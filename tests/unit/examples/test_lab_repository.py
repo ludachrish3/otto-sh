@@ -38,8 +38,12 @@ def test_custom_dataset_overrides_demo():
                 }
             ],
         },
-        # Resources are declared per LAB since v2 (spec §8.1) — a host entry
-        # carrying them is now a validation error, not a second spelling.
+        # The LAB level of three (spec 2026-08-28 three-level-reservations §2):
+        # this kwarg is the ``labs`` table's ``resources``. A host entry MAY
+        # carry its own, and an element's set reaches a host through
+        # ``create_host_from_dict(..., element_resources=...)`` — this sample
+        # does neither, so the built host's two sets stay empty and the
+        # assertion below is about the lab's declaration alone.
         resources={"only": {"node"}},
     )
     assert repo.list_labs() == ["only"]

@@ -231,13 +231,16 @@ class TestJsonFileLabRepository:
         assert "ip" in str(exc_info.value)
 
     def test_load_lab_resources_come_from_the_declaring_labs_entry(self, tmp_path):
-        """The lab is the reservable unit: ``resources`` are DECLARED per lab.
+        """A lab's ``resources`` are DECLARED in its ``labs`` entry, never derived.
 
-        Replaces the v1 aggregation test (host resources unioned into the lab)
-        — hosts no longer carry ``resources`` at all. ``write_lab_json`` hoists
-        each flat host's into its own labs' table entries, so the fixture still
-        reads the same while pinning the new rule: the OTHER lab's declared
-        resources stay out of this one.
+        Replaces the v1 aggregation test (host resources unioned into the lab).
+        Hosts DO carry ``resources`` again — the lab is one of three reservable
+        levels since spec 2026-08-28 three-level-reservations — but what a
+        ``Lab`` holds is what its ``labs`` entry declares, and nothing is read
+        back off its member hosts. ``write_lab_json`` hoists each flat v1
+        host's into its own labs' table entries, so the fixture still reads the
+        same while pinning that rule: the OTHER lab's declared resources stay
+        out of this one.
         """
         _hosts_file(
             tmp_path,

@@ -17,7 +17,7 @@ from ..host.remote_host import RemoteHost
 from ..host.unix_host import UnixHost
 from .callbacks import list_hosts_callback
 from .expose import HostGroup
-from .invoke import print_error
+from .invoke import fail, print_error
 
 
 def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:
@@ -167,30 +167,110 @@ def main(
     }
 
 
+def _check_named_host_reservations(ctx: typer.Context, named: "list[RemoteHost]") -> None:
+    """Require the OWN slots of every host the user named that sits outside the fleet.
+
+    ``otto host <id> --hop <id>`` is deliberately unscoped — explicit targeting
+    beats scoping — while the preamble's gate requires only the fleet of
+    interest (spec 2026-08-28 three-level-reservations §5). Before this branch
+    every reservation was lab-level, so a whole-lab lock covered any host the
+    fleet left out; element- and host-level slots make that gap reachable: a
+    project scoped to ``slot1`` would pass the gate holding ``slot-1`` and then
+    touch ``slot2``.
+
+    *named* is BOTH explicitly named hosts — the target and the resolved
+    ``--hop``. The hop is not a lesser target: ``rebuild_connections`` opens a
+    jump session through it, and reaching a fleet host through an unreserved
+    jump box is still using the jump box.
+
+    Two short-circuits, in this order:
+
+    * A host the fleet already covers is skipped — the preamble asked the
+      backend for exactly that set, and asking again for the same answer is a
+      second query per command.
+    * A named out-of-fleet host that declares neither ``resources`` nor
+      ``element_resources`` can add nothing to the requirement:
+      :func:`~otto.reservations.check.required_resource_origins` seeds the
+      lab-level set unconditionally, so checking such a host re-asks for
+      exactly what the preamble already required. Without this,
+      ``otto host local …`` under any lab with a lab-level identifier costs a
+      second backend round trip for a verdict otto has just had. The read is
+      local (two frozensets on a built host), never the backend.
+
+    Everything else mirrors :func:`~otto.cli.invoke.present_reservation_gate` —
+    the same memoized gate off ``ctx.meta``, its ``skip_check`` (``-R`` already
+    printed its loud warning; a second one says nothing new), and a ``None``
+    backend that means no ``[reservations]`` section resolved. The null backend
+    short-circuits inside ``check_reservations`` itself. One query for both
+    hosts, so a run short of two slots is told about both at once.
+
+    Local imports: ``otto host`` is a budgeted import surface
+    (``scripts/import_budget.py``) and neither ``otto.reservations`` nor the
+    lab accessor belongs on ``otto host --help``.
+    """
+    gate = ctx.meta.get("otto_reservation")
+    if gate is None or gate.skip_check or gate.backend is None or gate.identity is None:
+        return
+    fleet = get_context().admissible_ids(require_nonempty=False)
+    outside = [host for host in named if host.id not in fleet]
+    if not any(host.resources or host.element_resources for host in outside):
+        return
+
+    from ..config import get_lab
+    from ..reservations.check import MissingReservationError, check_reservations
+
+    try:
+        check_reservations(
+            get_lab(),
+            gate.identity.username,
+            gate.backend,
+            host_ids={host.id for host in outside},
+        )
+    except MissingReservationError as e:
+        fail(e)
+
+
 def resolve_cli_host(ctx: typer.Context) -> RemoteHost:
     """Build the host the ``otto host`` callback recorded (lab is ready by now).
 
     Reproduces the construction the callback used to do inline: resolve the
     host by ID, validate/attach a ``--hop``, and apply ``--term`` / ``--transfer``
     override-copies. An already-resolved ``ctx.obj`` is honoured as a fast path.
+
+    This is also where the reservation gate learns which hosts were NAMED
+    (``_check_named_host_reservations`` below) — the group callback cannot,
+    because it runs before the lab loads and so only stashes the raw ids.
+    Memoized by ``ctx.obj`` like the rest of the construction, so the check
+    runs at most once per invocation.
     """
     if ctx.obj is not None:
         # Today ONLY test scaffolding pre-installs ctx.obj. Anything set here
-        # bypasses hop validation and the --term/--transfer override-copies
-        # below, so a future upstream writer (e.g. a group callback building
-        # the host early) must do that work itself or leave ctx.obj unset.
+        # bypasses hop validation, the --term/--transfer override-copies and
+        # the named-host reservation check below, so a future upstream
+        # writer (e.g. a group callback building the host early) must do that
+        # work itself or leave ctx.obj unset.
         return ctx.obj
 
     request = ctx.meta["_otto_host_request"]
     host: RemoteHost = _resolve_host(request["host_id"])
 
+    # _resolve_host accepts a positional handle (e.g. dut1) as well as a
+    # canonical id. Resolved BEFORE the reservation check so the hop is one of
+    # the hosts that check covers, and its canonical id is what gets stored:
+    # downstream canonical-only lookups (e.g. RemoteHost._build_hop_transport's
+    # `lab.hosts[hop_id]`) would KeyError on a raw handle. A hop that names no
+    # host therefore reports "No host with ID" ahead of any reservation
+    # verdict, which is the same order the target already had.
     hop = request.get("hop")
-    if hop:
-        # _resolve_host accepts a positional handle (e.g. dut1) as well as a
-        # canonical id; store the resolved canonical id so downstream
-        # canonical-only lookups (e.g. RemoteHost._build_hop_transport's
-        # `lab.hosts[hop_id]`) don't KeyError on a raw handle.
-        host.hop = _resolve_host(hop).id
+    hop_host: "RemoteHost | None" = _resolve_host(hop) if hop else None
+
+    # Before ANY connection is wired: a host the caller may not have is not a
+    # host to start opening a session to — and `rebuild_connections` below
+    # builds the jump transport through the hop.
+    _check_named_host_reservations(ctx, [h for h in (host, hop_host) if h is not None])
+
+    if hop_host is not None:
+        host.hop = hop_host.id
         host.rebuild_connections()
 
     term = request.get("term")

@@ -660,6 +660,7 @@ a reference plus otto-owned fields; nothing here is an address or a credential:
         {
             "name": "test1",
             "labs": ["unix", "busybox"],
+            "resources": ["test1-chassis"],
             "metadata": {"role": "hub"},
             "hosts": [
                 {
@@ -680,7 +681,8 @@ a reference plus otto-owned fields; nothing here is an address or a credential:
                     "os_type": "unix",
                     "docker_capable": true,
                     "valid_terms": ["telnet", "ssh"],
-                    "valid_transfers": ["nc", "scp", "sftp", "ftp"]
+                    "valid_transfers": ["nc", "scp", "sftp", "ftp"],
+                    "resources": ["test2-console"]
                 }
             ]
         },

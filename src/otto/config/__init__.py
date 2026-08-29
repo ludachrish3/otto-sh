@@ -26,6 +26,12 @@ from .fleet import (
 from .fleet import (
     run_on_all_hosts as run_on_all_hosts,
 )
+
+# NOT re-exported: `otto.config.fleet.get_hosts_in_play` — it is the
+# reservation readers' tolerant spelling (an empty declared fleet is zero hosts
+# in play, never an abort), and a walk written against the most discoverable
+# name would silently touch nothing. Its three readers import it from
+# `otto.config.fleet` / `otto.context` by hand, which is the point.
 from .lab import (
     load_lab as load_lab,
 )

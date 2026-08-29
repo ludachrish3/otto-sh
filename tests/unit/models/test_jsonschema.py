@@ -90,12 +90,38 @@ def test_lab_schema_v2_sections():
     }
 
 
-def test_host_specs_have_no_hoisted_fields_but_metadata():
+def test_host_specs_have_no_labs_but_metadata_and_resources():
+    """``labs`` is the element's; ``metadata`` and ``resources`` are the host's own.
+
+    These are the STANDALONE per-spec documents, which describe the flat host
+    dict — so ``element``/``element_id`` legitimately survive here even though a
+    v2 host ENTRY may not carry them (see
+    ``test_element_host_entries_drop_the_hoisted_keys``). ``resources`` returned
+    to ``HostSpec`` with spec 2026-08-28 three-level-reservations and so appears
+    at both places.
+    """
     docs = build_schemas(builtins_only=True)
     for stem in ("unix-host", "embedded-host"):
-        props = docs[stem]["properties"]
+        props = set(docs[stem]["properties"])
         assert "metadata" in props
-        assert not {"labs", "resources"} & set(props)
+        assert "resources" in props
+        assert "labs" not in props
+
+
+def test_resources_are_offered_at_element_and_host_level():
+    """Spec 2026-08-28 three-level-reservations §8: all three levels come from the models.
+
+    ``_drop_hoisted_keys`` is driven off ``HOISTED_HOST_KEYS``, so ``resources``
+    leaving that set is the whole edit — the nested host entry offers it without
+    a schema-builder change.
+    """
+    lab = build_schemas(builtins_only=True)["lab"]
+    assert "resources" in lab["$defs"]["LabEntrySpec"]["properties"]
+    assert "resources" in lab["$defs"]["ElementSpec"]["properties"]
+    host_defs = [n for n in lab["$defs"] if n.endswith("HostSpec")]
+    assert host_defs, sorted(lab["$defs"])  # never let the loop below be vacuous
+    for name in host_defs:
+        assert "resources" in lab["$defs"][name]["properties"], name
 
 
 def test_valid_impairers_enum_injected():

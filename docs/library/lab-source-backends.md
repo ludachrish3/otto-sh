@@ -13,9 +13,14 @@ two read-only methods:
 
 `load_lab(name, preferences=None) -> Lab`
 : Build and return the named lab. Raises
-  [`LabNotFoundError`](../api/labs.rst) if the name is unknown. Set
-  `Lab.resources` to what the lab reserves — the lab is the reservable unit,
-  and otto never reads resources back off its hosts.
+  [`LabNotFoundError`](../api/labs.rst) if the name is unknown. Populate the
+  reservation identifiers at every level your equipment uses: `Lab.resources`
+  for what the lab reserves as a whole, and, on each host it builds,
+  `element_resources` for the element it belongs to and `resources` for the
+  host itself. Both host-side fields are `frozenset[str]`; a host built through
+  [`create_host_from_dict`](../api/host/factory.rst) gets them from the
+  `element_resources=` keyword and the host dict's own `resources` key. See
+  {doc}`../guide/cli/reservation/index` for what the three levels mean.
 
 `list_labs() -> list[str]`
 : The lab names this source **declares**. This is not a convenience listing:
@@ -30,6 +35,17 @@ Return a **fresh `Lab`** from every `load_lab` call. When more than one source
 is configured, otto merges the sources' labs **in place** — so a backend that
 caches one `Lab` object and hands it back from every call would eventually
 return a lab an earlier merge has already mutated.
+```
+
+```{warning}
+**A level you leave empty is a level nobody reserves.** The gate reads
+`Lab.resources` *and* each in-play host's `element_resources` and `resources`;
+a backend that sets only the first under-reserves **silently** — the check
+passes, and two runs land on the same slot. Nothing catches it for you:
+`assert_lab_repository_conforms` compares `Lab.resources` across calls and does
+not inspect the host-level sets. If your equipment really is reservable only as
+whole labs, leaving both host-side fields empty is the correct declaration —
+just make it a decision rather than an omission.
 ```
 
 ### One optional capability
@@ -84,8 +100,10 @@ holds a mapping of lab name to host dicts and builds real hosts with
 [`create_host_from_dict`](../api/host/factory.rst) so each becomes a `RemoteHost`
 keyed by its `id` — which is what the rest of otto expects. Note where its
 resources live: a *second* mapping, lab name to resource set, mirroring
-`lab.json`'s `labs` table. No host dict in the sample carries a `resources`
-key, because a host has none to carry.
+`lab.json`'s `labs` table. That is the lab level only — the sample's routers
+are reserved as whole labs, so no host dict carries a `resources` key and
+nothing is passed as `element_resources`. A backend for chassis-and-slot
+equipment fills those in too.
 
 The shipped sample works out of the box and demonstrates the contract:
 

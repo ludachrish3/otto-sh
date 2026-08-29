@@ -28,6 +28,19 @@ def test_lab_entry_forbids_unknown_keys_and_non_object_metadata() -> None:
         LabEntrySpec.model_validate({"metadata": [1]})
 
 
+def test_lab_entry_resources_must_be_nonempty_strings() -> None:
+    """All three levels share one notion of a usable identifier (spec 2026-08-28
+    three-level-reservations §2, §10).
+
+    Anchored on the validator's exact sentence rather than a loose
+    ``resources.*non-empty``: the failure text carries this module's locals, so
+    a wide pattern can be satisfied by a name in the test itself.
+    """
+    with pytest.raises(ValidationError, match=r"resources must be non-empty strings"):
+        LabEntrySpec.model_validate({"resources": [" "]})
+    assert LabEntrySpec.model_validate({"resources": ["bed"]}).resources == {"bed"}
+
+
 def test_element_flattens_identity_onto_hosts() -> None:
     el = ElementSpec.model_validate(
         {"name": "dut", "id": 3, "labs": ["embedded"], "hosts": [_HOST, {**_HOST, "board": "mgmt"}]}
@@ -65,6 +78,43 @@ def test_flatten_does_not_alias_the_entry() -> None:
 def test_hoisted_key_on_a_host_entry_names_key_and_element(key: str) -> None:
     with pytest.raises(ValidationError, match=rf"'{key}'.*element 'dut'|element 'dut'.*'{key}'"):
         ElementSpec.model_validate({"name": "dut", "labs": ["l"], "hosts": [{**_HOST, key: "x"}]})
+
+
+def test_hoisted_keys_no_longer_include_resources() -> None:
+    """Spec 2026-08-28 three-level-reservations §2: a host entry may carry resources again.
+
+    Spelled ``sorted(...) == [...]`` rather than against a ``frozenset``
+    literal: ruff's SIM300 reads the ALL-CAPS name as the constant and demands
+    the literal on the left, which reads backwards.
+    """
+    assert sorted(HOISTED_HOST_KEYS) == ["element", "element_id", "labs"]
+
+
+def test_element_and_host_resources_are_sets_of_nonempty_strings() -> None:
+    """Spec 2026-08-28 three-level-reservations §2: the element and the slot declare too.
+
+    Anchored on the validator's exact sentence rather than a loose
+    ``resources.*non-empty``: the failure text carries this module's locals,
+    so a wide pattern can be satisfied by a name in the test itself.
+    """
+    el = ElementSpec.model_validate(
+        {
+            "name": "chassis",
+            "labs": ["rig"],
+            "resources": ["chassis-1", "chassis-1"],
+            "hosts": [{**_HOST, "resources": ["slot-1"]}],
+        }
+    )
+    assert el.resources == {"chassis-1"}
+    # The host's own set is not hoisted anywhere: it rides inside the entry,
+    # untouched, to the host spec that validates it.
+    assert el.flatten()[0]["resources"] == ["slot-1"]
+    with pytest.raises(ValidationError, match=r"resources must be non-empty strings"):
+        ElementSpec.model_validate(
+            {"name": "c", "labs": ["l"], "resources": [""], "hosts": [_HOST]}
+        )
+    bare = ElementSpec.model_validate({"name": "c", "labs": ["l"], "hosts": [_HOST]})
+    assert bare.resources == set()
 
 
 def test_membership_is_fullmatch() -> None:

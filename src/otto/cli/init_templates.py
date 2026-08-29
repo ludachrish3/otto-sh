@@ -263,10 +263,11 @@ exists and reserves nothing.
 - **`metadata`** — an opaque object for your own per-host data; otto never
   reads it.
 
-`element`, `element_id`, `labs` and `resources` are NOT host fields any more:
-identity lives on the element (`name` / `id`), membership on the element's
-`labs` patterns, and resources on the `labs` table. otto rejects a host entry
-carrying any of them, naming the key.
+`element`, `element_id` and `labs` are NOT host fields any more: identity
+lives on the element (`name` / `id`), membership on the element's `labs`
+patterns. otto rejects a host entry carrying any of them, naming the key.
+`resources` may be declared on the lab (`labs` table), the element, or the
+host — see the reservation docs.
 
 Interfaces (when present) are keyed by their network-device name (`eth0`,
 `eth1`, …), so impairment/capture can read the device straight off the key.

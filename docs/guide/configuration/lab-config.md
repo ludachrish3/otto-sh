@@ -136,7 +136,7 @@ a whole.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `resources` | array of strings | Reservation identifiers this lab holds, matched byte-for-byte by the reservation backend.  Defaults to empty — a lab that reserves nothing is a perfectly good declaration.  See {doc}`../cli/reservation/index`. |
+| `resources` | array of strings | Reservation identifiers shared by the lab as a whole — a switch, a PDU, a bed.  Matched byte-for-byte by the reservation backend.  Elements and hosts may declare their own alongside; see {doc}`../cli/reservation/index`.  Defaults to empty — a lab that reserves nothing is a perfectly good declaration. |
 | `metadata` | object | Opaque lab-level user data; otto never reads it.  Surfaces as `lab.metadata["<lab name>"]`, and on every host of the lab as `host.lab_info.metadata`. |
 
 **A lab exists if and only if some source declares it here.**  `otto
@@ -152,13 +152,20 @@ labs by regex ([Elements](#elements) below), the set of lab names is no
 longer derivable from the elements — a pattern like `"unix.*"` names nothing
 in particular — so the `labs` table is the enumerable record of what exists.
 
-Resources are **declared**, never derived from hosts: the lab is the
-reservable unit, and a host carries no resources of its own.  One consequence
-is worth stating out loud — two labs that share elements contend with each
-other only if their declarations share a resource identifier.  `otto init`
-warns about any pair that shares an element and reserves nothing in common,
-naming the labs, the shared elements, and the remedy.  (A lab that declares
-no resources reserves nothing at all, so it is never half of such a pair.)
+Resources are **declared**, never derived: this entry is what the lab holds
+*as a whole*.  An element or a host may declare its own alongside — three
+levels that combine freely; see [Elements](#elements) and
+[Per-host fields](#per-host-fields) below, and
+{doc}`../cli/reservation/index` for what a run actually has to hold.  One
+consequence is worth stating out loud — two labs that share an element contend
+with each other only if something they both hold locks that element.  `otto
+init` warns about any pair that shares an element, reserves nothing in common,
+**and** leaves that element unprotected — no element- or host-level `resources`
+on it.  The warning names the labs, the unprotected elements, and three
+remedies: a shared lab identifier, a `resources` entry on the element (or on
+each of its hosts), or making one lab a sub-lab of the other.  (A lab that
+declares no resources reserves nothing at all, so it is never half of such a
+pair.)
 
 A **sub-lab** is just another declared lab whose name follows a scheme —
 `unix.rack-b4` alongside `unix` — with its own `resources` and `metadata`.
@@ -179,7 +186,8 @@ option tables stay on the host entries.
 | `name` | string | Element name — the human-readable name of the equipment, and the source of every child host's id (`slug(name)`; see {ref}`host-identity`).  Must slug to a non-empty token.  Required. |
 | `id` | integer | Disambiguates repeats of the same `name`; must be `>= 0`.  Appended to each child host's id.  Omit when the name alone is unique. |
 | `labs` | array of strings | Membership patterns, `re.fullmatch`-ed against a lab name (below).  Required and non-empty: an element that joins nothing is a mistake, and "every lab" is spelled `[".*"]`. |
-| `metadata` | object | Opaque element-level user data; otto never reads it.  Surfaces as `host.element_metadata` on every host of the element — a copy per host, so two hosts of one element never share a mutable dict. |
+| `metadata` | object | Opaque element-level user data; otto never reads it.  Surfaces as `host.element_metadata` on every host of the element — a copy per host, so two hosts of one element never share a mutable dict.  The element's `resources` below travel the same road, surfacing as `host.element_resources` (a frozenset, so it is shared safely). |
+| `resources` | array of strings | Reservation identifiers for the element as one unit — the chassis, where the lab is too coarse and a slot too fine.  Combined with the lab's and each host's; see {doc}`../cli/reservation/index`.  Defaults to empty. |
 | `hosts` | array of objects | The element's host entries — the [per-host fields](#per-host-fields) below.  Required and non-empty. |
 
 **Membership is by pattern.**  Each `labs` entry is a Python regular
@@ -222,10 +230,11 @@ from a lab, change it at the source that declares it.
 ## Per-host fields
 
 A host entry is one addressable endpoint of its element.  `element`,
-`element_id`, `labs`, and `resources` are **not** host fields: the first two
-are the element's `name` and `id`, `labs` is the element's membership, and
-`resources` belongs to the [labs table](#the-labs-table).  A host entry
-carrying any of them fails the load naming the key.
+`element_id`, and `labs` are **not** host fields: the first two are the
+element's `name` and `id`, and `labs` is the element's membership.  A host
+entry carrying any of them fails the load naming the key.  `resources` *is* a
+host field — the third reservation level, beside the
+[labs table](#the-labs-table)'s and the [element](#elements)'s.
 
 ### Required
 
@@ -240,6 +249,7 @@ carrying any of them fails the load naming the key.
 |-------|------|-------------|
 | `name` | string | Display-name override.  Otto derives a human-friendly label from the element name, its logical number, `board`, and `slot`; setting `name` replaces that label entirely.  It does **not** change the host id. |
 | `metadata` | object | Opaque user data — the sanctioned home for custom fields, so `extra="forbid"` never has to give way.  Otto never reads it.  Surfaces as `host.metadata`; the element's as `host.element_metadata`; the lab's as `host.lab_info`. |
+| `resources` | array of strings | This host's own reservation identifiers — a slot.  Combined with the element's and the lab's; see {doc}`../cli/reservation/index`.  Defaults to empty. |
 | `board` | string | Board type, included in the host id when set. |
 | `user` | string | Pin a specific user from `creds`.  Defaults to the first entry. |
 | `term` | string | Terminal protocol lab pin — must be in the host's `valid_terms` menu.  Product `[host_preferences]` and CLI `--term` can override; see the precedence chain below. |
@@ -554,6 +564,7 @@ list more resources than are shown here):
         {
             "name": "test1",
             "labs": ["unix", "busybox"],
+            "resources": ["test1-chassis"],
             "metadata": {"role": "hub"},
             "hosts": [
                 {
@@ -610,7 +621,9 @@ list more resources than are shown here):
 `test1` is in two labs because its *element* is: every host it holds joins
 `unix` and `busybox` together.  Note that the reservation identifier `test1`
 is declared on both labs, so reserving either contends with the other — the
-overlap rule the [labs table](#the-labs-table) describes.  The Zephyr host's
+overlap rule the [labs table](#the-labs-table) describes.  The element's own
+`test1-chassis` is a second, independent lock: a run that touches this host
+needs it whichever lab it came in through.  The Zephyr host's
 `hop` names `test4`, another element of the same fixture: a management path
 to reach the device, not a declared link.
 
@@ -654,7 +667,8 @@ a stub/dangling node). A link can legitimately span two labs.
 ## Migrating from the hosts array
 
 Before v2, a `lab.json` carried a top-level `hosts` array, and each host entry
-declared its own `element`, `element_id`, `labs`, and `resources`.  That shape
+declared its own `element`, `element_id`, and `labs` (and, then as now, its
+own `resources`).  That shape
 is gone: a top-level `hosts` key fails the load with a message naming the
 file.  There is no migration tool — the transform is mechanical, and this is
 it.
@@ -733,7 +747,7 @@ After:
 }
 ```
 
-Four steps, in order:
+Three steps, in order:
 
 1. **Group the `hosts` array by `element` + `element_id`.**  Each group
    becomes one `elements` entry: `element` becomes the element's `name`,
@@ -743,12 +757,14 @@ Four steps, in order:
 2. **Move each group's `labs` up to the element.**  The hosts of one element
    must have carried the same `labs`; where they did not, they were never one
    element — split them into elements with distinct names.
-3. **Union each lab's hosts' `resources` into that lab's `labs` entry.**
-   Every lab name any element joins must appear in some source's `labs`
-   table: a lab exists only once it is declared.  A lab that reserves nothing
-   is written `{}`.
-4. **Delete `resources` from the host entries.**  The lab is the reservable
-   unit; hosts carry no resources.
+3. **Union each lab's hosts' `resources` into that lab's `labs` entry, or
+   keep them on the host entries.**  Both are valid: the lab is one reservable
+   unit among three, and `resources` is still a host field (an element may
+   declare its own too).  Union them when the hosts were all standing in for
+   one shared thing; keep them per host when each really is its own slot.
+   Either way, every lab name any element joins must appear in some source's
+   `labs` table — a lab exists only once it is declared, and a lab that
+   reserves nothing is written `{}`.
 
 Two things do *not* change.  Host ids compose exactly as before — `slug(name)`
 plus the element `id` plus `board`/`slot` — so declared-link endpoints,

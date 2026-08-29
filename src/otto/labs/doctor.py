@@ -3,8 +3,10 @@
 Pure — takes parsed documents, returns strings — so ``otto init`` (the only
 caller) stays the single place that reads a repo's lab files. Warnings, not
 problems: a shared file may serve projects that declare different labs, so a
-dead pattern is advice, and the disjoint-resource overlap (spec 2026-08-27
-lab-definition-v2 §8.3) is the author's call to make once it is pointed out.
+dead pattern is advice, and the disjoint-resource overlap (spec 2026-08-28
+three-level-reservations §7) is the author's call to make once it is pointed
+out — an element or host that already carries a resource needs no lab-level
+contention to protect it.
 
 Every check here needs the WHOLE picture — a pattern is only dead once no
 file declares a lab it matches, and two labs only fail to contend once both
@@ -24,8 +26,9 @@ def lab_warnings(documents: Documents) -> list[str]:
     """Return every advisory finding across *documents*, in report order.
 
     Dead membership patterns first (per file, per element, per pattern), then
-    one finding per pair of labs that share an element, BOTH declare at least
-    one resource, and declare no resource in common. An empty list means the
+    one finding per pair of labs that share an element left unprotected by
+    any element- or host-level resource (spec §7), when BOTH labs declare at
+    least one resource and none in common. An empty list means the
     declarations are coherent; nothing here ever makes a repo invalid.
     """
     declared: dict[str, LabEntrySpec] = {}
@@ -33,19 +36,51 @@ def lab_warnings(documents: Documents) -> list[str]:
         declared.update(entries)
     names = sorted(declared)
     out: list[str] = []
-    members: dict[str, list[str]] = {n: [] for n in names}
+    members: dict[str, list[ElementSpec]] = {n: [] for n in names}
     for source, _, elements in documents:
         for element in elements:
             out.extend(_dead_patterns(source, element, names))
             for name in names:
                 if element.matches(name):
-                    members[name].append(element.name)
+                    members[name].append(element)
+    # Keyed by ElementKey, not by name: membership is an identity question, and
+    # two elements named ``chassis`` with ids 1 and 2 are two elements. The
+    # last-wins collapse is load-bearing — it is the same rule the multi-source
+    # merge applies (spec 2026-08-27 lab-definition-v2 §6), so a file that
+    # overrides an element by key is compared here as the one element it is,
+    # not as the original and its replacement. Built once per lab rather than
+    # per pair: with N labs the pair loop would otherwise rebuild each map N-1
+    # times over the same members.
+    keyed = {name: {el.key: el for el in members[name]} for name in names}
     for i, first in enumerate(names):
         for second in names[i + 1 :]:
-            shared = sorted(set(members[first]) & set(members[second]))
-            if shared and _cannot_contend(declared[first], declared[second]):
-                out.append(_disjoint_resources(first, second, shared))
+            second_keys = set(keyed[second])
+            shared = [el for key, el in keyed[first].items() if key in second_keys]
+            unprotected = sorted(str(el.key) for el in shared if not protected(el))
+            if unprotected and _cannot_contend(declared[first], declared[second]):
+                out.append(_disjoint_resources(first, second, unprotected))
     return out
+
+
+def protected(element: ElementSpec) -> bool:
+    """Whether reserving *element* below the lab level is already possible.
+
+    Spec 2026-08-28 three-level-reservations §7. True when the element declares
+    at least one resource, or every one of its host entries does — then a lab
+    that shares it contends through those identifiers, whatever the lab-level
+    sets say.
+
+    ``element.hosts`` are RAW dicts (:class:`~otto.models.lab.ElementSpec`
+    validates them only after :meth:`~otto.models.lab.ElementSpec.flatten`), so
+    a ``resources: [""]`` reads truthy here and this returns "protected" for an
+    identifier that reserves nothing. That is not this function's to catch: the
+    doctor's own verdict table already fails such a file through
+    ``validate_host_dict`` (``otto.cli.init._validate_entry``), whose host spec
+    rejects a blank identifier at all three levels.
+    """
+    if element.resources:
+        return True
+    return all(bool(host.get("resources")) for host in element.hosts)
 
 
 def _cannot_contend(first: LabEntrySpec, second: LabEntrySpec) -> bool:
@@ -84,17 +119,22 @@ def _dead_patterns(source: str, element: ElementSpec, names: list[str]) -> list[
     ]
 
 
-def _disjoint_resources(first: str, second: str, shared: list[str]) -> str:
-    """Return the overlap warning for two labs that share elements but no resource.
+def _disjoint_resources(first: str, second: str, unprotected: list[str]) -> str:
+    """Return the overlap warning for two labs that share unprotected elements.
 
-    On v1 two labs sharing a host shared that host's resources automatically,
-    so reserving either contended correctly. Lab-level resources are declared,
-    never derived (spec §8.1), so that safety net is gone and this is the
-    check that replaces it.
+    *unprotected* names only the shared elements left unprotected — those with
+    no element- or host-level resource of their own (:func:`protected`) —
+    rendered as ``('chassis', 1)`` keys, because two same-named elements with
+    different ids would otherwise print one name twice. On v1 two labs sharing
+    a host shared that host's resources automatically, so reserving either
+    contended correctly. Lab-level resources are declared, never derived
+    (spec §8.1), so that safety net is gone and this is the check that
+    replaces it.
     """
     return (
-        f"labs {first!r} and {second!r} share element(s) {shared} but declare "
-        f"disjoint resources — reserving one will not contend with the other; "
-        f"declare a shared resource identifier, or make one a sub-lab of the "
-        f"other (e.g. {first}.{second})"
+        f"labs {first!r} and {second!r} share element(s) {unprotected} that no "
+        f"element- or host-level resource protects, and declare disjoint lab "
+        f"resources — reserving one will not contend with the other; declare a "
+        f"shared lab identifier, give the element (or each of its hosts) a "
+        f"resource, or make one a sub-lab of the other (e.g. {first}.{second})"
     )

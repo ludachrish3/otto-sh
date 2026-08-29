@@ -53,21 +53,96 @@ The gate runs at the top of every live-lab subcommand:
 | `otto cov report ...` | no     | Offline; never touches hardware.                   |
 | `otto reservation ...`| no     | The whoami/check helpers only *report* on state.   |
 
-For each gated invocation, the **required set** is the selected lab's
-declared `resources` — its entry in the
-[`labs` table](../../configuration/lab-config.md#the-labs-table) of `lab.json`.
-For a combined `--lab a+b` it is the union of the components' declared sets.
-Hosts contribute nothing: the lab is the reservable unit and a host carries no
-resources of its own.  Otto then asks the configured backend which of the
-required identifiers the effective user holds; anything missing raises an
-error and the command does not run.
+### Three reservable levels
 
-One consequence is worth planning for: two labs that share elements contend
-with each other only if their declarations share a resource identifier.  The
-`otto init` doctor warns about any pair that shares an element, **both**
-reserve at least one resource, and reserve nothing in common.  A lab that
-declares `resources: []` reserves nothing at all, so it is never half of such
-a pair — there is no reservation for the shared element to protect.
+A `lab.json` declares reservation identifiers at three levels.  Every level is
+optional, they combine freely, and the identifiers themselves are opaque
+strings the backend matches byte-for-byte:
+
+| Level | Where it is declared | What it stands for |
+|-------|----------------------|--------------------|
+| lab | `resources` in the lab's [`labs` table](../../configuration/lab-config.md#the-labs-table) entry | Infrastructure the lab shares as a whole — a switch, a PDU, a bed. |
+| element | `resources` on an [`elements`](../../configuration/lab-config.md#elements) entry | The element reserved as one unit — a chassis. |
+| host | `resources` on a [host entry](../../configuration/lab-config.md#common-optional) | The slot. |
+
+A lab whose every element carries a resource leaves nothing unguarded — every
+reservable host in play then requires something (the built-in `local` host and
+container hosts declare none, ever) — but it is not the same as a whole-lab
+lock: distinct per-element identifiers can be held by different people at the
+same time, which is usually the point.  A single lab-level identifier is what
+*asks* the scheduler for one holder.  Otto enforces no exclusivity of its own:
+it asks your backend who holds a resource, accepts a list, and will report
+`held by: dana, sam` without complaint.  A chassis shared slot by slot needs
+only host-level entries.  This `rig` has all three kinds of thing, so it
+declares at all three levels:
+
+```json
+{
+  "labs": {"rig": {"resources": ["rig-pdu"]}},
+  "elements": [
+    {"name": "chassis", "id": 1, "labs": ["rig"], "resources": ["chassis-1"],
+     "hosts": [
+       {"ip": "10.0.0.11", "board": "slot", "slot": 1,
+        "resources": ["chassis-1-slot-1"], "creds": [{"login": "admin", "password": "…"}]},
+       {"ip": "10.0.0.12", "board": "slot", "slot": 2,
+        "resources": ["chassis-1-slot-2"], "creds": [{"login": "admin", "password": "…"}]}
+     ]},
+    {"name": "gw", "labs": ["rig"],
+     "hosts": [{"ip": "10.0.0.1", "creds": [{"login": "admin", "password": "…"}]}]}
+  ]
+}
+```
+
+Taking the whole rig means holding `rig-pdu`; taking the chassis out of
+service means holding `chassis-1`; one engineer per slot means one identifier
+per host entry.  The same identifier may appear at more than one level, or on
+two hosts that share a single physical lock — the required set is a set, so
+that costs nothing.
+
+(`board` and `slot` are what give the two chassis hosts distinct ids,
+`chassis1_slot1` and `chassis1_slot2`; see {ref}`host-identity`.  A resource
+identifier is unrelated to a host id — otto never derives one from the other.)
+
+### The fleet the gate reserves for
+
+The required set is computed over the **hosts in play** — every host the run's
+project(s) declare an interest in via `[project] host_patterns`
+({ref}`project-scope`), or the whole lab when no repo declares one.  The lab
+level always counts; each host in play adds its element's identifiers and its
+own.  For a combined `--lab a+b` the lab level contributes the union of the
+components' declared sets, and every lab-level row is attributed to the merged
+name `a+b` rather than to the component that declared the identifier.
+
+Naming a host explicitly — as the target or as the `--hop` — adds it to that
+set.  `otto host <id>` is not scoped by any `[project]` declaration
+({doc}`../host/index`), so a host outside the fleet has its OWN element- and
+host-level identifiers checked before the command runs — otherwise holding the
+fleet's slots would be permission to touch hardware nobody reserved, and
+reaching a fleet host through an unreserved jump box is still using the jump
+box.
+
+Otto then asks the configured backend which of those identifiers the effective
+user holds.  Anything missing raises an error that names each missing
+identifier, the level and owner that required it, and who holds it today — and
+the command does not run.
+
+`--hosts` on `otto monitor` / `otto tunnel` narrows that verb's walk inside a
+run the gate has already admitted; it does not narrow the gate.  To reserve
+fewer slots, narrow `[project] host_patterns` in the project that runs them.
+
+### Two labs over one element
+
+One consequence is worth planning for: two labs that share an element contend
+with each other only if something they both hold locks that element.  The
+`otto init` doctor warns about a pair that shares an element when **both**
+labs reserve at least one resource, their lab-level sets have nothing in
+common, **and** the shared element is unprotected — it declares no `resources`
+of its own and not every one of its host entries does either.  Protect it at
+either lower level and the pair is fine: reserving one lab now contends with
+the other through that identifier.  The other two remedies the warning offers
+are a shared lab identifier, or making one lab a sub-lab of the other.  A lab
+that declares `resources: []` reserves nothing at all, so it is never half of
+such a pair — there is no reservation for the shared element to protect.
 
 ## Fail-closed behavior
 
@@ -87,7 +162,9 @@ normal `MissingReservationError` path, which does not mention `-R`.
 ## Troubleshooting
 
 `"User $USER does not hold all resources required by lab ..."`
-: Expected when the check is working correctly.  Either reserve the
+: Expected when the check is working correctly.  One line follows per
+  missing identifier and the level and owner that required it — read it as
+  "reserve *this* thing" rather than "reserve the lab".  Either reserve the
   listed resources in your scheduler, pass `--as-user` if the booking
   is in someone else's name, or (if you're certain the data is wrong)
   use `-R` for one command.

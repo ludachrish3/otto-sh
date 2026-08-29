@@ -194,19 +194,21 @@ def _drop_hoisted_keys(schema: dict[str, Any]) -> None:
     :class:`~otto.models.lab.ElementSpec` rejects every
     :data:`~otto.models.lab.HOISTED_HOST_KEYS` member found inside one of its
     ``hosts`` entries — ``element``/``element_id`` belong to the element and
-    ``labs``/``resources`` to the element / the ``labs`` table now — so the
-    nested host sub-schemas must neither require nor permit them. With the
-    specs' ``additionalProperties: false`` that makes an unmigrated host entry
-    squiggle in the editor rather than validate.
+    ``labs`` is the element's membership — so the nested host sub-schemas must
+    neither require nor permit them. With the specs' ``additionalProperties:
+    false`` that makes an unmigrated host entry squiggle in the editor rather
+    than validate.
 
     The standalone per-spec documents keep these fields, deliberately: they
     describe the FLAT host dict ``ElementSpec.flatten()`` builds, which the
     host factory and ``host_identity`` still take.
 
     Driven off ``HOISTED_HOST_KEYS`` rather than a local list, so the schema
-    cannot drift from the runtime rule: ``labs``/``resources`` are already gone
-    from :class:`~otto.models.host.HostSpec` (those two pops are no-ops today),
-    but if one ever came back the nested entry would still refuse it.
+    cannot drift from the runtime rule: ``labs`` is gone from
+    :class:`~otto.models.host.HostSpec` (that pop is a no-op today) and
+    ``resources`` came BACK to it with spec 2026-08-28
+    three-level-reservations — which is why the set, not a local list, drives
+    this: the nested entry now offers ``resources`` without a schema edit.
     """
     props = schema.get("properties")
     if isinstance(props, dict):

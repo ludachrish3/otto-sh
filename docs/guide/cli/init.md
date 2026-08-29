@@ -84,8 +84,11 @@ never changes the exit code:
   declared lab`.  A shared lab file may legitimately serve projects that
   declare different labs, so this is advice, not breakage.
 - **Two labs that share an element but declare disjoint resources**, when both
-  declare at least one.  Reserving either would not contend with the other; the
-  warning names the labs, the shared elements, and the remedy.  (A lab that
+  declare at least one *and* no element- or host-level resource protects the
+  shared element.  Reserving either would not contend with the other; the
+  warning names the labs, the unprotected elements, and three remedies —
+  declare a shared lab identifier, give the element (or each of its hosts) a
+  `resources` entry, or make one lab a sub-lab of the other.  (A lab that
   reserves nothing is never half of such a pair.)
 
 Alongside the schemas, `otto init --schemas` writes

@@ -49,9 +49,13 @@ if TYPE_CHECKING:
 # A tiny built-in dataset so the sample works out of the box (doctests +
 # conformance). Each value is a list of host dicts as they'd appear in a
 # lab.json entry; the mapping key supplies lab membership here, so the
-# host-level "labs" field is unnecessary. Resources are declared PER LAB in
-# ``_DEMO_RESOURCES`` below, never on a host — the lab is the reservable unit
-# (spec §8.1), which is why no host entry here carries a "resources" key.
+# host-level "labs" field is unnecessary. This sample declares resources only
+# at the LAB level, in ``_DEMO_RESOURCES`` below — one of the three levels a
+# lab may use (spec 2026-08-28 three-level-reservations §2). A host dict MAY
+# carry its own "resources", and an element's set reaches a host through
+# ``create_host_from_dict(..., element_resources=...)``; a backend whose
+# equipment is reserved per chassis or per slot has to populate those too,
+# because otto reads all three off the built lab.
 _DEMO_LABS: dict[str, list[dict[str, Any]]] = {
     "east": [
         {
@@ -87,8 +91,10 @@ class ExampleLabRepository:
         demo dataset.
     resources : dict[str, set[str]] | None
         Optional mapping of lab name to the resources that lab reserves — the
-        ``labs`` table's ``resources``, which is where they live in v2 (hosts
-        carry none). Defaults to the demo dataset's own table.
+        ``labs`` table's ``resources``, the LAB level of the three a lab may
+        declare. This sample uses no other; a backend whose hosts or elements
+        are separately reservable stamps those on the hosts it builds.
+        Defaults to the demo dataset's own table.
     """
 
     def __init__(
@@ -138,9 +144,12 @@ class ExampleLabRepository:
                 inventory_ref=entry.ref,
             )
             lab.add_host(host)
-        # Declared, never derived: the lab is the reservable unit and carries
-        # its own set (spec §8.1). Reading it back off the hosts is exactly
-        # what v2 removed — a copy so a caller cannot mutate the table.
+        # Declared, never derived: the lab carries its own set (spec §8.1), and
+        # UNIONING the hosts' sets into it is exactly what v2 removed. The
+        # element and host levels are not folded in here either — they stay on
+        # the hosts, where the gate reads them (spec 2026-08-28
+        # three-level-reservations §3). A copy, so a caller cannot mutate the
+        # table.
         lab.resources = set(self._resources.get(name, set()))
         return lab
 

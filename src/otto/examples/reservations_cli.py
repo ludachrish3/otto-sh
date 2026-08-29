@@ -34,7 +34,7 @@ alice: OK
 0
 >>> run_check(demo, backend=ExampleReservationBackend(), identity=resolve_username("carol"))
 carol: User 'carol' does not hold all resources required by lab 'demo'. Missing:
-  - lab-a (held by alice)
+  lab-a  lab demo  (held by: alice)
 1
 
 Run the full CLI (steps 1-2 included) directly — with no ``--backend`` it

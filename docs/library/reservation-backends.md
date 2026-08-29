@@ -115,10 +115,9 @@ def test_my_backend_conforms():
   do not return empty. The CLI surfaces this specific exception as a fail-closed
   startup error with an `-R` hint — swallowing it means otto proceeds as if the
   user holds nothing, the opposite of fail-closed.
-- **String-match byte-for-byte.** The strings you return must match
-  `Lab.resources` exactly — the identifiers a lab declares in its `labs` table
-  entry, which is the only place resources live (hosts carry none). Normalize
-  inside your backend, not in otto.
+- **String-match byte-for-byte.** The strings you return must match the
+  identifiers `required_resources` computes — lab, element and host levels
+  alike. Normalize inside your backend, not in otto.
 - **`backend_name()` should be stable.** It shows up in diagnostics and skip
   warnings; changing it between versions breaks log-history searches.
 - **`url` is optional on both sides.** Accept `url: str | None = None` and use
@@ -183,7 +182,7 @@ alice: OK
 0
 >>> run_check(demo, backend=ExampleReservationBackend(), identity=resolve_username("carol"))
 carol: User 'carol' does not hold all resources required by lab 'demo'. Missing:
-  - lab-a (held by alice)
+  lab-a  lab demo  (held by: alice)
 1
 ```
 

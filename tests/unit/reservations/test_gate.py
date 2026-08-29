@@ -9,9 +9,12 @@ Outcome matrix (per user, per backend state):
 
 Plus an import-hygiene guard: importing ``otto.reservations`` must never pull
 in ``typer`` — that is the whole point of extracting the gate out of the CLI.
-"""
 
-from unittest.mock import patch
+Every case installs a REAL ``OttoContext``: since spec 2026-08-28
+three-level-reservations §5 the gate computes its requirement over
+``OttoContext.admissible_ids()``, so a lab handed over by patching
+``otto.config.get_lab`` alone would leave the fleet half of the read unwired.
+"""
 
 import pytest
 
@@ -22,6 +25,8 @@ from otto.reservations import (
     ReservationGateResult,
     ResolvedIdentity,
 )
+from tests._fixtures.fleet import _lab as fleet_lab
+from tests._fixtures.fleet import _repo, install_scoped_context
 from tests.conftest import make_host
 
 
@@ -46,8 +51,11 @@ def _lab_with_resources() -> Lab:
     """Build a lab declaring {rack1} that also holds hosts.
 
     The hosts are the point: the gate must demand the LAB's declaration and
-    nothing else. Since lab-definition v2 a host carries no ``resources`` field
-    to contribute from, so this guards the shape rather than a filter.
+    nothing else. These hosts contribute nothing because ``make_host`` leaves
+    ``resources`` and ``element_resources`` at their empty defaults — NOT
+    because a host cannot carry them (since spec 2026-08-28
+    three-level-reservations it can). A lab whose hosts declare their own is
+    covered in ``test_check.py``; this guards the lab level in isolation.
     """
     return Lab(
         name="test_lab",
@@ -65,18 +73,16 @@ def _lab_declaring(*resources: str) -> Lab:
 
 
 class TestReservationGateResultMatrix:
-    def test_skip_check_returns_skipped_outcome_with_warning(self, caplog):
+    def test_skip_check_returns_skipped_outcome_with_warning(self, caplog, monkeypatch):
         import logging
 
         lab = _lab_with_resources()
+        install_scoped_context(monkeypatch, lab, [])
         backend = _FakeBackend(owners={})  # would fail the check if it ran
         identity = ResolvedIdentity(username="alice", source="$USER")
         gate = ReservationGate(backend=backend, identity=identity, skip_check=True)
 
-        with (
-            caplog.at_level(logging.WARNING, logger="otto"),
-            patch("otto.config.get_lab", return_value=lab),
-        ):
+        with caplog.at_level(logging.WARNING, logger="otto"):
             outcome = gate.evaluate()
 
         assert outcome.checked is False
@@ -89,18 +95,16 @@ class TestReservationGateResultMatrix:
         assert "[bold red]" not in outcome.warning
         assert any("skipped" in rec.message.lower() for rec in caplog.records)
 
-    def test_skip_check_warns_even_when_backend_none(self, caplog):
+    def test_skip_check_warns_even_when_backend_none(self, caplog, monkeypatch):
         import logging
 
         lab = _lab_with_resources()
+        install_scoped_context(monkeypatch, lab, [])
         identity = ResolvedIdentity(username="alice", source="$USER")
         # backend=None models the -R break-glass path: construction skipped.
         gate = ReservationGate(backend=None, identity=identity, skip_check=True)
 
-        with (
-            caplog.at_level(logging.WARNING, logger="otto"),
-            patch("otto.config.get_lab", return_value=lab),
-        ):
+        with caplog.at_level(logging.WARNING, logger="otto"):
             outcome = gate.evaluate()
 
         assert outcome.skipped is True
@@ -113,19 +117,17 @@ class TestReservationGateResultMatrix:
         outcome = gate.evaluate()
         assert outcome == ReservationGateResult(checked=False, skipped=False, warning=None)
 
-    def test_backend_missing_resource_raises(self):
+    def test_backend_missing_resource_raises(self, monkeypatch):
         lab = _lab_with_resources()
+        install_scoped_context(monkeypatch, lab, [])
         backend = _FakeBackend(owners={})  # no one has anything
         identity = ResolvedIdentity(username="alice", source="$USER")
         gate = ReservationGate(backend=backend, identity=identity, skip_check=False)
 
-        with (
-            patch("otto.config.get_lab", return_value=lab),
-            pytest.raises(MissingReservationError),
-        ):
+        with pytest.raises(MissingReservationError):
             gate.evaluate()
 
-    def test_backend_fully_held_returns_checked(self):
+    def test_backend_fully_held_returns_checked(self, monkeypatch):
         lab = _lab_declaring("rack1", "test1", "test2")
         backend = _FakeBackend(
             owners={
@@ -135,23 +137,124 @@ class TestReservationGateResultMatrix:
             }
         )
         identity = ResolvedIdentity(username="alice", source="$USER")
+        install_scoped_context(monkeypatch, lab, [])
         gate = ReservationGate(backend=backend, identity=identity, skip_check=False)
 
-        with patch("otto.config.get_lab", return_value=lab):
-            outcome = gate.evaluate()
+        outcome = gate.evaluate()
 
         assert outcome == ReservationGateResult(checked=True, skipped=False, warning=None)
 
-    def test_backend_configured_but_identity_none_raises_runtime_error(self):
+    def test_backend_configured_but_identity_none_raises_runtime_error(self, monkeypatch):
         lab = _lab_with_resources()
+        install_scoped_context(monkeypatch, lab, [])
         backend = _FakeBackend(owners={})
         gate = ReservationGate(backend=backend, identity=None, skip_check=False)
 
-        with (
-            patch("otto.config.get_lab", return_value=lab),
-            pytest.raises(RuntimeError, match="identity must be resolved"),
-        ):
+        with pytest.raises(RuntimeError, match="identity must be resolved"):
             gate.evaluate()
+
+
+####################
+#  The requirement is computed over the fleet of interest
+#  (spec 2026-08-28 three-level-reservations §5)
+####################
+
+
+def _slot_lab():
+    """A two-host lab whose hosts each declare a host-level resource."""
+    lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
+    lab.hosts["slot1"].resources = frozenset({"slot-1"})
+    lab.hosts["slot2"].resources = frozenset({"slot-2"})
+    return lab
+
+
+def test_gate_requires_only_the_fleet_in_play(tmp_path, monkeypatch):
+    """Mutation: make evaluate() pass host_ids=None and this goes red — slot-2 would be demanded."""
+    lab = _slot_lab()
+    install_scoped_context(monkeypatch, lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
+    gate = ReservationGate(
+        backend=_FakeBackend({"slot-1": "chris"}),
+        identity=ResolvedIdentity(username="chris", source="$USER"),
+    )
+
+    assert gate.evaluate() == ReservationGateResult(checked=True, skipped=False, warning=None)
+
+
+def test_gate_demands_every_host_when_no_repo_declares_a_fleet(tmp_path, monkeypatch):
+    """The whole-lab fallback is unchanged: no declaration, no narrowing."""
+    lab = _slot_lab()
+    install_scoped_context(monkeypatch, lab, [_repo(tmp_path, "r1")])
+    gate = ReservationGate(
+        backend=_FakeBackend({"slot-1": "chris"}),
+        identity=ResolvedIdentity(username="chris", source="$USER"),
+    )
+
+    with pytest.raises(MissingReservationError, match=r"slot-2\s+host slot2"):
+        gate.evaluate()
+
+
+def test_skip_warning_lists_the_in_play_requirement(tmp_path, monkeypatch):
+    """-R must announce the SAME requirement the check would have made, not a wider one."""
+    lab = _slot_lab()
+    install_scoped_context(monkeypatch, lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
+
+    result = ReservationGate(
+        skip_check=True, identity=ResolvedIdentity(username="chris", source="$USER")
+    ).evaluate()
+
+    assert result.skipped
+    assert "['slot-1']" in result.warning
+    assert "slot-2" not in result.warning
+
+
+def _three_level_lab():
+    """A lab declaring its own resource over hosts that declare element- and host-level ones."""
+    lab = _slot_lab()
+    lab.resources = {"rack-1"}
+    lab.hosts["slot1"].element_resources = frozenset({"chassis-a"})
+    return lab
+
+
+def _empty_fleet_repo(tmp_path):
+    """A repo whose ``[project]`` declaration admits no host in the loaded lab."""
+    return _repo(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])
+
+
+def test_empty_declared_fleet_requires_the_lab_level_only_under_skip(tmp_path, monkeypatch):
+    """Zero hosts in play is a requirement of the LAB's own set — never an abort here.
+
+    An empty declared fleet means nothing is in play, so the requirement is the
+    lab-level rows and only those: no host contributes its element's set or its
+    own when no host is selected. The refusal still belongs to the walk that
+    follows, which is where it always was.
+
+    Mutation: pass ``require_nonempty=True`` in ``otto.config.fleet.get_hosts_in_play``
+    and this goes red with ``ProjectScopeError``.
+    """
+    lab = _three_level_lab()
+    install_scoped_context(monkeypatch, lab, [_empty_fleet_repo(tmp_path)])
+
+    result = ReservationGate(
+        skip_check=True, identity=ResolvedIdentity(username="chris", source="$USER")
+    ).evaluate()
+
+    assert result.skipped
+    assert "Required resources: ['rack-1']" in result.warning
+    assert "chassis-a" not in result.warning
+    assert "slot-1" not in result.warning
+    assert "slot-2" not in result.warning
+
+
+def test_empty_declared_fleet_checks_the_lab_level_only(tmp_path, monkeypatch):
+    """The checked path reaches a verdict too: hold the lab's set and the gate passes."""
+    lab = _three_level_lab()
+    install_scoped_context(monkeypatch, lab, [_empty_fleet_repo(tmp_path)])
+    gate = ReservationGate(
+        backend=_FakeBackend({"rack-1": "chris"}),
+        identity=ResolvedIdentity(username="chris", source="$USER"),
+    )
+
+    assert gate.evaluate() == ReservationGateResult(checked=True, skipped=False, warning=None)
 
 
 def test_reservations_import_is_typer_free():

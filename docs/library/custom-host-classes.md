@@ -56,6 +56,16 @@ register_host_class("my-rtos", MyRtosHost)
 `ZephyrHost` in `otto.host.embedded_host` is the in-tree worked example — it
 re-declares `os_type`, `os_name`, and `command_frame` as class-level field
 defaults and is registered under `"zephyr"` at module load.
+
+Subclassing `EmbeddedHost` or `UnixHost` inherits every field otto's loader
+stamps.  A class that subclasses `RemoteHost` (or `BaseHost`) **directly** must
+declare them itself — among them `resources`, `element_resources`,
+`element_metadata`, `inventory_ref` and `lab_info`, each with a
+`field(default_factory=...)`.  Neither `RemoteHost` nor `BaseHost` is a
+dataclass, so their annotations are a contract the type checker credits to
+every subclass while creating no attribute and no dataclass field: the first
+read raises `AttributeError`.  The failure is loud and happens at load rather
+than mid-run, but nothing warns you before it.
 ## Composition
 
 Layer a defaults bundle over a custom class to create per-build profiles

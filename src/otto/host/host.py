@@ -443,6 +443,20 @@ class Host(Protocol):
     lab_info: "LabInfo"
     """The resolved lab this host came from (name, declared resources, metadata)."""
 
+    resources: frozenset[str]
+    """This host's own reservation identifiers — a slot (spec 2026-08-28
+    three-level-reservations §3); empty for containers and ``local``. The lab's
+    are on :attr:`lab_info`."""
+
+    element_resources: frozenset[str]
+    """The reservation identifiers of the ELEMENT this host belongs to (spec
+    2026-08-28 three-level-reservations §3) — stamped by the loader, like
+    ``element_metadata``; empty for containers and ``local``.
+
+    Carried per member host because there is no element registry at runtime:
+    an element is in play exactly when one of its hosts is, so the union over
+    elements in play falls out of the union over hosts in play."""
+
     inventory_ref: "InventoryRef"
     """Inventory provenance (see :class:`~otto.host.inventory_ref.InventoryRef`); empty for an
     inline host."""
@@ -814,6 +828,8 @@ class BaseHost(ABC):
     name: str
     log: LogMode
     lab_info: "LabInfo"
+    resources: frozenset[str]
+    element_resources: frozenset[str]
     inventory_ref: "InventoryRef"
     products: list["Product"]
     dev_tools: list["DevTool"]

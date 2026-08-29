@@ -72,8 +72,9 @@ def _section(text: str, heading: "str | None", page: Path) -> str:
         # composes the host id from them (spec §14), but in a v2 FILE they are
         # the element's `name` / `id` and are errors inside a host entry. They
         # are documented under "Elements"; a per-host row for them would teach
-        # exactly the shape v2 forbids. (`labs` / `resources`, the other two
-        # hoisted keys, left HostSpec outright and never reach this set.)
+        # exactly the shape v2 forbids. (`labs`, the other hoisted key, left
+        # HostSpec outright; `resources` is a host field again since spec
+        # 2026-08-28 three-level-reservations and therefore needs its row.)
         *[
             (_PAGE, None, stem, sorted(set(spec.model_fields) - HOISTED_HOST_KEYS))
             for stem, spec in registered_host_specs(builtins_only=True).items()

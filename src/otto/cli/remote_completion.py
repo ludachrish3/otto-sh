@@ -371,6 +371,38 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     Loads the lab a second time (:func:`_load_host` loads it again) so the
     gate stays self-contained and can run strictly first; the config files are
     hot in the page cache by then.
+
+    What scopes the requirement is the explicit ``host_ids=`` argument, read
+    off the context object directly — the same fleet the command gate uses
+    (spec 2026-08-28 three-level-reservations §5), so completion never refuses
+    a TAB over a resource the command it is completing would not demand.
+    ``set_context`` is installed around that read for a different reason: it
+    makes THIS lab the ambient one for everything reached from here, so a
+    completion cannot resolve against whatever lab an outer context happened
+    to hold; it is undone in the ``finally``.
+
+    ``require_nonempty=False`` for the same reason the command gate uses it —
+    an empty declared fleet is zero hosts in play, so the requirement is the
+    lab-level set — and with one extra edge here: a raise would be swallowed
+    by :func:`remote_path_completer`'s catch-all into an empty completion, so
+    an abort on this path is not a loud failure but a dead TAB with no
+    explanation anywhere.
+
+    Every host the user NAMED joins the fleet, even when no repo declared it —
+    the target and the ``--hop``. ``otto host <id> --hop <id>`` is deliberately
+    unscoped (explicit targeting beats scoping), and :func:`_load_host` opens a
+    session to the target THROUGH the hop, so a TAB about to contact either
+    must demand that host's own slot. The hop is not a lesser target: reaching
+    a fleet host through an unreserved jump box is still using the jump box.
+
+    Through :meth:`~otto.config.lab.Lab.resolve_handle`, so a positional handle
+    (``dut1`` for the first ``dut``) resolves to the id the command will
+    actually contact rather than being dropped as an unknown host. That is a
+    pure lookup over the mapping this function already built — it opens
+    nothing, which is what keeps the gate strictly first. An unresolvable name
+    answers ``None`` and is skipped: passing it on would be a ``ValueError``
+    out of the walk, and :func:`remote_path_completer`'s catch-all would leave
+    the user a dead TAB with no explanation.
     """
     from ..config import get_repos
     from ..context import OttoContext, reset_context, set_context
@@ -378,9 +410,14 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     from .invoke import build_lab_from_repos
 
     lab = build_lab_from_repos(get_repos(), chain.labs)
-    token = set_context(OttoContext(lab=lab))
+    ctx = OttoContext(lab=lab)
+    token = set_context(ctx)
     try:
-        return required_resources(lab)
+        named = [lab.resolve_handle(h) for h in (chain.host_id, chain.hop) if h]
+        host_ids = ctx.admissible_ids(require_nonempty=False) | {
+            host.id for host in named if host is not None
+        }
+        return required_resources(lab, host_ids=host_ids)
     finally:
         reset_context(token)
 
@@ -392,11 +429,11 @@ def _reservation_allows(chain: _ChainParams) -> bool:
     gate (:meth:`otto.reservations.check.ReservationGate.evaluate`) always
     queries the backend live and must never read this cache.
 
-    Mirrors the command gate's semantics — whole-lab required set, a no-op
-    when no ``[reservations]`` section is configured — with one deliberate
-    difference: ``skip_reservation_check`` is hard-wired ``False`` because
-    ``-R``'s loud warning has nowhere to go during completion, and a silent
-    break-glass is not one.
+    Mirrors the command gate's semantics — the required set over the fleet of
+    interest, a no-op when no ``[reservations]`` section is configured — with
+    one deliberate difference: ``skip_reservation_check`` is hard-wired
+    ``False`` because ``-R``'s loud warning has nowhere to go during
+    completion, and a silent break-glass is not one.
 
     Backend failures propagate to :func:`remote_path_completer`'s catch-all
     (fail closed to ``[]``) and store nothing: only an answer the backend
@@ -408,9 +445,8 @@ def _reservation_allows(chain: _ChainParams) -> bool:
         store_reservation_set,
         store_reservation_windows,
     )
-    from ..reservations import build_reservation_gate
+    from ..reservations import build_reservation_gate, is_null_backend
     from ..reservations.identity import resolve_username
-    from ..reservations.null_backend import NullReservationBackend
     from ..reservations.protocol import SupportsReservationWindows
 
     repos = get_repos()
@@ -434,7 +470,11 @@ def _reservation_allows(chain: _ChainParams) -> bool:
         cwd_fallback=Path.cwd(),
     )
     backend = gate.backend
-    if backend is None or isinstance(backend, NullReservationBackend):
+    # THE shared predicate, not a third isinstance: this gate, the verdict in
+    # check_reservations and the held column of ``otto reservation check`` all
+    # have to reach the same conclusion about what backend "none" means, and
+    # three spellings of it is how they drift apart.
+    if backend is None or is_null_backend(backend):
         return True
     if isinstance(backend, SupportsReservationWindows):
         windows = backend.get_reservation_windows(username)

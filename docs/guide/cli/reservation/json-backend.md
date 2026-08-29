@@ -43,8 +43,11 @@ The top-level object has two required fields:
 
   * `user` *(string, required)* — the reservation-system username.
   * `resources` *(list of strings, required)* — resource identifiers
-    the user holds.  Must match byte-for-byte the strings a lab declares
-    in its `labs` table entry (`Lab.resources`); hosts declare none.
+    the user holds.  Must match byte-for-byte the identifiers otto computes
+    for a run, which a `lab.json` may declare at any of three levels — the
+    `labs` table entry, an element, or a host entry
+    ({doc}`index`).  Write the identifier exactly as the lab file spells it;
+    otto normalizes nothing.
   * `expires` *(string, optional)* — ISO-8601 timestamp.  Past-dated
     entries are silently ignored.  Omit for "no expiry".
 

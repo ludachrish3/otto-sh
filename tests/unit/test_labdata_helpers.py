@@ -34,6 +34,22 @@ def test_hosts_of_one_element_group_into_one_element_entry() -> None:
     assert doc["labs"] == {"unix": {"resources": []}}
 
 
+def test_lab_json_v2_still_hoists_v1_host_resources_to_the_lab() -> None:
+    """Spec 2026-08-28 three-level-reservations §2: the helper migrates v1 fixtures.
+
+    ``resources`` is a host field again, so a writer that simply forwarded the
+    key would be defensible — and would silently empty the ``labs`` table under
+    every migrated fixture, leaving each ``lab.resources`` assertion downstream
+    to pass for the wrong reason. This helper's input is v1-shaped, and in v1 a
+    host's resources aggregated into the lab, so it keeps doing exactly that; a
+    test that wants element- or host-level resources writes the v2 shape
+    directly.
+    """
+    doc = lab_json_v2([_host("a", "b", ["l"], resources=["r"])])
+    assert doc["labs"]["l"]["resources"] == ["r"]
+    assert "resources" not in doc["elements"][0]["hosts"][0]
+
+
 def test_hosts_of_one_element_disagreeing_on_labs_is_loud() -> None:
     """v2 assigns membership per ELEMENT, so this fixture has no v2 spelling.
 

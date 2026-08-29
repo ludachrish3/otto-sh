@@ -1,5 +1,6 @@
 """Host-dict factory: build and validate ``RemoteHost`` instances from raw config dicts."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -159,6 +160,7 @@ def create_host_from_dict(
     lab_name: str | None = None,
     *,
     element_metadata: dict[str, Any] | None = None,
+    element_resources: Iterable[str] | None = None,
     inventory_ref: InventoryRef | None = None,
 ) -> RemoteHost:
     """Create the appropriate :class:`~otto.host.remote_host.RemoteHost` subclass from a host dict.
@@ -179,6 +181,12 @@ def create_host_from_dict(
     ``element_metadata`` is the element's opaque table — a LOADER argument like
     ``lab_name`` (the file layer hoists it; the host spec forbids it on the
     entry), copied per host and stamped before the providers run.
+
+    ``element_resources`` is the element's declared reservation set (spec
+    2026-08-28 three-level-reservations §3) — a LOADER argument like
+    ``element_metadata``: the host spec forbids it on the entry, and it is
+    stamped before the providers run so a provider gated on a reservation can
+    see it.
 
     ``inventory_ref`` is the provenance of an entry the loader resolved from an
     inventory record — a LOADER argument like ``element_metadata``; the host
@@ -210,6 +218,7 @@ def create_host_from_dict(
     # invisible to exactly the code that needs it.
     host.source_lab = lab_name or ""
     host.element_metadata = dict(element_metadata or {})
+    host.element_resources = frozenset(element_resources or ())
     host.inventory_ref = inventory_ref if inventory_ref is not None else InventoryRef()
     apply_product_providers(host)
     apply_dev_tool_providers(host)

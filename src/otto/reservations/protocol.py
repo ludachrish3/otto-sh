@@ -66,8 +66,9 @@ class ReservationBackend(Protocol):
         set[str]
             Resource identifiers the user currently holds.  Empty set if the
             user has no active reservations.  Resource strings must match
-            byte-for-byte the values in ``Lab.resources`` (the lab's declared
-            reservation identifiers) — any necessary normalization is the
+            byte-for-byte the identifiers ``required_resources`` computes —
+            lab, element and host levels alike (spec 2026-08-28
+            three-level-reservations §9) — any necessary normalization is the
             backend's job.
 
         Raises

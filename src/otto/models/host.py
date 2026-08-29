@@ -30,6 +30,7 @@ from ..host.unix_host import UnixHost
 from ..link import IMPAIRERS
 from ..logger.mode import LogMode
 from .base import OttoModel
+from .lab import resources_nonempty
 from .options import (
     FtpOptionsSpec,
     NcOptionsSpec,
@@ -327,6 +328,15 @@ class HostSpec(OttoModel):
     sanctioned home for custom fields, so ``extra='forbid'`` never has to
     give way: a key here can never collide with a field otto adds later."""
 
+    resources: set[str] = Field(default_factory=set)
+    """This host's own reservation identifiers — a slot (spec 2026-08-28
+    three-level-reservations §2).
+
+    A host field again, after the v2 break made the lab the only reservable
+    unit. The element's and the lab's are carried separately (the runtime's
+    ``element_resources`` and ``lab_info.resources``), so an entry never
+    restates them."""
+
     interfaces: dict[str, InterfaceSpec] = Field(default_factory=dict)
     log: LogMode = LogMode.NORMAL
     log_stdout: bool = True  # common: both UnixHost and EmbeddedHost declare it
@@ -400,6 +410,11 @@ class HostSpec(OttoModel):
             raise ValueError(f"must be >= 0, got {v}")
         return v
 
+    @field_validator("resources")
+    @classmethod
+    def _resources(cls, v: set[str]) -> set[str]:
+        return resources_nonempty(v)
+
     @field_validator("inventory")
     @classmethod
     def _inventory_key_nonempty(cls, v: str | None) -> str | None:
@@ -458,6 +473,8 @@ class HostSpec(OttoModel):
             kw["default_dest_dir"] = Path(self.default_dest_dir)
         if "metadata" in s:
             kw["metadata"] = dict(self.metadata)
+        if "resources" in s:
+            kw["resources"] = frozenset(self.resources)
         if "debug_log_globs" in s:
             # Copied, like ``metadata``: the host must not share a mutable
             # container with the spec that built it.

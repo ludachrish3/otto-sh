@@ -20,7 +20,16 @@ def test_snippets_cover_the_v2_shapes() -> None:
     assert '"ip"' in body
     assert '"creds"' in body
     assert '"os_type": "unix"' in body
-    # Hoisted fields never appear in a host entry.
+    # `labs` is hoisted, so it can never appear in a host entry.
+    #
+    # `resources` MAY appear in one since spec 2026-08-28
+    # three-level-reservations §2 — leaving it out of the snippet is a
+    # deliberate choice, not a consequence of the rule. `lab-config.md` lists
+    # it as an optional host field, but a reservation identifier names a lock
+    # in someone's booking system: there is no placeholder a reader could fill
+    # by looking at the rest of the file, which is the bar `_COMMON_OPTIONAL`
+    # sets. It belongs in the schema's autocomplete, like `hop`, not in the
+    # starting skeleton. Pinned so re-adding it has to be a decision.
     assert '"labs"' not in body
     assert '"resources"' not in body
 

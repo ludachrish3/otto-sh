@@ -42,8 +42,9 @@ _LAB_SECTIONS = frozenset({"labs", "elements", "links"})
 _MIGRATION_HINT = (
     "top-level 'hosts' has moved: hosts are grouped under 'elements' (each with "
     "'name', optional 'id', 'labs' membership patterns, optional 'metadata', and "
-    "'hosts'), and per-host 'labs'/'resources' moved to the element and the "
-    "top-level 'labs' table. See docs/guide/configuration/lab-config.md, "
+    "'hosts'), and per-host 'labs' moved to the element (a host's 'resources' may "
+    "stay on the host — a slot — or move to the element or the 'labs' table). "
+    "See docs/guide/configuration/lab-config.md, "
     '"Migrating from the hosts array".'
 )
 
@@ -332,8 +333,9 @@ class JsonFileLabRepository:
 
         lab = Lab(name=name)
         if declared is not None:
-            # The lab is the reservable unit (spec §8.1): its resources are
-            # DECLARED here, never read back off its hosts.
+            # The lab's own resources are DECLARED here, never read back off
+            # its hosts (one of three levels since spec 2026-08-28
+            # three-level-reservations).
             lab.resources = set(declared.resources)
             lab.metadata[name] = dict(declared.metadata)
 
@@ -605,6 +607,7 @@ def _add_host(
             preferences=preferences,
             lab_name=lab.name,
             element_metadata=element.metadata,
+            element_resources=element.resources,
             inventory_ref=entry.ref,
         )
         lab.add_host(host)

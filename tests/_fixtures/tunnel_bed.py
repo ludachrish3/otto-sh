@@ -335,11 +335,13 @@ def cli_sut_dir(tmp_path: Path) -> Path:
     by_element = {h["element"]: h for h in flat_hosts(with_labs=True)}
     hosts = [by_element[ne] for ne in ("test1", "test2")]
     doc = lab_json_v2(hosts)
-    # `flat_hosts` drops `resources` — a v2 host entry may not carry one — so
-    # each declared lab's reservable set is restated rather than hoisted, and
+    # Each declared lab's reservable set is restated rather than hoisted, and
     # DERIVED rather than spelled out: tech1 names every one of these hosts'
     # reservation identifier after its element, so this reproduces the union
     # the v1 document had without becoming a second copy of it that can drift.
+    # The assignment OVERWRITES, so it also covers what `lab_json_v2` hoisted
+    # from `test2`'s own host-entry `resources` (a v2 entry may carry one; the
+    # hoist is v1 semantics, and this bed wants the v1 union either way).
     for name, entry in doc["labs"].items():
         entry["resources"] = [h["element"] for h in hosts if name in h["labs"]]
     return make_sut_repo(

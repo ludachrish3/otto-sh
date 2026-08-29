@@ -167,6 +167,16 @@ class RemoteHost(BaseHost):
     element_metadata: dict[str, Any]
     """Opaque ``metadata`` of the element this host belongs to — a per-host copy."""
 
+    resources: frozenset[str]
+    """This host's own reservation identifiers — a slot (spec 2026-08-28
+    three-level-reservations §3); empty for containers and ``local``. The lab's
+    are on :attr:`lab_info`."""
+
+    element_resources: frozenset[str]
+    """The reservation identifiers of this host's ELEMENT (spec 2026-08-28
+    three-level-reservations §3) — a per-host copy stamped by the loader,
+    exactly like :attr:`element_metadata`; never a lab-entry field."""
+
     lab_info: "LabInfo"
     """The resolved lab (see :class:`~otto.host.lab_info.LabInfo`), stamped by the loader."""
 

@@ -16,6 +16,7 @@ here means the element→host flattening lost or invented a field.
 import pytest
 
 from otto.config.lab import load_lab
+from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from otto.host.command_frame import FRAME_CLASSES, register_command_frame
 from tests._fixtures.labdata import lab_data_dir
 from tests._fixtures.paths import ensure_custom_hosts_on_path
@@ -93,6 +94,36 @@ _PINNED_RESOURCES: dict[tuple[str, str], set[str]] = {
     ("tech2", "unix_alt"): {"alt1", "alt2", "alt3"},
 }
 
+# Element- and host-level sets (spec 2026-08-28 three-level-reservations §11):
+# the lab-level pins above are UNCHANGED by that spec; these are new pins.
+#
+# EVERY host of each pinned lab is listed, empties included. A partial mapping
+# pins only what it names, so a stray `resources` added to any host the map
+# left out would pass — and the empties are the half of this pin that says the
+# spec's two new levels did not leak into the rest of the fixtures.
+_PINNED_ELEMENT_RESOURCES: dict[tuple[str, str], dict[str, set[str]]] = {
+    ("tech1", "unix"): {"test1": {"test1-chassis"}, "test2": set(), "test3": set()},
+    ("tech1", "busybox"): {
+        "bb1161_qemu": set(),
+        "bb1211_qemu": set(),
+        "bb1281_qemu": set(),
+        "bb1310_qemu": set(),
+        "bb1350_qemu": set(),
+        "test1": {"test1-chassis"},
+    },
+}
+_PINNED_HOST_RESOURCES: dict[tuple[str, str], dict[str, set[str]]] = {
+    ("tech1", "unix"): {"test1": set(), "test2": {"test2-console"}, "test3": set()},
+    ("tech1", "busybox"): {
+        "bb1161_qemu": set(),
+        "bb1211_qemu": set(),
+        "bb1281_qemu": set(),
+        "bb1310_qemu": set(),
+        "bb1350_qemu": set(),
+        "test1": set(),
+    },
+}
+
 
 @pytest.mark.parametrize(("tech", "lab"), sorted(_PINNED))
 def test_identities_unchanged(tech: str, lab: str) -> None:
@@ -111,3 +142,37 @@ def test_reservation_sets_match_the_old_host_union(tech: str, lab: str) -> None:
     """The declared ``labs`` entry reserves exactly what the v1 hosts' union did."""
     built = load_lab(lab, search_paths=[lab_data_dir() / tech])
     assert built.resources == _PINNED_RESOURCES[(tech, lab)]
+
+
+def _pinned_every_host(built, mapping: dict[str, set[str]]) -> None:
+    """Assert *mapping* names every non-``local`` host of *built*, and no other.
+
+    Without this the maps pin only what they happen to name: a host added to a
+    pinned lab later would carry any ``resources`` at all and both tests below
+    would stay green, because they iterate the MAP and not the LAB. ``local`` is
+    excluded because the loader injects it into every lab — it is not lab data,
+    and it can never declare a reservation identifier.
+    """
+    assert set(mapping) == set(built.hosts) - {BUILTIN_LOCAL_HOST_ID}, sorted(
+        set(built.hosts) - {BUILTIN_LOCAL_HOST_ID} - set(mapping)
+    )
+
+
+@pytest.mark.parametrize(("tech", "lab"), sorted(_PINNED_ELEMENT_RESOURCES))
+def test_element_resources_pinned(tech: str, lab: str) -> None:
+    """Every built host carries its element's declared ``resources``."""
+    built = load_lab(lab, search_paths=[lab_data_dir() / tech])
+    mapping = _PINNED_ELEMENT_RESOURCES[(tech, lab)]
+    _pinned_every_host(built, mapping)
+    for host_id, expected in mapping.items():
+        assert built.hosts[host_id].element_resources == frozenset(expected), host_id
+
+
+@pytest.mark.parametrize(("tech", "lab"), sorted(_PINNED_HOST_RESOURCES))
+def test_host_resources_pinned(tech: str, lab: str) -> None:
+    """Every built host carries the ``resources`` its own host entry declared."""
+    built = load_lab(lab, search_paths=[lab_data_dir() / tech])
+    mapping = _PINNED_HOST_RESOURCES[(tech, lab)]
+    _pinned_every_host(built, mapping)
+    for host_id, expected in mapping.items():
+        assert built.hosts[host_id].resources == frozenset(expected), host_id

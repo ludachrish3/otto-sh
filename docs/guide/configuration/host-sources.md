@@ -190,6 +190,10 @@ Because replacement is wholesale, overriding one board of a four-board chassis
 means restating the whole element. In exchange, a hybrid element — this
 source's hosts with that source's metadata — cannot exist.
 
+Element-level `resources` replace with the element: a later source that
+restates an element without `resources` removes that element's lock (the
+override warning already names both sources).
+
 Replacement happens per lab load, so it covers exactly the labs *both*
 elements match. An override that **drops** a membership pattern therefore does
 not take the element out of a lab the earlier source's element still matches —

@@ -101,7 +101,12 @@ def test_lab_template_parses_through_the_runtime_parsers() -> None:
 
 
 def test_example_host_entry_carries_no_hoisted_key() -> None:
-    """`element`/`element_id`/`labs`/`resources` are element- or lab-level in v2."""
+    """`element`/`element_id`/`labs` are element-level in v2.
+
+    Not `resources`: it came back to the host entry with spec 2026-08-28
+    three-level-reservations, so it is no longer a hoisted key. Driven off
+    the live set, so this test follows the rule rather than restating it.
+    """
     from otto.models.lab import HOISTED_HOST_KEYS
 
     assert set(EXAMPLE_HOST_ENTRY) & HOISTED_HOST_KEYS == set()

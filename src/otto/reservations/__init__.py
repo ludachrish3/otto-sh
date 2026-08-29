@@ -22,7 +22,16 @@ from .check import (
     ReservationGateResult as ReservationGateResult,
 )
 from .check import (
+    ResourceLevel as ResourceLevel,
+)
+from .check import (
+    ResourceOrigin as ResourceOrigin,
+)
+from .check import (
     check_reservations as check_reservations,
+)
+from .check import (
+    required_resource_origins as required_resource_origins,
 )
 from .check import (
     required_resources as required_resources,
@@ -38,6 +47,9 @@ from .json_backend import (
 )
 from .null_backend import (
     NullReservationBackend as NullReservationBackend,
+)
+from .null_backend import (
+    is_null_backend as is_null_backend,
 )
 from .protocol import (
     ReservationBackend as ReservationBackend,

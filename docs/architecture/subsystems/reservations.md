@@ -14,13 +14,11 @@ starting a run.
   lab defines the required-resource list — and it does so lazily, through
   the same loud path the preamble uses. Neither contacts a remote host,
   which is also why the group opts out of per-invocation output directories.
-- **`check` is the preamble's gate, standalone.** The required set is the
-  lab's *declared* `resources` — hosts carry none, and for `--lab a+b` it is
-  the union of the components' declarations. It asks the backend what
-  the effective user holds, and reports what is missing and *who holds it*
-  (backends answer `who_reserved` with a list — resources can have multiple
-  concurrent holders). A one-second pre-flight before a twenty-minute
-  `otto test`.
+- **`check` is the preamble's gate, standalone.** It computes the same
+  required set the preamble does, asks the backend what the effective user
+  holds, and reports what is missing and *who holds it* (backends answer
+  `who_reserved` with a list — resources can have multiple concurrent
+  holders). A one-second pre-flight before a twenty-minute `otto test`.
 - **Break-glass stays honest.** Under `-R` / `--skip-reservation-check` the
   backend is never even constructed — a hanging scheduler cannot block lab
   access — but a factory is kept so `reservation` subcommands can still
@@ -53,6 +51,43 @@ custom schedulers register by name — {doc}`registries`), and
 one against the contract. See {doc}`../../guide/cli/reservation/index` for the
 built-in JSON backend's configuration, `--as-user`, `-R`, and the full
 walkthrough for writing and registering a custom backend.
+
+## Three levels, one reader
+
+A lab declares reservation identifiers at three levels — the lab as a whole,
+an element, a host entry — and the gate has to answer one question from all
+three: *what must this user hold before this run starts?*
+
+The answer is a list of **origins**, not a bare set of strings.
+{class}`~otto.reservations.check.ResourceOrigin` carries the identifier, the
+level that declared it (`lab`/`element`/`host`), and the owner at that level —
+the lab name, the element rendered as `('chassis', 1)`, or the host id.
+{func}`~otto.reservations.check.required_resource_origins` builds them;
+{func}`~otto.reservations.check.required_resources` is the projection down to
+the identifiers, so there is one derivation and two views of it. Keeping the
+origin is what lets a failure say *which slot* is missing rather than only
+which string, and what lets `otto reservation check` explain a requirement it
+would otherwise just assert.
+
+Carriage is by the road each level's neighbour already travels: the lab set
+stays on `host.lab_info.resources`, the element's is stamped onto every host of
+the element as `host.element_resources` (beside `element_metadata`), and the
+host entry's is `host.resources`. Both host-side fields are `frozenset[str]`,
+so no caller can mutate one lab's declaration through a host it happens to
+hold.
+
+The set is computed over the **fleet of interest**, not the whole lab:
+{meth}`~otto.context.OttoContext.admissible_ids` — the same set every fleet
+walk starts from, public since this work precisely so the gate and the walks
+cannot disagree about which hosts a run may touch. One definition, two
+readers. A declared fleet that admits no host in the loaded lab is **zero
+hosts in play**, not a refusal: the requirement narrows to the lab's own set
+and every reservation reader passes `require_nonempty=False` to say so. The
+fleet-shaped `ProjectScopeError` stays with the WALK — a run that walks still
+aborts on it, with the same message, exactly where it did before this gate
+existed — so the gate never becomes a new abort surface. Completion's gate
+builds a temporary context and passes that context's ids, so a TAB and a run
+agree about what is needed.
 
 ## Where the code lives
 

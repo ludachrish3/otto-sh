@@ -25,7 +25,8 @@ from ..reservations import (
     ReservationGate,
     build_reservation_gate,
     check_reservations,
-    required_resources,
+    is_null_backend,
+    required_resource_origins,
 )
 from .invoke import fail
 
@@ -108,7 +109,21 @@ def whoami(ctx: typer.Context) -> None:
 
 @reservation_app.command()
 def check(ctx: typer.Context) -> None:
-    """Run the reservation check for the top-level ``--lab`` and report."""
+    """Run the reservation check for the top-level ``--lab`` and report.
+
+    The table lists every requirement with its origin — the slot, not just the
+    string — over the hosts in play (spec 2026-08-28 three-level-reservations
+    §5), whose count the title states. A ``[project]`` declaration that admits
+    no host in the loaded lab is ``0 host(s) in play``: the table then holds
+    the lab-level rows and only those, and this command still reports rather
+    than refusing — the fleet-shaped abort is a fleet WALK's, and this walks
+    nothing.
+
+    The backend is consulted only when something is actually required, so an
+    outage cannot fail a run that needs no reservation, and the ``"none"``
+    backend is never queried at all — its rows read ``n/a`` rather than a
+    ``held`` verdict it has no way to give.
+    """
     from ..config import get_lab
 
     # The group is lab_free (whoami needs no lab); check is the one subcommand
@@ -133,13 +148,70 @@ def check(ctx: typer.Context) -> None:
 
     lab = get_lab()
     username = res.identity.username
-    needed = required_resources(lab)
 
-    rprint(f"Checking reservations for [bold]{username}[/bold] against lab [bold]{lab.name}[/bold]")
-    rprint(f"Required resources: {sorted(needed)}")
+    from rich import box
+    from rich.table import Table
+
+    # Function-scope: ``otto.cli.reservation`` is one of the budgeted import
+    # surfaces, and pulling otto.context (and rich's table machinery) in at
+    # module scope would move the snapshot for every ``otto`` invocation, not
+    # just this subcommand's. tach declares the otto.cli -> otto.context edge.
+    from ..context import get_context
+
+    # NOT rebound onto ``ctx`` — that name is the typer Context this command
+    # was handed, and shadowing it here would be a live bug the moment
+    # anything below reached for ctx.meta again.
+    # require_nonempty=False: this command reports, it does not walk. A
+    # declaration that admits nothing is 0 hosts in play — a lab-level-only
+    # requirement, which is a verdict — and the fleet-shaped refusal belongs to
+    # the walk a run would do next, not to a read-only report about it.
+    in_play = get_context().admissible_ids(require_nonempty=False)
+    origins = required_resource_origins(lab, host_ids=in_play)
+
+    if not origins:
+        # No table: an empty bordered header box is chrome that says nothing,
+        # and the sentence is the whole message. Nor is the backend queried —
+        # check_reservations returns on an empty requirement before it ever
+        # asks, and a table that asked first would fail this command on a
+        # backend outage where it used to succeed.
+        rprint("(this lab requires no reservation for the hosts in play)")
+    else:
+        # The null backend reserves nothing and check_reservations
+        # short-circuits on it, so "does alice hold this?" has no answer to
+        # give; asking anyway returns set() and would render every row unheld
+        # directly above the OK line. Same predicate as the verdict's, so the
+        # table and the check can never disagree about what "none" means.
+        null = is_null_backend(backend)
+        held = set() if null else backend.get_reserved_resources(username)
+        table = Table(
+            title=(
+                f"reservations required by lab {lab.name} for {username} "
+                f"({len(in_play)} host(s) in play)"
+            ),
+            box=box.ROUNDED,
+        )
+        for column in ("resource", "level", "owner", "held"):
+            table.add_column(column)
+        for origin in origins:
+            # escape(): a resource identifier is OPAQUE to otto and an owner can
+            # be any host id, while rich reads '[a]' in a cell as a style tag and
+            # drops it — 'rack[a]' would render as 'rack', naming a resource that
+            # is not the one being checked. ``level`` is a closed Literal, so it
+            # needs none, and "n/a" is plain: it is an absence, not a verdict.
+            if null:
+                held_cell = "n/a"
+            else:
+                held_cell = "[green]yes[/green]" if origin.resource in held else "[red]no[/red]"
+            table.add_row(
+                escape(origin.resource),
+                origin.level,
+                escape(origin.owner),
+                held_cell,
+            )
+        rprint(table)
 
     try:
-        check_reservations(lab, username, backend)
+        check_reservations(lab, username, backend, host_ids=in_play)
     except MissingReservationError as e:
         fail(e)
 

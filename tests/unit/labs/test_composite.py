@@ -488,3 +488,60 @@ def test_summaries_resolve_patterns_against_all_declared_labs(tmp_path) -> None:
     (s,) = comp.list_host_summaries()
     assert s.labs == ["site.b4"]
     assert set(comp.load_lab("site.b4").hosts) == {"g"}
+
+
+def _composite_over(tmp_path, docs: list[dict]) -> CompositeLabRepository:
+    """Build an ordered composite of one json source per document.
+
+    The module's ``_composite`` / ``_comp`` helpers wrap
+    :class:`~otto.examples.lab_repository.ExampleLabRepository`, whose dataset
+    is a flat list of host dicts — it has no element layer at all, so it cannot
+    carry an element's resources. These sources are real lab files, each in its
+    own directory under *tmp_path*, in the order given.
+    """
+    sources = []
+    for idx, doc in enumerate(docs):
+        d = tmp_path / f"src{idx}"
+        d.mkdir(exist_ok=True)
+        (d / "lab.json").write_text(json.dumps(doc))
+        sources.append(LabSource(label=f"src{idx}", repository=JsonFileLabRepository([d])))
+    return CompositeLabRepository(sources)
+
+
+def test_element_resources_survive_replacement_and_vanish_when_the_later_source_omits_them(
+    tmp_path,
+) -> None:
+    """Spec §6: element resources replace WITH the element, wholesale.
+
+    No new merge unit — the element is the unit, so a later source that
+    restates it without ``resources`` REMOVES the element-level lock. The ip
+    assertion is what proves the replacement actually happened, rather than the
+    later source being ignored.
+    """
+    base = {
+        "labs": {"rig": {}},
+        "elements": [
+            {
+                "name": "chassis",
+                "labs": ["rig"],
+                "resources": ["chassis-1"],
+                "hosts": [{"ip": "10.0.0.1", "os_type": "unix", "creds": _CREDS}],
+            }
+        ],
+    }
+    later = {
+        "labs": {"rig": {}},
+        "elements": [
+            {
+                "name": "chassis",
+                "labs": ["rig"],
+                "hosts": [{"ip": "10.0.0.2", "os_type": "unix", "creds": _CREDS}],
+            }
+        ],
+    }
+    lab = _composite_over(tmp_path, [base]).load_lab("rig")
+    assert lab.hosts["chassis"].element_resources == frozenset({"chassis-1"})
+
+    lab = _composite_over(tmp_path, [base, later]).load_lab("rig")
+    assert lab.hosts["chassis"].element_resources == frozenset()
+    assert lab.hosts["chassis"].ip == "10.0.0.2"

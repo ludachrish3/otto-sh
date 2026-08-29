@@ -14,6 +14,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+import typer
 from typer.testing import CliRunner
 
 from otto.cli import host as host_module
@@ -250,6 +252,215 @@ class TestResolveCliHostHop:
             host = host_module.resolve_cli_host(ctx)
 
         assert host.hop == "dut47"
+
+
+# ── An explicitly named host is reserved too ──────────────────────────────────
+#  `otto host <id> --hop <id>` reaches any host in the lab (explicit targeting
+#  beats scoping), while the preamble's gate requires only the fleet of interest
+#  (spec 2026-08-28 three-level-reservations §5). A host the fleet does not hold
+#  — target OR hop — therefore needs its OWN slot checked here, or the run
+#  touches hardware nobody reserved.
+
+
+class _SlotBackend:
+    """Reservation backend holding a fixed set; every other resource is dana's."""
+
+    def __init__(self, held: set[str]) -> None:
+        self._held = set(held)
+
+    def backend_name(self) -> str:
+        return "fake"
+
+    def get_reserved_resources(self, username: str) -> set[str]:
+        return set(self._held)
+
+    def who_reserved(self, resource: str) -> list[str]:
+        return ["dana"]
+
+
+def _slot_fleet(monkeypatch, tmp_path):
+    """A two-host lab whose declared fleet is ``slot1`` alone; each host owns a slot."""
+    from tests._fixtures.fleet import _lab as fleet_lab
+    from tests._fixtures.fleet import _repo, install_scoped_context
+
+    lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
+    lab.hosts["slot1"].resources = frozenset({"slot-1"})
+    lab.hosts["slot2"].resources = frozenset({"slot-2"})
+    install_scoped_context(monkeypatch, lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
+    return lab
+
+
+def _host_ctx(gate, host_id, hop=""):
+    return SimpleNamespace(
+        obj=None,
+        meta={
+            "otto_reservation": gate,
+            "_otto_host_request": {
+                "host_id": host_id,
+                "hop": hop,
+                "term": None,
+                "transfer": None,
+            },
+        },
+    )
+
+
+def _gate(held, *, skip_check=False):
+    from otto.reservations.check import ReservationGate
+    from otto.reservations.identity import ResolvedIdentity
+
+    return ReservationGate(
+        backend=_SlotBackend(held),
+        identity=ResolvedIdentity(username="chris", source="$USER"),
+        skip_check=skip_check,
+    )
+
+
+def test_targeting_a_host_outside_the_fleet_demands_its_own_slot(monkeypatch, tmp_path, capsys):
+    """Holding the fleet's slot is not permission to touch a host outside it.
+
+    The project declares ``slot1``, so the preamble's gate asked for
+    ``slot-1`` and got it. ``otto host slot2 …`` then resolves a host the fleet
+    never covered — and before this check it simply ran.
+
+    Red at HEAD: ``resolve_cli_host`` returned the ``slot2`` host and no
+    ``typer.Exit`` was raised.
+    """
+    _slot_fleet(monkeypatch, tmp_path)
+    ctx = _host_ctx(_gate({"slot-1"}), "slot2")
+
+    with pytest.raises(typer.Exit) as exc:
+        host_module.resolve_cli_host(ctx)
+
+    assert exc.value.exit_code == 1
+    out = capsys.readouterr().out
+    assert "slot-2" in out
+    assert "host slot2" in out  # the origin: level and owner, not just the id
+    assert "dana" in out  # and who holds it
+
+
+def test_targeting_a_host_outside_the_fleet_proceeds_when_its_slot_is_held(monkeypatch, tmp_path):
+    """The check is a check, not a refusal: hold ``slot-2`` and ``slot2`` is reachable."""
+    _slot_fleet(monkeypatch, tmp_path)
+    ctx = _host_ctx(_gate({"slot-1", "slot-2"}), "slot2")
+
+    assert host_module.resolve_cli_host(ctx).id == "slot2"
+
+
+def test_a_target_inside_the_fleet_is_not_checked_twice(monkeypatch, tmp_path):
+    """The preamble already asked the backend for exactly the fleet's requirement.
+
+    A second ``check_reservations`` for a host already in play would be a
+    second backend query per command for an answer otto has just had. The spy
+    goes red on a check that drops the ``admissible_ids`` guard.
+    """
+    from otto.reservations import check as check_mod
+
+    _slot_fleet(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        check_mod, "check_reservations", lambda *a, **kw: calls.append(kw.get("host_ids"))
+    )
+    ctx = _host_ctx(_gate({"slot-1"}), "slot1")
+
+    assert host_module.resolve_cli_host(ctx).id == "slot1"
+    assert calls == []
+
+
+def test_dash_r_skips_the_targeted_host_check_too(monkeypatch, tmp_path):
+    """``-R`` already printed one loud warning; this path adds no second verdict.
+
+    The gate's ``skip_check`` is the whole break-glass contract — a check that
+    ignored it would make ``-R`` stop working for exactly the command whose
+    target is out of scope.
+    """
+    from otto.reservations import check as check_mod
+
+    _slot_fleet(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        check_mod, "check_reservations", lambda *a, **kw: calls.append(kw.get("host_ids"))
+    )
+    ctx = _host_ctx(_gate(set(), skip_check=True), "slot2")
+
+    assert host_module.resolve_cli_host(ctx).id == "slot2"
+    assert calls == []
+
+
+def test_no_reservation_gate_on_the_context_is_a_no_op(monkeypatch, tmp_path):
+    """A lab-free or ungated invocation has no gate to read; targeting still works."""
+    _slot_fleet(monkeypatch, tmp_path)
+    ctx = _host_ctx(None, "slot2")
+
+    assert host_module.resolve_cli_host(ctx).id == "slot2"
+
+
+def test_a_hop_outside_the_fleet_demands_its_own_slot(monkeypatch, tmp_path, capsys):
+    """Reaching a host you hold THROUGH a jump box you do not hold is still using it.
+
+    The target is ``slot1``, squarely inside the declared fleet and already
+    covered by the preamble's gate; only the ``--hop`` is outside it. Otto then
+    builds a jump transport through ``slot2`` and opens a session on it, so a
+    check that looked at the target alone left the whole hole open on the host
+    that actually gets logged into first.
+
+    Red at HEAD: the hop resolved after the check, `slot-2` was never demanded,
+    and ``resolve_cli_host`` returned with ``host.hop == "slot2"``.
+    """
+    _slot_fleet(monkeypatch, tmp_path)
+    ctx = _host_ctx(_gate({"slot-1"}), "slot1", hop="slot2")
+
+    with pytest.raises(typer.Exit) as exc:
+        host_module.resolve_cli_host(ctx)
+
+    assert exc.value.exit_code == 1
+    out = capsys.readouterr().out
+    assert "slot-2" in out
+    assert "host slot2" in out
+    assert "slot-1" not in out  # the target is in the fleet: not re-demanded
+
+
+def test_a_hop_outside_the_fleet_proceeds_when_its_slot_is_held(monkeypatch, tmp_path):
+    """Hold the hop's slot and the jump is wired as before."""
+    _slot_fleet(monkeypatch, tmp_path)
+    ctx = _host_ctx(_gate({"slot-1", "slot-2"}), "slot1", hop="slot2")
+
+    host = host_module.resolve_cli_host(ctx)
+
+    assert host.id == "slot1"
+    assert host.hop == "slot2"
+
+
+def test_an_out_of_fleet_host_with_no_slot_of_its_own_is_never_queried(monkeypatch, tmp_path):
+    """A host that declares nothing can only re-ask for the lab level. Don't.
+
+    ``required_resource_origins`` seeds the lab-level set unconditionally, so
+    checking a resource-less out-of-fleet host asks the backend for exactly
+    what the preamble's gate already required and got. ``otto host local …``
+    is the everyday shape of this — ``local`` is excluded from every declared
+    fleet, so without the guard every such run pays a second round trip for a
+    verdict otto has just had.
+
+    Red at HEAD: the spy recorded one call with ``{'gw'}``.
+    """
+    from otto.reservations import check as check_mod
+
+    lab = _slot_fleet(monkeypatch, tmp_path)
+    lab.resources = {"rig-pdu"}  # a lab-level id, so the requirement is non-empty
+    from tests._fixtures.fleet import _host
+
+    lab.add_host(_host("gw", "rig", 9))  # no resources, no element_resources
+    assert not lab.hosts["gw"].resources  # the premise, stated
+    assert not lab.hosts["gw"].element_resources
+
+    calls = []
+    monkeypatch.setattr(
+        check_mod, "check_reservations", lambda *a, **kw: calls.append(kw.get("host_ids"))
+    )
+    ctx = _host_ctx(_gate({"rig-pdu", "slot-1"}), "gw")
+
+    assert host_module.resolve_cli_host(ctx).id == "gw"
+    assert calls == []
 
 
 # ── run command ───────────────────────────────────────────────────────────────

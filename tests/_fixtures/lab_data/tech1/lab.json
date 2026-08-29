@@ -24,6 +24,7 @@
         {
             "name": "test1",
             "labs": ["unix", "busybox"],
+            "resources": ["test1-chassis"],
             "metadata": {"role": "hub"},
             "hosts": [
                 {
@@ -61,6 +62,7 @@
                     "rack": 1,
                     "shelf": 3,
                     "docker_capable": true,
+                    "resources": ["test2-console"],
                     "creds": [
                         {"login": "vagrant", "password": "vagrant"},
                         {"login": "test", "password": "Password1"}

@@ -54,7 +54,13 @@ def test_metadata_must_be_an_object() -> None:
         UnixHostSpec(ip="10.0.0.1", element="a", creds=_CREDS, metadata=["not", "a", "table"])
 
 
-def test_hoisted_fields_are_no_longer_host_fields() -> None:
-    for key, value in (("labs", ["unix"]), ("resources", ["r1"])):
-        with pytest.raises(ValidationError, match=rf"{key}\s+Extra inputs are not permitted"):
-            UnixHostSpec(ip="10.0.0.1", element="a", creds=_CREDS, **{key: value})
+def test_labs_is_no_longer_a_host_field() -> None:
+    """Membership is the element's; ``labs`` on an entry is an error.
+
+    ``resources`` is deliberately NOT checked beside it any more: it came back
+    to ``HostSpec`` with spec 2026-08-28 three-level-reservations (a host may
+    declare its slot), so asserting it is refused would pin the opposite of
+    the rule.
+    """
+    with pytest.raises(ValidationError, match=r"labs\s+Extra inputs are not permitted"):
+        UnixHostSpec(ip="10.0.0.1", element="a", creds=_CREDS, labs=["unix"])

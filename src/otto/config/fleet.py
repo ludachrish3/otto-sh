@@ -403,3 +403,29 @@ def get_lab() -> Lab:
     from ..context import get_context
 
     return get_context().lab
+
+
+def get_hosts_in_play() -> set[str]:
+    """Return this run's hosts in play — the RESERVATION readers' entry; walks must not use it.
+
+    Named for the contract rather than for the mechanism, and deliberately NOT
+    re-exported from :mod:`otto.config`: it bakes in ``require_nonempty=False``,
+    so ``for hid in get_hosts_in_play(): get_host(hid)`` is a walk that does
+    nothing at all on an empty declared fleet — the exact silent emptiness
+    :func:`~otto.config.scope.require_nonempty_fleet` exists to make loud.
+    A fleet WALK calls :meth:`otto.context.OttoContext.admissible_ids`
+    directly, with the refusal on.
+
+    Here rather than at the call site because not every reader may import
+    ``otto.context``: ``tach.toml`` confines ``otto.reservations`` to a short
+    list that does not include it, and the reservation gate needs exactly this
+    set to scope its requirement (spec 2026-08-28 three-level-reservations §5).
+    Lazy for the same reason :func:`get_lab` is — context imports config back.
+
+    An empty declared fleet reads as ZERO hosts in play — the requirement is
+    the lab-level set alone — and never as an abort; a run that goes on to walk
+    its fleet still refuses that fleet with the same message.
+    """
+    from ..context import get_context
+
+    return get_context().admissible_ids(require_nonempty=False)

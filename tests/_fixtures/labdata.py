@@ -21,6 +21,14 @@ from otto.models.lab import HOISTED_HOST_KEYS
 
 _LAB_DATA_DIR = Path(__file__).resolve().parent / "lab_data"
 
+_V1_HOISTED_KEYS = HOISTED_HOST_KEYS | {"resources"}
+"""What a v1 host dict carries that this helper lifts OUT of the host entry.
+
+``HOISTED_HOST_KEYS`` (what v2 forbids on a host entry) plus ``resources``,
+which v2 allows again (spec 2026-08-28 three-level-reservations §2) but which
+a v1 fixture meant at the LAB level. See :func:`lab_json_v2`.
+"""
+
 
 def lab_data_dir() -> Path:
     """Directory holding the per-tech lab-data trees (``tech1``/``tech2``)."""
@@ -36,8 +44,12 @@ def host_data(ne: str, tech: str = "tech1") -> dict[str, Any]:
     """Return the flat host dict for element ``ne`` (see :func:`flat_hosts`).
 
     Factory-ready: ``element``/``element_id`` are stamped from the element, and
-    there is no ``labs``/``resources`` (``HostSpec`` forbids both since Task 2).
-    Callers that need membership want :func:`flat_hosts` with ``with_labs=True``.
+    there is no ``labs`` (``HostSpec`` forbids it). ``resources`` comes through
+    when the host entry declares one — since spec 2026-08-28
+    three-level-reservations a v2 entry may, and ``tech1``'s ``test2`` does; a
+    v1-shaped round-trip through :func:`lab_json_v2` instead hoists it to the
+    lab level, which is v1's own semantics. Callers that need membership want
+    :func:`flat_hosts` with ``with_labs=True``.
     """
     for host in flat_hosts(tech):
         if host["element"] == ne:
@@ -85,7 +97,16 @@ def lab_json_v2(
             el["id"] = h["element_id"]
         # HOISTED_HOST_KEYS is the product's own list of what a v2 host entry
         # may not carry, so a writer built on it cannot drift from the validator.
-        el["hosts"].append({k: v for k, v in h.items() if k not in HOISTED_HOST_KEYS})
+        # ``resources`` is added back on top of it: since spec 2026-08-28
+        # three-level-reservations a v2 host entry MAY carry its own, but this
+        # helper's input is v1-shaped, and in v1 a host's resources aggregated
+        # into the lab. Forwarding the key instead would leave the ``labs``
+        # table empty and every migrated ``lab.resources`` assertion would pass
+        # for the wrong reason. A test that wants element- or host-level
+        # resources writes the v2 shape directly.
+        el["hosts"].append(
+            {k: v for k, v in h.items() if k not in _V1_HOISTED_KEYS},
+        )
         for lab in h.get("labs", []):
             entry = labs.setdefault(lab, {"resources": []})
             entry["resources"].extend(
@@ -144,11 +165,13 @@ def flat_hosts(tech: str = "tech1", *, with_labs: bool = False) -> list[dict[str
     """Every host of a tech's v2 lab.json as a flat v1-style dict.
 
     ``element``/``element_id`` come from the element, so the result is what
-    :func:`otto.host.factory.create_host_from_dict` takes. No ``labs`` and no
-    ``resources``: ``HostSpec`` forbids both since Task 2 — pass
-    ``with_labs=True`` for the membership readers, which adds the list of
-    DECLARED lab names the element's patterns match, so membership reads as it
-    did on v1 entries.
+    :func:`otto.host.factory.create_host_from_dict` takes. No ``labs``
+    (``HostSpec`` forbids it); a host entry's own ``resources`` DOES come
+    through, because a v2 entry may carry one and ``tech1``'s ``test2`` does
+    (the element's and the lab's are not folded in — this is the entry, not the
+    built host). Pass ``with_labs=True`` for the membership readers, which adds
+    the list of DECLARED lab names the element's patterns match, so membership
+    reads as it did on v1 entries.
     """
     return flatten_lab_doc(json.loads(lab_data_path(tech).read_text()), with_labs=with_labs)
 

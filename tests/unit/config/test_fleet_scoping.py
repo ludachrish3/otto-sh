@@ -15,84 +15,27 @@ either would pin the stub's shape instead of the chain's.
 
 import logging
 import re
-import textwrap
 
 import pytest
 
 from otto.bootstrap import ProjectScopeError
 from otto.config.lab import Lab
-from otto.config.repo import Repo
 from otto.config.scope import EmptySelectionError
-from otto.context import OttoContext, set_context
-from tests._fixtures.sutrepo import make_sut_repo
-
-
-def _toml_list(patterns):
-    # TOML literal strings (single quotes) keep backslashes verbatim.
-    return "[" + ", ".join(f"'{p}'" for p in patterns) + "]"
-
-
-def _repo(tmp_path, name, *, labs=None, hosts=None):
-    """A real ``Repo`` whose ``[project]`` block declares *labs* / *hosts*.
-
-    Both ``None`` writes no ``[project]`` table at all — the undeclared repo the
-    whole-lab fallback is built on, which is a different thing from a repo that
-    declared an empty list.
-    """
-    body = ""
-    if labs is not None or hosts is not None:
-        lines = ["[project]"]
-        if labs is not None:
-            lines.append(f"lab_patterns = {_toml_list(labs)}")
-        if hosts is not None:
-            lines.append(f"host_patterns = {_toml_list(hosts)}")
-        body = "\n".join(lines)
-    return Repo(sut_dir=make_sut_repo(tmp_path / name, name=name, extra=textwrap.dedent(body)))
-
-
-def _host(element, lab_name, octet):
-    from otto.host.factory import create_host_from_dict
-
-    return create_host_from_dict(
-        {
-            "element": element,
-            "os_type": "unix",
-            "ip": f"10.0.0.{octet}",
-            "creds": [{"login": "admin", "password": "admin"}],
-        },
-        lab_name=lab_name,
-    )
-
-
-def _lab(*pairs, component_names=None):
-    """A ``Lab`` holding ``(element, source_lab)`` hosts, stamped by the factory."""
-    names = list(component_names or sorted({lab_name for _, lab_name in pairs}))
-    lab = Lab(name="+".join(names), component_names=names)
-    for octet, (element, lab_name) in enumerate(pairs, start=1):
-        lab.add_host(_host(element, lab_name, octet))
-    return lab
+from otto.context import OttoContext
+from tests._fixtures.fleet import _lab, _repo, install_scoped_context
 
 
 @pytest.fixture
 def scoped_context(monkeypatch):
     """Build and install an ``OttoContext`` whose scopes resolve over given repos.
 
-    ``OttoContext.scopes`` reads ``otto.config.get_ordered_repos`` lazily, so
-    patching that one seam is what lets a unit test declare a fleet of interest
-    without standing up a bootstrap.
-
-    Installation is not undone here: the root conftest's autouse
-    ``_reset_otto_context`` snapshot-restores the ContextVar after every test,
-    and a ``reset_context(token)`` of our own cannot work anyway — the async
-    tests below run their body in a COPY of the context, so the token is from
-    a different Context object and ``ContextVar.reset`` raises.
+    A thin wrapper over :func:`tests._fixtures.fleet.install_scoped_context`,
+    which is where the construction lives now that the reservation gate needs
+    the same one — see that function for why installation is not undone.
     """
 
     def _install(lab, repos):
-        monkeypatch.setattr("otto.config.get_ordered_repos", lambda: list(repos))
-        ctx = OttoContext(lab=lab)
-        set_context(ctx)
-        return ctx
+        return install_scoped_context(monkeypatch, lab, repos)
 
     return _install
 
@@ -508,6 +451,71 @@ async def test_module_level_fleet_surface_is_scoped_too(tmp_path, scoped_context
     assert [h.id for h in fleet_all_hosts()] == ["h1"]
     with pytest.raises(EmptySelectionError):
         list(fleet_all_hosts(pattern=re.compile("h")))
+
+
+def test_module_level_get_hosts_in_play_reads_the_active_context(tmp_path, scoped_context):
+    """The hosts in play, for readers that may not import ``otto.context``.
+
+    ``otto.reservations`` is exactly that reader (``tach.toml`` does not allow
+    it the context module), so this accessor is the seam its gate goes through
+    — and it must return the SAME set ``all_hosts`` walks, not the whole lab.
+
+    Imported from ``otto.config.fleet``, not ``otto.config``: the tolerant
+    reader is deliberately kept out of the package's re-export, so a walk
+    cannot reach it by the most discoverable spelling.
+    """
+    from otto.config.fleet import get_hosts_in_play
+
+    lab = _lab(("h1", "a"), ("h2", "a"))
+    ctx = scoped_context(lab, [_repo(tmp_path, "r1", labs=["a"], hosts=["h1"])])
+
+    assert get_hosts_in_play() == {"h1"}
+    assert get_hosts_in_play() == ctx.admissible_ids()
+
+
+def test_the_tolerant_fleet_reader_is_not_re_exported_from_otto_config(tmp_path, scoped_context):
+    """``otto.config`` offers only the spellings a WALK may safely use.
+
+    ``get_hosts_in_play`` bakes in ``require_nonempty=False``, so a caller who
+    found it beside ``all_hosts``/``get_host`` and looped over it would get a
+    walk that silently touches nothing on an empty declared fleet. Keeping it
+    off the re-export is the guard; this pins that decision so a later
+    convenience edit has to argue with a test.
+    """
+    import otto.config
+
+    assert not hasattr(otto.config, "get_hosts_in_play")
+    assert not hasattr(otto.config, "get_admissible_ids")
+
+
+def test_require_nonempty_false_reads_an_empty_fleet_as_zero_hosts(tmp_path, scoped_context):
+    """The reservation readers' opt-out: an empty declared fleet is a legal answer.
+
+    The refusal is the WALK's — ``test_empty_base_set_with_a_declaring_repo_raises``
+    above pins that ``all_hosts()`` still aborts on this very condition — so a
+    reader that only needs "which hosts are in play" gets ``set()`` rather than
+    a new abort surface. The default is unchanged, which is the first assert.
+    """
+    lab = _lab(("h1", "a"), ("h2", "a"))
+    ctx = scoped_context(lab, [_repo(tmp_path, "r1", labs=["some-other-lab"], hosts=[".*"])])
+
+    with pytest.raises(ProjectScopeError):
+        ctx.admissible_ids()
+    assert ctx.admissible_ids(require_nonempty=False) == set()
+
+
+def test_require_nonempty_false_still_refuses_an_unknown_owner(tmp_path, scoped_context):
+    """The opt-out covers the empty fleet, never a caller's typo.
+
+    An owner otto never resolved falls back to the WHOLE lab, which is the
+    silent widening the scoping exists to prevent — so that refusal lives in
+    ``scoped_ids`` and fires regardless of this flag.
+    """
+    lab = _lab(("h1", "a"), ("h2", "a"))
+    ctx = scoped_context(lab, [_repo(tmp_path, "r1", labs=["a"], hosts=["h1"])])
+
+    with pytest.raises(ProjectScopeError, match="typo"):
+        ctx.admissible_ids("typo", require_nonempty=False)
 
 
 # ── deliberately unscoped surfaces (§6) ───────────────────────────────────────

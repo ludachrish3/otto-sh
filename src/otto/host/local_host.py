@@ -174,6 +174,17 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     lab_info: LabInfo = field(default_factory=LabInfo, repr=False)
     """The resolved lab this host was registered into (empty unless a loader stamped it)."""
 
+    resources: frozenset[str] = field(default_factory=frozenset, repr=False)
+    """Empty for the builtin ``local`` host — it is never a reservable unit
+    (spec 2026-08-28 three-level-reservations §3), and no lab entry declares
+    it. Present so this class satisfies the :class:`~otto.host.host.Host`
+    contract."""
+
+    element_resources: frozenset[str] = field(default_factory=frozenset, repr=False)
+    """Empty for the builtin ``local`` host — it belongs to no element, so the
+    loader never stamps it. Declared for the same contract reason as
+    :attr:`resources` above."""
+
     inventory_ref: InventoryRef = field(default_factory=InventoryRef, repr=False)
     """Inventory provenance; empty unless this host was resolved from a record."""
 

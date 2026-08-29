@@ -249,8 +249,8 @@ def test_any_exception_yields_empty(monkeypatch):
 ####################
 
 
-def _chain(as_user="carol", labs=("unix",)):
-    return rc._ChainParams(host_id="dut1", hop="", term=None, labs=list(labs), as_user=as_user)
+def _chain(as_user="carol", labs=("unix",), host_id="dut1"):
+    return rc._ChainParams(host_id=host_id, hop="", term=None, labs=list(labs), as_user=as_user)
 
 
 @pytest.fixture
@@ -456,6 +456,193 @@ def test_gate_cached_refusal_is_honoured(monkeypatch, gate_env):
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("backend built on cache hit")),
     )
     assert rc._reservation_allows(_chain()) is False
+
+
+def test_required_for_is_scoped_to_the_fleet_of_interest(monkeypatch, tmp_path):
+    """Completion demands what the COMMAND would, not the whole lab.
+
+    Spec 2026-08-28 three-level-reservations §5.
+
+    Deliberately not on ``gate_env``: that fixture stubs ``_required_for``
+    itself, so it cannot say anything about what ``_required_for`` computes.
+    Mutation: drop the ``host_ids=`` argument in ``_required_for`` and this
+    goes red with ``slot-2`` — the resource on the host no repo declared.
+    """
+    from tests._fixtures.fleet import _lab as fleet_lab
+    from tests._fixtures.fleet import _repo
+
+    lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
+    lab.hosts["slot1"].resources = frozenset({"slot-1"})
+    lab.hosts["slot2"].resources = frozenset({"slot-2"})
+    repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
+    monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.config.get_ordered_repos", lambda: [repo])
+    monkeypatch.setattr("otto.cli.invoke.build_lab_from_repos", lambda repos, labnames: lab)
+
+    assert rc._required_for(_chain(labs=("rig",))) == {"slot-1"}
+
+
+def test_required_for_adds_the_targeted_host_when_it_is_outside_the_fleet(monkeypatch, tmp_path):
+    """A TAB about to contact ``slot2`` demands ``slot2``'s slot, fleet or no fleet.
+
+    ``otto host <id>`` is unscoped by design, and ``_load_host`` connects to
+    exactly ``chain.host_id`` — so scoping the requirement to the declared
+    fleet alone would let completion open a session to a host whose slot
+    nobody holds. The fleet here declares ``slot1`` only; the chain targets
+    ``slot2``.
+
+    Red before the named-host union: the requirement came back ``{'slot-1'}``
+    and ``slot-2`` was never demanded.
+    """
+    from tests._fixtures.fleet import _lab as fleet_lab
+    from tests._fixtures.fleet import _repo
+
+    lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
+    lab.hosts["slot1"].resources = frozenset({"slot-1"})
+    lab.hosts["slot2"].resources = frozenset({"slot-2"})
+    repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
+    monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.config.get_ordered_repos", lambda: [repo])
+    monkeypatch.setattr("otto.cli.invoke.build_lab_from_repos", lambda repos, labnames: lab)
+
+    assert rc._required_for(_chain(labs=("rig",), host_id="slot2")) == {"slot-1", "slot-2"}
+
+
+def test_required_for_ignores_a_target_the_lab_does_not_hold(monkeypatch, tmp_path):
+    """An id outside the lab is dropped, not walked: a dead TAB explains nothing.
+
+    ``required_resource_origins`` raises ``ValueError`` on an id the lab does
+    not contain, and ``remote_path_completer``'s catch-all would turn that into
+    an empty completion with no message anywhere. A typo must leave the fleet's
+    requirement standing. (A positional handle is a different case — it names a
+    real host, and the test below pins that it resolves.)
+
+    Mutation: drop the ``if host is not None`` filter on the resolved names and
+    this goes red with ``AttributeError: 'NoneType' object has no attribute
+    'id'``.
+    """
+    from tests._fixtures.fleet import _lab as fleet_lab
+    from tests._fixtures.fleet import _repo
+
+    lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
+    lab.hosts["slot1"].resources = frozenset({"slot-1"})
+    repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
+    monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.config.get_ordered_repos", lambda: [repo])
+    monkeypatch.setattr("otto.cli.invoke.build_lab_from_repos", lambda repos, labnames: lab)
+
+    assert rc._required_for(_chain(labs=("rig",), host_id="typo9")) == {"slot-1"}
+
+
+def test_required_for_adds_the_hop_when_it_is_outside_the_fleet(monkeypatch, tmp_path):
+    """The ``--hop`` is a named host too — ``_load_host`` opens a jump through it.
+
+    The target here is IN the fleet and the hop is not, which is the shape that
+    makes the point: reaching a host you hold through a jump box you do not
+    hold is still using the jump box.
+
+    Red before the hop joined the union: the requirement came back
+    ``{'slot-1'}``.
+    """
+    from tests._fixtures.fleet import _lab as fleet_lab
+    from tests._fixtures.fleet import _repo
+
+    lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
+    lab.hosts["slot1"].resources = frozenset({"slot-1"})
+    lab.hosts["slot2"].resources = frozenset({"slot-2"})
+    repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
+    monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.config.get_ordered_repos", lambda: [repo])
+    monkeypatch.setattr("otto.cli.invoke.build_lab_from_repos", lambda repos, labnames: lab)
+
+    chain = rc._ChainParams(host_id="slot1", hop="slot2", term=None, labs=["rig"], as_user="carol")
+    assert rc._required_for(chain) == {"slot-1", "slot-2"}
+
+
+def _handle_lab():
+    """Two ``dut`` hosts whose ids (``dut47``/``dut48``) are NOT their handles.
+
+    ``resolve_handle`` tries the canonical id first, so a lab where the id and
+    the positional handle coincide cannot tell the two lookups apart. Element
+    ids 47/48 make the handles ``dut1``/``dut2`` and the ids ``dut47``/``dut48``
+    — the shape ``test_hop_handle_resolves_to_canonical_id`` in
+    ``tests/unit/cli/test_host.py`` describes.
+    """
+    from otto.config.lab import Lab
+    from otto.host.factory import create_host_from_dict
+
+    lab = Lab(name="rig", component_names=["rig"])
+    for element_id, octet in ((47, 1), (48, 2)):
+        lab.add_host(
+            create_host_from_dict(
+                {
+                    "element": "dut",
+                    "element_id": element_id,
+                    "os_type": "unix",
+                    "ip": f"10.0.0.{octet}",
+                    "creds": [{"login": "admin", "password": "admin"}],
+                },
+                lab_name="rig",
+            )
+        )
+    # The stamping `load_lab` does and a hand-built lab skips; without it no
+    # host has a logical_index and there are no positional handles to resolve.
+    lab._assign_logical_indices()
+    return lab
+
+
+def test_required_for_resolves_a_positional_handle_to_the_host_it_will_contact(
+    monkeypatch, tmp_path
+):
+    """``dut1`` is a real host the command WILL reach, not an unknown name to drop.
+
+    ``Lab.resolve_handle`` is a pure lookup over the mapping ``_required_for``
+    has already built — it opens nothing, so using it costs the gate none of
+    its "strictly first" property. Dropping the handle instead means the TAB
+    contacts ``dut47`` while having demanded nothing of it.
+
+    Red at HEAD: the handle was intersected against ``lab.hosts``, matched
+    nothing, and the requirement came back ``{'slot-1'}``.
+    """
+    from tests._fixtures.fleet import _repo
+
+    lab = _handle_lab()
+    assert lab.resolve_handle("dut1").id == "dut47"  # the premise, stated
+    lab.hosts["dut47"].resources = frozenset({"slot-2"})
+    lab.hosts["dut48"].resources = frozenset({"slot-1"})
+    repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["dut48"])
+    monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.config.get_ordered_repos", lambda: [repo])
+    monkeypatch.setattr("otto.cli.invoke.build_lab_from_repos", lambda repos, labnames: lab)
+
+    assert rc._required_for(_chain(labs=("rig",), host_id="dut1")) == {"slot-1", "slot-2"}
+
+
+def test_required_for_under_an_empty_declared_fleet_returns_the_lab_level_set(
+    monkeypatch, tmp_path
+):
+    """A completion must never abort: zero hosts in play is an answer, not a refusal.
+
+    ``remote_path_completer``'s catch-all would swallow a ``ProjectScopeError``
+    into ``[]``, so the failure would be an unexplained dead TAB rather than a
+    traceback — which is exactly why the read has to be non-raising here rather
+    than merely survivable.
+
+    Mutation: pass ``require_nonempty=True`` at ``_required_for``'s
+    ``admissible_ids`` call and this goes red with ``ProjectScopeError``.
+    """
+    from tests._fixtures.fleet import _lab as fleet_lab
+    from tests._fixtures.fleet import _repo
+
+    lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
+    lab.resources = {"rack-1"}
+    lab.hosts["slot1"].resources = frozenset({"slot-1"})
+    repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])
+    monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.config.get_ordered_repos", lambda: [repo])
+    monkeypatch.setattr("otto.cli.invoke.build_lab_from_repos", lambda repos, labnames: lab)
+
+    assert rc._required_for(_chain(labs=("rig",))) == {"rack-1"}
 
 
 def test_gate_never_skips_under_dash_r(monkeypatch, gate_env):

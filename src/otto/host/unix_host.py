@@ -433,6 +433,14 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     element_metadata: dict[str, Any] = field(default_factory=dict, repr=False)
     """Opaque ``metadata`` of this host's element; a per-host copy (loader-stamped)."""
 
+    resources: frozenset[str] = field(default_factory=frozenset, repr=False)
+    """This host's own reservation identifiers — a slot; a copy of the spec's set.
+    See :attr:`~otto.host.remote_host.RemoteHost.resources`."""
+
+    element_resources: frozenset[str] = field(default_factory=frozenset, repr=False)
+    """The element's reservation identifiers; stamped by the loader, never by the
+    spec. See :attr:`~otto.host.remote_host.RemoteHost.element_resources`."""
+
     lab_info: LabInfo = field(default_factory=LabInfo, repr=False)
     """The resolved lab this host came from (loader-stamped, like ``source_lab``)."""
 

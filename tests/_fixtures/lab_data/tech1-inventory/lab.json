@@ -13,6 +13,7 @@
         {
             "name": "test1",
             "labs": ["unix", "busybox"],
+            "resources": ["test1-chassis"],
             "metadata": {"role": "hub"},
             "hosts": [
                 {
@@ -33,7 +34,8 @@
                     "os_type": "unix",
                     "docker_capable": true,
                     "valid_terms": ["telnet", "ssh"],
-                    "valid_transfers": ["nc", "scp", "sftp", "ftp"]
+                    "valid_transfers": ["nc", "scp", "sftp", "ftp"],
+                    "resources": ["test2-console"]
                 }
             ]
         },

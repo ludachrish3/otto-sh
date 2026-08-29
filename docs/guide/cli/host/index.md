@@ -36,6 +36,13 @@ hosts" listing printed for an unknown id enumerates the whole lab for the same
 reason.  Explicit targeting beats scoping — see
 {ref}`project-scope`.
 
+Reservations follow the hosts you name, not the scope.  A host you name — the
+target or the `--hop` — that is outside your project's fleet has its own
+element- and host-level identifiers checked before the command runs, on top of
+the fleet's.  So reaching past the scope still means holding what the host you
+reached needs, and hopping through a host still means holding the hop
+({doc}`../reservation/index`).
+
 ## The host verb model
 
 Every `otto host` action is a **verb** on the host, and every verb — the four

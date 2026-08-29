@@ -21,8 +21,27 @@ from typing_extensions import override
 
 from .base import OttoModel
 
-HOISTED_HOST_KEYS: frozenset[str] = frozenset({"element", "element_id", "labs", "resources"})
-"""Keys that live ABOVE the host entry in v2 and are errors inside one."""
+HOISTED_HOST_KEYS: frozenset[str] = frozenset({"element", "element_id", "labs"})
+"""Keys that live ABOVE the host entry in v2 and are errors inside one.
+
+``resources`` left this set with spec 2026-08-28 three-level-reservations: a
+host entry may declare its own (a slot), beside the element's and the lab's.
+"""
+
+
+def resources_nonempty(v: set[str]) -> set[str]:
+    """Reservation identifiers are opaque, non-empty strings.
+
+    Spec 2026-08-28 three-level-reservations §2, §10. Shared by all three
+    levels — :class:`LabEntrySpec`, :class:`ElementSpec`, and
+    :class:`~otto.models.host.HostSpec`, which imports it from here — so they
+    cannot drift into three different notions of a usable identifier. Public
+    precisely because it is imported across modules: a leading underscore on a
+    name another module depends on says "private" while meaning the opposite.
+    """
+    if any(not r.strip() for r in v):
+        raise ValueError("resources must be non-empty strings")
+    return v
 
 
 @dataclass(frozen=True)
@@ -88,6 +107,11 @@ class LabEntrySpec(OttoModel):
     def _strip(cls, data: object) -> object:
         return _strip_comment_keys(data)
 
+    @field_validator("resources")
+    @classmethod
+    def _resources(cls, v: set[str]) -> set[str]:
+        return resources_nonempty(v)
+
 
 class ElementSpec(OttoModel):
     """One ``elements`` entry: identity, membership, metadata, and its hosts."""
@@ -103,6 +127,15 @@ class ElementSpec(OttoModel):
 
     metadata: dict[str, Any] = Field(default_factory=dict)
     """Opaque element-level user data; copied onto each host as ``element_metadata``."""
+
+    resources: set[str] = Field(default_factory=set)
+    """Reservation identifiers for the element as one unit (spec 2026-08-28
+    three-level-reservations §2).
+
+    Optional and independent of the lab's and each host's — the element level
+    is for equipment reserved whole (a chassis), where the lab is too coarse
+    and a slot too fine.
+    """
 
     hosts: list[dict[str, Any]] = Field(min_length=1)
     """Raw host entries; validated by the host specs after :meth:`flatten`."""
@@ -128,6 +161,11 @@ class ElementSpec(OttoModel):
             raise ValueError(f"must be >= 0, got {v}")
         return v
 
+    @field_validator("resources")
+    @classmethod
+    def _resources(cls, v: set[str]) -> set[str]:
+        return resources_nonempty(v)
+
     @model_validator(mode="after")
     def _patterns_compile_and_hosts_carry_no_hoisted_keys(self) -> "ElementSpec":
         for pattern in self.labs:
@@ -137,7 +175,7 @@ class ElementSpec(OttoModel):
             if hoisted:
                 raise ValueError(
                     f"element {self.name!r}: hosts[{idx}] carries {hoisted[0]!r}, which "
-                    f"now lives on the element / the 'labs' table, not the host entry"
+                    f"now lives on the element, not the host entry"
                 )
         return self
 

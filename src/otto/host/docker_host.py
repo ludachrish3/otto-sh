@@ -119,6 +119,19 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     lab_info: LabInfo = field(default_factory=LabInfo, repr=False)
     """The resolved lab this host was registered into (copied from the parent for containers)."""
 
+    resources: frozenset[str] = field(default_factory=frozenset, repr=False)
+    """Always empty — a container is never a reservable unit (spec 2026-08-28
+    three-level-reservations §3). Declared rather than inherited: ``BaseHost``
+    is not a dataclass, so its bare annotation creates no attribute and no
+    dataclass field, and every concrete host dataclass must therefore declare
+    the contract's fields itself (R11) — a read before anything assigns one is
+    an ``AttributeError`` the type checker cannot see."""
+
+    element_resources: frozenset[str] = field(default_factory=frozenset, repr=False)
+    """Always empty — a container belongs to no element, and the loader that
+    stamps this never builds one. Declared for the same reason as
+    :attr:`resources` above."""
+
     inventory_ref: InventoryRef = field(default_factory=InventoryRef, repr=False)
     """Inventory provenance; empty unless this host was resolved from a record."""
 

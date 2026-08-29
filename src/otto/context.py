@@ -350,31 +350,60 @@ class OttoContext:
             )
         return scopes
 
-    def _admissible_ids(self, owner: "str | None") -> "set[str]":
+    def admissible_ids(
+        self, owner: "str | None" = None, *, require_nonempty: bool = True
+    ) -> "set[str]":
         """Host ids this run's fleet walks may reach, re-derived live for *owner*.
 
         The one place the two fleet surfaces get their base set from, so
         widening one cannot silently leave the other behind.
 
+        Public since spec 2026-08-28 three-level-reservations §5: the
+        reservation gate reads the same set every fleet walk starts from — one
+        definition, two readers.
+
+        ``require_nonempty=False`` is the RESERVATION readers' spelling —
+        :meth:`otto.reservations.check.ReservationGate.evaluate` (through
+        :func:`otto.config.fleet.get_hosts_in_play`), ``otto reservation
+        check``, and the completer's gate. They ask which hosts are IN PLAY
+        (spec §5) and nothing more: an empty declared fleet means nothing is in
+        play, which is a legal answer — the requirement narrows to the
+        lab-level set — not a condition to abort on. The refusal stays with the
+        WALK, which is the surface that would silently touch nothing; a run
+        that walks still aborts with the same fleet-shaped message, just after
+        the gate rather than inside it. The unknown-*owner* refusal lives in
+        :func:`~otto.config.scope.scoped_ids` and fires either way: a caller's
+        typo would fall back to the whole lab, which is the silent widening
+        this scoping exists to prevent.
+
         Args:
             owner: ``Repo.name`` whose universe bounds the walk, or ``None``
-                for the union across declaring repos.
+                (the default) for the union across declaring repos.
+            require_nonempty: Refuse an empty base set (the default, for every
+                fleet walk). ``False`` returns it as the answer it is.
 
         Returns:
-            The admissible ids.
+            The admissible ids — possibly empty when *require_nonempty* is
+            ``False``.
 
         Raises:
             otto.bootstrap.ProjectScopeError: Nothing is admissible while some
                 repo declared a ``[project]`` scope (spec §10 row 5) — framed
                 against *owner* when the walk was bound to one, so a repo whose
-                own fleet is empty is not reported as the whole fleet's. Also
-                when *owner* names a repo this run never resolved.
+                own fleet is empty is not reported as the whole fleet's;
+                suppressed by ``require_nonempty=False``. Also when *owner*
+                names a repo this run never resolved, which no flag suppresses.
         """
         from .config.scope import require_nonempty_fleet, scoped_ids
 
         admissible = scoped_ids(self.lab.hosts, self.scopes, owner)
-        require_nonempty_fleet(self.scopes, admissible, owner)
+        if require_nonempty:
+            require_nonempty_fleet(self.scopes, admissible, owner)
         return admissible
+
+    def _admissible_ids(self, owner: "str | None") -> "set[str]":
+        """Alias of :meth:`admissible_ids` kept for one release; new code calls the public name."""
+        return self.admissible_ids(owner)
 
     def all_hosts(
         self,
@@ -453,12 +482,12 @@ class OttoContext:
         # Computed here rather than in a wrapper: this is a generator, so the
         # body runs at first `next()` — which is when the walk actually happens
         # and therefore when the lab's host mapping is the one being walked.
-        selected = self._admissible_ids(_scope_owner)
+        selected = self.admissible_ids(_scope_owner)
         if pattern is not None and selected:
             # `and selected`: with an EMPTY base set the pattern is not what
             # went wrong, and blaming it would send the reader to fix a regex
             # over a lab that holds nothing to select. That case is already
-            # spoken for — loudly by `_admissible_ids` when a repo declared a
+            # spoken for — loudly by `admissible_ids` when a repo declared a
             # scope, and deliberately silently otherwise, which is the
             # long-standing "an empty lab yields an empty walk" behavior every
             # lab-less CLI path (e.g. `otto cov get` reaching its own

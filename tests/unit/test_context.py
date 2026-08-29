@@ -292,6 +292,22 @@ def test_bare_accessors_delegate_to_active_context():
         reset_context(token)
 
 
+def test_admissible_ids_is_public_and_the_private_name_is_an_alias(monkeypatch):
+    """The fleet of interest has a public name now (spec 2026-08-28
+    three-level-reservations §5).
+
+    The reservation gate reads the same set every fleet walk starts from, so it
+    cannot be reached through an underscored method; the private spelling stays
+    as an alias for one release rather than breaking any caller that has it.
+    """
+    monkeypatch.setattr("otto.config.get_ordered_repos", list)
+    ctx = OttoContext(lab=_lab_with("test1"))
+
+    assert ctx.admissible_ids() == {"test1"}
+    # The private spelling is the alias, deliberately reached here by that name.
+    assert ctx._admissible_ids(None) == ctx.admissible_ids(None)
+
+
 def test_addhost_wires_lab_backref_and_survives_override_copy():
     import dataclasses
 

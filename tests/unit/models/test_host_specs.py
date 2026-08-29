@@ -6,11 +6,15 @@ import pytest
 from pydantic import ValidationError
 
 from otto.host.command_frame import ZephyrFrame
+from otto.host.docker_host import DockerContainerHost  # noqa: F401 — imported for the sweep below
 from otto.host.embedded_filesystem import NoFileSystem
-from otto.host.embedded_host import EmbeddedHost
+from otto.host.embedded_host import EmbeddedHost, ZephyrHost  # noqa: F401 — same
 from otto.host.factory import create_host_from_dict
+from otto.host.host import BaseHost
 from otto.host.interface import Interface
+from otto.host.local_host import LocalHost  # noqa: F401 — same
 from otto.host.options import TelnetOptions
+from otto.host.os_profile import HOST_CLASSES
 from otto.host.toolchain import Toolchain
 from otto.host.unix_host import UnixHost
 from otto.link import LinkImpairer, register_impairer
@@ -272,6 +276,120 @@ def test_embedded_spec_rejects_unix_only_field():
         EmbeddedHostSpec(ip="192.0.2.1", element="dut", docker_capable=True)
 
 
+def test_host_resources_reach_the_runtime_host_as_a_frozenset_copy():
+    """Spec 2026-08-28 three-level-reservations §2, §3: a host declares its slot.
+
+    The negative is anchored on the validator's exact sentence, not a loose
+    ``resources.*non-empty``: the failure text carries this test's locals, so a
+    wide pattern is satisfiable by the test's own names.
+    """
+    spec = UnixHostSpec(**_minimal_unix_kwargs(), resources=["slot-1", "slot-1"])
+    host = spec.to_host()
+    assert host.resources == frozenset({"slot-1"})
+    assert isinstance(host.resources, frozenset)
+
+    bare = UnixHostSpec(**_minimal_unix_kwargs()).to_host()
+    assert bare.resources == frozenset()
+
+    with pytest.raises(ValidationError, match=r"resources must be non-empty strings"):
+        UnixHostSpec(**_minimal_unix_kwargs(), resources=[" "])
+
+
+def _otto_host_dataclasses() -> list[type]:
+    """Every concrete otto host dataclass in ``BaseHost``'s subtree.
+
+    Walked rather than listed, so a host class added later is swept without
+    editing this test — and filtered to ``otto.*`` modules, because
+    ``__subclasses__`` sees whatever the session has imported and a stand-in
+    some other test module defined must not join the sweep.
+
+    Seeded with ``HOST_CLASSES``, the ``os_type`` registry, as well. Today that
+    adds NOTHING: every registered class is a ``RemoteHost`` subclass whose
+    module is already imported by the time this runs, so the walk reaches all
+    of them on its own. It is insurance, not coverage — the walk is only as
+    good as the imports, and a class registered by an init module this session
+    never imported would otherwise slip the sweep while lab data can still
+    select it. (The registry is RemoteHost-only: ``LocalHost`` and
+    ``DockerContainerHost`` appear in no registry at all, which is why it can
+    never replace the walk.)
+    """
+    seen: dict[str, type] = {}
+    # ``HOST_CLASSES`` is an ``otto.registry.Registry``, not a dict — ``items()``
+    # is the only accessor that yields the classes; there is no ``values()``.
+    stack: list[type] = [BaseHost, *(cls for _, cls in HOST_CLASSES.items())]
+    while stack:
+        cls = stack.pop()
+        stack.extend(cls.__subclasses__())
+        if dataclasses.is_dataclass(cls) and cls.__module__.startswith("otto."):
+            seen[cls.__name__] = cls
+    return [seen[n] for n in sorted(seen)]
+
+
+def _basehost_contract_fields() -> list[str]:
+    """``BaseHost``'s BARE annotations — the names that are a promise only.
+
+    An annotation carrying a value (``source_lab: str = ""``) creates a real
+    class attribute every subclass inherits, so it can never be the gap this
+    sweep hunts. A bare one creates nothing.
+
+    ``__annotations__`` rather than ``typing.get_type_hints``: the names are
+    all this needs, and several of these are string forward references to
+    modules ``host.py`` imports only under ``TYPE_CHECKING``.
+    """
+    return sorted(a for a in BaseHost.__annotations__ if a not in vars(BaseHost))
+
+
+def test_every_host_class_declares_every_basehost_contract_field():
+    """Spec 2026-08-28 three-level-reservations §3: every host answers ``.resources``
+    and ``.element_resources`` — generalised to the whole ``BaseHost`` contract.
+
+    ``BaseHost`` is NOT a dataclass, so a bare ``resources: frozenset[str]``
+    annotation is a contract the type checker credits to every subclass while
+    producing no runtime attribute and no dataclass field — no default, and
+    nothing for ``dataclasses.fields()`` to report. A host class that skips the
+    field therefore raises ``AttributeError`` on first read, which the lab-wide
+    aggregation walks straight into. (The instances DO have a ``__dict__``,
+    ``slots=True`` on the subclass notwithstanding, because the bases are plain
+    classes — so a loader CAN assign one late; the point is that nothing does,
+    and every read before the first assignment fails.) That hazard is not
+    specific to ``resources``: it is true of every bare annotation on
+    ``BaseHost``, so the sweep is over all of them rather than over the one
+    field a given plan happened to add.
+
+    Swept over every class rather than the ones the drift guard pairs with a
+    spec: ``LocalHost`` and ``DockerContainerHost`` have no spec at all, and
+    they are exactly the two whose reservation sets are always empty.
+    """
+    classes = _otto_host_dataclasses()
+    # Never let the sweep collapse: the walk is only as good as the imports.
+    assert {"UnixHost", "EmbeddedHost", "ZephyrHost", "LocalHost", "DockerContainerHost"} <= {
+        c.__name__ for c in classes
+    }, sorted(c.__name__ for c in classes)
+    contract = _basehost_contract_fields()
+    # Nor let the CONTRACT collapse: an empty annotation set would sweep nothing.
+    assert {"resources", "element_resources", "lab_info"} <= set(contract), contract
+    # Collected, not asserted per class: a gap is usually the SAME missing
+    # field on every host class, and one assertion per class would report the
+    # alphabetically first and hide the other four.
+    missing = [
+        f"{cls.__name__}.{name}"
+        for cls in classes
+        for name in contract
+        if name not in {f.name for f in dataclasses.fields(cls)}
+    ]
+    assert not missing, f"host classes missing a BaseHost contract field: {missing}"
+    # The default_factory, not just the field: both sets are read by iterating,
+    # and neither is normalised on assignment. NOTE (no code here): a plain
+    # ``str`` assigned to ``element_resources`` would satisfy every type check
+    # this sweep can make and then iterate as its CHARACTERS at the gate — a
+    # requirement of one-letter resources. The factory is the one place that
+    # could reject or normalise it.
+    for cls in classes:
+        by_name = {f.name: f for f in dataclasses.fields(cls)}
+        for name in ("resources", "element_resources"):
+            assert by_name[name].default_factory is frozenset, f"{cls.__name__}.{name}"
+
+
 # Runtime host init fields applied by overridable repo logic (NOT lab data) —
 # intentionally absent from the lab.json spec, so the drift guard skips them.
 # ``products`` is user product data, independent of lab data; it is attached to
@@ -281,8 +399,18 @@ def test_embedded_spec_rejects_unix_only_field():
 # and ``lab_info`` are stamped by the element/lab layers above the host entry,
 # never declared on it. ``inventory_ref`` is the loader-stamped provenance of a
 # referenced entry (spec §7) — never declared on the entry itself.
+# ``element_resources`` is the element's reservation set (spec 2026-08-28
+# three-level-reservations §3), stamped by the loader like ``element_metadata``;
+# the entry declares only its OWN ``resources``, which IS a spec field.
 _NON_SPEC_RUNTIME_FIELDS = frozenset(
-    {"products", "dev_tools", "element_metadata", "lab_info", "inventory_ref"}
+    {
+        "products",
+        "dev_tools",
+        "element_metadata",
+        "element_resources",
+        "lab_info",
+        "inventory_ref",
+    }
 )
 # Spec-only fields: on the lab-data entry but deliberately NOT a constructor
 # argument. ``inventory`` is the key of the record a referenced entry was

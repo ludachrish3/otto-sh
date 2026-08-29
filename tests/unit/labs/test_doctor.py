@@ -29,7 +29,10 @@ def test_shared_element_with_disjoint_resources_warns() -> None:
     (w,) = lab_warnings(docs)
     assert "'busybox'" in w
     assert "'unix'" in w
-    assert "'test1'" in w
+    # The element is named by its KEY, not its name: two same-named elements
+    # with different ids are two elements, and a name-only rendering would
+    # print one of them twice with nothing to tell them apart.
+    assert "('test1', None)" in w
     assert "disjoint" in w
 
 
@@ -129,7 +132,7 @@ def test_overlap_warning_names_the_remedy() -> None:
         )
     ]
     (w,) = lab_warnings(docs)
-    assert "declare a shared resource identifier" in w
+    assert "declare a shared lab identifier" in w
     assert "busybox.unix" in w  # the sub-lab spelling that makes the relation visible
 
 
@@ -142,3 +145,80 @@ def test_elements_and_declarations_from_different_files_still_pair_up() -> None:
     ]
     (w,) = lab_warnings(docs)
     assert "disjoint" in w
+
+
+def _el_r(name, labs, *, resources=None, hosts=None):
+    return ElementSpec(name=name, labs=labs, resources=set(resources or ()), hosts=hosts or _H)
+
+
+_DISJOINT = {"unix": LabEntrySpec(resources={"a"}), "busybox": LabEntrySpec(resources={"b"})}
+
+
+def test_shared_element_protected_by_the_element_does_not_warn() -> None:
+    docs = [
+        ("lab.json", _DISJOINT, [_el_r("test1", ["unix", "busybox"], resources=["test1-chassis"])])
+    ]
+    assert lab_warnings(docs) == []
+
+
+def test_shared_element_protected_by_every_host_does_not_warn() -> None:
+    hosts = [{**_H[0], "resources": ["s1"]}, {**_H[0], "ip": "10.0.0.2", "resources": ["s2"]}]
+    docs = [("lab.json", _DISJOINT, [_el_r("test1", ["unix", "busybox"], hosts=hosts)])]
+    assert lab_warnings(docs) == []
+
+
+def test_one_unprotected_host_leaves_the_element_unprotected() -> None:
+    hosts = [{**_H[0], "resources": ["s1"]}, {**_H[0], "ip": "10.0.0.2"}]
+    docs = [("lab.json", _DISJOINT, [_el_r("test1", ["unix", "busybox"], hosts=hosts)])]
+    (w,) = lab_warnings(docs)
+    assert "('test1', None)" in w
+    assert "no element- or host-level resource protects" in w
+
+
+def test_warning_names_only_the_unprotected_shared_elements() -> None:
+    docs = [
+        (
+            "lab.json",
+            _DISJOINT,
+            [
+                _el_r("safe", ["unix", "busybox"], resources=["safe-lock"]),
+                _el_r("open", ["unix", "busybox"]),
+            ],
+        )
+    ]
+    (w,) = lab_warnings(docs)
+    assert "[\"('open', None)\"]" in w
+    assert "safe" not in w
+
+
+def test_two_same_named_elements_with_different_ids_are_not_a_shared_element() -> None:
+    """Membership is keyed on ``ElementKey``, so ``chassis`` #1 and #2 do not pair up.
+
+    Not a red-at-HEAD guard — this passes today. It is a REGRESSION pin: the
+    shared-element intersection is the one place a name-keyed shortcut looks
+    equivalent and is not, and a repo where each lab owns its own chassis would
+    otherwise start getting an overlap warning for two elements that share
+    nothing but a spelling.
+    """
+    docs = [
+        (
+            "lab.json",
+            _DISJOINT,
+            [
+                ElementSpec(name="chassis", id=1, labs=["unix"], hosts=_H),
+                ElementSpec(name="chassis", id=2, labs=["busybox"], hosts=_H),
+            ],
+        )
+    ]
+    assert lab_warnings(docs) == []
+
+
+def test_r18_both_labs_must_reserve_something_even_with_unprotected_elements() -> None:
+    docs = [
+        (
+            "lab.json",
+            {"unix": LabEntrySpec(resources={"a"}), "busybox": LabEntrySpec()},
+            [_el("test1", ["unix", "busybox"])],
+        )
+    ]
+    assert lab_warnings(docs) == []

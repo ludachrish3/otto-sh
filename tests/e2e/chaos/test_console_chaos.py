@@ -138,11 +138,13 @@ def _make_console_target(root: Path) -> ChaosTarget:
             test4 = host
     assert test4 is not None, "tech1/lab.json missing 'test4' -- fixture shape changed"
     doc = lab_json_v2(hosts)
-    # `flat_hosts` drops `resources` -- a v2 host entry may not carry one -- so
-    # the private lab's reservable set is restated rather than hoisted, and
+    # The private lab's reservable set is restated rather than hoisted, and
     # DERIVED rather than spelled out: tech1 names both of these hosts'
     # reservation identifier after their element, so this reproduces the union
     # the v1 document had without becoming a second copy that can drift.
+    # The assignment OVERWRITES, so it also covers anything `lab_json_v2`
+    # hoisted from a host entry's own `resources` -- a v2 entry may carry one
+    # (spec 2026-08-28 three-level-reservations), and the hoist is v1 semantics.
     for name, entry in doc["labs"].items():
         entry["resources"] = [h["element"] for h in hosts if name in h["labs"]]
     (tech_dir / "lab.json").write_text(json.dumps(doc, indent=2))

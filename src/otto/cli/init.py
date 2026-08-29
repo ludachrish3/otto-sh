@@ -650,7 +650,12 @@ def _validate_lab(
 def _lab_warnings(
     root: Path, cache: "dict[Path, Inventory | Exception | None] | None" = None
 ) -> list[str]:
-    """Advisory findings across every lab file (spec §8.3, §9, §11) — never failing.
+    """Advisory findings across every lab file — never failing.
+
+    Spec §8.3, §9 and §11, plus the shared-element protection rule of spec
+    2026-08-28 three-level-reservations §7: two labs that share an element
+    neither of them can reserve below the lab level, while their lab-level sets
+    have nothing in common (:func:`otto.labs.doctor.lab_warnings`).
 
     Separate from :func:`_validate_lab` because the two answer different
     questions: a problem is "otto will not load this", a warning is "otto will

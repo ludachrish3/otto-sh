@@ -25,7 +25,12 @@ class LabInfo:
     """Component lab name; ``""`` for a host no loader attributed."""
 
     resources: frozenset[str] = frozenset()
-    """The lab's declared reservation identifiers (spec §8.1)."""
+    """The LAB's declared reservation identifiers (spec §8.1) — lab level only.
+
+    Element and host resources live on the host itself
+    (:attr:`~otto.host.remote_host.RemoteHost.element_resources`,
+    :attr:`~otto.host.remote_host.RemoteHost.resources`; spec 2026-08-28
+    three-level-reservations §3)."""
 
     metadata: dict[str, Any] = field(default_factory=dict)
     """The lab's opaque ``metadata`` table — a per-host copy."""
