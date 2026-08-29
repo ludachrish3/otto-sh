@@ -122,7 +122,8 @@ Each level reaches the host by the road its neighbour already travels:
 - `RemoteHost.resources: frozenset[str]` — the host's own, from `HostSpec.resources`
   via `_common_host_kwargs`.
 - Containers and the builtin `local` host: both empty. They are never
-  reservable units.
+  reservable units — and `local` is additionally held out of the hosts in play
+  altogether (§5), so the guarantee does not rest on the field staying empty.
 
 An element is in play exactly when at least one of its hosts is, so carrying
 the element's set on each member host makes "the union over elements in play"
@@ -167,9 +168,12 @@ one. `OttoContext.admissible_ids(None)` computes it live and every fleet walk
 starts from it. The reservation side reads that same set — the gate in both
 its checked and `-R` forms, `otto reservation check`, and completion's gate —
 so "in play" has one definition and no second list to keep in step. They
-differ from a walk in one keyword: a walk demands a non-empty fleet, while the
-reservation readers pass `require_nonempty=False` and take zero hosts in play
-as an answer:
+differ from a walk in one keyword and one subtraction: a walk demands a
+non-empty fleet, while the reservation readers pass `require_nonempty=False`
+and take zero hosts in play as an answer; and every reservation reader goes
+through `get_hosts_in_play()`, which holds the built-in `local` host out of
+the set (below). Both differences live in that one accessor, so the four
+readers cannot drift from each other:
 
 - `OttoContext.admissible_ids(owner=None, *, require_nonempty=True)` becomes
   public (the private name stays as an alias for one release of internal
@@ -212,11 +216,17 @@ as an answer:
   when they fall outside the fleet: holding the fleet's slots is not
   permission to touch a slot nobody reserved, and reaching a fleet host
   through an unreserved jump box is still using the jump box.
-- The built-in `local` host is a member of every lab, and scoping admits by
-  pattern rather than by id, so `local` is in play on the whole-lab fallback
-  and whenever a declared scope's lab and host patterns both match it — a
-  three-machine lab reports `4 host(s) in play`. It declares no resources
-  (§3), so it can never add a row or change a verdict; only the count sees it.
+- The built-in `local` host is **never** in play. It is a member of every lab
+  and scoping admits by pattern rather than by id, so it reaches the
+  reservation readers' base set on the whole-lab fallback and wherever a
+  declared scope's patterns match it — and `get_hosts_in_play()` subtracts it
+  there, leaving a three-machine lab reporting `3 host(s) in play`. otto can
+  always run on the machine it is running on, so a reservation standing
+  between a user and `otto host local <verb>` costs them a run and buys nobody
+  a slot. The subtraction is by host identity (`is_builtin_host`), not by the
+  id string: a lab that declares its own `local` entry suppresses the built-in
+  host altogether, and that entry's resources are enforced like any other's.
+  Fleet WALKS are untouched — `include_local=True` remains their own opt-in.
 - Completion's reservation gate (`remote_completion.py`) builds a temporary
   context; it passes that context's hosts in play plus any host the command
   line names, so completion and the run agree about what is needed.
@@ -287,7 +297,7 @@ unchanged. `library/reservation-backends.md` says the same.
 | Identity lacks a resource of a host outside the fleet that the run **names** (`otto host <id>`, `--hop`) | Required and checked: explicit targeting is unscoped, so the named host's own element- and host-level resources are demanded before the command runs (§5). |
 | `-R` | Warning lists the in-play requirement; nothing checked. |
 | Element restated by a later source without `resources` | Element-level lock removed for that element (wholesale); override warning already fires. |
-| Container / builtin `local` | Never contribute resources. `local` is still counted among the hosts in play wherever the patterns admit it (§5, §14). |
+| Container / builtin `local` | Never contribute resources. `local` is not counted among the hosts in play either — the reservation readers subtract it by identity (§5, §14). |
 | Doctor: shared element protected at element or host level | No overlap warning for that element. |
 | Doctor: shared element unprotected, lab sets disjoint and both non-empty | Warning naming the unprotected element(s) (R18 posture kept). |
 
@@ -313,7 +323,11 @@ Red-first, mutation-proved, per the standing rule.
   the gate pass `None` must turn the "slot 2 not required when the project
   targets slot 1" test red.
 - `tests/unit/config/` / `tests/unit/cli/`: `admissible_ids` public contract;
-  `otto reservation check` table; `-R` line; completion passes the fleet.
+  `otto reservation check` table; `-R` line; completion passes the fleet;
+  `get_hosts_in_play` subtracts the built-in `local` host while
+  `admissible_ids` still returns it (the walk's `include_local` knob is
+  untouched), and a lab-declared `local` entry is NOT subtracted — the guard
+  that fails if the exclusion is ever keyed on the id string.
 - `tests/unit/host/`: factory stamps `element_resources` before providers
   run; `resources` from the spec; containers/local empty.
 - `tests/unit/labs/`: element resources survive composite replacement and
@@ -347,7 +361,8 @@ Red-first, mutation-proved, per the standing rule.
 | Reservable units | Lab, element, host — all optional, freely combined | §2 |
 | Per-slot sub-labs instead? | No — membership is per element (v2 §7 / R14) | §1 |
 | How element resources reach runtime | Copied onto each member host as `element_resources`, like `element_metadata` | §3 |
-| "In play" | The fleet of interest — `OttoContext.admissible_ids()`, the same set every walk uses — plus any host the run names | §5 |
+| "In play" | The fleet of interest — `OttoContext.admissible_ids()`, the same set every walk uses — plus any host the run names, less the built-in `local` host | §5 |
+| Built-in `local` and the gate | Never in play: otto can always run on the runner, so reaching it never needs a slot. Subtracted by identity, not by id — a lab-declared `local` entry is enforced | §5, §14 |
 | Default when no fleet is known | Every host in the lab (never under-reserve) | §4 |
 | Verb-level `--hosts` and the gate | Narrows the walk, not the gate; narrow `[project] host_patterns` to narrow the gate | §5 |
 | Gate under an empty declared fleet | Zero hosts in play — the lab-level requirement; the refusal stays with the walk | §5 |
@@ -362,11 +377,17 @@ A per-invocation override of the fleet of interest at bootstrap (a global
 Nothing here precludes it — it would feed `admissible_ids()` — and nothing
 here needs it: the project's `host_patterns` is the runtime knob today.
 
-Whether the built-in `local` host should count as a host in play is open. It
-belongs to every lab and scoping filters nothing by id, so it is admitted
-wherever the patterns reach it and adds one to the `N host(s) in play` the
-`check` table reports (§5). Because it declares no resources it can never add
-a row or change a verdict, so this is a question about the count a reader
-sees, not about correctness: excluding it from the count, or from the set the
-reservation readers ask for, are two different answers and neither is chosen
-here.
+~~Whether the built-in `local` host should count as a host in play is open.~~
+**Answered: it does not count.** Of the two answers this section framed —
+excluding it from the count, or from the set the reservation readers ask for —
+the second was chosen, and it subsumes the first. `get_hosts_in_play()`
+subtracts the host, so the `N host(s) in play` count drops by one *and* no
+resource it might ever carry can reach a requirement.
+
+The question framed this as cosmetic, on the grounds that `local` declares no
+resources and so can never change a verdict. That reasoning was the weak part:
+it made a user-facing guarantee — that reaching the machine otto is already
+running on never needs a slot — rest on a host class happening to leave a
+field empty. Under the chosen answer the guarantee is structural, and the test
+that pins it hands the built-in host a resource precisely so that a gate which
+stopped excluding it would fail rather than pass on the empty default.
