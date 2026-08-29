@@ -227,9 +227,11 @@ Ripple (all in the reservation half of the work):
 - `JsonReservationBackend.who_reserved` → aggregate **all** active entries whose
   `resources` include the lookup (drop today's "first writer wins"), returning
   the deduped holder list (`src/otto/reservations/json_backend.py`).
-- `check.py` failure formatting: `holders: dict[str, list[str]]`; render
-  `(unreserved)` for an empty list and `held by alice, bob` for multiple
-  (`src/otto/reservations/check.py:113`). `get_reserved_resources` /
+- `check.py` failure formatting: `holders: dict[str, list[str]]`; one indented
+  line per (resource × origin) — the resource, then the level and owner that
+  required it, then the holders in parentheses: `(held by: nobody)` for an
+  empty list, `(held by: alice, bob)` for multiple
+  (`src/otto/reservations/check.py`). `get_reserved_resources` /
   `MissingReservationError` *gating* semantics are unchanged — the gate still
   asks "does this user hold the resource"; only the informational holder
   lookup becomes multi-valued.
