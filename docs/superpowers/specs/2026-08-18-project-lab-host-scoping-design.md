@@ -5,7 +5,9 @@
 **Predecessor:** `2026-08-16-first-party-default-instructions-design.md` (the
 project layer this scopes)
 **Companion (deferred, own spec):** multi-source lab data —
-`todo/lab_flexibility.md`
+`docs/superpowers/specs/2026-08-19-multi-source-lab-data-design.md` (the lab
+flexibility todo both were raised in is closed by lab v2,
+`docs/superpowers/specs/2026-08-27-lab-definition-v2-design.md`)
 
 ## 1. Problem
 
@@ -251,9 +253,11 @@ reference (new spec fields), `otto init` scaffold + its template drift guard
 
 ## 13. Deferred
 
-- **Multi-source lab data** (`todo/lab_flexibility.md`) — own brainstorm/spec;
-  composes via the source-agnostic `source_lab` stamp and post-ingest
-  resolution.
+- **Multi-source lab data** — own brainstorm/spec
+  (`docs/superpowers/specs/2026-08-19-multi-source-lab-data-design.md`;
+  the lab flexibility todo it was raised in is closed by lab v2,
+  `docs/superpowers/specs/2026-08-27-lab-definition-v2-design.md`); composes
+  via the source-agnostic `source_lab` stamp and post-ingest resolution.
 - **Attribute-based patterns** (element/os_type/role) — regexes are id-only;
   attribute logic already has the provider seam.
 - **`include_unscoped=True`** admin escape hatch — until a concrete need.

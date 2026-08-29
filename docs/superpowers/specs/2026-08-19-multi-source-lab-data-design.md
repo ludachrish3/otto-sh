@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-19
 **Status:** Approved design, pre-implementation
-**Origin:** `todo/lab_flexibility.md`; deferred by
+**Origin:** the lab flexibility todo, since closed by lab v2
+(`docs/superpowers/specs/2026-08-27-lab-definition-v2-design.md`); deferred by
 `docs/superpowers/specs/2026-08-18-project-lab-host-scoping-design.md` §13.
 
 ## 1. Problem
