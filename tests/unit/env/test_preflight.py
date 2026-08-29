@@ -119,6 +119,54 @@ class TestSatisfaction:
         repo = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
         assert check_repo(repo, site_dirs=[site]) == []
 
+    def test_an_unjudgeable_version_never_reaches_the_specifier(self, tmp_path, monkeypatch):
+        """The parse must be OURS, not a side effect of how packaging complains.
+
+        `SpecifierSet.contains` signals a non-PEP-440 version differently across
+        packaging generations -- <26 raises `InvalidVersion`, >=26 answers False
+        -- and the False arm would turn "cannot judge" into "judged and failed".
+        Catching the exception therefore proves nothing on either side: under
+        <26 it passes for the library's reason, under >=26 it does not pass at
+        all. This INJECTS the condition instead of inheriting it, by asking
+        whether the unjudgeable version was ever handed to the comparison. It is
+        red under BOTH generations if the parse moves back into the try.
+        """
+        from packaging.specifiers import SpecifierSet
+
+        asked: "list[object]" = []
+        real = SpecifierSet.contains
+
+        def spy(self, item, *args, **kwargs):
+            asked.append(item)
+            return real(self, item, *args, **kwargs)
+
+        monkeypatch.setattr(SpecifierSet, "contains", spy)
+        site = tmp_path / "site"
+        _install(site, "beetroot", "not-a-version")
+        repo = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        assert check_repo(repo, site_dirs=[site]) == []
+        assert asked == [], f"the unjudgeable version was compared anyway: {asked}"
+
+    def test_a_judgeable_version_does_reach_the_specifier(self, tmp_path, monkeypatch):
+        """The other arm of the guard above: parsing first must not stop otto
+        asking the question when the version IS judgeable -- a preflight that
+        never compares anything would pass a one-armed spy suite."""
+        from packaging.specifiers import SpecifierSet
+
+        asked: "list[object]" = []
+        real = SpecifierSet.contains
+
+        def spy(self, item, *args, **kwargs):
+            asked.append(item)
+            return real(self, item, *args, **kwargs)
+
+        monkeypatch.setattr(SpecifierSet, "contains", spy)
+        site = tmp_path / "site"
+        _install(site, "beetroot", "0.2")
+        repo = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        assert check_repo(repo, site_dirs=[site]) == []
+        assert [str(item) for item in asked] == ["0.2"]
+
     def test_an_unparseable_requirement_is_skipped(self, tmp_path):
         """Same owner as an unreadable pyproject: the installer diagnoses it,
         and it does so better than a gate that only knows the string failed."""

@@ -177,7 +177,7 @@ def _check(repo: Any, env: _Environment) -> "tuple[list[Unsatisfied], str | None
         return [], None
 
     from packaging.requirements import InvalidRequirement, Requirement
-    from packaging.version import InvalidVersion
+    from packaging.version import InvalidVersion, Version
 
     from ..models.dependencies import normalize_name
 
@@ -205,14 +205,19 @@ def _check(repo: Any, env: _Environment) -> "tuple[list[Unsatisfied], str | None
             continue
         version = str(dist.version)
         try:
-            # Prereleases count. The installer put this version here
-            # deliberately, and refusing a run over a `2.0.0b1` it chose would
-            # be otto second-guessing the resolver it defers to everywhere else.
-            satisfied = req.specifier.contains(version, prereleases=True)
+            # Parse before comparing. A non-PEP-440 version in installed
+            # metadata is unjudgeable, and the two packaging generations
+            # disagree on how `contains` says so: <26 raises InvalidVersion,
+            # >=26 answers False -- which would turn "cannot judge" into
+            # "judged and failed". Parsing ourselves says it the same way on
+            # both, and staying quiet beats a preflight that CRASHES or lies.
+            parsed = Version(version)
         except InvalidVersion:
-            # A non-PEP-440 version in installed metadata is unjudgeable, and a
-            # preflight that CRASHES is worse than one that stays quiet.
             continue
+        # Prereleases count. The installer put this version here deliberately,
+        # and refusing a run over a `2.0.0b1` it chose would be otto
+        # second-guessing the resolver it defers to everywhere else.
+        satisfied = req.specifier.contains(parsed, prereleases=True)
         if not satisfied:
             unsatisfied.append(Unsatisfied(repo=repo.name, requirement=raw, found=version))
     return unsatisfied, None
