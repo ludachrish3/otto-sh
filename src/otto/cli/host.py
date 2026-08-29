@@ -183,8 +183,13 @@ def _check_named_host_reservations(ctx: typer.Context, named: "list[RemoteHost]"
     jump session through it, and reaching a fleet host through an unreserved
     jump box is still using the jump box.
 
-    Two short-circuits, in this order:
+    Three short-circuits, in this order:
 
+    * The built-in ``local`` host is not a target here any more than it is a
+      host in play (spec 2026-08-28 three-level-reservations §5): naming the
+      machine otto is already running on must never need a slot. A lab that
+      declares its OWN ``local`` entry is not this host and is not skipped —
+      see :func:`~otto.host.builtin_hosts.is_builtin_host`.
     * A host the fleet already covers is skipped — the preamble asked the
       backend for exactly that set, and asking again for the same answer is a
       second query per command.
@@ -192,8 +197,8 @@ def _check_named_host_reservations(ctx: typer.Context, named: "list[RemoteHost]"
       ``element_resources`` can add nothing to the requirement:
       :func:`~otto.reservations.check.required_resource_origins` seeds the
       lab-level set unconditionally, so checking such a host re-asks for
-      exactly what the preamble already required. Without this,
-      ``otto host local …`` under any lab with a lab-level identifier costs a
+      exactly what the preamble already required. Without this, naming any
+      resource-less host under a lab with a lab-level identifier costs a
       second backend round trip for a verdict otto has just had. The read is
       local (two frozensets on a built host), never the backend.
 
@@ -211,8 +216,11 @@ def _check_named_host_reservations(ctx: typer.Context, named: "list[RemoteHost]"
     gate = ctx.meta.get("otto_reservation")
     if gate is None or gate.skip_check or gate.backend is None or gate.identity is None:
         return
-    fleet = get_context().admissible_ids(require_nonempty=False)
-    outside = [host for host in named if host.id not in fleet]
+    from ..config.fleet import get_hosts_in_play
+    from ..host.builtin_hosts import is_builtin_host
+
+    fleet = get_hosts_in_play()
+    outside = [host for host in named if host.id not in fleet and not is_builtin_host(host)]
     if not any(host.resources or host.element_resources for host in outside):
         return
 

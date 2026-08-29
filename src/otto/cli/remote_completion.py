@@ -405,7 +405,9 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     the user a dead TAB with no explanation.
     """
     from ..config import get_repos
+    from ..config.fleet import get_hosts_in_play
     from ..context import OttoContext, reset_context, set_context
+    from ..host.builtin_hosts import is_builtin_host
     from ..reservations.check import required_resources
     from .invoke import build_lab_from_repos
 
@@ -414,8 +416,8 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     token = set_context(ctx)
     try:
         named = [lab.resolve_handle(h) for h in (chain.host_id, chain.hop) if h]
-        host_ids = ctx.admissible_ids(require_nonempty=False) | {
-            host.id for host in named if host is not None
+        host_ids = get_hosts_in_play() | {
+            host.id for host in named if host is not None and not is_builtin_host(host)
         }
         return required_resources(lab, host_ids=host_ids)
     finally:

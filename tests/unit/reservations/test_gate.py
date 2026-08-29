@@ -26,7 +26,7 @@ from otto.reservations import (
     ResolvedIdentity,
 )
 from tests._fixtures.fleet import _lab as fleet_lab
-from tests._fixtures.fleet import _repo, install_scoped_context
+from tests._fixtures.fleet import _repo, add_builtin_local, install_scoped_context
 from tests.conftest import make_host
 
 
@@ -255,6 +255,43 @@ def test_empty_declared_fleet_checks_the_lab_level_only(tmp_path, monkeypatch):
     )
 
     assert gate.evaluate() == ReservationGateResult(checked=True, skipped=False, warning=None)
+
+
+def test_the_gate_ignores_resources_declared_on_the_builtin_local_host(monkeypatch):
+    """Reaching the runner never needs a slot (spec 2026-08-28 §5).
+
+    The built-in host is handed a resource it would never carry in production:
+    against a gate that still counted it, ``alice`` holds nothing and this
+    raises. The lab itself declares none, so the requirement is empty and the
+    backend is never asked — which is the whole point of the exemption.
+    """
+    lab = add_builtin_local(fleet_lab(("h1", "a")), resources={"runner-slot"})
+    install_scoped_context(monkeypatch, lab, [])
+    gate = ReservationGate(
+        backend=_FakeBackend(owners={}),
+        identity=ResolvedIdentity(username="alice", source="$USER"),
+    )
+
+    assert gate.evaluate() == ReservationGateResult(checked=True, skipped=False, warning=None)
+
+
+def test_the_gate_still_enforces_a_lab_declared_local_host(monkeypatch):
+    """The other direction, so the exemption cannot be read as "ignore the id `local`".
+
+    A lab may define its own ``local`` entry, and ``load_lab`` then injects no
+    built-in host at all. That entry is an ordinary host the user wrote down,
+    and its slot is enforced.
+    """
+    lab = fleet_lab(("local", "a"), ("h2", "a"))
+    lab.hosts["local"].resources = frozenset({"runner-slot"})
+    install_scoped_context(monkeypatch, lab, [])
+    gate = ReservationGate(
+        backend=_FakeBackend(owners={"runner-slot": "dana"}),
+        identity=ResolvedIdentity(username="alice", source="$USER"),
+    )
+
+    with pytest.raises(MissingReservationError, match="runner-slot"):
+        gate.evaluate()
 
 
 def test_reservations_import_is_typer_free():

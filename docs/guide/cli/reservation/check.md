@@ -33,11 +33,13 @@ reads top-down from the coarsest thing that required it.  Each such declaration
 gets its own row: the table explains *why* something is required, not just
 *that* it is.  The title names the lab, the identity being checked, and how
 many hosts are in play; that count is the fleet of interest ({doc}`index`), not
-the whole lab when a project narrows it.  It counts the built-in `local` host on
-the whole-lab fallback, and also whenever a declared scope's `lab_patterns` and
-`host_patterns` both fullmatch it — `host_patterns = [".*"]` is enough.
-Scoping admits by pattern, not by id: nothing filters `local` out of the fleet
-itself.  It never adds a row, though, because `local` declares no resources.
+the whole lab when a project narrows it.  It never counts the built-in `local`
+host, on the whole-lab fallback or under any `[project]` declaration: otto can
+always run on the machine it is running on, so that host is held out of the
+requirement entirely.  Scoping itself still admits by pattern rather than by id
+— a fleet *walk* reaches `local` with `include_local=True` exactly as before —
+and it is this reservation reader, not the scope, that sets it aside.  A lab
+declaring its own `local` entry is counted like any other host.
 
 Then the verdict — `OK — all required resources are reserved.`, or the same
 error a gated command would fail with, one line per missing identifier and
@@ -45,7 +47,7 @@ origin.  For the three-level `rig` on {doc}`index`, checked as a user who
 holds everything but the second slot:
 
 ```text
-reservations required by lab rig for chris (4 host(s)
+reservations required by lab rig for chris (3 host(s)
                        in play)
 ╭──────────────────┬─────────┬────────────────┬──────╮
 │ resource         │ level   │ owner          │ held │

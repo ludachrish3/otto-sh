@@ -22,7 +22,7 @@ from otto.bootstrap import ProjectScopeError
 from otto.config.lab import Lab
 from otto.config.scope import EmptySelectionError
 from otto.context import OttoContext
-from tests._fixtures.fleet import _lab, _repo, install_scoped_context
+from tests._fixtures.fleet import _lab, _repo, add_builtin_local, install_scoped_context
 
 
 @pytest.fixture
@@ -471,6 +471,41 @@ def test_module_level_get_hosts_in_play_reads_the_active_context(tmp_path, scope
 
     assert get_hosts_in_play() == {"h1"}
     assert get_hosts_in_play() == ctx.admissible_ids()
+
+
+def test_get_hosts_in_play_excludes_the_builtin_local_host(tmp_path, scoped_context):
+    """The runner is never in play (spec 2026-08-28 three-level-reservations §5).
+
+    otto can always run on localhost, so a reservation standing between a user
+    and ``otto host local <verb>`` is a footgun with no upside. The exclusion
+    lives HERE, in the reservation readers' accessor, and not in
+    ``scoped_ids``: ``include_local=True`` is a fleet WALK's own opt-in and must
+    keep working, which the second assert pins.
+    """
+    from otto.config.fleet import get_hosts_in_play
+
+    lab = add_builtin_local(_lab(("h1", "a"), ("h2", "a")), resources={"rack-a"})
+    ctx = scoped_context(lab, [_repo(tmp_path, "r1")])
+
+    assert get_hosts_in_play() == {"h1", "h2"}
+    assert ctx.admissible_ids() == {"h1", "h2", "local"}
+
+
+def test_get_hosts_in_play_keeps_a_lab_that_declares_its_own_local_host(tmp_path, scoped_context):
+    """The word "built-in" is load-bearing, and it is not the id string.
+
+    A lab may define its own ``local`` entry, in which case ``load_lab``
+    injects nothing and that entry is an ordinary host — the user asked for it
+    by writing it down. An exclusion keyed on ``id == "local"`` would silently
+    drop its resources from every requirement; this is the test that would fail.
+    """
+    from otto.config.fleet import get_hosts_in_play
+
+    lab = _lab(("local", "a"), ("h2", "a"))
+    assert "local" in lab.hosts, sorted(lab.hosts)  # the factory's id, not an assumption
+    scoped_context(lab, [_repo(tmp_path, "r1")])
+
+    assert get_hosts_in_play() == {"local", "h2"}
 
 
 def test_the_tolerant_fleet_reader_is_not_re_exported_from_otto_config(tmp_path, scoped_context):

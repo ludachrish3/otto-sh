@@ -425,7 +425,20 @@ def get_hosts_in_play() -> set[str]:
     An empty declared fleet reads as ZERO hosts in play — the requirement is
     the lab-level set alone — and never as an abort; a run that goes on to walk
     its fleet still refuses that fleet with the same message.
+
+    The built-in ``local`` host is never in play: otto can always run on the
+    machine it is running on, so a reservation standing between a user and
+    ``otto host local <verb>`` costs them a run and buys nobody a slot. The
+    subtraction is here rather than in :func:`~otto.config.scope.scoped_ids`
+    because scoping answers a different question — ``include_local=True`` is a
+    fleet WALK's own opt-in and keeps working untouched. ``is_builtin_host``
+    rather than an ``id != "local"`` test: a lab may declare its OWN ``local``
+    entry (``load_lab`` then injects nothing), and that host's ``resources``
+    are as real as any other's.
     """
     from ..context import get_context
+    from ..host.builtin_hosts import is_builtin_host
 
-    return get_context().admissible_ids(require_nonempty=False)
+    ctx = get_context()
+    in_play = ctx.admissible_ids(require_nonempty=False)
+    return {hid for hid in in_play if not is_builtin_host(ctx.lab.hosts.get(hid))}

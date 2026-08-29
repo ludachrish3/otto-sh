@@ -82,7 +82,22 @@ walk starts from, public since this work precisely so the gate and the walks
 cannot disagree about which hosts a run may touch. One definition, two
 readers. A declared fleet that admits no host in the loaded lab is **zero
 hosts in play**, not a refusal: the requirement narrows to the lab's own set
-and every reservation reader passes `require_nonempty=False` to say so. The
+and every reservation reader passes `require_nonempty=False` to say so.
+
+Reservation readers reach that set through
+{func}`otto.config.fleet.get_hosts_in_play`, which applies the one adjustment
+the gate makes and the walks do not: the built-in `local` host is subtracted.
+Otto can always run on the machine it is running on, so requiring a slot to
+reach it would be a footgun with no upside. The subtraction is by host
+identity, not by the id
+string (`otto.host.builtin_hosts.is_builtin_host`) — a lab that declares its
+own `local` entry suppresses the built-in host altogether, and that entry's
+`resources` are enforced like any other's.
+All four reservation readers — the gate, `otto reservation check`, the
+explicit-target check in `otto host`, and completion's cached gate — go
+through that accessor, so none can drift from the others.
+
+The
 fleet-shaped `ProjectScopeError` stays with the WALK — a run that walks still
 aborts on it, with the same message, exactly where it did before this gate
 existed — so the gate never becomes a new abort surface. Completion's gate

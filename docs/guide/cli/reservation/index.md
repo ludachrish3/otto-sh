@@ -66,8 +66,9 @@ strings the backend matches byte-for-byte:
 | host | `resources` on a [host entry](../../configuration/lab-config.md#common-optional) | The slot. |
 
 A lab whose every element carries a resource leaves nothing unguarded — every
-reservable host in play then requires something (the built-in `local` host and
-container hosts declare none, ever) — but it is not the same as a whole-lab
+reservable host in play then requires something (container hosts declare none,
+ever, and the built-in `local` host is never in play at all) — but it is not
+the same as a whole-lab
 lock: distinct per-element identifiers can be held by different people at the
 same time, which is usually the point.  A single lab-level identifier is what
 *asks* the scheduler for one holder.  Otto enforces no exclusivity of its own:
@@ -109,12 +110,22 @@ The required set is computed over the **hosts in play** — every host the run's
 project(s) declare an interest in via `[project] host_patterns`
 ({ref}`project-scope`), or the whole lab when no repo declares one.  The lab
 level always counts; each host in play adds its element's identifiers and its
-own.  For a combined `--lab a+b` the lab level contributes the union of the
+own.
+
+The built-in `local` host is never among them.  Otto can always run on the
+machine it is running on, so a reservation standing between you and
+`otto host local <verb>` would cost you a run and buy nobody a slot.  A lab
+that declares its *own* `local` host entry is a different thing — otto injects
+no built-in host in that case, and that entry's `resources` are enforced like
+any other's.
+
+For a combined `--lab a+b` the lab level contributes the union of the
 components' declared sets, and every lab-level row is attributed to the merged
 name `a+b` rather than to the component that declared the identifier.
 
 Naming a host explicitly — as the target or as the `--hop` — adds it to that
-set.  `otto host <id>` is not scoped by any `[project]` declaration
+set, the built-in `local` host still excepted.  `otto host <id>` is not scoped
+by any `[project]` declaration
 ({doc}`../host/index`), so a host outside the fleet has its OWN element- and
 host-level identifiers checked before the command runs — otherwise holding the
 fleet's slots would be permission to touch hardware nobody reserved, and

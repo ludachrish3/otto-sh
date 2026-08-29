@@ -153,19 +153,21 @@ def check(ctx: typer.Context) -> None:
     from rich.table import Table
 
     # Function-scope: ``otto.cli.reservation`` is one of the budgeted import
-    # surfaces, and pulling otto.context (and rich's table machinery) in at
-    # module scope would move the snapshot for every ``otto`` invocation, not
-    # just this subcommand's. tach declares the otto.cli -> otto.context edge.
-    from ..context import get_context
+    # surfaces, and pulling the fleet accessor (and rich's table machinery) in
+    # at module scope would move the snapshot for every ``otto`` invocation,
+    # not just this subcommand's.
+    from ..config.fleet import get_hosts_in_play
 
     # NOT rebound onto ``ctx`` — that name is the typer Context this command
     # was handed, and shadowing it here would be a live bug the moment
     # anything below reached for ctx.meta again.
-    # require_nonempty=False: this command reports, it does not walk. A
-    # declaration that admits nothing is 0 hosts in play — a lab-level-only
-    # requirement, which is a verdict — and the fleet-shaped refusal belongs to
-    # the walk a run would do next, not to a read-only report about it.
-    in_play = get_context().admissible_ids(require_nonempty=False)
+    # The shared reservation reader, not ``admissible_ids`` directly: it bakes
+    # in the two rules this table must agree with the gate about — a
+    # declaration that admits nothing is 0 hosts in play (a lab-level-only
+    # requirement, which is a verdict, and the fleet-shaped refusal belongs to
+    # the walk a run would do next rather than to a read-only report about it),
+    # and the built-in ``local`` host is never in play at all.
+    in_play = get_hosts_in_play()
     origins = required_resource_origins(lab, host_ids=in_play)
 
     if not origins:

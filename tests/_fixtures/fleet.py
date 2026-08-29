@@ -62,6 +62,23 @@ def _lab(*pairs, component_names=None):
     return lab
 
 
+def add_builtin_local(lab, *, resources=frozenset()):
+    """Inject the built-in ``LocalHost``, the way ``load_lab`` does.
+
+    *resources* is the hostile condition, not a realistic one: the built-in host
+    carries none in production, so a guard that merely observed "``local``
+    required nothing" would pass against a gate that never excluded it. Handing
+    it a resource is what makes the exclusion falsifiable.
+    """
+    from otto.host.builtin_hosts import make_builtin_local_host
+
+    local_host = make_builtin_local_host()
+    local_host.source_lab = lab.component_names[0]
+    local_host.resources = frozenset(resources)
+    lab.add_host(local_host)
+    return lab
+
+
 def install_scoped_context(monkeypatch, lab, repos):
     """Build and install an ``OttoContext`` whose scopes resolve over *repos*.
 
