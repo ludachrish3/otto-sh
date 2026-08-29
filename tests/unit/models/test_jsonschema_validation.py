@@ -132,13 +132,30 @@ def test_standalone_host_and_link_schemas_accept_comment_keys():
 
 # ── A referenced host entry (spec 2026-08-28 host-inventory §5) ──────────────
 #
-# Every entry below carries ``sw_version``, which ONLY ``UnixHostSpec``
+# Every entry below carries ``docker_capable``, which ONLY ``UnixHostSpec``
 # declares. That pins which arm of the host ``anyOf`` decides the verdict:
 # ``os_type`` carries no enum in the generated schema (the ``discriminator``
 # keyword is OpenAPI, and Draft 2020-12 ignores it), so a bare
 # ``"os_type": "unix"`` entry is ALSO checked against ``EmbeddedHostSpec``,
 # whose looser ``required`` would answer for it. A test written that way
 # would pass with the unix arm broken.
+#
+# The selector was ``sw_version`` until spec 2026-08-28 host-inventory §4
+# widened that field onto the base ``HostSpec``, at which point every negative
+# test below started passing against the embedded arm and asserting nothing.
+# ``test_the_arm_selector_is_still_unix_only`` exists so the NEXT widening
+# fails by name here instead of quietly emptying this block.
+
+_ARM_SELECTOR = "docker_capable"
+
+
+def test_the_arm_selector_is_still_unix_only():
+    """The premise every test in this block rests on, asserted rather than assumed."""
+    from otto.models.host import EmbeddedHostSpec, HostSpec, UnixHostSpec
+
+    assert _ARM_SELECTOR in UnixHostSpec.model_fields
+    assert _ARM_SELECTOR not in HostSpec.model_fields
+    assert _ARM_SELECTOR not in EmbeddedHostSpec.model_fields
 
 
 def test_referenced_entry_needs_neither_ip_nor_creds(lab_validator):
@@ -148,7 +165,7 @@ def test_referenced_entry_needs_neither_ip_nor_creds(lab_validator):
     joins the record on before the spec sees the dict, so an editor must not
     red-underline an entry otto loads perfectly.
     """
-    lab = lab_json_v2([{"inventory": "test1", "element": "test1", "sw_version": "1.0"}])
+    lab = lab_json_v2([{"inventory": "test1", "element": "test1", "docker_capable": True}])
     errors = list(lab_validator.iter_errors(lab))
     assert errors == [], [e.message for e in errors]
 
@@ -160,7 +177,7 @@ def test_an_entry_with_neither_an_address_nor_a_reference_is_still_rejected(lab_
     ``anyOf`` arm would make this document validate — the failure mode the
     arm exists to prevent.
     """
-    lab = lab_json_v2([{"element": "test1", "sw_version": "1.0"}])
+    lab = lab_json_v2([{"element": "test1", "docker_capable": True}])
     assert list(lab_validator.iter_errors(lab)), (
         "an entry with neither 'ip' nor 'inventory' must fail"
     )
@@ -172,7 +189,7 @@ def test_an_inline_entry_still_needs_every_field_it_always_needed(lab_validator)
     ``UnixHostSpec`` requires ``ip`` AND ``creds``; an arm naming only ``ip``
     would let this credential-less inline entry through.
     """
-    lab = lab_json_v2([{"ip": "10.0.0.1", "element": "test1", "sw_version": "1.0"}])
+    lab = lab_json_v2([{"ip": "10.0.0.1", "element": "test1", "docker_capable": True}])
     assert list(lab_validator.iter_errors(lab)), "an inline entry without creds must fail"
 
 
@@ -186,10 +203,10 @@ def test_the_reference_arm_constrains_the_value_not_just_the_key(lab_validator):
     entry inline and still owing an ``ip``; ``""`` is an ``InventoryError``.
     """
     creds = [{"login": "u", "password": "p"}]
-    null_no_ip = lab_json_v2([{"inventory": None, "element": "test1", "sw_version": "1.0"}])
+    null_no_ip = lab_json_v2([{"inventory": None, "element": "test1", "docker_capable": True}])
     assert list(lab_validator.iter_errors(null_no_ip)), "'inventory': null is not a reference"
 
-    empty_key = lab_json_v2([{"inventory": "", "element": "test1", "sw_version": "1.0"}])
+    empty_key = lab_json_v2([{"inventory": "", "element": "test1", "docker_capable": True}])
     assert list(lab_validator.iter_errors(empty_key)), "'inventory': '' is not a key"
 
     # ...and the other direction, so the constraint cannot be satisfied by
@@ -202,7 +219,7 @@ def test_the_reference_arm_constrains_the_value_not_just_the_key(lab_validator):
                 "ip": "10.0.0.1",
                 "creds": creds,
                 "element": "test1",
-                "sw_version": "1.0",
+                "docker_capable": True,
             }
         ]
     )

@@ -19,11 +19,13 @@ TRUTHY -- measured: ``test1`` declares no ``userland_options`` in
 host would send every plain unix host down the busybox branch. Two more
 values are neither host- nor raw-read in the ordinary sense: ``element`` is
 the function's own argument, and ``os_version``/``sw_version`` come from
-``getattr(host, ..., None)`` -- a host class that doesn't define the
-attribute (``ZephyrHost`` has no ``sw_version``) reads as ``None`` rather
-than raising, a manufactured absence marker, not a value the host reported.
-``UnixHost`` defines both and simply reports ``None`` when unset, so the
-two absences are indistinguishable downstream.
+``getattr(host, ..., None)`` -- a host class that doesn't define the attribute
+reads as ``None`` rather than raising, a manufactured absence marker, not a
+value the host reported. Since spec 2026-08-28 host-inventory §4 widened
+``sw_version`` onto ``RemoteHost``, every built-in host class defines both and
+simply reports ``None`` when unset, so the default is now reached only by a
+third-party host class -- and the two absences stay indistinguishable
+downstream either way.
 
 Named ``HostAxes`` rather than ``Profile``: ``otto.host.os_profile.OsProfile``
 is a product concept that ``os_type`` selects, and it supplies defaults *into*

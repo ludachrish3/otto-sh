@@ -180,6 +180,8 @@ _COMMON_PLAIN_FIELDS = (
     "os_type",
     "os_name",
     "os_version",
+    "hw_version",
+    "sw_version",
     "user",
     "element_id",
     "board",
@@ -304,6 +306,21 @@ class HostSpec(OttoModel):
     os_type: str = "unix"
     os_name: str | None = None
     os_version: str | None = None
+
+    hw_version: str | None = None
+    """Free-form hardware version. Informational — otto never parses it."""
+
+    sw_version: str | None = None
+    """Free-form software version — what the device is DECLARED to run, never
+    what a probe observed.
+
+    On the base rather than ``UnixHostSpec`` since spec 2026-08-28
+    host-inventory §4 — an embedded target has a firmware version as surely as a
+    Unix box has a distro one. Like ``os_version`` above, this is otto's own
+    vocabulary rather than a fact an inventory tool natively holds: a deployment
+    may still hand it over by mapping a custom field, but no backend supplies it
+    by default (``otto.inventory.netbox.NATIVE_SUPPLIES``)."""
+
     user: str | None = None
     element_id: int | None = None
     board: str | None = None
@@ -511,15 +528,13 @@ class UnixHostSpec(HostSpec):
     """Boundary spec for a Unix host entry in ``lab.json``.
 
     Extends ``HostSpec`` with the Unix-specific fields: term/transfer/impairer menus and
-    active selections, SSH/SFTP/SCP/FTP/nc option tables, Docker capability, and
-    hardware/software version strings. ``to_host()`` resolves the active term, transfer, and
+    active selections, SSH/SFTP/SCP/FTP/nc option tables, and Docker
+    capability. ``to_host()`` resolves the active term, transfer, and
     impairer from preferences and builds a ``UnixHost`` (or a custom subclass passed as
     ``cls``).
     """
 
     creds: list[CredSpec] = Field(min_length=1)  # required for a Unix host (SSH/telnet login)
-    hw_version: str | None = None
-    sw_version: str | None = None
     valid_terms: list[str] = Field(default_factory=lambda: ["ssh", "telnet"])
     valid_transfers: list[str] = Field(default_factory=lambda: ["scp", "sftp", "ftp", "nc"])
     valid_impairers: list[str] = Field(default_factory=lambda: ["netem"])
@@ -585,7 +600,7 @@ class UnixHostSpec(HostSpec):
         kw["impairer"] = IMPAIRER_RESOLVER.resolve_active(
             self.valid_impairers, pin=self.impairer, preference=prefs.get("impairer")
         )
-        for n in ("hw_version", "sw_version", "docker_capable", "shell_history"):
+        for n in ("docker_capable", "shell_history"):
             if n in s:
                 kw[n] = getattr(self, n)
         for n in (

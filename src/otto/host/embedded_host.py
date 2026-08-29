@@ -131,6 +131,16 @@ class EmbeddedHost(RemoteHost):
     os_version: str | None = None
     """OS/kernel version string, or None if unspecified."""
 
+    hw_version: str | None = None
+    """Hardware version description, or None — the board revision, typically.
+    Informational; otto never parses it."""
+
+    sw_version: str | None = None
+    """Firmware version this target is DECLARED to run, or None. A declaration,
+    never an observation. Widened onto the embedded family by spec 2026-08-28
+    host-inventory §4: an embedded target has a firmware version as surely as a
+    Unix box has a distro one."""
+
     name: str = ""
     """Human readable name to represent the host. Automatically generated if not provided."""
 

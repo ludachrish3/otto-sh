@@ -372,8 +372,8 @@ both its display name and its positional handle.
 | `os_type` | string | Profile selector.  Defaults to `"unix"`.  Resolves to a registered host class and optional defaults bundle — see {doc}`os-profiles`. |
 | `os_name` | string | Human-readable OS name (e.g. `"Linux"`, `"Zephyr"`). |
 | `os_version` | string | OS or kernel version string (e.g. `"3.7"`, `"4.4"`). |
-| `hw_version` | string | Free-form hardware version description (Unix hosts only).  Informational — otto never parses it. |
-| `sw_version` | string | Free-form software version description (Unix hosts only).  Informational — otto never parses it. |
+| `hw_version` | string | Free-form hardware version description.  Informational — otto never parses it. |
+| `sw_version` | string | Free-form software version description — what the host is *declared* to run, never what a probe observed.  Informational — otto never parses it. |
 
 ### Embedded-only fields
 

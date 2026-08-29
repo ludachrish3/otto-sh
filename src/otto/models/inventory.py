@@ -7,14 +7,14 @@ referencing host's own concrete spec (:class:`~otto.models.host.UnixHostSpec`,
 :class:`~otto.models.host.EmbeddedHostSpec`) declares — so the join
 (:func:`otto.inventory.resolve_host_entry`) is a plain key copy and
 no mapping table exists in otto core: a mapping is where drift hides.
-``hw_version``/``sw_version`` are declared only on ``UnixHostSpec``, not the
-shared ``HostSpec`` base; a record field the target host's own spec does not
-declare fails *that host's* validation with ``extra_forbidden`` naming the
-key — the deployment's ``supplies`` declaration
-(:func:`~otto.inventory.protocol.check_supplies`) is the actual control on
-which fields a given record may carry. ``extra`` is the one
-record field with no host-spec twin at all: an opaque table otto never
-reads, carried onto the host as ``host.inventory_ref.extra``.
+Every field below is on the shared ``HostSpec`` base, so no record can be
+refused by the host family it lands on: ``hw_version``/``sw_version`` were the
+last two declared on ``UnixHostSpec`` alone, and §4 widened them. The
+deployment's ``supplies`` declaration
+(:func:`~otto.inventory.protocol.check_supplies`) is therefore the only control
+on which fields a given record may carry. ``extra`` is the one record field
+with no host-spec twin at all: an opaque table otto never reads, carried onto
+the host as ``host.inventory_ref.extra``.
 """
 
 import re

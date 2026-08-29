@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from otto.models.host import HostSpec, UnixHostSpec
+from otto.models.host import HostSpec
 from otto.models.inventory import (
     FILLABLE_INVENTORY_FIELDS,
     INVENTORY_KEY_FIELDS,
@@ -11,28 +11,20 @@ from otto.models.inventory import (
     coerce_digit_string,
 )
 
-UNIX_ONLY_RECORD_FIELDS = {"hw_version", "sw_version"}
-"""``InventoryRecord`` fields with no counterpart on the abstract ``HostSpec``
-base: ``hw_version``/``sw_version`` are declared only on ``UnixHostSpec`` —
-an existing, deliberate restriction (lab-config.md marks them "Unix hosts
-only") this task does not widen to embedded hosts. Named explicitly, not
-folded into a wider union, so a *new* stray field is still caught."""
-
 
 def test_every_record_field_except_extra_is_a_hostspec_field():
     """Spec §4: record field names are HostSpec field names, 1:1 — no mapping table in core.
 
-    ``hw_version``/``sw_version`` are the sole, named exception (see
-    ``UNIX_ONLY_RECORD_FIELDS``); every other field must be on the shared
-    base so a stray field anywhere else still fails this guard.
+    No exceptions. ``hw_version``/``sw_version`` were carved out while they were
+    declared on ``UnixHostSpec`` alone; the open question that carve-out was
+    holding open is answered — both are base fields now — so the guard is a
+    plain subset check again, and a stray record field anywhere fails it.
     """
-    record_fields = set(InventoryRecord.model_fields) - {"extra"} - UNIX_ONLY_RECORD_FIELDS
-    assert record_fields <= set(HostSpec.model_fields)
-    assert set(UnixHostSpec.model_fields) >= UNIX_ONLY_RECORD_FIELDS  # not vacuous
-    # The carve-out must stay a carve-out. If the open R5 question is ever
-    # answered by widening hw_version/sw_version onto the base, this goes red
-    # and the exception retires loudly instead of sitting here dead.
-    assert not (UNIX_ONLY_RECORD_FIELDS & set(HostSpec.model_fields))
+    record_fields = set(InventoryRecord.model_fields) - {"extra"}
+    assert record_fields <= set(HostSpec.model_fields), sorted(
+        record_fields - set(HostSpec.model_fields)
+    )
+    assert "ip" in record_fields  # not vacuous
 
 
 def test_fillable_fields_are_derived_not_listed():

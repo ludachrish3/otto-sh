@@ -226,6 +226,15 @@ class RemoteHost(BaseHost):
     os_version: str | None
     """OS/kernel version string, or None if unspecified."""
 
+    hw_version: str | None
+    """Hardware version description, or None. Informational — otto never parses it."""
+
+    sw_version: str | None
+    """Software version the host is DECLARED to run, or None; never a probe's
+    observation. On the shared contract rather than
+    :class:`~otto.host.unix_host.UnixHost` alone since spec 2026-08-28
+    host-inventory §4."""
+
     default_dest_dir: Path
     """Per-host default directory that ``put`` / ``get`` resolve a
     relative or empty ``dest_dir`` against. Lets a fan-out helper like
