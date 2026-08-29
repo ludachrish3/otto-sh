@@ -133,13 +133,16 @@ every boundary spec; `_`-prefixed keys are comment space like everywhere else.
 copy; there is no mapping table in otto core. (The NetBox backend carries the
 one deliberate mapping, §9.2.)
 
-One carve-out: `hw_version` and `sw_version` are declared on `UnixHostSpec`
-only, not on the shared `HostSpec` base, so the name a record must match is
-the *referencing host's own* spec — an embedded entry handed a record stating
-`sw_version` fails that entry's `extra="forbid"` validation naming the key.
-The 1:1 guard reads the carve-out as a named set rather than pretending the
-two fields sit on the base; `supplies` (§10) remains the actual control on
-which fields a given record may carry (§21).
+No carve-out: every record field is on the shared `HostSpec` base, so any
+record can be received by any host family and no entry can fail validation
+merely for being embedded. `hw_version` and `sw_version` were the last two
+declared on `UnixHostSpec` alone — the §21 open question this spec shipped
+with, since answered by widening them onto the base. An embedded target has a
+firmware version as surely as a Unix box has a distro one, and both fields are
+otto's own vocabulary rather than facts an inventory tool natively holds: like
+`os_version`, they stay out of every backend's default `supplies` and arrive
+only where a deployment maps them (§9.2). `supplies` (§10) is therefore the
+sole control on which fields a given record may carry.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -768,9 +771,11 @@ rule: a test that cannot fail is a defect).
 
 - `tests/unit/models/test_inventory_record.py`: field set is host-spec
   names (a guard asserting every `InventoryRecord` field except `extra` is a
-  `HostSpec` field, bar the named `UnixHostSpec`-only pair of §4 — the 1:1
-  rule as a test, carve-out included, and the carve-out itself asserted
-  non-vacuous); `FILLABLE_INVENTORY_FIELDS` derived, not listed; digit-string
+  `HostSpec` field — a plain subset check with no exceptions, now that §4's
+  carve-out has retired; the guard as first written named the two exempt
+  fields AND asserted the exemption was still real, which is what made the
+  widening announce itself here rather than pass silently);
+  `FILLABLE_INVENTORY_FIELDS` derived, not listed; digit-string
   coercion on `site`/`rack`; `extra="forbid"`.
 - `tests/unit/inventory/test_resolve.py`: `resolve_host_entry` fill, the
   inline-forbidden error (parametrised over every supplied field, including a
@@ -1146,13 +1151,16 @@ and the doctor would then point at any lab file still stating it inline.
 
 ## 21. Open questions
 
-- **Should `hw_version` and `sw_version` move to the base `HostSpec`?** They
-  are declared on `UnixHostSpec` only, so the §4 carve-out exists: a record
-  may state them, but only an entry whose own spec declares them can receive
-  them, and an embedded entry handed one fails validation naming the key.
-  Widening them to the base would restore a clean 1:1 rule with no carve-out
-  and would let an embedded host's declared versions come from the inventory
-  — at the cost of two more fields on every host family that has no use for
-  them, and a `lab-config.md` row each. Left as it shipped; the carve-out is
-  named in one place (§4) rather than spread, so widening later is a
-  contained change.
+- **~~Should `hw_version` and `sw_version` move to the base `HostSpec`?~~**
+  **Answered: yes.** They are base fields now, and §4's carve-out is gone. The
+  cost the question weighed — two more fields on a family with no use for them
+  — was mispriced: an embedded target has a firmware version as surely as a
+  Unix box has a distro one, and `ZephyrHost` was already the odd class out
+  for lacking the attribute its siblings had. Both are declared beside
+  `os_version` on `HostSpec` and on `RemoteHost`'s shared runtime contract,
+  with real dataclass fields on `EmbeddedHost` (the drift guard
+  `test_host_spec_fields_match_runtime_init` is bidirectional and would
+  otherwise refuse the widening). They remain otto's own vocabulary rather
+  than native inventory facts: neither joins any backend's default `supplies`,
+  so an inventory hands them over only where a deployment maps a custom field
+  — exactly `os_version`'s status, which is the precedent this follows.
