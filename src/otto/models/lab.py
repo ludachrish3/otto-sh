@@ -62,13 +62,18 @@ class ElementKey:
 
     @override
     def __str__(self) -> str:
-        """Render as ``('dut', 1)`` — the pair users see in the file.
+        """Render as ``bb1350`` when there is no repeat ``id``, else ``('dut', 1)``.
 
         Error messages name an element by this (``f"duplicate element {key}"``),
         not by ``repr``: the dataclass repr leaks a type name the ``lab.json``
-        author never typed, while the pair is exactly the ``name`` / ``id``
-        they wrote.
+        author never typed. Most elements have no repeat ``id`` — the common
+        case — so the pair would show a bare ``None`` (``('bb1350', None)``),
+        which reads as a bug rather than as identity; the bare name is exactly
+        what the author wrote in that case, just as the pair is when an ``id``
+        is present.
         """
+        if self.id is None:
+            return self.name
         return f"({self.name!r}, {self.id!r})"
 
 

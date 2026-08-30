@@ -31,8 +31,11 @@ def test_shared_element_with_disjoint_resources_warns() -> None:
     assert "'unix'" in w
     # The element is named by its KEY, not its name: two same-named elements
     # with different ids are two elements, and a name-only rendering would
-    # print one of them twice with nothing to tell them apart.
-    assert "('test1', None)" in w
+    # print one of them twice with nothing to tell them apart. Pinned to the
+    # exact list repr `['test1']`, not a bare `"test1" in w` substring check —
+    # that would also pass against the pre-fix `["('test1', None)"]`
+    # rendering, since "test1" is a substring of it too.
+    assert "['test1']" in w
     assert "disjoint" in w
 
 
@@ -171,7 +174,7 @@ def test_one_unprotected_host_leaves_the_element_unprotected() -> None:
     hosts = [{**_H[0], "resources": ["s1"]}, {**_H[0], "ip": "10.0.0.2"}]
     docs = [("lab.json", _DISJOINT, [_el_r("test1", ["unix", "busybox"], hosts=hosts)])]
     (w,) = lab_warnings(docs)
-    assert "('test1', None)" in w
+    assert "['test1']" in w
     assert "no element- or host-level resource protects" in w
 
 
@@ -187,7 +190,7 @@ def test_warning_names_only_the_unprotected_shared_elements() -> None:
         )
     ]
     (w,) = lab_warnings(docs)
-    assert "[\"('open', None)\"]" in w
+    assert "['open']" in w
     assert "safe" not in w
 
 

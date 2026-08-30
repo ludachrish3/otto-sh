@@ -115,7 +115,7 @@ def test_duplicate_element_across_files_of_one_source_errors(tmp_path: Path) -> 
     write_lab_json(tmp_path / "one.json", [HOST], declare_labs=False)
     write_lab_json(tmp_path / "two.json", [dict(HOST, ip="10.0.0.9")], declare_labs=False)
     repo = JsonFileLabRepository([tmp_path / "*.json"])
-    with pytest.raises(LabRepositoryError, match=r"\('alt1', None\).*one\.json.*two\.json"):
+    with pytest.raises(LabRepositoryError, match=r"element alt1 in .*one\.json.*two\.json"):
         repo.load_lab("veg")
 
 

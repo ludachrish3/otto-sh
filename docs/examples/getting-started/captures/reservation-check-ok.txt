@@ -1,11 +1,11 @@
 $ otto --lab busybox --as-user chris reservation check
-  reservations required by lab busybox for chris (5   
-                   host(s) in play)                   
-╭────────────────┬─────────┬──────────────────┬──────╮
-│ resource       │ level   │ owner            │ held │
-├────────────────┼─────────┼──────────────────┼──────┤
-│ bb-bench       │ lab     │ busybox          │ yes  │
-│ bb1350-chassis │ element │ ('bb1350', None) │ yes  │
-│ bb1350-slot    │ host    │ bb1350_qemu      │ yes  │
-╰────────────────┴─────────┴──────────────────┴──────╯
+reservations required by lab busybox for chris (5
+                host(s) in play)                 
+╭────────────────┬─────────┬─────────────┬──────╮
+│ resource       │ level   │ owner       │ held │
+├────────────────┼─────────┼─────────────┼──────┤
+│ bb-bench       │ lab     │ busybox     │ yes  │
+│ bb1350-chassis │ element │ bb1350      │ yes  │
+│ bb1350-slot    │ host    │ bb1350_qemu │ yes  │
+╰────────────────┴─────────┴─────────────┴──────╯
 OK — all required resources are reserved.

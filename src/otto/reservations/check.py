@@ -198,7 +198,8 @@ def required_resource_origins(
             element = getattr(host, "element", None)
             # ``not element``, not ``is None``: an empty name is no more of an
             # identity than a missing one, and it would render the owner as
-            # ``('', None)`` — the plausible-looking output this raise exists
+            # ``''`` — invisible, not even the ``('', None)`` a reader might
+            # catch as broken — which is exactly the output this raise exists
             # to prevent. A factory-built host cannot reach either (the spec
             # validator refuses a name that slugs to nothing).
             if not element:

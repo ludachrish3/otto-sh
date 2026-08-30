@@ -1,14 +1,14 @@
 $ otto --lab busybox --as-user alice reservation check
-  reservations required by lab busybox for alice (5   
-                   host(s) in play)                   
-╭────────────────┬─────────┬──────────────────┬──────╮
-│ resource       │ level   │ owner            │ held │
-├────────────────┼─────────┼──────────────────┼──────┤
-│ bb-bench       │ lab     │ busybox          │ no   │
-│ bb1350-chassis │ element │ ('bb1350', None) │ no   │
-│ bb1350-slot    │ host    │ bb1350_qemu      │ no   │
-╰────────────────┴─────────┴──────────────────┴──────╯
+reservations required by lab busybox for alice (5
+                host(s) in play)                 
+╭────────────────┬─────────┬─────────────┬──────╮
+│ resource       │ level   │ owner       │ held │
+├────────────────┼─────────┼─────────────┼──────┤
+│ bb-bench       │ lab     │ busybox     │ no   │
+│ bb1350-chassis │ element │ bb1350      │ no   │
+│ bb1350-slot    │ host    │ bb1350_qemu │ no   │
+╰────────────────┴─────────┴─────────────┴──────╯
 User 'alice' does not hold all resources required by lab 'busybox'. Missing:
   bb-bench        lab busybox  (held by: chris)
-  bb1350-chassis  element ('bb1350', None)  (held by: chris)
+  bb1350-chassis  element bb1350  (held by: chris)
   bb1350-slot     host bb1350_qemu  (held by: chris)

@@ -133,7 +133,7 @@ def test_duplicate_id_across_lab_files_keeps_the_first_record(tmp_path):
     addressing, so enumeration must not silently prefer the later file.
 
     The two records are DISTINCT elements — ``('dup', 1)`` with board ``seed``
-    and ``('dup1', None)`` with board ``seed``, both ``dup1_seed`` — because
+    and ``dup1`` with board ``seed``, both ``dup1_seed`` — because
     that is the only v2 route to one id from two files of one source: the same
     element in two files is a duplicate-element error before enumeration ever
     reaches the ids (spec §2.4).

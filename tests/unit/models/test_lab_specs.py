@@ -68,6 +68,15 @@ def test_element_key_is_a_hashable_value_so_a_later_source_replaces_an_earlier_o
     assert ElementKey("dut", 3) != ElementKey("dut", None)
 
 
+def test_element_key_str_is_bare_name_without_an_id_and_a_pair_with_one() -> None:
+    """A key without a repeat ``id`` (the common case) renders as its bare name, not
+    ``('bb1350', None)`` — the ``None`` reads as a bug in user-facing output (the
+    ``owner`` column, doctor warnings, composite-lab messages).
+    """
+    assert str(ElementKey("bb1350")) == "bb1350"
+    assert str(ElementKey("dut", 1)) == "('dut', 1)"
+
+
 def test_flatten_does_not_alias_the_entry() -> None:
     el = ElementSpec.model_validate({"name": "a", "labs": ["l"], "hosts": [_HOST]})
     el.flatten()[0]["ip"] = "changed"

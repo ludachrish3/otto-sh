@@ -180,7 +180,7 @@ def _slot_host(fixture_id: str, host_id: str, resource: str):
     plain dataclass fields, the same shape
     ``tests/unit/reservations/test_check.py:_three_level_lab`` uses. The
     element is left with ``element_id=None`` so the rendered owner is
-    ``('chassis', None)``, which is the origin the table has to show.
+    ``chassis``, which is the origin the table has to show.
     """
     from tests.conftest import make_host
 
@@ -279,7 +279,7 @@ def test_check_prints_the_requirement_table_before_the_verdict(capsys, monkeypat
     assert "level" in out
     assert "owner" in out
     assert "held" in out
-    assert _table_row(out, "chassis-1", "element", "('chassis', None)", "yes")
+    assert _table_row(out, "chassis-1", "element", "│ chassis  │", "yes")
     assert _table_row(out, "slot-1", "host", "chassis1", "yes")
     # The title's IDENTITY half, not just its count: a table that named the
     # wrong lab or the wrong user would still be a correct-looking table.

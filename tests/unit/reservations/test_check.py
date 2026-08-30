@@ -222,8 +222,8 @@ def test_missing_error_names_each_origin_and_holder():
 
 def test_a_host_with_element_resources_but_no_element_identity_is_a_loud_error():
     """A RemoteHost with a non-empty ``element_resources`` but no ``element`` is a
-    loader invariant violation — must fail loud, not render a plausible-looking
-    ``('', None)`` owner (the pre-fix behavior)."""
+    loader invariant violation — must fail loud, not render an empty-string
+    owner that looks like a real one (the pre-fix ``('', None)`` behavior)."""
     host = make_host("test1")
     host.element_resources = frozenset({"chassis-1"})
     del host.element
@@ -233,14 +233,14 @@ def test_a_host_with_element_resources_but_no_element_identity_is_a_loud_error()
 
 
 def test_an_empty_element_name_is_no_more_of_an_identity_than_a_missing_one():
-    """``element=""`` must raise, not render the ``('', None)`` owner R17 forbids.
+    """``element=""`` must raise, not render the empty-string owner R17 forbids.
 
     The absent attribute and the blank one are the same loader break, and the
     blank one is the likelier of the two to reach a user: it renders a row that
     looks like a real element and names nothing.
 
     Red at HEAD (``if element is None``): no raise, and the owner rendered as
-    ``('', None)``.
+    ``''`` — blank, not even the ``('', None)`` a reader might catch as broken.
     """
     host = make_host("test1")
     host.element_resources = frozenset({"chassis-1"})
@@ -290,9 +290,9 @@ def test_message_padding_aligns_the_level_column_for_different_length_resources(
     assert "  much-longer-name  lab test_lab  (held by: nobody)" in lines
 
 
-def test_a_single_instance_element_renders_its_id_as_none():
+def test_a_single_instance_element_renders_its_bare_name():
     gw = make_host("test3")
     gw.id, gw.element, gw.element_id = "gw", "gw", None
     gw.element_resources = frozenset({"gw-lock"})
     lab = Lab(name="rig", hosts={"gw": gw})
-    assert ResourceOrigin("gw-lock", "element", "('gw', None)") in required_resource_origins(lab)
+    assert ResourceOrigin("gw-lock", "element", "gw") in required_resource_origins(lab)
