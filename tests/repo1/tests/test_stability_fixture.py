@@ -39,7 +39,7 @@ class _Options(RepoOptions):
 
 
 @pytest.mark.asyncio(loop_scope="class")
-class TestStabilityFixture(OttoSuite[_Options]):
+class TestStabilityFixture(OttoSuite):
     """Verify SSH connections survive across stability iterations."""
 
     _host: ClassVar[UnixHost]

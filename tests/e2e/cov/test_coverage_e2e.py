@@ -575,8 +575,8 @@ def suite_run_exit_code(tmp_path_factory):
 
     Verifies the real ``otto test`` invocation path (``run_suite``),
     catching class-lifecycle issues (e.g. missing event loops in
-    ``setup_class``) that direct-call e2e tests would miss. Pinned to the
-    same xdist group as the rest of this file so it doesn't race on VMs.
+    class-scoped fixtures) that direct-call e2e tests would miss. Pinned to
+    the same xdist group as the rest of this file so it doesn't race on VMs.
     """
     tmp_dir = tmp_path_factory.mktemp("suite_runner")
     xdir = tmp_dir / "xdir"
@@ -597,8 +597,8 @@ class TestSuiteRunnerIntegration:
     """Verify that TestCoverageProduct passes when run via ``otto test``.
 
     Mirrors the real ``otto test`` invocation path and catches
-    class-lifecycle issues (e.g. missing event loops in ``setup_class``)
-    that direct-call e2e tests would miss.
+    class-lifecycle issues (e.g. missing event loops in class-scoped
+    fixtures) that direct-call e2e tests would miss.
     """
 
     def test_suite_exits_successfully(self, suite_run_exit_code):

@@ -126,10 +126,11 @@ def test_suite_runner_exit_code_rides_the_renderer_silently():
     reported everything the user needs. The no-typer.Exit half is the
     ``typer-exit-outside-cli`` rule's job, not this test's.
     """
+    from otto.suite import OttoSuite
     from otto.suite.register import SUITES, register_suite_class
     from otto.suite.run import SuiteRunResult
 
-    class _SuiteRcFive:
+    class _SuiteRcFive(OttoSuite):
         pass
 
     register_suite_class(_SuiteRcFive)

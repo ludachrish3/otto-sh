@@ -89,6 +89,7 @@ from otto import options
 from otto.cli.test import suite_app
 from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
+from otto.suite import OttoSuite
 from otto.suite.register import register_suite_class
 
 
@@ -135,7 +136,7 @@ def _stub_cli_bootstrap(monkeypatch):
 
 
 def test_suite_pydantic_options_reject_bad_value(monkeypatch):
-    class _ValSuite:
+    class _ValSuite(OttoSuite):
         @options
         class Options:
             count: Annotated[int, typer.Option(help="positive count")] = pydantic.Field(
@@ -154,7 +155,7 @@ def test_suite_pydantic_options_reject_bad_value(monkeypatch):
 def test_suite_pydantic_options_accept_good_value(monkeypatch):
     seen: dict = {}
 
-    class _OkSuite:
+    class _OkSuite(OttoSuite):
         @options
         class Options:
             count: Annotated[int, typer.Option(help="positive count")] = pydantic.Field(
@@ -179,7 +180,7 @@ def test_suite_field_default_used_when_flag_omitted(monkeypatch):
     """
     seen: dict = {}
 
-    class _DefSuite:
+    class _DefSuite(OttoSuite):
         @options
         class Options:
             count: Annotated[int, typer.Option()] = pydantic.Field(default=7, ge=0)
@@ -201,7 +202,7 @@ def test_suite_plain_dataclass_options_still_work(monkeypatch):
 
     seen: dict = {}
 
-    class _PlainSuite:
+    class _PlainSuite(OttoSuite):
         @dataclass
         class Options:
             label: Annotated[str, typer.Option()] = "x"

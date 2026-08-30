@@ -66,3 +66,23 @@ class TestExpectCollector:
         expect(2 + 2 == 5, "via module fn", collector=c)
         assert len(c.failures) == 1
         assert "via module fn" in c.failures[0]
+
+
+# ── the callable form: ``expect(cond, msg)`` (spec §5.4) ─────────────────────
+
+
+def test_call_records_like_expect_and_points_at_the_caller() -> None:
+    collector = ExpectCollector()
+    answer = 41
+    collector(answer == 42, "off by one")
+    assert len(collector.failures) == 1
+    report = collector.failures[0]
+    assert "Message: off by one" in report
+    assert "answer = 41" in report, report  # the CALLER's locals, not __call__'s
+    assert 'collector(answer == 42, "off by one")' in report
+
+
+def test_call_with_a_truthy_condition_records_nothing() -> None:
+    collector = ExpectCollector()
+    collector(True)
+    assert collector.failures == []

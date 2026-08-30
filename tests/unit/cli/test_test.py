@@ -26,6 +26,7 @@ from typer.testing import CliRunner
 
 from otto.cli.test import suite_app
 from otto.context import get_context
+from otto.suite import OttoSuite
 from otto.suite.register import SUITES, register_suite_class
 from tests._fixtures.gitrepo import TmpGitRepo
 
@@ -80,7 +81,7 @@ class TestTestHelp:
     def test_suite_help_shows_options(self):
         """Otto test <SuiteName> --help must list suite-specific options."""
 
-        class _HelpSuite:
+        class _HelpSuite(OttoSuite):
             @dataclass
             class Options:
                 firmware: Annotated[str, typer.Option()] = "latest"
@@ -117,7 +118,7 @@ class TestTestHelp:
     def test_suite_help_omits_runner_options(self):
         """Runner options must NOT appear in the per-suite ``--help`` output."""
 
-        class _SuiteNoRunnerOpts:
+        class _SuiteNoRunnerOpts(OttoSuite):
             pass
 
         register_suite_class(_SuiteNoRunnerOpts)
@@ -144,7 +145,7 @@ class TestTestCallback:
         """
         from otto.cli.main import app
 
-        class _CallbackSuite:
+        class _CallbackSuite(OttoSuite):
             pass
 
         register_suite_class(_CallbackSuite)
@@ -217,7 +218,7 @@ class TestTypeEnforcement:
     def test_invalid_int_rejected_by_typer(self):
         """Passing a non-integer to an int option must fail at CLI level."""
 
-        class _TypeSuite:
+        class _TypeSuite(OttoSuite):
             @dataclass
             class Options:
                 count: Annotated[int, typer.Option()] = 1
@@ -231,7 +232,7 @@ class TestTypeEnforcement:
     def test_invalid_iterations_rejected(self):
         """--iterations lives on the parent; bad values must still reject."""
 
-        class _IterSuite:
+        class _IterSuite(OttoSuite):
             pass
 
         register_suite_class(_IterSuite)
@@ -241,7 +242,7 @@ class TestTypeEnforcement:
         assert result.exit_code != 0
 
     def test_defaults_applied_when_omitted(self):
-        class _DefaultSuite:
+        class _DefaultSuite(OttoSuite):
             @dataclass
             class Options:
                 max_retries: Annotated[int, typer.Option()] = 9
@@ -273,7 +274,7 @@ class TestHelpContent:
     def test_annotated_help_in_cli_output(self):
         """A field annotated with typer.Option(help=...) shows that text in --help."""
 
-        class _AnnotatedHelpSuite:
+        class _AnnotatedHelpSuite(OttoSuite):
             @dataclass
             class Options:
                 device_type: Annotated[
@@ -294,7 +295,7 @@ class TestHelpContent:
     def test_no_help_when_option_has_none(self):
         """A bare typer.Option() with no help= produces no help text in --help."""
 
-        class _BareHelpSuite:
+        class _BareHelpSuite(OttoSuite):
             @dataclass
             class Options:
                 firmware: Annotated[str, typer.Option()] = "latest"
@@ -318,7 +319,7 @@ class TestHelpContent:
                 ),
             ] = "router"
 
-        class _InheritedHelpSuite:
+        class _InheritedHelpSuite(OttoSuite):
             @dataclass
             class Options(_InheritedParentOpts):
                 firmware: Annotated[
@@ -379,7 +380,7 @@ class TestParentRunnerOptionsCtx:
         return captured
 
     def test_iterations_forwarded_via_ctx(self):
-        class _CtxIterSuite:
+        class _CtxIterSuite(OttoSuite):
             pass
 
         register_suite_class(_CtxIterSuite)
@@ -388,7 +389,7 @@ class TestParentRunnerOptionsCtx:
         assert ctx_obj.get("iterations") == 5
 
     def test_markers_forwarded_via_ctx(self):
-        class _CtxMarkSuite:
+        class _CtxMarkSuite(OttoSuite):
             pass
 
         register_suite_class(_CtxMarkSuite)
@@ -400,7 +401,7 @@ class TestParentRunnerOptionsCtx:
         assert ctx_obj.get("markers") == "not integration"
 
     def test_defaults_when_omitted(self):
-        class _CtxDefSuite:
+        class _CtxDefSuite(OttoSuite):
             pass
 
         register_suite_class(_CtxDefSuite)
@@ -418,7 +419,7 @@ class TestParentRunnerOptionsCtx:
         assert ctx_obj.get("monitor_hosts") is None
 
     def test_monitor_flag_forwarded_via_ctx(self):
-        class _CtxMonSuite:
+        class _CtxMonSuite(OttoSuite):
             pass
 
         register_suite_class(_CtxMonSuite)
@@ -427,7 +428,7 @@ class TestParentRunnerOptionsCtx:
         assert ctx_obj.get("monitor") is True
 
     def test_monitor_options_forwarded_via_ctx(self, tmp_path):
-        class _CtxMonOptSuite:
+        class _CtxMonOptSuite(OttoSuite):
             pass
 
         register_suite_class(_CtxMonOptSuite)
@@ -453,7 +454,7 @@ class TestParentRunnerOptionsCtx:
     def test_monitor_implied_by_output_or_hosts(self):
         """--monitor-output or --monitor-hosts alone should imply --monitor."""
 
-        class _CtxMonImplSuite:
+        class _CtxMonImplSuite(OttoSuite):
             pass
 
         register_suite_class(_CtxMonImplSuite)
@@ -467,7 +468,7 @@ class TestParentRunnerOptionsCtx:
 
 # Register a single suite once at module import; every --cov-dir test
 # reuses it, varying only the CLI args it's invoked with.
-class _CovCtxSuite:
+class _CovCtxSuite(OttoSuite):
     """Fixture suite used for exercising the cov/cov-dir callback plumbing."""
 
 

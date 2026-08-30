@@ -241,11 +241,11 @@ dry run core: no device was contacted — nothing was read and nothing was chang
 
 ## The lab-level verbs answer the same way
 
-`otto.project`'s verbs — what `otto run install` and the `ensure_*` fixtures
-call — compose the host verbs above, and inherit their answers. Two of them
-have an answer of their own, and both are reached from a *library* caller: the
-`otto run` group keeps the seam default, so `otto -n run cleanup` prints the
-block and runs no body at all, while a suite requesting `ensure_clean` calls
+`otto.project`'s verbs — what `otto run install` and the `ensure` marker's
+steps call — compose the host verbs above, and inherit their answers. Two of
+them have an answer of their own, and both are reached from a *library* caller:
+the `otto run` group keeps the seam default, so `otto -n run cleanup` prints the
+block and runs no body at all, while a suite marked `ensure("clean")` calls
 the converge directly.
 
 - `cleanup()` finishes with two lab-wide steps, and neither pretends to have

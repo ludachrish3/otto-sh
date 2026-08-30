@@ -312,6 +312,16 @@ class TestListMarkers:
         assert result.exit_code == 0
         assert "no markers configured" in result.stdout
 
+    def test_list_markers_includes_otto_builtins(self, tmp_path):
+        """`ensure` and `retry` are otto's, not the repo's — they get their own panel."""
+        sut = _make_sut(tmp_path)
+        with patch("otto.cli.test.get_repos", return_value=[Repo(sut_dir=sut)]):
+            result = runner.invoke(suite_app, ["--list-markers"])
+        assert result.exit_code == 0
+        assert "ensure(*steps)" in result.stdout
+        assert "retry(n)" in result.stdout
+        assert "otto (built in)" in result.stdout
+
 
 # ---------------------------------------------------------------------------
 # get_instructions_panel

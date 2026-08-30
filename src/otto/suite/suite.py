@@ -2,18 +2,14 @@
 
 import asyncio
 import contextlib
-import inspect
 import re
-from collections.abc import AsyncGenerator, Coroutine, Generator
+from collections.abc import AsyncGenerator, Coroutine
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 import pytest_asyncio
-
-from otto.context import get_context
 
 if TYPE_CHECKING:
     from otto.host.unix_host import UnixHost
@@ -25,9 +21,6 @@ if TYPE_CHECKING:
 
 logger = getLogger(__name__)
 
-TOptions = TypeVar("TOptions")
-"""Type variable for the options dataclass of an :class:`OttoSuite` subclass."""
-
 
 def _sanitize_node_name(name: str) -> str:
     """Replace filesystem-unsafe characters from parametrized test names.
@@ -37,7 +30,7 @@ def _sanitize_node_name(name: str) -> str:
     return re.sub(r'[\[\]/<>:"|?*\\]', "_", name)
 
 
-class OttoSuite(Generic[TOptions]):
+class OttoSuite:
     """Base class for otto test suites.
 
     Subclass this with a ``Test*``-prefixed name and it is automatically
@@ -48,24 +41,25 @@ class OttoSuite(Generic[TOptions]):
 
     Defining suite options
     ----------------------
-    Define a ``@dataclass`` before the suite class, annotate each field with
+    Define an options class before the suite, annotate each field with
     ``Annotated[T, typer.Option(help="...")]`` so the help text appears in
-    ``otto test <ClassName> --help``, then pass it as the generic argument::
+    ``otto test <ClassName> --help``, then assign it to the class attribute
+    ``Options`` — the one and only declaration::
 
-        from dataclasses import dataclass
         from typing import Annotated
 
         import typer
 
+        from otto import options
         from otto.suite import OttoSuite
 
-        @dataclass
+        @options
         class _Opts:
             device_type: Annotated[str, typer.Option(
                 help="Kind of device under test ('router', 'switch').",
             )] = "router"
 
-        class TestMyDevice(OttoSuite[_Opts]):
+        class TestMyDevice(OttoSuite):
             \"\"\"Validate device configuration.\"\"\"
             Options = _Opts
 
@@ -75,7 +69,7 @@ class OttoSuite(Generic[TOptions]):
     ``Options`` instance constructed from CLI arguments::
 
         async def test_device_reachable(self, suite_options: _Opts) -> None:
-            self.logger.info(f"Testing {suite_options.device_type}")
+            logger.info(f"Testing {suite_options.device_type}")
 
     Parametrized tests
     ------------------
@@ -83,10 +77,10 @@ class OttoSuite(Generic[TOptions]):
 
         @pytest.mark.parametrize("interface", ["eth0", "eth1", "mgmt0"])
         async def test_interface_up(self, interface: str) -> None:
-            self.logger.info(f"Checking {interface}")
+            logger.info(f"Checking {interface}")
             assert True
 
-    Each parameter combination gets its own ``testDir`` with a sanitized name.
+    Each parameter combination gets its own ``test_dir`` with a sanitized name.
 
     Using fixtures
     --------------
@@ -141,7 +135,7 @@ class OttoSuite(Generic[TOptions]):
             ] = Field(default=3, ge=0)
 
 
-        class TestDevice(OttoSuite[_Opts]):
+        class TestDevice(OttoSuite):
             Options = _Opts
 
     Both ``--lab-env`` and ``--retries`` appear in
@@ -155,13 +149,25 @@ class OttoSuite(Generic[TOptions]):
     the same repo-wide flags as ``otto test`` — see
     :func:`otto.cli.run.instruction`.
 
-    Built-in autouse fixtures
-    -------------------------
-    OttoSuite provides three autouse fixtures that run for every test:
+    What every suite gets
+    ---------------------
+    Under ``otto test`` a class's tests, its class-scoped fixtures and its
+    function-scoped fixtures share ONE event loop, so a host session opened
+    in a class fixture is live in every test. Otto's own autouse fixtures act
+    on every test — the ``ensure`` marker's converge path, a start banner,
+    monitor start/end events, connection release at class end under
+    ``--cov`` — and what a test needs it requests by name:
 
-    - ``_otto_log_test_start`` — logs a banner marking the start of each test
-    - ``_otto_test_dir`` — creates ``self.testDir`` with sanitized node name
-    - ``_otto_monitor_events`` — records monitor start/end events
+    - ``suite_options`` — the ``Options`` instance
+    - ``suite_dir`` / ``test_dir`` — artifact directories, created on request
+    - ``expect`` — non-fatal assertions that fail the test at the end
+    - ``ctx`` — the active :class:`~otto.context.OttoContext`
+
+    Nothing otto-specific lives on ``self``; log with a module-level
+    ``logging.getLogger(__name__)``. Suite-wide setup is a class-scoped,
+    autouse, ``@classmethod`` yield fixture; per-test setup a function-scoped
+    one. The full guide, including the mapping from ``setup_class`` and
+    friends, is ``docs/library/writing-suites.md``.
 
     Per-test timeouts are enforced by ``pytest-timeout`` (a runtime
     dependency). Apply ``@pytest.mark.timeout(seconds)`` to individual tests
@@ -172,6 +178,22 @@ class OttoSuite(Generic[TOptions]):
     #: drives session-wide collection.  Falls back to ``None`` so per-suite
     #: ``start_monitor()`` calls keep working unchanged.
     _session_monitor_collector: "MetricCollector | None" = None
+
+    Options: ClassVar[type[Any] | None] = None
+    """The suite's options class, or ``None`` for a suite with no options.
+
+    ``otto test <Suite> --help`` synthesizes its flags from this class and the
+    ``suite_options`` fixture hands tests an instance of it. Assign it on the
+    subclass; there is no other way to declare options.
+    """
+
+    # Per-test monitor state for start_monitor()/stop_monitor(): class-level
+    # defaults, so a fresh instance (pytest makes one per test) reads None
+    # until start_monitor assigns on the instance.
+    _monitor_collector: "MetricCollector | None" = None
+    _monitor_server: "MonitorServer | None" = None
+    _monitor_task: "asyncio.Task[None] | None" = None
+    _monitor_db: "MetricDB | None" = None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """Auto-register ``Test*``-named subclasses as ``otto test`` subcommands.
@@ -187,134 +209,11 @@ class OttoSuite(Generic[TOptions]):
 
             register_suite_class(cls)
 
-    def setup_method(self, method: object = None) -> None:  # noqa: ARG002 — required by pytest setup_method hook signature
-        """Initialise per-test instance attributes before each test method runs."""
-        output_dir = get_context().output_dir
-        if output_dir is None:
-            raise RuntimeError("output_dir is not set; create_output_dir must run before suite")
-        self.suiteDir = output_dir
-        """Base directory where all artifacts go for the suite"""
-
-        self.logger = logger
-        """Logger for writing test info to console and log file."""
-
-        self._expect_failures: list[str] = []
-        """Collected non-fatal expectation failures for the current test."""
-
-        self._monitor_collector: "MetricCollector | None" = None
-        self._monitor_server: "MonitorServer | None" = None
-        self._monitor_task: "asyncio.Task[None] | None" = None
-        self._monitor_db: "MetricDB | None" = None
-
     def _active_monitor_collector(self) -> "MetricCollector | None":
         """Return the per-suite collector if active, else the session-wide one."""
         if self._monitor_collector is not None:
             return self._monitor_collector
         return type(self)._session_monitor_collector  # noqa: SLF001 — intra-package read of OttoSuite class-level monitor collector via runtime type
-
-    def teardown_method(self, method: object = None) -> None:  # noqa: ARG002 — required by pytest teardown_method hook signature
-        """Override in subclasses to clean up after each test method (no-op in the base class)."""
-        logger.debug("Welcome to the base teardown_method() method")
-
-    @classmethod
-    def setup_class(cls) -> None:
-        """Set ``cls.testDir`` to the ``setupClass`` output sub-directory before the class runs."""
-        logger.debug("Welcome to the base setup_class() method")
-        output_dir = get_context().output_dir
-        if output_dir is None:
-            raise RuntimeError("output_dir is not set; create_output_dir must run before suite")
-        cls.testDir = output_dir / "setupClass"
-
-    @classmethod
-    def teardown_class(cls) -> None:
-        """Set ``cls.testDir`` to the ``teardownClass`` sub-directory after the class finishes."""
-        logger.debug("Welcome to the base teardown_class() method")
-        output_dir = get_context().output_dir
-        if output_dir is None:
-            raise RuntimeError("output_dir is not set; create_output_dir must run before suite")
-        cls.testDir = output_dir / "teardownClass"
-
-    # ── Expect (non-fatal assertions) ────────────────────────────────────
-
-    def expect(self, condition: object, msg: str | None = None) -> None:
-        """Record a non-fatal expectation.
-
-        Unlike ``assert``, a failing ``expect()`` does **not** stop the
-        test.  All failures are collected and reported together when the
-        test finishes — the test is marked failed only at that point.
-
-        Use ``assert`` for preconditions that must hold before the test
-        can continue (fatal).  Use ``expect()`` for checks where you want
-        to see *all* failures at once (non-fatal).
-
-        Args:
-            condition: Any truthy/falsy expression to evaluate.
-            msg: Optional human-friendly message printed alongside the
-                auto-captured source line and locals — not a replacement.
-
-        Examples:
-            Fatal vs non-fatal::
-
-                # Fatal — test stops here if command itself failed
-                assert result.status == Status.Success
-
-                # Non-fatal — records failure, test continues
-                self.expect("hostname" in result.value)
-                self.expect("interface" in result.value)
-                self.expect(result.retcode == 0, "unexpected retcode")
-
-            The failure report always includes the source location and
-            caller locals.  When *msg* is provided it appears *in addition
-            to* the auto-captured source context, never replacing it:
-
-            >>> from unittest.mock import MagicMock
-            >>> from otto.suite.suite import OttoSuite
-            >>> suite = OttoSuite()
-            >>> suite._expect_failures = []
-            >>> suite.logger = MagicMock()
-            >>> x = 42
-            >>> suite.expect(x == 99, "math is broken")
-            >>> report = suite._expect_failures[0]
-            >>> "Message: math is broken" in report
-            True
-            >>> "x = 42" in report
-            True
-
-        .. note::
-            The auto-captured source line and locals are best-effort.
-            Provide *msg* when the expression alone isn't self-explanatory.
-        """
-        if condition:
-            return
-
-        # Capture caller context for the failure message
-        frame_info = inspect.stack(context=1)[1]
-        filename = Path(frame_info.filename).name
-        lineno = frame_info.lineno
-        source_line = (frame_info.code_context or [""])[0].strip()
-
-        # Build a summary of the caller's local variables
-        caller_locals = frame_info.frame.f_locals
-        locals_summary = ", ".join(
-            f"{k} = {v!r}"
-            for k, v in caller_locals.items()
-            if not k.startswith("_") and k != "self"
-        )
-
-        # Assemble the failure report
-        header = f"{filename}:{lineno}"
-        parts = [header, f"  {source_line}"]
-        if msg:
-            parts.append(f"  Message: {msg}")
-        if locals_summary:
-            parts.append(f"  Locals: {locals_summary}")
-        report = "\n".join(parts)
-
-        self._expect_failures.append(report)
-        log_msg = f"[bold yellow]EXPECT FAILED[/bold yellow]  {header}\n  {source_line}"
-        if msg:
-            log_msg += f"\n  Message: {msg}"
-        self.logger.warning(log_msg)
 
     # ── Autouse fixtures ───────────────────────────────────────────────────
 
@@ -323,20 +222,6 @@ class OttoSuite(Generic[TOptions]):
         """Log a banner announcing the start of each test."""
         node = cast("pytest.Item", request.node)
         logger.info(f"[bold cyan]=== {node.name} ===[/bold cyan]")
-
-    @pytest.fixture(autouse=True)
-    def _otto_test_dir(self, request: pytest.FixtureRequest) -> Generator[None, None, None]:
-        """Create a per-test artifact directory with a sanitized node name."""
-        node_name = _sanitize_node_name(request.node.name)
-        logger.debug("_otto_test_dir: setting up testDir for %s", node_name)
-        self.testDir = self.suiteDir / "tests" / node_name
-        yield
-        if self._expect_failures:
-            summary = "\n\n".join(self._expect_failures)
-            pytest.fail(
-                f"{len(self._expect_failures)} expectation(s) failed:\n\n{summary}",
-                pytrace=False,
-            )
 
     @pytest.fixture(autouse=True)
     async def _otto_monitor_events(
@@ -369,14 +254,15 @@ class OttoSuite(Generic[TOptions]):
                 source="auto",
             )
 
-    @pytest_asyncio.fixture(autouse=True, scope="class", loop_scope="class")
+    @pytest_asyncio.fixture(autouse=True, scope="class")
+    @classmethod
     async def _otto_release_connections(
-        self, request: pytest.FixtureRequest
+        cls, request: pytest.FixtureRequest
     ) -> AsyncGenerator[None, None]:
         """Release host connections at class teardown during coverage runs.
 
         OttoSuites run each test class on its own event loop
-        (``loop_scope='class'``). A persistent shell session — and the single
+        (``otto.suite.run.ASYNCIO_LOOP_ARGS``). A persistent shell session — and the single
         socket of an RTOS telnet console — is bound to the loop that opened it.
         Under ``--cov`` the coverage collector runs *after* pytest on a separate
         ``asyncio.run`` loop (see ``otto.coverage.collect.collect_coverage``); a session
@@ -389,6 +275,8 @@ class OttoSuite(Generic[TOptions]):
 
         Scoped to ``--cov`` so ordinary runs keep their persistent sessions and
         pay no reconnect cost; outside coverage there is no cross-loop consumer.
+        A ``classmethod`` because pytest 9 deprecates class-scoped fixtures as
+        instance methods.
         """
         yield
         from .plugin import otto_cov_key

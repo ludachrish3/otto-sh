@@ -78,8 +78,8 @@ markers, reporting — and the plugin ({class}`~otto.suite.plugin.OttoPlugin`)
 layers on otto's concerns:
 
 - **Artifacts** — each test gets its own directory under the invocation's
-  output dir ({doc}`../utilities/logging`), exposed to the suite as
-  `testDir`.
+  output dir ({doc}`../utilities/logging`), requested by a test as the
+  `test_dir` fixture (`suite_dir` for the suite-wide one).
 - **Stability modes** — `--iterations` / `--duration` re-run tests via the
   runtest protocol and aggregate per-test pass rates, reporting `Unstable`
   rather than failing on the first flake.
@@ -121,9 +121,9 @@ disambiguation — is documented in {doc}`../../guide/cli/test/index`.
 
 ## Non-fatal assertions
 
-`self.expect(...)` records a failed expectation — with the captured source
+The `expect` fixture records a failed expectation — with the captured source
 line and locals — and *keeps the test running*; the accumulated failures
-raise one combined `AssertionError` at the end
+fail the test at the end of its body, in the call phase
 ({class}`~otto.suite.expect.ExpectCollector`). This exists because hardware
 tests are expensive to reach: when a board takes minutes to provision, "check
 everything, then fail with the full list" beats fail-fast.

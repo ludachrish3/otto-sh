@@ -94,9 +94,8 @@ brings. This script builds a collector for one host — which resolves that
 host's parser set exactly as the monitor does — polls it for a few ticks,
 and prints one line per series collected. `otto test --monitor`
 ({doc}`../guide/cli/monitor/during-tests`) is the same collector driven by
-the suite runner; on today's build it writes an export with no samples — a
-defect, not a limit of the technique — so this page drives the collector
-directly.
+the suite runner; this page drives the collector directly so the proof needs
+no suite.
 
 ```{literalinclude} ../examples/getting-started/collect_metrics.py
 :language: python

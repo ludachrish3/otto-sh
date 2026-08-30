@@ -222,8 +222,8 @@ def instruction(
         cmd_name = explicit_name or typer.main.get_command_name(func_name)
 
         # A repo may not claim a first-party name. Overriding lab behavior
-        # happens in ProjectActions -- which `otto run install` AND the
-        # ensure_installed fixture both route through -- so shadowing the
+        # happens in ProjectActions -- which `otto run install` AND an
+        # ensure("installed") marker both route through -- so shadowing the
         # instruction would move only the CLI half and let the two answer
         # differently. Refused BEFORE the register call below: otherwise the
         # repo's entry lands first and the collision surfaces (if at all) as

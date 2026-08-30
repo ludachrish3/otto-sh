@@ -11,6 +11,7 @@ from otto.host.login_proxy import Cred
 from otto.models import MetricPoint
 from otto.monitor.collector import MetricCollector
 from otto.suite.plugin import OttoPlugin
+from otto.suite.run import ASYNCIO_LOOP_ARGS
 
 pytest_plugins = ["pytester"]
 
@@ -141,16 +142,15 @@ def test_one():
 
 _INNER_ARGS = (
     # A nested in-process session: pytest-playwright's session-wide call
-    # wrapper rejects re-entry, and the outer suite's `filterwarnings=error`
-    # turns pytest-asyncio's unset-loop-scope deprecation into an
-    # INTERNALERROR at inner configure. Same overrides as
+    # wrapper rejects re-entry, so `-p no:playwright` disables it. The inner
+    # session runs with otto test's own loop-scope args (ASYNCIO_LOOP_ARGS),
+    # not a stand-in, so it measures the real contract. Same overrides as
     # test_options_plugin.py's inner runs.
     "-p",
     "no:cacheprovider",
     "-p",
     "no:playwright",
-    "-o",
-    "asyncio_default_fixture_loop_scope=function",
+    *ASYNCIO_LOOP_ARGS,
     # The warning below is the ARTIFACT under test, so the inner session has to
     # print it: pytest holds captured logs back unless a test fails.
     "-o",
@@ -544,19 +544,16 @@ async def test_class_monitor_task_runs_on_class_loop_collecting_metrics():
 # ── End-to-end: monitor with class-scoped-loop tests writes metrics to JSON ─
 
 
-def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
-    """Run an embedded pytest session that mirrors the original bug shape.
+def test_e2e_monitor_collects_metrics_for_an_unmarked_suite(tmp_path):
+    """Defect #1 (spec §3.4): `otto test --monitor` wrote an export with no metrics.
 
-    Simulates the user's failing setup:
-      * ``OttoPlugin`` configured with ``--monitor`` and a JSON output path.
-      * A test class using ``@pytest.mark.asyncio(loop_scope="class")`` so its
-        tests run on a class-scoped event loop, NOT the session loop.
-
-    The patched ``collector.run()`` ticks every 10ms and writes synthetic
-    metrics into ``_series``. Pre-fix this task was created on the session
-    loop (dormant during class-scoped tests) and never ticked — exported
-    JSON had empty ``metrics``. Post-fix the task is created on the class
-    loop and ticks freely while the test runs.
+    ``_otto_class_monitor_task`` drives ``collector.run()`` on the CLASS loop;
+    before ASYNCIO_LOOP_ARGS every test ran on its own FUNCTION loop, so the
+    task never ticked while a test executed. The previous version of this test
+    stayed green by marking the suite ``@pytest.mark.asyncio(loop_scope="class")``
+    — which no real suite under ``otto test`` ever did. The suite below carries
+    NO marker; the session runs with the same loop-scope args ``otto test``
+    passes, and those args alone decide whether metrics land.
     """
     import asyncio
     import json
@@ -568,9 +565,7 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
     suite_path.write_text(
         textwrap.dedent("""
         import asyncio
-        import pytest
 
-        @pytest.mark.asyncio(loop_scope="class")
         class TestClassLoopSuite:
             async def test_a(self):
                 # Yield repeatedly so whichever loop is hosting the run task
@@ -626,8 +621,7 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
                     "addopts=",
                     "-o",
                     "asyncio_mode=auto",
-                    "-o",
-                    "asyncio_default_fixture_loop_scope=function",
+                    *ASYNCIO_LOOP_ARGS,
                     str(suite_path),
                 ],
                 plugins=[plugin],

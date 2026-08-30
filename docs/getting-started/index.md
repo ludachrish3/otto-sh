@@ -147,6 +147,7 @@ A test suite is an {class}`~otto.suite.suite.OttoSuite` subclass with a
 Replace the scaffolded `tests/test_example.py` with:
 
 ```python
+import logging
 from typing import Annotated
 
 import typer
@@ -154,6 +155,8 @@ from pydantic import Field
 
 from otto import options
 from otto.suite import OttoSuite
+
+logger = logging.getLogger(__name__)
 
 
 @options
@@ -165,13 +168,13 @@ class _Options:
     ] = Field(default=3, ge=0)
 
 
-class TestExample(OttoSuite[_Options]):
+class TestExample(OttoSuite):
     """Basic connectivity checks."""
 
     Options = _Options
 
     async def test_reachable(self, suite_options: _Options) -> None:
-        self.logger.info(f"firmware={suite_options.firmware}")
+        logger.info(f"firmware={suite_options.firmware}")
         assert True
 ```
 

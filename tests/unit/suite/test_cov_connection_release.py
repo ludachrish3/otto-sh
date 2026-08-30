@@ -29,8 +29,10 @@ def _request(cov: bool) -> MagicMock:
 
 
 async def _drive(request: MagicMock) -> None:
-    suite = OttoSuite.__new__(OttoSuite)  # bare instance; the fixture only needs request
-    gen = OttoSuite._otto_release_connections.__wrapped__(suite, request)
+    fixture_fn = OttoSuite._otto_release_connections.__wrapped__
+    # A classmethod fixture: the wrapped object may be the classmethod itself.
+    fixture_fn = getattr(fixture_fn, "__func__", fixture_fn)
+    gen = fixture_fn(OttoSuite, request)
     await gen.__anext__()  # setup → suspend at yield
     with contextlib.suppress(StopAsyncIteration):
         await gen.__anext__()  # resume → run teardown
@@ -64,3 +66,66 @@ async def test_release_connections_tolerates_close_errors():
     with patch("otto.config.all_hosts", return_value=[bad, good]):
         await _drive(_request(cov=True))  # must not raise
     good.close.assert_awaited_once()
+
+
+def test_release_fixture_is_a_classmethod_and_warns_nothing(tmp_path) -> None:
+    """Spec §5.6 / Appendix A.2: the instance-method form is deprecated in pytest 9.1.
+    Run a real inner session with that deprecation escalated to an error.
+
+    The suite requests ``suite_dir``/``test_dir`` so the session sets up BOTH
+    class-scoped fixtures this task owns — ``OttoSuite._otto_release_connections``
+    (autouse) and ``OttoOptionsPlugin.suite_dir``.
+
+    ``_otto_class_monitor_task`` is shadowed by a clean classmethod of the same
+    name: ``OttoPlugin``'s own copy is class-scoped AND an instance method, so
+    it trips this identical deprecation. pytest's check
+    (``resolve_fixture_function``) only asks whether the bound ``__self__`` is a
+    type, and a plugin OBJECT's method fails that just as a test class's does —
+    a pre-existing defect in ``otto/suite/plugin.py``, outside this task's
+    scope. Shadowing it keeps this test measuring OttoSuite's own fixtures
+    instead of erroring on somebody else's.
+    """
+    import sys
+
+    from otto.config.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context
+    from otto.suite.plugin import OttoPlugin
+    from otto.suite.pytest_plugin import OttoOptionsPlugin
+    from otto.suite.run import ASYNCIO_LOOP_ARGS
+
+    test_file = tmp_path / "test_nowarn.py"
+    test_file.write_text("""\
+import pytest_asyncio
+from otto.suite.suite import OttoSuite
+
+class TestNoWarn(OttoSuite):
+    @pytest_asyncio.fixture(scope="class", autouse=True)
+    @classmethod
+    async def _otto_class_monitor_task(cls):
+        yield
+
+    async def test_a(self, suite_dir, test_dir) -> None:
+        assert True
+""")
+    token = set_context(OttoContext(lab=Lab(name="_test_stub"), output_dir=tmp_path))
+    try:
+        exit_code = pytest.main(
+            [
+                str(test_file),
+                "-o",
+                "asyncio_mode=auto",
+                *ASYNCIO_LOOP_ARGS,
+                "--no-cov",
+                "--override-ini",
+                "addopts=",
+                "-p",
+                "no:playwright",
+                "-W",
+                "error::pytest.PytestRemovedIn10Warning",
+            ],
+            plugins=[OttoPlugin(), OttoOptionsPlugin(None)],
+        )
+    finally:
+        sys.modules.pop(test_file.stem, None)
+        reset_context(token)
+    assert exit_code == pytest.ExitCode.OK

@@ -513,7 +513,7 @@ class TestCollectCurrentCommands:
         class _AutoRegProbeOpts:
             retries: Annotated[int, typer.Option(help="n")] = 3
 
-        class TestAutoRegProbe(OttoSuite[_AutoRegProbeOpts]):
+        class TestAutoRegProbe(OttoSuite):
             Options = _AutoRegProbeOpts
 
             async def test_something(self) -> None: ...

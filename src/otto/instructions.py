@@ -59,7 +59,7 @@ FIRST_PARTY_INSTRUCTIONS: frozenset[str] = frozenset(
 A repo instruction may not take one -- :func:`otto.cli.run.instruction` refuses
 it while a repo's init modules are being imported. The sanctioned override is a
 :class:`~otto.project.actions.ProjectActions` subclass, which keeps
-``otto run install`` and the ``ensure_installed`` fixture on one code path.
+``otto run install`` and an ``ensure("installed")`` marker on one code path.
 
 Declared HERE rather than beside the instructions themselves so the guard can
 read it without importing them: the check runs inside the decorator, on every

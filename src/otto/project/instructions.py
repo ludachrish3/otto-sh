@@ -7,16 +7,16 @@ same decorator a repo uses, the same lifecycle bridge, the same generated
 repo's init runs, so every lab has them.
 
 NEVER AN OVERRIDE POINT. A repo customizes lab behavior by registering a
-:class:`~otto.project.actions.ProjectActions` subclass; these wrappers, the
-``ensure_*`` fixtures, and anything else that calls the orchestrator all pick
-that change up for free. A repo that tries to claim one of these names is
+:class:`~otto.project.actions.ProjectActions` subclass; these wrappers, a
+suite's ``ensure`` marker steps, and anything else that calls the orchestrator
+all pick that change up for free. A repo that tries to claim one of these names is
 refused at registration instead (:func:`otto.cli.run.instruction`), because two
 code paths to "install the lab" is exactly the split-brain the project layer
 exists to prevent.
 
 So every body below is dispatch and nothing else -- flag names in, orchestrator
 keywords out. A wrapper thick enough to have a bug of its own belongs in the
-orchestrator, where the fixtures reach it too.
+orchestrator, where the marker's steps reach it too.
 """
 
 from typing import TYPE_CHECKING, Annotated
@@ -111,8 +111,8 @@ async def install(
     produces a lab nobody can reason about.
 
     --ensure converges instead: the lab's current state is read and only the
-    missing work is done, which is what the ensure_installed fixture does
-    before a test session. --no-recover-partial then keeps a PARTIAL lab's
+    missing work is done, which is what a suite's ensure("installed") marker
+    does before a test. --no-recover-partial then keeps a PARTIAL lab's
     remnants in place rather than tearing them down first.
     """
     return await orchestrator.install(ensure=ensure, recover_partial=recover_partial)

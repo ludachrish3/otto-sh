@@ -638,8 +638,8 @@ def _unusable_scope_message(scope: "ProjectScope") -> str:
 def require_current_scope(scopes: "dict[str, ProjectScope]", current_repo_name: str) -> None:
     """Enforce D3 for the CURRENT repo: raise when its fleet of interest is unusable.
 
-    Call at project-layer entry (default instructions, ``ensure_*`` fixtures,
-    monitor fleet build) — not at context creation, so explicit
+    Call at project-layer entry (default instructions, a suite's ``ensure``
+    marker steps, monitor fleet build) — not at context creation, so explicit
     ``otto host <id> <verb>`` targeting still works when a declaration is
     wrong. Which repo is current (``bootstrap().repos[0]``, the driving
     project) is the caller's reading; this function is handed the name.

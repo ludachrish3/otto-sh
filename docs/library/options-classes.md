@@ -150,6 +150,7 @@ suite options class and an instruction options class that both inherit it.
 ### In a test suite
 
 ```python
+import logging
 from typing import Annotated
 
 import typer
@@ -158,17 +159,19 @@ from otto.suite import OttoSuite
 
 from my_shared.options import RepoOptions  # your base, listed in `init`
 
+logger = logging.getLogger(__name__)
+
 
 @options
 class _Options(RepoOptions):  # inherits --device-type, --lab-env, --retries
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
 
 
-class TestDevice(OttoSuite[_Options]):
+class TestDevice(OttoSuite):
     Options = _Options
 
     async def test_version(self, suite_options: _Options) -> None:
-        self.logger.info(f"device={suite_options.device_type} fw={suite_options.firmware}")
+        logger.info(f"device={suite_options.device_type} fw={suite_options.firmware}")
 ```
 
 `otto test TestDevice --help` shows `--device-type`, `--lab-env`, `--retries`,

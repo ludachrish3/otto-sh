@@ -1,15 +1,13 @@
 """
-Unit tests for ``otto.suite.suite``.
+Unit tests for ``otto.suite.suite`` and the fixtures otto hands every suite.
 
 Tests verify:
   - ``_sanitize_node_name`` replaces filesystem-unsafe characters
-  - The two autouse fixtures (``_otto_test_dir``,
-    ``_otto_monitor_events``) work correctly when split from the former
-    monolithic ``_test_lifecycle``
-  - ``@pytest.mark.parametrize`` produces distinct ``testDir`` per parameter
+  - ``suite_dir`` / ``test_dir`` land at ``<run>/<Suite>/<node>``, sanitized,
+    and exist only when requested
   - ``suite_options`` fixture injection works in test method parameters
-  - ``teardown_method`` is called after each test
-  - ``expect()`` records non-fatal failures without stopping execution
+  - nothing otto-specific lives on the suite instance; the xunit hooks are gone
+  - ``expect`` records non-fatal failures, fails the CALL phase, composes with retry
   - ``start_monitor(db_path=...)``/``stop_monitor()`` persist a real (not
     degraded) session archive
 """
@@ -37,6 +35,7 @@ from otto.monitor.db import MetricDB, read_sessions
 from otto.monitor.export import build_db_export
 from otto.suite.plugin import OttoPlugin
 from otto.suite.pytest_plugin import OttoOptionsPlugin
+from otto.suite.run import ASYNCIO_LOOP_ARGS
 from otto.suite.suite import OttoSuite, _sanitize_node_name
 
 # ── _sanitize_node_name ──────────────────────────────────────────────────────
@@ -65,8 +64,18 @@ class TestSanitizeNodeName:
 # ── Inner pytest session helpers ─────────────────────────────────────────────
 
 
-def _run_inner_pytest(test_file: Path, tmp_path: Path, options: object | None = None) -> int:
+def _run_inner_pytest(
+    test_file: Path,
+    tmp_path: Path,
+    options: object | None = None,
+    extra_plugins: tuple[object, ...] = (),
+) -> int:
     """Run an inner pytest session with OttoPlugin + OttoOptionsPlugin.
+
+    *extra_plugins* are registered alongside otto's own, so a caller that needs
+    to observe the inner session (e.g. ``_run_inner_recording``'s phase
+    recorder) gets the SAME session shape every other test here measures rather
+    than a second, drifting copy of the argument list.
 
     The inner session runs in-process via ``pytest.main()``, so it shares the
     interpreter (and ``sys.modules``) with the outer run. The callers all
@@ -105,8 +114,7 @@ def _run_inner_pytest(test_file: Path, tmp_path: Path, options: object | None = 
                 str(test_file),
                 "-o",
                 "asyncio_mode=auto",
-                "-o",
-                "asyncio_default_fixture_loop_scope=function",
+                *ASYNCIO_LOOP_ARGS,
                 "--no-cov",
                 "--override-ini",
                 "addopts=",
@@ -114,7 +122,7 @@ def _run_inner_pytest(test_file: Path, tmp_path: Path, options: object | None = 
                 "no:playwright",
                 "-x",
             ],
-            plugins=[OttoPlugin(), OttoOptionsPlugin(options)],
+            plugins=[OttoPlugin(), OttoOptionsPlugin(options), *extra_plugins],
         )
     finally:
         sys.modules.pop(test_file.stem, None)
@@ -125,18 +133,12 @@ def _run_inner_pytest(test_file: Path, tmp_path: Path, options: object | None = 
 # ── Autouse fixtures ─────────────────────────────────────────────────────────
 
 
-class TestOttoTestDir:
-    def test_test_dir_created_per_test(self, tmp_path: Path) -> None:
-        """Each test gets a unique testDir under suiteDir/tests/.
+class TestArtifactDirs:
+    def test_test_dir_is_per_test_under_the_suite_dir(self, tmp_path: Path) -> None:
+        """Spec §5.3: ``<run>/<Suite>/<node>``; each test its own; both exist when requested.
 
-        Both inner tests APPEND, and the assertions are set-shaped, because the
-        inner pytest run is ordered independently of this one: it inherits
-        pytest-randomly like any other run, so alpha-then-beta is a coin flip.
-        The original wrote with ``write_text`` in alpha and appended in beta,
-        which silently truncated beta's line whenever beta ran first — one line
-        instead of two, roughly half the time, and only under shuffle. What the
-        test is actually about is that the two directories differ and each is
-        named after its own test; neither claim needs an order.
+        Both inner tests APPEND and the assertions are set-shaped: the inner
+        run inherits pytest-randomly, so alpha-then-beta is a coin flip.
         """
         capture_file = tmp_path / "dirs.txt"
         test_file = tmp_path / "test_dirs.py"
@@ -147,24 +149,28 @@ from otto.suite.suite import OttoSuite
 CAPTURE = pathlib.Path({str(capture_file)!r})
 
 class TestDirs(OttoSuite):
-    async def test_alpha(self) -> None:
+    async def test_alpha(self, suite_dir, test_dir) -> None:
         with CAPTURE.open("a") as f:
-            f.write(str(self.testDir) + "\\n")
+            f.write(f"{{suite_dir}} {{test_dir}} {{test_dir.is_dir()}}\\n")
 
-    async def test_beta(self) -> None:
+    async def test_beta(self, suite_dir, test_dir) -> None:
         with CAPTURE.open("a") as f:
-            f.write(str(self.testDir) + "\\n")
+            f.write(f"{{suite_dir}} {{test_dir}} {{test_dir.is_dir()}}\\n")
 """)
         exit_code = _run_inner_pytest(test_file, tmp_path)
         assert exit_code == pytest.ExitCode.OK
-        lines = [line for line in capture_file.read_text().strip().split("\n") if line]
-        assert len(lines) == 2, f"expected one testDir per inner test, got {lines}"
-        assert lines[0] != lines[1], f"both inner tests shared a testDir: {lines}"
-        assert any("test_alpha" in line for line in lines), lines
-        assert any("test_beta" in line for line in lines), lines
+        rows = [line.split() for line in capture_file.read_text().strip().split("\n") if line]
+        assert len(rows) == 2, rows
+        suite_dirs = {row[0] for row in rows}
+        assert suite_dirs == {str(tmp_path / "TestDirs")}, suite_dirs
+        test_dirs = {row[1] for row in rows}
+        assert test_dirs == {
+            str(tmp_path / "TestDirs" / "test_alpha"),
+            str(tmp_path / "TestDirs" / "test_beta"),
+        }
+        assert all(row[2] == "True" for row in rows), rows
 
     def test_parametrized_names_sanitized(self, tmp_path: Path) -> None:
-        """Parametrized test names have brackets replaced in testDir."""
         capture_file = tmp_path / "param_dirs.txt"
         test_file = tmp_path / "test_param_dirs.py"
         test_file.write_text(f"""\
@@ -176,18 +182,49 @@ CAPTURE = pathlib.Path({str(capture_file)!r})
 
 class TestParamDirs(OttoSuite):
     @pytest.mark.parametrize("val", ["a", "b"])
-    async def test_param(self, val: str) -> None:
+    async def test_param(self, val: str, test_dir) -> None:
         with CAPTURE.open("a") as f:
-            f.write(str(self.testDir) + "\\n")
+            f.write(str(test_dir) + "\\n")
 """)
         exit_code = _run_inner_pytest(test_file, tmp_path)
         assert exit_code == pytest.ExitCode.OK
-        lines = [line for line in capture_file.read_text().strip().split("\n") if line]
-        assert len(lines) == 2
-        # Brackets should be sanitized
-        for line in lines:
-            assert "[" not in line
-            assert "]" not in line
+        lines = sorted(line for line in capture_file.read_text().strip().split("\n") if line)
+        assert lines == [
+            str(tmp_path / "TestParamDirs" / "test_param_a_"),
+            str(tmp_path / "TestParamDirs" / "test_param_b_"),
+        ]
+
+    def test_dirs_exist_only_when_requested(self, tmp_path: Path) -> None:
+        """Like ``tmp_path``: a test that never names ``test_dir`` leaves no directory.
+        Red if the plugin creates directories eagerly (an autouse mkdir)."""
+        test_file = tmp_path / "test_silent.py"
+        test_file.write_text("""\
+from otto.suite.suite import OttoSuite
+
+class TestSilent(OttoSuite):
+    async def test_quiet(self) -> None:
+        assert True
+""")
+        exit_code = _run_inner_pytest(test_file, tmp_path)
+        assert exit_code == pytest.ExitCode.OK
+        assert not (tmp_path / "TestSilent").exists()
+
+    def test_plain_function_gets_the_module_stem_as_its_suite_dir(self, tmp_path: Path) -> None:
+        capture_file = tmp_path / "plain.txt"
+        test_file = tmp_path / "test_plain_dirs.py"
+        test_file.write_text(f"""\
+import pathlib
+
+CAPTURE = pathlib.Path({str(capture_file)!r})
+
+async def test_plain(suite_dir, test_dir) -> None:
+    CAPTURE.write_text(f"{{suite_dir}} {{test_dir}}")
+""")
+        exit_code = _run_inner_pytest(test_file, tmp_path)
+        assert exit_code == pytest.ExitCode.OK
+        suite_dir, test_dir = capture_file.read_text().split()
+        assert suite_dir == str(tmp_path / "test_plain_dirs")
+        assert test_dir == str(tmp_path / "test_plain_dirs" / "test_plain")
 
 
 # ── suite_options fixture ────────────────────────────────────────────────────
@@ -233,36 +270,46 @@ class TestNoneOpts(OttoSuite):
         assert capture_file.read_text() == "None"
 
 
-# ── teardown_method ──────────────────────────────────────────────────────────
+# ── nothing otto-specific on the instance ────────────────────────────────────
 
 
-class TestTeardownMethod:
-    def test_teardown_method_called(self, tmp_path: Path) -> None:
-        """teardown_method() is called after each test."""
-        capture_file = tmp_path / "teardown.txt"
-        test_file = tmp_path / "test_teardown.py"
+class TestNothingOttoSpecificOnTheInstance:
+    """Spec §5.6/§10: the xunit hooks and the attributes they set are gone — loudly."""
+
+    def test_hooks_are_not_defined_on_the_base(self) -> None:
+        for name in (
+            "setup_method",
+            "teardown_method",
+            "setup_class",
+            "teardown_class",
+            "expect",
+        ):
+            assert name not in OttoSuite.__dict__, name
+
+    def test_a_live_instance_carries_no_otto_attributes(self, tmp_path: Path) -> None:
+        capture_file = tmp_path / "attrs.txt"
+        test_file = tmp_path / "test_attrs.py"
         test_file.write_text(f"""\
 import pathlib
 from otto.suite.suite import OttoSuite
 
 CAPTURE = pathlib.Path({str(capture_file)!r})
 
-class TestTeardown(OttoSuite):
-    def teardown_method(self, method=None) -> None:
-        with CAPTURE.open("a") as f:
-            f.write("torn_down\\n")
-
-    async def test_one(self) -> None:
-        assert True
-
-    async def test_two(self) -> None:
-        assert True
+class TestAttrs(OttoSuite):
+    async def test_probe(self) -> None:
+        gone = ("testDir", "suiteDir", "logger", "expect", "_expect_failures")
+        present = [n for n in gone if hasattr(self, n)]
+        CAPTURE.write_text(",".join(present))
 """)
         exit_code = _run_inner_pytest(test_file, tmp_path)
         assert exit_code == pytest.ExitCode.OK
-        lines = [line for line in capture_file.read_text().strip().split("\n") if line]
-        assert len(lines) == 2
-        assert all(line == "torn_down" for line in lines)
+        assert capture_file.read_text() == ""
+
+    def test_monitor_slots_default_to_none_on_the_class(self) -> None:
+        assert OttoSuite._monitor_collector is None
+        assert OttoSuite._monitor_server is None
+        assert OttoSuite._monitor_task is None
+        assert OttoSuite._monitor_db is None
 
 
 # ── Parametrize ──────────────────────────────────────────────────────────────
@@ -323,24 +370,38 @@ class TestParamOpts(OttoSuite):
 # ── expect() non-fatal assertions ───────────────────────────────────────────
 
 
+class _PhaseRecorder:
+    """Inner-session plugin: remembers (when, outcome) per test report."""
+
+    def __init__(self) -> None:
+        self.reports: list[tuple[str, str]] = []
+
+    def pytest_runtest_logreport(self, report) -> None:
+        self.reports.append((report.when, report.outcome))
+
+
+def _run_inner_recording(test_file: Path, tmp_path: Path) -> tuple[int, list[tuple[str, str]]]:
+    """``_run_inner_pytest`` plus a phase recorder registered alongside otto's plugins."""
+    recorder = _PhaseRecorder()
+    exit_code = _run_inner_pytest(test_file, tmp_path, extra_plugins=(recorder,))
+    return exit_code, recorder.reports
+
+
 class TestExpect:
     def test_passing_expect_does_not_fail(self, tmp_path: Path) -> None:
-        """A truthy expect() should not cause the test to fail."""
         test_file = tmp_path / "test_pass.py"
         test_file.write_text("""\
 from otto.suite.suite import OttoSuite
 
 class TestPass(OttoSuite):
-    async def test_ok(self) -> None:
-        self.expect(True)
-        self.expect(1 == 1)
-        self.expect("hello")
+    async def test_ok(self, expect) -> None:
+        expect(True)
+        expect(1 == 1)
+        expect("hello")
 """)
-        exit_code = _run_inner_pytest(test_file, tmp_path)
-        assert exit_code == pytest.ExitCode.OK
+        assert _run_inner_pytest(test_file, tmp_path) == pytest.ExitCode.OK
 
     def test_failing_expect_continues_execution(self, tmp_path: Path) -> None:
-        """A failing expect() does not stop the test; later code still runs."""
         capture_file = tmp_path / "continued.txt"
         test_file = tmp_path / "test_continue.py"
         test_file.write_text(f"""\
@@ -350,16 +411,48 @@ from otto.suite.suite import OttoSuite
 CAPTURE = pathlib.Path({str(capture_file)!r})
 
 class TestContinue(OttoSuite):
-    async def test_continues(self) -> None:
-        self.expect(False)
+    async def test_continues(self, expect) -> None:
+        expect(False)
         CAPTURE.write_text("reached")
+""")
+        assert _run_inner_pytest(test_file, tmp_path) == pytest.ExitCode.TESTS_FAILED
+        assert capture_file.read_text() == "reached"
+
+    def test_failures_fail_the_call_phase_not_teardown(self, tmp_path: Path) -> None:
+        """Spec §5.4: `1 failed`, in the CALL phase. Red if the summary is raised from a
+        fixture's teardown (today's shape: `passed` call + `failed` teardown)."""
+        test_file = tmp_path / "test_phase.py"
+        test_file.write_text("""\
+from otto.suite.suite import OttoSuite
+
+class TestPhase(OttoSuite):
+    async def test_soft(self, expect) -> None:
+        expect(False, "soft")
+""")
+        exit_code, reports = _run_inner_recording(test_file, tmp_path)
+        assert exit_code == pytest.ExitCode.TESTS_FAILED
+        assert ("call", "failed") in reports, reports
+        assert ("teardown", "failed") not in reports, reports
+        assert ("setup", "passed") in reports, reports
+
+    def test_a_hard_assert_in_the_body_wins(self, tmp_path: Path, capsys) -> None:
+        """The body's own AssertionError is the failure; the soft one was already logged."""
+        test_file = tmp_path / "test_hard.py"
+        test_file.write_text("""\
+from otto.suite.suite import OttoSuite
+
+class TestHard(OttoSuite):
+    async def test_hard(self, expect) -> None:
+        expect(False, "soft failure recorded")
+        raise AssertionError("hard failure wins")
 """)
         exit_code = _run_inner_pytest(test_file, tmp_path)
         assert exit_code == pytest.ExitCode.TESTS_FAILED
-        assert capture_file.read_text() == "reached"
+        out = capsys.readouterr().out
+        assert "hard failure wins" in out
+        assert "1 expectation(s) failed" not in out
 
     def test_multiple_failures_all_reported(self, tmp_path: Path) -> None:
-        """All failing expects appear in the final error message."""
         capture_file = tmp_path / "count.txt"
         test_file = tmp_path / "test_multi.py"
         test_file.write_text(f"""\
@@ -369,18 +462,16 @@ from otto.suite.suite import OttoSuite
 CAPTURE = pathlib.Path({str(capture_file)!r})
 
 class TestMulti(OttoSuite):
-    async def test_three_failures(self) -> None:
-        self.expect(False, "first")
-        self.expect(False, "second")
-        self.expect(False, "third")
-        CAPTURE.write_text(str(len(self._expect_failures)))
+    async def test_three_failures(self, expect) -> None:
+        expect(False, "first")
+        expect(False, "second")
+        expect(False, "third")
+        CAPTURE.write_text(str(len(expect.failures)))
 """)
-        exit_code = _run_inner_pytest(test_file, tmp_path)
-        assert exit_code == pytest.ExitCode.TESTS_FAILED
+        assert _run_inner_pytest(test_file, tmp_path) == pytest.ExitCode.TESTS_FAILED
         assert capture_file.read_text() == "3"
 
     def test_failure_includes_source_line(self, tmp_path: Path) -> None:
-        """The failure report includes the source filename and line."""
         capture_file = tmp_path / "report.txt"
         test_file = tmp_path / "test_source.py"
         test_file.write_text(f"""\
@@ -390,20 +481,18 @@ from otto.suite.suite import OttoSuite
 CAPTURE = pathlib.Path({str(capture_file)!r})
 
 class TestSource(OttoSuite):
-    async def test_source_info(self) -> None:
+    async def test_source_info(self, expect) -> None:
         x = 42
-        self.expect(x == 99)
-        CAPTURE.write_text(self._expect_failures[0])
+        expect(x == 99)
+        CAPTURE.write_text(expect.failures[0])
 """)
-        exit_code = _run_inner_pytest(test_file, tmp_path)
-        assert exit_code == pytest.ExitCode.TESTS_FAILED
+        assert _run_inner_pytest(test_file, tmp_path) == pytest.ExitCode.TESTS_FAILED
         report = capture_file.read_text()
         assert "test_source.py" in report
-        assert "self.expect(x == 99)" in report
+        assert "expect(x == 99)" in report
         assert "x = 42" in report
 
     def test_custom_msg_alongside_source(self, tmp_path: Path) -> None:
-        """A custom msg appears alongside (not instead of) source info."""
         capture_file = tmp_path / "msg.txt"
         test_file = tmp_path / "test_msg.py"
         test_file.write_text(f"""\
@@ -413,22 +502,18 @@ from otto.suite.suite import OttoSuite
 CAPTURE = pathlib.Path({str(capture_file)!r})
 
 class TestMsg(OttoSuite):
-    async def test_custom_msg(self) -> None:
+    async def test_custom_msg(self, expect) -> None:
         val = 42
-        self.expect(val == 99, "hostname missing from config")
-        CAPTURE.write_text(self._expect_failures[0])
+        expect(val == 99, "hostname missing from config")
+        CAPTURE.write_text(expect.failures[0])
 """)
-        exit_code = _run_inner_pytest(test_file, tmp_path)
-        assert exit_code == pytest.ExitCode.TESTS_FAILED
+        assert _run_inner_pytest(test_file, tmp_path) == pytest.ExitCode.TESTS_FAILED
         report = capture_file.read_text()
-        # msg is present
         assert "hostname missing from config" in report
-        # source info is also present (not replaced by msg)
-        assert "self.expect(val == 99" in report
+        assert "expect(val == 99" in report
         assert "val = 42" in report
 
     def test_mix_of_pass_and_fail(self, tmp_path: Path) -> None:
-        """Only failing expects are recorded; passing ones are ignored."""
         capture_file = tmp_path / "mix.txt"
         test_file = tmp_path / "test_mix.py"
         test_file.write_text(f"""\
@@ -438,20 +523,18 @@ from otto.suite.suite import OttoSuite
 CAPTURE = pathlib.Path({str(capture_file)!r})
 
 class TestMix(OttoSuite):
-    async def test_mixed(self) -> None:
-        self.expect(True)
-        self.expect(False, "one")
-        self.expect(True)
-        self.expect(False, "two")
-        self.expect(True)
-        CAPTURE.write_text(str(len(self._expect_failures)))
+    async def test_mixed(self, expect) -> None:
+        expect(True)
+        expect(False, "one")
+        expect(True)
+        expect(False, "two")
+        expect(True)
+        CAPTURE.write_text(str(len(expect.failures)))
 """)
-        exit_code = _run_inner_pytest(test_file, tmp_path)
-        assert exit_code == pytest.ExitCode.TESTS_FAILED
+        assert _run_inner_pytest(test_file, tmp_path) == pytest.ExitCode.TESTS_FAILED
         assert capture_file.read_text() == "2"
 
     def test_failures_reset_between_tests(self, tmp_path: Path) -> None:
-        """Each test starts with a fresh _expect_failures list."""
         capture_file = tmp_path / "reset.txt"
         test_file = tmp_path / "test_reset.py"
         test_file.write_text(f"""\
@@ -461,26 +544,58 @@ from otto.suite.suite import OttoSuite
 CAPTURE = pathlib.Path({str(capture_file)!r})
 
 class TestReset(OttoSuite):
-    async def test_first(self) -> None:
-        self.expect(True)
+    async def test_first(self, expect) -> None:
+        expect(True)
 
-    async def test_second(self) -> None:
+    async def test_second(self, expect) -> None:
         with CAPTURE.open("w") as f:
-            f.write(str(len(self._expect_failures)))
+            f.write(str(len(expect.failures)))
 """)
-        exit_code = _run_inner_pytest(test_file, tmp_path)
-        assert exit_code == pytest.ExitCode.OK
+        assert _run_inner_pytest(test_file, tmp_path) == pytest.ExitCode.OK
         assert capture_file.read_text() == "0"
+
+    def test_a_plain_function_may_use_expect(self, tmp_path: Path) -> None:
+        test_file = tmp_path / "test_plain_expect.py"
+        test_file.write_text("""\
+async def test_plain(expect) -> None:
+    expect(False, "plain function soft failure")
+""")
+        exit_code, reports = _run_inner_recording(test_file, tmp_path)
+        assert exit_code == pytest.ExitCode.TESTS_FAILED
+        assert ("call", "failed") in reports
+
+    def test_expect_composes_with_retry(self, tmp_path: Path) -> None:
+        """Spec §5.4 / ruling R2: the collector resets per attempt, so a retried body
+        whose second attempt is clean PASSES. Red if the check lives in
+        pytest_runtest_call (the retry never re-enters it) or the collector is not reset."""
+        counter = tmp_path / "attempts.txt"
+        test_file = tmp_path / "test_retry_expect.py"
+        test_file.write_text(f"""\
+import pathlib
+import pytest
+from otto.suite.suite import OttoSuite
+
+COUNTER = pathlib.Path({str(counter)!r})
+
+class TestRetryExpect(OttoSuite):
+    @pytest.mark.retry(2)
+    async def test_flaky_soft(self, expect) -> None:
+        attempts = int(COUNTER.read_text()) if COUNTER.exists() else 0
+        COUNTER.write_text(str(attempts + 1))
+        expect(attempts >= 1, "first attempt is soft-red")
+""")
+        exit_code, reports = _run_inner_recording(test_file, tmp_path)
+        assert counter.read_text() == "2"
+        assert exit_code == pytest.ExitCode.OK, reports
+        assert ("call", "passed") in reports
 
 
 # ── _active_monitor_collector accessor ─────────────────────────────────────────
 
 
 def _make_suite(tmp_path: Path):
-    """A bare, otherwise-unconfigured ``OttoSuite`` — the shared arrangement for
-    every test below that needs a suite instance with a settable
-    ``_monitor_collector`` but no other otto machinery (lab, host pool, ...).
-    """
+    """A bare ``OttoSuite`` subclass instance — no hooks exist to call any more; the
+    monitor slots are class-level ``None`` defaults."""
     from otto.suite.suite import OttoSuite
 
     class _Suite(OttoSuite):
@@ -489,11 +604,9 @@ def _make_suite(tmp_path: Path):
     ctx = OttoContext(lab=Lab(name="_test_stub"), output_dir=tmp_path)
     token = set_context(ctx)
     try:
-        s = _Suite()
-        s.setup_method()
+        return _Suite()
     finally:
         reset_context(token)
-    return s
 
 
 class TestActiveMonitorCollector:
@@ -642,20 +755,6 @@ async def _fake_collector_run(collector: MetricCollector, interval, duration=Non
     """
     await collector.init_db()
     await asyncio.Event().wait()
-
-
-def _make_suite(tmp_path: Path) -> OttoSuite:
-    class _Suite(OttoSuite):
-        pass
-
-    ctx = OttoContext(lab=Lab(name="_test_stub"), output_dir=tmp_path)
-    token = set_context(ctx)
-    try:
-        suite = _Suite()
-        suite.setup_method()
-    finally:
-        reset_context(token)
-    return suite
 
 
 class TestStartMonitorArchive:
@@ -832,3 +931,58 @@ class TestStartMonitorLiveSessionWiring:
                 assert session.end is None, "a live session is one whose end is still open"
             finally:
                 await suite.stop_monitor()
+
+
+# ── ctx at session scope; logger capture (spec §5.2, §5.5) ────────────────────
+
+
+def test_a_class_scoped_fixture_may_request_ctx(tmp_path: Path) -> None:
+    """Spec §5.2: ``ctx`` is session-scoped so suite-wide fixtures can take it.
+    Red at function scope (ScopeMismatch at setup)."""
+    capture_file = tmp_path / "ctx.txt"
+    test_file = tmp_path / "test_ctx_scope.py"
+    test_file.write_text(f"""\
+import pathlib
+import pytest
+from otto.suite.suite import OttoSuite
+
+CAPTURE = pathlib.Path({str(capture_file)!r})
+
+class TestCtxScope(OttoSuite):
+    @pytest.fixture(scope="class", autouse=True)
+    @classmethod
+    def uses_ctx(cls, ctx):
+        CAPTURE.write_text(ctx.lab.name)
+
+    async def test_ran(self) -> None:
+        assert True
+""")
+    assert _run_inner_pytest(test_file, tmp_path) == pytest.ExitCode.OK
+    assert capture_file.read_text() == "_test_stub"
+
+
+def test_collected_suite_modules_are_captured_into_ottos_logging(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Spec §5.5: after collection every item's top-level module name reaches
+    capture_external_loggers, so a suite's ``logging.getLogger(__name__)`` lands
+    in otto's sinks. Red if the collection hook is dropped."""
+    seen: list[set[str]] = []
+    monkeypatch.setattr(
+        "otto.logger.management.capture_external_loggers",
+        lambda prefixes: seen.append(set(prefixes)),
+    )
+    test_file = tmp_path / "test_logcap.py"
+    test_file.write_text("""\
+from otto.suite.suite import OttoSuite
+
+class TestLogCap(OttoSuite):
+    async def test_a(self) -> None:
+        assert True
+
+async def test_plain() -> None:
+    assert True
+""")
+    assert _run_inner_pytest(test_file, tmp_path) == pytest.ExitCode.OK
+    assert seen, "capture_external_loggers was never called after collection"
+    assert "test_logcap" in seen[0], seen

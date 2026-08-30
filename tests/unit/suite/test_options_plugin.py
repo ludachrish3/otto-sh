@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -26,6 +27,7 @@ from otto.context import OttoContext, reset_context, set_context
 from otto.errors import EnsureStateError
 from otto.result import CommandNotRunError, Result
 from otto.suite.plugin import OttoPlugin
+from otto.suite.run import ASYNCIO_LOOP_ARGS
 from otto.utils import Status
 
 pytest_plugins = ["pytester"]
@@ -40,7 +42,7 @@ from otto.suite import OttoSuite
 class _Defaulted:
     retries: Annotated[int, typer.Option(help="n")] = 3
 
-class TestDefaulted(OttoSuite[_Defaulted]):
+class TestDefaulted(OttoSuite):
     Options = _Defaulted
     def test_gets_defaults(self, suite_options):
         assert suite_options.retries == 3
@@ -49,7 +51,7 @@ class TestDefaulted(OttoSuite[_Defaulted]):
 class _Required:
     firmware: Annotated[str, typer.Option(help="fw")]
 
-class TestRequired(OttoSuite[_Required]):
+class TestRequired(OttoSuite):
     Options = _Required
     def test_never_runs(self, suite_options):
         raise AssertionError("should have failed at fixture setup")
@@ -57,12 +59,8 @@ class TestRequired(OttoSuite[_Required]):
 
 
 # pytester's runpytest_inprocess spins up a *nested* pytest session inside
-# this one. The outer suite's `filterwarnings = ["error"]` (pyproject.toml)
-# turns pytest-asyncio's "asyncio_default_fixture_loop_scope is unset"
-# deprecation warning into a fatal INTERNALERROR during inner-session
-# configure. tests/unit/suite/test_plugin.py hits the same trap driving
-# pytest.main() directly and works around it with this same `-o` override;
-# mirrored here for the pytester-based inner runs.
+# this one. It runs with otto test's own loop-scope args (ASYNCIO_LOOP_ARGS)
+# so the loop-identity asserts in ENSURE_SUITE_SRC measure the real contract.
 # `-p no:playwright`: pytest-playwright's session-wide soft-assertion hook
 # wraps every test call and rejects re-entry ("nested soft assertion scopes
 # are not supported"), so it must be disabled for in-process nested sessions —
@@ -73,14 +71,13 @@ INNER_ARGS = (
     "no:cacheprovider",
     "-p",
     "no:playwright",
-    "-o",
-    "asyncio_default_fixture_loop_scope=function",
+    *ASYNCIO_LOOP_ARGS,
 )
 
 
 @pytest.fixture(autouse=True)
 def _otto_context(tmp_path: Path):
-    """OttoSuite.setup_class reads get_context().output_dir — install a stub
+    """The suite_dir fixture reads get_context().output_dir — install a stub
     context for the duration of the inner pytest session, mirroring the
     `_run_inner_pytest` helper in tests/unit/suite/test_otto_suite.py.
     """
@@ -145,55 +142,31 @@ def test_explicit_instance_still_wins(pytester: pytest.Pytester) -> None:
     assert result.ret == pytest.ExitCode.OK
 
 
-# ── ensure_* converging fixtures ─────────────────────────────────────────────
+# ── the ensure marker (spec §4) ──────────────────────────────────────────────
 #
-# The fixture bodies are driven DIRECTLY, the way `test_ctx_fixture_returns_
+# The fixture body is driven DIRECTLY, the way `test_ctx_fixture_returns_
 # active_context` (tests/unit/suite/test_register.py) and `_FixtureRunner`
 # (tests/unit/suite/test_plugin.py) drive theirs: the decorator stashes the
 # original function on ``__wrapped__``, so calling that skips pytest's fixture
-# machinery. `test_ensure_fixtures_are_available_to_a_suite` below is the other
-# half — it runs a real inner session, which is the only thing that can prove
-# these are actually REGISTERED as fixtures at the right scope.
+# machinery. The pytester tests further down are the other half — they run a
+# real inner session, which is the only thing that can prove the marker is
+# read from the right node, validated at collection, and REGISTERED.
 
-ENSURE_FIXTURES = ("ensure_installed", "ensure_uninstalled", "ensure_clean")
-
-ENSURE_SUITE_SRC = """\
-import asyncio
-
-from otto.suite import OttoSuite
-from otto.suite.pytest_plugin import OttoOptionsPlugin
-
-class TestEnsures(OttoSuite):
-    async def test_requests_the_fixture(self, {fixture}):
-        assert {fixture} is None
-        # The converge has to run on the loop the TEST runs on: it opens host
-        # connections, and a connection bound to a loop that is no longer
-        # running is unusable here. `_converge_loop` is stashed by the stub
-        # (_stub below); this is what makes the fixture's declared loop scope
-        # load-bearing rather than decorative — `loop_scope="class"` puts the
-        # converge on a third loop and fails right here.
-        assert OttoOptionsPlugin._converge_loop is asyncio.get_running_loop()
-
-async def test_plain_function_requests_the_fixture({fixture}):
-    # The other shape `otto test` runs: a module-level async test, no class.
-    # A class-scoped loop has nothing to attach to here.
-    assert {fixture} is None
-    assert OttoOptionsPlugin._converge_loop is asyncio.get_running_loop()
-"""
+ENSURE_STEPS = ("installed", "uninstalled", "clean")
+CONVERGE_FUNCTIONS = ("ensure_installed", "ensure_uninstalled", "ensure_clean")
 
 
 def _stub(calls: list[tuple], name: str, outcome: Any) -> Callable[..., Any]:
     """One converge stand-in: records the CALL and its loop, then returns/raises *outcome*.
 
     The recorded entry is ``(name, args, kwargs)`` — the arguments included,
-    not swallowed by an unexamined ``*args``. The fixtures call their converge
+    not swallowed by an unexamined ``*args``. The marker calls its converge
     function with NOTHING, taking the orchestrator's own defaults, and that is
-    the documented behaviour of all three (``ensure_installed`` "a PARTIAL lab
-    is uninstalled first, then installed fresh" IS ``recover_partial=True``).
-    A stub that recorded only the name would let a fixture quietly pass
-    ``recover_partial=False`` — which inverts that sentence, installs straight
-    over known remnants, and reproduces the PARTIAL state the converge was
-    requested to fix.
+    the documented behaviour of all three (``installed`` "a PARTIAL lab is
+    uninstalled first, then installed fresh" IS ``recover_partial=True``). A
+    stub that recorded only the name would let the plugin quietly pass
+    ``recover_partial=False`` — a real behaviour change no assertion on the
+    NAME alone can see.
     """
 
     async def _fake(*args: Any, **kwargs: Any) -> Any:
@@ -208,176 +181,262 @@ def _stub(calls: list[tuple], name: str, outcome: Any) -> Callable[..., Any]:
     return _fake
 
 
-def _called(fixture_name: str, times: int = 1) -> list[tuple]:
-    """The expected ``calls`` record: *fixture_name*'s converge, with no arguments."""
-    return [(fixture_name, (), {})] * times
+def _called(*function_names: str) -> list[tuple]:
+    """The expected ``calls`` record: each converge function, in order, with no arguments."""
+    return [(name, (), {}) for name in function_names]
 
 
 def _stub_ensures(monkeypatch: pytest.MonkeyPatch, calls: list[tuple], outcome: Any) -> list[tuple]:
-    """Replace ALL THREE converge functions, each recording its own name.
+    """Replace ALL THREE converge functions on ``otto.project``, each recording its own name.
 
-    All three, not just the one under test: that is what makes ``calls ==
-    [fixture_name]`` able to catch a fixture wired to the WRONG converge
-    function. Patching only one would leave the wrong call hitting the real
-    orchestrator, which fails for unrelated reasons (no lab in the ambient
-    context) and reads as a confusing error rather than a clean red.
-
-    Patched on ``otto.project`` — the package object the fixture bodies read
-    the name off at call time. A fixture that reached into
-    ``otto.project.orchestrator`` instead would see through this stub, and
-    should: the re-export is the seam the rest of otto calls.
-
-    Also arms the ``_converge_loop`` slot the stubs write the running loop to
-    — through ``monkeypatch`` with ``raising=False``, so the attribute is
-    deleted again on teardown and the plugin class leaves the test as it
-    arrived.
+    All three, not just the one under test: that is what lets ``calls`` catch a
+    step wired to the WRONG converge function. Patched on ``otto.project`` — the
+    package object the plugin reads the name off at call time; a plugin that
+    reached into ``otto.project.orchestrator`` would see through this stub, and
+    should. Also arms the ``_converge_loop`` slot the stubs write to (deleted
+    again on teardown via ``raising=False``).
     """
     from otto.suite.pytest_plugin import OttoOptionsPlugin
 
     monkeypatch.setattr(OttoOptionsPlugin, "_converge_loop", None, raising=False)
-    for name in ENSURE_FIXTURES:
+    for name in CONVERGE_FUNCTIONS:
         monkeypatch.setattr(f"otto.project.{name}", _stub(calls, name, outcome))
     return calls
 
 
-def _run_fixture(fixture_name: str) -> Any:
-    """Call the plugin's async fixture body on a throwaway loop."""
+def _marker_request(args: tuple | None) -> MagicMock:
+    """A FixtureRequest double whose node carries an ``ensure`` marker with *args* (or none)."""
+    request = MagicMock()
+    request.node.get_closest_marker.return_value = (
+        None if args is None else MagicMock(args=args, kwargs={})
+    )
+    return request
+
+
+def _run_ensure(args: tuple | None) -> Any:
+    """Drive ``_otto_ensure``'s body on a throwaway loop for a marker with *args*."""
     from otto.suite.pytest_plugin import OttoOptionsPlugin
 
     plugin = OttoOptionsPlugin(None)
-    return asyncio.run(getattr(plugin, fixture_name).__wrapped__(plugin))
+    return asyncio.run(OttoOptionsPlugin._otto_ensure.__wrapped__(plugin, _marker_request(args)))
 
 
-def _drive_and_catch(fixture_name: str) -> BaseException | None:
+_OUTCOMES = (EnsureStateError, CommandNotRunError, pytest.skip.Exception)
+
+
+def _drive_and_catch(args: tuple | None) -> BaseException | None:
     """Run the fixture; return whatever it raised (``None`` if it returned).
 
-    ``BaseException``, not ``Exception``, and that is the whole point: the
-    outcome this file has to be able to distinguish from an error is
-    ``pytest.skip()``, whose ``Skipped`` is rooted at ``BaseException``. A
-    ``pytest.raises(Exception)`` would let a skipping fixture straight through
-    and the case would report SKIPPED — which is not red. Returning the object
-    lets the caller assert on its TYPE.
+    The outcomes this file has to tell apart are ``EnsureStateError`` (a
+    convergence failure), ``CommandNotRunError`` (a dry-run refusal), and
+    ``pytest.skip()``'s ``Skipped`` — rooted at ``BaseException``, which is the
+    outcome a wrong implementation would produce (e.g. relabelling a failure
+    as a skip). Catching exactly these three, rather than ``BaseException``
+    broadly, means anything else propagates and errors the test — the louder,
+    correct behaviour for an outcome this file was not built to expect.
     """
     try:
-        _run_fixture(fixture_name)
-    except BaseException as exc:  # noqa: BLE001 — the caught type IS the assertion; see docstring
+        _run_ensure(args)
+    except _OUTCOMES as exc:
         return exc
     return None
 
 
-@pytest.mark.parametrize("fixture_name", ENSURE_FIXTURES)
-def test_ensure_fixture_awaits_its_converge_function(
-    fixture_name: str, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("step", "function"), list(zip(ENSURE_STEPS, CONVERGE_FUNCTIONS, strict=True))
+)
+def test_each_step_awaits_its_own_converge_function_once_with_no_arguments(
+    step: str, function: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Each fixture awaits ITS OWN converge function, exactly once, with no arguments.
-
-    Kills a fixture that requests the wrong converge function, one that returns
-    the coroutine without awaiting it (silently a no-op), and one that passes
-    the converge layer a flag of its own — ``recover_partial=False`` above all,
-    which is a real behaviour change (install over known remnants) that no
-    assertion on the NAME alone can see.
-    """
     calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
-    _run_fixture(fixture_name)
-    assert calls == _called(fixture_name)
+    _run_ensure((step,))
+    assert calls == _called(function)
 
 
-@pytest.mark.parametrize("fixture_name", ENSURE_FIXTURES)
-def test_ensure_fixture_failure_errors_not_skips(
-    fixture_name: str, monkeypatch: pytest.MonkeyPatch
+def test_a_path_runs_its_steps_in_the_written_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Spec §4.1: ``ensure("clean", "installed")`` cleans, THEN installs — a fresh install."""
+    calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    _run_ensure(("clean", "installed"))
+    assert calls == _called("ensure_clean", "ensure_installed")
+
+
+@pytest.mark.parametrize("args", [None, ("none",)])
+def test_no_marker_and_none_converge_nothing(args, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    _run_ensure(args)
+    assert calls == []
+
+
+@pytest.mark.parametrize("step", ENSURE_STEPS)
+def test_a_failed_converge_errors_not_skips_and_names_the_step_and_host(
+    step: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """House rule: a host that cannot converge FAILS the test with its name.
 
-    Kills ``pytest.skip`` on failure — the raised object must be an
-    ``EnsureStateError``, so a ``Skipped`` fails the isinstance assertion
-    instead of quietly marking the case skipped. Also kills a fixture that
-    ignores ``is_ok`` and returns anyway (``raised is None``).
-
-    THE VERB LABEL IS PART OF THE MESSAGE, and pinned per fixture. The three
-    fixtures pass their own name to one shared ``_raise_unless_converged``, so
-    the label is a hand-written string argument at each call site: the
-    copy-paste that gives ``ensure_clean`` the message ``ensure_installed
-    failed: …`` is a one-word slip that leaves the reader debugging the wrong
-    converge entirely, and every other assertion here is blind to it.
+    The raised object must be an ``EnsureStateError`` — a ``Skipped`` fails the
+    isinstance — and the message carries THIS step's name, so a copy-paste that
+    labels a clean failure "installed" is caught.
     """
     _stub_ensures(monkeypatch, [], Result(Status.Failed, msg="host test1: unreachable"))
-    raised = _drive_and_catch(fixture_name)
+    raised = _drive_and_catch((step,))
     assert isinstance(raised, EnsureStateError), (
         f"convergence failure must ERROR the test, never skip it; got {raised!r}"
     )
-    assert str(raised) == f"{fixture_name} failed: host test1: unreachable", (
-        "the message must name THIS fixture's verb and the failing host"
-    )
+    assert str(raised) == f"ensure {step} failed: host test1: unreachable"
 
 
-@pytest.mark.parametrize("fixture_name", ENSURE_FIXTURES)
-def test_ensure_fixture_accepts_a_skipped_no_op(
-    fixture_name: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A converge that had nothing to do returns ``Status.Skipped``, and that is ok.
-
-    The no-op arms of ``otto.project``'s ensure layer ("already installed",
-    "already clean") report ``Skipped``, whose ``is_ok`` is True. Kills a
-    fixture that gates on ``status is Status.Success`` and so errors every
-    test in an already-converged lab — the common case.
-    """
+@pytest.mark.parametrize("step", ENSURE_STEPS)
+def test_a_skipped_no_op_converge_is_ok(step: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``Status.Skipped`` ("already installed") has ``is_ok`` True — the common case."""
     calls = _stub_ensures(monkeypatch, [], Result(Status.Skipped, msg="already installed"))
-    assert _drive_and_catch(fixture_name) is None
-    assert calls == _called(fixture_name)
+    assert _drive_and_catch((step,)) is None
+    assert len(calls) == 1
 
 
-@pytest.mark.parametrize("fixture_name", ENSURE_FIXTURES)
-def test_ensure_fixture_propagates_a_dry_run_refusal(
-    fixture_name: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A dry run's ``CommandNotRunError`` propagates unchanged, not reframed.
-
-    Under ``--dry-run`` several converge paths RAISE rather than return: the
-    state was never established, so there is nothing to report about it. A
-    fixture that caught it — even to re-raise as ``EnsureStateError`` — would
-    relabel "otto declined to issue the command" as "the lab failed to
-    converge". Kills a ``try/except Exception`` wrapper around the await.
-    """
+@pytest.mark.parametrize("step", ENSURE_STEPS)
+def test_a_dry_run_refusal_propagates_unchanged(step: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Under ``--dry-run`` converge paths RAISE ``CommandNotRunError``; it must not be
+    relabelled as a failure to converge (kills a ``try/except Exception`` wrapper)."""
     _stub_ensures(monkeypatch, [], CommandNotRunError("rpm -q otto-agent", "test1"))
-    raised = _drive_and_catch(fixture_name)
+    raised = _drive_and_catch((step,))
     assert isinstance(raised, CommandNotRunError), (
         f"a dry-run refusal must reach the test unchanged; got {raised!r}"
     )
 
 
-@pytest.mark.parametrize("fixture_name", ENSURE_FIXTURES)
-def test_ensure_fixtures_are_available_to_a_suite(
-    fixture_name: str, pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+def test_a_failed_first_step_stops_the_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``("clean", "installed")`` with a failing clean never reaches installed."""
+    calls = _stub_ensures(monkeypatch, [], Result(Status.Failed, msg="host test1: unreachable"))
+    raised = _drive_and_catch(("clean", "installed"))
+    assert isinstance(raised, EnsureStateError)
+    assert calls == _called("ensure_clean")
+
+
+# ── real inner sessions: marker resolution, validation, registration ─────────
+
+MARKER_SUITE_SRC = """\
+import asyncio
+
+import pytest
+
+from otto.suite import OttoSuite
+from otto.suite.pytest_plugin import OttoOptionsPlugin
+
+pytestmark = pytest.mark.ensure("installed")
+
+
+@pytest.mark.ensure("clean")
+class TestMarked(OttoSuite):
+    async def test_takes_the_class_path(self):
+        # The converge has to run on the loop the TEST runs on: it opens host
+        # connections, and a connection bound to another loop is unusable here.
+        assert OttoOptionsPlugin._converge_loop is asyncio.get_running_loop()
+
+    @pytest.mark.ensure("none")
+    async def test_opts_out(self):
+        pass
+
+
+async def test_plain_function_takes_the_module_path():
+    assert OttoOptionsPlugin._converge_loop is asyncio.get_running_loop()
+"""
+
+
+def test_closest_marker_replaces_the_whole_path(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Both shapes ``otto test`` runs can REQUEST each of the three.
+    """Spec §4.1: module says installed, class says clean, one test says none.
 
-    The direct-call tests above exercise the fixture BODIES; only a real inner
-    session proves the registration works — right name, resolvable from an
-    OttoSuite method AND from a plain module-level async test, and awaited on
-    the same event loop the requesting test runs on (the inner asserts).
-
-    That last one is not a formality: with ``loop_scope="class"`` — the shape
-    this task was briefed with — pytest-asyncio hands the fixture a loop that
-    NO test runs on, and the converge's host connections would be stranded on
-    it. This test fails in that configuration.
-
-    PARAMETRIZED OVER ALL THREE, because registration and loop scope are
-    per-fixture declarations: they are three separate decorators, so one of
-    them carrying the wrong scope (or not being a ``pytest_asyncio`` fixture at
-    all, which makes it resolve to an un-awaited coroutine) is invisible to a
-    test that only ever requests ``ensure_installed``. The direct-call tests
-    are parametrized precisely because the three bodies drift independently;
-    the declarations above them drift the same way.
+    Per-test converge calls: the class test → [clean]; the opted-out test → [];
+    the plain function → [installed] (the module marker). Red if the plugin
+    MERGES paths (the class test would also see installed) or reads the wrong
+    node. Order-independent: the inner session inherits pytest-randomly.
     """
     from otto.suite.pytest_plugin import OttoOptionsPlugin
 
     calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
-    pytester.makepyfile(test_inner=ENSURE_SUITE_SRC.format(fixture=fixture_name))
+    pytester.makepyfile(test_inner=MARKER_SUITE_SRC)
     result = pytester.runpytest_inprocess(
-        "-k",
-        "requests_the_fixture",
-        *INNER_ARGS,
-        plugins=[OttoPlugin(), OttoOptionsPlugin(None)],
+        *INNER_ARGS, plugins=[OttoPlugin(), OttoOptionsPlugin(None)]
     )
     assert result.ret == pytest.ExitCode.OK
-    assert calls == _called(fixture_name, times=2)  # the class test and the plain one
+    result.assert_outcomes(passed=3)
+    assert sorted(name for name, _, _ in calls) == ["ensure_clean", "ensure_installed"]
+
+
+@pytest.mark.parametrize(
+    ("marker", "fragment"),
+    [
+        ('@pytest.mark.ensure("bogus")', "unknown step 'bogus'"),
+        ('@pytest.mark.ensure("none", "installed")', "'none' is a complete path"),
+        ("@pytest.mark.ensure()", "at least one step"),
+    ],
+)
+def test_an_invalid_path_errors_the_run_at_collection(
+    marker: str, fragment: str, pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec §4.2: the run stops before any test executes, naming node, verb, vocabulary."""
+    from otto.suite.pytest_plugin import OttoOptionsPlugin
+
+    calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    pytester.makepyfile(
+        test_inner=f"""\
+import pytest
+from otto.suite import OttoSuite
+
+class TestBad(OttoSuite):
+    {marker}
+    async def test_never_runs(self):
+        raise AssertionError("collection should have refused this")
+"""
+    )
+    result = pytester.runpytest_inprocess(
+        *INNER_ARGS, plugins=[OttoPlugin(), OttoOptionsPlugin(None)]
+    )
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    result.stderr.fnmatch_lines([f"*test_inner.py::TestBad::test_never_runs*{fragment}*"])
+    assert calls == []
+
+
+def test_the_old_fixture_names_are_gone(pytester: pytest.Pytester) -> None:
+    """Spec §4.2/§10: requesting ``ensure_installed`` by name is a loud fixture-not-found."""
+    from otto.suite.pytest_plugin import OttoOptionsPlugin
+
+    pytester.makepyfile(
+        test_inner="""\
+from otto.suite import OttoSuite
+
+class TestOld(OttoSuite):
+    async def test_requests_it(self, ensure_installed):
+        pass
+"""
+    )
+    result = pytester.runpytest_inprocess(
+        *INNER_ARGS, plugins=[OttoPlugin(), OttoOptionsPlugin(None)]
+    )
+    result.assert_outcomes(errors=1)
+    result.stdout.fnmatch_lines(["*fixture 'ensure_installed' not found*"])
+
+
+def test_the_marker_is_registered_for_strict_markers(
+    pytester: pytest.Pytester, monkeypatch
+) -> None:
+    """``--strict-markers`` accepts ``ensure`` — it is registered, not merely tolerated."""
+    from otto.suite.pytest_plugin import OttoOptionsPlugin
+
+    _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    pytester.makepyfile(
+        test_inner="""\
+import pytest
+from otto.suite import OttoSuite
+
+@pytest.mark.ensure("installed")
+class TestStrict(OttoSuite):
+    async def test_ok(self):
+        pass
+"""
+    )
+    result = pytester.runpytest_inprocess(
+        "--strict-markers", *INNER_ARGS, plugins=[OttoPlugin(), OttoOptionsPlugin(None)]
+    )
+    assert result.ret == pytest.ExitCode.OK

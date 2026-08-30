@@ -119,7 +119,7 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
 
 
 @pytest.mark.asyncio(loop_scope="class")
-class TestCoverageProduct(OttoSuite[_Options]):
+class TestCoverageProduct(OttoSuite):
     """Exercise the sample C product across multiple hosts for coverage testing.
 
     Different hosts exercise different code paths so that merged

@@ -28,6 +28,8 @@ from ..utils import DRY_RUN_HEADLINE, Status
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
+    from .suite import OttoSuite
+
 
 @dataclasses.dataclass(frozen=True)
 class SuiteEntry:
@@ -108,7 +110,7 @@ def _print_suite_dry_run(ctx: typer.Context, suite_class: type) -> None:
 # ---------------------------------------------------------------------------
 
 
-def register_suite_class(suite_class: type) -> None:
+def register_suite_class(suite_class: "type[OttoSuite]") -> None:
     """Register an OttoSuite subclass as an ``otto test`` subcommand.
 
     Called automatically by ``OttoSuite.__init_subclass__`` for every subclass
@@ -117,7 +119,7 @@ def register_suite_class(suite_class: type) -> None:
     it into :data:`SUITES`; ``cli/test.py``'s ``suite_app`` resolves it lazily
     by name through its ``RegistryBackedGroup``.
     """
-    opts_cls = getattr(suite_class, "Options", None)
+    opts_cls = suite_class.Options
     suite_file = inspect.getfile(suite_class)
 
     # Build the full parameter list for the Typer command. The leading

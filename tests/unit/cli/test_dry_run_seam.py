@@ -20,6 +20,7 @@ from otto.cli.expose import HostGroup
 from otto.cli.invoke import LabReference, render_leaf_value
 from otto.cli.registry import CommandSpec, cli_command, register_cli_command
 from otto.result import CommandResult, NotRunResult, Result
+from otto.suite import OttoSuite
 from otto.utils import DRY_RUN_HEADLINE, Status, cli_exposed
 from tests._fixtures.dispatch import DispatchRunner
 from tests.conftest import active_context
@@ -615,7 +616,7 @@ class TestRendererHandlesADecline:
 # ---------------------------------------------------------------------------
 
 
-class SeamPreviewSuite:
+class SeamPreviewSuite(OttoSuite):
     """A suite-shaped class with two bound tests."""
 
     def test_alpha(self) -> None: ...

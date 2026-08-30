@@ -230,10 +230,9 @@ class OttoPlugin:
 
         When ``--iterations`` or ``--duration`` (or both) are specified,
         each collected test is executed multiple times within a single
-        pytest session.  Class-scoped fixtures (``setup_class`` /
-        ``teardown_class``) remain cached by pytest for the lifetime of
-        the class and fire only once.  Method-scoped fixtures fire on
-        every iteration.
+        pytest session.  Class-scoped fixtures remain cached by pytest for
+        the lifetime of the class and fire only once.  Function-scoped
+        fixtures fire on every iteration.
 
         Unlike calling ``runtestprotocol`` in a loop (which tears down
         *all* fixtures including class-scoped ones after each call), this
@@ -386,11 +385,11 @@ class OttoPlugin:
         fixtures (and the per-class collection task below) can reach it,
         export collected data on teardown, then close.
 
-        Note: this fixture *does not* drive ``collector.run()``. OttoSuites
-        use ``loop_scope='class'``, so each test class runs on its own event
-        loop while the session loop is dormant. A task created here would
-        be starved during tests. ``_otto_class_monitor_task`` (class-scoped,
-        class loop) drives collection on the loop that's actually ticking.
+        Note: this fixture *does not* drive ``collector.run()``. Under
+        ``ASYNCIO_LOOP_ARGS`` each test class runs on its own event loop while
+        the session loop is dormant. A task created here would be starved
+        during tests. ``_otto_class_monitor_task`` (class-scoped, class loop)
+        drives collection on the loop that's actually ticking.
         """
         if not self._monitor:
             yield
@@ -507,19 +506,15 @@ class OttoPlugin:
                 await collector.close()
             OttoSuite._session_monitor_collector = None  # noqa: SLF001 — intra-package clear of OttoSuite class-level monitor collector slot
 
-    @pytest_asyncio.fixture(
-        scope="class",
-        loop_scope="class",
-        autouse=True,
-    )
+    @pytest_asyncio.fixture(scope="class", autouse=True)
     async def _otto_class_monitor_task(self) -> AsyncGenerator[None, None]:
         """Drive ``collector.run()`` on the test class's event loop.
 
-        OttoSuite tests use ``loop_scope='class'``, so a task on the session
-        loop never ticks while tests run (events still record because
-        ``add_event`` is just a list append from the class loop). Restarting
-        the collection task per class on the class loop ensures
-        ``_collect_one`` actually executes during tests.
+        Under ``otto test`` (``ASYNCIO_LOOP_ARGS``) every test runs on its
+        class loop, so a task on the session loop never ticks while tests run
+        (events still record because ``add_event`` is just a list append from
+        the class loop). Restarting the collection task per class on the
+        class loop ensures ``_collect_one`` actually executes during tests.
 
         Collected metrics accumulate on the shared session-scoped collector,
         so a single export at session teardown captures every class's data.

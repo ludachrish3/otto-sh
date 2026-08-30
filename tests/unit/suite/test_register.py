@@ -27,6 +27,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+from otto.suite import OttoSuite
 from otto.suite.pytest_plugin import OttoOptionsPlugin
 from otto.suite.register import (
     SUITES,
@@ -74,7 +75,7 @@ def _ok_result(exit_code: int = 0):
 
 class TestRegisterSuiteClass:
     def test_register_suite_class_records_source_file(self):
-        class _SuiteFileProbe:
+        class _SuiteFileProbe(OttoSuite):
             pass
 
         register_suite_class(_SuiteFileProbe)
@@ -84,7 +85,7 @@ class TestRegisterSuiteClass:
     def test_adds_entry_to_registry(self):
         initial = len(SUITES)
 
-        class _SuiteA:
+        class _SuiteA(OttoSuite):
             pass
 
         register_suite_class(_SuiteA)
@@ -129,8 +130,9 @@ class TestRegisterSuiteClass:
             suite_file = tmp_path / dirname / "test_dup_probe.py"
             suite_file.parent.mkdir(parents=True, exist_ok=True)
             suite_file.write_text(
+                "from otto.suite import OttoSuite\n"
                 "from otto.suite.register import register_suite_class\n\n\n"
-                "class _DupFileSuite:\n"
+                "class _DupFileSuite(OttoSuite):\n"
                 "    pass\n\n\n"
                 "register_suite_class(_DupFileSuite)\n"
             )
@@ -159,8 +161,9 @@ class TestRegisterSuiteClass:
         """
         suite_file = tmp_path / "test_reimport_probe.py"
         suite_file.write_text(
+            "from otto.suite import OttoSuite\n"
             "from otto.suite.register import register_suite_class\n\n\n"
-            "class _ReimportProbe:\n"
+            "class _ReimportProbe(OttoSuite):\n"
             "    pass\n\n\n"
             "register_suite_class(_ReimportProbe)\n"
         )
@@ -181,7 +184,7 @@ class TestRegisterSuiteClass:
             sys.modules.pop("test_reimport_probe", None)
 
     def test_suite_without_options_has_only_injected_ctx(self):
-        class _SuiteNoOpts:
+        class _SuiteNoOpts(OttoSuite):
             pass
 
         register_suite_class(_SuiteNoOpts)
@@ -194,7 +197,7 @@ class TestRegisterSuiteClass:
         assert sig.parameters["ctx"].annotation is typer.Context
 
     def test_suite_with_options_includes_option_fields(self):
-        class _SuiteWithOpts:
+        class _SuiteWithOpts(OttoSuite):
             @dataclass
             class Options:
                 device_type: Annotated[str, typer.Option()] = "router"
@@ -209,7 +212,7 @@ class TestRegisterSuiteClass:
         assert "count" in sig.parameters
 
     def test_suite_docstring_used_as_command_help(self):
-        class _SuiteDocstring:
+        class _SuiteDocstring(OttoSuite):
             """My suite docstring."""
 
         register_suite_class(_SuiteDocstring)
@@ -292,7 +295,7 @@ class TestInheritedOptions:
         class ParentOpts:
             device_type: Annotated[str, typer.Option()] = "router"
 
-        class _SuiteInherited:
+        class _SuiteInherited(OttoSuite):
             @dataclass
             class Options(ParentOpts):
                 firmware: Annotated[str, typer.Option()] = "latest"
@@ -349,7 +352,7 @@ class TestRunnerInvocation:
     def test_runner_calls_run_suite_with_options(self):
         """Invoking a suite command constructs the Options instance and calls run_suite."""
 
-        class _SuiteRunner:
+        class _SuiteRunner(OttoSuite):
             @dataclass
             class Options:
                 device_type: Annotated[str, typer.Option()] = "router"
@@ -374,7 +377,7 @@ class TestRunnerInvocation:
         assert opts.device_type == "switch"  # type: ignore[union-attr]
 
     def test_runner_uses_defaults_when_options_omitted(self):
-        class _SuiteDefaults:
+        class _SuiteDefaults(OttoSuite):
             @dataclass
             class Options:
                 count: Annotated[int, typer.Option()] = 7
@@ -400,7 +403,7 @@ class TestRunnerInvocation:
         """The runner invokes run_suite(suite, *, options, run_options, output_dir)."""
         from otto.suite.run import RunOptions
 
-        class _SuiteArity:
+        class _SuiteArity(OttoSuite):
             pass
 
         register_suite_class(_SuiteArity)
@@ -438,7 +441,7 @@ class TestRunnerInvocation:
         ``typer-exit-outside-cli`` ast-grep rule's job (zero baseline).
         """
 
-        class _SuiteFails:
+        class _SuiteFails(OttoSuite):
             pass
 
         register_suite_class(_SuiteFails)

@@ -106,8 +106,8 @@ def _enforce_driving_repo_scope() -> None:
     """Raise when the DRIVING repo's own fleet declaration cannot work (D3, spec §5).
 
     Spec §5 names the monitor fleet build as one of D3's project-layer entries,
-    alongside the default instructions and the ``ensure_*`` fixtures, and this
-    is that entry. A single-repo world fails loud without it — the union comes
+    alongside the default instructions and a suite's ``ensure`` marker steps,
+    and this is that entry. A single-repo world fails loud without it — the union comes
     out empty and ``require_nonempty_fleet`` refuses at the walk — but a lab
     where a DEPENDENCY admits hosts has a healthy union, so the driving
     project's own "this lab is not my world" verdict would go unread and the

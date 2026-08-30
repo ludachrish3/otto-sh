@@ -135,17 +135,19 @@ otto -l my_lab run deploy --debug
 
 ### Test suites (`otto test`)
 
-A **suite** is a class that extends `OttoSuite` and is registered with the
-`@register_suite()` decorator. Each suite becomes a subcommand of `otto test`.
-Suites can define their own `Options` dataclass whose fields appear as CLI
-flags:
+A **suite** is a class that extends `OttoSuite` with a `Test*`-prefixed name;
+it auto-registers as a subcommand of `otto test`. Suites can define their own
+`Options` dataclass whose fields appear as CLI flags:
 
 ```python
+import logging
 from dataclasses import dataclass
 from typing import Annotated
 
 import typer
-from otto.suite import OttoSuite, register_suite
+from otto.suite import OttoSuite
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -153,12 +155,11 @@ class _Options:
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
 
 
-@register_suite()
-class TestDevice(OttoSuite[_Options]):
+class TestDevice(OttoSuite):
     Options = _Options
 
     async def test_device_reachable(self, suite_options: _Options) -> None:
-        self.logger.info(f"firmware={suite_options.firmware}")
+        logger.info(f"firmware={suite_options.firmware}")
         assert True
 ```
 
@@ -168,7 +169,7 @@ otto test --iterations 10 --threshold 95 TestDevice
 ```
 
 Suites support pytest markers (`timeout`, `retry`, `parametrize`,
-`integration`), non-fatal assertions via `self.expect()`, per-test artifact
+`integration`), non-fatal assertions via the `expect` fixture, per-test artifact
 directories, and built-in monitoring.
 
 Both suites and instructions accept an options dataclass. For flags that are

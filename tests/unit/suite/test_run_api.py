@@ -93,10 +93,11 @@ def test_find_suite_unknown_lists_registered():
 
 
 def test_find_suite_returns_registered_class():
+    from otto.suite import OttoSuite
     from otto.suite.register import SUITES, register_suite_class
     from otto.suite.run import find_suite as _find
 
-    class _FindMeSuite:
+    class _FindMeSuite(OttoSuite):
         pass
 
     # Explicit cleanup (matching the seeding convention in
@@ -928,7 +929,7 @@ def test_run_selection_multi_repo_junit_fan_out(tmp_path, monkeypatch):
 
 # ── run_suite: context installation for library callers ─────────────────────
 #
-# OttoSuite internals (setup_method / setup_class / the ctx fixture) call
+# Otto's own fixtures (suite_dir / test_dir / the ctx fixture) call
 # get_context(); only the CLI preamble ever installed an OttoContext, so the
 # documented library path (bootstrap() → find_suite → run_suite) failed for
 # EVERY real OttoSuite with "RuntimeError: No active OttoContext". These tests
@@ -941,21 +942,15 @@ def _inner_session_env(monkeypatch):
 
     ``PYTEST_ADDOPTS`` reaches the inner ``pytest.main`` even though
     ``_run_pytest_session`` overrides ini ``addopts`` (env addopts are
-    prepended to argv, not read from the ini):
-
-    - ``-p no:playwright``: the outer session's pytest-playwright wraps every
-      ``pytest_runtest_call``; letting the inner session load it again nests
-      its soft-assertion scope and errors (same reason
-      test_otto_suite._run_inner_pytest disables it).
-    - ``asyncio_default_fixture_loop_scope=function``: silences pytest-asyncio's
-      unset-option deprecation warning at inner configure time, which the outer
-      session's ``filterwarnings=error`` would otherwise escalate into an inner
-      INTERNALERROR. A plain library caller (no outer pytest) never hits either.
+    prepended to argv, not read from the ini). ``-p no:playwright``: the
+    outer session's pytest-playwright wraps every ``pytest_runtest_call``;
+    letting the inner session load it again nests its soft-assertion scope
+    and errors (same reason test_otto_suite._run_inner_pytest disables it).
+    Nothing here touches pytest-asyncio's loop scopes: the inner session
+    runs with ``otto test``'s own ``ASYNCIO_LOOP_ARGS``, and that is what
+    the loop tests below measure.
     """
-    monkeypatch.setenv(
-        "PYTEST_ADDOPTS",
-        "-p no:playwright -o asyncio_default_fixture_loop_scope=function",
-    )
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-p no:playwright")
 
 
 def _probe_suite_src(cls_name: str) -> str:
@@ -965,27 +960,30 @@ def _probe_suite_src(cls_name: str) -> str:
         "from otto.suite import OttoSuite\n\n\n"
         f"class {cls_name}(OttoSuite):\n"
         f'    """Library-run probe: writes a marker into its per-test dir."""\n\n'
-        "    def test_marker(self):\n"
-        "        # suiteDir/testDir come from get_context().output_dir\n"
-        "        self.testDir.mkdir(parents=True, exist_ok=True)\n"
-        '        (self.testDir / "marker.txt").write_text("ok")\n'
+        "    def test_marker(self, test_dir):\n"
+        "        # test_dir comes from get_context().output_dir\n"
+        '        (test_dir / "marker.txt").write_text("ok")\n'
     )
 
 
-def _register_probe_suite(tmp_path: Path, tag: str) -> type:
+def _register_probe_suite(tmp_path: Path, tag: str, src: str | None = None) -> type:
     """Write, import, and auto-register a real Test* OttoSuite; return the class.
 
-    Mirrors ``Repo.import_test_file``'s spec_from_file_location shape (see
-    tests/unit/suite/test_register.py) so ``inspect.getfile`` resolves. The
-    ``Test*`` name auto-registers via ``OttoSuite.__init_subclass__``; callers
-    must clean up with :func:`_cleanup_probe_suite` in a ``finally``.
+    *src* is a source template with a ``{cls_name}`` placeholder (default:
+    :func:`_probe_suite_src`). Mirrors ``Repo.import_test_file``'s
+    spec_from_file_location shape (see tests/unit/suite/test_register.py) so
+    ``inspect.getfile`` resolves. The ``Test*`` name auto-registers via
+    ``OttoSuite.__init_subclass__``; callers must clean up with
+    :func:`_cleanup_probe_suite` in a ``finally``.
     """
     import importlib.util
     import sys
 
     cls_name = f"TestCtxProbe{tag}"
     suite_file = tmp_path / f"test_ctx_probe_{tag.lower()}.py"
-    suite_file.write_text(_probe_suite_src(cls_name))
+    suite_file.write_text(
+        _probe_suite_src(cls_name) if src is None else src.format(cls_name=cls_name)
+    )
     mod_name = f"_otto_ctx_probe_{tag.lower()}"
     spec = importlib.util.spec_from_file_location(mod_name, suite_file)
     assert spec is not None
@@ -1032,7 +1030,7 @@ def test_run_suite_installs_minimal_context_when_none_active(tmp_path, monkeypat
         assert result.passed, f"exit_code={result.exit_code}"
         assert (out / "junit.xml").exists()
         # The suite's per-test dir was created under output_dir via the
-        # temporary context (suiteDir = get_context().output_dir).
+        # temporary context (suite_dir = get_context().output_dir / <Suite>).
         markers = list(out.rglob("marker.txt"))
         assert markers, f"no per-test marker under {out}"
         # The temporary context never leaks out of run_suite.
@@ -1304,3 +1302,181 @@ def test_run_suite_rebuilds_scope_hosts_registered_by_the_inner_session(tmp_path
     assert events == ["rebuild", "close"], (
         "dead per-loop state must be dropped BEFORE the post-run sweep closes the host"
     )
+
+
+# ── One event loop per suite (spec §3) ───────────────────────────────────────
+#
+# These run REAL inner sessions through run_suite, i.e. through
+# _run_pytest_session's base_args — the only thing that proves the loop-scope
+# defaults `otto test` sets are the ones in effect. Each probe writes the id of
+# the running loop, tagged, into a file the outer test reads back.
+
+_LOOP_PROBE_HEADER = '''"""Loop-identity probe (real otto test args)."""
+
+import asyncio
+import pathlib
+
+import pytest
+import pytest_asyncio
+
+from otto.suite import OttoSuite
+
+LOOPS = pathlib.Path({loops!r})
+
+
+def _record(tag: str) -> None:
+    with LOOPS.open("a") as f:
+        f.write(f"{{tag}} {{id(asyncio.get_running_loop())}}\\n")
+'''
+
+_ONE_LOOP_SUITE = (
+    _LOOP_PROBE_HEADER
+    + """
+
+class {cls_name}(OttoSuite):
+    @pytest_asyncio.fixture(scope="class", autouse=True)
+    @classmethod
+    async def suite_loop(cls):
+        _record("class-setup")
+        yield
+        _record("class-teardown")
+
+    @pytest_asyncio.fixture
+    async def per_test(self):
+        _record("function-fixture")
+
+    async def test_one(self, per_test) -> None:
+        _record("test_one")
+
+    async def test_two(self) -> None:
+        _record("test_two")
+"""
+)
+
+_ESCAPE_HATCH_SUITE = (
+    _LOOP_PROBE_HEADER
+    + """
+
+@pytest.mark.asyncio(loop_scope="function")
+class {cls_name}(OttoSuite):
+    @pytest_asyncio.fixture(scope="class", autouse=True)
+    @classmethod
+    async def suite_loop(cls):
+        _record("class-setup")
+        yield
+        _record("class-teardown")
+
+    async def test_one(self) -> None:
+        _record("test_one")
+
+    async def test_two(self) -> None:
+        _record("test_two")
+"""
+)
+
+_PINNED_SESSION_SUITE = (
+    _LOOP_PROBE_HEADER
+    + """
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def pinned_session():
+    yield "ok"
+
+
+class {cls_name}(OttoSuite):
+    async def test_uses_it(self, pinned_session) -> None:
+        assert pinned_session == "ok"
+"""
+)
+
+_UNPINNED_SESSION_SUITE = (
+    _LOOP_PROBE_HEADER
+    + """
+
+@pytest_asyncio.fixture(scope="session")
+async def unpinned_session():
+    yield "ok"
+
+
+class {cls_name}(OttoSuite):
+    async def test_uses_it(self, unpinned_session) -> None:
+        assert unpinned_session == "ok"
+"""
+)
+
+
+def _loop_ids(loops_file: Path) -> dict[str, set[int]]:
+    """``{tag: {loop ids}}`` from a probe's LOOPS file."""
+    out: dict[str, set[int]] = {}
+    for line in loops_file.read_text().splitlines():
+        tag, loop_id = line.split()
+        out.setdefault(tag, set()).add(int(loop_id))
+    return out
+
+
+def _run_loop_probe(tmp_path: Path, monkeypatch, tag: str, src: str):
+    """Register *src* as TestCtxProbe<tag>, run through run_suite, return (result, loops, out)."""
+    import otto.config
+
+    monkeypatch.setattr(otto.config, "get_repos", list)
+    out = tmp_path / "out"
+    out.mkdir()
+    loops = tmp_path / "loops.txt"
+    suite_cls = _register_probe_suite(tmp_path, tag, src.replace("{loops!r}", repr(str(loops))))
+    try:
+        result = run_suite(suite_cls, output_dir=out)
+    finally:
+        _cleanup_probe_suite(tag)
+    return result, loops, out
+
+
+@pytest.mark.usefixtures("_inner_session_env")
+def test_run_suite_shares_one_loop_across_class_fixture_tests_and_function_fixture(
+    tmp_path, monkeypatch
+):
+    """Spec §3.2: class fixture (setup AND teardown), both tests and an unpinned
+    function fixture report ONE loop id. Red if either ASYNCIO_LOOP_ARGS entry
+    is dropped from _run_pytest_session's base args."""
+    result, loops, _ = _run_loop_probe(tmp_path, monkeypatch, "OneLoop", _ONE_LOOP_SUITE)
+    assert result.passed, f"exit_code={result.exit_code}"
+    ids = _loop_ids(loops)
+    expected_tags = {"class-setup", "class-teardown", "function-fixture", "test_one", "test_two"}
+    assert set(ids) == expected_tags, ids
+    assert len(set().union(*ids.values())) == 1, f"more than one loop: {ids}"
+
+
+@pytest.mark.usefixtures("_inner_session_env")
+def test_run_suite_escape_hatch_gives_each_test_its_own_loop(tmp_path, monkeypatch):
+    """Spec §3.4: `@pytest.mark.asyncio(loop_scope="function")` on the class opts out.
+
+    Comparing id(test_one's loop) to id(test_two's loop) directly is unsound:
+    their loops don't overlap in time, and CPython can hand the second one the
+    first one's now-freed address, so the test could go red on correct
+    behaviour. The suite's own autouse class fixture is unpinned, so under
+    ASYNCIO_LOOP_ARGS it still runs on the CLASS loop, opened once and alive
+    for the whole class — a live anchor whose id neither test's (closed
+    before the next opens) function loop can ever recycle. Each test's loop
+    must differ from that live class loop.
+    """
+    result, loops, _ = _run_loop_probe(tmp_path, monkeypatch, "Escape", _ESCAPE_HATCH_SUITE)
+    assert result.passed, f"exit_code={result.exit_code}"
+    ids = _loop_ids(loops)
+    class_loop = ids["class-setup"]
+    assert ids["test_one"].isdisjoint(class_loop), f"expected distinct loops: {ids}"
+    assert ids["test_two"].isdisjoint(class_loop), f"expected distinct loops: {ids}"
+
+
+@pytest.mark.usefixtures("_inner_session_env")
+def test_run_suite_pinned_session_fixture_is_usable_from_a_class_test(tmp_path, monkeypatch):
+    """Spec §3.3: a session-scoped async fixture that pins loop_scope="session" works."""
+    result, _, _ = _run_loop_probe(tmp_path, monkeypatch, "Pinned", _PINNED_SESSION_SUITE)
+    assert result.passed, f"exit_code={result.exit_code}"
+
+
+@pytest.mark.usefixtures("_inner_session_env")
+def test_run_suite_unpinned_session_fixture_fails_with_scope_mismatch(tmp_path, monkeypatch):
+    """Spec §3.3 / Appendix A.4: the unpinned form errors at setup naming pytest-asyncio's
+    class runner — documented, not hidden. The junit report carries the message."""
+    result, _, out = _run_loop_probe(tmp_path, monkeypatch, "Unpinned", _UNPINNED_SESSION_SUITE)
+    assert not result.passed
+    assert "_class_scoped_runner" in (out / "junit.xml").read_text()

@@ -21,13 +21,13 @@ the same code:
 | An instruction | `otto run install` |
 | A script | `await otto.project.install()` |
 | A suite body | the same call, inside a test |
-| A test fixture | `async def test_x(self, ensure_installed): ...` |
+| A test marker | `@pytest.mark.ensure("installed")` on the class or test |
 
 ```{important}
-**Instructions and fixtures are never override points.** A repo customizes lab
-behavior by registering a `ProjectActions` subclass — never by defining its own
-instruction named `install`. If the *instruction* could be overridden, then
-`otto run install` and the `ensure_installed` fixture would run different code,
+**Instructions and ensure markers are never override points.** A repo customizes
+lab behavior by registering a `ProjectActions` subclass — never by defining its
+own instruction named `install`. If the *instruction* could be overridden, then
+`otto run install` and an `ensure("installed")` marker would run different code,
 and the lab a test converges would not be the lab you installed by hand.
 ```
 
@@ -83,7 +83,7 @@ with them — netem impairments are reset and every otto tunnel is reaped. See
 [What `cleanup` takes off the lab](#what-cleanup-takes-off-the-lab) for what
 those last two do and do not touch. `--ensure` turns `install` into a converge —
 the lab's current state is read and only the missing work is done — which is
-what the fixtures do before a test.
+what an `ensure` marker's steps do before a test.
 
 (fleet-of-interest)=
 
@@ -379,8 +379,8 @@ Three things about that are contracts rather than styling:
   drift; `--full` is not `is_clean()` with the exception swallowed.
 - **It costs device work, which is why it is a flag.** Bare `otto run status`
   counts products and nothing else. `--full` adds a netem read per impairable
-  link and a process scan per `has_bash` host — the same reads `ensure_clean`
-  makes. Links otto refuses to impair get no row at all — every implicit hop
+  link and a process scan per `has_bash` host — the same reads the `clean`
+  ensure step makes. Links otto refuses to impair get no row at all — every implicit hop
   edge, and also the management or hop-transit interfaces a scan turns down.
   A refused link is never read, so there is no state to show and a "clean" row
   would be a claim about something nobody looked at; `cleanup` names the

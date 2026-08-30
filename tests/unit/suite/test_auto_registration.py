@@ -42,7 +42,7 @@ def test_options_inner_class_is_captured() -> None:
     class _Opts:
         retries: int = 3
 
-    class TestWithOpts(OttoSuite[_Opts]):
+    class TestWithOpts(OttoSuite):
         Options = _Opts
 
     entry = SUITES.get("TestWithOpts")

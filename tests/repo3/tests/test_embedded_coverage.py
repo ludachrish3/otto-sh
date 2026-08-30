@@ -160,7 +160,7 @@ class _Options:
 
 
 @pytest.mark.asyncio(loop_scope="class")
-class TestEmbeddedCoverage(OttoSuite[_Options]):
+class TestEmbeddedCoverage(OttoSuite):
     """Exercise the LLEXT coverage product over the console on each embedded
     coverage host, leaving the extension loaded for ``--cov`` collection.
     """

@@ -5,6 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from otto.suite.run import ASYNCIO_LOOP_ARGS
+
 
 class TestSuiteOptionsPassthrough:
     """Options reach test methods via the suite_options fixture from OttoOptionsPlugin."""
@@ -41,7 +43,7 @@ class TestCapture(OttoSuite):
         assert suite_options.device_type == "switch"  # type: ignore
 """)
 
-        # Inject a minimal OttoContext so OttoSuite.setup_method can call
+        # Inject a minimal OttoContext so otto's suite_dir fixture can call
         # get_context().output_dir (Task 3 migration: output_dir lives on
         # OttoContext, not on the logger).
         mock_ctx = MagicMock()
@@ -53,8 +55,7 @@ class TestCapture(OttoSuite):
                     str(test_file),
                     "-o",
                     "asyncio_mode=auto",
-                    "-o",
-                    "asyncio_default_fixture_loop_scope=function",
+                    *ASYNCIO_LOOP_ARGS,
                     "--no-cov",
                     "--override-ini",
                     "addopts=",

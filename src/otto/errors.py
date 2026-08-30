@@ -133,8 +133,8 @@ class OttoError(Exception):
 class EnsureStateError(OttoError, RuntimeError):
     """A converge could not reach the lab state it was asked to guarantee.
 
-    Raised by the ``ensure_installed`` / ``ensure_uninstalled`` /
-    ``ensure_clean`` suite fixtures when :mod:`otto.project`'s converge layer
+    Raised by a suite's ``@pytest.mark.ensure`` converge steps (``installed``
+    / ``uninstalled`` / ``clean``) when :mod:`otto.project`'s converge layer
     answers non-ok. It is an ERROR and never a skip, by house rule: a host
     that cannot be brought to the state a test requires fails that test with
     the host named, rather than quietly removing the test from the run.

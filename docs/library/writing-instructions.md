@@ -226,6 +226,7 @@ repo-wide flags as ``otto run``:
 
 ```python
 # tests/test_device.py
+import logging
 from typing import Annotated
 
 import typer
@@ -234,17 +235,19 @@ from otto import options
 from my_instructions.options import RepoOptions
 from otto.suite import OttoSuite
 
+logger = logging.getLogger(__name__)
+
 
 @options
 class _Options(RepoOptions):  # inherits --device-type, --lab-env
     firmware: Annotated[str, typer.Option()] = "latest"
 
 
-class TestDevice(OttoSuite[_Options]):
+class TestDevice(OttoSuite):
     Options = _Options
 
     async def test_version(self, suite_options: _Options) -> None:
-        self.logger.info(
+        logger.info(
             f"device_type={suite_options.device_type!r} "
             f"lab_env={suite_options.lab_env!r} "
             f"firmware={suite_options.firmware!r}"
@@ -358,46 +361,50 @@ tunnels** are one step further out again: they belong to the lab rather than to
 any single host, and nothing in a repo's products or dev tools put them there.
 All of them are performed once, by the layer above.
 
-## Converging fixtures in suites
+## Declaring lab state in suites
 
-A suite that needs the lab in a known state requests a fixture instead of
-scripting the walk:
+A suite that needs the lab in a known state marks it instead of scripting
+the walk:
 
 ```python
+import pytest
+
 from otto.suite import OttoSuite
 
 
+@pytest.mark.ensure("installed")
 class TestWidget(OttoSuite):
-    async def test_service_answers(self, ensure_installed) -> None:
+    async def test_service_answers(self) -> None:
         """Runs against a fully-installed lab, whatever state the last test left."""
-        self.logger.info("lab is installed")
 ```
 
-The three fixtures are `ensure_installed`, `ensure_uninstalled` and
-`ensure_clean`. Each is a one-line wrapper over the same converge functions the
-CLI calls, so a fixture and `otto run install --ensure` cannot diverge. See
-{doc}`../guide/cli/test/index` for the full fixture list.
+The steps are `installed`, `uninstalled` and `clean` (and `none`); a marker
+on a test overrides the class's, and the path runs in the written order
+before the body. Each step is a one-line call into the same converge
+functions the CLI uses, so a marker and `otto run install --ensure` cannot
+diverge. The marker's full semantics are in
+{doc}`writing-suites`; the bullets below are what each step does.
 
 - **Function-scoped**: the guarantee is per test *case*. When the state already
   holds, the cost is one probe of it — but not the same probe for all three.
-  `ensure_installed` and `ensure_uninstalled` ask `status()`, which counts the
-  *counted* repos' products. `ensure_clean` asks `is_clean()` instead, and that
+  `installed` and `uninstalled` ask `status()`, which counts the
+  *counted* repos' products. `clean` asks `is_clean()` instead, and that
   is much the heavier sweep: **every** repo is asked (not only the counted
   ones), dev tools are probed alongside products, each host is asked once more
   for `toolchain_tools_absent()`, every impairable link's netem state is read,
   and the lab is scanned for tunnel processes.
-- **`ensure_installed` recovers a PARTIAL lab** by tearing it down and
+- **`installed` recovers a PARTIAL lab** by tearing it down and
   installing fresh — installing over remnants is how a lab got into that state
   in the first place.
-- **`ensure_clean` is stronger than `ensure_uninstalled`**: dev tools,
+- **`clean` is stronger than `uninstalled`**: dev tools,
   toolchain tools, impairments and tunnels are not products, so an
   uninstalled-but-tooled — or merely impaired — lab still gets cleaned.
 - **`is_clean()` answers for exactly what `cleanup` removes**, which is the
   rule that keeps the two from drifting: a lab dirty only in tunnels is not
-  clean, and `otto run cleanup` is what the fixture runs to fix it. It cuts the
+  clean, and `otto run cleanup` is what the step runs to fix it. It cuts the
   other way too — a *foreign* qdisc leaves the lab "clean", because `cleanup`
   provably will not remove one, and reporting otherwise would send every
-  `ensure_clean` into a cleanup that cannot change the answer.
+  `clean` step into a cleanup that cannot change the answer.
 - **A state that could not be read is an error, never an answer.** A host that
   did not respond to the toolchain probe, a link whose impairment could not be
   read, a tunnel scan that reached nobody: each raises out of `is_clean()`
@@ -439,7 +446,7 @@ migration is one of two moves:
 
 1. **It really is your repo's install.** Move its body into a
    `ProjectActions.install` override, as above, and delete the instruction.
-   Every surface — the command, scripts, suites, the `ensure_installed` fixture
+   Every surface — the command, scripts, suites, the `installed` ensure step
    — picks the change up at once.
 2. **It is unrelated** (`install` meaning something else entirely). Rename it;
    `otto run install-firmware` collides with nothing.

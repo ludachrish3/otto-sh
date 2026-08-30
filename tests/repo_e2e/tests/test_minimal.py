@@ -19,7 +19,7 @@ class E2EFixtureOptions:
     label: Annotated[str, typer.Option(help="Label for the e2e fixture run.")] = "e2e"
 
 
-class TestE2EFixture(OttoSuite[E2EFixtureOptions]):
+class TestE2EFixture(OttoSuite):
     """Deterministic hostless fixture suite for CLI e2e tests."""
 
     Options = E2EFixtureOptions

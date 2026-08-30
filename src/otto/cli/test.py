@@ -280,11 +280,28 @@ def list_suites_callback(value: bool) -> None:
     raise typer.Exit
 
 
+def _builtin_markers_panel() -> "Panel":
+    """Render the markers otto itself provides, from the one table that registers them."""
+    from rich.panel import Panel
+    from rich.text import Text
+
+    from ..suite.markers import OTTO_MARKERS
+
+    content = Text("\n".join(f"• {line}" for line in OTTO_MARKERS.values()))
+    return Panel(
+        content,
+        title=Text("otto (built in)", style="bold not dim"),
+        border_style="dim",
+        padding=(1, 5, 1, 1),
+    )
+
+
 def list_markers_callback(value: bool) -> None:
-    """Print the markers available to --markers (one panel per repo) and exit."""
+    """Print the markers available to --markers (one panel per repo, plus otto's) and exit."""
     if not value:
         return
     panels = [repo.get_markers_panel() for repo in get_repos()]
+    panels.append(_builtin_markers_panel())
     _render_panels(panels)
     raise typer.Exit
 

@@ -132,9 +132,13 @@ collection, and lets the tests run.
 `@pytest.mark.retry(n)`
 : Retry a failing test up to *n* times before reporting failure.
 
+`@pytest.mark.ensure("installed")`
+: Converge the lab through the named steps before the test — see
+  {doc}`../../../library/writing-suites` (Declaring lab state).
+
 `@pytest.mark.parametrize("arg", [values])`
 : Run the test once per value.  Each parameter combination gets its own
-  artifact directory.
+  `test_dir`.
 
 ```{toctree}
 :caption: Topics

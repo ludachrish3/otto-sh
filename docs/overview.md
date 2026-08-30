@@ -158,6 +158,7 @@ with a `Test`-prefixed name, which registers it automatically.
 Each suite becomes a subcommand of `otto test`.  Suites can define an `Options` class whose fields appear as CLI flags:
 
 ```python
+import logging
 from typing import Annotated
 
 import typer
@@ -165,17 +166,19 @@ import typer
 from otto import options
 from otto.suite import OttoSuite
 
+logger = logging.getLogger(__name__)
+
 
 @options
 class _Options:
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
 
 
-class TestDevice(OttoSuite[_Options]):
+class TestDevice(OttoSuite):
     Options = _Options
 
     async def test_device_reachable(self, suite_options: _Options) -> None:
-        self.logger.info(f"firmware={suite_options.firmware}")
+        logger.info(f"firmware={suite_options.firmware}")
         assert True
 ```
 
@@ -185,7 +188,7 @@ otto test --iterations 10 --threshold 95 TestDevice
 ```
 
 Suites support pytest markers (`timeout`, `retry`, `parametrize`,
-`integration`), non-fatal assertions via `self.expect()`, per-test artifact
+`integration`), non-fatal assertions via the `expect` fixture, per-test artifact
 directories, and built-in monitoring.
 
 Both suites and instructions accept an options class. For flags that

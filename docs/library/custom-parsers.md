@@ -191,7 +191,7 @@ with a more meaningful `label` (e.g. `rx wan0`) and it replaces the default.
 You can also start the monitor programmatically from within a single test:
 
 ```python
-class TestPerformance(OttoSuite[_Options]):
+class TestPerformance(OttoSuite):
     async def test_load(self, suite_options: _Options) -> None:
         await self.start_monitor(hosts=[host1, host2])
         await self.add_monitor_event("Load started", color="#2ca02c")

@@ -24,17 +24,21 @@ class TestInterfaces(OttoSuite):
 ## Non-fatal assertions with expect
 
 Sometimes you want to check multiple conditions without stopping at the
-first failure.  Use `self.expect()`:
+first failure.  Request the `expect` fixture:
 
 ```python
-async def test_device_config(self, suite_options) -> None:
+async def test_device_config(self, suite_options, expect) -> None:
     result = (await host.run("show running-config")).only
 
-    self.expect("hostname" in result.value, "Config should contain hostname")
-    self.expect("ntp server" in result.value, "Config should have NTP configured")
-    self.expect("logging" in result.value, "Config should have logging enabled")
-    # All three are checked; failures are reported together at the end
+    expect("hostname" in result.value, "Config should contain hostname")
+    expect("ntp server" in result.value, "Config should have NTP configured")
+    expect("logging" in result.value, "Config should have logging enabled")
+    # All three are checked; the test fails at the end with every failure listed
 ```
+
+Each failure is logged as it happens with its source line; the full report in
+`expect.failures` adds the caller's locals. A hard `assert` in the body
+still stops the test at once.
 
 You can also use {class}`~otto.suite.expect.ExpectCollector` directly
 outside of a suite:
@@ -102,6 +106,7 @@ class RepoOptions:
 
 ```python
 # tests/test_device.py
+import logging
 from typing import Annotated
 import typer
 
@@ -109,18 +114,20 @@ from otto import options
 from my_shared.options import RepoOptions
 from otto.suite import OttoSuite
 
+logger = logging.getLogger(__name__)
+
 
 @options
 class _Options(RepoOptions):
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
 
 
-class TestDevice(OttoSuite[_Options]):
+class TestDevice(OttoSuite):
     Options = _Options
 
     async def test_version(self, suite_options: _Options) -> None:
         # suite_options has device_type, lab_env, AND firmware
-        self.logger.info(f"Testing {suite_options.device_type} fw={suite_options.firmware}")
+        logger.info(f"Testing {suite_options.device_type} fw={suite_options.firmware}")
 ```
 
 All fields from `RepoOptions` and `_Options` appear as CLI flags:
@@ -164,16 +171,18 @@ rather than persisting an unrenderable event.
 
 ## Per-test artifact directories
 
-Every test gets a `self.testDir` directory for storing artifacts.
-Parametrized tests get unique names:
+Request `test_dir` for a directory that is this test's own — parametrized
+tests get unique names — and `suite_dir` for the suite-wide one:
 
 ```python
-async def test_capture_logs(self, suite_options) -> None:
-    # self.testDir is e.g. <xdir>/test/TestDevice/<timestamp>/test_capture_logs/
-    log_file = self.testDir / "device.log"
+async def test_capture_logs(self, test_dir) -> None:
+    # test_dir is <run output dir>/TestDevice/test_capture_logs/
     result = (await host.run("show log")).only
-    log_file.write_text(result.value)
+    (test_dir / "device.log").write_text(result.value)
 ```
+
+Both are created when first requested, like `tmp_path`; a test that never
+names them leaves nothing behind.
 
 ## Docker from instructions and suites
 

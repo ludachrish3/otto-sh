@@ -151,6 +151,26 @@ def resolve_output_dir(output_dir: Path | None) -> Path:
     return Path.cwd()
 
 
+ASYNCIO_LOOP_ARGS: list[str] = [
+    "-o",
+    "asyncio_default_test_loop_scope=class",
+    "-o",
+    "asyncio_default_fixture_loop_scope=class",
+]
+"""pytest-asyncio loop-scope defaults every ``otto test`` session runs under.
+
+One event loop per suite: a class's tests, its class-scoped fixtures and its
+function-scoped fixtures all run on the class loop, so a host session opened
+once in a class fixture is usable from every test and closed once after the
+last. Consequences the fixtures in this package honour: no class- or
+function-scoped async fixture declares ``loop_scope`` (a pin would move it
+off this loop), and a module/session-scoped async fixture MUST declare
+``loop_scope`` equal to its scope or pytest-asyncio errors at setup with a
+``ScopeMismatch`` on ``_class_scoped_runner``. Otto's own in-process test
+sessions import this list rather than restating it.
+"""
+
+
 def find_suite(name: str) -> type:
     """Resolve a registered ``OttoSuite`` subclass by class name via ``SUITES``."""
     from .register import SUITES
@@ -170,8 +190,8 @@ def _final_exit_code(rc: int, unstable: bool) -> int:
 def _session_context(log_dir: Path) -> Iterator[None]:
     """Guarantee an active ``OttoContext`` with an ``output_dir`` for the session(s).
 
-    ``OttoSuite`` internals (``setup_method``/``setup_class`` per-test dirs, the
-    ``ctx`` fixture) call ``get_context()``; in the CLI that context is
+    Otto's own fixtures (``suite_dir``/``test_dir``, the ``ctx`` fixture) call
+    ``get_context()``; in the CLI that context is
     installed by the command preamble, but a library caller
     (``bootstrap()`` → :func:`run_suite`) has none. Three cases:
 
@@ -492,6 +512,7 @@ def _run_pytest_session(
         "-s",
         "-o",
         "asyncio_mode=auto",
+        *ASYNCIO_LOOP_ARGS,
         # pytest-timeout honors @pytest.mark.timeout(N) on tests/classes. No
         # global default is imposed here — timeouts in user suites stay opt-in,
         # as they were before — but signal method ensures a fired timeout

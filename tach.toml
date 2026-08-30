@@ -429,12 +429,12 @@ depends_on = ["otto.utils", "otto.errors"]
 
 [[modules]]
 path = "otto.suite"
-# otto.project is the ensure_installed / ensure_uninstalled / ensure_clean
-# fixtures in pytest_plugin.py, imported INSIDE each fixture body (tach counts
-# it as an edge anyway). The edge points DOWN — project drives hosts on behalf
-# of a repo, a suite consumes that — and it is the point of the layer: `otto
-# run install` and the fixture call the same function, so the CLI and the
-# suites cannot diverge on what "installed" means.
+# otto.project is the `ensure` marker's converge steps (`_converge` in
+# pytest_plugin.py resolves the otto.project function at call time). The edge
+# points DOWN — project drives hosts on behalf of a repo, a suite consumes
+# that — and it is the point of the layer: `otto run install` and the marker
+# call the same function, so the CLI and the suites cannot diverge on what
+# "installed" means.
 #
 # It does complete a LOOP in this file's graph — otto.project -> otto.cli ->
 # otto.suite -> otto.project — the one loop in the header's inventory that is
@@ -444,7 +444,9 @@ path = "otto.suite"
 # decorator), and nothing in otto.suite imports it. Retiring it means giving
 # instruction registration a home that is not otto.cli, which is the same fix
 # the config<->cli DEBT edge needs and belongs with it, not here.
-depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.utils", "otto.project"]
+#
+# otto.logger: pytest_plugin hands collected suite modules' logger names to capture_external_loggers (spec 2026-08-30 §5.5) — a downward edge like otto.cli's.
+depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.utils", "otto.project", "otto.logger"]
 
 [[modules]]
 path = "otto.testing"

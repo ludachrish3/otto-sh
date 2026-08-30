@@ -335,14 +335,18 @@ class RepoOptions:
 TEST_EXAMPLE_TEMPLATE = '''\
 """Example otto test suite — runs hostless so it passes out of the box."""
 
+import logging
 from typing import Annotated
 
+import pytest
 import typer
 
 from otto import options
 from otto.suite import OttoSuite
 
 from {options_module} import RepoOptions
+
+logger = logging.getLogger(__name__)
 
 
 @options
@@ -352,14 +356,34 @@ class _Options(RepoOptions):
     greeting: Annotated[str, typer.Option(help="Greeting the example test logs.")] = "hello"
 
 
-class TestExample(OttoSuite[_Options]):
+class TestExample(OttoSuite):
     """A minimal suite: `otto test TestExample` (auto-registered by its Test* name)."""
 
     Options = _Options
 
-    async def test_logs_message(self, suite_options: _Options, repo_marker: str) -> None:
-        self.logger.info("%s (%s)", suite_options.message, suite_options.greeting)
+    @pytest.fixture(scope="class", autouse=True)
+    @classmethod
+    def banner(cls, suite_options: _Options) -> str:
+        """Suite-wide setup: runs once before the first test (the setup_class of old).
+
+        A fixture defined ON the class at class scope is a classmethod. Make it
+        `async` and it runs on the suite's event loop — open host sessions here,
+        `yield` them, and close them after the yield.
+        """
+        text = f"{{suite_options.message}} ({{suite_options.greeting}})"
+        logger.info("suite starting: %s", text)
+        return text
+
+    async def test_logs_message(self, banner: str, repo_marker: str) -> None:
+        logger.info(banner)
         assert repo_marker == "from-conftest"
+
+    async def test_expect_and_artifacts(self, expect, test_dir) -> None:
+        """`expect` records a failure without stopping the test; `test_dir` is this
+        test's own artifact directory under the run's output dir."""
+        expect(len("otto") == 4, "four letters")
+        (test_dir / "note.txt").write_text("artifacts go here")
+        assert (test_dir / "note.txt").exists()
 
 
 def test_example_function() -> None:
@@ -379,14 +403,22 @@ def repo_marker() -> str:
     return "from-conftest"
 
 
-# Fixtures can hand tests live lab hosts; uncomment once your lab_data/ is real:
-# @pytest.fixture
+# Fixtures can hand tests live lab hosts. Class scope = opened once per suite,
+# on the suite's event loop, shared by every test in it, closed after the last
+# (a conftest fixture is a plain function — no @classmethod needed). Uncomment
+# once your lab_data/ is real:
+# import pytest_asyncio
+#
+# @pytest_asyncio.fixture(scope="class")
 # async def primary_host():
 #     from otto.config import get_host
 #
 #     host = get_host("example-device")
 #     yield host
 #     await host.close()
+#
+# A module- or session-scoped async fixture must pin its loop scope to match,
+# e.g. @pytest_asyncio.fixture(scope="session", loop_scope="session").
 '''
 
 INSTRUCTIONS_TEMPLATE = '''\
@@ -418,8 +450,8 @@ logger = logging.getLogger(__name__)
 #             ...                       # your work
 #             return await super().install()
 #
-# One override point, so `otto run install`, a script, a suite, and the
-# ensure_installed fixture all pick it up. See docs/guide/cli/run/defaults.md.
+# One override point, so `otto run install`, a script, a suite, and an
+# ensure("installed") marker all pick it up. See docs/guide/cli/run/defaults.md.
 
 
 @options

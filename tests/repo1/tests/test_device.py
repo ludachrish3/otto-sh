@@ -9,6 +9,7 @@ Run with::
     otto test --iterations 10 --threshold 90 TestDevice
 """
 
+import logging
 from typing import Annotated
 
 import pytest
@@ -17,6 +18,8 @@ from repo1_common.options import RepoOptions
 
 from otto import options
 from otto.suite import OttoSuite
+
+logger = logging.getLogger(__name__)
 
 
 @options
@@ -36,14 +39,14 @@ class _Options(RepoOptions):
     ] = True
 
 
-class TestDevice(OttoSuite[_Options]):
+class TestDevice(OttoSuite):
     """Validate device configuration and connectivity."""
 
     Options = _Options
 
     async def test_device_reachable(self, suite_options: _Options) -> None:
         """Verify the device responds to basic connectivity checks."""
-        self.logger.info(
+        logger.info(
             f"[bold]Checking reachability[/bold] — "
             f"device_type={suite_options.device_type!r}  "
             f"lab_env={suite_options.lab_env!r}",
@@ -55,7 +58,7 @@ class TestDevice(OttoSuite[_Options]):
     @pytest.mark.timeout(30)
     async def test_firmware_version(self, suite_options: _Options) -> None:
         """Verify the running firmware matches the expected version."""
-        self.logger.info(
+        logger.info(
             f"Checking firmware={suite_options.firmware!r} on {suite_options.device_type!r}",
         )
         # Placeholder: replace with real firmware query
@@ -73,7 +76,7 @@ class TestDevice(OttoSuite[_Options]):
         ``retry_attempts`` property in JUnit XML, WARNING logs per failed
         attempt, and a terminal summary of retried tests.
         """
-        self.logger.info("Testing management-plane connectivity")
+        logger.info("Testing management-plane connectivity")
         # Placeholder: replace with real management check
         assert True
 
@@ -82,13 +85,13 @@ class TestDevice(OttoSuite[_Options]):
         """Verify all expected interfaces are operationally up (requires live device)."""
         if not suite_options.check_interfaces:
             pytest.skip("Interface check disabled via --no-check-interfaces")
-        self.logger.info("Checking interface state (integration)")
+        logger.info("Checking interface state (integration)")
         # Placeholder: replace with real SNMP/SSH interface query
         assert True
 
     @pytest.mark.parametrize("interface", ["eth0", "eth1", "mgmt0"])
     async def test_interface_up(self, interface: str) -> None:
         """Parametrized test — runs once per interface name."""
-        self.logger.info(f"Checking interface {interface}")
+        logger.info(f"Checking interface {interface}")
         # Placeholder: replace with real interface check
         assert True

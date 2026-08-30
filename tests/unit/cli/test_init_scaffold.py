@@ -89,13 +89,32 @@ def test_lab_scaffold_passes_hostspec_ingest(tmp_path: Path) -> None:
     assert data["$schema"] == "../.otto/schemas/lab.schema.json"
 
 
-def test_tests_scaffold_suite_autoregisters(tmp_path: Path) -> None:
+def test_tests_scaffold_suite_is_pytest_native(tmp_path: Path) -> None:
+    """The scaffold models the shapes the docs teach (spec §8.1): a bare subclass
+    with `Options = _Options`, a module logger, a classmethod class fixture, a
+    test that uses `expect` and `test_dir`, a plain function — and none of the
+    removed spellings."""
     BY_NAME["tests"].scaffold(tmp_path, CFG)
     src = (tmp_path / "tests" / "test_example.py").read_text()
-    assert "class TestExample(OttoSuite" in src
-    assert "register_suite" not in src  # decorator is gone (companion plan)
+    assert "class TestExample(OttoSuite):" in src
+    assert "Options = _Options" in src
+    assert "logger = logging.getLogger(__name__)" in src
+    assert '@pytest.fixture(scope="class", autouse=True)\n    @classmethod' in src
     assert "def test_example_function" in src
-    assert (tmp_path / "tests" / "conftest.py").exists()
+    assert "expect(" in src
+    assert "test_dir" in src
+    for old in (
+        "OttoSuite[",
+        "self.logger",
+        "self.expect",
+        "testDir",
+        "register_suite",
+        "ensure_installed",
+    ):
+        assert old not in src, old
+    conftest = (tmp_path / "tests" / "conftest.py").read_text()
+    assert '@pytest_asyncio.fixture(scope="class")' in conftest
+    assert 'loop_scope="session"' in conftest  # the pin rule, stated where it will be copied
 
 
 def test_instructions_scaffold_imports(tmp_path: Path) -> None:

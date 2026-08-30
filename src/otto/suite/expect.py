@@ -110,6 +110,31 @@ class ExpectCollector:
                 log_msg += f"\n  Message: {msg}"
             self.logger.warning(log_msg)
 
+    def __call__(self, condition: object, msg: str | None = None) -> None:
+        """``expect(condition, msg)`` — the form the ``expect`` fixture hands a test.
+
+        Identical to :meth:`expect`, with the captured source line and locals
+        taken one frame further up so the report points at the test, not here.
+
+        Examples:
+            The failure report always includes the source location and caller
+            locals.  When *msg* is provided it appears *in addition to* the
+            auto-captured source context, never replacing it:
+
+            >>> from otto.suite.expect import ExpectCollector
+            >>> collector = ExpectCollector()
+            >>> x = 42
+            >>> collector(x == 99, "math is broken")
+            >>> report = collector.failures[0]
+            >>> print(report.splitlines()[1])  # the caller's line, not __call__'s
+              collector(x == 99, "math is broken")
+            >>> "Message: math is broken" in report
+            True
+            >>> "x = 42" in report
+            True
+        """
+        self.expect(condition, msg, _stack_offset=2)
+
     def reset(self) -> None:
         """Clear all recorded failures."""
         self.failures.clear()
