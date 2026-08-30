@@ -55,11 +55,10 @@ directory otto's own documentation build creates and wipes.
 :language: text
 ```
 
-Steps 6, 7 and 8 need a lab named: `otto --lab example_lab test TestExample`,
-`otto --lab example_lab test --tests test_example_function` and `otto --lab
-example_lab run smoke` — or set `OTTO_LAB=example_lab` once and type them as
-printed ({doc}`../guide/cli/index` lists every global option and the
-environment variable that sets it).
+The last three steps name the lab explicitly (`--lab example_lab`), as every
+example on this page does; {doc}`../guide/cli/index` covers `--lab`, the
+`OTTO_LAB` environment variable that replaces it, and the rest of the global
+options.
 
 {doc}`../guide/cli/init` is the flag reference; {doc}`../guide/configuration/settings`
 explains every key `settings.toml` accepts and the one-time

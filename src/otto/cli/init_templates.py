@@ -154,6 +154,9 @@ paths = ["lab_data"]
 #backend = "uv"
 """
 
+EXAMPLE_LAB_NAME = "example_lab"
+"""The lab the scaffold declares — the one name every printed next step passes to ``--lab``."""
+
 EXAMPLE_HOST_ENTRY = {
     "ip": "192.0.2.1",
     "os_type": "unix",
@@ -170,7 +173,7 @@ EXAMPLE_ELEMENT_ENTRY = {
         "docs/guide/configuration/lab-config.md or `otto schema export`."
     ),
     "name": "example-device",
-    "labs": ["example_lab"],
+    "labs": [EXAMPLE_LAB_NAME],
     "hosts": [EXAMPLE_HOST_ENTRY],
 }
 
@@ -182,7 +185,7 @@ LAB_JSON_TEMPLATE: dict[str, Any] = {
         "declares data-plane routes (see docs/guide/configuration/lab-config.md). "
         "Keys starting with _ are comments; $schema wires editor autocomplete."
     ),
-    "labs": {"example_lab": {"resources": ["example-device"]}},
+    "labs": {EXAMPLE_LAB_NAME: {"resources": ["example-device"]}},
     "elements": [EXAMPLE_ELEMENT_ENTRY],
     "links": [],
 }

@@ -21,6 +21,7 @@ import typer
 
 from .init_templates import (
     CONFTEST_TEMPLATE,
+    EXAMPLE_LAB_NAME,
     INSTRUCTIONS_TEMPLATE,
     LAB_JSON_TEMPLATE,
     LAB_README_TEMPLATE,
@@ -875,11 +876,11 @@ async def init_command(
     # shell already running, so the pair has to be printed together or the
     # user concludes completion is broken (spec §12).
     steps.append("source ~/.bash_completions/otto.sh")
-    steps.append("otto --lab example_lab --list-hosts")
+    steps.append(f"otto --lab {EXAMPLE_LAB_NAME} --list-hosts")
     steps.append("otto test --list-suites")
-    steps.append("otto test TestExample")
-    steps.append("otto test --tests test_example_function")
-    steps.append("otto run smoke")
+    steps.append(f"otto --lab {EXAMPLE_LAB_NAME} test TestExample")
+    steps.append(f"otto --lab {EXAMPLE_LAB_NAME} test --tests test_example_function")
+    steps.append(f"otto --lab {EXAMPLE_LAB_NAME} run smoke")
     rprint("\n[bold]Next steps[/bold]")
     for i, step in enumerate(steps, 1):
         rprint(f"  {i}. {step}")

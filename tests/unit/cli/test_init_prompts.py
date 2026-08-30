@@ -89,6 +89,13 @@ def test_epilogue_prints_next_steps(tmp_path: Path) -> None:
     # shell; the banner has to say so (see test_init_banner.py).
     assert "source ~/.bash_completions/otto.sh" in result.output
     assert "otto test --list-suites" in result.output
+    # These three need a lab to run; the printed lines must name it (like
+    # step 4's `otto --lab example_lab --list-hosts`) or they fail as
+    # printed with "Missing option '--lab'".
+    output = result.output.replace("\n", "")
+    assert "otto --lab example_lab test TestExample" in output
+    assert "otto --lab example_lab test --tests test_example_function" in output
+    assert "otto --lab example_lab run smoke" in output
 
 
 def test_epilogue_skips_sut_dirs_when_already_set(tmp_path: Path, monkeypatch) -> None:

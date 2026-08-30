@@ -26,9 +26,9 @@ Next steps
   3. source ~/.bash_completions/otto.sh
   4. otto --lab example_lab --list-hosts
   5. otto test --list-suites
-  6. otto test TestExample
-  7. otto test --tests test_example_function
-  8. otto run smoke
+  6. otto --lab example_lab test TestExample
+  7. otto --lab example_lab test --tests test_example_function
+  8. otto --lab example_lab run smoke
     otto init — /tmp/otto-gs/acme     
 ┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┓
 ┃ area         ┃ status     ┃ detail ┃

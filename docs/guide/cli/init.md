@@ -49,10 +49,9 @@ Every run also prints a "Next steps" list of the commands to run next —
 `otto --install-completion` **and** `source ~/.bash_completions/otto.sh`
 (the first writes the completion script, the second activates it in the shell
 you are in — neither does the other's job), `otto --lab example_lab
---list-hosts`, `otto test --list-suites`, and — with the lab the printed
-lines leave out, and which `otto test` and `otto run` require — `otto --lab
-example_lab test TestExample`, `otto --lab example_lab test --tests
-test_example_function`, and `otto --lab example_lab run smoke`.
+--list-hosts`, `otto test --list-suites`, `otto --lab example_lab test
+TestExample`, `otto --lab example_lab test --tests test_example_function`,
+and `otto --lab example_lab run smoke`.
 
 ## What it scaffolds: lab files
 
