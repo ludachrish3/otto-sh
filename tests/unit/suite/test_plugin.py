@@ -653,3 +653,69 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
     assert len(metrics) > 0, f"Regression: monitor.json contains no metrics. payload={payload}"
     assert metrics[0]["host"] == "host1"
     assert metrics[0]["label"] == "cpu"
+
+
+# ── pytest_report_teststatus ─────────────────────────────────────────────────
+
+
+def _status(
+    when: str,
+    outcome: str,
+    *,
+    wasxfail: bool = False,
+) -> tuple[str, str, str] | None:
+    """Run the hook over a synthetic report for *when* x *outcome*."""
+    report = pytest.TestReport(
+        nodeid="test_x.py::test_a",
+        location=("test_x.py", 0, "test_a"),
+        keywords={},
+        outcome=outcome,  # type: ignore[arg-type]
+        longrepr=None,
+        when=when,  # type: ignore[arg-type]
+    )
+    if wasxfail:
+        report.wasxfail = ""  # type: ignore[attr-defined]
+    return OttoPlugin().pytest_report_teststatus(report, MagicMock())
+
+
+@pytest.mark.parametrize(
+    ("when", "outcome", "expected"),
+    [
+        # Only the call phase contributes to the "passed" count — a passing
+        # setup/teardown must return the empty category, or one test is
+        # counted three times ("3 passed" for a one-test suite).
+        ("setup", "passed", ("", "", "")),
+        ("teardown", "passed", ("", "", "")),
+        ("call", "passed", ("passed", "", "PASSED")),
+        ("setup", "failed", ("error", "", "ERROR")),
+        ("teardown", "failed", ("error", "", "ERROR")),
+        ("call", "failed", ("failed", "", "FAILED")),
+        ("setup", "skipped", ("skipped", "", "SKIPPED")),
+        ("teardown", "skipped", ("skipped", "", "SKIPPED")),
+        ("call", "skipped", ("skipped", "", "SKIPPED")),
+    ],
+)
+def test_teststatus_mirrors_pytest_categories(
+    when: str, outcome: str, expected: tuple[str, str, str]
+) -> None:
+    assert _status(when, outcome) == expected
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [
+        ("skipped", ("xfailed", "", "XFAIL")),
+        ("passed", ("xpassed", "", "XPASS")),
+    ],
+)
+def test_teststatus_mirrors_xfail_categories(outcome: str, expected: tuple[str, str, str]) -> None:
+    assert _status("call", outcome, wasxfail=True) == expected
+
+
+def test_teststatus_letter_is_always_blank() -> None:
+    """The whole point of the override: no per-test progress character."""
+    for when in ("setup", "call", "teardown"):
+        for outcome in ("passed", "failed", "skipped"):
+            status = _status(when, outcome)
+            assert status is not None
+            assert status[1] == ""

@@ -319,14 +319,37 @@ class OttoPlugin:
         short-letter keeps the category and verbose word intact (so failure
         summaries and the final pass/fail counts still render) while
         stopping the terminal reporter from writing anything per test.
+
+        The *category* must mirror pytest's own categorisation exactly. This
+        hook is ``firstresult``; pluggy runs ``tryfirst`` impls, then the rest
+        newest-first, then ``trylast``, so otto's undecorated impl runs after
+        ``_pytest.subtests`` (``tryfirst``, which therefore still sees every
+        report first) and replaces the three below it outright —
+        ``_pytest.skipping`` (xfail/xpass), ``_pytest.runner``
+        (setup/teardown) and ``_pytest.terminal`` (the rest). In particular a
+        *passing* setup or teardown report carries the **empty** category:
+        only the ``call`` phase counts towards "passed". Returning "passed"
+        for all three phases counted every test three times — a one-test
+        suite reported ``3 passed``.
         """
-        if report.passed:
-            return ("passed", "", "PASSED")
-        if report.failed:
-            return ("failed", "", "FAILED")
-        if report.skipped:
-            return ("skipped", "", "SKIPPED")
-        return None
+        # mirrors _pytest.skipping.pytest_report_teststatus
+        if hasattr(report, "wasxfail"):
+            if report.skipped:
+                return ("xfailed", "", "XFAIL")
+            if report.passed:
+                return ("xpassed", "", "XPASS")
+        # mirrors _pytest.runner.pytest_report_teststatus
+        if report.when in ("setup", "teardown"):
+            if report.failed:
+                return ("error", "", "ERROR")
+            if report.skipped:
+                return ("skipped", "", "SKIPPED")
+            return ("", "", "")
+        # mirrors _pytest.terminal.pytest_report_teststatus
+        outcome: str = report.outcome
+        if report.when == "collect" and outcome == "failed":
+            outcome = "error"
+        return (outcome, "", outcome.upper())
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         """In stability mode, accumulate per-test pass/fail counts."""

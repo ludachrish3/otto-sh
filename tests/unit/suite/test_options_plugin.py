@@ -107,13 +107,12 @@ def test_defaulted_options_are_constructed(pytester: pytest.Pytester) -> None:
         *INNER_ARGS,
         plugins=[OttoPlugin(), OttoOptionsPlugin(None)],
     )
-    # OttoPlugin.pytest_report_teststatus (src/otto/suite/plugin.py) returns
-    # a "passed"/"failed" category for every report phase (setup/call/
-    # teardown), not just "call" — so result.assert_outcomes() over-counts a
-    # single passing test as 3 passes. tests/unit/suite/test_otto_suite.py's
-    # inner-session helper hits the same thing and asserts on the session
-    # exit code instead; mirrored here.
     assert result.ret == pytest.ExitCode.OK
+    # End-to-end guard on OttoPlugin.pytest_report_teststatus: a one-test
+    # suite must be counted ONCE. The override used to return the "passed"
+    # category for the setup and teardown phase reports too, so this same
+    # run reported `3 passed`.
+    result.assert_outcomes(passed=1)
 
 
 def test_required_options_fail_with_suite_hint(pytester: pytest.Pytester) -> None:
