@@ -426,11 +426,23 @@ async def test_session_monitor_does_not_start_run_task(tmp_path):
 
 
 class _ClassFixtureRunner:
-    """Drive the class-scoped ``_otto_class_monitor_task`` fixture directly."""
+    """Drive the class-scoped ``_otto_class_monitor_task`` fixture directly.
+
+    The fixture is a staticmethod that reads its plugin from
+    ``request.config.stash[otto_plugin_key]`` (a class-scoped instance method
+    is deprecated in pytest 9.1), so the driver hands it a request double
+    carrying exactly that stash entry.
+    """
 
     @staticmethod
     async def setup(plugin: OttoPlugin):
-        gen = plugin._otto_class_monitor_task.__wrapped__(plugin)
+        from otto.suite.plugin import otto_plugin_key
+
+        request = MagicMock()
+        request.config.stash = {otto_plugin_key: plugin}
+        fixture_fn = plugin._otto_class_monitor_task.__wrapped__
+        fixture_fn = getattr(fixture_fn, "__func__", fixture_fn)
+        gen = fixture_fn(request)
         await gen.__anext__()
         return gen
 

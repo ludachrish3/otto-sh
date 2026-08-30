@@ -21,7 +21,6 @@ from typing import ClassVar
 
 import pytest
 import pytest_asyncio
-from _pytest.fixtures import SubRequest
 from repo1_common.options import RepoOptions
 
 from otto import options
@@ -38,16 +37,20 @@ class _Options(RepoOptions):
     pass
 
 
-@pytest.mark.asyncio(loop_scope="class")
 class TestStabilityFixture(OttoSuite):
     """Verify SSH connections survive across stability iterations."""
 
     _host: ClassVar[UnixHost]
     Options = _Options
 
-    @pytest_asyncio.fixture(autouse=True, scope="class", loop_scope="class")
-    async def _establish_connection(self, request: SubRequest):
-        """Open an SSH connection to the first host and keep it for all iterations."""
+    @pytest_asyncio.fixture(autouse=True, scope="class")
+    @classmethod
+    async def _establish_connection(cls):
+        """Open an SSH connection to the first host and keep it for all iterations.
+
+        A classmethod on the suite's own loop (no ``loop_scope`` pin) — the
+        connection it opens is bound to the loop every iteration runs on.
+        """
         hosts = list(all_hosts())
         assert hosts, "No hosts configured"
         host = hosts[0]
@@ -56,7 +59,7 @@ class TestStabilityFixture(OttoSuite):
         result = await host.exec("echo stability_setup_ok", timeout=10)
         assert result.status.is_ok, f"Failed to establish connection during setup: {result.value}"
 
-        self.__class__._host = host
+        cls._host = host
         yield
 
     @pytest.mark.integration

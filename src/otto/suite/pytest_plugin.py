@@ -28,6 +28,16 @@ _logger = logging.getLogger(__name__)
 otto_expect_key: pytest.StashKey[ExpectCollector] = pytest.StashKey()
 """Where the ``expect`` fixture parks a test's collector for the call-phase wrapper."""
 
+otto_options_plugin_key: pytest.StashKey["OttoOptionsPlugin"] = pytest.StashKey()
+"""Where ``pytest_configure`` parks the plugin instance for its static fixtures.
+
+pytest 9.1 deprecates a class-scoped fixture that is a bound instance method —
+of a plugin object as much as of a test class (the check is only "is
+``__self__`` a type") — and pytest 10 makes it an error. The class-scoped
+fixtures here are therefore staticmethods; the one that needs plugin state
+(``suite_options``) finds it through ``request.config``.
+"""
+
 
 def _raise_unless_converged(result: "Result", step: str) -> None:
     """Turn a non-ok converge *result* into an error naming the failing host.
@@ -71,7 +81,8 @@ class OttoOptionsPlugin:
         self.options = options
 
     @pytest.fixture(scope="class")
-    def suite_options(self, request: pytest.FixtureRequest) -> Any:
+    @staticmethod
+    def suite_options(request: pytest.FixtureRequest) -> Any:
         """Return the suite's Options instance.
 
         Single-suite runs (``otto test <SuiteName> --flags``) pass the
@@ -79,9 +90,11 @@ class OttoOptionsPlugin:
         (``otto test --tests ...`` / ``-m ...``) span suites, so each suite's
         ``Options`` is default-constructed once per class; required fields
         make the suite's tests fail with a pointer at the single-suite form.
+        A ``staticmethod`` reading its plugin from ``otto_options_plugin_key``.
         """
-        if self.options is not None:
-            return self.options
+        plugin = request.config.stash[otto_options_plugin_key]
+        if plugin.options is not None:
+            return plugin.options
         cls = getattr(request, "cls", None)
         if cls is None:
             return None
@@ -185,9 +198,14 @@ class OttoOptionsPlugin:
     # ── the ensure marker ────────────────────────────────────────────────────
 
     def pytest_configure(self, config: pytest.Config) -> None:
-        """Register otto's built-in markers so ``--strict-markers`` runs accept them."""
+        """Register the built-in markers and park this plugin for its static fixtures.
+
+        ``--strict-markers`` runs accept ``ensure``/``retry`` because of the
+        first; ``suite_options`` finds its plugin because of the second.
+        """
         for line in OTTO_MARKERS.values():
             config.addinivalue_line("markers", line)
+        config.stash[otto_options_plugin_key] = self
 
     def pytest_collection_modifyitems(self, items: list[pytest.Item]) -> None:
         """Two duties once collection is complete.

@@ -47,6 +47,9 @@ def test_init_then_full_verification_flow(tmp_path: Path) -> None:
     # present on disk.
     r = run_otto(["test", "TestExample"], xdir=xdir, sut_dirs=repo, lab="example_lab")
     assert r.returncode == 0, r.stdout + r.stderr
+    # The first run a new user sees must not open with pytest deprecation
+    # blocks from otto's OWN fixtures (pytest 10 turns them into errors).
+    assert "PytestRemovedIn10Warning" not in (r.stdout + r.stderr), r.stdout + r.stderr
 
     r = run_otto(
         ["test", "--tests", "test_example_function"], xdir=xdir, sut_dirs=repo, lab="example_lab"

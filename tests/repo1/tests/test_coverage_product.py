@@ -118,7 +118,6 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
     return result.value.strip()
 
 
-@pytest.mark.asyncio(loop_scope="class")
 class TestCoverageProduct(OttoSuite):
     """Exercise the sample C product across multiple hosts for coverage testing.
 
@@ -128,12 +127,17 @@ class TestCoverageProduct(OttoSuite):
 
     Options = _Options
 
-    @pytest_asyncio.fixture(autouse=True, scope="class", loop_scope="class")
-    async def _deploy_product(self, request):
-        """Compile and deploy the product to all remote hosts; uninstall on teardown."""
+    @pytest_asyncio.fixture(autouse=True, scope="class")
+    @classmethod
+    async def _deploy_product(cls, request):
+        """Compile and deploy the product to all remote hosts; uninstall on teardown.
+
+        A classmethod on the suite's own loop (no ``loop_scope`` pin: under
+        ``otto test`` the class loop is the default and every test shares it).
+        """
         await _compile_product()
 
-        request.cls._hosts = list(all_hosts(_REAL_HOSTS))
+        cls._hosts = list(all_hosts(_REAL_HOSTS))
 
         install_results = await do_for_all_hosts(_install_on_host, pattern=_REAL_HOSTS)
         failed = {h: r for h, r in install_results.items() if isinstance(r, BaseException)}

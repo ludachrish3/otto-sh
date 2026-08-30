@@ -72,18 +72,16 @@ def test_release_fixture_is_a_classmethod_and_warns_nothing(tmp_path) -> None:
     """Spec §5.6 / Appendix A.2: the instance-method form is deprecated in pytest 9.1.
     Run a real inner session with that deprecation escalated to an error.
 
-    The suite requests ``suite_dir``/``test_dir`` so the session sets up BOTH
-    class-scoped fixtures this task owns — ``OttoSuite._otto_release_connections``
-    (autouse) and ``OttoOptionsPlugin.suite_dir``.
-
-    ``_otto_class_monitor_task`` is shadowed by a clean classmethod of the same
-    name: ``OttoPlugin``'s own copy is class-scoped AND an instance method, so
-    it trips this identical deprecation. pytest's check
-    (``resolve_fixture_function``) only asks whether the bound ``__self__`` is a
-    type, and a plugin OBJECT's method fails that just as a test class's does —
-    a pre-existing defect in ``otto/suite/plugin.py``, outside this task's
-    scope. Shadowing it keeps this test measuring OttoSuite's own fixtures
-    instead of erroring on somebody else's.
+    The suite requests ``suite_dir``/``test_dir``/``suite_options`` so the
+    session sets up EVERY class-scoped fixture otto provides:
+    ``OttoSuite._otto_release_connections`` (autouse, classmethod),
+    ``OttoPlugin._otto_class_monitor_task`` (autouse, staticmethod) and
+    ``OttoOptionsPlugin.suite_dir`` / ``suite_options`` (staticmethods).
+    pytest's check (``resolve_fixture_function``) only asks whether the bound
+    ``__self__`` is a type, so a class-scoped instance method on a plugin
+    OBJECT fails it exactly as one on a test class does — which is why the
+    plugin fixtures are staticmethods reaching their plugin through
+    ``request.config.stash``.
     """
     import sys
 
@@ -95,17 +93,18 @@ def test_release_fixture_is_a_classmethod_and_warns_nothing(tmp_path) -> None:
 
     test_file = tmp_path / "test_nowarn.py"
     test_file.write_text("""\
-import pytest_asyncio
 from otto.suite.suite import OttoSuite
 
-class TestNoWarn(OttoSuite):
-    @pytest_asyncio.fixture(scope="class", autouse=True)
-    @classmethod
-    async def _otto_class_monitor_task(cls):
-        yield
 
-    async def test_a(self, suite_dir, test_dir) -> None:
-        assert True
+class _Opts:
+    pass
+
+
+class TestNoWarn(OttoSuite):
+    Options = _Opts
+
+    async def test_a(self, suite_dir, test_dir, suite_options) -> None:
+        assert isinstance(suite_options, _Opts)
 """)
     token = set_context(OttoContext(lab=Lab(name="_test_stub"), output_dir=tmp_path))
     try:

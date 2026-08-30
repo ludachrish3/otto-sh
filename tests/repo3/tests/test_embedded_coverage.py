@@ -159,7 +159,6 @@ class _Options:
     pass
 
 
-@pytest.mark.asyncio(loop_scope="class")
 class TestEmbeddedCoverage(OttoSuite):
     """Exercise the LLEXT coverage product over the console on each embedded
     coverage host, leaving the extension loaded for ``--cov`` collection.
@@ -167,11 +166,13 @@ class TestEmbeddedCoverage(OttoSuite):
 
     Options = _Options
 
-    @pytest_asyncio.fixture(autouse=True, scope="class", loop_scope="class")
-    async def _load_extension(self, request):
+    @pytest_asyncio.fixture(autouse=True, scope="class")
+    @classmethod
+    async def _load_extension(cls, request):
         """Rebuild (per version), then load + initialise the extension on every
         embedded host; unload on teardown (unless ``--cov`` needs it kept for
-        the post-test dump).
+        the post-test dump). A classmethod on the suite's own loop (no
+        ``loop_scope`` pin).
 
         Each distinct ``(build_dir, zver)`` pair is built exactly once so that
         multiple hosts sharing the same Zephyr version do not trigger redundant
@@ -180,7 +181,7 @@ class TestEmbeddedCoverage(OttoSuite):
         hosts = _embedded_hosts()
         if not hosts:
             pytest.skip("no embedded coverage hosts in the active lab")
-        request.cls._hosts = hosts
+        cls._hosts = hosts
         ext = _extension()
 
         # Keep each version's product up to date — repo1's TestCoverageProduct

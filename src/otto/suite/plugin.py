@@ -49,6 +49,16 @@ logger = logging.getLogger(__name__)
 #: on remote hosts for post-run collection.
 otto_cov_key: pytest.StashKey[bool] = pytest.StashKey()
 
+otto_plugin_key: pytest.StashKey["OttoPlugin"] = pytest.StashKey()
+"""Where ``pytest_configure`` parks the plugin instance for its static fixtures.
+
+A class-scoped fixture must not be an instance method — pytest 9.1 deprecates
+that form for ANY bound method whose ``__self__`` is not a type, a plugin
+object's included (``_pytest.fixtures.resolve_fixture_function``), and pytest
+10 makes it an error. So the class-scoped fixtures on this plugin are
+staticmethods that find their plugin here, through ``request.config``.
+"""
+
 
 _MAX_NAMED_HOSTS = 5
 """How many ids the no-monitorable-hosts warning spells out before summarizing.
@@ -164,6 +174,14 @@ class OttoPlugin:
         """
         config.option.asyncio_mode = "auto"
         config.stash[otto_cov_key] = self._cov
+        config.stash[otto_plugin_key] = self
+
+    def class_monitor_interval(self) -> float | None:
+        """Seconds between monitor samples while a class runs; ``None`` with ``--monitor`` off.
+
+        The one thing ``_otto_class_monitor_task`` needs from its plugin.
+        """
+        return self._monitor_interval if self._monitor else None
 
     def pytest_sessionstart(self, session: pytest.Session) -> None:
         r"""Quiet down pytest's terminal reporter output.
@@ -507,8 +525,14 @@ class OttoPlugin:
             OttoSuite._session_monitor_collector = None  # noqa: SLF001 — intra-package clear of OttoSuite class-level monitor collector slot
 
     @pytest_asyncio.fixture(scope="class", autouse=True)
-    async def _otto_class_monitor_task(self) -> AsyncGenerator[None, None]:
+    @staticmethod
+    async def _otto_class_monitor_task(
+        request: pytest.FixtureRequest,
+    ) -> AsyncGenerator[None, None]:
         """Drive ``collector.run()`` on the test class's event loop.
+
+        A ``staticmethod`` reading its plugin from ``otto_plugin_key``: see
+        that key for why a class-scoped fixture cannot be an instance method.
 
         Under ``otto test`` (``ASYNCIO_LOOP_ARGS``) every test runs on its
         class loop, so a task on the session loop never ticks while tests run
@@ -522,14 +546,13 @@ class OttoPlugin:
         """
         from .suite import OttoSuite
 
+        interval = request.config.stash[otto_plugin_key].class_monitor_interval()
         collector = getattr(OttoSuite, "_session_monitor_collector", None)
-        if not self._monitor or collector is None:
+        if interval is None or collector is None:
             yield
             return
 
-        task = asyncio.create_task(
-            collector.run(interval=timedelta(seconds=self._monitor_interval))
-        )
+        task = asyncio.create_task(collector.run(interval=timedelta(seconds=interval)))
         try:
             yield
         finally:
