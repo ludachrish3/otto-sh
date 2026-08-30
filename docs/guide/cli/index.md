@@ -86,8 +86,8 @@ otto --lab my_lab --show-lab       # full lab details (use -v for expanded outpu
 ## Environment variables
 
 Most environment variables below back a global option; where one does, the
-flag always wins when both are present.  `OTTO_SUT_DIRS` and `OTTO_HOME`
-have no flag.
+flag always wins when both are present.  `OTTO_SUT_DIRS`, `OTTO_HOME` and
+`OTTO_TEARDOWN_DEADLINE` have no flag.
 
 | Variable | Backs | Notes |
 | --- | --- | --- |
@@ -99,6 +99,7 @@ have no flag.
 | `OTTO_LOG_RICH` | `--rich-log-file` | |
 | `OTTO_SUT_DIRS` | *(no flag)* | Paths to the repo roots under test, separated by `,` or the OS path separator (`:` on Linux/macOS, `;` on Windows). Required when a development repo is under test |
 | `OTTO_HOME` | *(no flag)* | otto's user-level home; defaults to `~/.otto`.  Holds one workspace home per `OTTO_SUT_DIRS` set — see [The workspace home](#the-workspace-home) |
+| `OTTO_TEARDOWN_DEADLINE` | *(no flag)* | Seconds an interrupted command's graceful cleanup may run before it is abandoned; defaults to `10` — see {doc}`../../architecture/lifecycle` |
 
 ## Shell completion
 

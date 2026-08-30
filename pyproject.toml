@@ -191,7 +191,11 @@ lint = [
 
 [tool.doc8]
 max-line-length = 100
-ignore-path = ["docs/_build"]
+# The Getting Started captures are real, committed command output (spec
+# 2026-08-27 §5) -- e.g. a Rich table's centered title pads with trailing
+# spaces. doc8's prose checks don't apply to a verbatim transcript; drift is
+# caught by scripts/refresh_docs_captures.py --check instead.
+ignore-path = ["docs/_build", "docs/examples/getting-started/captures"]
 
 [tool.pyright]
 typeCheckingMode = "strict"

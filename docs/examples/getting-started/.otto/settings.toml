@@ -1,0 +1,25 @@
+# The Getting Started worked example — a real otto project pointed at otto's
+# own test bed. Pages under docs/getting-started/ include fragments of this
+# file between `# doc: begin <id>` / `# doc: end <id>` markers.
+
+# doc: begin identity
+name = "gs"
+version = "0.1.0"
+# doc: end identity
+
+# doc: begin libs
+libs = ["libs"]
+init = ["gs_example"]
+# doc: end libs
+
+# doc: begin lab-sources
+[[lab.sources]]
+backend = "json"
+paths = ["lab_data"]
+# doc: end lab-sources
+
+# doc: begin project
+[project]
+lab_patterns = ["busybox"]
+host_patterns = ["bb.*_qemu"]
+# doc: end project

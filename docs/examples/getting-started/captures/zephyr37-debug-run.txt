@@ -1,0 +1,46 @@
+$ otto --log-level DEBUG --lab embedded host zephyr37-fat run kernel uptime
+DEBUG    LocalSession@<session>: handshake start cmd='stty -echo 2>/dev/null; echo session.py:448
+         __OTTO_<session>_READY__\n' marker='__OTTO_<session>_READY__'                        
+         timeout=3.0s                                                                               
+DEBUG    LocalSession@<session>: handshake matched                                 session.py:471
+DEBUG    LocalSession@<session>: framed write cmd='git -C                          session.py:688
+         /tmp/otto-gs/getting-started log -1 --format=%H' payload='echo                             
+         "__OTTO_<session>_BEGIN__"; git -C /tmp/otto-gs/getting-started log -1                  
+         --format=%H; echo "__OTTO_<session>_END__$?__"\n'                                       
+DEBUG    LocalSession@<session>: begin marker matched on                           session.py:741
+         chunk='__OTTO_<session>_BEGIN__\n'                                                      
+DEBUG    LocalSession@<session>: run_cmd done cmd='git -C                          session.py:770
+         /tmp/otto-gs/getting-started log -1 --format=%H' retcode=128 output_len=<n>                 
+         buffer='\n__OTTO_<session>_BEGIN__\nfatal: not a git repository (or any                 
+         of the parent directories): .git\n__OTTO_<session>_END__128__'                          
+DEBUG    /tmp/otto-gs/getting-started: fatal: not a git repository (or any of the      invoke.py:350
+         parent directories): .git                                                                  
+INFO     fleet of interest: 0 of 9 lab hosts (1 repos, 1 excluded)                    context.py:347
+DEBUG    Opening SSH tunnel through test4 for zephyr37_fat                        remote_host.py:679
+DEBUG    Forwarding localhost:<port> -> 192.0.2.1:23 for zephyr37_fat              connections.py:367
+DEBUG    Connecting to zephyr37_fat via telnet                                    connections.py:502
+DEBUG    TelnetClient.connect host=localhost:<port> user='' login=False                 telnet.py:171
+         login_prompt=b':' interactive=False                                                        
+DEBUG    Skipping telnet login for localhost (options.login=False)                     telnet.py:204
+DEBUG    Telnet connected to localhost:<port> in <duration>s                                  telnet.py:215
+DEBUG    Connected to zephyr37_fat via telnet                                     connections.py:525
+DEBUG    SessionManager[zephyr37_fat]: building telnet session with                  session.py:2131
+         frame=ZephyrFrame                                                                          
+DEBUG    TelnetSession@<session>: handshake start                                  session.py:448
+         cmd='__OTTO_<session>_READY__\n' marker='__OTTO_<session>_READY__'                   
+         timeout=15.0s                                                                              
+DEBUG    TelnetSession@<session>: handshake matched                                session.py:471
+INFO     @zephyr37_fat   | kernel uptime                                                host.py:2239
+DEBUG    TelnetSession@<session>: framed write cmd='kernel uptime'                 session.py:688
+         payload='__OTTO_<session>_BEGIN__\rkernel                                               
+         uptime\rretval\r__OTTO_<session>_END__\r'                                               
+DEBUG    TelnetSession@<session>: begin marker matched on                          session.py:741
+         chunk='\x1b[1;31m__OTTO_<session>_BEGIN__: command not found\r\n'                       
+INFO     @zephyr37_fat > | Uptime: <n> ms                                         host.py:2257
+DEBUG    TelnetSession@<session>: run_cmd done cmd='kernel uptime' retcode=0       session.py:770
+         output_len=<n> buffer=': command not found\r\n\x1b[m\x1b[1;32m~$                            
+         \x1b[m\r\n\x1b[1;31m__OTTO_<session>_BEGIN__: command not                               
+         found\r\n\x1b[m\x1b[1;32m~$ \x1b[m\r\nUptime: <n> ms\r\n\x1b[1;32m~$                 
+         \x1b[m\r\n0\r\n\x1b[1;32m~$ \x1b[m\r\n\x1b[1;31m__OTTO_<session>_END__'                 
+
+Output directory: /tmp/otto-gs/xdir/host/<run>_run

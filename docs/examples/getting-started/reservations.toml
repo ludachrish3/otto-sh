@@ -1,0 +1,22 @@
+# The Reservations page's step: append this file to .otto/settings.toml.
+# otto does not read it where it sits; the docs-capture runner appends it for
+# the two reservation captures only (captures.toml, settings_append), so every
+# other capture -- and every reader's own runs before that page -- has no gate.
+
+# doc: begin reservations
+[reservations]
+backend = "json"
+
+[reservations.json]
+path = "reservations.json"
+# doc: end reservations
+
+# doc: begin team-backend-config
+# To use the file-backed example backend instead:
+#
+# [reservations]
+# backend = "team-file"
+#
+# [reservations.team-file]
+# path = "team-reservations.txt"
+# doc: end team-backend-config

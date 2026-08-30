@@ -55,6 +55,7 @@ ignore = [
 "tests/**" = ["S101", "D", "PLR2004", "SLF001", "ANN", "ARG", "S104", "S105", "S106", "S108", "S110", "S310", "S603", "S607", "INP001", "E402"]  # S*: tests use fake creds / subprocess harnesses / remote-host paths — not a security surface
 "scripts/**" = ["INP001", "T201"]  # scripts are CLI tools: namespace packages + print() are by design
 "docs/conf.py" = ["INP001", "ANN", "D"]  # Sphinx build config — not autodoc'd; annotations and pydocstyle add nothing here
+"docs/examples/**" = ["INP001", "T201"]  # an example project is not a package; its scripts print
 "**/__init__.py" = ["F401"]
 
 [lint.pylint]

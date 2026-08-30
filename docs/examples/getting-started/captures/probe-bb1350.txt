@@ -1,0 +1,40 @@
+$ otto --lab busybox host bb1350_qemu probe
+INFO     fleet of interest: 5 of 7 lab hosts (1 repos, 0 excluded)                                  
+capability       value      source
+applet_base64    present    declared
+applet_nc        present    declared
+applet_poweroff  present    declared
+applet_scp       absent     declared
+applet_shutdown  absent     declared
+applet_uudecode  present    declared
+applet_uuencode  present    declared
+base64_flag      -d         declared
+checksum         md5sum     declared
+elevation        su         declared
+shell_dialect    ash        declared
+stat_size        stat       declared
+timeout_style    coreutils  declared
+
+declared = already pinned in this host's userland_options, and never re-probed. probed = the device 
+answered, so this one is worth pinning. assumed = otto could not ask, so the value is only what otto
+did before it asked anything -- and it is left out of the pin for that reason, because inside a JSON
+payload a guess is indistinguishable from a measurement.
+
+Every capability is declared in this host's userland_options already, so none of them needed a 
+probe. This is the pin in force:
+
+"userland_options": {
+  "applet_base64": "present",
+  "applet_nc": "present",
+  "applet_poweroff": "present",
+  "applet_scp": "absent",
+  "applet_shutdown": "absent",
+  "applet_uudecode": "present",
+  "applet_uuencode": "present",
+  "base64_flag": "-d",
+  "checksum": "md5sum",
+  "elevation": "su",
+  "shell_dialect": "ash",
+  "stat_size": "stat",
+  "timeout_style": "coreutils"
+}

@@ -1,0 +1,16 @@
+$ python ./collect_metrics.py
+bb1350_qemu//dev	N samples
+bb1350_qemu/Blocked	N samples
+bb1350_qemu/Entropy	N samples
+bb1350_qemu/Established	N samples
+bb1350_qemu/Load (15m)	N samples
+bb1350_qemu/Load (1m)	N samples
+bb1350_qemu/Load (5m)	N samples
+bb1350_qemu/Memory Usage	N samples
+bb1350_qemu/Overall CPU	N samples
+bb1350_qemu/Runnable	N samples
+bb1350_qemu/Time-wait	N samples
+bb1350_qemu/Total procs	N samples
+bb1350_qemu/core 0	N samples
+bb1350_qemu/rx eth0	N samples
+bb1350_qemu/tx eth0	N samples

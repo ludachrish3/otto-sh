@@ -1,0 +1,41 @@
+$ otto init --all --name acme --path /tmp/otto-gs/acme
+settings.toml is the repo marker — scaffolding it first.
+created .otto/settings.toml
+created .otto/schemas/unix-host.schema.json
+created .otto/schemas/embedded-host.schema.json
+created .otto/schemas/lab.schema.json
+created .otto/schemas/link.schema.json
+created .otto/schemas/settings.schema.json
+created .otto/schemas/reservations.schema.json
+created .otto/schemas/inventory.schema.json
+created .otto/schemas/monitor-meta.schema.json
+created .otto/schemas/monitor-export.schema.json
+created .vscode/settings.json
+created .vscode/extensions.json
+created .vscode/otto.code-snippets
+created lab_data/lab.json
+created lab_data/README.md
+created pylib/acme_options.py
+created tests/test_example.py
+created tests/conftest.py
+created pylib/acme_instructions/__init__.py
+
+Next steps
+  1. export OTTO_SUT_DIRS=/tmp/otto-gs/acme
+  2. otto --install-completion
+  3. source ~/.bash_completions/otto.sh
+  4. otto --lab example_lab --list-hosts
+  5. otto test --list-suites
+  6. otto test TestExample
+  7. otto test --tests test_example_function
+  8. otto run smoke
+    otto init — /tmp/otto-gs/acme     
+┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┓
+┃ area         ┃ status     ┃ detail ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━┩
+│ settings     │ scaffolded │        │
+│ schemas      │ scaffolded │        │
+│ lab          │ scaffolded │        │
+│ tests        │ scaffolded │        │
+│ instructions │ scaffolded │        │
+└──────────────┴────────────┴────────┘

@@ -111,7 +111,7 @@ html_theme_options = {
     ]
 }
 
-exclude_patterns = ["RESTRUCTURE_PLAN.md", "superpowers/**", "_inventories"]
+exclude_patterns = ["RESTRUCTURE_PLAN.md", "superpowers/**", "_inventories", "examples/**"]
 
 # -- autodoc ------------------------------------------------------------------
 
@@ -536,8 +536,16 @@ napoleon_use_ivar = True
 
 # -- doctest ------------------------------------------------------------------
 
-doctest_global_setup = """
+_GS_EXAMPLE = pathlib.Path(__file__).resolve().parent / "examples" / "getting-started"
+
+# An f-string: any literal brace in the setup code below must be doubled.
+doctest_global_setup = f"""
 import asyncio
+import sys
+from pathlib import Path
+GS_EXAMPLE = Path({str(_GS_EXAMPLE)!r})
+if str(GS_EXAMPLE / "libs") not in sys.path:
+    sys.path.insert(0, str(GS_EXAMPLE / "libs"))
 from otto.utils import Status, complete_separated_list, split_on
 from otto.result import CommandResult, Result, Results
 from otto.config.lab import split_lab_names

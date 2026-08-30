@@ -581,16 +581,17 @@ change shows up in the docs on the next build with zero manual work.
 
 ```text
 docs/
-├── overview.md          # Project overview
-├── getting-started.md   # Installation and first steps
-├── installation.md      # Install flows: air-gapped, teams, offline docs
+├── overview.md               # Project overview
+├── getting-started/          # hub + the worked example (fragments from examples/getting-started/)
+├── examples/                 # checked-in example projects the worked example includes; not Sphinx sources
+├── installation.md           # Install flows: air-gapped, teams, offline docs
 ├── guide/
-│   ├── cli/             # One page per command, mirroring otto's command tree
-│   └── configuration/   # settings.toml, lab.json, host sources and options
-├── library/             # Using otto as a library + recipes (Markdown)
-├── architecture/        # How otto is built and why (Markdown)
-├── contributing.md      # This page
-└── api/                 # API reference (reStructuredText, auto-generated)
+│   ├── cli/                  # One page per command, mirroring otto's command tree
+│   └── configuration/        # settings.toml, lab.json, host sources and options
+├── library/                  # Using otto as a library + recipes (Markdown)
+├── architecture/             # How otto is built and why (Markdown)
+├── contributing.md           # This page
+└── api/                      # API reference (reStructuredText, auto-generated)
 ```
 
 CLI usage goes in `guide/cli/`, on the page for the command it serves —
@@ -643,6 +644,33 @@ In Markdown documentation files (collected by Sphinx):
 Common imports (`Status`, `Result`, `CommandResult`, `Results`, `LocalHost`)
 are pre-loaded in doc-file doctests via `doctest_global_setup` in
 `docs/conf.py`.
+
+### Getting Started captures
+
+The pages under `docs/getting-started/` show real command output. Each block
+is a committed text file under `docs/examples/getting-started/captures/`,
+produced by `scripts/refresh_docs_captures.py` from the manifest
+`docs/examples/getting-started/captures.toml` and included with
+`{literalinclude}` — never pasted. Labless captures (`labless = true`) are
+diffed in the docs gate (`nox -s docs`, `make docs-lint`); bed captures are
+diffed by `make docs-captures-check` and refreshed by `make docs-captures`,
+both of which need the lab VMs. To refresh one: `uv run --no-sync python
+scripts/refresh_docs_captures.py --only <id>`. Never edit an artifact by hand
+— if a capture drifts, the page's claim drifted with it, and the fix is in
+otto, the manifest's redaction rules, or the prose. A failed refresh leaves
+the captures it had already written updated and the rest stale (exit 2); fix
+the cause and re-run. Every capture runs in the fixed scratch directory
+`/tmp/otto-gs` (not `$TMPDIR`), so an artifact's layout is reproducible
+regardless of machine or environment — don't refresh two manifests at once on
+the same machine, they'd collide on it. A capture whose page's step is "add
+this table to your settings" can name `settings_append = "<file>"`, a
+project-relative TOML fragment appended to the scratch copy's
+`.otto/settings.toml` for that capture alone and restored afterwards, so
+committing the table doesn't change every other capture of the project.
+A doctest on these pages that calls `repo.import_init_modules()` imports the
+example project's init module, which registers process-global extensions — a
+command frame, monitor parsers, a login proxy, a reservation backend — that
+every later document in the same `sphinx-build -b doctest` process then sees.
 
 ## Coverage reports
 

@@ -1,0 +1,6 @@
+{
+    "version": 1,
+    "reservations": [
+        {"user": "chris", "resources": ["bb-bench", "bb1350-chassis", "bb1350-slot"]}
+    ]
+}

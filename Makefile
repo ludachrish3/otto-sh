@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed support-matrix web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed support-matrix web-install web web-dev test-ts web-clean wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -1304,6 +1304,8 @@ docs-lint:
 	@uv run python scripts/lint_docs_versions.py docs/
 	@uv run python scripts/check_docs_dependency_table.py
 	@uv run python scripts/check_docs_wheel_matrix.py
+	@$(SAY) "getting-started captures: labless drift check"
+	@uv run python scripts/refresh_docs_captures.py --check --labless
 
 docs-html: docs/_build/html/index.html
 
@@ -1340,6 +1342,14 @@ doctest-src:
 # this venv can carry tach after a `uv run --group lint` (issue #193). Pinned
 # by tests/unit/test_lane_invariants.py.
 	@uv run pytest -p no:cacheprovider -o addopts="--doctest-modules -p no:tach" src/otto
+
+docs-captures: ## (Docs) Refresh EVERY Getting Started capture, bed included (needs the lab VMs)
+	@$(SAY) "getting-started captures: full refresh (bed)"
+	@uv run python scripts/refresh_docs_captures.py
+
+docs-captures-check: ## (Docs) Diff EVERY Getting Started capture against the bed -- monitoring, never a push gate
+	@$(SAY) "getting-started captures: full drift check (bed)"
+	@uv run python scripts/refresh_docs_captures.py --check
 
 # web-clean is a prerequisite because the built frontend IS a generated
 # artifact, and omitting it made this target quietly dishonest: a `make clean`

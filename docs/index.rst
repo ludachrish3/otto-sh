@@ -5,7 +5,7 @@ otto
    :maxdepth: 2
 
    overview
-   getting-started
+   getting-started/index
    installation
    guide/index
    library/index

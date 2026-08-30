@@ -69,7 +69,9 @@ commands on hosts:
 otto --lab my_lab --dry-run run deploy
 ```
 
-Commands and file transfers are skipped, but connections are still verified.
+Nothing is contacted: the lab loads and the run stops before the instruction
+body. `--probe` opens a connection, never a command — but only `otto host`
+lends it hosts to dial; an `otto run` dry run names none ({doc}`../dry-run`).
 
 ## Options
 

@@ -1,0 +1,22 @@
+$ otto inventory lookup test1
+key:      test1
+backend:  json:/tmp/otto-gs/getting-started-inventory/inventory.json
+╭────────────┬─────────────────────────────────────────────────────────────────────────────────────╮
+│ field      │ value                                                                               │
+├────────────┼─────────────────────────────────────────────────────────────────────────────────────┤
+│ creds      │ vagrant, test                                                                       │
+│ interfaces │ {"bbeth-1350": {"ip": "198.51.100.18", "subnet": "198.51.100.16/30"}, "eth2":       │
+│            │ {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"}}                                 │
+│ ip         │ 10.10.200.11                                                                        │
+│ is_virtual │ true                                                                                │
+│ rack       │ 1                                                                                   │
+│ shelf      │ 3                                                                                   │
+│ site       │ lab-a                                                                               │
+╰────────────┴─────────────────────────────────────────────────────────────────────────────────────╯
+extra (opaque to otto) 
+╭───────────┬─────────╮
+│ key       │ value   │
+├───────────┼─────────┤
+│ asset_tag │ VM-0011 │
+╰───────────┴─────────╯
+supplies: board, creds, interfaces, ip, is_virtual, os_name, rack, shelf, site

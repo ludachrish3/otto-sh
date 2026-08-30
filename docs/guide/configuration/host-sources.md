@@ -121,7 +121,7 @@ field, and the link entry — lives in {doc}`lab-config`.
 Running `otto init` (or `otto init --lab`) scaffolds a `lab.json` with one
 declared lab and one example element, plus a `lab_data/README.md` walking
 through the three sections — a faster way to see a valid file than building
-one from scratch. See {doc}`../../getting-started`.
+one from scratch. See {doc}`../../getting-started/index`.
 ```
 
 ### Annotating entries with `_`-prefixed keys

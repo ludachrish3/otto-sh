@@ -118,7 +118,7 @@ tests
 
 init
 : List of Python module names (dot-separated) to import at startup.  Use
-  this to register instructions (`@command()`) and shared option classes.
+  this to register instructions (`@instruction()`) and shared option classes.
   These modules must be importable from one of the `libs` directories.
   Defaults to `[]`.
 
@@ -295,8 +295,6 @@ Inspect the outcome at runtime via `otto.config.get_repos()` — each repo
 carries a `dependencies` list with per-dependency status and the provider's
 version.
 
-
-(team-setup-checklist)=
 ### `[env]` — which installer builds the orchestration venv
 
 ```toml
@@ -342,6 +340,8 @@ environment problem, and each is reported by the thing that owns it — see
 {doc}`../cli/env/index`, which also documents what the preflight does not
 cover.
 
+(team-setup-checklist)=
+
 ## Team setup checklist
 
 Most of otto's configuration is a **one-time, team-level** decision. New
@@ -375,7 +375,7 @@ otto for a team:
    {doc}`../cli/test/index`.
 5. **Set per-product preferences** — optional `[host_preferences]` /
    `[os_profiles]` (this page, above, and {doc}`lab-config` / {doc}`os-profiles`).
-6. **Enable tab completion** — see {doc}`../../getting-started`.
+6. **Enable tab completion** — see {doc}`../../getting-started/index`.
 7. **(Optional) Add TLS to the dashboard** — plain HTTP plus a per-run
    access key is the default and needs no setup; add TLS only if a lab
    needs it. A team owner creates a CA once and distributes trust to

@@ -451,6 +451,8 @@ The `otto host` subcommands map directly to methods on the
 can also be done inside instructions and test suites:
 
 ```{doctest}
+>>> from asyncio import run
+>>> from otto.host.local_host import LocalHost
 >>> host = LocalHost()
 >>> result = run(host.run(["echo hello", "echo world"]))
 >>> result.status

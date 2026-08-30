@@ -1,0 +1,6 @@
+$ otto --lab embedded host zephyr27-fat run kernel uptime
+INFO     fleet of interest: 0 of 9 lab hosts (1 repos, 1 excluded)                                  
+INFO     @zephyr27_fat   | kernel uptime                                                            
+INFO     @zephyr27_fat > | Uptime: <n> ms                                                     
+
+Output directory: /tmp/otto-gs/xdir/host/<run>_run

@@ -1,0 +1,35 @@
+{
+    "_note": "keys are the device names NetBox will carry; never rename a key",
+    "test1": {
+        "ip": "10.10.200.11",
+        "interfaces": {
+            "eth2": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"},
+            "bbeth-1350": {"ip": "198.51.100.18", "subnet": "198.51.100.16/30"}
+        },
+        "is_virtual": true,
+        "site": "lab-a",
+        "rack": 1,
+        "shelf": 3,
+        "extra": {"asset_tag": "VM-0011"}
+    },
+    "test2": {
+        "ip": "10.10.200.12",
+        "interfaces": {
+            "eth2": {"ip": "192.168.1.12", "subnet": "192.168.1.0/24"}
+        },
+        "is_virtual": true,
+        "site": "lab-a",
+        "rack": 1,
+        "shelf": 3
+    },
+    "test3": {
+        "ip": "10.10.200.13",
+        "interfaces": {
+            "eth2": {"ip": "192.168.1.13", "subnet": "192.168.1.0/24"}
+        },
+        "is_virtual": true,
+        "site": "lab-a",
+        "rack": 1,
+        "shelf": 4
+    }
+}

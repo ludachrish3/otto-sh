@@ -5,7 +5,7 @@ recommended project-managed setup for teams, fully air-gapped installation, and 
 read otto's documentation (and its dependencies' documentation) offline.
 
 If you just want otto on your machine right now, the short version on the
-{doc}`getting-started` page is enough. Come back here when you are setting up a team,
+{doc}`getting-started/index` page is enough. Come back here when you are setting up a team,
 working without internet access, or managing otto alongside other Python dependencies.
 
 ## Requirements

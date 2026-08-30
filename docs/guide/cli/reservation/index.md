@@ -155,6 +155,16 @@ are a shared lab identifier, or making one lab a sub-lab of the other.  A lab
 that declares `resources: []` reserves nothing at all, so it is never half of
 such a pair — there is no reservation for the shared element to protect.
 
+## Writing your own backend
+
+The `json` backend is a file; a team with a scheduler — Jira, a booking
+service, a database — writes a backend that reads it: three read-only
+methods, registered from an `init` module, selected by name in
+`[reservations]`. {doc}`../../../library/reservation-backends` has the
+contract, the conformance helper that proves a backend against it, and the
+optional windows and username-completion capabilities. The Getting Started
+section walks through one ({doc}`../../../getting-started/reservations`).
+
 ## Fail-closed behavior
 
 If backend construction raises (scheduler unreachable, bad credentials), otto

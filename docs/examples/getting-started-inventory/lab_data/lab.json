@@ -1,0 +1,59 @@
+{
+    "_note": "every machine fact comes from inventory.json; every otto fact stays here. Declared inline, these three hosts come out identical.",
+    "labs": {
+        "unix": {
+            "resources": ["unix-bench"],
+            "metadata": {"description": "unix regression bed"}
+        }
+    },
+    "elements": [
+        {
+            "_doc_begin": "test1",
+            "name": "test1",
+            "labs": ["unix"],
+            "resources": ["test1-chassis"],
+            "metadata": {"role": "hub"},
+            "hosts": [
+                {
+                    "inventory": "test1",
+                    "os_type": "unix",
+                    "docker_capable": true,
+                    "valid_terms": ["ssh", "telnet"],
+                    "valid_transfers": ["scp", "sftp", "ftp", "nc"]
+                }
+            ],
+            "_doc_end": "test1"
+        },
+        {
+            "_doc_begin": "test2",
+            "name": "test2",
+            "labs": ["unix"],
+            "hosts": [
+                {
+                    "inventory": "test2",
+                    "os_type": "unix",
+                    "docker_capable": true,
+                    "valid_terms": ["telnet", "ssh"],
+                    "valid_transfers": ["nc", "scp", "sftp", "ftp"],
+                    "resources": ["test2-console"]
+                }
+            ],
+            "_doc_end": "test2"
+        },
+        {
+            "_doc_begin": "test3",
+            "name": "test3",
+            "labs": ["unix"],
+            "hosts": [
+                {
+                    "inventory": "test3",
+                    "os_type": "unix",
+                    "docker_capable": true,
+                    "valid_terms": ["ssh", "telnet"],
+                    "valid_transfers": ["scp", "sftp", "ftp", "nc"]
+                }
+            ],
+            "_doc_end": "test3"
+        }
+    ]
+}

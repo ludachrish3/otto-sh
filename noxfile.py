@@ -493,6 +493,7 @@ def docs(session: nox.Session) -> None:
     session.run("python", "scripts/lint_docs_versions.py", "docs/")
     session.run("python", "scripts/check_docs_dependency_table.py")
     session.run("python", "scripts/check_docs_wheel_matrix.py")
+    session.run("python", "scripts/refresh_docs_captures.py", "--check", "--labless")
     # -E (fresh env) + -a (write all) so the build matches a clean checkout.
     session.run("sphinx-build", "-E", "-a", "-W", "-b", "html", "docs/", "docs/_build/html")
     session.run("sphinx-build", "-E", "-b", "doctest", "docs/", "docs/_build/doctest")
@@ -502,3 +503,13 @@ def docs(session: nox.Session) -> None:
     session.run(
         "pytest", "-p", "no:cacheprovider", "-o", "addopts=--doctest-modules -p no:tach", "src/otto"
     )
+
+
+@nox_uv.session(uv_groups=["dev"])
+def docs_captures(session: nox.Session) -> None:
+    """Refresh or --check the Getting Started command captures (args pass through).
+
+    ``nox -s docs_captures -- --check --labless`` is what the docs gate runs;
+    without ``--labless`` the bed must be reachable.
+    """
+    session.run("python", "scripts/refresh_docs_captures.py", *session.posargs)

@@ -101,7 +101,7 @@ combining the two is a loud usage error rather than a silent intersection.
 This is the deliberate second door into the same pipeline: plain pytest
 functions (no `OttoSuite` at all) are first-class here, which is what the
 `otto init` scaffold demonstrates
-([getting started](../../getting-started.md#your-first-test-suite)).
+([getting started](../../getting-started/index.md#your-first-test-suite)).
 
 `--tests` tab-completion is fed by two layers. The always-available **floor**
 is a static `ast` scan of `def test_*` / `Test*` methods — instant, never

@@ -1,0 +1,17 @@
+# The same lab as ../getting-started, with the unix hosts' machine facts moved
+# into an inventory. The project-level [inventory] table overrides any
+# ~/.otto/settings.toml; relative paths anchor to this project's root.
+name = "gs"
+version = "0.1.0"
+
+[[lab.sources]]
+backend = "json"
+paths = ["lab_data"]
+
+# doc: begin inventory-config
+[inventory]
+backend = "json"
+path = "inventory.json"
+creds_file = "creds.json"
+supplies = ["ip", "interfaces", "is_virtual", "site", "rack", "shelf", "board", "os_name"]
+# doc: end inventory-config

@@ -1,0 +1,9 @@
+$ otto inventory list
+╭───────┬──────────────╮
+│ key   │ ip           │
+├───────┼──────────────┤
+│ test1 │ 10.10.200.11 │
+│ test2 │ 10.10.200.12 │
+│ test3 │ 10.10.200.13 │
+╰───────┴──────────────╯
+3 record(s) in json:/tmp/otto-gs/getting-started-inventory/inventory.json

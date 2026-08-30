@@ -1,0 +1,15 @@
+{
+    "_note": "one home for credentials, whatever the inventory backend",
+    "test1": [
+        {"login": "vagrant", "password": "vagrant"},
+        {"login": "test", "password": "Password1"}
+    ],
+    "test2": [
+        {"login": "vagrant", "password": "vagrant"},
+        {"login": "test", "password": "Password1"}
+    ],
+    "test3": [
+        {"login": "vagrant", "password": "vagrant"},
+        {"login": "test", "password": "Password1"}
+    ]
+}

@@ -553,6 +553,15 @@ Practices that help, none of which otto requires:
   the last export shows what moved, and `otto init` in CI catches a dead
   reference before a run does.
 
+## Writing your own backend
+
+A JSON file and NetBox are the two backends otto ships. A team whose facts
+live elsewhere — a CMDB, a spreadsheet export, an internal API — writes a
+backend: a class implementing the inventory protocol, registered from an
+`init` module and selected by name in `[inventory]`. The contract, the
+snapshot-cache opt-in, and the conformance helper that proves a backend
+against it are in {doc}`../../library/inventory-backends`.
+
 ## Worked example — the unix lab
 
 Three virtual hosts in a `unix` lab, one of which is also a member of

@@ -1,0 +1,109 @@
+# Captures the Getting Started pages include (spec 2026-08-27 §5).
+# Refresh: python scripts/refresh_docs_captures.py [--only ID]   (bed captures need the lab)
+# Check:   python scripts/refresh_docs_captures.py --check [--labless]
+#
+# labless = true  -> tier 2, checked in the docs gate
+# labless = false -> tier 3, checked by `make docs-captures-check` only
+
+[[capture]]
+id = "init-all"
+labless = true
+mkdir = ["{tmp}/acme"]
+argv = ["{otto}", "init", "--all", "--name", "acme", "--path", "{tmp}/acme"]
+
+[[capture]]
+id = "probe-test1"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{otto}", "--lab", "unix", "host", "test1", "probe"]
+
+[[capture]]
+id = "inventory-lookup-test1"
+labless = true
+project = "getting-started-inventory"
+argv = ["{otto}", "inventory", "lookup", "test1"]
+
+[[capture]]
+id = "inventory-list"
+labless = true
+project = "getting-started-inventory"
+argv = ["{otto}", "inventory", "list"]
+
+[[capture]]
+id = "zephyr37-debug-run"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{otto}", "--log-level", "DEBUG", "--lab", "embedded", "host", "zephyr37-fat", "run", "kernel uptime"]
+# The uptime value varies every run. DEBUG logging turned out to carry four
+# more things that vary run to run: the per-session random ids threaded
+# through every handshake/marker/framed-write line, the local hop's ephemeral
+# forwarding port, the tunnel-connect duration, and the uptime response's own
+# byte length -- plus the per-run scratch output directory, which otto names
+# from a non-ISO YYYYMMDD_HHMMSS_mmm timestamp. The repo's commit is not among
+# them: the capture runs against a scratch copy, so otto's git read fails and
+# no hash is ever printed.
+redact = [
+    ["Uptime: \\d+ ms", "Uptime: <n> ms"],
+    ["output_len=\\d+", "output_len=<n>"],
+    ["LocalSession@[0-9a-f]+", "LocalSession@<session>"],
+    ["TelnetSession@[0-9a-f]+", "TelnetSession@<session>"],
+    ["__OTTO_[0-9a-f]+_", "__OTTO_<session>_"],
+    ["localhost:\\d+", "localhost:<port>"],
+    ["in \\d+\\.\\d+s", "in <duration>s"],
+    ["\\d{8}_\\d{6}_\\d{3}_run", "<run>_run"],
+]
+
+[[capture]]
+id = "probe-bb1350"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{otto}", "--lab", "busybox", "host", "bb1350_qemu", "probe"]
+
+[[capture]]
+id = "as-root-test1"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{python}", "{project}/as_root.py"]
+
+[[capture]]
+id = "monitor-bb1350"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{python}", "{project}/collect_metrics.py"]
+# How many samples a fixed-duration run collects depends on where the ticks
+# fall (and a rate series needs two ticks before its first point), so the
+# counts are normalised; which series appear is the point, and is stable.
+redact = [["\\t\\d+ samples", "\\tN samples"]]
+
+[[capture]]
+id = "zephyr27-run"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{otto}", "--lab", "embedded", "host", "zephyr27-fat", "run", "kernel uptime"]
+# Same uptime-casing and run-directory fixes as zephyr37-debug-run; this one
+# runs at the default log level so none of the DEBUG-only noise appears.
+redact = [
+    ["Uptime: \\d+ ms", "Uptime: <n> ms"],
+    ["\\d{8}_\\d{6}_\\d{3}_run", "<run>_run"],
+]
+
+[[capture]]
+id = "reservation-check-refused"
+labless = true
+project = "getting-started"
+settings_append = "reservations.toml"
+expect_exit = 1
+argv = ["{otto}", "--lab", "busybox", "--as-user", "alice", "reservation", "check"]
+
+[[capture]]
+id = "reservation-check-ok"
+labless = true
+project = "getting-started"
+settings_append = "reservations.toml"
+argv = ["{otto}", "--lab", "busybox", "--as-user", "chris", "reservation", "check"]

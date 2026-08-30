@@ -126,6 +126,9 @@ their own CLI options via Typer annotations:
 
 ```python
 import logging
+from typing import Annotated
+
+import typer
 
 from otto.cli.run import instruction
 from otto.config import all_hosts
@@ -231,12 +234,12 @@ Monitoring can also be started from within a test suite using
 4. **Monitor hosts:**
 
    ```bash
-   otto -l my_lab monitor
+   otto -l my_lab monitor --live
    ```
 
 ## Where to go next
 
-- {doc}`getting-started` — Installation and first steps
+- {doc}`getting-started/index` — Installation and first steps
 - {doc}`installation` — Air-gapped installs, team setup, offline docs
 - {ref}`team-setup-checklist` — One-time team setup (host source, reservations, libs)
 - {doc}`guide/cli/index` — Every `otto` command, one page per verb
