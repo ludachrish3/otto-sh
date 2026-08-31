@@ -38,6 +38,7 @@
                 {
                     "ip": "10.10.200.13",
                     "docker_capable": true,
+                    "roles": ["docker"],
                     "creds": [
                         {"login": "vagrant", "password": "vagrant"},
                         {"login": "test", "password": "Password1"}

@@ -1,0 +1,19 @@
+# The REAL edge, repo1's side of the displacement pair (spec §4).
+#
+# Plain compose: nothing here speaks otto. `EDGE_ADDR` arrives under the name
+# the product chose, and the file is deployable by hand —
+# `EDGE_ADDR=10.0.0.5 docker compose -f edge.yml up -d` behaves identically
+# to the otto deployment (spec §6's executable decoupling test).
+services:
+  edge:
+    image: repo1-api:latest        # reuse the already-built image; no new Dockerfile
+    command: ["sh", "-c", "while sleep 3600; do :; done"]
+    environment:
+      # Pass-through: compose hands the variable to the container at
+      # container-env time.
+      - EDGE_ADDR
+      # Native interpolation with a native default: compose resolves this at
+      # PARSE time. It reads `unset` unless otto's env mapping actually
+      # reached the compose invocation, so the pair proves both consumption
+      # points spec §6's two sinks exist to cover.
+      - EDGE_ORIGIN=${EDGE_ADDR:-unset}

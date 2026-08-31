@@ -181,7 +181,26 @@ depends_on = ["otto.utils", "otto.host", "otto._webassets", "otto.config", "otto
 
 [[modules]]
 path = "otto.docker"
-depends_on = ["otto.host", "otto.models", "otto.lifecycle", "otto.utils", "otto.config", "otto.result"]
+depends_on = [
+    "otto.host",
+    "otto.models",
+    "otto.lifecycle",
+    "otto.utils",
+    "otto.config",
+    "otto.result",
+    # UseCaseResolutionError roots on OttoError, because the repo's
+    # `test_every_public_exception_in_src_is_ottoerror_rooted` guard requires
+    # every public exception in src/otto to. Same standing as otto.result's
+    # edge below: otto.errors is a zero-import leaf, so this can neither
+    # invert layering nor create a cycle.
+    "otto.errors",
+    # `register_compose_adapter` is a registration seam — it writes into a
+    # Registry and attributes the entry to the registering repo, exactly as
+    # every other registration seam in the tree does (docker use-cases spec
+    # §5). otto.registry is a zero-import leaf too (see otto.bootstrap's note
+    # above), so the same no-cycle argument holds.
+    "otto.registry",
+]
 
 [[modules]]
 path = "otto.errors"

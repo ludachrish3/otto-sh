@@ -271,6 +271,7 @@ host field — the third reservation level, beside the
 | `log` | string | Standing log disposition for this host's command I/O, named by its `LogMode`: `"normal"` (the default) logs everywhere, `"quiet"` keeps it in `verbose.log` but off the console, `"never"` redacts it from every sink.  Composed with each command's own mode, the more restrictive winning.  Booleans are no longer accepted — write the mode name. |
 | `log_stdout` | boolean | Whether this host's output is echoed to stdout (default `true`).  Currently unused by otto — `log` alone governs the console: `"quiet"` keeps output off it, `"never"` redacts it everywhere. |
 | `docker_capable` | boolean | `true` when this host can run Docker containers (Unix hosts only). |
+| `roles` | array of strings | Lab-intent tags for this host (e.g. `["edge", "db"]`, Unix hosts only). Consumed by docker use-case placement resolution to pick the host a use-case's role names. Defaults to `[]`. |
 | `has_bash` | boolean | `true` when the host has a working `bash` to `exec -a`-tag processes through. Gates which hosts can host or be scanned for `otto tunnel` tunnels — see {doc}`../cli/tunnel/index`. Defaults to `true` for Unix hosts (including `local` and Docker containers), `false` for embedded hosts. |
 | `shell_history` | boolean | Whether otto's own commands are recorded in this host's shell history (Unix hosts only). Defaults to `false` — otto neutralizes `HISTFILE` on each shell it opens so automation traffic doesn't bury a human's history. Set `true` where otto's commands should stay visible in the history file. See {ref}`per-host-shell-history`. |
 
@@ -952,19 +953,27 @@ container joins the same universes its parent is in.
 ## Docker-capable hosts
 
 Mark hosts that can host containers.  `docker_capable` is a *host* field, so
-it goes on the host entry inside its element:
+it goes on the host entry inside its element, and `roles` sits beside it:
 
 ```text
 {
   "name": "test3",
   "labs": ["unix"],
   "hosts": [
-    { "ip": "...", "creds": [...], "docker_capable": true }
+    { "ip": "...", "creds": [...], "docker_capable": true, "roles": ["edge"] }
   ]
 }
 ```
 
-See {doc}`../cli/docker/index` for the commands that read this.
+`roles` is lab **intent** — what this lab uses the machine for — not a fact
+about the machine, which is why it lives here and never in the inventory
+layer.  A docker use-case fragment declaring `role = "edge"` is placed on the
+host tagged with it; a multi-role host is normal, and two hosts claiming one
+role is representable and refused at resolution rather than guessed at.
+
+See {doc}`../cli/docker/use-cases` for how a role is resolved and what the
+other placement knobs are, and {doc}`../cli/docker/index` for the commands
+that read this.
 
 ## Declaring toolchain tools in lab data
 

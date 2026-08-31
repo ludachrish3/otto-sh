@@ -52,7 +52,7 @@ def register_builtin_commands() -> None:
     register_cli_command(
         "docker",
         "otto.cli.docker:docker_app",
-        help="Build images and orchestrate compose stacks on docker-capable lab hosts.",
+        help="Build images and deploy use-case stacks on docker-capable lab hosts.",
         gate=False,
     )
     register_cli_command(

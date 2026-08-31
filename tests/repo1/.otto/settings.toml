@@ -63,5 +63,28 @@ dockerfile = "docker/Dockerfile"
 context = "docker"
 
 [[docker.composes]]
+name = "core"
 path = "docker/compose.yml"
 services = ["api"]
+
+[[docker.use_cases]]
+name = "repo1"
+composes = ["core"]
+role = "docker"
+
+# The displacement pair's winner (spec §4). repo1 provides a REAL `edge` at
+# priority 10; repo2's mock sits at 0 and stands down. Losing is whole-fragment,
+# so a `--provide edge=repo2` invocation excludes `core` here too — which is
+# what makes the pair a usable --remove-orphans fixture.
+[[docker.composes]]
+name = "edge"
+path = "docker/edge.yml"
+services = ["edge"]
+
+[[docker.use_cases]]
+name = "integration"
+composes = ["core", "edge"]
+role = "docker"
+provides = "edge"
+priority = 10
+env = { EDGE_ADDR = "${otto:parent.addr}" }

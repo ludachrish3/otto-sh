@@ -353,9 +353,15 @@ def cli_sut_dir(tmp_path: Path) -> Path:
             f'paths = ["{lab_dir}"]\n'
             f"\n"
             f"[[docker.composes]]\n"
+            f'name = "core"\n'
             f'path = "{REPO1 / "docker" / "compose.yml"}"\n'
             f'services = ["api"]\n'
-            f'default_host = "test2"\n'
+            f"\n"
+            f"[[docker.use_cases]]\n"
+            f'name = "repo1"\n'
+            f'composes = ["core"]\n'
+            f'role = "docker"\n'
+            f'placement = {{ docker = "test2" }}\n'
         ),
         files={"lab_data/lab.json": json.dumps(doc)},
     )

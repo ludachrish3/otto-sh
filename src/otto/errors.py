@@ -8,9 +8,9 @@ before any broad ``except ValueError`` / ``except RuntimeError`` clause in
 the same ``try`` — the first lexical match wins.
 
 DEFINES, not raises, and the difference is not small: otto also raises plain
-stdlib exceptions at 301 sites — an argument otto validates and rejects is
+stdlib exceptions at 387 sites — an argument otto validates and rejects is
 usually a bare ``ValueError``, not a named class. ``except OttoError``
-therefore means "one of otto's 49 NAMED failures", not "anything otto
+therefore means "one of otto's 50 NAMED failures", not "anything otto
 raised".
 
 There is no one clause that catches everything, and it is worth being exact
@@ -23,23 +23,23 @@ rather than offering a comforting near-miss:
   hold gets a process exit instead. The sixth is
   :class:`~otto.lifecycle.SyncPhaseInterrupt`, a ``KeyboardInterrupt`` on
   purpose (see below).
-* ``except (ValueError, RuntimeError)`` covers 254 of the 301 raise sites,
-  and 34 of the 49 named classes. Of the other 15, eleven are rooted at plain
+* ``except (ValueError, RuntimeError)`` covers 337 of the 387 raise sites,
+  and 35 of the 50 named classes. Of the other 15, eleven are rooted at plain
   ``Exception`` (the bootstrap, project-activation, lab-context,
   lab-repository, inventory and reservation errors) and four sit under
   ``OSError`` (``AppShellTimeoutError``, ``LoginProxyError``,
-  ``RetryAttemptTimeoutError``, ``WaitTimeoutError``) — 34 + 11 + 4 = 49, so
+  ``RetryAttemptTimeoutError``, ``WaitTimeoutError``) — 35 + 11 + 4 = 50, so
   the split accounts for every named class.
 
 Those counts are measured, not maintained by arithmetic: a *raise site* is a
 ``raise`` of a name that is a BUILTIN exception type (so ``typer.Exit`` and
-otto's own classes are excluded from the 301), and it is *covered* when that
+otto's own classes are excluded from the 387), and it is *covered* when that
 builtin is rooted at ``ValueError`` or ``RuntimeError`` — which is why the 42
 ``NotImplementedError`` raises count as covered. Re-measure by walking the
 AST of ``src/otto``; do not adjust these by hand. The 2026-08-07 error-taxonomy
 wave is why the site count FELL: 37 bare ``RuntimeError`` raises in link,
 tunnel, docker and transfer became named classes, which moves them out of the
-301 and into the named-class total. That total is stated once, above, and
+387 and into the named-class total. That total is stated once, above, and
 gated; it is not repeated here, because the second copy is the one that goes
 stale.
 

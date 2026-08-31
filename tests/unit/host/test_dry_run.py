@@ -2437,8 +2437,17 @@ class TestADeclineNeverResurfacesAsAFabricatedFailure:
 
     @staticmethod
     def _stub_config(monkeypatch) -> None:
-        """`_auto_up`'s two late imports, stubbed so nothing reads a real lab."""
-        repo = dataclasses.make_dataclass("Repo", ["name"])(name="repo1")
+        """`_auto_up`'s two late imports, stubbed so nothing reads a real lab.
+
+        ``docker_settings.use_cases`` is present (empty) rather than omitted:
+        `_auto_up` now checks `declared_use_cases(get_repos())` before the
+        legacy per-repo route, and a bare name-only stub would AttributeError
+        there instead of taking this test's legacy-route path.
+        """
+        docker_settings = dataclasses.make_dataclass("DockerSettings", ["use_cases"])(use_cases=())
+        repo = dataclasses.make_dataclass("Repo", ["name", "docker_settings"])(
+            name="repo1", docker_settings=docker_settings
+        )
         monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
         # `_auto_up` hands the lab straight to the spied `compose_up` and
         # never looks inside it, so an opaque object is the honest stub.

@@ -151,9 +151,13 @@ def _repo_with_docker(tmp_path: Path, hosts: list[dict], compose) -> SimpleNames
 _TEST1_DOCKER = {**_TEST1, "docker_capable": True}
 
 
-def test_lab_filter_synthesizes_container_when_default_host_in_lab(tmp_path: Path) -> None:
-    """A compose default_host that survives the lab filter yields its container."""
-    compose = SimpleNamespace(default_host="test1", services=("api",))
+def test_lab_filter_synthesizes_container_for_docker_capable_host_in_lab(tmp_path: Path) -> None:
+    """A docker-capable host that survives the lab filter yields its container.
+
+    [[docker.composes]] carries no placement of its own (spec §14) — every
+    docker-capable host in the repo's (filtered) labs is a candidate parent.
+    """
+    compose = SimpleNamespace(services=("api",))
     repo = _repo_with_docker(tmp_path, [_TEST1_DOCKER], compose)
 
     assert collect_host_ids([repo], lab_names=["unix"]) == [
@@ -163,13 +167,13 @@ def test_lab_filter_synthesizes_container_when_default_host_in_lab(tmp_path: Pat
     ]
 
 
-def test_lab_filter_drops_container_when_default_host_outside_lab(tmp_path: Path) -> None:
-    """A default_host filtered out by the lab must not synthesize a container.
+def test_lab_filter_drops_container_for_docker_capable_host_outside_lab(tmp_path: Path) -> None:
+    """A docker-capable host filtered out by the lab must not synthesize a container.
 
-    Guards the leak the old code had: it synthesized default_host containers
+    Guards the leak the old code had: it synthesized containers for hosts
     regardless of which lab was selected.
     """
-    compose = SimpleNamespace(default_host="test1", services=("api",))
+    compose = SimpleNamespace(services=("api",))
     repo = _repo_with_docker(tmp_path, [_TEST1_DOCKER, _ALT2], compose)
 
     # test1 (and thus its container) belongs to unix, not unix_alt.

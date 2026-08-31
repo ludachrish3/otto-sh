@@ -55,6 +55,7 @@ stale entries without trusting the mtimes on-disk::
             "hosts": ["test1", "test2", ...],
             "hosts_by_lab": {"unix": ["test1", "test2"], ...},
             "docker_hosts": ["test1", ...],
+            "docker_use_cases": ["integration", ...],
             "term_backends": ["ssh", "telnet", ...],
             "transfer_backends": [{"name": "scp", "host_families": ["unix"]}, ...],
             "labs": ["tech1", "tech2", ...],
@@ -170,7 +171,13 @@ CACHE_FILENAME = "completion_cache.json"
 #      served.
 # v13: host summaries may carry an inventory-supplied ip (spec 2026-08-28
 #      host-inventory §11); the digest now includes the inventory fingerprint.
-SCHEMA_VERSION = 13
+# v14: added "docker_use_cases" (source for `otto docker up|down|build <TAB>`).
+#      The bump is REQUIRED, not cosmetic: `read_cache` defaults the key with
+#      `.get("docker_use_cases", [])`, so a surviving v13 entry would validate
+#      as an empty list, `_use_case_completer`'s `isinstance(..., list)` guard
+#      would take the CACHE branch, and every tab-complete would offer nothing
+#      instead of falling back to a live scan of the repos.
+SCHEMA_VERSION = 14
 
 # One home, two readers: `collect_test_names` decides which files to PARSE for
 # names, and `compute_fingerprint` decides which files to STAT for
@@ -758,10 +765,11 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
     path.
 
     On success returns a dict with ``instructions``, ``suites``, ``hosts``,
-    ``docker_hosts``, ``term_backends``, ``transfer_backends``, and
-    ``commands`` keys. The first two are lists of
+    ``docker_hosts``, ``docker_use_cases``, ``term_backends``,
+    ``transfer_backends``, and ``commands`` keys. The first two are lists of
     ``{"name": str, "options": [...]}`` dicts; ``hosts`` and ``docker_hosts``
-    are plain lists of host-ID strings; ``term_backends`` is a list of
+    are plain lists of host-ID strings; ``docker_use_cases`` is a plain list of
+    declared use-case names; ``term_backends`` is a list of
     backend-name strings; ``transfer_backends`` is a list of
     ``{"name": str, "host_families": [str, ...]}`` dicts; ``commands`` is a
     list of ``{"name": str, "help": str | None, "lab_free": bool}`` dicts for
@@ -796,6 +804,7 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
     hosts = entry.get("hosts")
     hosts_by_lab = entry.get("hosts_by_lab", {})
     docker_hosts = entry.get("docker_hosts", [])
+    docker_use_cases = entry.get("docker_use_cases", [])
     term_backends = entry.get("term_backends", [])
     transfer_backends = entry.get("transfer_backends", [])
     usernames = entry.get("usernames", [])
@@ -808,6 +817,7 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
         or not isinstance(hosts, list)
         or not isinstance(hosts_by_lab, dict)
         or not isinstance(docker_hosts, list)
+        or not isinstance(docker_use_cases, list)
         or not isinstance(term_backends, list)
         or not isinstance(transfer_backends, list)
         or not isinstance(usernames, list)
@@ -822,6 +832,7 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
         "hosts": hosts,
         "hosts_by_lab": hosts_by_lab,
         "docker_hosts": docker_hosts,
+        "docker_use_cases": docker_use_cases,
         "term_backends": term_backends,
         "transfer_backends": transfer_backends,
         "usernames": usernames,
@@ -838,6 +849,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     hosts: list[str],
     *,
     docker_hosts: list[str] | None = None,
+    docker_use_cases: list[str] | None = None,
     term_backends: list[str] | None = None,
     transfer_backends: list[dict[str, Any]] | None = None,
     usernames: list[str] | None = None,
@@ -887,6 +899,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
         "hosts": hosts,
         "hosts_by_lab": hosts_by_lab or {},
         "docker_hosts": docker_hosts or [],
+        "docker_use_cases": docker_use_cases or [],
         "term_backends": term_backends or [],
         "transfer_backends": transfer_backends or [],
         "usernames": usernames or [],
@@ -1269,6 +1282,21 @@ def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
     return sorted(ids)
 
 
+def collect_docker_use_case_names(repos: list["Repo"]) -> list[str]:
+    """Enumerate every ``[[docker.use_cases]]`` name the active repos declare.
+
+    The completion source for ``otto docker up|down|build <TAB>``. Read
+    straight off parsed settings — no lab, no host source, no
+    :func:`otto.bootstrap.bootstrap` call — so it is safe in the completion
+    fast path, the same property :func:`collect_docker_capable_host_ids` has.
+
+    Deduped across repos on purpose: one use-case name shared by three repos is
+    ONE use-case (that sharing is the whole mechanism, spec §3.1), not three
+    completions of the same word.
+    """
+    return sorted({uc.name for repo in repos for uc in repo.docker_settings.use_cases})
+
+
 def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) -> list[str]:
     """Enumerate every host ID reachable via the configured lab search paths.
 
@@ -1332,24 +1360,49 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
         docker = getattr(repo, "docker_settings", None)
         if docker is None or not docker.composes:
             continue
-        for compose in docker.composes:
-            # Pick parents to enumerate against. Prefer an explicit
-            # default_host; otherwise enumerate every docker-capable host
-            # in this repo's labs (pessimistic but stable; the actual
-            # bring-up picks one). Under a lab filter, an explicit
-            # default_host only counts if it survived the filter (i.e. it is a
-            # docker-capable host in the selected lab).
-            if compose.default_host:
-                parents = (
-                    [compose.default_host]
-                    if wanted is None or compose.default_host in docker_capable_ids
-                    else []
-                )
-            else:
-                parents = list(docker_capable_ids)
-            for parent in parents:
+        # Mirror `register_declared_container_hosts`' branch, id shape for id
+        # shape: a repo declaring `[[docker.use_cases]]` registers
+        # `<parent>.<usecase>.<service>` placeholders (spec §9) and takes the
+        # use-case branch INSTEAD OF the legacy composes walk, never both.
+        # Synthesizing `<parent>.<repo>.<service>` here regardless made
+        # completion offer an id nothing registers whenever a use-case is not
+        # named after its repo — the exact id the user needs never completes,
+        # while `--list-hosts` shows it. (The sample repos name their
+        # use-cases after themselves, which is why the divergence hid.)
+        #
+        # The PLACEMENT half is deliberately not mirrored: this function has
+        # no Lab, so it stays pessimistic-but-stable (every docker-capable
+        # host in the repo's labs) exactly as the legacy walk below does,
+        # while the placeholder walk resolves one host per fragment.
+        middles_for: "dict[str, set[str]]" = {}  # service -> id middle segments
+        # getattr, like `docker_settings` above: this is the completion fast
+        # path, which must not crash on a settings object that predates the
+        # field (or on a test double that never grew it).
+        use_cases = getattr(docker, "use_cases", ()) or ()
+        if use_cases:
+            by_handle = {c.name: c for c in docker.composes if c.name}
+            for uc in use_cases:
+                for handle in uc.composes:
+                    compose = by_handle.get(handle)
+                    # An unresolvable handle is settings the schema would
+                    # reject; completion never crashes on bad data, it just
+                    # offers nothing for it.
+                    if compose is None:
+                        continue
+                    for service in compose.services:
+                        middles_for.setdefault(service, set()).add(uc.name)
+        else:
+            for compose in docker.composes:
                 for service in compose.services:
-                    ids.add(f"{parent}.{repo.name}.{service}".lower())
+                    middles_for.setdefault(service, set()).add(repo.name)
+
+        # No per-compose placement any more (spec §14): enumerate every
+        # docker-capable host in this repo's labs (pessimistic but stable;
+        # the actual bring-up picks one via the use-case machinery).
+        for parent in docker_capable_ids:
+            for service, middles in middles_for.items():
+                for middle in middles:
+                    ids.add(f"{parent}.{middle}.{service}".lower())
 
     # Logical handles (<slug(element)><position>) alongside canonical ids, so
     # `otto host <TAB>` offers exactly what Lab.resolve_handle would resolve at

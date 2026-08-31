@@ -328,7 +328,6 @@ def _oldos_repo() -> Repo:
         composes=(
             DockerCompose(
                 path=OLDOS_DOCKER_DIR / "compose.yml",
-                default_host=None,
                 services=("oldos",),
             ),
         ),

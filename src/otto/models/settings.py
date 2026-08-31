@@ -52,7 +52,13 @@ from .options import (
 )
 
 if TYPE_CHECKING:
-    from ..config.repo import DockerCompose, DockerImage, DockerSettings, MonitorSettings
+    from ..config.repo import (
+        DockerCompose,
+        DockerImage,
+        DockerSettings,
+        DockerUseCase,
+        MonitorSettings,
+    )
 
 
 def anchor_to_repo(v: Path, info: ValidationInfo) -> Path:
@@ -117,23 +123,73 @@ class DockerImageSpec(OttoModel):
 class DockerComposeSpec(OttoModel):
     """Boundary spec for a ``[[docker.composes]]`` entry in ``settings.toml``.
 
-    Validates the Compose file path, an optional default service host name, and the list
-    of services within the Compose project. Builds a ``DockerCompose`` runtime dataclass
-    via ``to_runtime()``.
+    Validates the Compose file path and the list of services within the
+    Compose project — a pure file inventory (spec §14): placement lives on
+    ``[[docker.use_cases]]`` fragments, never here. Builds a ``DockerCompose``
+    runtime dataclass via ``to_runtime()``. ``name`` is the handle
+    ``[[docker.use_cases]]`` entries reference; defaults to the path stem.
     """
 
+    name: str | None = None
     path: RepoPath
-    default_host: str | None = None
     services: tuple[str, ...] = ()
+
+    @property
+    def effective_name(self) -> str:
+        """The handle this compose is known by -- ``name``, or the path stem when unset."""
+        return self.name or self.path.stem
 
     def to_runtime(self) -> "DockerCompose":
         """Build the ``DockerCompose`` runtime dataclass from the validated spec fields."""
         from ..config.repo import DockerCompose
 
         return DockerCompose(
+            name=self.effective_name,
             path=self.path,
-            default_host=self.default_host,
             services=self.services,
+        )
+
+
+class DockerUseCaseSpec(OttoModel):
+    """Boundary spec for a ``[[docker.use_cases]]`` fragment (spec §3.1).
+
+    A fragment is the atomic unit of participation and placement. Same-named
+    fragments across repos form one use-case; ``provides``/``priority`` enter
+    the provider competition (spec §4). ``env`` accepts scalar TOML values and
+    stringifies them, like ``build_args``.
+    """
+
+    name: str
+    composes: list[str] = Field(min_length=1)
+    role: str | None = None
+    placement: dict[str, str] = Field(default_factory=dict)
+    provides: str | None = None
+    priority: int = 0
+    env: dict[str, Any] = Field(default_factory=dict)
+    pass_env: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _priority_requires_provides(self) -> "DockerUseCaseSpec":
+        if self.priority != 0 and self.provides is None:
+            raise ValueError(
+                f"use_case {self.name!r}: priority is meaningful only on provider "
+                f"fragments — set provides, or drop priority."
+            )
+        return self
+
+    def to_runtime(self) -> "DockerUseCase":
+        """Build the ``DockerUseCase`` runtime dataclass from the validated spec fields."""
+        from ..config.repo import DockerUseCase
+
+        return DockerUseCase(
+            name=self.name,
+            composes=tuple(self.composes),
+            role=self.role,
+            placement=dict(self.placement),
+            provides=self.provides,
+            priority=self.priority,
+            env={k: str(v) for k, v in self.env.items()},
+            pass_env=tuple(self.pass_env),
         )
 
 
@@ -148,6 +204,23 @@ class DockerSettingsSpec(OttoModel):
     registry_url: str = "docker.io"
     images: list[DockerImageSpec] = Field(default_factory=list)
     composes: list[DockerComposeSpec] = Field(default_factory=list)
+    use_cases: list[DockerUseCaseSpec] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _handles_resolve(self) -> "DockerSettingsSpec":
+        names = [c.effective_name for c in self.composes]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            raise ValueError(f"[[docker.composes]] handles must be unique; duplicated: {dupes}")
+        known = set(names)
+        for uc in self.use_cases:
+            missing = [h for h in uc.composes if h not in known]
+            if missing:
+                raise ValueError(
+                    f"use_case {uc.name!r} references unknown compose handle(s) "
+                    f"{missing}; declared: {sorted(known)}"
+                )
+        return self
 
     def to_runtime(self) -> "DockerSettings":
         """Build the ``DockerSettings`` runtime dataclass from the validated spec fields."""
@@ -157,6 +230,7 @@ class DockerSettingsSpec(OttoModel):
             registry_url=self.registry_url,
             images=tuple(i.to_runtime() for i in self.images),
             composes=tuple(c.to_runtime() for c in self.composes),
+            use_cases=tuple(u.to_runtime() for u in self.use_cases),
         )
 
 

@@ -236,6 +236,20 @@ This opens a web dashboard showing CPU, memory, disk, and network metrics.
 saved export instead, and `--hosts` narrows by a regex full-matched against
 host ids — see {doc}`../guide/cli/monitor/index`.
 
+### Docker services
+
+A lab host does not have to be a machine. Otto can deploy compose services
+onto a docker-capable lab host and register each container as a lab host of
+its own, with lab facts — another host's address, say — templated into the
+service through variable names your compose file already uses. The next page
+is a tour of declaring, deploying and templating one.
+
+```{toctree}
+:maxdepth: 1
+
+docker-services
+```
+
 ## Where to go next
 
 - {ref}`team-setup-checklist` -- One-time setup when adopting otto for a team

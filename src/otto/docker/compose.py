@@ -15,13 +15,14 @@ import contextlib
 import getpass
 import json
 import logging
+import re
 import shlex
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from typing import Any
 
 from ..config.lab import Lab
-from ..config.repo import DockerCompose, Repo
+from ..config.repo import Repo
 from ..host.docker_host import DockerContainerHost
 from ..host.errors import HostCommandError
 from ..host.host import Host, is_dry_run, refuse_declined_fact
@@ -79,6 +80,37 @@ def get_user_compose_project(repo_name: str, suffix: str | None = None) -> str:
     return f"otto-{repo_name}-{raw_suffix}".lower()
 
 
+def _slug_segment(name: str) -> str:
+    """Lower-case *name* and squash compose-illegal characters to ``-``."""
+    return re.sub(r"[^a-z0-9_-]+", "-", name.lower())
+
+
+def use_case_project(lab_name: str, use_case: str, suffix: "str | None" = None) -> str:
+    """Compose project for *use_case* deployed into *lab_name* (spec §9).
+
+    ``<lab>-<usecase>-<suffix>`` — deliberately NO ``otto-`` prefix: the
+    deployment belongs to the product, not to the tool that enabled it.
+    The lab segment is load-bearing: ``--remove-orphans`` reaps within a
+    project, and one docker host can serve several labs — two labs must
+    never share a project.
+
+    ALL THREE segments are slugged by the same rule. Docker requires
+    ``-p`` to match ``[a-z0-9][a-z0-9_-]*``, and it does not care which
+    segment carried the offending character: a lab named ``"Unix Lab"``, a
+    use-case named ``"smoke test"`` and a ``$USER`` of ``"first.last"`` are
+    the identical defect, and slugging only the first of them would have made
+    the other two fail as a raw docker error instead of a name otto can use.
+    The leading character is repaired for the same reason -- a lab named
+    ``"_scratch"`` slugs cleanly and is still rejected by docker.
+    """
+    # Same deferred-import + fresh-read rationale as get_user_compose_project.
+    from ..models.settings import OttoEnvSettings
+
+    raw = suffix or OttoEnvSettings().compose_suffix or _safe_username()
+    project = "-".join(_slug_segment(part) for part in (lab_name, use_case, raw))
+    return project.lstrip("-_") or _slug_segment(use_case)
+
+
 def _safe_username() -> str:
     try:
         return getpass.getuser()
@@ -86,25 +118,40 @@ def _safe_username() -> str:
         return "anon"
 
 
-def _resolve_parent(
-    repo: Repo, lab: Lab, on: str | None, composes: list[DockerCompose]
-) -> UnixHost:
-    """Pick a parent host for *repo*'s compose stack.
+def _resolve_parent(repo: Repo, lab: Lab, on: str | None) -> UnixHost:
+    """Pick a parent host for *repo*'s compose stack (spec §14).
 
-    Order: explicit *on* > the first compose entry's ``default_host`` > error.
-    The chosen host must be ``docker_capable``.
+    Order: explicit *on* > the repo's sole use-case placement > error.
+    ``[[docker.composes]]`` is a pure file inventory now — it carries no
+    placement of its own — so a per-repo verb with no *on* falls through to
+    the repo's declared ``[[docker.use_cases]]`` fragments. The per-repo
+    primitives stay public (spec §11); a repo whose use-cases place onto
+    several hosts is ambiguous here and must pass *on*. The chosen host must
+    be ``docker_capable``.
     """
     candidate = on
     if candidate is None:
-        for compose in composes:
-            if compose.default_host:
-                candidate = compose.default_host
-                break
-    if candidate is None:
-        raise ValueError(
-            f"No docker host specified for repo {repo.name!r}. "
-            f"Pass on=<host_id>, or set default_host in [[docker.composes]]."
-        )
+        from .resolve import SelectedFragment, Selection, resolve_placement
+
+        frags = [SelectedFragment(repo, f) for f in repo.docker_settings.use_cases]
+        if not frags:
+            raise ValueError(
+                f"No docker host specified for repo {repo.name!r}. Pass on=<host_id>, "
+                f"or declare [[docker.use_cases]] with a role/placement."
+            )
+        # The Selection's own `use_case` name is a carrier here, never a
+        # claim about which fragment is "the" one: `resolve_placement` never
+        # reads it (`_place_fragment` labels each refusal from the fragment
+        # itself), but naming it after repo.name rather than borrowing
+        # frags[0]'s name avoids attributing every fragment's placement to
+        # whichever one happened to sort first.
+        placed = resolve_placement(Selection(repo.name, frags), lab)
+        if len(placed) != 1:
+            raise ValueError(
+                f"repo {repo.name!r}'s use-cases place onto {sorted(placed)} — "
+                f"ambiguous for a per-repo verb; pass on=<host_id>."
+            )
+        candidate = next(iter(placed))
 
     if candidate not in lab.hosts:
         raise ValueError(
@@ -223,10 +270,14 @@ async def compose_up(
 ) -> dict[str, DockerContainerHost]:
     """Bring up *repo*'s compose stack on a parent host.
 
-    Idempotent at the project-name level: if a stack with the same
-    *project_name* is already running on *parent*, this becomes a lookup
-    instead of a fresh ``up``. Either way, returns a dict mapping each
-    declared service to its :class:`~otto.host.docker_host.DockerContainerHost`, with the hosts
+    Convergent at the project-name level (spec §8): ``up -d --remove-orphans``
+    is issued whether or not a stack with the same *project_name* is already
+    running on *parent* — a broader deployment adds services onto a live
+    stack, and a displaced provider's now-orphaned container is reaped in the
+    same pass. The already-up probe is retained only to decide OWNERSHIP: it
+    answers whether THIS call is the one that must roll the stack back on a
+    later failure, never whether ``up`` itself runs. Returns a dict mapping
+    each declared service to its :class:`~otto.host.docker_host.DockerContainerHost`, with the hosts
     also registered in ``lab.hosts`` so ``--list-hosts`` and
     ``otto host <id>`` see them.
 
@@ -250,7 +301,7 @@ async def compose_up(
     if not settings.composes:
         raise ValueError(f"Repo {repo.name!r} has no [[docker.composes]] entries; nothing to up.")
 
-    parent = _resolve_parent(repo, lab, on, list(settings.composes))
+    parent = _resolve_parent(repo, lab, on)
     proj = project_name or get_user_compose_project(repo.name)
 
     # Below _resolve_parent, so a dry run still fails on an unknown host, a
@@ -287,13 +338,14 @@ async def compose_up(
     remote_files = await stage_compose_files(parent, proj, list(settings.composes))
     remote_file_strs = [str(p) for p in remote_files]
 
-    # `is True`, so an UNKNOWN answer (a failed probe) means we run the
-    # convergent `up -d` rather than assuming the stack is there.
+    # `is True`, so an UNKNOWN answer (a failed probe) means this call is
+    # treated as the owner and will roll back on a later failure — the
+    # opposite default would strand a stack nobody claims. This is now used
+    # ONLY for that ownership decision: `up -d` itself always runs below,
+    # convergent regardless of what this probe answered.
     brought_up_here = await _stack_already_up(parent, proj) is not True
     try:
-        return await _up_and_register(
-            repo, lab, parent, proj, remote_file_strs, brought_up_here=brought_up_here
-        )
+        return await _up_and_register(repo, lab, parent, proj, remote_file_strs)
     except BaseException:
         # Every raise below this point happens AFTER `up -d` has run, and the
         # caller cannot clean up what it never received: `composed()` arms its
@@ -331,47 +383,120 @@ async def _rollback_partial_up(repo: Repo, lab: Lab, parent: UnixHost, proj: str
         )
 
 
+async def register_stack_hosts(
+    lab: Lab,
+    parent: UnixHost,
+    *,
+    compose_project: str,
+    id_project: str,
+    services: "list[str]",
+) -> "dict[str, DockerContainerHost]":
+    """Resolve container ids and register hosts for *services* of one stack.
+
+    ``id_project`` is the middle segment of the host id
+    (``<parent>.<id_project>.<service>``): the repo name on the legacy per-repo
+    path, the use-case name on the deploy path (spec §9).
+    """
+    hosts: dict[str, DockerContainerHost] = {}
+    for service in services:
+        cid = await _resolve_container_id(parent, compose_project, service)
+        if not cid:
+            logger.warning(
+                rf"\[docker] could not resolve container id for {compose_project}/{service}; "
+                f"skipping registration"
+            )
+            continue
+        host = DockerContainerHost(
+            parent=parent,
+            container_id=cid,
+            project=id_project,
+            service=service,
+            compose_project=compose_project,
+        )
+        # A container's lab is its PARENT's lab, never the lab it is registered
+        # INTO: in a multi-lab session that lab is the composite ("a+b"), a name
+        # no component owns and no `lab_patterns` entry matches — so the very
+        # repo that declared this compose would stop seeing its own containers.
+        # The parent was built by the factory and carries the component name.
+        # An unattributed parent leaves this empty and falls through to
+        # ``Lab.add_host``'s backstop, which stays a pure backstop.
+        host.source_lab = parent.source_lab
+        # ``replace`` rather than a plain assignment: LabInfo is frozen, but
+        # the dict behind its ``metadata`` is not. Sharing the parent's record
+        # would give every container of that parent one table, so a write on
+        # any of them would surface on all of them and on the parent — the
+        # aliasing LabInfo.__post_init__ exists to prevent. replace() re-runs
+        # __post_init__, which copies the dict.
+        host.lab_info = replace(parent.lab_info)
+        # Register in the lab so otto host <id> finds it. compose_up is
+        # idempotent and re-registers on every call — replacing a placeholder
+        # from register_declared_container_hosts, or a prior compose_up's
+        # entry for the same service (e.g. after a container restart changed
+        # its id) — so this is an explicit delete-then-add rather than a
+        # silent overwrite (add_host would reject the duplicate id outright).
+        lab.hosts.pop(host.id, None)
+        lab.add_host(host)
+        hosts[service] = host
+
+    if not hosts:
+        # Same silent-success shape as `_up_and_register`'s empty-`services`
+        # case, reached the other way: every service resolved to no running
+        # container (this loop's `continue` skipped every one). The
+        # usual cause is that they all exited immediately — a container that is
+        # not running is not a host otto can drive.
+        raise HostCommandError(
+            f"none of compose stack {compose_project}'s {len(services)} service(s) resolved to a "
+            f"running container on {parent.id}, so no host was registered — the usual "
+            f"cause is that they all exited immediately; see the per-service warnings "
+            f"above, then `docker compose -p {compose_project} logs` on {parent.id}"
+        )
+
+    return hosts
+
+
 async def _up_and_register(
     repo: Repo,
     lab: Lab,
     parent: UnixHost,
     proj: str,
     remote_file_strs: list[str],
-    *,
-    brought_up_here: bool,
 ) -> dict[str, DockerContainerHost]:
-    """Bring the stack up and register its containers — the rollbackable half."""
+    """Bring the stack up and register its containers — the rollbackable half.
+
+    ``up -d --remove-orphans`` is issued UNCONDITIONALLY (spec §8): the
+    caller's already-up probe decides only who owns rollback on a later
+    failure, never whether this runs. A stack that was already up still gets
+    a convergent re-run, which is how a broader deployment can add services
+    onto it and reap a displaced provider's now-orphaned container.
+    """
     settings = repo.docker_settings
-    if brought_up_here:
-        logger.info(rf"\[docker] composing {proj} on {parent.id}")
-        # `up -d` is convergent, so a transient libnetwork race (network
-        # Created then reported "not found" when the container attaches) is
-        # retried once with a brief backoff — the re-run starts the already-
-        # created container cleanly. A genuine failure fails identically on
-        # the retry and propagates, so this never masks a real error.
-        #
-        # Follow-up if this single retry doesn't stabilize `otto docker up`:
-        # the tell is the RuntimeError below STILL reporting "network ... not
-        # found" *after* the retry (i.e. attempt 1 raced too). That means the
-        # parent daemon is degraded, not merely racing — pull `journalctl -u
-        # docker` on the parent (the docker_capable host) around the failure.
-        # Levers, roughly in order: widen the retry (range(2) -> range(3) and/or
-        # a longer _NETWORK_RACE_RETRY_BACKOFF_S); a pre-`up` `docker network
-        # prune` on the parent; or restart the daemon between runs.
-        for attempt in range(2):
-            up = await _compose_cmd(parent, proj, remote_file_strs, "up -d")
-            if up.is_ok:
-                break
-            if attempt == 0 and _is_transient_network_race(up.value):
-                logger.debug(
-                    rf"\[docker] {proj} hit a transient network race on up; "
-                    f"retrying once after {_NETWORK_RACE_RETRY_BACKOFF_S}s"
-                )
-                await asyncio.sleep(_NETWORK_RACE_RETRY_BACKOFF_S)
-                continue
-            raise HostCommandError(f"docker compose up failed: {up.value}")
-    else:
-        logger.info(rf"\[docker] {proj} already running on {parent.id}; reusing")
+    logger.info(rf"\[docker] composing {proj} on {parent.id} (convergent)")
+    # `up -d` is convergent, so a transient libnetwork race (network
+    # Created then reported "not found" when the container attaches) is
+    # retried once with a brief backoff — the re-run starts the already-
+    # created container cleanly. A genuine failure fails identically on
+    # the retry and propagates, so this never masks a real error.
+    #
+    # Follow-up if this single retry doesn't stabilize `otto docker up`:
+    # the tell is the RuntimeError below STILL reporting "network ... not
+    # found" *after* the retry (i.e. attempt 1 raced too). That means the
+    # parent daemon is degraded, not merely racing — pull `journalctl -u
+    # docker` on the parent (the docker_capable host) around the failure.
+    # Levers, roughly in order: widen the retry (range(2) -> range(3) and/or
+    # a longer _NETWORK_RACE_RETRY_BACKOFF_S); a pre-`up` `docker network
+    # prune` on the parent; or restart the daemon between runs.
+    for attempt in range(2):
+        up = await _compose_cmd(parent, proj, remote_file_strs, "up -d --remove-orphans")
+        if up.is_ok:
+            break
+        if attempt == 0 and _is_transient_network_race(up.value):
+            logger.debug(
+                rf"\[docker] {proj} hit a transient network race on up; "
+                f"retrying once after {_NETWORK_RACE_RETRY_BACKOFF_S}s"
+            )
+            await asyncio.sleep(_NETWORK_RACE_RETRY_BACKOFF_S)
+            continue
+        raise HostCommandError(f"docker compose up failed: {up.value}")
 
     # Enumerate services. Project-declared list is authoritative for the
     # mapping we return; cross-check against the live list and warn on drift.
@@ -417,60 +542,9 @@ async def _up_and_register(
             "is nothing to register — check the compose file's `services:` block"
         )
 
-    hosts: dict[str, DockerContainerHost] = {}
-    for service in services:
-        cid = await _resolve_container_id(parent, proj, service)
-        if not cid:
-            logger.warning(
-                rf"\[docker] could not resolve container id for {proj}/{service}; "
-                f"skipping registration"
-            )
-            continue
-        host = DockerContainerHost(
-            parent=parent,
-            container_id=cid,
-            project=repo.name,
-            service=service,
-            compose_project=proj,
-        )
-        # A container's lab is its PARENT's lab, never the lab it is registered
-        # INTO: in a multi-lab session that lab is the composite ("a+b"), a name
-        # no component owns and no `lab_patterns` entry matches — so the very
-        # repo that declared this compose would stop seeing its own containers.
-        # The parent was built by the factory and carries the component name.
-        # An unattributed parent leaves this empty and falls through to
-        # ``Lab.add_host``'s backstop, which stays a pure backstop.
-        host.source_lab = parent.source_lab
-        # ``replace`` rather than a plain assignment: LabInfo is frozen, but
-        # the dict behind its ``metadata`` is not. Sharing the parent's record
-        # would give every container of that parent one table, so a write on
-        # any of them would surface on all of them and on the parent — the
-        # aliasing LabInfo.__post_init__ exists to prevent. replace() re-runs
-        # __post_init__, which copies the dict.
-        host.lab_info = replace(parent.lab_info)
-        # Register in the lab so otto host <id> finds it. compose_up is
-        # idempotent and re-registers on every call — replacing a placeholder
-        # from register_declared_container_hosts, or a prior compose_up's
-        # entry for the same service (e.g. after a container restart changed
-        # its id) — so this is an explicit delete-then-add rather than a
-        # silent overwrite (add_host would reject the duplicate id outright).
-        lab.hosts.pop(host.id, None)
-        lab.add_host(host)
-        hosts[service] = host
-
-    if not hosts:
-        # Same silent-success shape as the empty-`services` case above, reached
-        # the other way: every service resolved to no running container. The
-        # usual cause is that they all exited immediately — a container that is
-        # not running is not a host otto can drive.
-        raise HostCommandError(
-            f"none of compose stack {proj}'s {len(services)} service(s) resolved to a "
-            f"running container on {parent.id}, so no host was registered — the usual "
-            f"cause is that they all exited immediately; see the per-service warnings "
-            f"above, then `docker compose -p {proj} logs` on {parent.id}"
-        )
-
-    return hosts
+    return await register_stack_hosts(
+        lab, parent, compose_project=proj, id_project=repo.name, services=services
+    )
 
 
 async def compose_down(
@@ -514,7 +588,7 @@ async def compose_down(
     if not settings.composes:
         return CommandResult(Status.Skipped, value="", command="", retcode=-1)
 
-    parent = _resolve_parent(repo, lab, on, list(settings.composes))
+    parent = _resolve_parent(repo, lab, on)
     proj = project_name or get_user_compose_project(repo.name)
 
     if is_dry_run():
@@ -554,21 +628,113 @@ async def compose_down(
     if not result.is_ok:
         logger.error(rf"\[docker] compose down failed: {result.value}")
 
-    # Unregister any hosts that came from this stack. Close each container
-    # host first so its persistent session drains cleanly while
-    # the parent's connection is still alive.
-    parent_id = parent.id
-    prefix = f"{parent_id}.{repo.name.lower()}."
-    drop = [hid for hid in lab.hosts if hid.startswith(prefix)]
+    # Unregister any hosts that came from this stack (shared with the
+    # use-case teardown path, which sweeps `<parent>.<usecase>.` instead).
+    await unregister_container_hosts(lab, f"{parent.id}.{repo.name.lower()}.")
+
+    return result
+
+
+async def compose_down_project(
+    parent: UnixHost,
+    compose_project: str,
+    *,
+    lab: Lab,
+    remove_ids_under: "str | None",
+    stop_timeout: int = 1,
+) -> CommandResult:
+    """Tear a merged stack down by PROJECT LABEL, then unregister its hosts.
+
+    No ``-f`` on purpose: ``docker compose -p <proj> down`` finds the stack by
+    the project label docker already carries, so a use-case teardown never
+    has to re-run adapters, re-render templates or re-stage files merely to
+    DELETE what they produced (spec §8). ``--remove-orphans`` is what makes a
+    provider transition concrete — a displaced mock's container is an orphan
+    of the merged file set and goes with the rest.
+
+    *remove_ids_under* is the container-host id prefix to unregister
+    (``<parent>.<usecase>.``), or ``None`` to unregister nothing.
+    :func:`~otto.docker.deployment.deploy`'s rollback passes ``None``: it is
+    compensating for a call that never got as far as registering anything, and
+    popping ids it did not put there would yank a peer's registrations out of
+    the lab.
+
+    Never raises for a failed ``down``: the result is returned so a sweep over
+    several hosts keeps going, exactly like :func:`compose_down`.
+
+    Raises:
+        ~otto.result.CommandNotRunError: this is a dry run. Armed here, not
+            inherited from ``exec``, because the second half of this function
+            MUTATES ``lab.hosts`` -- a dry run must leave the lab alone, and a
+            declined ``down`` result whose ``.value`` is read would raise from
+            the logging line instead, naming the wrong thing.
+    """
+    if is_dry_run():
+        raise CommandNotRunError(
+            f"compose_down_project({compose_project})",
+            parent.id,
+            "No container was stopped and no host was unregistered from the lab.",
+        )
+
+    result = await parent.exec(
+        f"docker compose -p {shlex.quote(compose_project)} down --remove-orphans "
+        f"--timeout {int(stop_timeout)}",
+        timeout=float("inf"),
+    )
+    if not result.is_ok:
+        logger.error(
+            rf"\[docker] compose down failed for {compose_project} on {parent.id}: "
+            f"{result.value}"
+        )
+    if remove_ids_under is not None:
+        await unregister_container_hosts(lab, remove_ids_under)
+    return result
+
+
+async def unregister_container_hosts(
+    lab: Lab, prefix: str, *, services: "list[str] | None" = None
+) -> list[str]:
+    """Close and pop every container host in *lab* whose id starts with *prefix*.
+
+    Children before parent (each container host is closed while the parent's
+    connection is still alive, so its persistent session drains cleanly), and
+    best-effort: a host that fails to close is warned about and still popped,
+    because leaving it in ``lab.hosts`` would advertise a container that has
+    just been removed.
+
+    *services* narrows the sweep to ``<prefix><service>`` ids -- the partial
+    (``down USE_CASE SERVICE...``) teardown, which must leave the rest of the
+    stack registered. Returns the ids that were removed.
+
+    The narrowed ids are LOWER-CASED, because ``DockerContainerHost.id`` is
+    (``f"{parent}.{project}.{service}".lower()``) and compose service names
+    are not case-folded by docker. Without it, ``down USE_CASE MyApi`` stopped
+    and ``rm -f``'d the container and then matched nothing here, leaving otto
+    advertising a host for a container it had just removed -- the silent-wrong
+    shape this module keeps being swept for. ``prefix`` is lowered too rather
+    than trusted: every caller builds it from ids that are already lower, so
+    lowering is a no-op for them and a repair for anyone who forgets.
+    """
+    prefix = prefix.lower()
+    wanted = None if services is None else {f"{prefix}{s}".lower() for s in services}
+    drop = [
+        hid for hid in lab.hosts if hid.startswith(prefix) and (wanted is None or hid in wanted)
+    ]
     for hid in drop:
+        # `pop(..., None)` and the None check are not paranoia about our own
+        # snapshot: `await host.close()` below yields, so a concurrent
+        # teardown (a peer instruction, an outer fixture's compensating
+        # action) can pop an id out of `lab.hosts` between the snapshot and
+        # our turn. Popping it again then returns None, and closing None
+        # would replace a benign race with an AttributeError inside a
+        # best-effort sweep.
         host = lab.hosts.pop(hid, None)
         if host is not None:
             try:
                 await host.close()
             except Exception as e:  # noqa: BLE001 — best-effort teardown, logs warning
                 logger.warning(rf"\[docker] error closing container host {hid}: {e}")
-
-    return result
+    return drop
 
 
 @contextlib.asynccontextmanager
@@ -600,7 +766,7 @@ async def composed(
             the ``finally`` exists, so no teardown is armed for a stack that
             was never brought up.
     """
-    parent = _resolve_parent(repo, lab, on, list(repo.docker_settings.composes))
+    parent = _resolve_parent(repo, lab, on)
     proj = project_name or get_user_compose_project(repo.name)
 
     if is_dry_run():
@@ -693,14 +859,26 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
     The placeholders carry an empty ``container_id`` so that any operation
     against a not-yet-up container fails with a clear "run `otto docker up`"
     message rather than a confusing not-found error. Once :func:`compose_up`
+    (legacy repos) or :func:`~otto.docker.deployment.deploy` (use-case repos)
     runs, it overwrites the placeholder with a real entry containing the
     resolved container id.
+
+    A repo that declares ``[[docker.use_cases]]`` fragments takes the
+    USE-CASE branch below INSTEAD OF the legacy composes walk (never both):
+    its placeholders carry the use-case name as the id's middle segment
+    (``<parent>.<usecase>.<service>``, spec §9) rather than the repo name, so
+    ``DockerContainerHost._auto_up`` can tell the
+    two kinds apart and auto-start through the right pipeline. A repo with no
+    ``use_cases`` keeps today's per-repo ids unchanged.
 
     Returns the number of placeholders registered.
     """
     count = 0
     for repo in repos:
         settings = repo.docker_settings
+        if settings.use_cases:
+            count += _register_use_case_placeholders(lab, repo)
+            continue
         if not settings.composes:
             continue
         # Build a map of docker-capable parents in the lab, by id.
@@ -710,11 +888,10 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
         if not capable:
             continue
         for compose in settings.composes:
-            if compose.default_host:
-                parents = [h for h in capable if h.id == compose.default_host]
-            else:
-                parents = capable
-            for parent in parents:
+            # No per-compose placement any more (spec §14) — every
+            # docker-capable host in the lab is a candidate parent
+            # (pessimistic but stable; the actual bring-up picks one).
+            for parent in capable:
                 for service in compose.services:
                     placeholder = DockerContainerHost(
                         parent=parent,
@@ -733,6 +910,80 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
                         continue
                     lab.add_host(placeholder)
                     count += 1
+    return count
+
+
+def _register_use_case_placeholders(lab: Lab, repo: Repo) -> int:
+    """Best-effort use-case placeholders for one repo's fragments (spec §9).
+
+    Each fragment is placed independently via
+    :func:`~otto.docker.resolve.resolve_placement` — NOT via
+    :func:`~otto.docker.resolve.select_fragments`, so the provider
+    competition (spec §4) never runs here: a fragment that would lose its
+    ``provides`` competition at deploy time still gets its own placeholder.
+    That is deliberate (a placeholder exists so `otto host <id>` and
+    completion see something before the first `deploy`), not a bug — its
+    auto-up (``DockerContainerHost._auto_up``)
+    deploys the ACTUAL winning use-case, which may register a different
+    container under the same id and leave this one's id resolving to
+    whatever the competition produced.
+
+    Placement is best-effort PER FRAGMENT: one whose placement cannot be
+    resolved from the lab that happens to be loaded right now (no host
+    carries its role, an ambiguous scope, ...) — or whose ``composes``
+    handles cannot be resolved to services — contributes no placeholder,
+    and the rest of the repo's fragments are still tried. This walk runs at
+    the start of every otto invocation, long before a caller names a
+    specific use-case to bring up, so a fragment that cannot yet be placed
+    is normal, not an error. :func:`~otto.docker.deployment.deploy` still
+    refuses hard on the same conditions when the use-case is actually
+    asked for — the single ``except UseCaseResolutionError`` below is what
+    turns deploy's hard refusal into this walk's soft skip; there is no
+    second, looser copy of the services-from-handles traversal here (see
+    :func:`~otto.docker.deployment._declared_services`, delegated to
+    below).
+    """
+    # Function-scope: this walk runs in `cli/invoke.py`'s preamble on every
+    # otto invocation, so a bare `otto docker --help` must not pay
+    # deployment.py's or resolve.py's import cost (import budget). No cycle
+    # at call time: `deployment` already imports from `compose` at module
+    # scope, but by the time this function RUNS both modules are fully
+    # loaded.
+    from .deployment import _declared_services
+    from .resolve import SelectedFragment, Selection, UseCaseResolutionError, resolve_placement
+
+    count = 0
+    for frag in repo.docker_settings.use_cases:
+        sf = SelectedFragment(repo, frag)
+        try:
+            placed = resolve_placement(Selection(frag.name, [sf]), lab)
+            services = _declared_services([sf], report=False)
+        except UseCaseResolutionError:
+            continue
+        if not services:
+            continue
+
+        for host_id in placed:
+            parent = lab.hosts[host_id]
+            compose_project = use_case_project(parent.source_lab, frag.name)
+            for service in services:
+                placeholder = DockerContainerHost(
+                    parent=parent,
+                    container_id="",
+                    project=frag.name,
+                    service=service,
+                    compose_project=compose_project,
+                )
+                # Same rule as the legacy walk's registration above: the
+                # container belongs to its parent's lab, not to whatever
+                # composite the session assembled.
+                placeholder.source_lab = parent.source_lab
+                # Copied, not aliased — same reason as the legacy walk's.
+                placeholder.lab_info = replace(parent.lab_info)
+                if placeholder.id in lab.hosts:
+                    continue
+                lab.add_host(placeholder)
+                count += 1
     return count
 
 

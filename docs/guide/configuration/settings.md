@@ -454,13 +454,39 @@ context = "docker"
 build_args = { VERSION = "1.2.3" }       # optional; influences hash
 target = "prod"                          # optional multi-stage target
 
-[[docker.composes]]
+[[docker.composes]]                      # a pure file inventory
+name = "core"                            # referenceable handle; optional,
+                                         # defaults to the file stem; unique
 path = "docker/compose.yml"
-default_host = "test3"                   # lab host id; CLI --on overrides
-services = ["api", "db"]                 # used for tab-completion only
+services = ["api", "db"]                 # authoritative: names the container
+                                         # hosts otto registers
+
+[[docker.use_cases]]                     # a FRAGMENT; repeatable, and two
+name = "integration"                     # fragments sharing a name join one
+composes = ["core"]                      # use-case. Handles from above.
+role = "edge"                            # placement role, matched against a
+                                         # host's `roles` tags
+placement = { edge = "test3" }           # optional committed pin; may be
+                                         # lab-qualified ("unix:test3")
+provides = "edge"                        # optional: candidate provider of a
+priority = 10                            # capability, higher priority wins
+env = { LOG_LEVEL = "debug", EDGE_ADDR = "${otto:role.edge.addr}" }
+pass_env = ["EDGE_TAG"]                  # allowlist copied from your shell
 ```
+
+`services` names the entries of *this* file's own `services:` block, and it is
+authoritative: it is the list otto registers container hosts from, not a hint.
+Its cardinality is unrelated to `[[docker.images]]`: one built image can back
+several services, and a service may run a published image otto never builds.
+(The per-repo `compose_up` primitive additionally compares the declared list
+against `docker compose config --services` after bringing the stack up and
+warns on drift; the use-case deploy path registers from the declaration
+alone.)
 
 Relative paths resolve against the repo root — see
 [Path resolution](#path-resolution).
 
-See {doc}`../cli/docker/index` for the commands that read this block.
+{doc}`../cli/docker/use-cases` is the home for what these keys *mean* — how
+fragments compete and are placed, what `${otto:...}` resolves to and why that
+syntax is valid only in this file, and how the env channels merge.
+{doc}`../cli/docker/index` lists the commands that read this block.

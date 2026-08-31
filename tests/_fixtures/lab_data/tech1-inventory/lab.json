@@ -47,6 +47,7 @@
                     "inventory": "test3",
                     "os_type": "unix",
                     "docker_capable": true,
+                    "roles": ["docker"],
                     "valid_terms": ["ssh", "telnet"],
                     "valid_transfers": ["scp", "sftp", "ftp", "nc"]
                 }

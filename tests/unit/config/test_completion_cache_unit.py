@@ -16,6 +16,7 @@ import time
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Annotated
+from unittest import mock
 from unittest.mock import MagicMock
 
 import pytest
@@ -1546,3 +1547,124 @@ def test_declining_loader_module_does_not_escape_collect_cli_commands(monkeypatc
     entry = next(e for e in out if e["name"] == "probecmd")
     assert "commands" not in entry
     assert "options" not in entry
+
+
+# ── docker use-case names: collect -> write -> read -> completer ─────────────
+
+
+def _cache_repo(tmp_path: Path, name: str = "sut") -> MagicMock:
+    """A repo double `write_cache`/`read_cache` will actually key on.
+
+    ``inventory_settings = {}`` is not decoration: a MagicMock auto-attribute
+    is TRUTHY and ``dict()``s to ``{}``, which reads as a present-but-empty
+    ``[inventory]`` — a shape no real ``Repo`` produces and one
+    ``build_inventory`` rejects, taking the cache write down with it and
+    leaving a round-trip test green against a writer that wrote nothing.
+    """
+    repo = MagicMock()
+    repo.sut_dir = tmp_path / name
+    repo.sut_dir.mkdir()
+    touch_settings(repo.sut_dir)
+    repo.init = []
+    repo.libs = []
+    repo.tests = []
+    repo.inventory_settings = {}
+    return repo
+
+
+def _use_case(name: str):
+    from otto.config.repo import DockerUseCase
+
+    return DockerUseCase(name=name, composes=("core",))
+
+
+def test_collect_docker_use_case_names_dedupes_across_repos(tmp_path: Path) -> None:
+    """One name declared by three repos is ONE use-case — that sharing is the
+    whole mechanism (spec §3.1), not three completions of the same word."""
+    a = _cache_repo(tmp_path, "a")
+    a.docker_settings.use_cases = (_use_case("integration"), _use_case("soak"))
+    b = _cache_repo(tmp_path, "b")
+    b.docker_settings.use_cases = (_use_case("integration"),)
+
+    assert cc.collect_docker_use_case_names([a, b]) == ["integration", "soak"]
+
+
+def test_write_read_cache_round_trips_docker_use_cases(tmp_path: Path, monkeypatch) -> None:
+    """The REAL write -> read path, unpatched, end to end.
+
+    The completer tests in ``tests/unit/docker/test_cli.py`` hand
+    ``get_completion_names`` a dict they built themselves, so they stay green
+    against a ``write_cache`` that never writes the key at all. This is the
+    half that would notice: collect the names off a repo, write them, read them
+    back off DISK, and then feed that exact payload to the completer the way
+    ``otto docker up <TAB>`` does.
+    """
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
+    repo = _cache_repo(tmp_path)
+    repo.docker_settings.use_cases = (_use_case("soak"), _use_case("integration"))
+
+    names = cc.collect_docker_use_case_names([repo])
+    cc.write_cache([repo], instructions=[], suites=[], hosts=[], docker_use_cases=names)
+
+    out = cc.read_cache([repo])
+    assert out is not None
+    assert out["docker_use_cases"] == ["integration", "soak"], (
+        "write_cache did not persist docker_use_cases, or read_cache did not return it"
+    )
+
+    # ...and the entry on disk really carries the key, not just the reader's default.
+    entry = next(iter(json.loads(cc._cache_path().read_text()).values()))  # type: ignore[union-attr]
+    assert entry["docker_use_cases"] == ["integration", "soak"]
+    assert entry["schema_version"] == cc.SCHEMA_VERSION
+
+    # The consumer end: the completer serves exactly what came off disk.
+    from otto.cli.docker import _use_case_completer
+
+    with mock.patch("otto.config.get_completion_names", return_value=out):
+        assert _use_case_completer(MagicMock(), "i") == ["integration"]
+
+
+def test_a_v13_entry_is_not_served_for_docker_use_cases(tmp_path: Path, monkeypatch) -> None:
+    """WHY SCHEMA_VERSION had to move to 14, as an executable claim.
+
+    ``read_cache`` defaults the key with ``.get("docker_use_cases", [])``, so a
+    surviving pre-v14 entry validates as an EMPTY list rather than missing —
+    and the completer's ``isinstance(..., list)`` guard would then take the
+    cache branch and offer nothing instead of falling back to a live scan. The
+    bump is what makes that entry a miss.
+    """
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
+    repo = _cache_repo(tmp_path)
+    cache_file = cc._cache_path()
+    cache_file.parent.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
+    entry = {
+        "schema_version": 13,  # the version that predates docker_use_cases
+        "generated_at": int(time.time()),
+        "instructions": [],
+        "suites": [],
+        "hosts": [],
+    }
+    cache_file.write_text(  # type: ignore[union-attr]
+        json.dumps({cc.compute_fingerprint([repo]): entry})
+    )
+
+    assert cc.read_cache([repo]) is None, (
+        "a pre-v14 entry was served, so it would answer `otto docker up <TAB>` "
+        "with an empty use-case list"
+    )
+
+
+def test_a_non_list_docker_use_cases_entry_is_rejected(tmp_path: Path, monkeypatch) -> None:
+    """The new validation arm: a corrupt value fails the whole entry, not the
+    reader. Without it the completer would iterate a string one char at a time."""
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
+    repo = _cache_repo(tmp_path)
+    cc.write_cache([repo], instructions=[], suites=[], hosts=[], docker_use_cases=["integration"])
+
+    cache_file = cc._cache_path()
+    data = json.loads(cache_file.read_text())  # type: ignore[union-attr]
+    fingerprint = cc.compute_fingerprint([repo])
+    data[fingerprint]["docker_use_cases"] = "integration"  # a string, not a list
+    cache_file.write_text(json.dumps(data))  # type: ignore[union-attr]
+
+    assert cc.read_cache([repo]) is None

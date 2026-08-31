@@ -704,6 +704,7 @@ a reference plus otto-owned fields; nothing here is an address or a credential:
                     "inventory": "test3",
                     "os_type": "unix",
                     "docker_capable": true,
+                    "roles": ["docker"],
                     "valid_terms": ["ssh", "telnet"],
                     "valid_transfers": ["scp", "sftp", "ftp", "nc"]
                 }

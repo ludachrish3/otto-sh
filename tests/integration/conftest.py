@@ -98,19 +98,32 @@ _LAB_DATA = lab_data_path()
 # Docker host the e2e/compose tests target (test VM "test3" / test3).
 _DOCKER_HOST_IP = "10.10.200.13"
 
-# Compose-project name fragments that only ever appear in *disposable* test
-# stacks: `fresh_suffix` yields ``e2e-<hex>`` and the unstarted-container test
-# uses ``noexist-<hex>``. Each test run mints a fresh suffix, so an interrupted
-# or crashed run leaves an orphan stack behind. Roughly 30 orphans exhaust
-# docker's default address-pool ("all predefined address pools have been fully
-# subnetted") and wedge every subsequent ``compose up``. Stacks matching these
-# fragments are always safe to reap — they belong to no live developer session.
+# Compose-project name INFIXES that only ever appear in *disposable* test
+# stacks. Matched as infixes, never as a prefix, which is what let them
+# survive the use-case cutover (spec §9) unchanged: a compose project is
+# ``<lab>-<usecase>-<suffix>`` now — no ``otto-`` prefix — and the e2e
+# modules' ``fresh_suffix`` still yields ``e2e-<hex>`` / ``run-e2e-<hex>``, so
+# ``unix-repo1-e2e-1a2b3c4d`` still carries ``-e2e-``.
+# ``tests/unit/test_docker_reaper_scope.py`` pins that agreement in the
+# default lane, where this tree never runs.
+#
+# ``-noexist-`` is retained for stacks left by older runs: nothing in the
+# suite mints that suffix today.
+#
+# Each test run mints a fresh suffix, so an interrupted or crashed run leaves
+# an orphan stack behind. Roughly 30 orphans exhaust docker's default
+# address-pool ("all predefined address pools have been fully subnetted") and
+# wedge every subsequent ``compose up``. Stacks matching these fragments are
+# always safe to reap — they belong to no live developer session.
 _ORPHAN_PROJECT_FRAGMENTS = ("-e2e-", "-noexist-")
 
 
 async def _reap_orphan_docker_stacks() -> None:
-    """Remove leaked ``otto-*-{e2e,noexist}-*`` containers and networks on the
-    docker host so address-pool exhaustion can't accumulate across runs."""
+    """Remove leaked test containers and networks on the docker host.
+
+    Anything whose name carries one of :data:`_ORPHAN_PROJECT_FRAGMENTS` as an
+    infix, so address-pool exhaustion can't accumulate across runs.
+    """
     host = UnixHost(
         ip=_DOCKER_HOST_IP,
         element="test3",

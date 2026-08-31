@@ -543,6 +543,10 @@ class UnixHostSpec(HostSpec):
     impairer: str | None = None  # optional active pin; resolved at to_host
     docker_capable: bool = False
     shell_history: bool = False
+    roles: list[str] = Field(default_factory=list)
+    """Lab-intent role tags ("edge", "builder") consumed by docker use-case
+    placement (spec 2026-08-30 §5). Intent about how THIS LAB uses the host —
+    never an inventory fact, so it lives here and not in the facts layer."""
     ssh_options: SshOptionsSpec = SshOptionsSpec()
     sftp_options: SftpOptionsSpec = SftpOptionsSpec()
     scp_options: ScpOptionsSpec = ScpOptionsSpec()
@@ -600,9 +604,10 @@ class UnixHostSpec(HostSpec):
         kw["impairer"] = IMPAIRER_RESOLVER.resolve_active(
             self.valid_impairers, pin=self.impairer, preference=prefs.get("impairer")
         )
-        for n in ("docker_capable", "shell_history"):
+        for n in ("docker_capable", "shell_history", "roles"):
             if n in s:
-                kw[n] = getattr(self, n)
+                v = getattr(self, n)
+                kw[n] = list(v) if isinstance(v, list) else v
         for n in (
             "ssh_options",
             "sftp_options",

@@ -38,12 +38,21 @@ import ast
 import re
 from pathlib import Path
 
+from otto.docker.compose import use_case_project
 from tests._fixtures.paths import TESTS_ROOT
 
 _INTEGRATION = TESTS_ROOT / "integration"
 _CONFTEST = _INTEGRATION / "conftest.py"
 _FIXTURE = "reap_orphan_docker_stacks"
 _GROUP = "docker_e2e"
+
+# The modules that mint a disposable compose-project suffix, and the shape
+# they mint it with: `return "<literal>" + uuid.uuid4().hex[:8]`.
+_E2E_SUFFIX_SOURCES = (
+    TESTS_ROOT / "e2e" / "docker" / "test_docker_e2e_cli.py",
+    TESTS_ROOT / "e2e" / "run" / "test_run_exec_e2e.py",
+)
+_FRESH_SUFFIX = re.compile(r"""return\s+["']([^"']+)["']\s*\+\s*uuid\.uuid4\(\)""")
 
 
 def reaper_is_autouse(conftest_source: str) -> bool:
@@ -130,3 +139,70 @@ def test_the_scanners_see_the_shapes_they_judge() -> None:
         True,
     )
     assert modules_declaring("x = 1\n") == (False, False)
+
+
+def orphan_project_fragments(conftest_source: str) -> tuple[str, ...]:
+    """The reaper's infix list, read off the conftest SOURCE (AST, not import).
+
+    Read rather than imported for the reason the rest of this module reads
+    source: importing ``tests.integration.conftest`` from the default lane
+    would execute a conftest for a tree this lane never collects.
+    """
+    tree = ast.parse(conftest_source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "_ORPHAN_PROJECT_FRAGMENTS" for t in node.targets
+        ):
+            return tuple(ast.literal_eval(node.value))
+    raise AssertionError(f"{_CONFTEST} no longer defines `_ORPHAN_PROJECT_FRAGMENTS`")
+
+
+def minted_suffixes(source: str) -> list[str]:
+    """The literal prefixes an e2e module's ``fresh_suffix`` fixture mints."""
+    return _FRESH_SUFFIX.findall(source)
+
+
+def test_the_e2e_suffix_idiom_still_yields_a_reapable_project_name() -> None:
+    """The reap and the naming scheme must keep agreeing (spec §9).
+
+    The reaper filters on INFIXES (``-e2e-``), never on a prefix, which is
+    the only reason it survived the use-case cutover: compose projects went
+    from ``otto-<repo>-<suffix>`` to ``<lab>-<usecase>-<suffix>`` and the
+    ``otto-`` prefix is gone for good. Nothing FAILS when a reap stops
+    matching — orphans from crashed runs simply accumulate until the docker
+    daemon runs out of address pools and every subsequent ``compose up``
+    breaks, on a machine nobody is looking at. So it is asserted here, on the
+    real name-builder rather than on a hand-written string.
+
+    Both halves are checked because docker derives the second from the first:
+    the reap greps ``docker ps --filter name=`` and ``docker network ls
+    --filter name=``, which match CONTAINER and NETWORK names
+    (``<project>-<service>-<n>``, ``<project>_default``), not the project.
+    """
+    fragments = orphan_project_fragments(_CONFTEST.read_text())
+    assert fragments, "the reaper matches nothing at all"
+
+    minted = [
+        (path, suffix)
+        for path in _E2E_SUFFIX_SOURCES
+        for suffix in minted_suffixes(path.read_text())
+    ]
+    assert len(minted) == len(_E2E_SUFFIX_SOURCES), (
+        f"expected one `fresh_suffix` literal per e2e module, found {minted} — "
+        f"the regex no longer sees the shape it judges"
+    )
+
+    # A real project name, from the production builder — not a literal
+    # assembled here, which would keep passing after the scheme changed.
+    projects = [(path, use_case_project("unix", "integration", suffix)) for path, suffix in minted]
+    unreapable = [
+        f"{path.relative_to(TESTS_ROOT)}: {name!r}"
+        for path, project in projects
+        for name in (project, f"{project}-api-1", f"{project}_default")
+        if not any(frag in name for frag in fragments)
+    ]
+    assert not unreapable, (
+        f"a compose name minted by an e2e module carries none of the reaper's "
+        f"infixes {fragments} — a crashed run would leak that stack forever:\n  "
+        + "\n  ".join(unreapable)
+    )

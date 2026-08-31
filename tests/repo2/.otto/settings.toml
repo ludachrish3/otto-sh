@@ -25,6 +25,34 @@ dockerfile = "docker/Dockerfile"
 context = "docker"
 
 [[docker.composes]]
+name = "core"
 path = "docker/compose.yml"
-default_host = "alt3"
 services = ["worker"]
+
+[[docker.use_cases]]
+name = "repo2"
+composes = ["core"]
+role = "docker"
+placement = { docker = "alt3" }
+
+# The displacement pair's loser (spec §4). Two fragments, on purpose:
+# the unconditional one always participates (repo2's `worker` is part of the
+# merged stack either way), while the provider one competes for `edge` at the
+# default priority 0 and loses to repo1's 10 unless `--provide edge=repo2`
+# narrows the field to this repo.
+[[docker.composes]]
+name = "mock-edge"
+path = "docker/mock-edge.yml"
+services = ["edge"]
+
+[[docker.use_cases]]
+name = "integration"
+composes = ["core"]
+role = "docker"
+
+[[docker.use_cases]]
+name = "integration"
+composes = ["mock-edge"]
+role = "docker"
+provides = "edge"
+priority = 0

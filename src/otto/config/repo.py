@@ -81,15 +81,44 @@ class DockerCompose:
     path: Path
     """Absolute path to the compose YAML file."""
 
-    default_host: str | None = None
-    """Lab host id where this stack should run by default. Overridden by
-    ``otto docker up --on <host>``."""
-
     services: tuple[str, ...] = ()
-    """Service names declared in the compose file. Used to synthesize
-    container host ids for tab-completion without parsing YAML at
-    completion-fast-path time. The runtime is the source of truth and
-    will warn on mismatch with ``docker compose config --services``."""
+    """Service names declared in the compose file.
+
+    Authoritative, not a hint: this is the list container hosts are registered
+    from, and it is what lets tab-completion synthesize ids without parsing
+    YAML on the completion fast path. The legacy per-repo ``compose_up`` path
+    additionally compares it with ``docker compose config --services`` once the
+    stack is up and warns on drift; the use-case deploy path registers from the
+    declaration alone.
+    """
+
+    name: str = ""
+    """Handle use-case fragments reference; the spec fills the path stem when unset."""
+
+
+@dataclass(frozen=True)
+class DockerUseCase:
+    """One ``[[docker.use_cases]]`` fragment (spec §3.1): participation + placement atom."""
+
+    name: str
+    """Use-case this fragment belongs to; same name across repos = one use-case."""
+    composes: "tuple[str, ...]"
+    """Handles into this repo's [[docker.composes]]."""
+    role: "str | None" = None
+    """Placement role, resolved against `roles` host tags in the owning repo's scope."""
+    placement: "dict[str, str]" = field(default_factory=dict)
+    """Committed role→host pins.
+
+    A value may be lab-qualified (``unix:test3``) for multi-lab sessions.
+    """
+    provides: "str | None" = None
+    """Capability this fragment offers to the provider competition (spec §4)."""
+    priority: int = 0
+    """Competition rank; higher wins; only meaningful with provides."""
+    env: "dict[str, str]" = field(default_factory=dict)
+    """Channel-1 static env; values may use ``${otto:...}`` fact refs (spec §6)."""
+    pass_env: "tuple[str, ...]" = ()
+    """Allowlisted variable names copied from the invoking user's shell."""
 
 
 @dataclass(frozen=True)
@@ -104,6 +133,9 @@ class DockerSettings:
 
     composes: tuple[DockerCompose, ...] = ()
     """Compose files this project contributes."""
+
+    use_cases: tuple[DockerUseCase, ...] = ()
+    """`[[docker.use_cases]]` fragments this project contributes."""
 
 
 @dataclass(frozen=True)

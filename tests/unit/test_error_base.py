@@ -50,6 +50,7 @@ from otto.coverage.errors import (
 )
 from otto.coverage.overrides import OverrideConfigError
 from otto.coverage.tickets import TicketConfigError
+from otto.docker.resolve import UseCaseResolutionError
 from otto.env import EnvBuildError, EnvExistsError
 from otto.env.backends import BackendUnavailableError
 from otto.errors import EnsureStateError, OttoError
@@ -109,6 +110,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (CoverageDataMismatchError, RuntimeError),
     (OverrideConfigError, ValueError),
     (TicketConfigError, ValueError),
+    (UseCaseResolutionError, ValueError),
     (ParseMismatch, ValueError),
     (HostUnreachableError, RuntimeError),
     (HostCommandError, RuntimeError),

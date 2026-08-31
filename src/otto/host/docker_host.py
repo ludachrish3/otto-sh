@@ -308,23 +308,90 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     async def _auto_up(self) -> str:
         """Bring the owning stack up and return this service's container id.
 
-        Called when the container is declared but not running. Uses
-        :func:`compose_up` with ``build=False`` so access never triggers an
-        image rebuild — a missing image fails fast with an actionable error.
+        Called when the container is declared but not running. Two routes,
+        chosen by whether ``self.project`` names a declared use-case (spec
+        §9) or a legacy per-repo compose: a placeholder registered by
+        ``register_declared_container_hosts``'s use-case branch carries the
+        use-case's name in ``project`` — the very field a legacy placeholder
+        carries the REPO's name in — so this is the one place that has to
+        tell the two apart before deciding what to bring up. Both routes use
+        ``build=False`` so access never triggers an image rebuild — a
+        missing image fails fast with an actionable error.
+
+        If an active repo happens to share its name with a declared use-case,
+        a LEGACY placeholder for that repo (``project`` = the repo's name)
+        still routes to the use-case pipeline — the two placeholder shapes
+        are told apart by this ONE field and the use-case check runs first.
+        This is intentional (spec allows either namespace and does not
+        reserve one from the other) rather than a bug to guard against here;
+        a schema-level refusal of the collision, if wanted, belongs beside
+        settings validation, not in this per-call routing.
 
         Raises:
-            ~otto.result.CommandNotRunError: :func:`compose_up` declined,
-                unwrapped. See the arm below for why it is spelled out.
+            ~otto.result.CommandNotRunError: :func:`~otto.docker.deployment.deploy`
+                or :func:`~otto.docker.compose.compose_up` declined, unwrapped.
+                See the arms below for why it is spelled out.
         """
-        from ..config import get_lab as _get_lab
         from ..config import get_repos as _get_repos
+        from ..docker.resolve import declared_use_cases
+
+        repos = _get_repos()
+
+        if self.project in declared_use_cases(repos):
+            from ..docker.deployment import deploy
+
+            logger.debug(
+                rf"\[docker] container {self.id!r}: {self.project!r} routes to the "
+                f"use-case auto-start pipeline (a same-named repo, if any, would "
+                f"never reach here)"
+            )
+            logger.info(
+                rf"\[docker] container {self.id!r} not running; "
+                f"auto-starting use-case {self.project!r}"
+            )
+            try:
+                stack = await deploy(self.project, build=False)
+            except CommandNotRunError:
+                # Same reasoning as the legacy branch's bare raise below:
+                # `deploy` declines a dry run by raising `CommandNotRunError`
+                # with its own resolved-plan message, and refiling that as a
+                # generic "auto-start failed" would tell the operator a start
+                # was attempted and failed when nothing was attempted at all.
+                raise
+            except Exception as e:
+                raise RuntimeError(
+                    f"Container {self.id!r} is declared but not running, and "
+                    f"auto-start failed: {e}. Run `otto docker up {self.project}` "
+                    f"first."
+                ) from e
+
+            # `stack.by_host`, NOT the flattened `stack.hosts`: a use-case can
+            # span several parents, and two of them can legally declare the
+            # same service name (`_declared_services` warns on the collision,
+            # it does not refuse it). Reading the flattened map would hand
+            # THIS container -- bound to `self.parent` for every subsequent
+            # `docker exec` -- a container id that belongs to a DIFFERENT
+            # parent, which fails far from here with a bare "no such
+            # container" instead of this method's actionable refusal.
+            by_parent = stack.by_host.get(self.parent.id, {})
+            host = by_parent.get(self.service)
+            cid = host.container_id if host is not None else ""
+            if not cid:
+                raise RuntimeError(
+                    f"Container {self.id!r} is declared but not running. "
+                    f"Auto-start of use-case {self.project!r} did not produce "
+                    f"a container for service {self.service!r} on {self.parent.id}. "
+                    f"Run `otto docker up {self.project}` first."
+                )
+            return cid
+
+        from ..config import get_lab as _get_lab
         from ..docker.compose import compose_up
 
         logger.info(
             rf"\[docker] container {self.id!r} not running; "
             f"auto-starting stack {self.compose_project!r}"
         )
-        repos = _get_repos()
         lab = _get_lab()
         repo = next((r for r in repos if r.name == self.project), None)
         if repo is None:
@@ -356,11 +423,12 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             # stops being visible as a decline anywhere upstream.
             #
             # UNREACHABLE TODAY, and closed anyway. `_ensure_running` — the
-            # only caller — asks `_resolve_container_id` first, and that
-            # refuses a dry run outright (`refuse_declined_fact`), so no dry
-            # run reaches this call. The premise is one plausible refactor
-            # from changing: a cached container id, or any second caller that
-            # skips the probe, and the wide arm below starts fabricating.
+            # only caller of `_auto_up` — asks `_resolve_container_id` first,
+            # and that refuses a dry run outright (`refuse_declined_fact`), so
+            # no dry run reaches this call. The premise is one plausible
+            # refactor from changing: a cached container id, or any second
+            # caller that skips the probe, and the wide arm below starts
+            # fabricating.
             #
             # Bare `raise`, not a rewrap: the decline's own message already
             # names `compose_up(<repo>: <project>)` and says no image was

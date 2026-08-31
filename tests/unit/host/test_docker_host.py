@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import shlex
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from otto.host.docker_host import DockerContainerHost
+from otto.host.errors import HostCommandError
 from otto.host.inventory_ref import InventoryRef
 from otto.host.login_proxy import Cred
 from otto.result import CommandNotRunError, CommandResult, Result
@@ -277,10 +279,11 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
     compose_up.assert_awaited_once()
     assert compose_up.call_args.kwargs["build"] is False
     assert compose_up.call_args.kwargs["project_name"] == "otto-repo1-vagrant"
-    # Auto-up composes on the container's OWN parent host, not a global
-    # default_host: a `test1.repo1.api` container must auto-start on
-    # test1, not on whatever host happens to be the compose default. (Latent
-    # bug surfaced by the multi-host docker pool — see docker_host.py::_auto_up.)
+    # Auto-up composes on the container's OWN parent host, not a
+    # lab-wide placement: a `test1.repo1.api` container must auto-start on
+    # test1, not on whatever host use-case/pin resolution happens to pick.
+    # (Latent bug surfaced by the multi-host docker pool — see
+    # docker_host.py::_auto_up.)
     assert compose_up.call_args.kwargs["on"] == parent.id
     assert h.container_id == "freshcid"
     assert result.status == Status.Success
@@ -306,6 +309,172 @@ async def test_placeholder_auto_up_failure_raises(monkeypatch):
     monkeypatch.setattr("otto.config.get_lab", MagicMock())
     with pytest.raises(RuntimeError, match="not running"):
         await h.exec("echo hi")
+
+
+@pytest.mark.asyncio
+async def test_placeholder_use_case_project_auto_starts_via_deploy(monkeypatch):
+    """A placeholder whose ``project`` names a declared use-case (spec §9)
+    auto-starts through ``deployment.deploy``, never the legacy per-repo
+    ``compose_up`` — the id shape (``<parent>.<usecase>.<service>``) synthesized
+    by ``register_declared_container_hosts``'s use-case branch is exactly what
+    routes it here (see test_register_declared_use_case_repo_synthesizes_
+    usecase_ids in test_compose.py)."""
+    parent = _mock_parent()
+    h = DockerContainerHost(
+        parent=parent,
+        container_id="",
+        project="integration",
+        service="api",
+        compose_project="unix-integration-vagrant",
+    )
+    uc_repo = SimpleNamespace(
+        name="a",
+        docker_settings=SimpleNamespace(use_cases=[SimpleNamespace(name="integration")]),
+    )
+    started = _make_container(parent, container_id="freshcid")
+    stack = SimpleNamespace(
+        hosts={"api": started},
+        by_host={parent.id: {"api": started}},
+    )
+    deploy = AsyncMock(return_value=stack)
+    compose_up = AsyncMock()
+    monkeypatch.setattr("otto.docker.deployment.deploy", deploy)
+    monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
+    monkeypatch.setattr("otto.config.get_repos", lambda: [uc_repo])
+    monkeypatch.setattr("otto.config.get_lab", MagicMock())
+
+    result = await h.exec("echo hi")
+
+    deploy.assert_awaited_once_with("integration", build=False)
+    compose_up.assert_not_awaited()
+    assert h.container_id == "freshcid"
+    assert result.status == Status.Success
+
+
+def _uc_repos(use_case: str = "integration"):
+    return [
+        SimpleNamespace(
+            name="a",
+            docker_settings=SimpleNamespace(use_cases=[SimpleNamespace(name=use_case)]),
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_use_case_auto_up_picks_the_container_of_its_own_parent(monkeypatch):
+    """A use-case can span parents that legally declare the same service
+    name (_declared_services warns, it does not refuse). `_auto_up` must
+    read `stack.by_host[self.parent.id]`, never the flattened `stack.hosts`
+    — the flattened map is keyed last-write-wins across every parent, so a
+    naive read can hand THIS container (bound to `self.parent` for every
+    subsequent docker exec) a container id belonging to a DIFFERENT host."""
+    parent_other = _mock_parent("test1")
+    parent_mine = _mock_parent("test3")
+    h = DockerContainerHost(
+        parent=parent_mine,
+        container_id="",
+        project="integration",
+        service="api",
+        compose_project="unix-integration-vagrant",
+    )
+    other_container = _make_container(parent_other, container_id="wrong-parent-cid")
+    mine_container = _make_container(parent_mine, container_id="right-parent-cid")
+    # The flattened map deliberately carries the OTHER parent's container —
+    # exactly what a naive `stack.hosts[self.service]` read would return.
+    stack = SimpleNamespace(
+        hosts={"api": other_container},
+        by_host={
+            "test1": {"api": other_container},
+            "test3": {"api": mine_container},
+        },
+    )
+    deploy = AsyncMock(return_value=stack)
+    monkeypatch.setattr("otto.docker.deployment.deploy", deploy)
+    monkeypatch.setattr("otto.config.get_repos", _uc_repos)
+    monkeypatch.setattr("otto.config.get_lab", MagicMock())
+
+    await h.exec("echo hi")
+
+    assert h.container_id == "right-parent-cid"
+
+
+@pytest.mark.asyncio
+async def test_use_case_auto_up_hands_a_decline_back_unwrapped(monkeypatch):
+    """The dry-run decline pass-through on the use-case route (docker_host.py's
+    CommandNotRunError arm) — untested-under-coverage counterpart of the
+    legacy route's test_auto_up_hands_a_decline_back_unwrapped in
+    test_dry_run.py."""
+    parent = _mock_parent()
+    h = DockerContainerHost(
+        parent=parent,
+        container_id="",
+        project="integration",
+        service="api",
+        compose_project="unix-integration-vagrant",
+    )
+    declined = CommandNotRunError("deploy(integration)", parent.id, "No stack was brought up.")
+
+    async def declining_deploy(*_a, **_kw):
+        raise declined
+
+    monkeypatch.setattr("otto.docker.deployment.deploy", declining_deploy)
+    monkeypatch.setattr("otto.config.get_repos", _uc_repos)
+    monkeypatch.setattr("otto.config.get_lab", MagicMock())
+
+    with pytest.raises(CommandNotRunError) as exc:
+        await h._auto_up()
+
+    assert exc.value is declined
+    assert "auto-start failed" not in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_use_case_auto_up_wraps_a_real_deploy_failure(monkeypatch):
+    """The use-case route's wide `except Exception` — a real failure must
+    surface as the actionable 'auto-start failed' RuntimeError, exact
+    phrase, never a bare pass-through of the underlying error."""
+    parent = _mock_parent()
+    h = DockerContainerHost(
+        parent=parent,
+        container_id="",
+        project="integration",
+        service="api",
+        compose_project="unix-integration-vagrant",
+    )
+
+    async def failing_deploy(*_a, **_kw):
+        raise HostCommandError("docker compose up failed: no such image")
+
+    monkeypatch.setattr("otto.docker.deployment.deploy", failing_deploy)
+    monkeypatch.setattr("otto.config.get_repos", _uc_repos)
+    monkeypatch.setattr("otto.config.get_lab", MagicMock())
+
+    with pytest.raises(RuntimeError, match="not running, and auto-start failed"):
+        await h._auto_up()
+
+
+@pytest.mark.asyncio
+async def test_use_case_auto_up_no_container_for_service_is_refused(monkeypatch):
+    """The use-case route's 'did not produce a container for service'
+    refusal — deploy succeeds but this parent's service never resolved."""
+    parent = _mock_parent("test3")
+    h = DockerContainerHost(
+        parent=parent,
+        container_id="",
+        project="integration",
+        service="api",
+        compose_project="unix-integration-vagrant",
+    )
+    stack = SimpleNamespace(hosts={}, by_host={})
+    deploy = AsyncMock(return_value=stack)
+    monkeypatch.setattr("otto.docker.deployment.deploy", deploy)
+    monkeypatch.setattr("otto.config.get_repos", _uc_repos)
+    monkeypatch.setattr("otto.config.get_lab", MagicMock())
+
+    with pytest.raises(
+        RuntimeError, match="did not produce a container for service 'api' on test3"
+    ):
+        await h._auto_up()
 
 
 @pytest.mark.asyncio

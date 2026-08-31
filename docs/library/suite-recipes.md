@@ -190,16 +190,33 @@ The CLI is a thin wrapper around `otto.docker`. Project instructions and
 suites import the same library directly:
 
 ```python
-from otto.docker import build_images, compose_up, compose_down, composed
+from otto.docker import deployed
 
 
 @instruction()
 async def smoke():
-    async with composed(repo, lab, own=True) as containers:
-        api = containers["api"]
+    async with deployed("integration", own=True) as stack:
+        api = stack.hosts["api"]
         await api.run(["./run-tests"])
 ```
 
-`composed()` is the recommended scope — it tears the stack down on exit
-unless it found the stack already running, in which case nested users
-share without yanking the stack from peers.
+{func}`~otto.docker.deployment.deployed` is the recommended scope. It deploys
+a **use-case** — the same named, cross-repo deployment `otto docker up` brings
+up, with the same provider competition and placement — and hands back a
+{class}`~otto.docker.deployment.UseCaseStack`: `hosts` (service -> container
+host, flattened), `by_host`, the final `env` mapping, and the selection
+report. On exit it tears the stack down, unless it found the stack already
+running, in which case nested users share without yanking it from peers.
+Ownership is stack-level and all-or-nothing.
+
+`--on`, `--provide`, `--env` and service narrowing are all keyword arguments
+here (`on=`, `provide=`, `env=`, `services=`); see
+{doc}`../guide/cli/docker/use-cases` for what each one does and
+{mod}`otto.docker.deployment` for the signatures.
+
+The per-repo primitives stay public and supported —
+{func}`~otto.docker.compose.composed`, `compose_up`, `compose_down`,
+`build_images`. `composed(repo, lab, own=True)` scopes **one repo's** compose
+files with the same sharing contract, and is what `deploy` is built from;
+reach for it when you genuinely want a single repo's stack rather than a
+use-case.

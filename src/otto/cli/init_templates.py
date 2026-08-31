@@ -142,8 +142,13 @@ paths = ["lab_data"]
 #PORT = 8080
 #[[docker.composes]]
 #path = "docker/compose.yaml"
-#default_host = "{name}-svc"
 #services = ["{name}-svc"]
+## Use-case fragments: what `otto docker up` deploys. See
+## docs/guide/cli/docker/use-cases.md for provider competition (provides,
+## priority), placement (role, placement) and env templating (env, pass_env).
+#[[docker.use_cases]]
+#name = "integration"
+#composes = ["compose"]
 
 # --- [monitor] — dashboard TLS (optional); see the monitor guide -------------
 # tls_key without tls_cert is rejected; tls_cert alone is fine (bundled PEM).

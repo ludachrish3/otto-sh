@@ -1,0 +1,11 @@
+# The MOCK edge, repo2's side of the displacement pair (spec §4).
+#
+# Same service name and same shape as repo1's `edge`, on repo2's own image —
+# which is what makes a deployment attributable: the container that ends up
+# running carries /etc/repo2-marker.txt only if the mock WON the competition.
+services:
+  edge:
+    image: repo2-worker:latest     # reuse the already-built image; no new Dockerfile
+    command: ["sh", "-c", "while sleep 3600; do :; done"]
+    environment:
+      - EDGE_ADDR

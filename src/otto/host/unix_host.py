@@ -329,6 +329,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     and the configured user can talk to it). Containers declared by projects
     are scheduled onto docker-capable hosts; non-capable hosts are skipped."""
 
+    roles: list[str] = field(default_factory=list)
+    """Role tags this lab assigned to the host ("edge", "builder"). Docker
+    use-case fragments name a role; placement resolves it to the unique
+    docker-capable host carrying the tag (otto.docker.resolve)."""
+
     transfer: str = "scp"
     """Protocol used to transfer files."""
 

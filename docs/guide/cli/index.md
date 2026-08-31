@@ -264,7 +264,7 @@ connection failed.
 | [`otto host`](host/index.md) | Run commands and transfer files on lab hosts |
 | [`otto run`](run/index.md) | Run a registered instruction on the lab |
 | [`otto test`](test/index.md) | Run a registered `OttoSuite` test suite |
-| [`otto docker`](docker/index.md) | Build images and orchestrate compose stacks on docker-capable hosts |
+| [`otto docker`](docker/index.md) | Build images and deploy use-case stacks on docker-capable lab hosts |
 | [`otto link`](link/index.md) | Inspect and impair the lab's **static** links — the edges that already exist |
 | [`otto tunnel`](tunnel/index.md) | Create, list and remove host-resident tunnels — paths that do not exist until you build them |
 | [`otto monitor`](monitor/index.md) | Launch an interactive performance dashboard |

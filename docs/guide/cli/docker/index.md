@@ -1,8 +1,12 @@
 # otto docker
 
-`otto docker` builds container images and orchestrates compose stacks on the
+`otto docker` builds container images and deploys **use-case** stacks on the
 lab's docker-capable hosts. The containers it brings up become first-class lab
 hosts: they appear in `--list-hosts` and accept every `otto host` verb.
+
+A use-case is one named deployment that several active repos contribute
+fragments to; `up`, `down` and `build` all speak it. {doc}`use-cases` is the
+workflow home for that model — start there.
 
 ```{raw} html
 :file: ../../../_static/generated/termynal/help-docker.html
@@ -11,33 +15,48 @@ hosts: they appear in `--list-hosts` and accept every `otto host` verb.
 ## Synopsis
 
 ```text
-otto docker build [--repo NAME] [--on HOST] [--rebuild] [<IMAGE>...]
-otto docker up    [--repo NAME] [--on HOST] [--no-build]
-otto docker down  [--repo NAME] [--on HOST]
-otto docker ps    [--on HOST]
+otto docker use-cases [USE_CASE]
+otto docker up        [USE_CASE [SERVICE]...] [--on HOST] [--no-build]
+                      [--provide CAP=REPO]... [--env K=V]... [--env-file PATH]...
+otto docker down      [USE_CASE [SERVICE]...] [--on HOST] [--provide CAP=REPO]...
+otto docker build     [USE_CASE [IMAGE]...] [--repo NAME] [--on HOST] [--rebuild]
+                      [--provide CAP=REPO]...
+otto docker ps        [--on HOST]
 ```
 
 ## Options
 
 | Option | Applies to | Description |
 | ------ | ---------- | ----------- |
-| `--repo NAME` | `build`, `up`, `down` | Restrict to a single repo by name |
-| `--on HOST` | all | Lab host id to operate on (default: all docker-capable hosts) |
+| `USE_CASE` (argument) | `use-cases` | Show only this use-case (default: every declared one) |
+| `USE_CASE` (argument) | `up`, `down` | The use-case to deploy or tear down (default: the only one declared) |
+| `USE_CASE` (argument) | `build` | Build only the repos taking part in this use-case (default: every selected repo) |
+| `SERVICE...` (argument) | `up`, `down` | Narrow to these services; requires an explicit `USE_CASE` |
+| `IMAGE...` (argument) | `build` | Image names to build (default: all declared) |
+| `--on HOST` | `up`, `down` | Collapse every fragment of the deployment onto this lab host |
+| `--on HOST` | `build` | Lab host id to build on |
+| `--on HOST` | `ps` | Lab host id to query (default: all docker-capable hosts) |
+| `--provide CAP=REPO` | `up`, `down`, `build` | Break a provider tie for capability `CAP`. Repeatable |
+| `--env K=V` | `up` | Extra env var; wins over every channel. Repeatable |
+| `--env-file PATH` | `up` | Local `KEY=VALUE` file merged under `--env`. Repeatable |
+| `--no-build` | `up` | Skip the implicit build step before `compose up` |
+| `--repo NAME` | `build` | Restrict to a single repo by name |
 | `--rebuild` | `build` | Force rebuild even if a context-hash tag exists |
-| `--no-build` | `up` | Skip the implicit build step before compose up |
-| `<IMAGE>...` (argument) | `build` | Image names to build (default: all) |
+
+`--repo` is a `build`-only option: `up` and `down` deploy a merged, cross-repo
+use-case, which is not a per-repo thing to narrow.
 
 ## Container hosts
 
 After `otto docker up`, the resulting containers appear in `--list-hosts`
-under ids of the form `<parent>.<project>.<service>` (e.g.
-`test3.repo1.api`). Use them anywhere a host id is expected:
+under ids of the form `<parent>.<usecase>.<service>` (e.g.
+`test3.integration.api`). Use them anywhere a host id is expected:
 
 ```text
-otto host test3.repo1.api login
-otto host test3.repo1.api run "uname -a"
-otto host test3.repo1.api put ./local /remote/path
-otto host test3.repo1.api get /etc/os-release ./
+otto host test3.integration.api login
+otto host test3.integration.api run "uname -a"
+otto host test3.integration.api put ./local /remote/path
+otto host test3.integration.api get /etc/os-release ./
 ```
 
 Container ids are also synthesized at lab-load time **before** any
@@ -52,7 +71,7 @@ delegates to its parent host instead of being a parallel transport stack.
 
 Configuration lives with the rest of the project's settings: the per-project
 `[docker]` block in {doc}`../../configuration/settings`, and the per-lab
-declaration in {doc}`../../configuration/lab-config`.
+`docker_capable`/`roles` host fields in {doc}`../../configuration/lab-config`.
 
 ## Where docker runs
 
@@ -83,9 +102,9 @@ declaration in {doc}`../../configuration/lab-config`.
 :caption: Subcommands
 :hidden:
 
-build
 up
 down
+build
 ps
 ```
 
@@ -93,5 +112,6 @@ ps
 :caption: Topics
 :hidden:
 
+use-cases
 rebuild-policy
 ```

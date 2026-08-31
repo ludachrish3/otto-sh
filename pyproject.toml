@@ -59,6 +59,11 @@ dependencies = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-timeout>=2.3.1",
+    # `otto.docker.staging` parses a rendered compose file's YAML to collect
+    # `env_file:` sidecar references (spec §8); imported function-scope to
+    # keep the import budget light, but a package otto imports at runtime is
+    # a package otto declares regardless of where the import sits.
+    "pyyaml>=6.0.3",
     # `otto.inventory.netbox` imports `requests.adapters.HTTPAdapter` BY NAME to
     # mount the per-request timeout on pynetbox's session (pynetbox owns the
     # calls and offers no seam to pass one through). A package otto imports is a
@@ -172,7 +177,6 @@ dev = [
     # package is what lives here: `requests` itself is a direct runtime
     # dependency above, but nothing at runtime imports these stubs.
     "types-requests>=2.32",
-    "pyyaml>=6.0.3",
     "pytest-randomly>=4.1.0",
 ]
 # Architecture-gate tools, kept OUT of the dev group on purpose: tach ships a

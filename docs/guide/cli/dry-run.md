@@ -263,6 +263,16 @@ the converge directly.
   reads nobody took would send a converge into a cleanup on a fact nobody
   established.
 
+## `otto docker` previews the exact command
+
+`otto --dry-run docker up <usecase>` is the one place a preview is *more* than
+a description. Selection, placement, env assembly and a repo's compose adapter
+are all pure — they contact no device — so otto runs the whole resolution and
+declines at the first real touch, printing the resolved plan **and the exact
+per-host `docker compose` command it would have issued**, env prefix included.
+`down` declines the same way with its resolved plan. See
+{doc}`docker/use-cases` for what the plan's parts mean.
+
 ## What a dry run still does
 
 One exception, and it is deliberate: otto reads **its own** SUT checkout's git

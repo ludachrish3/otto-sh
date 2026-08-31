@@ -87,6 +87,7 @@
                     "rack": 1,
                     "shelf": 4,
                     "docker_capable": true,
+                    "roles": ["docker"],
                     "creds": [
                         {"login": "vagrant", "password": "vagrant"},
                         {"login": "test", "password": "Password1"}

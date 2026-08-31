@@ -45,20 +45,70 @@ contradicting otto's "users don't have root locally" constraint. Going
 through `parent.run("docker ...")` is one code path that handles both
 hopped and direct parents identically.
 
+## Use-case resolution
+
+A deployment is a **use-case**, not a repo: every active repo contributes
+*fragments* under the same use-case name, and the deploy pipeline resolves
+them before touching anything. Three pure phases, in order — selection (which
+fragments take part, after the provider competition), placement (which lab
+host each one lands on), and env assembly (the three channels merged into one
+mapping). Purity is the design constraint, not an accident: it is what lets
+`otto docker use-cases` render an inventory without contacting a device, and
+what lets `--dry-run` print the *exact* compose command rather than a
+description of one.
+
+Resolution refuses rather than guesses. An ambiguous role, a provider tie, a
+pin naming a host this lab does not have — each is a configuration error
+naming the candidates and the knobs, raised before a single file is staged.
+{doc}`../../guide/cli/docker/use-cases` documents the rules for users; the
+design rationale is in the docker use-cases design spec
+(`docs/superpowers/specs/2026-08-30-docker-use-cases-design.md`, §4-§6).
+
 ## Naming scheme
 
-Container host id = `<parent_id>.<project>.<service>`, lowercased.
+Container host id = `<parent_id>.<usecase>.<service>`, lowercased.
 
 - **Parent id** is whatever `UnixHost._generateId()` produces (e.g.
   `test3`, or `test3_rack1` if the lab encodes `board`/`slot`).
-- **Project** is `Repo.name` (the per-repo `name` in
-  `.otto/settings.toml`).
+- **Use-case** is the `[[docker.use_cases]]` `name` — the deployment, not
+  the repo, because a use-case is cross-repo by construction. A repo whose
+  fragment is named after the repo keeps its pre-use-case container ids
+  literally unchanged.
 - **Service** is the compose service name.
 
-The verbose form prevents collisions when multiple projects on the
-same parent declare a service of the same name (e.g. both repos have
+The verbose form prevents collisions when multiple deployments on the
+same parent declare a service of the same name (e.g. two use-cases each have
 an `api`). Tab-completion already does prefix matching, so typing
 `test3.` narrows naturally to the containers on a given parent.
+
+The **compose project** underneath is named separately, and differently:
+`<lab>-<usecase>-<suffix>` (suffix = the invoking username, or
+`OTTO_COMPOSE_SUFFIX`). This page is the home for why each segment is shaped
+that way:
+
+- The **lab** segment is load-bearing, not cosmetic. `--remove-orphans` reaps
+  within a project, and one docker host can serve containers for several labs,
+  so two labs sharing a project would have each `up` deleting the other's
+  containers. It also makes a plain `docker ps` on a shared host attributable
+  to a lab from outside otto.
+- The **suffix** keeps concurrent users' stacks isolated on a shared host.
+- There is **no `otto-` prefix**, deliberately. The deployment belongs to the
+  product; branding it with the tool that enabled it is the backwards
+  dependency the use-case design exists to refuse.
+
+One exception a maintainer will meet in a live `docker ps`: the legacy
+per-repo path — the `compose_up`/`composed` primitives, which stay public
+(spec §11) and which instructions still call — deploys under
+`otto-<repo>-<suffix>`, prefix included. That naming is frozen until the path
+is removed; it is not evidence the rule above is broken.
+
+Do **not** read that prefix as "this repo declares no use-cases". A repo with
+no `[[docker.use_cases]]` cannot reach the per-repo path without an explicit
+`on=`: `_resolve_parent` has nothing to resolve and raises. In practice an
+`otto-<repo>-<suffix>` project belongs to a repo that *does* declare
+fragments and was reached through a primitive rather than through
+`deploy` — so the fragment a maintainer would go hunting for is already
+there.
 
 ## Lifecycle and the lab
 
@@ -69,7 +119,14 @@ lab. This walks each repo's `[docker]` settings and registers
 `container_id = ""`. Two effects:
 
 1. `--list-hosts` and tab completion immediately show the declared
-   container ids — without needing to bring the stack up first.
+   container ids — without needing to bring the stack up first. These are
+   two synthesizers, not one: `--list-hosts` reads the placeholders this
+   walk registered, while completion runs off the cached id list
+   `config/completion_cache.collect_host_ids` builds without a lab. They must
+   mint the same id SHAPE (use-case fragments → `<parent>.<usecase>.<service>`,
+   a composes-only repo → `<parent>.<repo>.<service>`) or completion offers
+   ids nothing registers; both take the same branch, and the divergence is
+   pinned by `tests/unit/config/test_completion_container_ids.py`.
 2. Operations against a not-yet-up container produce a clear "run
    `otto docker up` first" error rather than a confusing "no such
    host."

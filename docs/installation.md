@@ -496,6 +496,7 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 | `pytest` | 9.1.1 | Test runner; otto imports user test files at runtime |
 | `pytest-asyncio` | 1.4.0 | Async test support for pytest |
 | `pytest-timeout` | 2.3.1 | Per-test timeouts for `otto test` (`@pytest.mark.timeout`) |
+| `pyyaml` | 6.0.3 | Parses rendered compose YAML to collect `env_file:` sidecar references |
 | `requests` | 2.20.0 | HTTP adapter mounted directly by the `netbox` inventory backend to bound each request |
 | `rich` | 15.0.0 | Terminal formatting, panels, and tables |
 | `sse-starlette` | 3.3.3 | Server-sent events for live dashboard updates |
@@ -512,7 +513,7 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 
 The direct dependencies above pull in further packages of their own — about 50 in a
 complete Linux runtime install. Most are pure Python and ship a single
-`py3-none-any` wheel that works everywhere. These five do not: they carry **native
+`py3-none-any` wheel that works everywhere. These six do not: they carry **native
 (C/Rust) extensions**, so their wheels are platform-specific, and the "Wheel matrix"
 column says whether they are *also* Python-version-specific.
 
@@ -522,6 +523,7 @@ column says whether they are *also* Python-version-specific.
 | `charset-normalizer` | requests (direct) | per-version + pure fallback | HTTP body charset detection |
 | `cryptography` | asyncssh | abi3 | SSH encryption; links against OpenSSL |
 | `pydantic-core` | pydantic | per-version | Rust-based data validation |
+| `pyyaml` | otto (direct) | per-version | LibYAML-backed C parser; no pure wheel is published |
 | `tomli` | otto (direct) | per-version + pure fallback | TOML parsing |
 
 Reading the matrix column:

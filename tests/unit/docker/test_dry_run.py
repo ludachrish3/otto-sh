@@ -142,7 +142,9 @@ def _spied_parent() -> UnixHost:
     return parent
 
 
-def _make_repo(tmp: Path, *, default_host: str = "probe_seed") -> Repo:
+def _make_repo(tmp: Path) -> Repo:
+    """Every caller passes ``on=`` explicitly, so this repo needs no placement
+    of its own — [[docker.composes]] is a pure file inventory (spec §14)."""
     sut = make_sut_repo(
         tmp / "repo1",
         name="repo1",
@@ -156,7 +158,6 @@ def _make_repo(tmp: Path, *, default_host: str = "probe_seed") -> Repo:
             "\n"
             "[[docker.composes]]\n"
             'path = "docker/compose.yml"\n'
-            f'default_host = "{default_host}"\n'
             'services = ["api"]\n'
         ),
         files={"docker/Dockerfile": "FROM alpine\n", "docker/compose.yml": "services: {}\n"},
@@ -505,7 +506,23 @@ class TestEveryPublicDockerExportIsAdjudicated:
     """
 
     #: Refuse at the top, above every device touch (an arm).
-    ARMED = frozenset({"build_images", "compose_up", "compose_down", "composed"})
+    #:
+    #: ``deploy``/``teardown``/``deployed`` arm BELOW their pure prefix
+    #: (select, place, validate) and above the first build/stage/up, so a
+    #: dry run still reports the resolved plan and still fires every
+    #: configuration refusal -- but they are device-contacting verbs, never
+    #: PURE, and the arm is what makes that safe.
+    ARMED = frozenset(
+        {
+            "build_images",
+            "compose_up",
+            "compose_down",
+            "composed",
+            "deploy",
+            "deployed",
+            "teardown",
+        }
+    )
 
     #: Reach the primitive, keep its announcement, refuse the ANSWER.
     REFUSING_PROBE = frozenset({"compose_ps"})
@@ -513,11 +530,14 @@ class TestEveryPublicDockerExportIsAdjudicated:
     #: No device contact at all -- pure configuration, hashing or lab lookup.
     PURE = frozenset(
         {
+            "AdapterResult",
+            "UseCaseStack",
             "context_hash",
             "get_container_host",
             "get_user_compose_project",
             "image_full_tag",
             "image_latest_tag",
+            "register_compose_adapter",
         }
     )
 
@@ -531,25 +551,38 @@ class TestEveryPublicDockerExportIsAdjudicated:
             "nobody had asked the question of any of them."
         )
 
-    @pytest.mark.parametrize("sub", ["build", "up", "down", "ps"])
+    @pytest.mark.parametrize("sub", ["build", "ps"])
     @pytest.mark.parametrize("dry", [True, False])
     def test_the_cli_never_reaches_the_library_under_a_dry_run(self, sub, dry):
         """WHY these hazards are library-only, pinned rather than asserted in prose.
 
-        ``otto docker`` registers with the safe default -- no
+        ``build`` and ``ps`` register with the safe default -- no
         ``dry_run_preview`` -- so Task 3's seam validates, prints the block and
-        exits 0 above every one of these bodies. That is what makes the
-        package's dry-run holes a LIBRARY-surface concern (suites, instructions
-        and third-party embedders that import ``otto.docker`` directly), and
-        it is the reason the arms above are backstops rather than the only
-        thing standing between ``-n`` and a running container.
+        exits 0 above both bodies. That is what makes the package's dry-run
+        holes a LIBRARY-surface concern (suites, instructions and third-party
+        embedders that import ``otto.docker`` directly), and it is the reason
+        the arms above are backstops rather than the only thing standing
+        between ``-n`` and a running container.
 
-        ``get_lab`` is the seam: it is the first statement of all four bodies,
-        and the patch is on ``otto.cli.docker``'s name for it, so the
+        ``up``/``down`` are DELIBERATELY not in this set any more: they stamp
+        ``__cli_dry_run_preview__`` so ``deploy``/``teardown`` run their pure
+        halves and decline with spec §12's resolved plan. Their opt-in is
+        pinned by ``tests/unit/cli/test_docker_output_dir.py`` and their
+        reach-the-library behavior by
+        ``TestTheDeployVerbsOwnTheirDryRunPreview`` below -- so the parameters
+        removed here did not just vanish.
+
+        ``get_lab`` is the seam: it is the first statement of BOTH remaining
+        bodies, and the patch is on ``otto.cli.docker``'s name for it, so the
         preamble's own lab access cannot be mistaken for the body's. Both
         halves are asserted in the same test -- 0 calls under ``-n``, 1
         without -- because "the body did not run" is satisfied just as well by
         a dispatch that ran nothing at all.
+
+        That seam is also WHY ``up``/``down`` could not stay: their new bodies
+        do not call ``get_lab()`` at all (``deploy``/``teardown`` load the lab
+        themselves), so the ``dry=False`` half became unwriteable for them
+        rather than merely inconvenient.
         """
         from unittest.mock import MagicMock, patch
 
@@ -571,17 +604,15 @@ class TestEveryPublicDockerExportIsAdjudicated:
             patch("otto.cli.docker._canonicalize_on", return_value=None),
             patch("otto.cli.docker._select_repos", return_value=[]),
             patch("otto.cli.docker.build_images", AsyncMock(side_effect=spy)),
-            patch("otto.cli.docker.compose_up", AsyncMock(side_effect=spy)),
-            patch("otto.cli.docker.compose_down", AsyncMock(side_effect=spy)),
             patch("otto.cli.docker.compose_ps", AsyncMock(side_effect=spy)),
         ):
             result = DispatchRunner().invoke(
                 docker_app, [sub], spec_name="docker", async_leaves=True
             )
 
-        assert result.exit_code == 0, result.output
         assert reached == [], f"`otto docker {sub}` reached the library: {reached}"
         if dry:
+            assert result.exit_code == 0, result.output
             assert get_lab.call_count == 0, f"`otto docker {sub} -n` ran its body"
             # SUPPRESS THE PAYLOAD, NEVER THE ANNOUNCEMENT: an empty dry run
             # is a bug, so the stop has to say what it stopped.
@@ -593,6 +624,23 @@ class TestEveryPublicDockerExportIsAdjudicated:
                 f"so the zero above proves nothing about the seam"
             )
             assert DRY_RUN_HEADLINE not in result.output
+            if sub == "ps":
+                # `ps` never goes through `_select_repos` -- it lists
+                # docker-capable hosts straight off the lab, not repos -- so
+                # an (unmocked) empty lab is a genuine, quiet "nothing to
+                # show", unaffected by the loudness contract below.
+                assert result.exit_code == 0, result.output
+            else:
+                # `_select_repos` mocked to `[]` means build/up/down's
+                # per-repo loop acted on nothing. The Task 1 loudness
+                # contract (fix rounds 1-2, 2026-08-31) makes a real empty
+                # selection exit 1 unconditionally -- never a silent exit 0,
+                # regardless of *why* the selection ended up empty. This
+                # scaffold predates that contract and pinned the old "ran
+                # its body, did nothing, exited 0" assumption; it must now
+                # assert the loud failure instead, exactly as a real
+                # `_select_repos` returning nothing would.
+                assert result.exit_code == 1, result.output
 
     @pytest.mark.asyncio
     async def test_the_pure_exports_stay_usable_under_a_dry_run(self, tmp_path):
@@ -610,3 +658,46 @@ class TestEveryPublicDockerExportIsAdjudicated:
             hash_hex = context_hash(image)
             assert image_full_tag("", "repo1", image, hash_hex) == f"repo1-api:{hash_hex[:16]}"
             assert get_user_compose_project("repo1", "ci").startswith("otto-repo1-")
+
+
+class TestTheDeployVerbsOwnTheirDryRunPreview:
+    """``up``/``down`` opt OUT of the seam default so the plan is reachable.
+
+    The seam exits 0 with a generic block above every leaf body unless the leaf
+    stamps ``__cli_dry_run_preview__``. Without the opt-in, ``otto --dry-run
+    docker up integration`` would never reach ``deploy``, and spec §12's
+    resolved plan -- the exact compose command -- would be unreachable from the
+    CLI no matter how good the library's decline is.
+
+    Asserted through the production dispatch (``DispatchRunner``), not by
+    reading the marker: the marker is only interesting if the seam honors it.
+    """
+
+    @pytest.mark.parametrize(("sub", "verb"), [("up", "deploy"), ("down", "teardown")])
+    def test_the_body_runs_under_a_dry_run_and_the_plan_is_printed(self, sub, verb):
+        from unittest.mock import patch
+
+        from otto.cli.docker import docker_app
+        from otto.result import CommandNotRunError
+        from tests._fixtures.dispatch import DispatchRunner
+
+        decline = CommandNotRunError(
+            f"{verb}(integration)", "test3", "Resolved plan: test3 <- repo1[core]."
+        )
+        called: "list[str]" = []
+
+        async def _spy(*_a, **_kw):
+            called.append(verb)
+            raise decline
+
+        with (
+            active_context(lab=Lab(name="unix"), dry_run=True),
+            patch(f"otto.docker.deployment.{verb}", AsyncMock(side_effect=_spy)),
+        ):
+            result = DispatchRunner().invoke(
+                docker_app, [sub, "integration"], spec_name="docker", async_leaves=True
+            )
+
+        assert called == [verb], f"`otto docker {sub} -n` never reached {verb}(): {result.output}"
+        assert result.exit_code == 0, result.output
+        assert "Resolved plan: test3" in " ".join(result.output.split()), result.output

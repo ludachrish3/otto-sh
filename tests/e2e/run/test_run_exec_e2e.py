@@ -6,14 +6,13 @@ dispatch path — repo discovery, lab loading, docker-stack bring-up, the
 runs exactly as the user runs it.
 
 Requirements:
-    vagrant up test1 test3
-    Both VMs must have docker installed and running.
+    vagrant up test3
+    The VM must have docker installed and running.
 
-Each test leases one docker-capable host from {test1, test3} via the
-same fd-flock mechanism as the docker e2e tests.  The ``xdist_group``
-keeps all subprocess-coverage tests in one worker so the SQLite coverage
-context table is only finalised once (avoids the "no such table: context"
-race introduced in 248d15b).
+The host is leased from a one-element pool via the same fd-flock mechanism
+as the docker e2e tests.  The ``xdist_group`` keeps all subprocess-coverage
+tests in one worker so the SQLite coverage context table is only finalised
+once (avoids the "no such table: context" race introduced in 248d15b).
 """
 
 import subprocess
@@ -26,9 +25,18 @@ from tests._fixtures._host_pool import lease_unix_host
 from tests.e2e._otto_subprocess import REPO1, assert_output_dir, run_otto
 
 # Docker container hosts require an SSH-based parent (DockerContainerHost
-# uses docker exec via the parent's SSH session).  test2 defaults to
-# telnet, so restrict the pool to SSH-first peers.
-_DOCKER_POOL = ("test1", "test3")
+# uses docker exec via the parent's SSH session), which rules out test2
+# (telnet is first in its valid_terms).
+#
+# The pool is ONE element, and that is a placement fact rather than a
+# preference: repo1's `[[docker.use_cases]]` fragments declare
+# ``role = "docker"``, and test3 is the only element in the `unix` fixture lab
+# tagged ``"roles": ["docker"]`` (spec §5 knob 3). Placeholder registration
+# therefore only mints ``test3.<usecase>.<service>`` ids — and the test below
+# hands such an id to a SECOND otto process, which knows only what placement
+# gave it. `--on test1` would register `test1.repo1.api` inside the
+# invocation that deployed it and nowhere else.
+_DOCKER_POOL = ("test3",)
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("run_exec_e2e")]
 
@@ -76,9 +84,21 @@ def docker_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
         yield element
 
 
+# The use-case repo1 declares for its own stack (spec §14: naming the
+# fragment after the repo keeps container ids literally unchanged). repo1 now
+# declares two use-cases, so a bare `otto docker up` is ambiguous and refuses.
+_REPO1_USE_CASE = "repo1"
+
+
 @pytest.fixture
 def fresh_suffix() -> str:
-    """A unique compose-project suffix so stacks from different test runs never collide."""
+    """A unique compose-project suffix so stacks from different test runs never collide.
+
+    The ``e2e-`` infix is load-bearing beyond uniqueness: it is what makes the
+    resulting ``<lab>-<usecase>-<suffix>`` compose project reapable by
+    ``tests/integration/conftest.py``'s orphan sweep.
+    ``tests/unit/test_docker_reaper_scope.py`` pins that agreement.
+    """
     return "run-e2e-" + uuid.uuid4().hex[:8]
 
 
@@ -89,6 +109,7 @@ def teardown_after(fresh_suffix, docker_host, tmp_path):
     _run_otto(
         "docker",
         "down",
+        _REPO1_USE_CASE,
         "--on",
         docker_host,
         xdir=tmp_path,
@@ -116,7 +137,9 @@ def test_run_instruction_on_container(teardown_after, docker_host, tmp_path):
     container_id = f"{docker_host}.repo1.api"
 
     # Step 1: bring the stack up.
-    up = _run_otto("docker", "up", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
+    up = _run_otto(
+        "docker", "up", _REPO1_USE_CASE, "--on", docker_host, xdir=tmp_path, compose_suffix=suffix
+    )
     assert up.returncode == 0, (
         f"`docker up` failed — cannot proceed with run test\n"
         f"stdout:\n{up.stdout}\nstderr:\n{up.stderr}"
