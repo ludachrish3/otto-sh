@@ -40,12 +40,12 @@ air-gapped installation, see [docs/installation.md](docs/installation.md).
 
 ### Hosts
 
-A **Host** represents a machine otto can talk to. `UnixHost` connects over SSH or Telnet; `EmbeddedHost` (and its concrete `ZephyrHost`) drives a firmware/RTOS target over a serial console; `LocalHost` runs commands on the local machine with no network; `DockerContainerHost` targets a container. All extend a common `BaseHost` interface (`run`, `oneshot`, `send`/`expect`, and — on the networked hosts — `put`/`get`).
+A **Host** represents a machine otto can talk to. `UnixHost` connects over SSH or Telnet; `EmbeddedHost` (and its concrete `ZephyrHost`) drives a firmware/RTOS target over a serial console; `LocalHost` runs commands on the local machine with no network; `DockerContainerHost` targets a container. All extend a common `BaseHost` interface (`run`, `exec`, `send`/`expect`, and — on the networked hosts — `put`/`get`).
 
 `run` executes a command on a host's persistent shell session (state like the
 working directory and environment variables are preserved between calls).
-`oneshot` runs each call independently of the persistent shell and of other
-concurrent `oneshot` calls, making it safe to fan out via `asyncio.gather()`.
+`exec` runs each call independently of the persistent shell and of other
+concurrent `exec` calls, making it safe to fan out via `asyncio.gather()`.
 
 ### Labs
 
