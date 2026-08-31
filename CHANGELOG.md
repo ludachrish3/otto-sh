@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-08-31
+
+### Added
+
+- **BREAKING** **logging**: root-logger capture — zero-registration funnel, [logging.levels] floor, one embedder pair
+- **reservations**: reaching the runner never needs a slot
+- **hosts**: hw_version and sw_version on every host family
+- **reservations**: reservable resources at lab, element and host
+- **inventory**: host facts from a tool-agnostic layer beneath lab.json v2
+- **labs**: lab.json v2 -- a labs table, elements and metadata replace the hosts array
+
+
+### Changed
+
+- **BREAKING** **suite**: suites go pytest-native — fixtures for everything, an ensure marker, one loop per suite
+
+
+### Dependencies
+
+- **deps**: bump packaging from 25.0 to 26.3
+- **deps**: bump pysnmp from 7.1.28 to 7.1.29
+- **deps-dev**: bump @testing-library/user-event in /web
+- **deps-dev**: bump @types/react-dom from 19.2.4 to 19.2.5 in /web
+- **deps-dev**: bump @types/node from 26.2.0 to 26.3.0 in /web
+- **deps**: bump actions/cache from 4 to 6
+- **deps-dev**: bump ruff from 0.16.3 to 0.16.4
+- **deps-dev**: bump ast-grep-cli from 0.45.1 to 0.45.2
+- **deps-dev**: bump vite from 8.2.1 to 8.2.2 in /web
+- **deps-dev**: bump @biomejs/biome from 2.5.9 to 2.5.10 in /web
+- **deps-dev**: bump monocart-coverage-reports in /web
+- **deps-dev**: bump @vitejs/plugin-react from 6.0.5 to 6.1.0 in /web
+- **deps**: bump @xyflow/react from 12.11.3 to 12.11.5 in /web
+
+
+### Documentation
+
+- **readme**: oneshot() was renamed to exec() — update Hosts section
+- **spec**: logging root capture — the standard funnel, a noise floor, one embedder call
+- **spec**: suites go pytest-native — fixtures, an ensure marker, one loop per suite
+- **getting-started**: a worked example built to survive interface change
+- **spec**: getting started overhaul -- inventory and reservations pages, follow-ups, findability
+- **spec**: getting started overhaul -- a worked example built to survive interface change
+- **spec**: the built-in local host is never in play
+- **spec**: hw_version and sw_version widen to the base HostSpec
+- **spec**: three reservable levels -- lab, element and host
+- **spec**: host inventory layer design
+- **spec**: lab definition v2 design
+
+
+### Fixed
+
+- **suite**: class-scoped plugin fixtures are staticmethods — pytest 10 refuses the instance form
+- **lab**: an element without an id renders as its name, not ('name', None)
+- **init**: the printed next steps name the lab they need
+- **suite**: count a test once -- setup and teardown passes are not "passed"
+- **env**: parse the installed version before judging it
+- **busybox**: the drift detector checks every pin, and says which failure it saw
+
+
+### Maintenance
+
+- **matrix**: re-measure the bed support matrix
+
+
 ## [0.8.8] - 2026-08-27
 
 ### Added
@@ -1455,7 +1519,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.8.8...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/ludachrish3/otto-sh/compare/v0.8.8...v0.9.0
 [0.8.8]: https://github.com/ludachrish3/otto-sh/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/ludachrish3/otto-sh/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/ludachrish3/otto-sh/compare/v0.8.5...v0.8.6
