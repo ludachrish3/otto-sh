@@ -588,13 +588,14 @@ def _age_the_snapshot(home: Path, hours: int) -> None:
 def test_the_doctor_reports_a_snapshot_it_served_because_the_backend_was_down(
     tmp_path, monkeypatch
 ):
-    """``otto init`` is ``lab_free``, so the cache's ``logger.warning`` reaches NOBODY.
+    """``otto init`` REPORTS staleness itself — the cache's warning fires once a process.
 
-    ``command_preamble`` never runs ``init_cli_logging`` for a lab-free group
-    and otto's ``NullHandler`` defeats ``logging.lastResort`` — the same class
-    Task 10 fixed for the ``otto inventory`` verbs, one surface over. Spec
-    §19.2 pitches ``otto init`` as the dead-reference gate to run in CI, and
-    without this it prints a green table against a snapshot days old.
+    ``_warn_stale`` is deduped per snapshot, and the resolution that spends it
+    can be ``entry()``'s completion-cache write, before any console handler
+    exists — the same class the ``otto inventory`` verbs report for, one
+    surface over. Spec §19.2 pitches ``otto init`` as the dead-reference gate
+    to run in CI, and without this it prints a green table against a snapshot
+    days old.
     """
     from tests.unit.inventory.netbox_stub import TOKEN, NetBoxStub, device
 

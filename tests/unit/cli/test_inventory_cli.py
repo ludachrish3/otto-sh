@@ -549,12 +549,12 @@ def _stale_netbox(tmp_path, monkeypatch, *, hours=31):
 
 
 def test_list_reports_a_snapshot_it_served_because_the_backend_was_down(tmp_path, monkeypatch):
-    """The load path LOGS this; a lab_free CLI group has no log handler to log to.
+    """The load path LOGS this once per process; the verb must report it anyway.
 
-    ``otto/__init__.py`` puts a ``NullHandler`` on the ``otto`` logger, which
-    defeats ``logging.lastResort``, and ``command_preamble`` never runs
-    ``init_cli_logging`` for a lab-free group — so a warning is the same as
-    silence here, and the operator gets a table with no hint that it is a day
+    ``_warn_stale`` is deduped per snapshot for the whole process, and the
+    resolution that spends the warning can be ``entry()``'s completion-cache
+    write, which runs before the root callback installs a console handler — so
+    without this row the operator gets a table with no hint that it is a day
     and a half old.
     """
     _stale_netbox(tmp_path, monkeypatch)

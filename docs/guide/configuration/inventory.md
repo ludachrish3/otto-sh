@@ -418,9 +418,10 @@ inventory: json:/home/me/lab/inventory.json
 
 - A **stale snapshot** the doctor was served because the remote backend was
   unreachable, naming its age and the `otto inventory refresh` that replaces
-  it. `otto init` installs no log handler, so it reports this itself, exactly
-  as the `otto inventory` verbs do — a green table against a snapshot days old
-  is the one thing this gate must not print.
+  it. The log line that also carries this fires only once per process, so
+  `otto init` reports it in the table itself, exactly as the `otto inventory`
+  verbs do — a green table against a snapshot days old is the one thing this
+  gate must not print.
 - **Orphan records** — keys no lab file in this project references, up to ten
   of them by name and a count for the rest. During the bridge the inventory is
   expected to be wider than any one project, so this is information, not a

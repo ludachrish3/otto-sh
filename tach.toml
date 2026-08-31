@@ -293,10 +293,13 @@ path = "otto.models"
 depends_on = [
     "otto.utils",
     "otto.link",
-    # ALLOWED LAZILY ONLY: to_runtime() bodies import config.repo at function
-    # scope. The module-scope ban is enforced by ast-grep
-    # (models-no-module-scope-config-import) since tach cannot distinguish
-    # scope.
+    # ALLOWED LAZILY ONLY, at two kinds of site: to_runtime() bodies import
+    # config.repo at function scope, and LoggingConfigSpec's removed-`capture`
+    # validator imports TOML_SETTINGS_PATH inside its error branch (so the
+    # cutover message can name the settings file that carried the dead key —
+    # spec 2026-08-30 §4.3). Both are function scope; the module-scope ban is
+    # enforced by ast-grep (models-no-module-scope-config-import) since tach
+    # cannot distinguish scope.
     "otto.config",
     "otto.logger",
     # (models -> coverage edge removed 2026-08-03: validate_color moved to
@@ -444,9 +447,7 @@ path = "otto.suite"
 # decorator), and nothing in otto.suite imports it. Retiring it means giving
 # instruction registration a home that is not otto.cli, which is the same fix
 # the config<->cli DEBT edge needs and belongs with it, not here.
-#
-# otto.logger: pytest_plugin hands collected suite modules' logger names to capture_external_loggers (spec 2026-08-30 §5.5) — a downward edge like otto.cli's.
-depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.utils", "otto.project", "otto.logger"]
+depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.utils", "otto.project"]
 
 [[modules]]
 path = "otto.testing"

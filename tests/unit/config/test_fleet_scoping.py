@@ -622,7 +622,7 @@ def test_declaring_run_logs_the_fleet_of_interest_once(tmp_path, scoped_context,
         second = ctx.scopes
     assert first is second  # resolution is cached, so the line cannot repeat
     lines = [r.message for r in caplog.records if "fleet of interest" in r.message]
-    assert lines == ["fleet of interest: 1 of 3 lab hosts (1 repos, 0 excluded)"]
+    assert lines == ["fleet of interest: 1 of 3 lab hosts (1 repo(s), 0 excluded)"]
 
 
 def test_undeclared_run_says_nothing(tmp_path, scoped_context, caplog):

@@ -178,6 +178,43 @@ class LabContextError(OttoError):
         self.rich = rich
 
 
+class LoggingLevelsConflictError(OttoError, ValueError):
+    """Two repos disagree about one logger's ``[logging.levels]`` entry.
+
+    A settings error, so it subclasses ``ValueError`` like the model-level
+    ones — but it cannot live in the model, which validates one repo's
+    ``settings.toml`` and has never seen the others. ``OttoError`` puts it in
+    front of ``otto.cli.main``'s boundary frame, which prints the sentence
+    instead of a traceback.
+    """
+
+
+def merge_logging_levels(repos: list["Repo"]) -> dict[str, str]:
+    """Union every repo's ``[logging.levels]``; a disagreement is an error.
+
+    Design 2026-08-30 §4.2: the same logger set to the same level by two repos
+    is fine (a shared vendor SDK quieted twice), two DIFFERENT levels is not —
+    last-one-wins would make the floor depend on ``OTTO_SUT_DIRS`` order, so
+    the operator is told which two repos to reconcile.
+    """
+    levels: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    for repo in repos:
+        for name, level in repo.logging_levels.items():
+            if name in levels and levels[name] != level:
+                raise LoggingLevelsConflictError(
+                    f"[logging.levels] {name}: {sources[name]} says {levels[name]}, "
+                    f"{repo.name} says {level} — set one value"
+                )
+            levels[name] = level
+            # setdefault, not assignment: with repos A, B (agreeing) and C
+            # (differing), an assignment would credit B for the value A
+            # established, and the operator would edit the wrong file and see
+            # the same error again.
+            sources.setdefault(name, repo.name)
+    return levels
+
+
 def print_error(message: object, *, soft_wrap: bool = False) -> None:
     """Print *message* as a user-facing error, with rich markup ESCAPED.
 
@@ -303,6 +340,20 @@ def ensure_cli_session(ctx: typer.Context) -> None:
     ``otto host`` menus via :func:`try_ensure_lab`) never touches logging.
     Guarded by ``ctx.meta['_otto_session_ready']``. The banner is not printed
     here — it shows on help screens only, via :func:`ensure_help_banner`.
+
+    ``init_cli_logging`` configures the ROOT logger, so there is nothing to
+    register: product code, suite modules and third-party libraries all reach
+    otto's sinks through plain propagation. The one per-logger knob is the
+    noise floor: otto's defaults go on with the console handler, and each
+    repo's ``[logging.levels]`` is merged over them here — the first point at
+    which repo settings are guaranteed parsed.
+
+    The console handler itself is NOT news by this point: the root callback
+    raised it as soon as it had ``--log-level`` (spec 2026-08-30 §3.1), so
+    ``init_cli_logging``'s install is an idempotent re-affirmation. What this
+    call still owns is the per-invocation state the file sinks read later
+    (xdir, retention, rich-file flag), the ``HostFilter``, and the repo
+    overrides below.
     """
     meta = ctx.meta
     if meta.get("_otto_session_ready"):
@@ -323,17 +374,6 @@ def ensure_cli_session(ctx: typer.Context) -> None:
     )
     management.attach_console_suppress_filter(HostFilter())
 
-    # Stash the product / external logger prefixes (init roots, libs sub-packages,
-    # explicit [logging] capture) so the per-subcommand create_output_dir attaches
-    # the shared QueueHandler to them once it exists. Done here (after
-    # init_cli_logging set the log level) so capture honours the verbose floor.
-    from ..config import get_repos
-
-    prefixes: set[str] = set()
-    for repo in get_repos():
-        prefixes |= repo.product_log_prefixes()
-    management.set_capture_prefixes(prefixes)
-
     logger = getLogger(__name__)
     if opts.dry_run:
         # Says which of the two dry runs this is. The old wording ("Connections
@@ -346,7 +386,17 @@ def ensure_cli_session(ctx: typer.Context) -> None:
             else "No device will be contacted."
         )
         logger.info(f"[magenta][DRY RUN] Commands and file transfers will be skipped. {contact}")
-    for repo in get_repos():
+
+    from ..config import get_repos
+
+    repos = get_repos()
+    # The noise floor's second half: install_console already applied otto's
+    # defaults, and this is the first point where every repo's settings are
+    # parsed, so the [logging.levels] overrides go on now. Deliberately AFTER
+    # the dry-run notice, which stays the first line of a dry run.
+    management.apply_library_levels(merge_logging_levels(repos))
+
+    for repo in repos:
         logger.debug(f"{repo.sut_dir}: {repo_provenance(repo)}")
 
 
@@ -534,8 +584,8 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     identity = reservation_gate.identity
     if identity is not None and identity.source == "--as-user":
         getLogger(__name__).info(
-            f"[bold magenta][reservations] acting as {identity.username!r}"
-            f" (--as-user)[/bold magenta]"
+            rf"[bold magenta]\[reservations] acting as {identity.username!r}"
+            rf" (--as-user)[/bold magenta]"
         )
 
     meta["otto_reservation"] = reservation_gate
@@ -669,22 +719,25 @@ def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
             else:
                 fatal.append(err)
                 continue
-            # PRINTED, not logged. This gate runs before `ensure_cli_session`
-            # at BOTH call sites, so `init_cli_logging` has not yet put a
-            # console handler on the `otto` logger — and the library-citizen
-            # NullHandler otto attaches at import counts to
-            # `logging.callHandlers`, which defeats `logging.lastResort`. A
-            # `getLogger().warning` here emitted NOTHING, leaving the operator
-            # with entry()'s scary "failed to load" line and no sign of the
-            # decision taken on their behalf.
+            # PRINTED, not logged — and no longer because logging is missing.
+            # The root callback installs the console handler before this gate
+            # runs (spec 2026-08-30 §3.1), so a `logger.warning` here WOULD be
+            # seen. Two reasons that never had anything to do with when
+            # logging starts keep it a print:
             #
-            # stderr via typer.echo, matching `_emit_bootstrap_findings` — the
-            # site that printed the startup `warning:` line this one explains,
-            # so a redirect cannot separate them. Deliberately NOT rich.print:
-            # the run CONTINUES past here, so a diagnostic on stdout would land
-            # inside a successful command's output, and rich would eat the
-            # reason's `[unix]` as a style tag (leaving `lab(s) )`) — the exact
-            # damage `print_error` exists to prevent.
+            # STREAM. `entry()` has already printed `warning: <err>` for this
+            # very error, from `_emit_bootstrap_findings`, which runs before
+            # Typer parses argv and so can never become a log record. That line
+            # goes to stderr; otto's console handler writes to stdout. Logging
+            # this one would put the retraction on a different stream from the
+            # scary line it retracts, where a redirect separates them — and the
+            # run CONTINUES past here, so stdout belongs to the command.
+            #
+            # MARKUP. The lab-inferred reason interpolates the selection in
+            # SQUARE BRACKETS, and both console routes — `rich.print` and the
+            # console handler, a RichHandler with `markup=True` — read `[unix]`
+            # as a style tag and delete it, leaving `lab(s) )`. `typer.echo`
+            # renders the sentence as written.
             typer.echo(
                 f"warning: repo {repo.name!r} failed to load, but is inactive "
                 f"for this run ({reason}) — continuing without it",
@@ -898,11 +951,12 @@ def refuse_unsatisfied_dependencies() -> None:
 
     result = preflight(bootstrap().ordered_repos)
     # PRINTED to stderr, not logged and not through rich -- the same call and
-    # the same three reasons as the demotion warning in
+    # the same reasons as the demotion warning in
     # `fail_loud_on_bootstrap_errors`: the run CONTINUES past here so stdout
-    # belongs to the command, rich would eat a bracketed token, and the
-    # library-citizen NullHandler defeats `logging.lastResort` for a logger
-    # with no console handler yet.
+    # belongs to the command, and a requirement string carries brackets
+    # (`otto-sh[monitor] >= 1`) that every rich-rendering route -- the console
+    # handler included -- would delete as a style tag. Not the swallowed-record
+    # reason, which the early console handler retired (spec 2026-08-30 §3.1).
     for warning in result.warnings:
         typer.echo(f"warning: {warning}", err=True)
     if not result.unsatisfied:

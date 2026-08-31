@@ -346,7 +346,7 @@ class OttoContext:
             excluded = sum(1 for scope in scopes.values() if scope.excluded)
             logger.info(
                 f"fleet of interest: {len(union)} of {len(self.lab.hosts)} lab hosts "
-                f"({len(scopes)} repos, {excluded} excluded)"
+                f"({len(scopes)} repo(s), {excluded} excluded)"
             )
         return scopes
 

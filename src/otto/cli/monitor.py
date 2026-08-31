@@ -234,18 +234,19 @@ def monitor(
     if source is not None:
         export = _load_review_document(source)
 
-        # monitor's spec is lab_free, so the shared command_preamble
-        # early-returns entirely for BOTH branches — including
-        # ensure_cli_session (init_cli_logging), not just the lab
-        # load. Without it the `'otto'` logger has no handler, so every
-        # otto.* record during review (warnings, errors, serve()'s keyless
-        # "Monitor dashboard started" line, "Server exiting") silently
-        # vanishes into Python's lastResort (WARNING+ only) handler. The
-        # keyed dashboard URL itself is printed straight to the terminal by
-        # MonitorServer.serve() via CONSOLE — never the logger, so the access
-        # key stays out of the log files — and thus survives regardless; this
-        # call is what gives the rest of review mode's log trail somewhere to
-        # go. Pull in just the session/logging slice here —
+        # The console handler is already up from the root callback (spec
+        # 2026-08-30 §3.1), so this call is about SESSION STATE, not about
+        # rescuing records from the NullHandler. monitor's spec is lab_free, so
+        # the shared command_preamble early-returns entirely for BOTH branches
+        # — including ensure_cli_session, not just the lab load — and without
+        # it review mode runs with no repo `[logging.levels]` floor, no
+        # HostFilter on the console, and no xdir/retention state recorded, so
+        # every otto.* record during review (warnings, errors, serve()'s
+        # keyless "Monitor dashboard started" line, "Server exiting") prints
+        # unfiltered and unconfigured. The keyed dashboard URL itself is
+        # printed straight to the terminal by MonitorServer.serve() via CONSOLE
+        # — never the logger, so the access key stays out of the log files.
+        # Pull in just the session/logging slice here —
         # NOT ensure_lab_session, which would also load a lab (review reads
         # a local file only) and create a per-invocation output dir. A
         # console-only log trail is Chris's accepted tradeoff for review
@@ -254,7 +255,7 @@ def monitor(
         # --live branch below is: a direct call to monitor() with a
         # hand-built context (this file's own unit tests) never went
         # through the root callback. Run after the source is validated so a
-        # doomed invocation (bad file) doesn't initialise logging for nothing.
+        # doomed invocation (bad file) doesn't build session state for nothing.
         from .invoke import ensure_cli_session
 
         if ctx.meta.get("_otto_root_options") is not None:

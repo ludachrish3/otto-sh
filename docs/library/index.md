@@ -34,6 +34,45 @@ example, driving `OttoContext`/`set_context()` manually as shown below — call
 available. Skipping it isn't an error; it just means your script only sees
 otto's own built-ins, not anything your project registers in `init`.
 
+## Logging
+
+Logging follows the same rule as everything above: importing otto
+configures nothing. A bare `import otto` attaches only a `NullHandler` to
+the `'otto'` logger — no handlers on the root logger, no logger levels
+touched. Opt in with one call, {func}`install <otto.logger.management.install>`
+(undone with {func}`reset <otto.logger.management.reset>`):
+
+```python
+import logging
+
+from otto.logger import install, reset
+
+install(log_level="INFO")
+
+logger = logging.getLogger(__name__)
+logger.info("reachable through otto's console the moment install() returns")
+```
+
+`install()` attaches otto's console handler to the **ROOT** logger — the
+same handler topology the CLI uses. Library mode is one of three postures
+covering every way otto's process gets configured; see
+[Root capture: three postures](../architecture/utilities/logging.md#root-capture-three-postures)
+for how it fits alongside the CLI and inner-pytest postures. Every logger
+in the process (your script, otto's own code, any library either imports)
+is captured with nothing to register. Pass `output_dir=` to add the
+`console.log` / `verbose.log` file pair otto's CLI writes; `overrides=`
+merges a per-logger noise-floor table over otto's own defaults, the same
+table {ref}`[logging.levels] <logging-levels>` configures for the CLI —
+and ACCUMULATES across repeated `install()` calls, so a later call that
+omits a name the first one set does not retract it. Calling `install()`
+again is otherwise safe — a repeat call re-levels or re-wires in place
+rather than duplicating handlers.
+
+`reset()` undoes it: root goes back to what `install()` found (handler set
+and level), and every logger the noise floor touched — defaults and
+`overrides=` alike — returns to `NOTSET`. Useful between runs in a
+long-lived process, and in tests that want a clean slate.
+
 ## Recommended: `open_context()`
 
 `open_context()` is the single entry point for library use. It loads a lab,

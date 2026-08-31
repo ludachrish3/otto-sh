@@ -47,11 +47,15 @@ _root_log_level: str | None = None
 """The ``--log-level`` value the root callback resolved, or None before it ran.
 
 Read by :func:`entry`'s boundary frame to decide whether a demoted traceback
-is wanted. It cannot ask the ``otto`` logger instead: logging is initialised
-from the lab session, and a ``lab_free`` command never opens one — so the
-logger would report "not debug" for a user who typed ``--log-level debug``.
-Set from the callback because by the time the frame runs, the Typer context
-that carried ``RootOptions`` is gone.
+is wanted. Set from the callback because by the time the frame runs, the Typer
+context that carried ``RootOptions`` is gone.
+
+Deliberately the value the operator TYPED, not a level read back off a logger.
+The callback does now put otto's verbose floor on root (spec 2026-08-30 §3.1),
+so root's level is readable here — but it is process state anything can move
+(``otto.logger.install`` in an embedding process, a suite, pytest's
+``log_cli``), and "did the operator ask for debug?" is a question about this
+invocation rather than about the handler stack it happens to have.
 """
 
 _field_default = os.environ.get(FIELD_DEFAULT_ENV_VAR) is not None
@@ -656,9 +660,15 @@ def main(  # noqa: PLR0913 — CLI command params
     """Record root options for lazy lab loading; handle inline root-flag actions.
 
     This is the Typer root callback executed before every ``otto`` subcommand.
-    It no longer loads the lab or initialises logging: it stashes the root
-    options on ``ctx.meta`` and returns. The real work (lab load, session
-    setup, output dir, reservation gate) runs lazily in the leaf-invoke
+    It stashes the root options on ``ctx.meta``, installs the CONSOLE half of
+    logging, and returns. It does not load the lab. The console install is
+    unconditional and immediate (spec 2026-08-30 §3.1): root's level, otto's
+    console handler and the noise floor go on here, so that every gate and
+    probe below can simply ``logger.warning``. That reaches ``otto <cmd>
+    --help`` too, which previously configured nothing — a process that prints
+    a help screen and exits, so the cost is one handler nobody writes through.
+    The rest (lab load, session setup, output dir and its FILE sinks,
+    reservation gate) runs lazily in the leaf-invoke
     :func:`~otto.cli.invoke.command_preamble`, so ``--help`` / discovery paths
     are structurally incapable of touching host state. The only exceptions are
     ``--show-lab`` / ``--list-hosts``, which inspect live lab state and so load
@@ -710,6 +720,15 @@ def main(  # noqa: PLR0913 — CLI command params
         exclude_projects=tuple(exclude_projects or ()),
     )
 
+    # Root capture (spec 2026-08-30 §3.1): the console handler goes up NOW,
+    # before any project gate or lab probe runs, so their logger.warning calls
+    # are visible. The sinks (per-run files) attach later, in create_output_dir.
+    # Completion invocations never get here — `ctx.resilient_parsing` returned
+    # at the top of this callback — so nothing configures logging for a TAB.
+    from ..logger import management
+
+    management.install_console(log_level, show_time=show_time)
+
     if show_lab or list_hosts:
         # These root flags inspect live lab state, which depends on the
         # registered world — fail the same way dispatch does rather than
@@ -718,18 +737,17 @@ def main(  # noqa: PLR0913 — CLI command params
         # -I/-E name is a typo here too, not an input to the demotion decision.
         validate_project_switches(ctx)
         fail_loud_on_bootstrap_errors(ctx)
-        # Open the CLI session BEFORE loading the lab. `init_cli_logging` is
-        # what puts a console handler on the "otto" logger; until it runs the
-        # tree still carries only the library NullHandler, which counts as a
-        # handler to `logging.callHandlers` and so suppresses even the
-        # last-resort stderr sink. Everything the lab load has to say —
-        # notably the cross-source override warning
+        # Open the CLI session BEFORE loading the lab. The console handler is
+        # already up (installed above), so this is no longer a rescue from a
+        # swallowed warning: the session is what applies each repo's
+        # [logging.levels] floor and the HostFilter, and what records the
+        # xdir/retention state — all of it before the lab load has anything to
+        # say, notably the cross-source override warning
         # (`otto.labs.composite`: "host X in lab Y: A overrides B"), the one
-        # notice that tells an operator a local source is shadowing the
-        # global database — was therefore emitted into a void on exactly the
-        # two flags whose whole purpose is inspecting that lab. Every other
-        # lab-loading path opens the session first (`ensure_lab_session`);
-        # this one had grown its own inline load and skipped it.
+        # notice that tells an operator a local source is shadowing the global
+        # database. Every other lab-loading path opens the session first
+        # (`ensure_lab_session`); this one had grown its own inline load and
+        # skipped it.
         ensure_cli_session(ctx)
         # Load the lab now, print, exit.
         try:
@@ -905,19 +923,20 @@ def entry() -> None:
         # somewhere it has no business being is a bug, and the maintainer
         # chasing it needs the frames. Debug logging prints them.
         #
-        # Both spellings of that one knob count, and neither can be answered
-        # by the logger: `init_cli_logging` runs from the lab session, which a
-        # `lab_free` leaf never opens — so for exactly the commands most likely
-        # to reach this boundary the "otto" logger is still at its inherited
-        # level no matter what the user typed. `_root_log_level` is what the
+        # Both spellings of that one knob count: `_root_log_level` is what the
         # root callback actually resolved (the flag, or OTTO_LOG_LEVEL through
         # Typer's `envvar=`), and the environment is read as well for the case
-        # where the callback never got to run.
+        # where the callback never got to run — which is also the case where
+        # nothing has installed a handler.
         #
-        # Printed straight to stderr rather than through `logger.debug`: otto's
-        # log sinks belong to a RUN, and a lab-free leaf opens none — measured,
-        # the logging route emitted nothing at all, so it would have silently
-        # dropped the traceback it promised.
+        # Printed straight to stderr rather than through `logger.debug`. The
+        # console handler IS up by now on every path that reached a command
+        # (spec 2026-08-30 §3.1), so this is no longer about reaching nobody —
+        # it is that a traceback is not log text: the console handler renders
+        # rich markup and folds at the console width, and frames carry both
+        # brackets and significant leading whitespace. The raw stderr write
+        # also keeps working on the branch above, where the callback never ran
+        # and there is no handler to write through.
         if "DEBUG" in (
             (_root_log_level or "").upper(),
             os.environ.get(LOG_LVL_ENV_VAR, "").upper(),

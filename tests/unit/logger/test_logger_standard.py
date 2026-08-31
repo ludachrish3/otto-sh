@@ -68,6 +68,46 @@ def test_management_is_still_reachable_via_lazy_getattr():
     assert result.returncode == 0, result.stderr
 
 
+def test_install_resolves_lazily_and_is_the_management_function():
+    """``from otto.logger import install`` — the embedder's one call (spec §3.4).
+
+    It lives on ``management``, so the package resolves the ATTRIBUTE out of a
+    lazily-imported module: a bare ``import otto.logger`` stays rich-free, and
+    asking for ``install`` — which IS the opt-in — is what pays for rich.
+    """
+    code = (
+        "import sys, otto.logger\n"
+        "assert 'rich' not in sys.modules, 'rich imported before install was touched'\n"
+        "from otto.logger import install\n"
+        "assert 'rich' in sys.modules, 'accessing install should import rich'\n"
+        "from otto.logger.management import install as direct\n"
+        "assert install is direct, 'the lazy attribute is not the real function'\n"
+        "sys.exit(0)\n"
+    )
+    result = subprocess.run([sys.executable, "-c", code], check=False)
+    assert result.returncode == 0, result.stderr
+
+
+def test_reset_resolves_lazily_and_is_the_management_function():
+    """``from otto.logger import reset`` — the other half of the embedder pair (spec §3.4/§6).
+
+    Same shape as the ``install`` sibling above: this is the only proof that a
+    ``_LAZY_ATTRS`` entry for ``reset`` actually exists — a missing entry is
+    otherwise invisible until a caller hits ``AttributeError``.
+    """
+    code = (
+        "import sys, otto.logger\n"
+        "assert 'rich' not in sys.modules, 'rich imported before reset was touched'\n"
+        "from otto.logger import reset\n"
+        "assert 'rich' in sys.modules, 'accessing reset should import rich'\n"
+        "from otto.logger.management import reset as direct\n"
+        "assert reset is direct, 'the lazy attribute is not the real function'\n"
+        "sys.exit(0)\n"
+    )
+    result = subprocess.run([sys.executable, "-c", code], check=False)
+    assert result.returncode == 0, result.stderr
+
+
 def test_management_attribute_is_cached_module_identity():
     import otto.logger
 

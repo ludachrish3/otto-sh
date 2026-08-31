@@ -146,7 +146,6 @@ import errno
 import gc
 import ipaddress
 import logging
-import logging.handlers
 import sys
 import types
 import weakref
@@ -603,17 +602,32 @@ def _restore_otto_logger_state():
     ``_stop_listener`` atexit hook it registered unconditionally is
     unregistered with it; other atexit hooks the test registered are
     unregistered; ``management._state`` is rebound to the snapshot copy;
-    handlers/level/propagate on the ``'otto'`` logger and any test-added
-    external-logger captures are put back exactly as found (membership AND
-    order). Stated limits (interim review), none with a live venue today —
-    each would be a new harness design, not a leak: a listener LIVE at
-    snapshot time that the test itself stops cannot be resurrected (pytest
-    never wires otto logging before tests); a handler that was in the
-    snapshot AND got fanned into a test-created listener is closed with that
-    listener yet re-attached here; test-added external-logger captures are
-    detached to ``NOTSET`` (their pre-test level is not snapshotted), and a
-    pre-existing captured prefix that a test re-captures through a NEW
-    QueueHandler keeps that second handler. The restore is wrapped so a
+    handlers/level/propagate on the ``'otto'`` logger AND handlers/level on
+    the ROOT logger (where otto's installers hang the console handler and the
+    QueueHandler since the 2026-08-30 root-capture cutover) are put back
+    exactly as found (membership AND order).
+
+    THIRD-LOGGER LEVELS are restored too, and that half is load-bearing rather
+    than belt-and-braces: since the noise floor landed (spec 2026-08-30 §4),
+    ``install_console`` pins ``asyncssh``/``asyncio``/``aiosqlite`` — plus
+    whatever a repo's ``[logging.levels]`` names — on EVERY install, and four
+    test venues run ``init_cli_logging`` without ``management.reset()``
+    afterwards. Restoring only ``'otto'`` and root would leave those loggers
+    quieted at WARNING for the rest of the xdist worker, under random
+    ordering. ``management._state.floored_loggers`` is the module-global
+    record of what was pinned, so the global fixture is where the guard
+    belongs; each name goes back to the level it had BEFORE the test (``NOTSET``
+    when it had none), not blanket-``NOTSET``, so an outer fixture's own floor
+    survives its inner tests.
+
+    Stated limits (interim review), none with a live venue today — each would
+    be a new harness design, not a leak: a listener LIVE at snapshot time that
+    the test itself stops cannot be resurrected (pytest never wires otto
+    logging before tests); a handler that was in the snapshot AND got fanned
+    into a test-created listener is closed with that listener yet re-attached
+    here; a per-logger level a test sets on a third logger DIRECTLY (not
+    through otto's installers, so it never reaches ``floored_loggers``) is
+    still not snapshotted. The restore is wrapped so a
     raising stop/close cannot skip the state rebind — under the old single
     ``reset()`` that skip healed next test, but a skipped SNAPSHOT restore
     would be permanent for the worker (the next test would snapshot the
@@ -622,20 +636,33 @@ def _restore_otto_logger_state():
     from otto.logger import management
 
     otto_logger = logging.getLogger("otto")
+    root_logger = logging.getLogger()
+    # `dataclasses.replace` re-passes field values BY REFERENCE, so every
+    # mutable collection on _LogConfig must be copied explicitly or the
+    # "snapshot" silently adopts whatever the test appends to it. The handler /
+    # listener fields are deliberately left shared: those are live objects the
+    # restore hands back, not values it is snapshotting.
     saved = dataclasses.replace(
         management._state,
-        capture_prefixes=list(management._state.capture_prefixes),
-        captured_prefixes=list(management._state.captured_prefixes),
+        floored_loggers=list(management._state.floored_loggers),
+        level_overrides=dict(management._state.level_overrides),
     )
+    # Pre-test levels of the loggers otto has already floored, so teardown can
+    # restore rather than blanket-reset them.
+    saved_floored_levels = {
+        name: logging.getLogger(name).level for name in management._state.floored_loggers
+    }
     saved_handlers = list(otto_logger.handlers)
     saved_level = otto_logger.level
     saved_propagate = otto_logger.propagate
+    saved_root_handlers = list(root_logger.handlers)
+    saved_root_level = root_logger.level
     yield
     state = management._state
     try:
         # Stop and close a listener the test created; a pre-existing one
         # (none in any current venue — see docstring) is left running for
-        # restore. _add_log_handlers registers the _stop_listener atexit hook
+        # restore. install_sinks registers the _stop_listener atexit hook
         # unconditionally with each wired listener — drop it with the
         # listener it belongs to (idempotent at exit anyway, but the registry
         # should describe reality).
@@ -651,21 +678,17 @@ def _restore_otto_logger_state():
         if state.atexit_registered and not saved.atexit_registered:
             atexit.unregister(management._stop_listener)
             atexit.unregister(management._print_output_dir)
-        # Detach the shared QueueHandler from external loggers captured
-        # DURING the test; captures from before the test are part of the
-        # snapshot and stay.
-        for prefix in state.captured_prefixes:
-            if prefix in saved.captured_prefixes:
-                continue
-            prefix_logger = logging.getLogger(prefix)
-            for handler in list(prefix_logger.handlers):
-                if isinstance(handler, logging.handlers.QueueHandler):
-                    prefix_logger.removeHandler(handler)
-            prefix_logger.setLevel(logging.NOTSET)
     finally:
         # The rebind and logger restore must happen even if a stop/close
         # above raised — see docstring: a skipped snapshot restore is
         # permanent pollution, not a one-test glitch.
+        #
+        # Hand back every logger otto's noise floor pinned during the test,
+        # BEFORE the rebind (the post-test state is the only record of what was
+        # pinned). A name that already carried a level at snapshot time gets
+        # that level back; one otto floored for the first time goes to NOTSET.
+        for name in state.floored_loggers:
+            logging.getLogger(name).setLevel(saved_floored_levels.get(name, logging.NOTSET))
         management._state = saved
         for handler in list(otto_logger.handlers):
             if handler not in saved_handlers:
@@ -680,6 +703,27 @@ def _restore_otto_logger_state():
             otto_logger.handlers[:] = list(saved_handlers)
         otto_logger.setLevel(saved_level)
         otto_logger.propagate = saved_propagate
+        # Same restore for ROOT, where otto's installers hang the console
+        # handler and the QueueHandler since the 2026-08-30 root-capture
+        # cutover. The HANDLER half is the load-bearing one: nothing else puts
+        # them back, so a test that ran init_cli_logging would otherwise leave
+        # otto's Rich console handler live for every later test on this worker.
+        # The LEVEL half is belt-and-braces, not the harness's own guarantee:
+        # pyproject sets the `log_level` ini, so _pytest.logging's
+        # `catching_logs` snapshots and restores root's level around EVERY test
+        # phase, and its restore runs after fixture finalisers — root-level
+        # pollution cannot cross a test boundary here today (verified with a
+        # scratch session carrying no restore fixture at all). Kept because it
+        # costs nothing and becomes load-bearing the day that ini key moves.
+        for handler in list(root_logger.handlers):
+            if handler not in saved_root_handlers:
+                root_logger.removeHandler(handler)
+        for handler in saved_root_handlers:
+            if handler not in root_logger.handlers:
+                root_logger.addHandler(handler)
+        if root_logger.handlers != saved_root_handlers:
+            root_logger.handlers[:] = list(saved_root_handlers)
+        root_logger.setLevel(saved_root_level)
 
 
 @pytest.fixture(autouse=True)

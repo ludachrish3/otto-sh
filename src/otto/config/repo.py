@@ -374,11 +374,12 @@ class Repo:
     registry at parse time so lab-data entries can select it by name in the
     ``os_type`` field. See :func:`otto.host.os_profile.register_os_profile`."""
 
-    logging_capture: list[str] = field(default_factory=list[str], init=False)
-    """Explicit top-level logger prefixes from ``[logging] capture`` whose
-    ``logging.getLogger(__name__)`` records otto should route into its sinks,
-    in addition to the package prefixes auto-derived from ``init``/``libs``.
-    See :meth:`product_log_prefixes`."""
+    logging_levels: dict[str, str] = field(default_factory=dict[str, str], init=False)
+    """This repo's ``[logging.levels]`` table: logger name → the minimum level
+    that ENTERS otto's funnel, overriding or extending
+    :data:`otto.logger.management.DEFAULT_LIBRARY_LEVELS`. There is no capture
+    list — otto configures the root logger, so every logger is captured; this
+    only quiets or un-quiets. Merged across repos by ``otto.cli.invoke``."""
 
     settings: dict[str, Any] = field(default_factory=dict[str, Any])
     """Repo settings dict as parsed from the `settings.toml` file"""
@@ -799,27 +800,11 @@ class Repo:
             sel: {k: (list(v) if isinstance(v, list) else dict(v)) for k, v in entries.items()}
             for sel, entries in model.host_preferences.items()
         }
-        self.logging_capture = list(model.logging.capture)
+        self.logging_levels = dict(model.logging.levels)
         self.os_profiles = self._register_os_profiles(model.os_profiles)
         self.docker_settings = model.docker.to_runtime()
         self.monitor_settings = model.monitor.to_runtime()
         self.env_backend = model.env.backend
-
-    def product_log_prefixes(self) -> set[str]:
-        """Top-level package names whose ``getLogger(__name__)`` records otto captures.
-
-        The set is declared init module roots, immediate sub-packages of each
-        ``libs`` dir, and explicit ``[logging] capture`` entries.
-        """
-        prefixes: set[str] = set(self.logging_capture)
-        for mod in self.init:
-            prefixes.add(mod.split(".", 1)[0])
-        for lib in self.libs:
-            if lib.is_dir():
-                for child in lib.iterdir():
-                    if (child / "__init__.py").exists():
-                        prefixes.add(child.name)
-        return prefixes
 
     def _register_os_profiles(
         self,

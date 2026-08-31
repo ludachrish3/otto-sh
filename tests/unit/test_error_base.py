@@ -34,7 +34,7 @@ import builtins
 import pytest
 
 from otto.bootstrap import BootstrapError, DependencyError, ProjectScopeError
-from otto.cli.invoke import LabContextError
+from otto.cli.invoke import LabContextError, LoggingLevelsConflictError
 from otto.config.scope import EmptySelectionError
 from otto.coverage.capture.gitio import (
     GitCommandFailedError,
@@ -94,6 +94,10 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (EnvExistsError, RuntimeError),
     (EnvBuildError, RuntimeError),
     (LabContextError, Exception),
+    # A settings error like the model-level ones, which are pydantic
+    # ValidationErrors — so an `except ValueError` around config loading
+    # catches a cross-repo [logging.levels] conflict too.
+    (LoggingLevelsConflictError, ValueError),
     (GitUnavailableError, RuntimeError),
     (GitMissingError, RuntimeError),
     (NotAGitRepoError, RuntimeError),

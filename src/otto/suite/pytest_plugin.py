@@ -208,17 +208,17 @@ class OttoOptionsPlugin:
         config.stash[otto_options_plugin_key] = self
 
     def pytest_collection_modifyitems(self, items: list[pytest.Item]) -> None:
-        """Two duties once collection is complete.
+        """One duty once collection is complete.
 
-        First: refuse an invalid ``ensure`` path before any test runs (spec
-        §4.2). Raised as a ``UsageError`` so the session exits with the
-        usage-error code and the message names the node, the step and the
-        vocabulary — a typo in a marker is a defect in the suite, not a test
-        outcome.
+        Refuse an invalid ``ensure`` path before any test runs (spec §4.2).
+        Raised as a ``UsageError`` so the session exits with the usage-error
+        code and the message names the node, the step and the vocabulary — a
+        typo in a marker is a defect in the suite, not a test outcome.
 
-        Second: hand the collected suite modules' logger names to otto's log
-        capture (spec §5.5), so a suite that logs with a module-level
-        ``logging.getLogger(__name__)`` reaches otto's sinks.
+        This hook used to also register the collected modules' logger names
+        with otto's capture allowlist. It does not any more: otto configures
+        the ROOT logger, so a suite module's ``logging.getLogger(__name__)``
+        reaches otto's sinks by propagation, with no plugin support at all.
         """
         for item in items:
             marker = item.get_closest_marker("ensure")
@@ -229,16 +229,6 @@ class OttoOptionsPlugin:
                 raise pytest.UsageError(
                     f"{item.nodeid}: @pytest.mark.ensure{marker.args!r}: {problem}"
                 )
-        # Spec §5.5: a suite module is imported by pytest, not by a repo's
-        # `init`, so otto's name-prefix logger capture has never seen it. Hand
-        # each collected module's top-level name to the same capture the init
-        # modules get; a no-op when no output dir is wired (library runs).
-        from ..logger.management import capture_external_loggers
-
-        modules = (getattr(item, "module", None) for item in items)
-        prefixes = {mod.__name__.split(".", 1)[0] for mod in modules if mod is not None}
-        if prefixes:
-            capture_external_loggers(prefixes)
 
     @pytest_asyncio.fixture(autouse=True)
     async def _otto_ensure(self, request: pytest.FixtureRequest) -> None:

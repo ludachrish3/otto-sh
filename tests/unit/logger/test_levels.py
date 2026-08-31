@@ -20,6 +20,37 @@ def test_critical_level_name_aliased_to_crit():
     assert logging.getLevelName(logging.CRITICAL) == "CRIT"
 
 
+def test_settings_accepts_exactly_names_logging_can_act_on():
+    """``[logging.levels]`` must not validate a name ``setLevel`` would reject.
+
+    The settings model's accepted set and the aliases THIS module registers are
+    two halves of one contract: a name the model lets through goes straight to
+    ``Logger.setLevel``, so a set that drifted ahead of the registrations would
+    accept a config and then crash the CLI with ``Unknown level``. Asserted
+    against ``logging`` itself rather than against a second hand-written list,
+    which would just be a third copy to drift.
+    """
+    from otto.models.settings import _LOG_LEVEL_NAMES
+
+    for name in _LOG_LEVEL_NAMES:
+        assert isinstance(logging.getLevelName(name), int), (
+            f"[logging.levels] accepts {name!r}, but logging does not know it"
+        )
+
+
+def test_every_alias_this_module_registers_is_configurable():
+    """The other direction: a new alias here is usable in ``[logging.levels]``.
+
+    ``otto.models.settings`` builds its accepted set FROM ``LEVEL_ALIASES``, so
+    this holds by construction — pinned anyway, because the day someone
+    re-hand-copies the set (the shape this replaced) it goes quietly false.
+    """
+    from otto.logger.levels import LEVEL_ALIASES
+    from otto.models.settings import _LOG_LEVEL_NAMES
+
+    assert set(LEVEL_ALIASES) <= _LOG_LEVEL_NAMES
+
+
 def test_file_formatter_aligns_message_column_across_all_levels():
     """The message must start at the same column for every level name.
 

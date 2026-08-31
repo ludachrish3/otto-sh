@@ -31,6 +31,11 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # the runtime readers that need it (coverage, reservations) never have to
 # import this pydantic-heavy module just to anchor a path — see the
 # import-budget guard.
+# otto.logger.levels is stdlib-only and is imported eagerly by otto.logger's
+# package __init__ anyway; it costs this module nothing (no rich — `management`
+# is a lazy PEP 562 export) and it is what keeps the accepted level names below
+# from drifting out of the module that registers them.
+from ..logger.levels import LEVEL_ALIASES
 from ..utils import anchor_path
 from .base import OttoModel
 from .color import validate_color
@@ -238,15 +243,67 @@ class InventoryConfigSpec(OttoModel):
         return v
 
 
+#: Level names ``[logging.levels]`` accepts: the five stdlib names, plus otto's
+#: aliases taken FROM the module that registers them rather than hand-copied —
+#: a third alias in ``otto.logger.levels`` becomes configurable here with no
+#: second edit, and a removed one stops validating instead of being accepted and
+#: then crashing ``setLevel`` downstream. ``NOTSET`` is excluded: "inherit root"
+#: is what an ABSENT entry already means.
+_LOG_LEVEL_NAMES = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"} | set(LEVEL_ALIASES))
+
+
 class LoggingConfigSpec(OttoModel):
     """Boundary spec for the ``[logging]`` section of ``settings.toml``.
 
-    ``capture`` lists top-level logger prefixes whose ``logging.getLogger(__name__)``
-    records otto should route into its sinks (in addition to the package prefixes
-    auto-derived from a repo's ``init``/``libs``). Defaults to an empty list.
+    ``levels`` maps a logger name to the minimum level that ENTERS otto's
+    funnel (design 2026-08-30 §4): otto's own defaults quiet known-noisy
+    libraries, and an entry here overrides or extends them per logger. Sink
+    levels (``--log-level``) still apply downstream, so the two knobs stay
+    independent — ``asyncssh = "DEBUG"`` admits the records, and only
+    ``--log-level DEBUG`` puts them on the console.
+
+    ``capture`` is GONE — capture is automatic now that otto configures the
+    root logger — and a config still carrying it is rejected with a pointer at
+    the successor rather than silently ignored (``extra='forbid'`` alone would
+    name the dead key without saying what replaced it).
     """
 
-    capture: list[str] = Field(default_factory=list)
+    levels: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_capture(cls, data: Any, info: ValidationInfo) -> Any:
+        if isinstance(data, dict) and "capture" in data:
+            sut_dir = (info.context or {}).get("sut_dir")
+            where = ""
+            if sut_dir is not None:
+                # Lazy, and only on this error path: otto.models is a leaf and
+                # must not import otto.config at module top (module docstring).
+                from ..config.repo import TOML_SETTINGS_PATH
+
+                where = f"{Path(sut_dir) / TOML_SETTINGS_PATH}: "
+            raise ValueError(
+                f"{where}[logging] `capture` was removed: capture is automatic "
+                "(otto logs through the root logger — every library's records "
+                "are routed without registration). See the [logging.levels] "
+                "section of the settings reference for per-library levels."
+            )
+        return data
+
+    @field_validator("levels")
+    @classmethod
+    def _validate_levels(cls, v: dict[str, str]) -> dict[str, str]:
+        for name, level in v.items():
+            if name == "otto" or name.startswith("otto."):
+                raise ValueError(
+                    f"[logging.levels] {name!r}: otto's own verbosity is --log-level's job"
+                )
+            if level.upper() not in _LOG_LEVEL_NAMES:
+                raise ValueError(
+                    f"[logging.levels] {name} = {level!r}: not a level "
+                    f"({', '.join(sorted(_LOG_LEVEL_NAMES))})"
+                )
+        return {name: level.upper() for name, level in v.items()}
 
 
 class LabSourceSpec(OttoModel):

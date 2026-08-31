@@ -17,6 +17,18 @@ from logging import (
     addLevelName,
 )
 
-# Define alias for levels with long names
-addLevelName(WARNING, "WARN")
-addLevelName(CRITICAL, "CRIT")
+LEVEL_ALIASES: dict[str, int] = {
+    "WARN": WARNING,
+    "CRIT": CRITICAL,
+}
+"""otto's short level-name aliases, and THE source of truth for them.
+
+Registered below, and read by ``otto.models.settings`` so the level names
+``[logging.levels]`` accepts stay the set otto actually understands: adding an
+alias here makes it configurable without a second edit, and removing one stops
+it validating instead of letting a config through that would later crash
+``setLevel``.
+"""
+
+for _alias, _level in LEVEL_ALIASES.items():
+    addLevelName(_level, _alias)

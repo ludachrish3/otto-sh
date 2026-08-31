@@ -265,7 +265,11 @@ def test_live_without_lab_reports_missing_option(tmp_path: Path) -> None:
 # same way its `--live` branch calls `ensure_lab_session` for the lab piece.
 # (The keyed URL itself now prints via CONSOLE — terminal only, key kept out of
 # the log files — so the guard rests on the keyless `Monitor dashboard started`
-# line, which still travels through the `'otto'` logger this fix wires up.)
+# line, which travels through the logging tree.) Since root capture (spec
+# 2026-08-30 §3.1) the root callback raises the console handler, so review
+# mode's records would survive even without that call; what this asserts is
+# the user-facing guarantee — review mode's log trail reaches the console —
+# rather than which install delivers it.
 
 
 def test_review_mode_logs_server_url_to_console(
@@ -279,7 +283,7 @@ def test_review_mode_logs_server_url_to_console(
     method run unmodified. serve() prints the keyed URL straight to the
     terminal via ``CONSOLE`` (so the access key never reaches the log files)
     and logs a keyless ``Monitor dashboard started`` line through the ``'otto'``
-    logger — the latter is what still needs ``ensure_cli_session`` to have run,
+    logger — the latter is what needs a console handler to have been installed,
     so this test asserts on both. The only stub is uvicorn's own
     internal socket/request loop (``uvicorn.Server.serve``): replaced with a
     fake that flips ``started`` and fabricates a bound socket, so no real TCP

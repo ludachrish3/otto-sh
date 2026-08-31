@@ -183,6 +183,52 @@ init
   `netbox`.  A relative `path` or `creds_file` anchors to the repo root, like
   every other settings path.  See {doc}`inventory` for the full treatment.
 
+\[logging.levels\]
+: Optional table setting the per-library noise floor — which third-party
+  loggers' records enter otto's funnel at all.  Otto quiets a few known-noisy
+  libraries by default; entries here override or extend that default per
+  logger name.  See {ref}`[logging.levels] <logging-levels>` below.
+
+(logging-levels)=
+
+### `[logging.levels]`
+
+otto captures every logger in the process by propagation to the ROOT
+logger — nothing needs registering.  `[logging.levels]` is the one knob
+that shapes *what enters* that funnel: a logger name mapped to the minimum
+level otto admits from it.  Otto ships its own per-library defaults (a few
+known-noisy dependencies quieted at `WARNING`); entries here override or
+extend them.
+
+```toml
+[logging.levels]
+asyncssh = "DEBUG"          # unmute one of otto's defaults for an SSH debugging session
+noisy_vendor_sdk = "ERROR"  # quiet a library of your own
+```
+
+- **Enters vs. shows.** This table decides what enters otto's funnel; the
+  sinks decide what shows. `--log-level` still governs the console and
+  `console.log`, and `verbose.log`'s own floor — so `asyncssh = "DEBUG"`
+  only reaches the console once `--log-level DEBUG` is also given.
+- **Defaults are overridable, not exhaustive.** A name not listed here
+  inherits root and is captured normally; the table only quiets or
+  un-quiets specific loggers. Otto's own defaults are
+  {data}`otto.logger.management.DEFAULT_LIBRARY_LEVELS`.
+- **Logger names are free-form; levels are not.** An unrecognized logger
+  name validates fine — pre-quieting a library before it's even installed
+  is legitimate. An unrecognized level name is a validation error.
+- **`otto` and `otto.*` are rejected.** otto's own verbosity is
+  `--log-level`'s job, not this table's.
+- **Multi-repo tables merge.** When more than one active repo sets
+  `[logging.levels]`, the tables union; two repos setting the *same*
+  logger to *different* levels is a validation error naming both repos and
+  the logger. The same level twice is fine.
+
+The `capture` key that used to live under `[logging]` — a per-repo
+allowlist this table replaces — is gone: capture is automatic now that
+otto configures the root logger, so a `settings.toml` still carrying it
+fails validation, naming the file and pointing here.
+
 ### User-level settings
 
 One file sits outside every repo: `~/.otto/settings.toml`, otto's **user-level**

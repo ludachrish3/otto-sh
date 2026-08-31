@@ -221,7 +221,7 @@ display data, not a walk's answer, since a walk re-derives membership live so a
 container that joins later is scoped rather than frozen out.
 
 Context creation also logs one line at INFO, and only when something actually
-narrowed: `fleet of interest: 6 of 214 lab hosts (2 repos, 1 excluded)`.
+narrowed: `fleet of interest: 6 of 214 lab hosts (2 repo(s), 1 excluded)`.
 
 ## What `cleanup` takes off the lab
 

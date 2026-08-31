@@ -148,11 +148,12 @@ def _records(inventory: "Inventory", code: int = 1) -> "dict[str, InventoryRecor
 def _stale_row(inventory: "Inventory") -> None:
     """Report a snapshot served because the backend was unreachable, if that happened.
 
-    The load path logs this; a ``lab_free`` CLI group never installs a log
-    handler, and ``otto``'s ``NullHandler`` defeats ``logging.lastResort``, so
-    without this the whole outage is invisible — ``list`` prints a table,
-    ``export`` writes an artefact and ``diff`` reports "no differences", all
-    from a snapshot that may be days old, all exiting 0.
+    The load path logs this, but only ONCE per snapshot per process, and the
+    resolution that spends the warning can be ``entry()``'s completion-cache
+    write — which runs before the root callback installs a console handler.
+    Without this row the whole outage is then invisible: ``list`` prints a
+    table, ``export`` writes an artefact and ``diff`` reports "no differences",
+    all from a snapshot that may be days old, all exiting 0.
     """
     from ..inventory import snapshot_cache_of
 

@@ -18,6 +18,7 @@ from unittest.mock import ANY, MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
+from otto.cli.invoke import LoggingLevelsConflictError, merge_logging_levels
 from otto.cli.main import app
 from otto.cli.registry import register_cli_command
 from otto.logger import management
@@ -300,9 +301,16 @@ class TestLoggerArguments:
     (RichHandler constructor args, remove_old_logs call args).
     """
 
+    # One invocation builds the console handler TWICE since spec 2026-08-30
+    # §3.1: the root callback installs it as soon as --log-level is parsed, and
+    # `ensure_cli_session` re-affirms it idempotently once repo settings exist.
+    # So these check the latest call and that every call AGREES — the flag must
+    # reach both installs, or the second silently undoes the first.
+    # TestEarlyConsoleHandler pins that only one handler survives on root.
     def test_show_time_default_is_false(self, real_main_mocks):
         _invoke([])
-        real_main_mocks["RichHandler"].assert_called_once_with(
+        rich = real_main_mocks["RichHandler"]
+        rich.assert_called_with(
             level=ANY,
             console=ANY,
             show_time=False,
@@ -315,10 +323,12 @@ class TestLoggerArguments:
             log_time_format=ANY,
             omit_repeated_times=ANY,
         )
+        assert {c.kwargs["show_time"] for c in rich.call_args_list} == {False}
 
     def test_show_time_flag(self, real_main_mocks):
         _invoke(["--show-time"])
-        real_main_mocks["RichHandler"].assert_called_once_with(
+        rich = real_main_mocks["RichHandler"]
+        rich.assert_called_with(
             level=ANY,
             console=ANY,
             show_time=True,
@@ -331,6 +341,7 @@ class TestLoggerArguments:
             log_time_format=ANY,
             omit_repeated_times=ANY,
         )
+        assert {c.kwargs["show_time"] for c in rich.call_args_list} == {True}
 
     def test_show_time_flag_replaces_verbose(self):
         result = runner.invoke(app, ["--help"])
@@ -353,17 +364,19 @@ class TestLoggerArguments:
         _invoke(["--no-rich-log-file"])
         assert management._state.rich_log_file is False
 
+    # --log-level sets the ROOT logger to the verbose floor: otto configures
+    # root, and the 'otto' logger keeps its library-citizen NOTSET.
     def test_log_level_default_is_info(self, real_main_mocks):
         _invoke([])
-        assert logging.getLogger("otto").level == logging.INFO
+        assert logging.getLogger().level == logging.INFO
 
     def test_log_level_custom(self, real_main_mocks):
         _invoke(["--log-level", "DEBUG"])
-        assert logging.getLogger("otto").level == logging.DEBUG
+        assert logging.getLogger().level == logging.DEBUG
 
     def test_log_level_custom_lower_case(self, real_main_mocks):
         _invoke(["--log-level", "debug"])
-        assert logging.getLogger("otto").level == logging.DEBUG
+        assert logging.getLogger().level == logging.DEBUG
 
     def test_log_days_default(self, real_main_mocks):
         _invoke([])
@@ -396,6 +409,151 @@ class TestLoggerArguments:
         result = _invoke([])
         assert result.exit_code == 0
         assert management._state.xdir == Path()
+
+
+# ── The [logging.levels] noise floor ─────────────────────────────────────────
+
+
+class _LevelsRepo:
+    """A repo double carrying only what ``merge_logging_levels`` reads."""
+
+    def __init__(self, name: str, levels: dict[str, str]) -> None:
+        self.name = name
+        self.logging_levels = levels
+
+
+class TestLoggingLevelsMerge:
+    """Design 2026-08-30 §4.2: repo tables union; a disagreement is an error."""
+
+    def test_tables_union_across_repos(self):
+        merged = merge_logging_levels(
+            [
+                _LevelsRepo("alpha", {"asyncssh": "DEBUG"}),
+                _LevelsRepo("beta", {"vendor": "ERROR"}),
+            ]
+        )
+        assert merged == {"asyncssh": "DEBUG", "vendor": "ERROR"}
+
+    def test_the_same_level_twice_is_not_a_conflict(self):
+        """A shared vendor SDK quieted by two repos must not error."""
+        merged = merge_logging_levels(
+            [
+                _LevelsRepo("alpha", {"vendor": "ERROR"}),
+                _LevelsRepo("beta", {"vendor": "ERROR"}),
+            ]
+        )
+        assert merged == {"vendor": "ERROR"}
+
+    def test_a_conflict_names_both_repos_and_the_logger(self):
+        with pytest.raises(LoggingLevelsConflictError) as exc:
+            merge_logging_levels(
+                [
+                    _LevelsRepo("alpha", {"vendor": "DEBUG"}),
+                    _LevelsRepo("beta", {"vendor": "ERROR"}),
+                ]
+            )
+        message = str(exc.value)
+        # The operator has to know WHICH two files to reconcile, and over what.
+        assert "alpha" in message
+        assert "beta" in message
+        assert "vendor" in message
+        assert "DEBUG" in message
+        assert "ERROR" in message
+
+    def test_the_conflict_names_the_repo_that_established_the_value(self):
+        """The operator has to be sent to the file that actually set it.
+
+        With A and B agreeing and C differing, crediting the LAST agreeing repo
+        would point at B — the operator edits B, and the same error re-fires
+        naming A and C. The middle repo is the discriminator, so it is here.
+        """
+        with pytest.raises(LoggingLevelsConflictError) as exc:
+            merge_logging_levels(
+                [
+                    _LevelsRepo("alpha", {"vendor": "DEBUG"}),
+                    _LevelsRepo("beta", {"vendor": "DEBUG"}),
+                    _LevelsRepo("gamma", {"vendor": "ERROR"}),
+                ]
+            )
+        message = str(exc.value)
+        assert "alpha" in message
+        assert "gamma" in message
+        assert "beta" not in message, (
+            "the message credited a repo that merely agreed with the established value"
+        )
+
+    def test_a_repo_table_reaches_the_live_logger(self, real_main_mocks):
+        """The WIRING: ensure_cli_session merges repo tables onto otto's floor.
+
+        Without this, every assertion above would still pass with the call
+        missing from ``ensure_cli_session`` entirely.
+        """
+        real_main_mocks["repo"].logging_levels = {
+            "vendor_under_test": "ERROR",
+            # An override of an otto default, proving the merge order.
+            "asyncssh": "DEBUG",
+        }
+        result = _invoke([])
+        assert result.exit_code == 0
+        assert logging.getLogger("vendor_under_test").level == logging.ERROR
+        assert logging.getLogger("asyncssh").level == logging.DEBUG
+
+
+# ── The early console handler ────────────────────────────────────────────────
+
+
+class TestEarlyConsoleHandler:
+    """Design 2026-08-30 §3.1: the console goes up in the ROOT CALLBACK.
+
+    Not in ``ensure_cli_session``, which runs several gates later and not at
+    all for a command that exits inside one of them. Everything between the
+    two — the ``-I``/``-E`` validator, the bootstrap gate, and every preflight
+    and lab probe they lead to — is inside the window this pins.
+    """
+
+    def test_a_warning_before_the_session_reaches_the_operator(self, main_mocks, monkeypatch):
+        """A logger.warning from a pre-session gate must land in the output.
+
+        ``main_mocks`` patches ``init_cli_logging`` out, so the ONLY thing that
+        can put a handler on root in this run is the root callback's own
+        ``install_console`` — which is exactly the claim. The warning is
+        INJECTED at a real pre-session call site (the bootstrap gate, which
+        ``command_preamble`` runs before it opens the session) rather than
+        borrowed from a real one: otto's own gates there print instead of
+        logging for reasons that survive this change, so inheriting one of
+        those would pin nothing.
+        """
+        import otto.cli.invoke as invoke_mod
+
+        real_gate = invoke_mod.fail_loud_on_bootstrap_errors
+
+        def _warning_gate(ctx=None):
+            logging.getLogger("pre_session_gate").warning("a gate spoke before the session")
+            real_gate(ctx)
+
+        monkeypatch.setattr(invoke_mod, "fail_loud_on_bootstrap_errors", _warning_gate)
+
+        result = _invoke([])
+
+        assert result.exit_code == 0, result.output
+        assert "a gate spoke before the session" in result.output
+
+    def test_the_second_install_leaves_one_handler_on_root(self, real_main_mocks):
+        """The callback installs, then the session installs again — idempotently.
+
+        ``real_main_mocks`` lets the real ``init_cli_logging`` run, so this
+        invocation calls ``install_console`` twice. Two console handlers on
+        root would print every subsequent record twice.
+        """
+        result = _invoke([])
+
+        assert result.exit_code == 0, result.output
+        marked = [
+            h
+            for h in logging.getLogger().handlers
+            if getattr(h, management.OTTO_HANDLER_ATTR, False)
+        ]
+        assert len(marked) == 1, marked
 
 
 # ── Lab loading ───────────────────────────────────────────────────────────────

@@ -45,22 +45,50 @@ logs its connection failures. This is why the monitor can set its polling
 hosts to `NEVER` ({doc}`../subsystems/monitoring`) without hiding real
 problems.
 
-## otto as a library citizen
+## Root capture: three postures
 
-A bare `import otto` attaches only a `NullHandler` to the `'otto'` logger —
-importing otto never configures logging; the handler topology above is
-strictly CLI-side (`otto.logger.management` never imports `otto.context`, and
-nothing in the library configures handlers). otto's own modules emit via
-`logging.getLogger(__name__)` — module-qualified children of `'otto'` that
-propagate up to it — the same stdlib idiom recommended for library consumers;
-there is no otto-specific logger accessor. The reverse direction is also
-covered: `capture_external_loggers` routes named third-party logger trees
-(product code using `logging.getLogger(__name__)`) into otto's sinks, so
-suite and instruction logs land in the same transcript as otto's own.
+otto configures the **ROOT** logger, not `'otto'`. The `'otto'` logger is an
+ordinary library logger — `propagate = True`, no handlers beyond the
+import-time `NullHandler` — and otto's own modules emit via
+`logging.getLogger(__name__)` exactly like any consumer's code. Handlers go
+on root instead, which is what makes capture zero-registration: a record
+from ANY logger in the process — otto's own, a repo's product code, a suite
+module, a third-party library — reaches the three sinks above by ordinary
+propagation. There is no allowlist to keep in sync and nothing to register.
+
+Three postures cover every way the process gets configured:
+
+- **`otto` CLI** — otto owns the process, so it configures root itself: the
+  console handler goes up in the root Typer callback, before any project
+  gate or lab probe that might want to `logger.warning`; the file sinks
+  attach once the output directory exists.
+- **Inner pytest sessions (`otto test`)** — same process, already
+  configured by the CLI posture above. pytest's own logging plugin (caplog,
+  `log_cli`) coexists rather than competing — see "Handler ownership"
+  below.
+- **Library mode** — `import otto` configures nothing beyond the
+  `NullHandler`; an embedding process opts in with one call,
+  {func}`otto.logger.install <otto.logger.management.install>`, and undoes
+  it with {func}`otto.logger.reset <otto.logger.management.reset>`. See
+  {doc}`the library page <../../library/index>` for the embedder API and
+  {ref}`[logging.levels] <logging-levels>` for the noise-floor table both
+  the CLI and `install()` apply.
+
+### Handler ownership
+
+Every handler otto attaches to root carries a marker attribute
+(`otto.logger.management.OTTO_HANDLER_ATTR`); otto detaches only its own
+marked handlers, on re-install or
+{func}`reset() <otto.logger.management.reset>`. A foreign root handler —
+pytest's caplog/`log_cli` capture, an embedder's own — is never touched and
+keeps receiving records by propagation alongside otto's sinks. This is what
+lets postures 2 and 3 coexist with otto's own handlers rather than fighting
+them for root.
 
 ## Where the code lives
 
-- {mod}`otto.logger.management` — sink wiring, the `QueueListener`,
-  time-boxed log rotation, and `capture_external_loggers`
+- {mod}`otto.logger.management` — `install_console`/`install_sinks` (root
+  handler wiring, marked-handler ownership), the `QueueListener`, and
+  time-boxed log rotation
 - {mod}`otto.logger.mode` — `LogMode` and `effective_mode`, the
   most-restrictive-wins composition

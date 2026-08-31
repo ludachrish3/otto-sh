@@ -1,6 +1,9 @@
 """Guarantees for using otto as a library — no CLI-specific handler baggage."""
 
+import json
 import logging
+import subprocess
+import sys
 
 import pytest
 
@@ -58,15 +61,46 @@ def test_reset_restores_library_citizen_state_after_cli_init(tmp_path):
     # Simulate a CLI run, then reset() and confirm we're back to library mode.
     management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
     management.create_output_dir("test")
-    management.capture_external_loggers(["some_product_pkg"])
     management.reset()
 
     otto = _otto()
     assert otto.propagate is True
     assert all(isinstance(h, logging.NullHandler) for h in otto.handlers)
     assert management._state.listener is None
-    # The product prefix logger must not retain otto's QueueHandler after reset.
-    from logging.handlers import QueueHandler
+    # Root carries none of otto's handlers any more (the CLI installs there).
+    root = logging.getLogger()
+    assert not [h for h in root.handlers if getattr(h, management.OTTO_HANDLER_ATTR, False)]
 
-    prod = logging.getLogger("some_product_pkg")
-    assert not any(isinstance(h, QueueHandler) for h in prod.handlers)
+
+def test_import_otto_touches_neither_root_handlers_nor_levels():
+    """Spec §3.4: library posture — import configures nothing beyond otto's NullHandler.
+
+    Measured in a FRESH interpreter, which is the only shape in which the import
+    is a real act: ``otto`` is already in this process's ``sys.modules`` (line 7
+    imports it), so an in-process ``import otto`` runs no module code and any
+    before/after snapshot around it reduces to ``assert x == x``.
+
+    The subprocess reports root's ``(handler count, level)`` before and after
+    ``import otto``. Both must be a virgin root logger — no handlers, WARNING.
+    """
+    script = (
+        "import json, logging\n"
+        "root = logging.getLogger()\n"
+        "before = [len(root.handlers), root.level]\n"
+        "import otto  # the act under test\n"
+        "after = [len(root.handlers), root.level]\n"
+        "print(json.dumps({'before': before, 'after': after, 'otto_nulls': "
+        "sum(isinstance(h, logging.NullHandler) for h in logging.getLogger('otto').handlers)}))\n"
+    )
+    # check=False: a non-zero exit is reported by the assertion below, which
+    # shows the child's stderr — CalledProcessError would hide it.
+    proc = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=120, check=False
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    seen = json.loads(proc.stdout)
+    assert seen["before"] == [0, logging.WARNING], seen
+    assert seen["after"] == [0, logging.WARNING], seen
+    # The one thing the import IS allowed to do (otto/__init__.py), pinned so
+    # the assertions above can't pass by the import having quietly failed.
+    assert seen["otto_nulls"] == 1, seen

@@ -150,12 +150,12 @@ def test_unreachable_serves_the_snapshot_with_an_age_warning(tmp_path, caplog):
 
 
 def test_the_notice_is_readable_state_and_a_refresh_clears_it(tmp_path):
-    """``stale_notice`` is the same sentence, READABLE — for a caller with no log handler.
+    """``stale_notice`` is the same sentence, READABLE — for a caller that must report it.
 
-    ``otto inventory`` is that caller: a ``lab_free`` CLI group never runs
-    ``init_cli_logging``, and ``otto``'s ``NullHandler`` defeats
-    ``logging.lastResort``, so the warning above reaches nobody and the verbs
-    would serve a stale snapshot in silence.
+    ``otto inventory`` is that caller: ``_warn_stale`` logs once per snapshot
+    per PROCESS, and the resolution that spends the warning can be ``entry()``'s
+    completion-cache write — before the root callback installs a console
+    handler — so the verbs would serve a stale snapshot in silence.
 
     Clearing it on a successful fetch is the half no CLI verb can exercise
     (each invocation builds a fresh cache), and it is exactly the half that

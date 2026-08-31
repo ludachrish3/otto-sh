@@ -44,32 +44,46 @@ def no_logger_output_dir():
     Tests that use ``real_main_mocks`` install a real context via ``set_context``
     beforehand; the stub is skipped for them.
 
-    We also pre-set ``propagate = False`` on the ``'otto'`` logger to match what
-    ``management.init_cli_logging`` would do in a real invocation. Without this,
-    tests that mock ``init_cli_logging`` leave ``propagate = True`` (restored by
-    the root conftest's ``_restore_otto_logger_state`` between tests),
-    causing log records to reach pytest's live-log handler, which temporarily
-    suspends stdout capture inside the CliRunner's isolation context.  Suspending
-    capture drops the CliRunner's ``_NamedTextIOWrapper`` reference, whose
-    ``TextIOWrapper.__del__`` closes the underlying ``BytesIOCopy`` — making the
-    subsequent ``outstreams[0].getvalue()`` fail with ``ValueError``.
+    We also strip otto-MARKED handlers off the ROOT logger for the duration.
+    Since the root-capture cutover (spec 2026-08-30) otto installs its console
+    handler and QueueHandler on root, not on the ``'otto'`` logger, so the old
+    ``otto.propagate = False`` posture no longer describes anything: a CLI unit
+    test that really runs ``init_cli_logging`` would otherwise leave otto's Rich
+    console handler on root, writing into whatever stream the NEXT CliRunner
+    invoke is isolating. Foreign root handlers (pytest's own capture) are left
+    alone — this is the same ownership rule production uses.
+
+    Note (issue #110, unchanged): with ``log_cli = true`` a record reaching
+    pytest's live-log handler mid-invoke temporarily suspends stdout capture
+    inside the CliRunner's isolation context, dropping the runner's
+    ``_NamedTextIOWrapper`` whose ``TextIOWrapper.__del__`` closes the
+    underlying ``BytesIOCopy`` — the subsequent ``outstreams[0].getvalue()``
+    then raises ``ValueError``. That hazard is held off by the ROOT conftest's
+    ``_clirunner_live_log_capture_guard``, not by this fixture.
     """
     from logging import getLogger
 
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context, try_get_context
+    from otto.logger.management import OTTO_HANDLER_ATTR
 
     token = None
     if try_get_context() is None:
         token = set_context(OttoContext(lab=Lab(name="_test_stub")))
-    # Mirror the propagate=False that init_cli_logging sets so that mocked-
-    # init_cli_logging tests don't accidentally emit live logs into pytest's
-    # capture machinery while a CliRunner invocation is in progress.
-    getLogger("otto").propagate = False
-    with patch("otto.logger.management.create_output_dir"):
-        yield
-    if token is not None:
-        reset_context(token)
+    root = getLogger()
+    saved_root_handlers = list(root.handlers)
+    for handler in saved_root_handlers:
+        if getattr(handler, OTTO_HANDLER_ATTR, False):
+            root.removeHandler(handler)
+    try:
+        with patch("otto.logger.management.create_output_dir"):
+            yield
+    finally:
+        # Put back exactly what was there (membership AND order), which also
+        # drops any handler the test itself installed on root.
+        root.handlers[:] = list(saved_root_handlers)
+        if token is not None:
+            reset_context(token)
 
 
 @pytest.fixture(autouse=True)
@@ -171,9 +185,14 @@ def real_main_mocks(tmp_path):
     clean_env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
     clean_env["OTTO_XDIR"] = str(tmp_path)
 
-    logger = logging.getLogger("otto")
-    original_level = logger.level
-    original_handlers = list(logger.handlers)
+    # Snapshot ROOT, not the ``'otto'`` logger: since the root-capture cutover
+    # the real ``init_cli_logging`` this fixture lets run puts otto's console
+    # handler on root and sets ROOT's level to the verbose floor, and touches
+    # the ``'otto'`` logger nowhere at all. Restoring ``'otto'`` here would put
+    # back a snapshot nothing ever dirtied while leaving the real spill in place.
+    root_logger = logging.getLogger()
+    original_root_level = root_logger.level
+    original_root_handlers = list(root_logger.handlers)
 
     from otto import bootstrap as bs
 
@@ -183,7 +202,22 @@ def real_main_mocks(tmp_path):
     with (
         patch.dict(os.environ, clean_env, clear=True),
         patch("otto.logger.management.remove_old_logs") as p_remove,
-        patch("otto.logger.management.RichHandler") as p_rich,
+        # A REAL (inert) handler, not a bare MagicMock instance. Since the
+        # root-capture cutover otto's console handler goes on the ROOT logger,
+        # where the stdlib compares ``record.levelno >= handler.level`` for
+        # EVERY record in the process; a MagicMock's ``.level`` is a Mock and
+        # that comparison raises TypeError inside whatever code happened to
+        # log — e.g. asyncio's own DEBUG line emitted from inside
+        # ``new_event_loop()``, which leaks the loop it is halfway through
+        # building. The mock still records the constructor call, so the
+        # RichHandler call-args assertions are unaffected. ``*args`` too: the
+        # only call site is all-keyword today, and a future positional would
+        # otherwise raise TypeError from inside mock, far from its cause —
+        # exactly the failure shape this double exists to eliminate.
+        patch(
+            "otto.logger.management.RichHandler",
+            side_effect=lambda *args, **kwargs: logging.NullHandler(),
+        ) as p_rich,
         patch("otto.config.get_repos", return_value=[repo]),
         patch(
             "otto.host.local_host.LocalHost.run",
@@ -209,10 +243,14 @@ def real_main_mocks(tmp_path):
             "RichHandler": p_rich,
         }
 
-    # Teardown: restore logger to pre-test state
+    # Teardown: restore the root logger to its pre-test state (membership AND
+    # order, then level). The per-logger levels the real ``init_cli_logging``
+    # pins (the spec §4 noise floor: asyncssh/asyncio/aiosqlite, plus anything
+    # a test's repo table names) are NOT handed back here: that state is
+    # module-global on ``management._state.floored_loggers``, so the guard for
+    # it lives with the state, in ``tests/conftest.py``'s autouse
+    # ``_restore_otto_logger_state`` — which covers every venue, not just this
+    # fixture's.
     bs._reset()
-    for handler in logger.handlers[:]:
-        logger.removeHandler(handler)
-    for handler in original_handlers:
-        logger.addHandler(handler)
-    logger.setLevel(original_level)
+    root_logger.handlers[:] = list(original_root_handlers)
+    root_logger.setLevel(original_root_level)

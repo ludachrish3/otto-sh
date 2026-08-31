@@ -237,15 +237,17 @@ class SnapshotCache:
         """Set when this object served a snapshot because the backend was unreachable.
 
         The same sentence ``_warn_stale`` logs, kept as READABLE STATE so a
-        caller with no log handler can still report it. ``otto inventory`` is
-        exactly that caller: a ``lab_free`` group never runs
-        ``init_cli_logging``, and ``otto/__init__.py`` attaches a
-        ``NullHandler`` to the ``otto`` logger — which defeats
-        ``logging.lastResort`` — so the warning reaches nobody and ``list`` /
-        ``export`` / ``diff`` would answer from a stale snapshot in silence.
-        ``export`` would then write a stale artefact and ``diff`` report "no
-        differences" against a stale left side, which is the one thing the
-        transition gate exists to prevent.
+        caller can report the outage in its own output instead of hoping a log
+        line was heard. Since root capture (spec 2026-08-30 §3.1) the CLI's
+        console handler is up from the root callback, so the log line is no
+        longer swallowed on ``lab_free`` groups — but the DEDUP is what makes
+        this state load-bearing anyway: ``_warn_stale`` logs once per snapshot
+        per PROCESS, and the first resolution can happen in ``entry()``'s
+        completion-cache write, before any handler exists. The verb's own
+        resolution is then the deduped one, and ``list`` / ``export`` / ``diff``
+        would answer from a stale snapshot in silence. ``export`` would write a
+        stale artefact and ``diff`` report "no differences" against a stale left
+        side, which is the one thing the transition gate exists to prevent.
 
         ``None`` until it happens, and cleared again by a successful fetch
         (:meth:`refresh` included). Read-only to callers.
@@ -527,12 +529,13 @@ def snapshot_cache_of(inventory: Inventory) -> "SnapshotCache | None":
     core wrapper later cannot silently turn every caller's answer into
     "uncached".
 
-    Public because ``SnapshotCache.stale_notice`` has to reach surfaces
-    that have no log handler to read it from. ``otto inventory`` and
-    ``otto init`` are both ``lab_free`` groups, so ``init_cli_logging`` never
-    runs and otto's ``NullHandler`` defeats ``logging.lastResort`` — a warning
-    on either is the same as silence, and both would otherwise report success
-    against a snapshot days old.
+    Public because ``SnapshotCache.stale_notice`` has to reach surfaces that
+    report staleness in their own output — ``otto inventory``'s table row and
+    ``otto init``'s prompt — rather than leaving it to a log line that may
+    already have been spent. ``_warn_stale`` logs once per snapshot per
+    process, and the first resolution can be ``entry()``'s completion-cache
+    write, which runs before the root callback installs a console handler; both
+    verbs would then report success against a snapshot days old.
     """
     while isinstance(inventory, CredsOverlay):
         inventory = inventory.inner

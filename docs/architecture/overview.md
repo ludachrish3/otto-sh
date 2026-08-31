@@ -82,7 +82,7 @@ a lower layer never imports from a higher one.
 | {mod}`otto.registry` | The generic named-registry engine behind every extension seam |
 | {mod}`otto.result` | The {class}`~otto.result.Result` family: statuses, payloads, exit codes |
 | {mod}`otto.utils` | `Status`, small shared helpers, CLI signature overlays |
-| `otto.logger` | The `'otto'` logger tree, log levels, {class}`~otto.logger.mode.LogMode` |
+| `otto.logger` | The root-logger funnel installer, per-library levels, {class}`~otto.logger.mode.LogMode` |
 | `otto.filesystem` | Network-filesystem detection (drives WAL-vs-DELETE and rotation choices) |
 | `otto.console`, `otto.params`, `otto.version` | Rich console singleton, options→CLI parameter expansion, version resolution |
 

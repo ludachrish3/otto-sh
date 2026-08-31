@@ -106,10 +106,15 @@ class TestDemotion:
     projection: the explicit -I/-E switches plus lab-name inference. Each arm
     below is a separate decision in the loop, so each gets its own test.
 
-    The demotion assertions read ``capsys``, never ``caplog``. This gate runs
-    before ``init_cli_logging``, so a log RECORD here reaches no handler and
-    produces no output; asserting on records would pin a line the operator
-    never sees. Output is the exit criterion.
+    The demotion assertions read ``capsys``, never ``caplog``. Since the root
+    callback installs the console handler (spec 2026-08-30 §3.1) a record here
+    WOULD reach a handler — but this site deliberately prints instead, for two
+    reasons that have nothing to do with when logging starts: ``entry()``
+    already wrote ``warning: <err>`` for the same error to STDERR before Typer
+    parsed argv, and otto's console handler renders to stdout (the two tests
+    below pin both halves — the stream, and the bracketed lab list that a
+    rich-rendered route would delete). Asserting on records would therefore pin
+    a line the operator never sees. Output is the exit criterion.
     """
 
     def test_excluded_repos_errors_demote_to_warnings(self, monkeypatch, capsys):

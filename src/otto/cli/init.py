@@ -672,12 +672,13 @@ def _lab_warnings(
     already a problem in the verdict table via :func:`_validate_lab`, and
     repeating it as a warning would be noise.
 
-    The stale-snapshot notice is REPORTED rather than logged because this
-    command is ``lab_free``: ``init_cli_logging`` never runs for such a group
-    and otto's ``NullHandler`` defeats ``logging.lastResort``, so the cache's
-    own ``logger.warning`` reaches nobody here. Spec §19.2 pitches
-    ``otto init`` as the dead-reference gate to run in CI, and a green table
-    against a days-old snapshot is exactly what that gate must not print.
+    The stale-snapshot notice is REPORTED rather than left to the cache's own
+    ``logger.warning``, which fires once per snapshot per process and may
+    already have been spent by an earlier resolution (``entry()``'s
+    completion-cache write runs before the root callback installs a console
+    handler at all). Spec §19.2 pitches ``otto init`` as the dead-reference
+    gate to run in CI, and a green table against a days-old snapshot is exactly
+    what that gate must not print.
     """
     from ..inventory import InventoryError, snapshot_cache_of
     from ..inventory.doctor import creds_mode_warning, orphan_warning, referenced_keys

@@ -52,9 +52,13 @@ paths = ["lab_data"]
 #lab_patterns = ["example_lab"]   # labs this project applies to
 #host_patterns = [".*"]           # hosts of interest within those labs
 
-# --- [logging] — extra top-level logger prefixes routed into otto's sinks ----
-#[logging]
-#capture = ["my_library"]
+# --- [logging.levels] — the per-library noise floor --------------------------
+# Nothing needs registering: otto configures the root logger, so every logger
+# in the process is already captured. This table only says what ENTERS otto's
+# sinks per logger; --log-level still decides what shows.
+#[logging.levels]
+#asyncssh = "DEBUG"               # un-quiet one of otto's defaults
+#noisy_vendor_sdk = "ERROR"       # quiet a library of your own
 
 # --- [host_preferences."<selector>"] — scoped term/transfer preferences ------
 # The quoted selector is a regex fullmatched against host ids; ".*" = all.

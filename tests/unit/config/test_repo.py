@@ -151,44 +151,70 @@ def test_bootstrap_registers_repo1_instructions_and_suites(monkeypatch):
                 registry.register(name, obj, overwrite=True, origin=origin)
 
 
-def test_product_log_prefixes_init_libs_and_explicit_capture(tmp_path):
-    # A libs dir containing a real package (has __init__.py); its immediate
-    # child package name becomes a capture prefix.
-    libs_dir = tmp_path / "pylib"
-    pkg = libs_dir / "mypkg"
-    pkg.mkdir(parents=True)
-    (pkg / "__init__.py").write_text("")
-    # A non-package child (no __init__.py) must NOT be picked up.
-    (libs_dir / "loose.py").write_text("")
-
-    sut = _write_repo(
+def test_logging_levels_parse_and_default_empty(tmp_path):
+    """Spec §4.2: ``[logging.levels]`` lands on the Repo; absent means empty."""
+    repo = _repo_with_settings(
         tmp_path,
-        textwrap.dedent("""
-        libs = ["pylib"]
-        init = ["my_instructions.commands", "custom_hosts"]
-
-        [logging]
-        capture = ["thirdparty_lib"]
-    """),
+        """
+        [logging.levels]
+        asyncssh = "DEBUG"
+        vendor = "ERROR"
+        """,
     )
-    repo = Repo(sut_dir=sut)
-    prefixes = repo.product_log_prefixes()
-
-    # init roots: first dotted segment of each init entry
-    assert "my_instructions" in prefixes
-    assert "custom_hosts" in prefixes
-    # immediate sub-package of a libs dir
-    assert "mypkg" in prefixes
-    # explicit [logging] capture entry
-    assert "thirdparty_lib" in prefixes
-    # a loose (non-package) module is not a prefix
-    assert "loose" not in prefixes
+    assert repo.logging_levels == {"asyncssh": "DEBUG", "vendor": "ERROR"}
+    bare = _repo_with_settings(tmp_path / "bare", "")
+    assert bare.logging_levels == {}
 
 
-def test_logging_capture_defaults_empty(tmp_path):
-    sut = _write_repo(tmp_path, "")
-    repo = Repo(sut_dir=sut)
-    assert repo.logging_capture == []
+def test_removed_capture_key_is_a_hard_cutover_error(tmp_path):
+    """Spec §4.3: the removed key is REJECTED, and the message points at its successor.
+
+    ``extra='forbid'`` alone would name ``capture`` without saying what to do
+    instead, so the model carries an explicit before-validator.
+    """
+    with pytest.raises(ValueError, match=r"\[logging\.levels\]") as exc:
+        _repo_with_settings(
+            tmp_path,
+            """
+            [logging]
+            capture = ["myproduct"]
+            """,
+        )
+    # Spec §4.3: the error must name the file that carried the key.
+    assert str(tmp_path / ".otto" / "settings.toml") in str(exc.value)
+
+
+def test_logging_levels_reject_otto_names_and_bad_levels(tmp_path):
+    """Spec §4.2: otto's own verbosity is --log-level's job; levels must be levels."""
+    with pytest.raises(ValueError, match="--log-level"):
+        _repo_with_settings(
+            tmp_path,
+            """
+            [logging.levels]
+            "otto.host" = "DEBUG"
+            """,
+        )
+    with pytest.raises(ValueError, match="LOUD"):
+        _repo_with_settings(
+            tmp_path / "bad_level",
+            """
+            [logging.levels]
+            vendor = "LOUD"
+            """,
+        )
+
+
+def test_logging_levels_accept_the_warn_crit_aliases(tmp_path):
+    """Spec §4.2: otto's own short aliases are levels too, and values normalize."""
+    repo = _repo_with_settings(
+        tmp_path,
+        """
+        [logging.levels]
+        vendor = "warn"
+        other = "CRIT"
+        """,
+    )
+    assert repo.logging_levels == {"vendor": "WARN", "other": "CRIT"}
 
 
 # TODO: Test various settings fields and the recording of arbitrary additional data

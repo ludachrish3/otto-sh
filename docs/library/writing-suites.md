@@ -146,12 +146,10 @@ delivers everything — as fixtures — and nothing otto-specific lives on
 - `ctx` — the active {class}`~otto.context.OttoContext`.
 
 **Logging.** Put `logger = logging.getLogger(__name__)` at the top of the
-file, as the instruction example does; `otto test` routes every collected
-suite module's logger into its console and log files. The captured name is
-the collected module's top-level name — the bare module stem in a plain
-`tests/` directory, or the package name (`tests`) when `tests/__init__.py`
-makes it a package, in which case every logger under that package reaches
-otto's sinks.
+file. Everything that logs during a run — the suite, otto, any library
+either imports — reaches otto's console and log files; there is nothing to
+register. Known-noisy libraries are quieted by default; the floor is
+per-logger configurable in {ref}`[logging.levels] <logging-levels>`.
 
 ### One event loop per suite
 

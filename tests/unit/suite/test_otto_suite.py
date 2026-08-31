@@ -15,6 +15,7 @@ Tests verify:
 import asyncio
 import contextlib
 import json
+import logging
 import socket
 import sys
 import urllib.request
@@ -933,7 +934,7 @@ class TestStartMonitorLiveSessionWiring:
                 await suite.stop_monitor()
 
 
-# ── ctx at session scope; logger capture (spec §5.2, §5.5) ────────────────────
+# ── ctx at session scope; logger propagation (spec §5.2) ──────────────────────
 
 
 def test_a_class_scoped_fixture_may_request_ctx(tmp_path: Path) -> None:
@@ -961,28 +962,46 @@ class TestCtxScope(OttoSuite):
     assert capture_file.read_text() == "_test_stub"
 
 
-def test_collected_suite_modules_are_captured_into_ottos_logging(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """Spec §5.5: after collection every item's top-level module name reaches
-    capture_external_loggers, so a suite's ``logging.getLogger(__name__)`` lands
-    in otto's sinks. Red if the collection hook is dropped."""
-    seen: list[set[str]] = []
-    monkeypatch.setattr(
-        "otto.logger.management.capture_external_loggers",
-        lambda prefixes: seen.append(set(prefixes)),
-    )
+def test_suite_module_logging_propagates_to_a_root_handler(tmp_path: Path) -> None:
+    """Spec §5.2: a suite module's plain ``logging.getLogger(__name__)`` reaches
+    root — no plugin support, no registration. The handler stands in for otto's
+    root sinks; the plugin no longer touches logging at all.
+
+    A CHARACTERISATION pin, not a regression guard: ``test_logcap`` was never
+    under ``otto``, so it propagated to root before the cutover too — this
+    passes pre- and post-cutover by design. It is here to state the surface the
+    deleted collection hook used to serve, not to protect against its return.
+    """
+
+    class _Sink(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[str] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.messages.append(record.getMessage())
+
     test_file = tmp_path / "test_logcap.py"
     test_file.write_text("""\
+import logging
+
 from otto.suite.suite import OttoSuite
+
+logger = logging.getLogger(__name__)
+
 
 class TestLogCap(OttoSuite):
     async def test_a(self) -> None:
-        assert True
-
-async def test_plain() -> None:
-    assert True
+        logger.info("from the suite module")
 """)
-    assert _run_inner_pytest(test_file, tmp_path) == pytest.ExitCode.OK
-    assert seen, "capture_external_loggers was never called after collection"
-    assert "test_logcap" in seen[0], seen
+    sink = _Sink()
+    root = logging.getLogger()
+    root.addHandler(sink)
+    old_level = root.level
+    root.setLevel(logging.INFO)
+    try:
+        assert _run_inner_pytest(test_file, tmp_path) == pytest.ExitCode.OK
+    finally:
+        root.removeHandler(sink)
+        root.setLevel(old_level)
+    assert "from the suite module" in sink.messages
