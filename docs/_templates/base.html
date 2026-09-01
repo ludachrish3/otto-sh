@@ -1,0 +1,19 @@
+{% extends "!base.html" %}
+
+{#
+  Announcement bar marking work-in-progress docs.
+
+  The theme gates its whole <aside class="md-banner"> on `{% if self.announce() %}`
+  (sphinx_immaterial/base.html), so this block MUST render to the empty string on
+  a tagged build — whitespace alone is truthy in Jinja and would paint an empty
+  banner across every released page. Hence the `{%- -%}` trimming throughout.
+
+  `otto_dev_banner_text` / `otto_stable_docs_url` come from html_context in
+  conf.py; the text is None on a release build. See scripts/docs_build_stamp.py.
+#}
+{%- block announce -%}
+{%- if otto_dev_banner_text -%}
+{{ otto_dev_banner_text }} For the latest release, see the
+<a href="{{ otto_stable_docs_url }}">stable documentation</a>.
+{%- endif -%}
+{%- endblock -%}

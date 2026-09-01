@@ -112,6 +112,26 @@ The hosted documentation at
 published by GitHub Actions. Read the Docs builds it independently off its own
 webhook, using
 [`.readthedocs.yaml`](https://github.com/ludachrish3/otto-sh/blob/main/.readthedocs.yaml)
-(`sphinx-build -W`, so warnings fail the build). It tracks the configured
-branch/version rather than the `v*` release tag — a documentation change lands
-when it reaches that branch, independent of cutting a PyPI release.
+(`sphinx-build -W`, so warnings fail the build).
+
+Read the Docs builds both the tracked branch and the `v*` release tags, and
+serves them under separate URLs:
+
+| URL | Serves |
+| --- | --- |
+| `/en/latest/` | The tracked branch. The **default** — the bare `otto-sh.readthedocs.io` redirects here. |
+| `/en/stable/` | The highest release tag by semantic-version ordering (not the most recently created tag). |
+| `/en/v%OTTO_VERSION%/` | That specific tag, pinned. |
+
+A documentation change reaches `/en/latest/` as soon as it lands on the tracked
+branch, independent of cutting a PyPI release; it reaches `/en/stable/` only
+when a release is tagged.
+
+Because the default is `latest`, a reader arriving at the bare URL lands on
+development docs having passed no version selector. Those builds therefore carry
+a dismissible banner saying so and linking to `/en/stable/`, and their page title
+gains a `+dev` marker (`otto %OTTO_VERSION%+dev documentation`). Both come from
+[`scripts/docs_build_stamp.py`](https://github.com/ludachrish3/otto-sh/blob/main/scripts/docs_build_stamp.py),
+which classifies the build from Read the Docs' environment variables, falling
+back to `git describe`. Nothing here needs doing at release time — tagging is
+what flips it.

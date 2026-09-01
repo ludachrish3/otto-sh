@@ -6,17 +6,28 @@ import typing
 from sphinx.util import inspect as sphinx_inspect
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+
+from scripts import docs_build_stamp
 
 project = "otto"
 author = "otto contributors"
 release = importlib.metadata.version("otto-sh")
 version = release
-# Sphinx's default html_title is "{project} {release} documentation", which bakes
-# the build-time package version into the page/tab title. Between tagged releases
-# that resolves to a dev string (e.g. "otto 0.5.1.dev3+g1234567"), which is stale
-# and noisy. The Read the Docs version selector already reports exactly which
-# version (latest/stable/tag) the reader is on, so keep the title version-free.
-html_title = f"{project} documentation"
+# The title carries the bare release ("otto 0.9.0 documentation") — no leading
+# "v", and never the full git-describe string, which is too long for a browser
+# tab. otto's version is static in pyproject.toml, so it reads the same at the
+# tag and past it; _BUILD_STAMP is what distinguishes them, adding a "+dev"
+# marker off-tag. The detail (commit, distance, link to the stable docs) goes in
+# the announcement bar rendered by _templates/base.html, which is the convention
+# Python, Django and NumPy all follow: short title, banner carries the warning.
+_BUILD_STAMP = docs_build_stamp.build_stamp()
+html_title = docs_build_stamp.html_title(project, release, _BUILD_STAMP)
+templates_path = ["_templates"]
+html_context = {
+    "otto_dev_banner_text": docs_build_stamp.dev_banner_text(_BUILD_STAMP),
+    "otto_stable_docs_url": docs_build_stamp.STABLE_DOCS_URL,
+}
 # Otto version numbers in prose and code fences are never hand-written — pages
 # use the %OTTO_VERSION% token and this source-read hook replaces it with the
 # release version (bump-my-version keeps that identical to the latest tag).
@@ -77,6 +88,9 @@ html_css_files = ["custom.css", "termynal.css", "termynal-otto.css"]
 html_js_files = ["termynal.js", "termynal-init.js"]
 
 html_theme_options = {
+    # Lets a reader dismiss the work-in-progress banner (_templates/base.html);
+    # the theme only renders the close button and its JS when this is set.
+    "features": ["announce.dismiss"],
     "palette": [
         {
             "media": "(prefers-color-scheme)",
@@ -108,7 +122,7 @@ html_theme_options = {
                 "name": "Switch to system preference",
             },
         },
-    ]
+    ],
 }
 
 exclude_patterns = ["RESTRUCTURE_PLAN.md", "superpowers/**", "_inventories", "examples/**"]
