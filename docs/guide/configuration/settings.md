@@ -460,6 +460,9 @@ name = "core"                            # referenceable handle; optional,
 path = "docker/compose.yml"
 services = ["api", "db"]                 # authoritative: names the container
                                          # hosts otto registers
+users = { db = "postgres", api = "1000:1000" }  # optional: declared default
+                                         # access user per service; keys must
+                                         # name a declared service
 
 [[docker.use_cases]]                     # a FRAGMENT; repeatable, and two
 name = "integration"                     # fragments sharing a name join one
@@ -482,6 +485,11 @@ several services, and a service may run a published image otto never builds.
 against `docker compose config --services` after bringing the stack up and
 warns on drift; the use-case deploy path registers from the declaration
 alone.)
+
+`users` declares the default access user per service — keys must name an
+entry in `services`, and values are non-empty, whitespace-free strings passed
+to docker verbatim (`"1000:1000"`, `"postgres"`, `"postgres:staff"`). See
+{ref}`container-users` for how commands consume it.
 
 Relative paths resolve against the repo root — see
 [Path resolution](#path-resolution).

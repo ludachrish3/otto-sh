@@ -95,6 +95,11 @@ class DockerCompose:
     name: str = ""
     """Handle use-case fragments reference; the spec fills the path stem when unset."""
 
+    users: tuple[tuple[str, str], ...] = ()
+    """Frozen, sorted (service, user) pairs from ``users = {...}``: the declared
+    default access user per service. Tuples rather than a dict so the container
+    stays hashable, matching ``build_args``. Values go to docker verbatim."""
+
 
 @dataclass(frozen=True)
 class DockerUseCase:

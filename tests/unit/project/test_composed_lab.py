@@ -89,8 +89,8 @@ class _FleetHost(BaseHost):
         self.debug_log_globs = []
         self.events = events
 
-    async def _exec_one(self, cmd, timeout, log=LogMode.NORMAL):
-        del timeout, log
+    async def _exec_one(self, cmd, timeout, log=LogMode.NORMAL, user=None):
+        del timeout, log, user
         self.events.append((self.id, f"exec:{cmd}"))
         return CommandResult(Status.Success, value="", command=cmd, retcode=0)
 

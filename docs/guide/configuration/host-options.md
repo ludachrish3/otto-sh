@@ -238,7 +238,7 @@ What suppression covers, and what it deliberately doesn't:
 ```{note}
 `otto login` is excluded because it hands *you* a real shell, and silently
 losing up-arrow recall would be worse than the noise. The trade-off is not
-free: if that login goes through a login proxy (`--as-user`), otto's own
+free: if that login goes through a login proxy (`--user`), otto's own
 `__OTTO_…_RECOVER__` resync probe is written into the elevated shell and so
 appears in *its* history. The two cannot both be had — suppressing the probe
 means suppressing your history for the whole session.

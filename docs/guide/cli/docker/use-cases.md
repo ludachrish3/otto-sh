@@ -348,6 +348,49 @@ Fragments that resolve to different hosts split the use-case into one merged
 stack per host; addressing between them flows through env values, which is
 what `${otto:role.<role>.addr}` is for.
 
+(container-users)=
+## Container users
+
+A compose fragment may declare a default access user per service — see
+[Docker images and compose stacks](../../configuration/settings.md#docker-images-and-compose-stacks)
+for the `users = { db = "postgres" }` field itself.
+
+That declared default is the middle of three precedence layers: a per-call
+`--user`/`user=` on `login`, `run`, `exec` or `put` beats the declared
+default, which beats the image's own `USER`. `get` takes no part in this
+ladder — see below.
+
+`run` (with `send`/`expect`) shares the container's **persistent channel**,
+which binds its user the first time it opens — a later `run()` naming a
+*different* user refuses rather than silently switching identity
+mid-session; `close()` or `rebuild_connections()` tears the channel down so
+the next call rebinds. `login` is not part of that channel at all: each call
+opens its own fresh `docker exec -it` over the parent connection, so it is
+never subject to the bind refusal — a `login --user postgres` succeeds even
+while the run channel is bound to `root`. See {doc}`../host/run` and
+{doc}`../host/login`.
+
+`put` chowns the landed files to the effective user — the per-call value, or
+the declared default when the call names none — as root, in one batched
+`chown` after `docker cp` places the files and before `--mode` is applied.
+Because it is one command over every landed file, a failure is not scoped to
+a single file: every still-successful entry flips to an error, naming the
+file, the user, and the reason. On containers, `get` accepts `--user`/`user=`
+and ignores it — reads are ownership-indifferent, so there is nothing to
+chown; every other host family refuses a non-`None` value on `get` loudly
+instead. See {doc}`../host/put`.
+
+A container's actual **runtime** user — the identity its own process runs
+as — is a different concern from all of the above, and stays where compose
+already owns it: the product's own compose file, lab-varied through the
+ordinary env channels this page describes.
+
+```yaml
+services:
+  api:
+    user: ${SERVICE_USER:-1000:1000}   # runtime user — the compose file's concern, lab-varied via env
+```
+
 ## The repo adapter
 
 For values only code can compute, or for compose files that must be *rendered*

@@ -66,6 +66,47 @@ def test_duplicate_compose_names_refused(tmp_path):
         Repo(sut_dir=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
 
 
+def test_compose_users_round_trip(tmp_path):
+    toml = (
+        '[[docker.composes]]\npath = "docker/compose.yml"\n'
+        'services = ["api", "db"]\n'
+        'users = { db = "postgres", api = "1000:1000" }\n'
+    )
+    repo = Repo(sut_dir=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
+    (c,) = repo.docker_settings.composes
+    assert c.users == (("api", "1000:1000"), ("db", "postgres"))
+
+
+def test_compose_users_unknown_service_refused(tmp_path):
+    toml = (
+        '[[docker.composes]]\npath = "docker/compose.yml"\nservices = ["api"]\n'
+        'users = { db = "postgres" }\n'
+    )
+    with pytest.raises(Exception, match="users keys must name declared services"):
+        Repo(sut_dir=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
+
+
+@pytest.mark.parametrize("bad", ["", "a b", " root", "\troot", "a\tb"])
+def test_compose_users_bad_form_refused(tmp_path, bad):
+    toml = (
+        '[[docker.composes]]\npath = "docker/compose.yml"\nservices = ["api"]\n'
+        f'users = {{ api = "{bad}" }}\n'
+    )
+    with pytest.raises(Exception, match="non-empty string with no whitespace"):
+        Repo(sut_dir=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
+
+
+@pytest.mark.parametrize("form", ["root", "1000", "1000:1000", "postgres:staff"])
+def test_compose_users_forms_pass_verbatim(tmp_path, form):
+    toml = (
+        '[[docker.composes]]\npath = "docker/compose.yml"\nservices = ["api"]\n'
+        f'users = {{ api = "{form}" }}\n'
+    )
+    repo = Repo(sut_dir=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
+    (c,) = repo.docker_settings.composes
+    assert dict(c.users)["api"] == form
+
+
 def test_priority_requires_provides():
     with pytest.raises(Exception, match="provides"):
         DockerUseCaseSpec(name="x", composes=["core"], priority=5)

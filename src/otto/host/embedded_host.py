@@ -462,11 +462,11 @@ class EmbeddedHost(RemoteHost):
     ####################
 
     @override
-    async def _login(self, as_user: str | None = None) -> None:
+    async def _login(self, user: str | None = None) -> None:
         """Open an interactive shell bridged to the local terminal.
 
         Not yet implemented for embedded hosts — the telnet bridge for a
-        login-less RTOS shell lands in a later phase. ``as_user`` is accepted
+        login-less RTOS shell lands in a later phase. ``user`` is accepted
         for signature parity with :meth:`~otto.host.host.BaseHost._login`
         but embedded hosts have no login-proxy chain to replay.
         """
@@ -480,6 +480,7 @@ class EmbeddedHost(RemoteHost):
         cmd: str,
         timeout: float,
         log: LogMode = LogMode.NORMAL,
+        user: str | None = None,
     ) -> CommandResult:
         """Run a single command on the embedded host.
 
@@ -489,6 +490,11 @@ class EmbeddedHost(RemoteHost):
         ``run``. It exists for API parity; use ``run`` for stateful
         workflows.
         """
+        if user is not None:
+            raise NotImplementedError(
+                f"{self.name}: exec(user=...) is not supported on EmbeddedHost — "
+                f"a serial console has no user to switch to"
+            ) from None
         return await self._session_mgr.run_cmd(cmd, timeout=timeout, log=self._effective_log(log))
 
     def _require_loader(self) -> BinaryLoader:
@@ -514,6 +520,10 @@ class EmbeddedHost(RemoteHost):
             Arg(variadic=True, elem_type=Path, help="Remote file(s) to download."),
         ],
         dest_dir: Path,
+        user: Annotated[
+            str | None,
+            Opt(help="Not supported on this host type — containers only."),
+        ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
         """Transfer files from the embedded host to the local machine.
@@ -523,6 +533,11 @@ class EmbeddedHost(RemoteHost):
         ``fs`` commands). Transfers are sequential — an embedded target has a
         single console.
         """
+        if user is not None:
+            raise NotImplementedError(
+                f"{self.name}: get(user=...) is not supported on EmbeddedHost — "
+                f"transfer ownership follows the connection's own identity"
+            ) from None
         if not isinstance(src_files, list):
             src_files = [src_files]
         if is_dry_run():
@@ -541,6 +556,10 @@ class EmbeddedHost(RemoteHost):
         mode: Annotated[
             int | str | None,
             Opt(help="Octal permission bits for the uploaded file(s), e.g. 755, 0644, 0o4755."),
+        ] = None,
+        user: Annotated[
+            str | None,
+            Opt(help="Not supported on this host type — containers only."),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
@@ -562,6 +581,11 @@ class EmbeddedHost(RemoteHost):
         signature only so the failure names this host and backend rather than
         surfacing as an unknown-argument error.
         """
+        if user is not None:
+            raise NotImplementedError(
+                f"{self.name}: put(user=...) is not supported on EmbeddedHost — "
+                f"transfer ownership follows the connection's own identity"
+            ) from None
         if not isinstance(src_files, list):
             src_files = [src_files]
         dest_dir = self._resolve_dest(dest_dir)

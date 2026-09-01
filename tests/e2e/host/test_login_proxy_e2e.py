@@ -17,7 +17,7 @@ What this module proves, end to end against the real bed, using a CUSTOM
 - ``switch_user`` / ``as_user`` roundtrip (become mysql, then restore);
 - ``exec`` routing through the proxied pool (Task 8);
 - ``nc`` transfer ownership under the proxied user;
-- ``login --as-user`` over the real PTY bridge (Task 9);
+- ``login --user`` over the real PTY bridge (Task 9);
 - the BUILT-IN ``"su"`` proxy's ``switch_user``/``as_user`` path with the
   ``test`` account, with no custom proxy code at all
   (``test_builtin_su_proxy_switch_user_does_not_hang``);
@@ -59,7 +59,7 @@ module therefore never touches shared lab data:
   :func:`otto.host.factory.create_host_from_dict`, reading only the
   leased VM's IP read-only from ``tech1/lab.json`` (via
   ``tests._fixtures.labdata.host_data``) — never its ``creds``.
-- Test 6 (the ``login --as-user`` bridge) drives a real ``otto``
+- Test 6 (the ``login --user`` bridge) drives a real ``otto``
   subprocess, which needs its OWN registration (it never imports this test
   module) — it scaffolds a throwaway, fully self-contained SUT directory
   under ``tmp_path`` with its own init module and its own single-host
@@ -313,7 +313,7 @@ async def test_nc_put_owned_by_proxied_user(leased_host: tuple[str, str], tmp_pa
 
 
 # ---------------------------------------------------------------------------
-# Test 6: login --as-user over the PTY bridge
+# Test 6: login --user over the PTY bridge
 # ---------------------------------------------------------------------------
 
 _LP_E2E_LAB = "lp_e2e_lab"
@@ -372,8 +372,8 @@ def _scaffold_sut_dir(sut_dir: Path, ip: str, element: str) -> str:
     return element
 
 
-def test_login_as_user_over_bridge(leased_host: tuple[str, str], tmp_path: Path) -> None:
-    """``otto host <id> login --as-user mysql`` must bridge the human directly onto mysql.
+def test_login_user_over_bridge(leased_host: tuple[str, str], tmp_path: Path) -> None:
+    """``otto host <id> login --user mysql`` must bridge the human directly onto mysql.
 
     Drives the real interactive PTY bridge (Task 9) through a throwaway,
     self-contained SUT directory — see :func:`_scaffold_sut_dir` — so the
@@ -386,7 +386,7 @@ def test_login_as_user_over_bridge(leased_host: tuple[str, str], tmp_path: Path)
     xdir = tmp_path / "xdir"
 
     with InteractiveOttoSession(
-        ["-R", "-l", _LP_E2E_LAB, "host", host_id, "login", "--as-user", "mysql"],
+        ["-R", "-l", _LP_E2E_LAB, "host", host_id, "login", "--user", "mysql"],
         xdir=xdir,
         sut_dirs=sut_dir,
     ) as sess:

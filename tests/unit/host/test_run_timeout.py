@@ -308,6 +308,41 @@ class TestValidateTimeout:
             _validate_timeout(bad)
 
 
+class TestValidateUser:
+    """The entry-point validator rejects a user docker/chown would misparse."""
+
+    @pytest.mark.parametrize("good", ["root", "1000", "1000:1000", "name:group"])
+    def test_accepts_well_formed_strings(self, good):
+        from otto.host.host import _validate_user
+
+        assert _validate_user(good) is None
+
+    # The spec blesses bare UIDs, so an unquoted int (1000 instead of "1000")
+    # is the likeliest wrong-type mistake — a caller a type checker never
+    # sees (annotations aren't enforced at runtime). tests/ is excluded from
+    # ty (pyproject.toml [tool.ty.src] exclude), so passing these needs no
+    # suppression.
+    @pytest.mark.parametrize("bad", [1000, None, True, False, [1]])
+    def test_rejects_non_strings(self, bad):
+        from otto.host.host import _validate_user
+
+        with pytest.raises(TypeError, match="user must be a string"):
+            _validate_user(bad)
+
+    def test_rejects_empty_string(self):
+        from otto.host.host import _validate_user
+
+        with pytest.raises(ValueError, match="non-empty string with no whitespace"):
+            _validate_user("")
+
+    @pytest.mark.parametrize("bad", ["a b", " root", "root ", "1000 1000"])
+    def test_rejects_whitespace(self, bad):
+        from otto.host.host import _validate_user
+
+        with pytest.raises(ValueError, match="non-empty string with no whitespace"):
+            _validate_user(bad)
+
+
 class TestTimedOutFlag:
     """Every timeout path marks the result, so callers need no string matching."""
 
@@ -434,6 +469,18 @@ class TestExecTemplate:
             await host.exec("x", timeout=-1)
         mock.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_exec_rejects_bad_user_type_before_dispatch(self, host: UnixHost):
+        """A bare int (e.g. a UID typed without quotes) must fail loud and
+        legible, not with a bare ``TypeError: 'int' object is not iterable``
+        from deep inside the whitespace check."""
+        with (
+            patch.object(host, "_exec_one", new_callable=AsyncMock) as mock,
+            pytest.raises(TypeError, match="user must be a string"),
+        ):
+            await host.exec("x", user=1000)  # type: ignore[arg-type]
+        mock.assert_not_awaited()
+
     def test_no_subclass_overrides_exec(self):
         """exec is final; family behavior belongs in _exec_one."""
         from otto.host.docker_host import DockerContainerHost
@@ -445,6 +492,34 @@ class TestExecTemplate:
             assert "exec" not in vars(cls), f"{cls.__name__} must override _exec_one, not exec"
             assert "_exec_one" in vars(cls), f"{cls.__name__} must implement _exec_one"
             assert BaseHost.exec is cls.exec
+
+
+class TestLoginTemplate:
+    """login() validates the user form before dispatch, same as exec()/run()."""
+
+    @pytest.mark.asyncio
+    async def test_login_rejects_bad_user_form_before_dispatch(self, host: UnixHost):
+        """A user with embedded whitespace (e.g. a stray leading space) must
+        fail loud from the shared validator, not reach ``_login`` where a
+        subclass might silently misparse it into its own command."""
+        with (
+            patch.object(host, "_login", new_callable=AsyncMock) as mock,
+            pytest.raises(ValueError, match="non-empty string with no whitespace"),
+        ):
+            await host.login(user=" root")
+        mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_login_rejects_bad_user_type_before_dispatch(self, host: UnixHost):
+        """A bare int (e.g. a UID typed without quotes) must fail loud and
+        legible, not with a bare ``TypeError: 'int' object is not iterable``
+        from deep inside the whitespace check."""
+        with (
+            patch.object(host, "_login", new_callable=AsyncMock) as mock,
+            pytest.raises(TypeError, match="user must be a string"),
+        ):
+            await host.login(user=1000)  # type: ignore[arg-type]
+        mock.assert_not_awaited()
 
 
 class TestNoUnboundedBranch:

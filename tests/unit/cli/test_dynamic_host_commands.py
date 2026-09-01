@@ -359,22 +359,22 @@ def test_run_and_login_exposed_on_base_host():
 
 
 # ---------------------------------------------------------------------------
-# Task 9: `otto host <id> login --as-user <target>`
+# Task 9: `otto host <id> login --user <target>`
 # ---------------------------------------------------------------------------
 
 
-def test_login_as_user_flag_renders_in_help(monkeypatch):
-    """A bare `as_user: str | None = None` param (no Opt/Annotated overlay,
+def test_login_user_flag_renders_in_help(monkeypatch):
+    """A bare `user: str | None = None` param (no Opt/Annotated overlay,
     matching the `timeout`/`state` precedent elsewhere in host.py) is enough
-    for the synthesizer to render a `--as-user` option."""
+    for the synthesizer to render a `--user` option."""
     app = _make_app(monkeypatch, {"u1": UnixHost})
     r = CliRunner().invoke(app, ["u1", "login", "--help"])
     assert r.exit_code == 0, r.output
-    assert "--as-user" in r.output
+    assert "--user" in r.output
 
 
-def test_login_as_user_flag_dispatches_end_to_end(monkeypatch):
-    """The parsed --as-user value reaches the bound host method unchanged,
+def test_login_user_flag_dispatches_end_to_end(monkeypatch):
+    """The parsed --user value reaches the bound host method unchanged,
     and omitting the flag defaults cleanly to None (existing behavior)."""
     captured: dict = {}
 
@@ -382,8 +382,8 @@ def test_login_as_user_flag_dispatches_end_to_end(monkeypatch):
         id = "h1"
 
         @cli_exposed
-        async def login(self, as_user: str | None = None) -> None:
-            captured["as_user"] = as_user
+        async def login(self, user: str | None = None) -> None:
+            captured["user"] = user
 
         async def close(self) -> None:
             pass
@@ -401,13 +401,45 @@ def test_login_as_user_flag_dispatches_end_to_end(monkeypatch):
             return
         ctx.obj = host
 
-    r = DispatchRunner().invoke(app, ["h1", "login", "--as-user", "mysql"])
+    r = DispatchRunner().invoke(app, ["h1", "login", "--user", "mysql"])
     assert r.exit_code == 0, r.output
-    assert captured["as_user"] == "mysql"
+    assert captured["user"] == "mysql"
 
     r2 = DispatchRunner().invoke(app, ["h1", "login"])
     assert r2.exit_code == 0, r2.output
-    assert captured["as_user"] is None
+    assert captured["user"] is None
+
+
+def test_host_verbs_synthesize_user_flag(monkeypatch):
+    """Task 8 pin: every host verb Tasks 1-7 threaded `user=` through
+    (login/run/put/get) synthesizes a `--user` CLI option, and none of them
+    resurrect the old `--as-user` spelling the login proxy retired in Task 1.
+
+    Two real (not fake) host classes, deliberately: UnixHost answers put/get
+    `user=` with a loud NotImplementedError at call time — the flag still has
+    to render in `--help` since the synthesizer works off the signature, not
+    the runtime refusal — while DockerContainerHost is the family where
+    `--user` actually works end to end, so the negative half of this pin
+    (``--as-user`` gone) is checked on the surface a real regression would
+    most plausibly resurface on, not just on a host that always refuses it.
+
+    COLUMNS is pinned wide: under CliRunner (non-tty) rich resolves width
+    from COLUMNS, defaulting to 80, and at the default width a long option
+    can be truncated for display (e.g. to ``--as-us…``, GH issue #89's
+    failure mode) — which would make the ``"--as-user" not in r.output``
+    half of this pin pass vacuously against a truncated resurrection instead
+    of a real absence.
+    """
+    from otto.host.docker_host import DockerContainerHost
+
+    monkeypatch.setenv("COLUMNS", "300")
+    app = _make_app(monkeypatch, {"u1": UnixHost, "d1": DockerContainerHost})
+    for host_id in ("u1", "d1"):
+        for verb in ("login", "run", "put", "get"):
+            r = CliRunner().invoke(app, [host_id, verb, "--help"])
+            assert r.exit_code == 0, (host_id, verb, r.output)
+            assert "--user" in r.output, (host_id, verb)
+            assert "--as-user" not in r.output, (host_id, verb)
 
 
 def test_run_cli_binding_markers():

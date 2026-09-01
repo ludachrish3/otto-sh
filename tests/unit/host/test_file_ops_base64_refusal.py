@@ -160,8 +160,13 @@ class _Host(UnixHost):
     device: _Device
 
     async def _exec_one(
-        self, cmd: str, timeout: float = 0.0, log: LogMode = LogMode.NORMAL
+        self,
+        cmd: str,
+        timeout: float = 0.0,
+        log: LogMode = LogMode.NORMAL,
+        user: str | None = None,
     ) -> CommandResult:
+        del user
         return self.device.answer(cmd)
 
 

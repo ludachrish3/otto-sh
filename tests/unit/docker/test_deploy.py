@@ -46,10 +46,12 @@ def _fail(out: str = "boom") -> CommandResult:
     return CommandResult(Status.Failed, value=out, command="", retcode=1)
 
 
-def _compose_file(tmp_path: Path, handle: str, *, services=("api",), text=None) -> DockerCompose:
+def _compose_file(
+    tmp_path: Path, handle: str, *, services=("api",), text=None, users=()
+) -> DockerCompose:
     path = tmp_path / f"{handle}.yml"
     path.write_text(text if text is not None else _COMPOSE_YAML)
-    return DockerCompose(path=path, name=handle, services=tuple(services))
+    return DockerCompose(path=path, name=handle, services=tuple(services), users=tuple(users))
 
 
 def _repo(name, *fragments, composes=(), images=()):
@@ -191,6 +193,49 @@ async def test_container_hosts_are_registered_under_the_use_case(single, monkeyp
 
     assert stack.hosts["api"].id == "test3.integration.api"
     assert "test3.integration.api" in single.lab.hosts
+
+
+@pytest.mark.asyncio
+async def test_registered_container_carries_its_declared_user(tmp_path, monkeypatch):
+    """The deploy path threads `users` from the same compose handles its
+    services came from — an undeclared service is left unset."""
+    monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
+    compose = _compose_file(tmp_path, "core", services=("api", "db"), users=(("db", "postgres"),))
+    repo = _repo("a", _frag(), composes=[compose])
+    host = _wire(_host("test3", "10.10.200.13"))
+    lab = _lab(host)
+
+    with _install(lab, [repo]):
+        stack = await deploy("integration", on="test3")
+
+    assert stack.hosts["db"].user == "postgres"
+    assert stack.hosts["api"].user is None
+    assert lab.hosts["test3.integration.db"].user == "postgres"
+
+
+@pytest.mark.asyncio
+async def test_conflicting_declared_users_across_fragments_refuse(tmp_path, monkeypatch):
+    """Two composes on the same host naming different users for one service
+    have no right answer; the deploy refuses rather than letting -f order pick."""
+    monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
+    a = _repo(
+        "a",
+        _frag(composes=("acore",)),
+        composes=[_compose_file(tmp_path, "acore", users=(("api", "postgres"),))],
+    )
+    b = _repo(
+        "b",
+        _frag(composes=("bcore",)),
+        composes=[_compose_file(tmp_path, "bcore", users=(("api", "root"),))],
+    )
+    host = _wire(_host("test3", "10.10.200.13"))
+    lab = _lab(host)
+
+    with (
+        _install(lab, [a, b]),
+        pytest.raises(ValueError, match="conflicting declared users for service 'api'"),
+    ):
+        await deploy("integration", on="test3")
 
 
 @pytest.mark.asyncio

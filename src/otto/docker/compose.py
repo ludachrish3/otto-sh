@@ -17,12 +17,12 @@ import json
 import logging
 import re
 import shlex
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from dataclasses import replace
 from typing import Any
 
 from ..config.lab import Lab
-from ..config.repo import Repo
+from ..config.repo import DockerCompose, Repo
 from ..host.docker_host import DockerContainerHost
 from ..host.errors import HostCommandError
 from ..host.host import Host, is_dry_run, refuse_declined_fact
@@ -383,6 +383,26 @@ async def _rollback_partial_up(repo: Repo, lab: Lab, parent: UnixHost, proj: str
         )
 
 
+def merge_declared_users(composes: "Iterable[DockerCompose]") -> "dict[str, str]":
+    """Union the ``users`` declarations of *composes*; conflicting values refuse.
+
+    Same-service agreement is fine (the same compose seen twice, or two files
+    declaring the same identity); a genuine disagreement has no right answer
+    otto should invent.
+    """
+    merged: dict[str, str] = {}
+    for c in composes:
+        for svc, u in c.users:
+            if svc in merged and merged[svc] != u:
+                raise ValueError(
+                    f"conflicting declared users for service {svc!r}: "
+                    f"{merged[svc]!r} vs {u!r} — declare one value per service "
+                    f"across the composes in play"
+                )
+            merged[svc] = u
+    return merged
+
+
 async def register_stack_hosts(
     lab: Lab,
     parent: UnixHost,
@@ -390,12 +410,19 @@ async def register_stack_hosts(
     compose_project: str,
     id_project: str,
     services: "list[str]",
+    users: "dict[str, str] | None" = None,
 ) -> "dict[str, DockerContainerHost]":
     """Resolve container ids and register hosts for *services* of one stack.
 
     ``id_project`` is the middle segment of the host id
     (``<parent>.<id_project>.<service>``): the repo name on the legacy per-repo
     path, the use-case name on the deploy path (spec §9).
+
+    *users* is the declared per-service access user (``users = {...}`` in
+    ``[[docker.composes]]``, merged across the composes in play by
+    :func:`merge_declared_users`). A service absent from it simply registers
+    with no declared user, deferring to the image's ``USER`` — the mapping is
+    per service, never a stack-wide default.
     """
     hosts: dict[str, DockerContainerHost] = {}
     for service in services:
@@ -412,6 +439,7 @@ async def register_stack_hosts(
             project=id_project,
             service=service,
             compose_project=compose_project,
+            user=(users or {}).get(service),
         )
         # A container's lab is its PARENT's lab, never the lab it is registered
         # INTO: in a multi-lab session that lab is the composite ("a+b"), a name
@@ -543,7 +571,12 @@ async def _up_and_register(
         )
 
     return await register_stack_hosts(
-        lab, parent, compose_project=proj, id_project=repo.name, services=services
+        lab,
+        parent,
+        compose_project=proj,
+        id_project=repo.name,
+        services=services,
+        users=merge_declared_users(repo.docker_settings.composes),
     )
 
 
@@ -887,6 +920,14 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
         ]
         if not capable:
             continue
+        # Merged over the repo's WHOLE compose set, once, before the loop —
+        # not per compose. Reading each entry's own `users` in the loop would
+        # make the first compose declaring a service win (the duplicate-id
+        # skip below discards the later placeholder), so a repo whose two
+        # composes disagree would get a silent first-wins placeholder here and
+        # a refusal from `compose_up`, which merges the same way this does.
+        # One gate, one answer, both paths.
+        users = merge_declared_users(settings.composes)
         for compose in settings.composes:
             # No per-compose placement any more (spec §14) — every
             # docker-capable host in the lab is a candidate parent
@@ -899,6 +940,7 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
                         project=repo.name,
                         service=service,
                         compose_project=get_user_compose_project(repo.name),
+                        user=users.get(service),
                     )
                     # Same rule as compose_up's registration: the container
                     # belongs to its parent's lab, not to whatever composite the
@@ -940,8 +982,8 @@ def _register_use_case_placeholders(lab: Lab, repo: Repo) -> int:
     asked for — the single ``except UseCaseResolutionError`` below is what
     turns deploy's hard refusal into this walk's soft skip; there is no
     second, looser copy of the services-from-handles traversal here (see
-    :func:`~otto.docker.deployment._declared_services`, delegated to
-    below).
+    :func:`~otto.docker.deployment._declared`, delegated to below — the
+    one walk that answers both services AND declared users).
     """
     # Function-scope: this walk runs in `cli/invoke.py`'s preamble on every
     # otto invocation, so a bare `otto docker --help` must not pay
@@ -949,7 +991,7 @@ def _register_use_case_placeholders(lab: Lab, repo: Repo) -> int:
     # at call time: `deployment` already imports from `compose` at module
     # scope, but by the time this function RUNS both modules are fully
     # loaded.
-    from .deployment import _declared_services
+    from .deployment import _declared
     from .resolve import SelectedFragment, Selection, UseCaseResolutionError, resolve_placement
 
     count = 0
@@ -957,11 +999,20 @@ def _register_use_case_placeholders(lab: Lab, repo: Repo) -> int:
         sf = SelectedFragment(repo, frag)
         try:
             placed = resolve_placement(Selection(frag.name, [sf]), lab)
-            services = _declared_services([sf], report=False)
+            declared = _declared([sf], report=False)
         except UseCaseResolutionError:
             continue
+        services = declared.services
         if not services:
             continue
+        # OUTSIDE the soft-skip on purpose. A handle that will not resolve is
+        # normal here (this walk runs before any use-case is named), but two
+        # of a fragment's composes naming DIFFERENT users for one service is a
+        # settings mistake with no right answer — and swallowing it would hand
+        # out placeholders whose identity disagrees with the container `deploy`
+        # would later register. merge_declared_users is the one gate; it says
+        # the same thing on both paths.
+        users = merge_declared_users(declared.composes)
 
         for host_id in placed:
             parent = lab.hosts[host_id]
@@ -973,6 +1024,7 @@ def _register_use_case_placeholders(lab: Lab, repo: Repo) -> int:
                     project=frag.name,
                     service=service,
                     compose_project=compose_project,
+                    user=users.get(service),
                 )
                 # Same rule as the legacy walk's registration above: the
                 # container belongs to its parent's lab, not to whatever

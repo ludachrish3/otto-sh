@@ -34,6 +34,7 @@ from .build import build_images
 from .compose import (
     _stack_already_up,
     compose_down_project,
+    merge_declared_users,
     register_stack_hosts,
     unregister_container_hosts,
     use_case_project,
@@ -196,13 +197,35 @@ def _units(frags: "list[SelectedFragment]") -> "list[_RepoUnit]":
     return list(units.values())
 
 
-def _declared_services(frags: "list[SelectedFragment]", *, report: bool = False) -> "list[str]":
-    """Every service the fragments' compose files declare, deduped, in order.
+@dataclass
+class _Declared:
+    """One walk of the fragments' ``composes`` handles, answering both questions.
+
+    Services and declared users come from the SAME resolution because a
+    second, looser traversal is exactly the drift this module refuses to
+    carry: the placeholder walk and the deploy path must agree about which
+    compose entries are in play, or a container could be registered with a
+    user no fragment on that host actually declares.
+    """
+
+    services: "list[str]"
+    """Every service the walked compose entries declare, deduped, in order."""
+
+    composes: "list[DockerCompose]"
+    """The resolved entries themselves, deduped by handle, in walk order —
+    what :func:`~otto.docker.compose.merge_declared_users` consumes."""
+
+
+def _declared(frags: "list[SelectedFragment]", *, report: bool = False) -> "_Declared":
+    """Resolve *frags*' compose handles once: the single services-from-handles walk.
 
     A service declared by two different fragments is warned about rather than
     refused: the merge really does happen (``-f`` order decides the winner),
     and §4's provider competition — not the YAML merge — is the mechanism for
     REPLACING a service. A silent merge is the part that would be wrong.
+    (Declared USERS are the exception: a disagreement there is refused, by
+    :func:`~otto.docker.compose.merge_declared_users`, because ``-f`` order
+    picking an identity is not a merge anyone asked for.)
 
     *report* says whether THIS pass is the one that talks. Three callers walk
     the same fragments for three different questions (validate a narrowing
@@ -214,9 +237,18 @@ def _declared_services(frags: "list[SelectedFragment]", *, report: bool = False)
     """
     services: "list[str]" = []
     owner: "dict[str, str]" = {}
+    composes: "list[DockerCompose]" = []
+    seen: "set[tuple[str, str]]" = set()
     for sf in frags:
         for handle in sf.fragment.composes:
             entry = _compose_entry(sf.repo, handle)
+            # Deduped by (repo, handle), not by identity: one repo's fragment
+            # pair naming the same handle resolves to the same entry twice,
+            # and feeding it twice to the users merge would be self-agreement
+            # noise rather than a second declaration.
+            if (sf.repo.name, handle) not in seen:
+                seen.add((sf.repo.name, handle))
+                composes.append(entry)
             for service in entry.services:
                 where = f"{sf.repo.name}[{handle}]"
                 if service in owner:
@@ -229,7 +261,12 @@ def _declared_services(frags: "list[SelectedFragment]", *, report: bool = False)
                     continue
                 owner[service] = where
                 services.append(service)
-    return services
+    return _Declared(services=services, composes=composes)
+
+
+def _declared_services(frags: "list[SelectedFragment]", *, report: bool = False) -> "list[str]":
+    """Return the service half of :func:`_declared`, for callers that want only it."""
+    return _declared(frags, report=report).services
 
 
 def _validated_services(
@@ -464,6 +501,13 @@ class _ActingHost:
     host_id: str
     fragments: "list[SelectedFragment]"
     services: "list[str]"
+    users: "dict[str, str]"
+    """Declared per-service access users, merged over this host's composes.
+
+    Merged here rather than at registration so a conflict refuses BEFORE the
+    stack is brought up — a container that is already running cannot be
+    un-registered into a different identity.
+    """
 
 
 def _acting_hosts(
@@ -487,8 +531,8 @@ def _acting_hosts(
     acting: "list[_ActingHost]" = []
     for host_id, host_frags in placed.items():
         frags = _ordered(host_frags, order)
-        declared = _declared_services(frags, report=report)
-        wanted = [s for s in declared if services_filter is None or s in services_filter]
+        declared = _declared(frags, report=report)
+        wanted = [s for s in declared.services if services_filter is None or s in services_filter]
         if not wanted:
             if report:
                 logger.info(
@@ -496,7 +540,14 @@ def _acting_hosts(
                     f"skipping it for use-case {use_case!r}"
                 )
             continue
-        acting.append(_ActingHost(host_id=host_id, fragments=frags, services=wanted))
+        acting.append(
+            _ActingHost(
+                host_id=host_id,
+                fragments=frags,
+                services=wanted,
+                users=merge_declared_users(declared.composes),
+            )
+        )
     return acting
 
 
@@ -692,7 +743,12 @@ async def deploy(
             if not result.is_ok:
                 _refuse_failed_up(proj, parent.id, result.value)
             hosts = await register_stack_hosts(
-                lab, parent, compose_project=proj, id_project=use_case, services=wanted
+                lab,
+                parent,
+                compose_project=proj,
+                id_project=use_case,
+                services=wanted,
+                users=acting.users,
             )
             stack.projects[host_id] = proj
             stack.by_host[host_id] = hosts

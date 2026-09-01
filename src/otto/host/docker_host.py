@@ -39,7 +39,7 @@ from ..utils import Arg, Opt, Status, cli_exposed
 from .connections import teardown_step
 from .dev_tool import DevTool
 from .file_ops import PosixFileOps
-from .host import BaseHost, Host, is_dry_run, refuse_declined_fact
+from .host import BaseHost, Host, _validate_user, is_dry_run, refuse_declined_fact
 from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
 from .privilege import PosixPrivilege
@@ -108,6 +108,13 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     container images (``alpine``, ``centos6``, …) may lack bash, so this must
     be overridable per container."""
 
+    user: "str | None" = None
+    """Declared default access user for this container (``users = {...}`` in
+    ``[[docker.composes]]``): the identity ``exec``/``run``/``login``/``put``
+    act as when the call doesn't name one. ``None`` defers to the image's
+    ``USER``. Values go to docker verbatim (``root``, ``1000``, ``1000:1000``,
+    ``name:group``)."""
+
     log: LogMode = field(default=LogMode.NORMAL, repr=False)
     """Standing per-host logging disposition. ``QUIET`` keeps this host's command
     I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
@@ -160,6 +167,30 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     parent's SSH connection; opening is lazy and gated on the parent being
     an SSH-based :class:`UnixHost`."""
 
+    _pending_run_user: "str | None" = field(default=None, init=False, repr=False)
+    """Per-call ``user`` of the ``run()`` attempt CURRENTLY in flight.
+
+    A parameter for the imminent open and nothing more: ``_run_one`` sets it
+    once the container is known to be up, and clears it in a ``finally`` the
+    moment the attempt ends — success or failure alike. It is deliberately not
+    a memory of "the last user asked for": an attempt that never opened a
+    channel must leave nothing behind for the NEXT opener to pick up, and the
+    next opener may be ``send``/``expect``, which have no ``user`` parameter to
+    correct a stale one with. ``None`` resolving to the declared :attr:`user`
+    via ``_effective_user`` is what makes those openers land on the declared
+    default exactly as a plain ``run()`` would."""
+
+    _bound_run_user: "str | None" = field(default=None, init=False, repr=False)
+    """User the default run channel ACTUALLY opened as. Meaningless unless
+    ``_run_user_bound`` — ``None`` is itself a valid binding (image USER)."""
+
+    _run_user_bound: bool = field(default=False, init=False, repr=False)
+    """Whether an open of the default run channel has been recorded.
+
+    Written ONLY by :meth:`_record_run_channel_open`, which the channel itself
+    calls once its transport is up; cleared by ``close``/``rebuild_connections``.
+    Nothing that merely *intends* to reach the channel may set it."""
+
     _ensure_lock: asyncio.Lock = field(init=False, repr=False)
     """Serializes :meth:`_ensure_running` so concurrent accesses to a
     down container trigger at most one auto-up."""
@@ -177,7 +208,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         Called from :meth:`__post_init__` and :meth:`rebuild_connections`.
         """
 
-        def _make_session() -> ShellSession:
+        def _make_session(*, record: bool = True) -> ShellSession:
             from .unix_host import UnixHost
 
             if not (isinstance(self.parent, UnixHost) and self.parent.term == "ssh"):
@@ -192,6 +223,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             return _DockerSshSession(
                 conn_provider=self.parent._connections.ssh,  # noqa: SLF001 — intra-package access to parent host's _connections
                 container_id_getter=lambda: self.container_id,
+                user_getter=self._user_for_an_imminent_open,
+                on_open=self._record_run_channel_open if record else None,
             )
 
         return SessionManager(
@@ -199,6 +232,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             log_command=self._log_command,
             log_output=self._log_output,
             session_factory=_make_session,
+            # Named auxiliary sessions open as the same user the run channel
+            # would open as right now, but record nothing — see
+            # :meth:`open_session`.
+            named_session_factory=lambda: _make_session(record=False),
             exec_factory=self._exec_via_parent,
             creds=[],
             host_id=self.id,
@@ -451,11 +488,73 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             )
         return host.container_id
 
-    async def _docker_exec(self, cmd: str, *, interactive: bool = False) -> str:
+    def _effective_user(self, user: "str | None") -> "str | None":
+        """Per-call beats declared; neither → ``None`` (the image's ``USER`` prevails)."""
+        return user if user is not None else self.user
+
+    def _user_for_an_imminent_open(self) -> "str | None":
+        """Return the user a channel opening RIGHT NOW must run as.
+
+        A LIVE default channel's own binding wins. That is what keeps a named
+        auxiliary session landing beside the run channel rather than somewhere
+        else: ``_pending_run_user`` is scoped to a single ``run()`` attempt and
+        is already cleared by the time ``open_session`` is called, so reading it
+        alone would open the named session as the declared default while the run
+        channel sits on another user. Falling back to the pending intent covers
+        the case this is really for — the run channel itself opening, which by
+        definition happens when no live one exists.
+        """
+        if self._run_channel_is_bound:
+            return self._bound_run_user
+        return self._effective_user(self._pending_run_user)
+
+    def _record_run_channel_open(self, user: "str | None") -> None:
+        """Record that the default run channel just opened as *user*.
+
+        THE ONLY WRITER of the bind record, and it is called from
+        :meth:`~otto.host.session._DockerSshSession._open` — i.e. by the open
+        itself, once the transport is up. Recording at the point of INTENT
+        instead (in ``_run_one``, before ``run_cmd``) is what the first cut of
+        this feature did, and it was wrong twice over: a channel that
+        ``send()``/``expect()`` opened was never recorded at all, so a
+        subsequent ``run(user=...)`` cheerfully "bound" a user the live shell
+        was not running as; and an open that failed left a record that refused
+        the next legitimate call.
+        """
+        self._bound_run_user = user
+        self._run_user_bound = True
+
+    def _forget_run_channel_binding(self) -> None:
+        """Drop the bind record and the pending intent — the channel is gone.
+
+        Both ``close`` and ``rebuild_connections`` end with no default channel,
+        so the next open is free to pick any user; clearing the intent as well
+        returns the host to its DECLARED default rather than silently carrying
+        the last per-call user across a teardown.
+        """
+        self._pending_run_user = None
+        self._bound_run_user = None
+        self._run_user_bound = False
+
+    @property
+    def _run_channel_is_bound(self) -> bool:
+        """Whether a LIVE default run channel exists whose user was recorded.
+
+        Both halves matter. Without the record, a channel could be live with
+        no idea what it opened as. Without liveness, a channel whose handshake
+        failed after its transport came up — or one whose ``close`` raised
+        partway — would keep refusing calls against a shell that is gone.
+        """
+        return self._run_user_bound and self._session_mgr.has_live_default_session
+
+    async def _docker_exec(
+        self, cmd: str, *, interactive: bool = False, user: "str | None" = None
+    ) -> str:
         """Build the ``docker exec`` invocation that runs *cmd* inside the container."""
         await self._ensure_running()
         flags = "-i" if not interactive else "-it"
-        return f"docker exec {flags} {self.container_id} sh -c {shlex.quote(cmd)}"
+        u = f" -u {shlex.quote(user)}" if user is not None else ""
+        return f"docker exec {flags}{u} {self.container_id} sh -c {shlex.quote(cmd)}"
 
     @override
     async def _exec_one(
@@ -463,6 +562,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         cmd: str,
         timeout: float,
         log: LogMode = LogMode.NORMAL,
+        user: "str | None" = None,
     ) -> CommandResult:
         """Run a single command in the container via the parent.
 
@@ -470,13 +570,14 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         ``docker exec``. ``run()`` is the stateful counterpart that
         preserves shell state across calls.
         """
-        return await self._exec_via_parent(cmd, timeout, log=log)
+        return await self._exec_via_parent(cmd, timeout, log=log, user=user)
 
     async def _exec_via_parent(
         self,
         cmd: str,
         timeout: float,
         log: LogMode = LogMode.NORMAL,
+        user: "str | None" = None,
     ) -> CommandResult:
         """Wrap *cmd* in ``docker exec`` and dispatch through the parent.
 
@@ -495,10 +596,13 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         today nothing arrives here under a dry run. This method is also
         ``SessionManager``'s ``exec_factory``, which is reached by a different
         route, and a seam that dispatches to a device answers for itself.
+        SessionManager's exec_factory reaches here without a user — the
+        declared default applies, which is the spec's effective-user rule,
+        not an accident.
         """
         if is_dry_run():
             return self._dry_run_result(cmd, log)
-        wrapped = await self._docker_exec(cmd)
+        wrapped = await self._docker_exec(cmd, user=self._effective_user(user))
         result = await self.parent.exec(wrapped, timeout=timeout, log=self._effective_log(log))
         # Replace the wrapped command in the result so callers see what they
         # asked for, not the docker-exec wrapper. `replace` rather than a field
@@ -512,6 +616,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         timeout: float,
         expects: "list[Expect] | None" = None,
         log: LogMode = LogMode.NORMAL,
+        user: "str | None" = None,
     ) -> CommandResult:
         """Execute one command on the persistent in-container shell.
 
@@ -519,13 +624,49 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         matching :class:`~otto.host.local_host.LocalHost` and
         :class:`~otto.host.unix_host.UnixHost`. Requires an SSH-based
         :class:`~otto.host.unix_host.UnixHost` parent.
+
+        The channel's user is BOUND, not per-call: ``docker exec -u`` is
+        settled when the channel opens and cannot be renegotiated on a live
+        shell. So this method does not bind anything — it declares an INTENT
+        (:attr:`_pending_run_user`) and lets the open do the binding, via
+        :meth:`_record_run_channel_open`. ``send()`` and ``expect()`` open the
+        very same channel and set no intent, which resolves to the declared
+        :attr:`user`; whichever call gets there first, the record describes the
+        shell that is actually running.
+
+        Against that record: if a LIVE channel opened as a different user than
+        this call asks for, refuse — the alternative is silently answering as
+        somebody else. If no channel is live, there is nothing to conflict
+        with, so the call proceeds and its open binds. ``None`` (the image's
+        ``USER``) is a binding like any other. :meth:`close` and
+        :meth:`rebuild_connections` drop the channel and the record together.
+
+        The intent is scoped to THIS attempt: set only once the container is
+        known to be up, and dropped in a ``finally`` whether the command
+        succeeded, failed, or never reached a shell. An attempt that dies
+        before its channel opens must leave nothing behind, because the next
+        thing to open the channel may be ``send``/``expect``, which take no
+        ``user`` and so cannot correct a stale one — the residue would open
+        the channel as a user this caller never successfully obtained and
+        then refuse every plain ``run()`` against it.
         """
         if is_dry_run():
             return self._dry_run_result(cmd, log)
+        effective = self._effective_user(user)
+        if self._run_channel_is_bound and effective != self._bound_run_user:
+            raise RuntimeError(
+                f"{self.name}: the persistent run channel is bound to user "
+                f"{self._bound_run_user!r} and this call asked for {effective!r} — "
+                f"close() or rebuild_connections() to rebind"
+            )
         await self._ensure_running()
-        return await self._session_mgr.run_cmd(
-            cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
-        )
+        self._pending_run_user = user
+        try:
+            return await self._session_mgr.run_cmd(
+                cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
+            )
+        finally:
+            self._pending_run_user = None
 
     @override
     async def open_session(self, name: str) -> "HostSession":
@@ -538,6 +679,15 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         daemon is not asked, no container is started, and the handle is a
         :class:`~otto.host.session.DeclinedSession` — see
         ``BaseHost._dry_run_session``.
+
+        **User:** a named session opens as whatever the run channel machinery
+        would bind at the time this session opens — see
+        ``_user_for_an_imminent_open``. In practice that is the LIVE run
+        channel's own user if there is one, and the declared :attr:`user`
+        otherwise. It READS that record but never writes it: opening a named
+        session neither refuses because the run channel is on another user nor
+        makes a later ``run(user=...)`` refuse. ``user`` is not a parameter
+        here; a named session on a different user is out of scope.
         """
         if is_dry_run():
             return self._dry_run_session(name)
@@ -572,17 +722,13 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     ####################
 
     @override
-    async def _login(self, as_user: str | None = None) -> None:
+    async def _login(self, user: "str | None" = None) -> None:
         """Open an interactive shell inside the container via the parent's SSH conn.
 
-        ``as_user`` is not supported here — a container exec has no
-        login-proxy chain of its own; passing it raises loudly rather than
-        being silently ignored.
+        ``user`` lands the shell as that identity (``docker exec -u``); the
+        declared per-service default applies when the call names none, and
+        the image's ``USER`` when neither is set.
         """
-        if as_user is not None:
-            raise NotImplementedError(
-                f"{self.name}: --as-user is not supported on DockerContainerHost"
-            ) from None
         # Importing here to keep this module importable without asyncssh.
         from .interact import run_ssh_login
         from .unix_host import UnixHost
@@ -601,10 +747,11 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         await self._ensure_running()
 
         conn = await self.parent._connections.ssh()  # noqa: SLF001 — intra-package access to parent host's _connections
-        # Pick a sensible default shell. /bin/sh is universal in Linux
-        # containers; users can override by running `docker exec` directly
-        # if they want bash.
-        cmd = f"docker exec -it {shlex.quote(self.container_id)} /bin/sh"
+        effective = self._effective_user(user)
+        u = f" -u {shlex.quote(effective)}" if effective is not None else ""
+        # /bin/sh is universal in Linux containers; users can override by
+        # running `docker exec` directly if they want bash.
+        cmd = f"docker exec -it{u} {shlex.quote(self.container_id)} /bin/sh"
         await run_ssh_login(conn=conn, host_name=self.name, command=cmd)
 
     ####################
@@ -628,6 +775,13 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             int | str | None,
             Opt(help="Octal permission bits for the uploaded file(s), e.g. 755, 0644, 0o4755."),
         ] = None,
+        user: Annotated[
+            str | None,
+            Opt(
+                help="chown landed files to this user inside the container "
+                "(defaults to the declared service user)."
+            ),
+        ] = None,
     ) -> Result:
         """Upload local files into the container.
 
@@ -640,6 +794,16 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         trusting ``docker cp`` to preserve it, which would put undocumented
         third-party behaviour in the trust path.
 
+        *user*, once resolved through ``_effective_user`` (falling back to
+        the declared service :attr:`user` when omitted), chowns the landed
+        files to that identity after they land — ``chown`` itself runs as
+        root, since the image's default user may not own what ``docker cp``
+        just placed. ``chown <user>`` accepts every form ``chown`` itself
+        accepts, verbatim: a name, a UID, or the ``UID:GID``/``name:group``
+        owner:group spelling. A chown failure never fails silently: every
+        landed file flips to an error entry naming the file, the user, and
+        the reason.
+
         Returns a :class:`~otto.result.Result` whose ``value`` maps each source
         path (as passed) to its per-file outcome, matching
         :meth:`~otto.host.host.BaseHost.put`.
@@ -647,12 +811,15 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         from .transfer import aggregate_transfer, chmod_command, parse_file_mode
 
         files = src_files if isinstance(src_files, list) else [src_files]
+        if user is not None:
+            _validate_user(user)
         if is_dry_run():
             return self._dry_run_transfer("PUT", files, dest_dir, mode)
         mode_check = parse_file_mode(mode)
         if not mode_check.is_ok:
             return aggregate_transfer({f: Result(Status.Error, msg=mode_check.msg) for f in files})
         resolved_mode: int | None = mode_check.value
+        effective = self._effective_user(user)
         await self._ensure_running()
 
         stage = self._stage_dir(self.container_id)
@@ -697,15 +864,31 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     per_file[f] = Result(Status.Error, msg=f"docker cp failed: {cp.value}")
                 else:
                     per_file[f] = Result(Status.Success, value=dest_dir / f.name)
+            # chown BEFORE chmod: chown-ing an already-chmod'd file clears
+            # setuid/setgid (S_ISUID/S_ISGID) on most filesystems, which
+            # would silently defeat a `mode="4755"` + `user=...` put. Running
+            # chown first means the mode landed last is the one that sticks.
+            # A side effect, still loud: a file whose chown just failed is no
+            # longer Status.Success, so the chmod pass below skips it rather
+            # than setting a mode on a file with admittedly-wrong ownership.
+            if effective is not None:
+                await self._chown_landed_as_root(per_file, effective)
             if resolved_mode is not None:
                 landed = [
                     r.value for r in per_file.values() if r.status is Status.Success and r.value
                 ]
                 if landed:
-                    # `self.exec` is a docker exec — it runs INSIDE the
-                    # container. `self.parent.exec` would chmod the staging
-                    # copy on the parent instead, which is about to be deleted.
-                    chmod = await self.exec(chmod_command(resolved_mode, landed))
+                    if effective is not None:
+                        # The effective user may not own what docker cp landed;
+                        # only root can be relied on to chmod it.
+                        wrapped = await self._docker_exec(
+                            chmod_command(resolved_mode, landed), user="root"
+                        )
+                        chmod = await self.parent.exec(wrapped, timeout=float("inf"))
+                    else:
+                        # self.exec runs INSIDE the container (parent.exec would
+                        # chmod the staging copy, about to be deleted).
+                        chmod = await self.exec(chmod_command(resolved_mode, landed))
                     if not chmod.status.is_ok:
                         for f, r in per_file.items():
                             if r.status is Status.Success:
@@ -723,6 +906,33 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             with teardown_step(host_name, "staging-dir removal"):
                 await self.parent.exec(f"rm -rf {shlex.quote(str(stage))}")
 
+    async def _chown_landed_as_root(self, per_file: "dict[Path, Result]", effective: str) -> None:
+        """Chown every landed file to *effective*, run as root inside the container.
+
+        Root performs the chown because the effective user may not own what
+        ``docker cp`` just placed. Mutates *per_file* in place: a failed
+        chown is never silent — every still-``Success`` entry flips to
+        ``Error``, naming the file, the user, and the reason.
+        """
+        landed = [r.value for r in per_file.values() if r.status is Status.Success and r.value]
+        if not landed:
+            return
+        paths = " ".join(shlex.quote(str(p)) for p in landed)
+        wrapped = await self._docker_exec(f"chown {shlex.quote(effective)} {paths}", user="root")
+        chown = await self.parent.exec(wrapped, timeout=float("inf"))
+        if chown.status.is_ok:
+            return
+        for f, r in per_file.items():
+            if r.status is Status.Success:
+                per_file[f] = Result(
+                    Status.Error,
+                    value=r.value,
+                    msg=(
+                        f"{f}: transferred, but chown to {effective!r} failed: "
+                        f"{chown.value or f'chown exited {chown.retcode}'}"
+                    ),
+                )
+
     @override
     @cli_exposed(success="Download complete.", dry_run_preview=True)
     async def get(
@@ -732,11 +942,21 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             Arg(variadic=True, elem_type=Path, help="Remote file(s) to download."),
         ],
         dest_dir: Path,
+        user: Annotated[
+            str | None,
+            Opt(
+                help="Accepted for interface uniformity; reads are ownership-indifferent, "
+                "so containers ignore it."
+            ),
+        ] = None,
     ) -> Result:
         """Download files from the container to the local machine.
 
         Two-step: ``docker cp`` from the container into a per-container
         staging dir on the parent, then ``parent.get`` to the local dir.
+
+        *user* is accepted and validated but otherwise ignored: a read never
+        changes what owns anything, so there is nothing to chown (spec §4).
 
         Returns a :class:`~otto.result.Result` whose ``value`` maps each source
         path (as passed) to its per-file outcome, matching
@@ -745,6 +965,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         from .transfer import aggregate_transfer
 
         files = src_files if isinstance(src_files, list) else [src_files]
+        if user is not None:
+            _validate_user(user)
         if is_dry_run():
             return self._dry_run_transfer("GET", files, dest_dir)
         await self._ensure_running()
@@ -815,8 +1037,13 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         ``ShellSession`` whose ``asyncssh`` process is bound to the old
         loop. Replacing the manager forces lazy re-opens against the
         parent's freshly-rebuilt SSH connection.
+
+        The run channel's user binding goes with the channel — a fresh
+        manager opens a fresh ``docker exec``, so the next ``run()`` is free
+        to name any user.
         """
         self._session_mgr = self._build_session_mgr()
+        self._forget_run_channel_binding()
 
     ####################
     #  Cleanup
@@ -829,8 +1056,18 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         The parent's underlying connection is owned by the parent and is not
         closed here — but this host *must* close before its parent so the
         session's docker exec channel can drain cleanly.
+
+        Clearing the run channel's user binding is part of the teardown: the
+        next ``run()`` reopens a channel and may bind a different user. It
+        happens in a ``finally`` because a teardown that fails half-way still
+        leaves no channel this host may claim to know the user of — the
+        alternative is a raising ``close()`` that also poisons every later
+        ``run(user=...)`` with a refusal.
         """
-        await self._session_mgr.close_all()
+        try:
+            await self._session_mgr.close_all()
+        finally:
+            self._forget_run_channel_binding()
 
 
 __all__ = ["DockerContainerHost"]

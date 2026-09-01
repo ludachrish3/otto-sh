@@ -724,7 +724,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     # TODO: Make sync versions of cmd and file methods that just wraps the async def
 
     @override
-    async def _login(self, as_user: str | None = None) -> None:
+    async def _login(self, user: str | None = None) -> None:
         """Open an interactive shell on this host, bridged to the local terminal.
 
         Dispatches on ``self.term``:
@@ -742,7 +742,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
           already be in non-echo mode. Hop tunnels are honored via the
           same port-forward helper the regular telnet path uses.
 
-        ``as_user``: land the interactive session on this login
+        ``user``: land the interactive session on this login
         instead of ``self._connections.login_target``, replaying any
         login-proxy hops (:func:`~otto.host.login_proxy.resolve_chain`)
         over the bridge after authentication but before the stdin/stdout
@@ -754,7 +754,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         mismatch raises :class:`~otto.host.login_proxy.LoginProxyError`
         rather than silently proxying from the wrong account.
         """
-        target = as_user if as_user is not None else self._connections.login_target
+        target = user if user is not None else self._connections.login_target
         direct, hops = resolve_chain(self.creds, target)
 
         if self.term == "ssh":
@@ -762,7 +762,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             if direct.login != via_login:
                 raise LoginProxyError(
                     f"{self.name}: login is authenticated as {via_login!r}, "
-                    f"but --as-user {target!r} resolves to a direct login of "
+                    f"but --user {target!r} resolves to a direct login of "
                     f"{direct.login!r}; starting a fresh connection as "
                     f"{direct.login!r} is not supported."
                 )
@@ -776,11 +776,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             )
             return
 
-        user, password = self._connections.credentials
-        if direct.login != user:
+        login_user, password = self._connections.credentials
+        if direct.login != login_user:
             raise LoginProxyError(
-                f"{self.name}: login is authenticated as {user!r}, but "
-                f"--as-user {target!r} resolves to a direct login of "
+                f"{self.name}: login is authenticated as {login_user!r}, but "
+                f"--user {target!r} resolves to a direct login of "
                 f"{direct.login!r}; starting a fresh connection as "
                 f"{direct.login!r} is not supported."
             )
@@ -796,7 +796,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
         client = TelnetClient(
             host=connect_host,
-            user=user,
+            user=login_user,
             password=password or "",
             options=interactive_options,
             connect_port=connect_port,
@@ -809,7 +809,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 client=client,
                 host_name=self.name,
                 proxy_hops=hops,
-                via_login=user,
+                via_login=login_user,
                 host_id=self.id,
             )
         finally:
@@ -822,6 +822,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         cmd: str,
         timeout: float,
         log: LogMode = LogMode.NORMAL,
+        user: str | None = None,
     ) -> CommandResult:
         """Run a single command concurrent-safely, independent of the persistent shell.
 
@@ -871,6 +872,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             :meth:`~otto.host.host.BaseHost.run`: stateful, sequential alternative
             with expect support.
         """
+        if user is not None:
+            raise NotImplementedError(
+                f"{self.name}: exec(user=...) is not supported on UnixHost — "
+                f"run(sudo=True) elevates whole commands; a per-call unix user "
+                f"is a ledgered follow-up"
+            ) from None
         return await self._session_mgr.exec(cmd, timeout=timeout, log=self._effective_log(log))
 
     ####################
@@ -891,9 +898,18 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             ),
         ],
         dest_dir: Path,
+        user: Annotated[
+            str | None,
+            Opt(help="Not supported on this host type — containers only."),
+        ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
         """Transfer files from remote host to the local machine."""
+        if user is not None:
+            raise NotImplementedError(
+                f"{self.name}: get(user=...) is not supported on UnixHost — "
+                f"transfer ownership follows the connection's own identity"
+            ) from None
         if not isinstance(src_files, list):
             src_files = [src_files]
         if is_dry_run():
@@ -917,6 +933,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             int | str | None,
             Opt(help="Octal permission bits for the uploaded file(s), e.g. 755, 0644, 0o4755."),
         ] = None,
+        user: Annotated[
+            str | None,
+            Opt(help="Not supported on this host type — containers only."),
+        ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
         """Transfer files from local machine to remote host.
@@ -926,6 +946,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         ``"0755"``, ``"0o755"``). It is applied in one batched ``chmod`` after
         the bytes land, whichever unix backend (scp/sftp/ftp/nc) carried them.
         """
+        if user is not None:
+            raise NotImplementedError(
+                f"{self.name}: put(user=...) is not supported on UnixHost — "
+                f"transfer ownership follows the connection's own identity"
+            ) from None
         if not isinstance(src_files, list):
             src_files = [src_files]
         dest_dir = self._resolve_dest(dest_dir)

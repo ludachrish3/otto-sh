@@ -101,6 +101,16 @@ def _validate_timeout(timeout: float) -> float:
     return float(timeout)
 
 
+def _validate_user(user: str) -> None:
+    """Refuse a user value docker or chown could misparse; forms are otherwise verbatim."""
+    if not isinstance(user, str):
+        raise TypeError(
+            f"user must be a string (e.g. 'root', '1000', '1000:1000'); got {type(user).__name__}"
+        )
+    if not user or any(c.isspace() for c in user):
+        raise ValueError(f"user must be a non-empty string with no whitespace; got {user!r}")
+
+
 logger = getLogger(__name__)
 
 
@@ -479,9 +489,9 @@ class Host(Protocol):
     source_lab: str
     """Lab this host came from, stamped by the loader (see :attr:`BaseHost.source_lab`)."""
 
-    async def _login(self, as_user: str | None = None) -> None: ...
+    async def _login(self, user: str | None = None) -> None: ...
 
-    async def login(self, as_user: str | None = None) -> None:
+    async def login(self, user: str | None = None) -> None:
         """Open an interactive shell bridged to the local terminal."""
         ...
 
@@ -492,6 +502,7 @@ class Host(Protocol):
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
         sudo: bool = False,
+        user: str | None = None,
     ) -> Results:
         """Run one or more commands on the host and collect their results.
 
@@ -511,6 +522,13 @@ class Host(Protocol):
                 :exc:`NotImplementedError`; a host whose userland offers no
                 mechanism raises
                 :exc:`~otto.host.errors.UnsupportedOnUserlandError`.
+            user: Run the commands as this user. Containers implement this
+                (``docker exec -u``); host families without user-switching
+                run semantics refuse loudly. ``None`` means the container's
+                declared default, or the connection's own identity elsewhere.
+                On containers the persistent channel binds its user at open;
+                a later ``run()`` naming a different user refuses — ``close()``
+                or ``rebuild_connections()`` to rebind.
 
         Returns:
             A :class:`~otto.result.Results` aggregating one :class:`~otto.result.CommandResult`
@@ -523,6 +541,7 @@ class Host(Protocol):
         cmd: str,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
+        user: str | None = None,
     ) -> CommandResult:
         """Run a single command outside the typical stateful ``run`` workflow.
 
@@ -534,6 +553,15 @@ class Host(Protocol):
         multiple coroutines. Families exposing only a single console (e.g.
         :class:`~otto.host.embedded_host.EmbeddedHost`) share the persistent
         session and are **not** concurrency-safe — see the concrete class.
+
+        Args:
+            cmd: Shell command to run.
+            timeout: Seconds before the command is abandoned.
+            log: Logging disposition for this call.
+            user: Run the command as this user. Containers implement this
+                (``docker exec -u``); host families without user-switching
+                exec semantics refuse loudly. ``None`` means the container's
+                declared default, or the connection's own identity elsewhere.
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
@@ -599,8 +627,14 @@ class Host(Protocol):
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
+        user: str | None = None,
     ) -> Result:
         """Download one or more files from the host to a local directory.
+
+        ``user`` is accepted for interface uniformity with :meth:`put`.
+        Containers ignore it — reads are ownership-indifferent, so there is
+        nothing to chown. Host families without a container's cp+chown
+        transfer path refuse it loudly instead of silently ignoring it.
 
         Returns a :class:`~otto.result.Result` whose ``value`` is a
         ``dict[Path, Result]`` mapping each source path — keyed exactly as
@@ -622,6 +656,7 @@ class Host(Protocol):
         src_files: list[Path] | Path,
         dest_dir: Path,
         mode: int | str | None = None,
+        user: str | None = None,
     ) -> Result:
         """Upload one or more local files to a directory on the host.
 
@@ -631,6 +666,15 @@ class Host(Protocol):
         permissions. Hosts whose transfer backend has no permission model
         (embedded ``console``/``tftp``) reject a non-``None`` mode before
         transferring anything.
+
+        ``user`` chowns the landed files inside a container to that identity
+        — root performs the chown after the files land, since the image's
+        default user may not own what ``docker cp`` just placed; a chown
+        failure fails the transfer loudly, per file. Any form ``chown``
+        itself accepts is passed through verbatim: a name, a UID, or the
+        ``UID:GID``/``name:group`` owner:group spelling. Host families whose
+        transfer path has no such notion of ownership refuse a non-``None``
+        ``user`` loudly rather than silently ignoring it.
 
         Returns a :class:`~otto.result.Result` whose ``value`` is a
         ``dict[Path, Result]`` mapping each source path — keyed exactly as
@@ -644,8 +688,8 @@ class Host(Protocol):
         ok, so the aggregate is non-ok and no caller reads the transfer as
         having happened; the per-file ``value`` still carries the destination
         path, because that is computed locally and IS the preview. A file that
-        transferred but whose ``mode`` could not be applied is an error entry
-        that still carries its ``dest_path``.
+        transferred but whose ``mode`` could not be applied, or whose ``user``
+        chown failed, is an error entry that still carries its ``dest_path``.
         """
         ...
 
@@ -1153,13 +1197,22 @@ class BaseHost(ABC):
     #  Command execution
     ####################
 
-    async def _login(self, as_user: str | None = None) -> None:
+    async def _login(self, user: str | None = None) -> None:
         raise NotImplementedError(
             f"The '{self.__class__.__name__}' class does not support interactive sessions"
         ) from None
 
     @cli_exposed
-    async def login(self, as_user: str | None = None) -> None:
+    async def login(
+        self,
+        user: Annotated[
+            str | None,
+            Opt(
+                help="Land the session as this user (containers via docker exec -u; "
+                "unix replays login-proxy hops)."
+            ),
+        ] = None,
+    ) -> None:
         """Open an interactive shell bridged to the local terminal.
 
         Subclasses implement ``_login`` to do the actual protocol
@@ -1183,19 +1236,22 @@ class BaseHost(ABC):
         the exposed caller is the LIBRARY one.
 
         Args:
-            as_user: Land the session on this login instead of the
-                connection's configured default, replaying any login-proxy
-                hops needed to reach it (see :mod:`otto.host.login_proxy`).
-                Hosts that cannot proxy raise :exc:`NotImplementedError`.
+            user: Land the session on this login instead of the
+                connection's configured default. Containers implement it via
+                ``docker exec -u``; unix hosts replay any login-proxy hops
+                needed to reach it (see :mod:`otto.host.login_proxy`). Hosts
+                that can do neither raise :exc:`NotImplementedError`.
         """
+        if user is not None:
+            _validate_user(user)
         if is_dry_run():
-            target = f"as {as_user!r}" if as_user is not None else "as the configured login user"
+            target = f"as {user!r}" if user is not None else "as the configured login user"
             self._log_command(
                 f"[DRY RUN] login({self.name}) {target} — no interactive shell opened, "
                 f"no connection made"
             )
             return
-        await self._login(as_user)
+        await self._login(user)
 
     @cli_exposed
     async def run(
@@ -1211,6 +1267,13 @@ class BaseHost(ABC):
         ] = DEFAULT_COMMAND_TIMEOUT,
         log: Annotated[LogMode, Exclude] = LogMode.NORMAL,
         sudo: bool = False,
+        user: Annotated[
+            str | None,
+            Opt(
+                help="Run as this user (containers only; other hosts refuse). "
+                "The persistent channel binds its user when it opens."
+            ),
+        ] = None,
     ) -> Results:
         """Execute one or more commands on the host via the persistent shell session.
 
@@ -1246,6 +1309,13 @@ class BaseHost(ABC):
                 userland offers neither mechanism raises
                 :exc:`~otto.host.errors.UnsupportedOnUserlandError` rather than
                 emitting a command that cannot work — see ``_elevate``.
+            user: Run each command as this user. Containers implement this
+                (``docker exec -u``); host families without user-switching
+                run semantics refuse loudly. ``None`` means the container's
+                declared default, or the connection's own identity elsewhere.
+                On containers the persistent channel binds its user at open;
+                a later run() naming a different user refuses — close() or
+                rebuild_connections() to rebind.
 
         Returns:
             A :class:`~otto.result.Results` aggregating one :class:`~otto.result.CommandResult`
@@ -1265,6 +1335,8 @@ class BaseHost(ABC):
         See Also:
             :meth:`exec`: stateless, concurrent-safe alternative for one-off commands.
         """
+        if user is not None:
+            _validate_user(user)
         timeout = _validate_timeout(timeout)
         default_expects = _normalize_expects(expects)
         if sudo:
@@ -1291,6 +1363,7 @@ class BaseHost(ABC):
                 timeout=single.timeout if single.timeout is not None else timeout,
                 # _resolve_command collapsed the None sentinel into a concrete LogMode.
                 log=single.log if single.log is not None else LogMode.NORMAL,
+                user=user,
             )
             return Results.collect([result])
 
@@ -1305,6 +1378,7 @@ class BaseHost(ABC):
                 timeout=t,
                 # _resolve_command collapsed the None sentinel into a concrete LogMode.
                 log=sc.log if sc.log is not None else LogMode.NORMAL,
+                user=user,
             )
 
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
@@ -1319,6 +1393,7 @@ class BaseHost(ABC):
         timeout: float,
         expects: list[Expect] | None = None,
         log: LogMode = LogMode.NORMAL,
+        user: "str | None" = None,
     ) -> CommandResult:
         """Per-command runner for the persistent shell session. Subclasses override."""
         raise NotImplementedError from None
@@ -1328,11 +1403,12 @@ class BaseHost(ABC):
         cmd: str,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
+        user: str | None = None,
     ) -> CommandResult:
         """Run a single command outside the persistent shell session.
 
-        Validates *timeout* and delegates to ``_exec_one``, which each host
-        family implements. Do not override this method — override
+        Validates *timeout* and *user* and delegates to ``_exec_one``, which
+        each host family implements. Do not override this method — override
         ``_exec_one``, so the validation cannot be bypassed.
 
         Args:
@@ -1341,17 +1417,24 @@ class BaseHost(ABC):
                 :data:`DEFAULT_COMMAND_TIMEOUT`; pass ``float("inf")`` for a
                 deliberately unbounded command.
             log: Logging disposition for this call.
+            user: Run the command as this user. Containers implement this
+                (``docker exec -u``); host families without user-switching
+                exec semantics refuse loudly. ``None`` means the container's
+                declared default, or the connection's own identity elsewhere.
         """
+        if user is not None:
+            _validate_user(user)
         timeout = _validate_timeout(timeout)
         if is_dry_run():
             return self._dry_run_result(cmd, log)
-        return await self._exec_one(cmd, timeout=timeout, log=log)
+        return await self._exec_one(cmd, timeout=timeout, log=log, user=user)
 
     async def _exec_one(
         self,
         cmd: str,
         timeout: float,
         log: LogMode = LogMode.NORMAL,
+        user: str | None = None,
     ) -> CommandResult:
         """Family-specific stateless command runner. Subclasses override."""
         raise NotImplementedError from None
@@ -1452,6 +1535,7 @@ class BaseHost(ABC):
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
+        user: str | None = None,
     ) -> Result:
         """Download files from the host to a local directory. Subclasses must override."""
         raise NotImplementedError from None
@@ -1461,6 +1545,7 @@ class BaseHost(ABC):
         src_files: list[Path] | Path,
         dest_dir: Path,
         mode: int | str | None = None,
+        user: str | None = None,
     ) -> Result:
         """Upload local files to a directory on the host. Subclasses must override."""
         raise NotImplementedError from None

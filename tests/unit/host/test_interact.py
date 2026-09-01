@@ -600,16 +600,16 @@ class TestUnixHostLoginDispatch:
 
 
 # ---------------------------------------------------------------------------
-# Task 9: UnixHost._login(as_user=...) — resolve_chain + direct-cred guard
+# Task 9: UnixHost._login(user=...) — resolve_chain + direct-cred guard
 # ---------------------------------------------------------------------------
 
 
-class TestUnixHostLoginAsUser:
+class TestUnixHostLoginUser:
     @pytest.mark.asyncio
-    async def test_ssh_as_user_passes_resolved_hops_and_via_login(self):
+    async def test_ssh_user_passes_resolved_hops_and_via_login(self):
         from otto.host.unix_host import UnixHost
 
-        # login_target defaults to the first cred ("admin"); --as-user mysql
+        # login_target defaults to the first cred ("admin"); --user mysql
         # resolves through admin via a single su hop.
         host = UnixHost(
             ip="10.0.0.1",
@@ -625,7 +625,7 @@ class TestUnixHostLoginAsUser:
         host._connections.ssh = AsyncMock(return_value=fake_conn)  # type: ignore[method-assign]
 
         with patch("otto.host.unix_host.run_ssh_login", new=AsyncMock()) as mock_ssh_login:
-            await host._login(as_user="mysql")
+            await host._login(user="mysql")
 
         mock_ssh_login.assert_awaited_once()
         kwargs = mock_ssh_login.await_args.kwargs
@@ -638,8 +638,8 @@ class TestUnixHostLoginAsUser:
         await host.close()
 
     @pytest.mark.asyncio
-    async def test_ssh_as_user_mismatched_direct_login_raises(self):
-        """--as-user resolving to a DIFFERENT direct login than the one the
+    async def test_ssh_user_mismatched_direct_login_raises(self):
+        """--user resolving to a DIFFERENT direct login than the one the
         cached connection already authenticated as is out of scope — the
         connection can't be re-authenticated mid-session, so this must raise
         a clear LoginProxyError rather than silently proxying as the wrong
@@ -663,13 +663,13 @@ class TestUnixHostLoginAsUser:
             patch("otto.host.unix_host.run_ssh_login", new=AsyncMock()) as mock_ssh_login,
             pytest.raises(LoginProxyError, match=r"other.*admin"),
         ):
-            await host._login(as_user="admin")
+            await host._login(user="admin")
 
         mock_ssh_login.assert_not_awaited()
         await host.close()
 
     @pytest.mark.asyncio
-    async def test_telnet_as_user_passes_resolved_hops_and_via_login(self):
+    async def test_telnet_user_passes_resolved_hops_and_via_login(self):
         from otto.host.unix_host import UnixHost
 
         host = UnixHost(
@@ -689,7 +689,7 @@ class TestUnixHostLoginAsUser:
             patch("otto.host.unix_host.TelnetClient", return_value=fake_client),
             patch("otto.host.unix_host.run_telnet_login", new=AsyncMock()) as mock_login,
         ):
-            await host._login(as_user="mysql")
+            await host._login(user="mysql")
 
         mock_login.assert_awaited_once()
         kwargs = mock_login.await_args.kwargs
@@ -702,7 +702,7 @@ class TestUnixHostLoginAsUser:
         await host.close()
 
     @pytest.mark.asyncio
-    async def test_telnet_as_user_mismatched_direct_login_raises_before_connecting(self):
+    async def test_telnet_user_mismatched_direct_login_raises_before_connecting(self):
         from otto.host.unix_host import UnixHost
 
         host = UnixHost(
@@ -722,7 +722,7 @@ class TestUnixHostLoginAsUser:
             patch("otto.host.unix_host.run_telnet_login", new=AsyncMock()) as mock_login,
             pytest.raises(LoginProxyError, match=r"other.*admin"),
         ):
-            await host._login(as_user="admin")
+            await host._login(user="admin")
 
         # Failed before ever building a dedicated telnet client/connection.
         mock_cls.assert_not_called()

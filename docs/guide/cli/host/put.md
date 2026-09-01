@@ -31,6 +31,7 @@ destination — completes against the host itself
 | Option | Default | Description |
 | ------ | ------- | ----------- |
 | `--mode TEXT` | backend default | **`put` only.** Octal permission bits for the uploaded file(s) — `755`, `0644`, `0o4755`. Always read as octal, never decimal |
+| `--user NAME` | none | Chown the landed file(s) to this owner. Containers only — every other host family refuses it on both `put` and `get`. On containers, `get` accepts it and ignores it: reads are ownership-indifferent. See {ref}`container-users` |
 
 The mode is applied after the bytes land, in one batched `chmod` covering the
 whole transfer.  Hosts whose transfer backend has no permission model

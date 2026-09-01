@@ -417,6 +417,11 @@ async def test_docker_put_chmods_inside_the_container(monkeypatch):
     # __new__ skips __init__, which is what stamps the BaseHost-contract
     # `name`; the staging-cleanup teardown_step labels the host with it.
     monkeypatch.setattr(host, "name", "parent:abc123", raising=False)
+    # __new__ also leaves the dataclass's own slots unset (slots=True means
+    # there is no class-level default to fall back on) — Task 6's put() now
+    # reads `self.user` unconditionally via `_effective_user`, so a declared
+    # default of None must be stamped here too.
+    monkeypatch.setattr(host, "user", None, raising=False)
 
     result = await host.put([src], dest_dir, mode="755")
 

@@ -1855,8 +1855,8 @@ class TestADryRunOpensNoSessionOnAnyHost:
 
         logins: list[str | None] = []
 
-        async def recording_login(as_user: str | None = None) -> None:
-            logins.append(as_user)
+        async def recording_login(user: str | None = None) -> None:
+            logins.append(user)
 
         host._auto_up = recording_auto_up
         host._session_mgr.open_session = recording_open
@@ -1941,8 +1941,8 @@ class TestADryRunOpensNoSessionOnAnyHost:
         host = _unix()
         logins: list[str | None] = []
 
-        async def recording_login(as_user: str | None = None) -> None:
-            logins.append(as_user)
+        async def recording_login(user: str | None = None) -> None:
+            logins.append(user)
 
         host._login = recording_login
 

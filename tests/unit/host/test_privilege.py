@@ -134,7 +134,7 @@ async def test_run_without_sudo_is_unchanged():
     host = LocalHost()
     captured = {}
 
-    async def fake_run_one(cmd, expects=None, timeout=None, log=LogMode.NORMAL):
+    async def fake_run_one(cmd, expects=None, timeout=None, log=LogMode.NORMAL, user=None):
         captured["cmd"] = cmd
         return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
@@ -146,7 +146,7 @@ async def test_run_without_sudo_is_unchanged():
 def _capture_run_one(host):
     captured = {}
 
-    async def fake_run_one(cmd, expects=None, timeout=None, log=LogMode.NORMAL):
+    async def fake_run_one(cmd, expects=None, timeout=None, log=LogMode.NORMAL, user=None):
         captured["cmd"] = cmd
         captured["expects"] = expects
         return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
@@ -874,7 +874,7 @@ def _capture_every_run_one():
     """
     seen: list[str] = []
 
-    async def fake_run_one(cmd, expects=None, timeout=None, log=LogMode.NORMAL):
+    async def fake_run_one(cmd, expects=None, timeout=None, log=LogMode.NORMAL, user=None):
         seen.append(cmd)
         return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
@@ -1061,7 +1061,7 @@ async def test_a_refusal_is_not_swallowed_into_a_successful_reboot():
     )
     issued: list[str] = []
 
-    async def fake_run_one(cmd, expects=None, timeout=None, log=LogMode.NORMAL):
+    async def fake_run_one(cmd, expects=None, timeout=None, log=LogMode.NORMAL, user=None):
         issued.append(cmd)
         return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 

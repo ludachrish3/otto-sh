@@ -1198,16 +1198,33 @@ class _DockerSshSession(SshSession):
     constructed with a placeholder ``container_id=""`` (declared but not yet
     up) work correctly once :meth:`DockerContainerHost._ensure_running`
     populates the id.
+
+    ``user_getter`` is read at the same moment and for the same reason. The
+    ``-u`` flag is fixed for the life of the channel, so the user has to be
+    decided by whoever opens it — and an open can be initiated by ``run``,
+    ``send`` or ``expect`` alike. The getter answers "what user would this
+    host open a channel as, right now"; ``on_open`` is how the host learns
+    what it actually got.
+
+    ``on_open`` is invoked with that user AFTER the transport is up, and only
+    for the DEFAULT run channel — named auxiliary sessions are built from a
+    factory that leaves it ``None``, so they open with the same user but do
+    not touch the host's record of which user the run channel is on. See
+    :meth:`DockerContainerHost._record_run_channel_open`.
     """
 
     def __init__(
         self,
         conn_provider: "Callable[[], Awaitable[SSHClientConnection]]",
         container_id_getter: Callable[[], str],
+        user_getter: "Callable[[], str | None] | None" = None,
+        on_open: "Callable[[str | None], None] | None" = None,
     ) -> None:
         super().__init__(conn=None)
         self._conn_provider = conn_provider
         self._cid_getter = container_id_getter
+        self._user_getter = user_getter
+        self._on_open = on_open
 
     @override
     async def _open(self) -> None:
@@ -1220,8 +1237,14 @@ class _DockerSshSession(SshSession):
                 "DockerSshSession opened with empty container_id — "
                 "DockerContainerHost._ensure_running must populate the id first."
             )
-        self._open_cmd = f"docker exec -it {shlex.quote(cid)} sh"
+        opened_as = self._user_getter() if self._user_getter is not None else None
+        u = f" -u {shlex.quote(opened_as)}" if opened_as is not None else ""
+        self._open_cmd = f"docker exec -it{u} {shlex.quote(cid)} sh"
         await super()._open()
+        # AFTER the transport is up, never before: an open that raises must
+        # leave the host's bind record untouched.
+        if self._on_open is not None:
+            self._on_open(opened_as)
 
 
 class HostSession:
@@ -1850,6 +1873,7 @@ class SessionManager:
         log_command: Callable[[str, LogMode], None] = lambda *_: None,
         log_output: Callable[[str, LogMode], None] = lambda *_: None,
         session_factory: "Callable[[], ShellSession] | None" = None,
+        named_session_factory: "Callable[[], ShellSession] | None" = None,
         exec_factory: "Callable[[str, float], Awaitable[CommandResult]] | None" = None,
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
@@ -1863,6 +1887,14 @@ class SessionManager:
         self._log_command = log_command
         self._log_output = log_output
         self._session_factory = session_factory
+        # How to build a NAMED auxiliary session, when that differs from the
+        # default channel. ``None`` (the norm) means "same factory as the
+        # default"; DockerContainerHost passes a distinct one whose sessions do
+        # not record a run-channel binding. Resolved at USE, not folded into
+        # ``_session_factory`` here, because ``_session_factory`` is a seam
+        # tests reassign on a live manager — snapshotting the fallback would
+        # silently ignore every such reassignment.
+        self._named_session_factory = named_session_factory
         self._exec_factory = exec_factory
         # Creds forwarded to HostSessions so named sessions can elevate via
         # otto.host.login_proxy.perform_switch. None on non-posix hosts →
@@ -1911,6 +1943,19 @@ class SessionManager:
         # names (notably the unique `__exec_pool_N__` names) connect in
         # parallel while same-name callers still resolve to one session.
         self._named_session_locks: dict[str, asyncio.Lock] = {}
+
+    @property
+    def has_live_default_session(self) -> bool:
+        """Whether the DEFAULT session is currently open and responsive.
+
+        The default session is the one ``run_cmd``/``send``/``expect`` share.
+
+        Narrower than :attr:`has_live_sessions`, which any named session
+        satisfies. Callers that need to know whether *the* persistent channel
+        is up (rather than whether this host holds any shell at all) want this
+        one.
+        """
+        return self._session is not None and self._session.alive
 
     @property
     def has_live_sessions(self) -> bool:
@@ -2412,8 +2457,9 @@ class SessionManager:
             if existing is not None:
                 await existing._session.close()  # noqa: SLF001 — intra-package access to HostSession._session to close dead transport
 
-            if self._session_factory is not None:
-                shell_session: ShellSession = self._session_factory()
+            named_factory = self._named_session_factory or self._session_factory
+            if named_factory is not None:
+                shell_session: ShellSession = named_factory()
             else:
                 assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no session_factory
                 match self._connections.term:

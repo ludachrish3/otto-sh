@@ -8,6 +8,7 @@ the placeholder ``container_id == ""`` guard.
 from __future__ import annotations
 
 import shlex
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -47,13 +48,16 @@ def _mock_parent(parent_id: str = "test3", *, term: str = "ssh"):
     return parent
 
 
-def _make_container(parent=None, container_id: str = "abc123def456") -> DockerContainerHost:
+def _make_container(
+    parent=None, container_id: str = "abc123def456", *, user: str | None = None
+) -> DockerContainerHost:
     return DockerContainerHost(
         parent=parent or _mock_parent(),
         container_id=container_id,
         project="repo1",
         service="api",
         compose_project="otto-repo1-vagrant",
+        user=user,
     )
 
 
@@ -183,6 +187,68 @@ async def test_exec_preserves_every_field_through_the_command_rebuild():
     assert result.command != wrapped_cmd
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("declared", "per_call", "expected_u"),
+    [
+        (None, None, None),  # neither → no -u
+        ("postgres", None, "postgres"),  # declared default
+        (None, "root", "root"),  # per-call
+        ("postgres", "root", "root"),  # per-call beats declared
+    ],
+)
+async def test_docker_exec_wrapper_effective_user(declared, per_call, expected_u):
+    host = _make_container(user=declared)
+    wrapped = await host._docker_exec("id", user=host._effective_user(per_call))
+    if expected_u is None:
+        assert " -u " not in wrapped
+    else:
+        assert f" -u {expected_u} " in wrapped
+
+
+@pytest.mark.asyncio
+async def test_exec_user_bad_form_refused():
+    host = _make_container()
+    with pytest.raises(ValueError, match="non-empty string with no whitespace"):
+        await host.exec("id", user="a b")
+
+
+@pytest.mark.asyncio
+async def test_exec_threads_per_call_user_to_docker_dash_u():
+    """Enter through the real path — ``host.exec()`` — rather than composing
+    ``_docker_exec``/``_effective_user`` directly, so a broken hop anywhere
+    in ``_exec_one`` → ``_exec_via_parent`` → ``_docker_exec`` shows up here
+    even though ``test_docker_exec_wrapper_effective_user`` above (which
+    builds its own wrapped string) cannot see it.
+    """
+    parent = _mock_parent()
+    h = _make_container(parent)
+    parent.exec.return_value = _ok(out="0")
+
+    await h.exec("id", user="root")
+
+    sent = parent.exec.call_args.args[0]
+    assert " -u root " in sent
+    assert sent.index(" -u root ") < sent.index(h.container_id)  # -u precedes the container id
+
+
+@pytest.mark.asyncio
+async def test_exec_uses_declared_default_user_when_none_given():
+    """Same real path, no per-call user: the container's declared default
+    (set at construction — never passed to ``exec()``) must still reach
+    docker via ``_effective_user``.
+    """
+    parent = _mock_parent()
+    h = _make_container(parent, user="postgres")
+    parent.exec.return_value = _ok(out="0")
+
+    await h.exec("id")
+
+    sent = parent.exec.call_args.args[0]
+    assert " -u postgres " in sent
+    assert sent.index(" -u postgres ") < sent.index(h.container_id)
+
+
 # ---------------------------------------------------------------------------
 # run — persistent-shell dispatch
 # ---------------------------------------------------------------------------
@@ -246,6 +312,434 @@ async def test_session_factory_resolves_container_id_lazily():
     h.container_id = "resolved_cid_xyz"
     session = h._session_mgr._session_factory()
     assert session._cid_getter() == "resolved_cid_xyz"
+
+
+# ---------------------------------------------------------------------------
+# run(user=...) — the persistent channel binds its user at its OPEN
+# ---------------------------------------------------------------------------
+
+
+def _channel_container(user: str | None = None) -> DockerContainerHost:
+    """Container on a real (offline) SSH-based UnixHost parent, so the real
+    ``SessionManager`` and the real ``_DockerSshSession`` factory are in play."""
+    return _make_container(_build_fake_ssh_remote_host(), user=user)
+
+
+@contextmanager
+def _stubbed_docker_channel():
+    """Run the REAL channel machinery with only the transport stubbed.
+
+    The bind seam is made of the session factory (which wires ``user_getter``
+    and ``on_open``), ``_DockerSshSession._open`` (which builds the command
+    and fires the callback), and ``alive``. All of those run for real here;
+    what is replaced is the ssh channel underneath and the marker handshake.
+    Tests therefore enter at ``host.run``/``host.send``/``host.open_session``
+    and observe what the channel ACTUALLY opened with — a helper that composed
+    the open itself could not tell a live binding from a dead one.
+
+    Yields the list of sessions opened, oldest first.
+    """
+    from otto.host.session import ShellSession, SshSession
+
+    opened: list = []
+
+    async def _fake_transport_open(self):
+        return None
+
+    async def _fake_init(self):
+        if self._initialized:
+            return
+        await self._open()  # the real _DockerSshSession._open
+        self._initialized = True
+        self._alive = True
+        opened.append(self)
+
+    async def _fake_run_cmd(self, cmd, **kwargs):
+        return _ok(cmd)
+
+    async def _fake_send(self, text):
+        return None
+
+    async def _fake_expect(self, pattern, timeout=None):
+        return pattern if isinstance(pattern, str) else pattern.pattern
+
+    async def _fake_close(self):
+        self._alive = False
+        self._initialized = False
+
+    with (
+        patch.object(SshSession, "_open", new=_fake_transport_open),
+        patch.object(SshSession, "close", new=_fake_close),
+        patch.object(ShellSession, "_ensure_initialized", new=_fake_init),
+        patch.object(ShellSession, "run_cmd", new=_fake_run_cmd),
+        patch.object(ShellSession, "send", new=_fake_send),
+        patch.object(ShellSession, "expect", new=_fake_expect),
+    ):
+        yield opened
+
+
+@pytest.mark.asyncio
+async def test_run_channel_binds_user_at_open():
+    host = _channel_container(user="postgres")
+    with _stubbed_docker_channel() as opened:
+        # the first open binds the declared default...
+        await host.run("id")
+        assert " -u postgres " in opened[-1]._open_cmd
+        assert host._bound_run_user == "postgres"
+        assert host._run_channel_is_bound is True
+        # ...and a differing per-call user now refuses loudly
+        with pytest.raises(RuntimeError, match="persistent run channel is bound to user"):
+            await host.run("id", user="root")
+
+
+@pytest.mark.asyncio
+async def test_run_open_command_carries_the_per_call_user():
+    """End to end: ``run(user=...)`` reaches the channel's ``docker exec -u``."""
+    host = _channel_container()
+    with _stubbed_docker_channel() as opened:
+        await host.run("id", user="root")
+    assert " -u root " in opened[-1]._open_cmd
+    assert opened[-1]._open_cmd.index(" -u root ") < opened[-1]._open_cmd.index(host.container_id)
+    assert host._bound_run_user == "root"
+
+
+@pytest.mark.asyncio
+async def test_per_call_user_wins_the_bind_over_the_declared_default():
+    """Precedence AT THE BIND, not just inside ``_effective_user``."""
+    host = _channel_container(user="postgres")
+    with _stubbed_docker_channel() as opened:
+        await host.run("id", user="root")
+    assert " -u root " in opened[-1]._open_cmd
+    assert " -u postgres " not in opened[-1]._open_cmd
+    assert host._bound_run_user == "root"
+
+
+@pytest.mark.asyncio
+async def test_send_opens_the_channel_and_a_differing_run_then_refuses():
+    """``send()`` opens the SAME channel ``run()`` uses, and binds it.
+
+    The bind record has to describe the shell that is actually running, not
+    the last thing ``run()`` intended — otherwise this call would "bind" root
+    on a channel already running as postgres and answer as postgres.
+    """
+    host = _channel_container(user="postgres")
+    with _stubbed_docker_channel() as opened:
+        await host.send("echo hi\n")
+        assert len(opened) == 1
+        assert " -u postgres " in opened[-1]._open_cmd
+        assert host._bound_run_user == "postgres"
+        with pytest.raises(
+            RuntimeError,
+            match=r"bound to user 'postgres' and this call asked for 'root'",
+        ):
+            await host.run("id", user="root")
+        # the refused call left no intent behind: a channel opened after it
+        # still opens as the declared user, not as the user that was refused
+        assert host._pending_run_user is None
+
+
+@pytest.mark.asyncio
+async def test_send_then_a_plain_run_shares_the_bound_channel():
+    host = _channel_container(user="postgres")
+    with _stubbed_docker_channel() as opened:
+        await host.send("echo hi\n")
+        result = await host.run("id")
+    assert result.only.status == Status.Success
+    assert len(opened) == 1  # reused, not reopened
+    assert host._bound_run_user == "postgres"
+
+
+@pytest.mark.asyncio
+async def test_expect_also_binds_the_channel_it_opens():
+    """``expect()`` is the third opener of the same channel."""
+    host = _channel_container(user="postgres")
+    with _stubbed_docker_channel() as opened:
+        assert await host.expect("hi", timeout=1.0) == "hi"
+        assert len(opened) == 1
+        assert " -u postgres " in opened[-1]._open_cmd
+        assert host._bound_run_user == "postgres"
+        with pytest.raises(RuntimeError, match="persistent run channel is bound to user"):
+            await host.run("id", user="root")
+
+
+@pytest.mark.asyncio
+async def test_a_failed_run_before_the_open_leaves_no_bind():
+    """``_ensure_running`` raising is a call that never reached a channel.
+
+    Recording the intent here (the first cut did) left a bind that refused the
+    next legitimate call even though no channel had ever opened.
+    """
+    host = _channel_container()
+    with _stubbed_docker_channel() as opened:
+        down = AsyncMock(side_effect=RuntimeError("container is down"))
+        with (
+            patch.object(host, "_ensure_running", new=down),
+            pytest.raises(RuntimeError, match="container is down"),
+        ):
+            await host.run("id", user="root")
+        assert opened == []
+        assert host._run_user_bound is False
+        assert host._run_channel_is_bound is False
+
+        await host.run("id", user="postgres")  # no stale refusal
+    assert host._bound_run_user == "postgres"
+    assert " -u postgres " in opened[-1]._open_cmd
+
+
+@pytest.mark.asyncio
+async def test_an_open_that_raises_leaves_no_bind():
+    """Same rule one layer down: the transport, not the intent, is the writer."""
+    from otto.host.session import SshSession
+
+    host = _channel_container()
+    with _stubbed_docker_channel() as opened:
+        with (
+            patch.object(
+                SshSession, "_open", new=AsyncMock(side_effect=RuntimeError("no channel"))
+            ),
+            pytest.raises(RuntimeError, match="no channel"),
+        ):
+            await host.run("id", user="root")
+        assert host._run_user_bound is False
+
+        await host.run("id", user="postgres")
+    assert host._bound_run_user == "postgres"
+    assert " -u postgres " in opened[-1]._open_cmd
+
+
+@pytest.mark.asyncio
+async def test_a_failed_run_leaves_no_pending_user_for_the_next_opener():
+    """A ``run(user=...)`` that dies before its channel opens must leave the
+    host exactly as it found it.
+
+    The residue is not a cosmetic leak. ``send()`` takes no ``user``, so it
+    would open the channel as the user the failed call asked for and never
+    obtained — and every plain ``run()`` afterwards would then refuse against
+    a binding the caller never asked for and cannot clear without a close.
+    """
+    host = _channel_container(user="postgres")
+    with _stubbed_docker_channel() as opened:
+        down = AsyncMock(side_effect=RuntimeError("container is down"))
+        with (
+            patch.object(host, "_ensure_running", new=down),
+            pytest.raises(RuntimeError, match="container is down"),
+        ):
+            await host.run("id", user="root")
+        assert host._pending_run_user is None
+
+        await host.send("echo hi\n")  # no user parameter to correct a stale one
+        assert " -u postgres " in opened[-1]._open_cmd
+        assert " -u root " not in opened[-1]._open_cmd
+        assert host._bound_run_user == "postgres"
+
+        result = await host.run("id")  # and the host is not bricked
+    assert result.only.status == Status.Success
+
+
+@pytest.mark.asyncio
+async def test_a_transport_failure_inside_run_cmd_leaves_no_pending_user():
+    """Same rule when the attempt dies INSIDE ``run_cmd`` rather than above it."""
+    from otto.host.session import SshSession
+
+    host = _channel_container(user="postgres")
+    with _stubbed_docker_channel() as opened:
+        with (
+            patch.object(
+                SshSession, "_open", new=AsyncMock(side_effect=RuntimeError("no channel"))
+            ),
+            pytest.raises(RuntimeError, match="no channel"),
+        ):
+            await host.run("id", user="root")
+        assert host._pending_run_user is None
+
+        await host.send("echo hi\n")
+    assert " -u postgres " in opened[-1]._open_cmd
+    assert host._bound_run_user == "postgres"
+
+
+@pytest.mark.asyncio
+async def test_a_successful_run_also_drops_its_pending_user():
+    """The intent is scoped to the attempt, not held until the next one."""
+    host = _channel_container(user="postgres")
+    with _stubbed_docker_channel():
+        await host.run("id", user="root")
+        assert host._pending_run_user is None
+        # ...and the live channel's own record is what later openers read
+        assert host._bound_run_user == "root"
+
+
+@pytest.mark.asyncio
+async def test_a_handshake_that_fails_after_the_open_leaves_no_live_bind():
+    """The record is written by the open, but consulted only while the channel
+    is LIVE. A transport that came up and then failed its readiness handshake
+    is discarded by ``SessionManager`` — it must not keep refusing calls."""
+    from otto.host.session import ShellSession
+
+    host = _channel_container()
+    with _stubbed_docker_channel() as opened:
+
+        async def _open_then_fail(self):
+            await self._open()  # fires the on-open callback for real
+            raise RuntimeError("handshake failed")
+
+        with (
+            patch.object(ShellSession, "_ensure_initialized", new=_open_then_fail),
+            pytest.raises(RuntimeError, match="handshake failed"),
+        ):
+            await host.run("id", user="root")
+
+        assert host._run_user_bound is True  # the open really did happen...
+        assert host._run_channel_is_bound is False  # ...but nothing is live
+        await host.run("id", user="postgres")  # so no stale refusal
+    assert host._bound_run_user == "postgres"
+    assert " -u postgres " in opened[-1]._open_cmd
+
+
+@pytest.mark.asyncio
+async def test_run_channel_rebinds_after_rebuild():
+    host = _channel_container()
+    with _stubbed_docker_channel() as opened:
+        await host.run("id", user="root")
+        assert host._bound_run_user == "root"
+        host.rebuild_connections()
+        assert host._run_user_bound is False
+        assert host._pending_run_user is None
+        await host.run("id", user="postgres")  # rebinding after rebuild is allowed
+    assert host._bound_run_user == "postgres"
+    assert " -u postgres " in opened[-1]._open_cmd
+
+
+@pytest.mark.asyncio
+async def test_run_channel_rebinds_after_close():
+    host = _channel_container(user="postgres")
+    with _stubbed_docker_channel() as opened:
+        await host.run("id")
+        await host.close()
+        assert host._run_user_bound is False
+        assert host._bound_run_user is None
+        await host.run("id", user="root")
+    assert host._bound_run_user == "root"
+    assert " -u root " in opened[-1]._open_cmd
+
+
+@pytest.mark.asyncio
+async def test_a_raising_close_still_forgets_the_binding():
+    """A teardown that fails half-way still leaves no channel this host may
+    claim to know the user of — otherwise a raising ``close()`` also poisons
+    every later ``run(user=...)`` with a refusal it can never clear."""
+    host = _channel_container(user="postgres")
+    with _stubbed_docker_channel():
+        await host.run("id")
+        assert host._run_user_bound is True
+        boom = AsyncMock(side_effect=RuntimeError("drain failed"))
+        with (
+            patch.object(host._session_mgr, "close_all", new=boom),
+            pytest.raises(RuntimeError, match="drain failed"),
+        ):
+            await host.close()
+        assert host._run_user_bound is False
+        assert host._bound_run_user is None
+        assert host._pending_run_user is None
+        # and the next call is not refused
+        result = await host.run("id", user="root")
+    assert result.only.status == Status.Success
+
+
+@pytest.mark.asyncio
+async def test_run_same_bound_user_is_fine():
+    host = _channel_container(user="postgres")
+    with _stubbed_docker_channel() as opened:
+        await host.run("id")
+        await host.run("id", user="postgres")  # equal to the bound user — no refusal
+    assert len(opened) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_binds_none_and_refuses_a_later_named_user():
+    """``None`` is itself a binding (the image's USER) — not "unbound"."""
+    host = _channel_container()
+    with _stubbed_docker_channel() as opened:
+        await host.run("id")
+        assert " -u " not in opened[-1]._open_cmd
+        assert host._run_user_bound is True
+        assert host._bound_run_user is None
+        with pytest.raises(RuntimeError, match="persistent run channel is bound to user"):
+            await host.run("id", user="root")
+
+
+@pytest.mark.asyncio
+async def test_run_sequence_form_threads_user_and_binds_once():
+    """The multi-command arm of ``run`` reaches ``_run_one`` through
+    ``_run_sc``/``_run_cmds_with_budget`` — a SECOND call site that has to
+    carry ``user`` too. Without it the sequence form would silently run on a
+    channel opened as the image's user while the single-command form honoured
+    the request.
+    """
+    host = _channel_container()
+    with _stubbed_docker_channel() as opened:
+        await host.run(["id", "whoami"], user="root")
+    assert len(opened) == 1
+    assert " -u root " in opened[-1]._open_cmd
+    assert host._bound_run_user == "root"
+
+
+@pytest.mark.asyncio
+async def test_run_user_bad_form_refused_before_anything_opens():
+    host = _channel_container()
+    with (
+        _stubbed_docker_channel() as opened,
+        pytest.raises(ValueError, match="non-empty string with no whitespace"),
+    ):
+        await host.run("id", user="a b")
+    assert opened == []
+    assert host._run_user_bound is False
+
+
+@pytest.mark.asyncio
+async def test_run_dry_run_never_opens_or_binds_the_channel():
+    host = _channel_container()
+    with _stubbed_docker_channel() as opened, active_context(dry_run=True):
+        await host.run("id", user="root")
+    assert opened == []
+    assert host._run_user_bound is False
+    assert host._bound_run_user is None
+    assert host._pending_run_user is None
+
+
+# --- named auxiliary sessions: same user, no bind record -------------------
+
+
+@pytest.mark.asyncio
+async def test_named_session_before_any_run_opens_as_the_declared_user():
+    host = _channel_container(user="postgres")
+    with _stubbed_docker_channel() as opened:
+        await host.open_session("mon")
+        assert " -u postgres " in opened[-1]._open_cmd
+        # ...and records nothing, so a later run is free to bind whatever it likes
+        assert host._run_user_bound is False
+        await host.run("id", user="root")
+    assert host._bound_run_user == "root"
+
+
+@pytest.mark.asyncio
+async def test_named_session_before_any_run_has_no_user_flag_when_none_declared():
+    host = _channel_container()
+    with _stubbed_docker_channel() as opened:
+        await host.open_session("mon")
+    assert " -u " not in opened[-1]._open_cmd
+    assert host._run_user_bound is False
+
+
+@pytest.mark.asyncio
+async def test_named_session_after_a_bound_run_opens_as_the_bound_user():
+    host = _channel_container(user="postgres")
+    with _stubbed_docker_channel() as opened:
+        await host.run("id", user="root")
+        await host.open_session("mon")
+        assert " -u root " in opened[-1]._open_cmd
+        # the run channel's own record is untouched by the named open
+        assert host._bound_run_user == "root"
+        assert host._run_channel_is_bound is True
 
 
 # ---------------------------------------------------------------------------
@@ -660,6 +1154,182 @@ async def test_get_two_step_via_parent():
 
 
 # ---------------------------------------------------------------------------
+# put/get user= — docker chown flow
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_put_chowns_landed_files_as_root():
+    """No per-call user: the declared service user is the chown target."""
+    parent = _mock_parent()
+    h = _make_container(parent, user="postgres")
+
+    status, _ = _sm(await h.put(Path("a.bin"), Path("/data")))
+
+    assert status == Status.Success
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
+    chown_calls = [c for c in cmds if "chown" in c]
+    assert len(chown_calls) == 1, cmds
+    assert chown_calls[0] == (
+        f"docker exec -i -u root {h.container_id} sh -c 'chown postgres /data/a.bin'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_put_chown_failure_fails_loudly_per_file():
+    """A per-call user beats the (absent) declared default, and a failed
+    chown flips the landed file to an error naming the file, the user, and
+    the reason — never a silent wrong-ownership success.
+    """
+    parent = _mock_parent()
+
+    def exec_side_effect(cmd, *_, **__):
+        if "chown" in cmd:
+            return _fail(cmd, out="chown: changing ownership: Operation not permitted")
+        return _ok(cmd)
+
+    parent.exec.side_effect = exec_side_effect
+    h = _make_container(parent)
+
+    result = await h.put(Path("a.bin"), Path("/data"), user="1000:1000")
+
+    assert not result.is_ok
+    per_file = result.value[Path("a.bin")]
+    assert per_file.status == Status.Error
+    assert "transferred, but chown to '1000:1000' failed" in per_file.msg
+    # dest_path is still carried even though ownership never landed.
+    assert per_file.value == Path("/data/a.bin")
+
+
+@pytest.mark.asyncio
+async def test_put_no_user_no_chown():
+    """Neither a per-call nor a declared user: no chown runs at all."""
+    parent = _mock_parent()
+    h = _make_container(parent)
+
+    status, _ = _sm(await h.put(Path("a.bin"), Path("/data")))
+
+    assert status == Status.Success
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
+    assert not any("chown" in c for c in cmds), cmds
+
+
+@pytest.mark.asyncio
+async def test_get_accepts_and_ignores_user():
+    """get(user=...) is accepted for interface uniformity but does nothing —
+    reads are ownership-indifferent, so nothing user-flavored ever runs.
+    """
+    parent = _mock_parent()
+    h = _make_container(parent)
+
+    status, _ = _sm(await h.get(Path("/data/a.bin"), Path("/tmp/out"), user="root"))
+
+    assert status == Status.Success
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
+    assert not any(" -u " in c for c in cmds), cmds
+
+
+@pytest.mark.asyncio
+async def test_put_mode_and_user_chmods_as_root():
+    """When both mode and user are given, the chmod ALSO runs as root inside
+    the container via the parent — the effective user may not own what
+    docker cp just landed, so only root can be relied on to chmod it.
+    """
+    parent = _mock_parent()
+    h = _make_container(parent, user="postgres")
+
+    status, _ = _sm(await h.put(Path("a.bin"), Path("/data"), mode="644"))
+
+    assert status == Status.Success
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
+    chmod_calls = [c for c in cmds if "chmod" in c]
+    assert len(chmod_calls) == 1, cmds
+    assert chmod_calls[0] == (
+        f"docker exec -i -u root {h.container_id} sh -c 'chmod 644 -- /data/a.bin'"
+    )
+    chown_calls = [c for c in cmds if "chown" in c]
+    assert len(chown_calls) == 1, cmds
+
+
+@pytest.mark.asyncio
+async def test_put_chown_precedes_chmod_to_preserve_setuid():
+    """chown MUST run before chmod: chowning a file after it lands its mode
+    clears S_ISUID/S_ISGID on most filesystems, which would silently defeat
+    a `mode="4755"` + `user=...` put. Pin the ORDER via transcript index —
+    a bare call count can't tell "chown then chmod" from "chmod then chown".
+    """
+    parent = _mock_parent()
+    h = _make_container(parent)
+
+    status, _ = _sm(await h.put(Path("a.bin"), Path("/data"), mode="4755", user="app"))
+
+    assert status == Status.Success
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
+    chown_cmd = f"docker exec -i -u root {h.container_id} sh -c 'chown app /data/a.bin'"
+    chmod_cmd = f"docker exec -i -u root {h.container_id} sh -c 'chmod 4755 -- /data/a.bin'"
+    assert chown_cmd in cmds, cmds
+    assert chmod_cmd in cmds, cmds
+    assert cmds.index(chown_cmd) < cmds.index(chmod_cmd), cmds
+
+
+@pytest.mark.asyncio
+async def test_put_validates_user():
+    """Entering at the public method: a malformed `user` (here, embedded
+    whitespace) is refused with `_validate_user`'s own message."""
+    h = _make_container()
+    with pytest.raises(ValueError, match="non-empty string with no whitespace"):
+        await h.put(Path("a.bin"), Path("/data"), user=" root")
+
+
+@pytest.mark.asyncio
+async def test_get_validates_user():
+    h = _make_container()
+    with pytest.raises(ValueError, match="non-empty string with no whitespace"):
+        await h.get(Path("/data/a.bin"), Path("/tmp/out"), user=" root")
+
+
+@pytest.mark.asyncio
+async def test_put_dry_run_validates_user_before_declining():
+    """`_validate_user` sits ABOVE the dry-run arm: a typo'd `user` under a
+    dry run raises rather than being folded into a harmless preview."""
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    with (
+        active_context(dry_run=True),
+        pytest.raises(ValueError, match="non-empty string with no whitespace"),
+    ):
+        await h.put(Path("a.bin"), Path("/data"), user=" root")
+    parent.exec.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_dry_run_validates_user_before_declining():
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    with (
+        active_context(dry_run=True),
+        pytest.raises(ValueError, match="non-empty string with no whitespace"),
+    ):
+        await h.get(Path("/data/a.bin"), Path("/tmp/out"), user=" root")
+    parent.exec.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_login_dry_run_validates_user_before_declining():
+    """`_validate_user` sits ABOVE the dry-run arm in `login`, same as
+    `put`/`get`: a typo'd `user` under a dry run raises rather than being
+    folded into a harmless preview."""
+    h = _make_container()
+    with (
+        patch.object(h, "_login", new_callable=AsyncMock) as mock,
+        active_context(dry_run=True),
+        pytest.raises(ValueError, match="non-empty string with no whitespace"),
+    ):
+        await h.login(user=" root")
+    mock.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
 # login() preconditions
 # ---------------------------------------------------------------------------
 
@@ -670,16 +1340,6 @@ async def test_login_requires_remote_ssh_parent():
     h = _make_container()
     with pytest.raises(NotImplementedError, match="SSH-based parent"):
         await h._login()
-
-
-@pytest.mark.asyncio
-async def test_login_as_user_raises_not_implemented():
-    """Task 9: DockerContainerHost has no login-proxy chain of its own —
-    passing --as-user must raise loudly rather than being silently ignored
-    or (worse) silently forwarded to the container's default shell."""
-    h = _make_container()
-    with pytest.raises(NotImplementedError, match="--as-user"):
-        await h._login(as_user="mysql")
 
 
 # ---------------------------------------------------------------------------
@@ -979,6 +1639,42 @@ async def test_login_ssh_runs_docker_exec():
     expected_cmd = f"docker exec -it {shlex.quote(h.container_id)} /bin/sh"
     assert "command" in call_kwargs
     assert expected_cmd in call_kwargs["command"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("declared", "per_call", "expected_u"),
+    [
+        (None, None, None),  # neither → no -u, image's USER prevails
+        ("postgres", None, "postgres"),  # declared default
+        ("postgres", "root", "root"),  # per-call beats declared
+        (None, "post gres", "post gres"),  # a user needing shlex quoting
+    ],
+)
+async def test_docker_login_carries_effective_user(declared, per_call, expected_u):
+    """``_login`` threads the effective user into ``docker exec -u`` — enter
+    through ``host._login()`` itself (not by composing ``_effective_user``
+    separately) so a broken hop in the real method shows up here.
+
+    Pins the FULL command string, not a substring: ``-u`` must land BEFORE
+    the container id (``docker exec`` treats anything after the id as
+    in-container argv, so a trailing ``-u`` would be silently swallowed by
+    the container's own command rather than selecting a user), and the user
+    value must be ``shlex.quote``d (the ``"post gres"`` row catches a
+    regression that drops the quoting).
+    """
+    parent = _build_fake_ssh_remote_host()
+    h = _make_container(parent, user=declared)
+
+    with patch("otto.host.interact.run_ssh_login", new_callable=AsyncMock) as mock_login:
+        await h._login(per_call)
+
+    cmd = mock_login.call_args.kwargs["command"]
+    quoted_cid = shlex.quote(h.container_id)
+    if expected_u is None:
+        assert cmd == f"docker exec -it {quoted_cid} /bin/sh"
+    else:
+        assert cmd == f"docker exec -it -u {shlex.quote(expected_u)} {quoted_cid} /bin/sh"
 
 
 # ---------------------------------------------------------------------------

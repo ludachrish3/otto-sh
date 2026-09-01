@@ -271,6 +271,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         timeout: float,
         expects: list[Expect] | None = None,
         log: LogMode = LogMode.NORMAL,
+        user: "str | None" = None,
     ) -> CommandResult:
         """Execute a command via the persistent local shell session.
 
@@ -281,7 +282,17 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         reads it. See that attribute for the three-part test an exemption has
         to pass; the default is to decline, and every host handed out by the
         fleet takes the default.
+
+        The *user* refusal sits ABOVE that arm: this family can never honour
+        the parameter, and a dry run must say so rather than decline as though
+        it could have.
         """
+        if user is not None:
+            raise NotImplementedError(
+                f"{self.name}: run(user=...) is not supported on "
+                f"{type(self).__name__} — the persistent shell has no "
+                f"user-switching semantics"
+            ) from None
         if is_dry_run() and not self.dry_run_exempt:
             return self._dry_run_result(cmd, log)
         return await self._session_mgr.run_cmd(
@@ -294,6 +305,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         cmd: str,
         timeout: float,
         log: LogMode = LogMode.NORMAL,
+        user: str | None = None,
     ) -> CommandResult:
         """Run a command in a fresh subprocess (stateless, concurrent-safe).
 
@@ -301,6 +313,11 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         calls, and multiple exec() calls can run concurrently via
         asyncio.gather().
         """
+        if user is not None:
+            raise NotImplementedError(
+                f"{self.name}: exec(user=...) is not supported on LocalHost — "
+                f"otto already runs as the invoking user"
+            ) from None
         return await self._exec_subprocess(cmd, timeout, log=self._effective_log(log))
 
     async def _exec_subprocess(
@@ -468,6 +485,10 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             Arg(variadic=True, elem_type=Path, help="Remote file(s) to download."),
         ],
         dest_dir: Path,
+        user: Annotated[
+            str | None,
+            Opt(help="Not supported on this host type — containers only."),
+        ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
         """Copy files to dest_dir on the local filesystem.
@@ -476,6 +497,11 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         flows through the same :class:`~otto.host.transfer.BaseFileTransfer`
         machinery as Unix and embedded backends.
         """
+        if user is not None:
+            raise NotImplementedError(
+                f"{self.name}: get(user=...) is not supported on LocalHost — "
+                f"local transfers keep the invoking user's ownership"
+            ) from None
         if not isinstance(src_files, list):
             src_files = [src_files]
         if is_dry_run():
@@ -498,6 +524,10 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             int | str | None,
             Opt(help="Octal permission bits for the uploaded file(s), e.g. 755, 0644, 0o4755."),
         ] = None,
+        user: Annotated[
+            str | None,
+            Opt(help="Not supported on this host type — containers only."),
+        ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
         """Copy files to dest_dir on the local filesystem.
@@ -508,6 +538,11 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         ``"0o755"``). Without it, ``shutil.copy2`` preserves the source
         file's own permissions.
         """
+        if user is not None:
+            raise NotImplementedError(
+                f"{self.name}: put(user=...) is not supported on LocalHost — "
+                f"local transfers keep the invoking user's ownership"
+            ) from None
         if not isinstance(src_files, list):
             src_files = [src_files]
         if is_dry_run():

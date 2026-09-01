@@ -133,11 +133,29 @@ class DockerComposeSpec(OttoModel):
     name: str | None = None
     path: RepoPath
     services: tuple[str, ...] = ()
+    users: dict[str, str] = Field(default_factory=dict)
 
     @property
     def effective_name(self) -> str:
         """The handle this compose is known by -- ``name``, or the path stem when unset."""
         return self.name or self.path.stem
+
+    @model_validator(mode="after")
+    def _users_name_declared_services(self) -> "DockerComposeSpec":
+        unknown = [k for k in self.users if k not in self.services]
+        if unknown:
+            raise ValueError(
+                f"[[docker.composes]] {self.effective_name!r}: users keys must name "
+                f"declared services; unknown: {sorted(unknown)} "
+                f"(declared: {sorted(self.services)})"
+            )
+        for svc, val in self.users.items():
+            if not val or any(c.isspace() for c in val):
+                raise ValueError(
+                    f"[[docker.composes]] {self.effective_name!r}: users[{svc!r}] must "
+                    f"be a non-empty string with no whitespace; got {val!r}"
+                )
+        return self
 
     def to_runtime(self) -> "DockerCompose":
         """Build the ``DockerCompose`` runtime dataclass from the validated spec fields."""
@@ -147,6 +165,7 @@ class DockerComposeSpec(OttoModel):
             name=self.effective_name,
             path=self.path,
             services=self.services,
+            users=tuple(sorted(self.users.items())),
         )
 
 

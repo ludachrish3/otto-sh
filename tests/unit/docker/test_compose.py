@@ -32,7 +32,9 @@ from otto.docker.compose import (
     composed,
     get_container_host,
     get_user_compose_project,
+    merge_declared_users,
     register_declared_container_hosts,
+    register_stack_hosts,
     unregister_container_hosts,
     use_case_project,
 )
@@ -70,12 +72,20 @@ _TRANSIENT_NETWORK_RACE_OUTPUT = (
 
 
 def _make_repo(
-    tmp: Path, *, name: str = "repo1", services: tuple = ("api",), host: str = "test3"
+    tmp: Path,
+    *,
+    name: str = "repo1",
+    services: tuple = ("api",),
+    host: str = "test3",
+    users: dict | None = None,
 ) -> Repo:
     """A repo whose lone use-case fragment pins its stack to *host* — the
     same "declared exact host" semantics ``default_host`` used to carry,
     now expressed as a committed placement pin (spec §14)."""
     services_toml = "[" + ", ".join(f'"{s}"' for s in services) + "]"
+    users_toml = (
+        "users = {" + ", ".join(f'{k} = "{v}"' for k, v in users.items()) + "}\n" if users else ""
+    )
     sut = make_sut_repo(
         tmp / name,
         name=name,
@@ -91,6 +101,7 @@ def _make_repo(
             f'name = "core"\n'
             f'path = "docker/compose.yml"\n'
             f"services = {services_toml}\n"
+            f"{users_toml}"
             f"\n"
             f"[[docker.use_cases]]\n"
             f'name = "{name}"\n'
@@ -504,6 +515,33 @@ async def test_compose_up_constructs_expected_command(tmp_path):
     assert " -p otto-repo1-" in cmd
     assert " -f " in cmd
     assert cmd.rstrip().endswith("up -d --remove-orphans")
+
+
+@pytest.mark.asyncio
+async def test_compose_up_registers_containers_with_their_declared_users(tmp_path):
+    """The legacy path merges `users` over the repo's own composes and hands
+    the result to registration — a service with no declaration stays unset."""
+    repo = _make_repo(tmp_path, services=("api", "db"), users={"db": "postgres"})
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+
+    async def exec_side_effect(cmd, *_, **__):
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("")
+        if "config" in cmd and "--services" in cmd:
+            return _ok("api\ndb\n")
+        if "service=api" in cmd:
+            return _ok("cid-api\n")
+        if "service=db" in cmd:
+            return _ok("cid-db\n")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    hosts = await compose_up(repo, lab, build=False)
+
+    assert hosts["db"].user == "postgres"
+    assert hosts["api"].user is None
 
 
 @pytest.mark.asyncio
@@ -922,6 +960,88 @@ async def test_composed_teardown_survives_cancellation(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# register_stack_hosts — declared users (spec: users = {...})
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_register_stack_hosts_threads_declared_user():
+    """A declared service gets its user; an undeclared one stays None.
+
+    Both halves matter: the second is what keeps `users` from becoming a
+    blanket default applied to every container in the stack.
+    """
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+
+    async def exec_side_effect(cmd, *_, **__):
+        if "service=api" in cmd:
+            return _ok("cid-api\n")
+        if "service=db" in cmd:
+            return _ok("cid-db\n")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    hosts = await register_stack_hosts(
+        lab,
+        parent,
+        compose_project="l-u-c",
+        id_project="uc",
+        services=["api", "db"],
+        users={"db": "postgres"},
+    )
+
+    assert hosts["db"].user == "postgres"
+    assert hosts["api"].user is None
+    # ...and the lab's copy is the same object, so `otto host <id>` sees it too.
+    assert lab.hosts["test3.uc.db"].user == "postgres"
+
+
+@pytest.mark.asyncio
+async def test_register_stack_hosts_without_users_leaves_every_container_unset():
+    """The default path (no `users=`) must not invent an identity."""
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    parent.exec.side_effect = lambda cmd, *_, **__: _ok("cid\n")  # type: ignore[union-attr]
+
+    hosts = await register_stack_hosts(
+        lab, parent, compose_project="l-u-c", id_project="uc", services=["api"]
+    )
+
+    assert hosts["api"].user is None
+
+
+# ---------------------------------------------------------------------------
+# merge_declared_users
+# ---------------------------------------------------------------------------
+
+
+def test_merge_declared_users_conflict_refused():
+    a = DockerCompose(path=Path("a.yml"), services=("db",), users=(("db", "postgres"),))
+    b = DockerCompose(path=Path("b.yml"), services=("db",), users=(("db", "root"),))
+    with pytest.raises(ValueError, match="conflicting declared users for service 'db'"):
+        merge_declared_users([a, b])
+
+
+def test_merge_declared_users_agreeing_duplicate_ok():
+    """The same compose seen twice — or two files naming the same identity —
+    is agreement, not a conflict: there is nothing for otto to invent."""
+    a = DockerCompose(path=Path("a.yml"), services=("db",), users=(("db", "postgres"),))
+    assert merge_declared_users([a, a]) == {"db": "postgres"}
+
+
+def test_merge_declared_users_unions_across_composes():
+    a = DockerCompose(path=Path("a.yml"), services=("db",), users=(("db", "postgres"),))
+    b = DockerCompose(path=Path("b.yml"), services=("web",), users=(("web", "1000:1000"),))
+    assert merge_declared_users([a, b]) == {"db": "postgres", "web": "1000:1000"}
+
+
+def test_merge_declared_users_of_nothing_is_empty():
+    assert merge_declared_users([]) == {}
+
+
+# ---------------------------------------------------------------------------
 # register_declared_container_hosts
 # ---------------------------------------------------------------------------
 
@@ -988,6 +1108,64 @@ def test_placeholder_id_collision_with_different_host_is_rejected(tmp_path):
 
     # The unrelated host must survive untouched — no silent overwrite.
     assert lab.hosts[placeholder.id] is existing
+
+
+def test_register_declared_legacy_placeholder_carries_declared_user():
+    """The legacy composes walk threads `users` onto its placeholders too, so
+    an `otto host <id>` against a not-yet-up container already knows which
+    identity it will act as."""
+    lab = _make_lab()
+    repo = _uc_repo("a", composes=[_core_compose(users=(("api", "postgres"),))])
+
+    assert register_declared_container_hosts(lab, [repo]) == 1
+
+    placeholder = lab.hosts["test3.a.api"]
+    assert isinstance(placeholder, DockerContainerHost)
+    assert placeholder.user == "postgres"
+
+
+def _two_composes(users_a: tuple = (), users_b: tuple = ()) -> list[DockerCompose]:
+    """Two compose entries that BOTH declare service `db` — the shape a
+    cross-compose users disagreement (or a split declaration) needs."""
+    return [
+        DockerCompose(path=Path("docker/a.yml"), name="acore", services=("db",), users=users_a),
+        DockerCompose(path=Path("docker/b.yml"), name="bcore", services=("db",), users=users_b),
+    ]
+
+
+def test_register_declared_legacy_placeholder_reads_the_merged_map_not_one_compose():
+    """The user may be declared by the SECOND compose to name the service.
+
+    Reading each entry's own `users` inside the loop would make the first
+    compose win (the duplicate-id skip discards the later placeholder), so
+    this container would come back unset while `compose_up` — which merges —
+    gave it `postgres`. The two must not disagree.
+    """
+    lab = _make_lab()
+    repo = _uc_repo("a", composes=_two_composes(users_b=(("db", "postgres"),)))
+
+    assert register_declared_container_hosts(lab, [repo]) == 1
+    assert lab.hosts["test3.a.db"].user == "postgres"
+
+
+def test_register_declared_legacy_conflicting_users_refuse():
+    """Same gate as `compose_up` on the same repo: a cross-compose
+    disagreement refuses rather than silently first-winning."""
+    lab = _make_lab()
+    repo = _uc_repo(
+        "a", composes=_two_composes(users_a=(("db", "postgres"),), users_b=(("db", "root"),))
+    )
+
+    with pytest.raises(ValueError, match="conflicting declared users for service 'db'"):
+        register_declared_container_hosts(lab, [repo])
+
+
+def test_register_declared_legacy_placeholder_without_users_is_unset():
+    lab = _make_lab()
+    repo = _uc_repo("a", composes=[_core_compose()])
+
+    assert register_declared_container_hosts(lab, [repo]) == 1
+    assert lab.hosts["test3.a.api"].user is None
 
 
 def _merged_lab_with_stamped_parent() -> Lab:
@@ -1058,8 +1236,8 @@ def _uc_frag(name: str = "integration", **kw: object) -> DockerUseCase:
     return DockerUseCase(name=name, **defaults)  # type: ignore[arg-type]
 
 
-def _core_compose(services: tuple = ("api",)) -> DockerCompose:
-    return DockerCompose(path=Path("docker/core.yml"), name="core", services=services)
+def _core_compose(services: tuple = ("api",), users: tuple = ()) -> DockerCompose:
+    return DockerCompose(path=Path("docker/core.yml"), name="core", services=services, users=users)
 
 
 def test_register_declared_use_case_repo_synthesizes_usecase_ids():
@@ -1080,6 +1258,50 @@ def test_register_declared_use_case_repo_synthesizes_usecase_ids():
     assert "test3.a.api" not in lab.hosts  # never the legacy repo-scoped id
     parent = lab.hosts["test3"]
     assert placeholder.compose_project == use_case_project(parent.source_lab, "integration")
+
+
+def test_register_declared_use_case_placeholder_carries_declared_user():
+    """The use-case walk derives users from the SAME handle resolution that
+    produced its services, so a fragment's placeholder carries the identity
+    its deployed container will carry."""
+    lab = _make_lab()
+    repo = _uc_repo("a", _uc_frag(), composes=[_core_compose(users=(("api", "postgres"),))])
+
+    with patch("otto.docker.resolve.scope_for_repo", return_value=None):
+        assert register_declared_container_hosts(lab, [repo]) == 1
+
+    assert lab.hosts["test3.integration.api"].user == "postgres"
+
+
+def test_register_declared_use_case_conflicting_users_refuse():
+    """The users merge sits OUTSIDE this walk's `except UseCaseResolutionError`
+    soft-skip on purpose: an unresolvable handle is normal here, a fragment
+    whose composes name two different identities for one service is a settings
+    mistake with no right answer. Moving the merge inside the try would hand
+    out placeholders that disagree with the container `deploy` later registers.
+    """
+    lab = _make_lab()
+    repo = _uc_repo(
+        "a",
+        _uc_frag(composes=("acore", "bcore")),
+        composes=_two_composes(users_a=(("db", "postgres"),), users_b=(("db", "root"),)),
+    )
+
+    with (
+        patch("otto.docker.resolve.scope_for_repo", return_value=None),
+        pytest.raises(ValueError, match="conflicting declared users for service 'db'"),
+    ):
+        register_declared_container_hosts(lab, [repo])
+
+
+def test_register_declared_use_case_placeholder_without_users_is_unset():
+    lab = _make_lab()
+    repo = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
+
+    with patch("otto.docker.resolve.scope_for_repo", return_value=None):
+        assert register_declared_container_hosts(lab, [repo]) == 1
+
+    assert lab.hosts["test3.integration.api"].user is None
 
 
 def test_register_declared_use_case_fragment_with_no_declared_services_is_skipped():

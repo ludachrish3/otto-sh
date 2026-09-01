@@ -401,6 +401,7 @@ class RemoteHost(BaseHost):
         timeout: float,
         expects: "list[Expect] | None" = None,
         log: LogMode = LogMode.NORMAL,
+        user: "str | None" = None,
     ) -> CommandResult:
         """Execute a single command on the host via the **persistent shell session**.
 
@@ -426,11 +427,25 @@ class RemoteHost(BaseHost):
             timeout: Seconds before the command is considered hung. On expiry,
                 Ctrl+C is sent and ``Status.Error`` is returned. Pass
                 ``float("inf")`` for a deliberately unbounded command.
+            user: Accepted for signature parity with the container family and
+                REFUSED — see Raises below.
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
             Exit code 0 → ``Status.Success``; non-zero → ``Status.Failed``.
+
+        Raises:
+            NotImplementedError: *user* is not None. The refusal is the FIRST
+                line of the body, above the dry-run arm, so a dry run refuses
+                too rather than reporting a decline for a call this family
+                could never honour.
         """
+        if user is not None:
+            raise NotImplementedError(
+                f"{self.name}: run(user=...) is not supported on "
+                f"{type(self).__name__} — the persistent shell has no "
+                f"user-switching semantics"
+            ) from None
         if is_dry_run():
             return self._dry_run_result(cmd, log)
         return await self._session_mgr.run_cmd(

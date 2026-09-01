@@ -24,7 +24,7 @@ account:
 ```
 
 A proxy is exercised wherever otto becomes another account: `otto host test1
-login --as-user root` opens the interactive shell through it, and the
+login --user root` opens the interactive shell through it, and the
 library's `host.as_user()` runs a block through it and unwinds afterwards.
 (`otto host test1 run --sudo` is different — it prefixes each command with
 the host's elevation and never changes the session's user.) The example

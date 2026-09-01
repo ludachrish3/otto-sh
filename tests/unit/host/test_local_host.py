@@ -155,6 +155,31 @@ async def test_exec_is_stateless():
     assert "empty" in result.value
 
 
+@pytest.mark.asyncio
+async def test_exec_user_refused_on_local():
+    """Call `_exec_one` directly — `exec()`'s dry-run/timeout validation
+    must not be able to short-circuit the branch under test."""
+    host = LocalHost()
+    with pytest.raises(NotImplementedError, match="otto already runs as the invoking user"):
+        await host._exec_one("id", timeout=5.0, user="root")
+
+
+@pytest.mark.asyncio
+async def test_run_user_refused_on_local():
+    """Call `_run_one` directly — `run()`'s dry-run/timeout layers must not
+    be able to short-circuit the branch under test. The refusal also sits
+    ABOVE `_run_one`'s own dry-run arm, so a dry run refuses too."""
+    host = LocalHost()
+    with pytest.raises(
+        NotImplementedError, match=r"run\(user=\.\.\.\) is not supported on LocalHost"
+    ):
+        await host._run_one("id", timeout=5.0, user="root")
+    with pytest.raises(
+        NotImplementedError, match="the persistent shell has no user-switching semantics"
+    ):
+        await host._run_one("id", timeout=5.0, user="root")
+
+
 # ---------------------------------------------------------------------------
 # send / expect
 # ---------------------------------------------------------------------------
@@ -245,6 +270,27 @@ async def test_get_files_nonexistent_source(tmp_path: Path):
     )
     assert result.status == Status.Error
     assert result.msg  # should have an error message
+
+
+@pytest.mark.asyncio
+async def test_put_user_refused_on_local(tmp_path: Path):
+    """`user` is a container-only concept; a local copy keeps the invoking
+    user's ownership. Enter at the public method — the refusal lives
+    directly in `put`, above the dry-run arm."""
+    host = LocalHost()
+    with pytest.raises(
+        NotImplementedError, match=r"put\(user=\.\.\.\) is not supported on LocalHost"
+    ):
+        await host.put(tmp_path / "a", tmp_path / "dest", user="root")
+
+
+@pytest.mark.asyncio
+async def test_get_user_refused_on_local(tmp_path: Path):
+    host = LocalHost()
+    with pytest.raises(
+        NotImplementedError, match=r"get\(user=\.\.\.\) is not supported on LocalHost"
+    ):
+        await host.get(tmp_path / "a", tmp_path / "dest", user="root")
 
 
 # ---------------------------------------------------------------------------

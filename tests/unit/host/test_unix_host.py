@@ -678,6 +678,31 @@ class TestExec:
         assert result.retcode == 1
 
     @pytest.mark.asyncio
+    async def test_exec_user_refused_on_unix(self, host: UnixHost):
+        """Call `_exec_one` directly — `exec()`'s dry-run/timeout validation
+        must not be able to short-circuit the branch under test."""
+        with pytest.raises(
+            NotImplementedError, match=r"exec\(user=\.\.\.\) is not supported on UnixHost"
+        ):
+            await host._exec_one("id", timeout=5.0, user="root")
+
+    @pytest.mark.asyncio
+    async def test_run_user_refused_on_unix(self, host: UnixHost):
+        """Call `_run_one` directly — `run()`'s dry-run/timeout layers must
+        not be able to short-circuit the branch under test."""
+        with pytest.raises(
+            NotImplementedError, match=r"run\(user=\.\.\.\) is not supported on UnixHost"
+        ):
+            await host._run_one("id", timeout=5.0, user="root")
+
+    @pytest.mark.asyncio
+    async def test_run_user_refusal_names_the_shell_reason(self, host: UnixHost):
+        with pytest.raises(
+            NotImplementedError, match="the persistent shell has no user-switching semantics"
+        ):
+            await host._run_one("id", timeout=5.0, user="root")
+
+    @pytest.mark.asyncio
     async def test_exec_telnet_success(self):
         h = UnixHost(
             ip="10.0.0.1",
@@ -839,6 +864,33 @@ class TestExec:
             timeout=DEFAULT_COMMAND_TIMEOUT,
             log=LogMode.QUIET,
         )
+
+
+# ---------------------------------------------------------------------------
+# File transfer: put/get user= refusal
+# ---------------------------------------------------------------------------
+
+
+class TestPutGetUserRefusal:
+    """`user` is a container-only concept on the transfer path; UnixHost
+    refuses it loudly, above the dry-run arm, rather than silently ignoring
+    it. Entering at the public method (not `_exec_one`-style private helper)
+    because the refusal itself lives directly in `put`/`get`.
+    """
+
+    @pytest.mark.asyncio
+    async def test_put_user_refused_on_unix(self, host: UnixHost):
+        with pytest.raises(
+            NotImplementedError, match=r"put\(user=\.\.\.\) is not supported on UnixHost"
+        ):
+            await host.put(Path("a"), Path("/tmp"), user="root")
+
+    @pytest.mark.asyncio
+    async def test_get_user_refused_on_unix(self, host: UnixHost):
+        with pytest.raises(
+            NotImplementedError, match=r"get\(user=\.\.\.\) is not supported on UnixHost"
+        ):
+            await host.get(Path("a"), Path("/tmp"), user="root")
 
 
 # ---------------------------------------------------------------------------

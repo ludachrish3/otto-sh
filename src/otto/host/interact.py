@@ -366,7 +366,7 @@ class _BridgeProxyIO:
     r"""Adapts a login driver's ``write_remote``/``read_remote`` closures.
 
     Satisfies :class:`~otto.host.login_proxy.ProxyIO`. Used by
-    :func:`run_ssh_login`/:func:`run_telnet_login` to replay ``--as-user``
+    :func:`run_ssh_login`/:func:`run_telnet_login` to replay ``--user``
     login-proxy hops after the transport/login is ready but *before*
     :func:`_run_bridge` starts the stdin/stdout pumps, so the human lands on
     an already-proxied terminal rather than seeing the hop exchange race the
@@ -570,7 +570,7 @@ async def run_ssh_login(
     ``docker exec -it <container> /bin/sh`` over the parent's existing
     SSH connection.
 
-    When *proxy_hops* is non-empty (the ``--as-user`` path), each hop is
+    When *proxy_hops* is non-empty (the ``--user`` path), each hop is
     replayed over the bridge (via ``_replay_proxy_hops``) after the PTY
     shell is ready but before ``_run_bridge`` starts the pumps, so the
     human lands directly on the proxied account. *via_login* is the login
@@ -669,7 +669,7 @@ async def run_telnet_login(
     subnegotiation via ``TelnetClient._send_naws``.
 
     *proxy_hops*/*via_login*/*host_id* mirror :func:`run_ssh_login` (the
-    ``--as-user`` path): non-empty hops are replayed over the bridge after login
+    ``--user`` path): non-empty hops are replayed over the bridge after login
     but before ``_run_bridge`` starts the pumps, using ``b"\\r"`` as the
     line terminator (telnet's convention, vs. SSH PTY's ``b"\\n"``).
     """

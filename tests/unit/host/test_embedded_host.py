@@ -172,11 +172,52 @@ class TestNotImplemented:
             await host.login()
 
     @pytest.mark.asyncio
-    async def test_login_as_user_raises(self, host: EmbeddedHost):
-        """Task 9: embedded hosts accept `as_user` for signature parity but
+    async def test_login_user_raises(self, host: EmbeddedHost):
+        """Task 9: embedded hosts accept `user` for signature parity but
         still raise — a login-less RTOS shell has nothing to proxy."""
         with pytest.raises(NotImplementedError):
-            await host.login(as_user="root")
+            await host.login(user="root")
+
+    @pytest.mark.asyncio
+    async def test_exec_user_refused_on_embedded(self, host: EmbeddedHost):
+        """Call `_exec_one` directly — `exec()`'s dry-run/timeout validation
+        must not be able to short-circuit the branch under test."""
+        with pytest.raises(NotImplementedError, match="a serial console has no user to switch to"):
+            await host._exec_one("id", timeout=5.0, user="root")
+
+    @pytest.mark.asyncio
+    async def test_run_user_refused_on_embedded(self, host: EmbeddedHost):
+        """Inherited from `RemoteHost._run_one`, so the message names the
+        CONCRETE class — this fixture is a ZephyrHost. Call `_run_one`
+        directly — `run()`'s dry-run/timeout layers must not be able to
+        short-circuit the branch under test."""
+        assert type(host).__name__ == "ZephyrHost"
+        with pytest.raises(
+            NotImplementedError, match=r"run\(user=\.\.\.\) is not supported on ZephyrHost"
+        ):
+            await host._run_one("id", timeout=5.0, user="root")
+        with pytest.raises(
+            NotImplementedError, match="the persistent shell has no user-switching semantics"
+        ):
+            await host._run_one("id", timeout=5.0, user="root")
+
+    @pytest.mark.asyncio
+    async def test_put_user_refused_on_embedded(self, host: EmbeddedHost):
+        """`user` is a container-only concept; the fixture host is a
+        ZephyrHost but the refusal names the FAMILY (EmbeddedHost), matching
+        `exec`'s established convention in this file. Enter at the public
+        method — the refusal lives directly in `put`, above the dry-run arm."""
+        with pytest.raises(
+            NotImplementedError, match=r"put\(user=\.\.\.\) is not supported on EmbeddedHost"
+        ):
+            await host.put(Path("a"), Path("/tmp"), user="root")
+
+    @pytest.mark.asyncio
+    async def test_get_user_refused_on_embedded(self, host: EmbeddedHost):
+        with pytest.raises(
+            NotImplementedError, match=r"get\(user=\.\.\.\) is not supported on EmbeddedHost"
+        ):
+            await host.get(Path("a"), Path("/tmp"), user="root")
 
 
 # ---------------------------------------------------------------------------

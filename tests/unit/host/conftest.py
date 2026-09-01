@@ -183,9 +183,13 @@ class RecordingHost(BaseHost):
         return CommandResult(Status.Success, value="", command=cmd, retcode=0)
 
     async def _exec_one(
-        self, cmd: str, timeout: float, log: LogMode = LogMode.NORMAL
+        self,
+        cmd: str,
+        timeout: float,
+        log: LogMode = LogMode.NORMAL,
+        user: str | None = None,
     ) -> CommandResult:
-        del timeout, log
+        del timeout, log, user
         self.exec_calls.append(cmd)
         self.event_log.append(f"exec:{cmd}")
         return self._next_exec_result(cmd)
