@@ -487,7 +487,10 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         dest_dir: Path,
         user: Annotated[
             str | None,
-            Opt(help="Not supported on this host type — containers only."),
+            Opt(
+                help="Not supported on this host type — containers chown, "
+                "unix hosts authenticate as the user."
+            ),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
@@ -526,7 +529,10 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         ] = None,
         user: Annotated[
             str | None,
-            Opt(help="Not supported on this host type — containers only."),
+            Opt(
+                help="Not supported on this host type — containers chown, "
+                "unix hosts authenticate as the user."
+            ),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:

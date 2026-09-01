@@ -415,13 +415,15 @@ def test_host_verbs_synthesize_user_flag(monkeypatch):
     (login/run/put/get) synthesizes a `--user` CLI option, and none of them
     resurrect the old `--as-user` spelling the login proxy retired in Task 1.
 
-    Two real (not fake) host classes, deliberately: UnixHost answers put/get
-    `user=` with a loud NotImplementedError at call time — the flag still has
-    to render in `--help` since the synthesizer works off the signature, not
-    the runtime refusal — while DockerContainerHost is the family where
-    `--user` actually works end to end, so the negative half of this pin
-    (``--as-user`` gone) is checked on the surface a real regression would
-    most plausibly resurface on, not just on a host that always refuses it.
+    Two real (not fake) host classes, deliberately: UnixHost's put/get accept
+    `user=` and authenticate as that user (local/embedded still refuse with a
+    loud NotImplementedError at call time) — the flag still has to render in
+    `--help` since the synthesizer works off the signature, not the runtime
+    behavior — while DockerContainerHost is the family where `--user` also
+    works end to end (chown, not authentication), so the negative half of
+    this pin (``--as-user`` gone) is checked on surfaces a real regression
+    would most plausibly resurface on, not just on a host that always
+    refuses it.
 
     COLUMNS is pinned wide: under CliRunner (non-tty) rich resolves width
     from COLUMNS, defaulting to 80, and at the default width a long option

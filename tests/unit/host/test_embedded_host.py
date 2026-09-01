@@ -197,7 +197,8 @@ class TestNotImplemented:
         ):
             await host._run_one("id", timeout=5.0, user="root")
         with pytest.raises(
-            NotImplementedError, match="the persistent shell has no user-switching semantics"
+            NotImplementedError,
+            match=r"a persistent session's identity is as_user's job.*on unix, exec/put/get",
         ):
             await host._run_one("id", timeout=5.0, user="root")
 

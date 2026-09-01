@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.host import HostSession, UnixHost
+from otto.host.connections import _UserConnections
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.login_proxy import Cred
 from otto.host.options import NcOptions, SshOptions, UserlandOptions
@@ -678,13 +679,54 @@ class TestExec:
         assert result.retcode == 1
 
     @pytest.mark.asyncio
-    async def test_exec_user_refused_on_unix(self, host: UnixHost):
+    async def test_exec_user_runs_on_that_users_connection(
+        self, host: UnixHost, monkeypatch: pytest.MonkeyPatch
+    ):
+        """`exec(user=X)` authenticates as X (spec 2026-09-01 §4): the exec
+        channel must ride the connection `ssh_as(X)` hands back, not the
+        login-target connection the pooled/plain path uses."""
+        seen: dict[str, object] = {}
+        user_conn = MagicMock(name="conn-postgres")
+
+        async def fake_ssh_as(user: str):
+            seen["user"] = user
+            return user_conn
+
+        async def fake_exec_on(conn, cmd, timeout=None, log=None):
+            seen["exec_conn"] = conn
+            seen["cmd"] = cmd
+            seen["log"] = log
+            return CommandResult(status=Status.Success, value="uid=70", command=cmd, retcode=0)
+
+        monkeypatch.setattr(host._connections, "ssh_as", fake_ssh_as, raising=False)
+        monkeypatch.setattr(host._session_mgr, "exec_on", fake_exec_on, raising=False)
+        monkeypatch.setattr(
+            host._session_mgr,
+            "exec",
+            AsyncMock(side_effect=AssertionError("per-user exec must not use the pooled path")),
+            raising=False,
+        )
+
+        result = await host.exec("id", user="postgres")
+
+        assert seen["user"] == "postgres"
+        assert seen["exec_conn"] is user_conn  # the channel rode X's connection
+        assert seen["cmd"] == "id"
+        assert result.value == "uid=70"
+
+    @pytest.mark.asyncio
+    async def test_exec_user_refused_on_telnet(self):
         """Call `_exec_one` directly — `exec()`'s dry-run/timeout validation
         must not be able to short-circuit the branch under test."""
-        with pytest.raises(
-            NotImplementedError, match=r"exec\(user=\.\.\.\) is not supported on UnixHost"
-        ):
-            await host._exec_one("id", timeout=5.0, user="root")
+        h = UnixHost(
+            ip="10.0.0.1",
+            element="box",
+            creds=[Cred(login="user", password="pass")],
+            term="telnet",
+            log=LogMode.QUIET,
+        )
+        with pytest.raises(NotImplementedError, match=r"per-user exec needs an SSH exec channel"):
+            await h._exec_one("id", timeout=5.0, user="root")
 
     @pytest.mark.asyncio
     async def test_run_user_refused_on_unix(self, host: UnixHost):
@@ -696,9 +738,10 @@ class TestExec:
             await host._run_one("id", timeout=5.0, user="root")
 
     @pytest.mark.asyncio
-    async def test_run_user_refusal_names_the_shell_reason(self, host: UnixHost):
+    async def test_run_user_refusal_points_at_as_user(self, host: UnixHost):
         with pytest.raises(
-            NotImplementedError, match="the persistent shell has no user-switching semantics"
+            NotImplementedError,
+            match=r"a persistent session's identity is as_user's job.*on unix, exec/put/get",
         ):
             await host._run_one("id", timeout=5.0, user="root")
 
@@ -867,30 +910,215 @@ class TestExec:
 
 
 # ---------------------------------------------------------------------------
-# File transfer: put/get user= refusal
+# File transfer: put/get user=
 # ---------------------------------------------------------------------------
 
 
-class TestPutGetUserRefusal:
-    """`user` is a container-only concept on the transfer path; UnixHost
-    refuses it loudly, above the dry-run arm, rather than silently ignoring
-    it. Entering at the public method (not `_exec_one`-style private helper)
-    because the refusal itself lives directly in `put`/`get`.
-    """
+@pytest.fixture
+def ftp_host() -> UnixHost:
+    """UnixHost whose transfer backend is ftp — the one backend that cannot
+    ride a per-user SSH connection (it authenticates separately)."""
+    return UnixHost(
+        ip="10.0.0.1",
+        element="box",
+        creds=[Cred(login="user", password="pass")],
+        transfer="ftp",
+        log=LogMode.QUIET,
+    )
+
+
+class TestUserConnectionsView:
+    """`_UserConnections` is the seam that makes an unchanged transfer backend
+    write as X: it hands back X's own connection from `ssh()`/`sftp()` and
+    passes everything else straight through to the primary manager."""
+
+    def test_ssh_and_sftp_route_to_the_per_user_accessors(self, host: UnixHost):
+        view = _UserConnections(host._connections, "postgres")
+        ssh_conn = MagicMock(name="ssh-as-postgres")
+        sftp_conn = MagicMock(name="sftp-as-postgres")
+        seen: dict[str, object] = {}
+
+        async def fake_ssh_as(user: str):
+            seen["ssh_user"] = user
+            return ssh_conn
+
+        async def fake_sftp_as(user: str):
+            seen["sftp_user"] = user
+            return sftp_conn
+
+        host._connections.ssh_as = fake_ssh_as  # type: ignore[method-assign]
+        host._connections.sftp_as = fake_sftp_as  # type: ignore[method-assign]
+
+        assert asyncio.run(view.ssh()) is ssh_conn
+        assert asyncio.run(view.sftp()) is sftp_conn
+        assert seen == {"ssh_user": "postgres", "sftp_user": "postgres"}
+
+    def test_ftp_refuses(self, host: UnixHost):
+        view = _UserConnections(host._connections, "postgres")
+        with pytest.raises(NotImplementedError, match=r"the ftp backend authenticates separately"):
+            asyncio.run(view.ftp())
+
+    def test_everything_else_delegates(self, host: UnixHost):
+        view = _UserConnections(host._connections, "postgres")
+        assert view.term == host._connections.term
+        assert view.credentials == host._connections.credentials
+
+
+class TestPutGetUser:
+    """`put/get(user=X)` authenticate as X and let the bytes land with X's
+    ownership (spec 2026-09-01 §4) — no post-hoc chown. The backend object is
+    unchanged; what differs is the connection view it was built over."""
 
     @pytest.mark.asyncio
-    async def test_put_user_refused_on_unix(self, host: UnixHost):
-        with pytest.raises(
-            NotImplementedError, match=r"put\(user=\.\.\.\) is not supported on UnixHost"
-        ):
-            await host.put(Path("a"), Path("/tmp"), user="root")
+    async def test_put_user_builds_transfer_over_users_connection(
+        self, host: UnixHost, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        captured: dict[str, object] = {}
+        real_build = host._build_file_transfer
+
+        def spy_build(user=None):
+            ft = real_build(user=user)
+            captured["user"] = user
+            captured["conns"] = ft._connections
+            captured["ft"] = ft
+            ft.put_files = AsyncMock(return_value=Result(Status.Success, value={}))
+            return ft
+
+        monkeypatch.setattr(host, "_build_file_transfer", spy_build)
+        src = tmp_path / "a.bin"
+        src.write_bytes(b"x")
+
+        await host.put(src, Path("/tmp"), user="postgres")
+
+        assert captured["user"] == "postgres"
+        assert isinstance(captured["conns"], _UserConnections)
+        assert captured["conns"]._user == "postgres"
+        captured["ft"].put_files.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_get_user_refused_on_unix(self, host: UnixHost):
+    async def test_get_user_builds_transfer_over_users_connection(
+        self, host: UnixHost, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        captured: dict[str, object] = {}
+        real_build = host._build_file_transfer
+
+        def spy_build(user=None):
+            ft = real_build(user=user)
+            captured["user"] = user
+            captured["conns"] = ft._connections
+            captured["ft"] = ft
+            ft.get_files = AsyncMock(return_value=Result(Status.Success, value={}))
+            return ft
+
+        monkeypatch.setattr(host, "_build_file_transfer", spy_build)
+
+        await host.get(Path("/etc/shadow"), tmp_path, user="postgres")
+
+        assert captured["user"] == "postgres"
+        assert isinstance(captured["conns"], _UserConnections)
+        assert captured["conns"]._user == "postgres"
+        captured["ft"].get_files.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_put_without_user_uses_the_shared_backend(self, host: UnixHost, tmp_path: Path):
+        """The `user=None` path must not build (or cache) anything new."""
+        host._file_transfer.put_files = AsyncMock(return_value=Result(Status.Success, value={}))
+        src = tmp_path / "a.bin"
+        src.write_bytes(b"x")
+
+        await host.put(src, Path("/tmp"))
+
+        host._file_transfer.put_files.assert_awaited_once()
+        assert host._user_transfers == {}
+
+    def test_transfer_for_is_cached_per_user(self, host: UnixHost):
+        a = host._transfer_for("postgres")
+        assert host._transfer_for("postgres") is a  # cached
+        assert host._transfer_for("root") is not a  # per user
+        assert host._transfer_for(None) is host._file_transfer
+
+    def test_rebuild_connections_drops_the_per_user_backends(self, host: UnixHost):
+        """Their connections die with the manager's per-user cache, so a stale
+        backend would be writing over a closed connection."""
+        stale = host._transfer_for("postgres")
+
+        host.rebuild_connections()
+
+        assert host._user_transfers == {}
+        assert host._transfer_for("postgres") is not stale
+
+    @pytest.mark.asyncio
+    async def test_put_user_refused_on_ftp_backend(self, ftp_host: UnixHost):
+        """Refused up front by name — anchored on ``put(``, so the view's own
+        ``put/get(...)`` refusal deeper in the backend cannot stand in for the
+        gate that is supposed to stop the call before any transfer work."""
         with pytest.raises(
-            NotImplementedError, match=r"get\(user=\.\.\.\) is not supported on UnixHost"
+            NotImplementedError,
+            match=r"^box: put\(user=\.\.\.\) over ftp — the ftp backend authenticates separately",
         ):
-            await host.get(Path("a"), Path("/tmp"), user="root")
+            await ftp_host.put(Path("a"), Path("/tmp"), user="root")
+
+    @pytest.mark.asyncio
+    async def test_get_user_refused_on_ftp_backend(self, ftp_host: UnixHost):
+        """Refused up front by name — anchored on ``get(``, so the view's own
+        ``put/get(...)`` refusal deeper in the backend cannot stand in for the
+        gate that is supposed to stop the call before any transfer work."""
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^box: get\(user=\.\.\.\) over ftp — the ftp backend authenticates separately",
+        ):
+            await ftp_host.get(Path("a"), Path("/tmp"), user="root")
+
+    @pytest.mark.asyncio
+    async def test_put_user_bad_form_refused(self, host: UnixHost, tmp_path: Path):
+        src = tmp_path / "a.bin"
+        src.write_bytes(b"x")
+        with pytest.raises(ValueError, match=r"non-empty string with no whitespace"):
+            await host.put(src, Path("/tmp"), user=" root")
+
+    @pytest.mark.asyncio
+    async def test_get_user_bad_form_refused(self, host: UnixHost, tmp_path: Path):
+        with pytest.raises(ValueError, match=r"non-empty string with no whitespace"):
+            await host.get(Path("/etc/hosts"), tmp_path, user=" root")
+
+    @pytest.mark.asyncio
+    async def test_per_user_backend_binds_user_into_exec_cmd(
+        self, host: UnixHost, monkeypatch: pytest.MonkeyPatch
+    ):
+        """nc runs its remote control plane (listener, port scan, stat) through
+        the context's `exec_cmd`. Binding `user=` there is what makes the
+        nc-landed bytes X's — the listener itself must be X's process."""
+        seen: dict[str, object] = {}
+
+        async def fake_exec(cmd, *, user=None, **_kw):
+            seen["cmd"] = cmd
+            seen["user"] = user
+            return _cs(command=cmd, output="")
+
+        monkeypatch.setattr(host, "exec", fake_exec)
+
+        await host._transfer_for("postgres")._exec_cmd("id -un")
+        assert seen == {"cmd": "id -un", "user": "postgres"}
+
+        seen.clear()
+        await host._file_transfer._exec_cmd("id -un")
+        assert seen == {"cmd": "id -un", "user": None}
+
+    @pytest.mark.asyncio
+    async def test_per_user_exec_cmd_on_telnet_surfaces_the_exec_refusal(self):
+        """On a telnet host that same binding hits Task 2's gate. The refusal
+        is loud and names the reason — nc's per-file collector then reports it
+        verbatim rather than flattening it into a generic transfer failure."""
+        h = UnixHost(
+            ip="10.0.0.1",
+            element="box",
+            creds=[Cred(login="user", password="pass")],
+            term="telnet",
+            transfer="nc",
+            log=LogMode.QUIET,
+        )
+        with pytest.raises(NotImplementedError, match=r"per-user exec needs an SSH exec channel"):
+            await h._transfer_for("root")._exec_cmd("true")
 
 
 # ---------------------------------------------------------------------------

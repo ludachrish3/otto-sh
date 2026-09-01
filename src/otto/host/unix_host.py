@@ -77,6 +77,7 @@ from .command_frame import CommandFrame, build_command_frame
 from .connections import (
     ConnectionManager,
     TermContext,
+    _UserConnections,
     build_term_backend,
     teardown_step,
 )
@@ -86,6 +87,7 @@ from .file_ops import PosixFileOps
 from .host import (
     Host,
     SuppressCommandOutput,
+    _validate_user,
     is_dry_run,
 )
 from .interact import run_ssh_login, run_telnet_login
@@ -519,6 +521,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     _file_transfer: UnixFileTransfer = field(init=False, repr=False)
     """Handles all file transfer protocols for this host."""
 
+    _user_transfers: "dict[str, UnixFileTransfer]" = field(
+        default_factory=dict, init=False, repr=False
+    )
+    """Per-user transfer backends (spec 2026-09-01 §4), built lazily by
+    :meth:`_transfer_for` and dropped by ``rebuild_connections`` (their
+    connections die with the manager's per-user cache in ``close``)."""
+
     _userland_cache: Userland | None = field(default=None, init=False, repr=False, compare=False)
     """Backing store for :meth:`_userland` — see there for why it is built on
     demand rather than by a ``default_factory``."""
@@ -642,6 +651,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             shell_history=self.shell_history,
         )
         self._file_transfer = self._build_file_transfer()
+        self._user_transfers = {}
 
     def _build_connections(self) -> ConnectionManager:
         """Construct the connection backend for the current ``term`` via the registry seam.
@@ -666,25 +676,41 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         conn_cls = self._connection_factory or build_term_backend(self.term)
         return conn_cls.create(term_ctx)
 
-    def _build_file_transfer(self) -> UnixFileTransfer:
+    def _build_file_transfer(self, user: "str | None" = None) -> UnixFileTransfer:
         """Construct the transfer backend for the current ``transfer`` via the registry seam.
 
         Uses ``self._connections``. Shared by ``__post_init__`` / ``rebuild_connections``
         (and the override-copy seam, via ``dataclasses.replace``) so a custom
         transfer backend builds the right class.
+
+        When *user* is given the backend is built over a
+        :class:`~otto.host.connections._UserConnections` view instead, and its
+        ``exec_cmd`` binds ``user=`` — so nc's remote listener/stat commands
+        run as *user* too. The backend class itself is unchanged; only the
+        identity underneath it is (spec 2026-09-01 §4).
         """
+        connections = (
+            self._connections
+            if user is None
+            else cast("ConnectionManager", _UserConnections(self._connections, user))
+        )
+        exec_cmd = (
+            (lambda *a, **kw: self.exec(*a, **kw))  # noqa: PLW0108 — late-bind self for monkeypatching
+            if user is None
+            else (lambda *a, **kw: self.exec(*a, user=user, **kw))
+        )
         return cast(
             "UnixFileTransfer",
             build_transfer_backend(self.transfer).create(
                 TransferContext(
                     transfer=self.transfer,
                     host_name=self.name,
-                    connections=self._connections,
+                    connections=connections,
                     nc_options=self.nc_options,
                     scp_options=self.scp_options,
                     userland=self._userland(),
                     get_local_ip=lambda: self._get_local_ip(),  # noqa: PLW0108 — late-bind self for monkeypatching
-                    exec_cmd=lambda *a, **kw: self.exec(*a, **kw),  # noqa: PLW0108 — late-bind self for monkeypatching
+                    exec_cmd=exec_cmd,
                     # Asked of the session manager, never predicted from
                     # `self.term`: whether `exec` types into a line-disciplined
                     # shell is that object's decision (a proxied login routes
@@ -695,6 +721,21 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 )
             ),
         )
+
+    def _transfer_for(self, user: "str | None") -> UnixFileTransfer:
+        """Return the transfer backend for *user* — the shared one for ``None``.
+
+        Cached per user: the backend holds a live connection view and, for nc,
+        a warmed-up control plane, so rebuilding it per call would re-probe
+        the remote on every transfer.
+        """
+        if user is None:
+            return self._file_transfer
+        ft = self._user_transfers.get(user)
+        if ft is None:
+            ft = self._build_file_transfer(user=user)
+            self._user_transfers[user] = ft
+        return ft
 
     def _get_local_ip(self) -> str:
         """Return the local IP address used to reach this host, via OS routing lookup.
@@ -864,20 +905,40 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 Defaults to :data:`~otto.host.host.DEFAULT_COMMAND_TIMEOUT`;
                 pass ``float("inf")`` for a deliberately unbounded command such
                 as a netcat listener awaiting a connection.
+            user: Run the command AUTHENTICATED AS this unix user (spec
+                2026-09-01 §4) — the exec channel is opened on the connection
+                :meth:`~otto.host.connections.ConnectionManager.ssh_as` holds
+                for *user*, so the command runs with that user's real
+                credentials rather than an elevation from the login user.
+                DIRECT-CRED users only: the connection layer refuses a user
+                reachable only through a proxy hop, because a raw exec channel
+                cannot replay hops. Requires ``term="ssh"`` — telnet has no
+                stateless exec primitive to authenticate separately.
+                ``None`` (the default) is unaffected: a plain exec still routes
+                through the pooled path, so a PROXIED LOGIN TARGET keeps
+                running as that target exactly as before.
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
+
+        Raises:
+            NotImplementedError: ``user`` was given on a non-SSH host.
 
         See Also:
             :meth:`~otto.host.host.BaseHost.run`: stateful, sequential alternative
             with expect support.
         """
         if user is not None:
-            raise NotImplementedError(
-                f"{self.name}: exec(user=...) is not supported on UnixHost — "
-                f"run(sudo=True) elevates whole commands; a per-call unix user "
-                f"is a ledgered follow-up"
-            ) from None
+            if self.term != "ssh":
+                raise NotImplementedError(
+                    f"{self.name}: exec(user=...) on a {self.term!r} host — "
+                    f"per-user exec needs an SSH exec channel (v1 scope); "
+                    f"use as_user() on the session instead"
+                ) from None
+            conn = await self._connections.ssh_as(user)
+            return await self._session_mgr.exec_on(
+                conn, cmd, timeout=timeout, log=self._effective_log(log)
+            )
         return await self._session_mgr.exec(cmd, timeout=timeout, log=self._effective_log(log))
 
     ####################
@@ -900,22 +961,28 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         dest_dir: Path,
         user: Annotated[
             str | None,
-            Opt(help="Not supported on this host type — containers only."),
+            Opt(help="Read as this user (authenticates as them). Direct-cred users only."),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
-        """Transfer files from remote host to the local machine."""
+        """Transfer files from remote host to the local machine.
+
+        *user* authenticates the transfer as that user (spec 2026-09-01 §4),
+        so the read happens with their permissions — direct-cred users only.
+        """
         if user is not None:
-            raise NotImplementedError(
-                f"{self.name}: get(user=...) is not supported on UnixHost — "
-                f"transfer ownership follows the connection's own identity"
-            ) from None
+            _validate_user(user)
+            if self.transfer == "ftp":
+                raise NotImplementedError(
+                    f"{self.name}: get(user=...) over ftp — the ftp backend "
+                    f"authenticates separately with its own creds"
+                ) from None
         if not isinstance(src_files, list):
             src_files = [src_files]
         if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
         with SuppressCommandOutput(host=cast("Host", self)):
-            return await self._file_transfer.get_files(src_files, dest_dir, show_progress)
+            return await self._transfer_for(user).get_files(src_files, dest_dir, show_progress)
 
     # TODO: Look into a way to batch a single list of files that goes to different hosts
     # The main use case is lists of products or tools. These are the same binaries, and
@@ -935,7 +1002,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         ] = None,
         user: Annotated[
             str | None,
-            Opt(help="Not supported on this host type — containers only."),
+            Opt(
+                help="Transfer as this user (authenticates as them; files land "
+                "with their ownership). Direct-cred users only."
+            ),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
@@ -945,19 +1015,27 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         (``0o755``) from Python, or a string always read as octal (``"755"``,
         ``"0755"``, ``"0o755"``). It is applied in one batched ``chmod`` after
         the bytes land, whichever unix backend (scp/sftp/ftp/nc) carried them.
+
+        *user* authenticates the transfer as that user (spec 2026-09-01 §4),
+        so the bytes land owned by them with no chown step — direct-cred
+        users only.
         """
         if user is not None:
-            raise NotImplementedError(
-                f"{self.name}: put(user=...) is not supported on UnixHost — "
-                f"transfer ownership follows the connection's own identity"
-            ) from None
+            _validate_user(user)
+            if self.transfer == "ftp":
+                raise NotImplementedError(
+                    f"{self.name}: put(user=...) over ftp — the ftp backend "
+                    f"authenticates separately with its own creds"
+                ) from None
         if not isinstance(src_files, list):
             src_files = [src_files]
         dest_dir = self._resolve_dest(dest_dir)
         if is_dry_run():
             return self._dry_run_transfer("PUT", src_files, dest_dir, mode)
         with SuppressCommandOutput(host=cast("Host", self)):
-            return await self._file_transfer.put_files(src_files, dest_dir, show_progress, mode)
+            return await self._transfer_for(user).put_files(
+                src_files, dest_dir, show_progress, mode
+            )
 
     ####################
     #  Kernel modules

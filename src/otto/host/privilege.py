@@ -298,6 +298,10 @@ class PosixPrivilege(UserlandHost):
         session state — affects subsequent ``run`` calls until the user
         exits back.
 
+        See Also:
+            :meth:`as_user` — the scoped form; prefer it unless the switch
+            should outlive the block.
+
         Raises:
             ~otto.result.CommandNotRunError: this is a dry run — see
                 :func:`~otto.host.host.refuse_declined_elevation`.
@@ -327,6 +331,9 @@ class PosixPrivilege(UserlandHost):
         Tracks ``current_user`` across the switch and restores the prior
         user when the block exits, undoing each applied hop in reverse
         (innermost first) so a multi-hop ``via`` chain unwinds correctly.
+
+        The scoped form of :meth:`switch_user` — same engine
+        (:func:`~otto.host.login_proxy.perform_switch`), plus undo.
 
         Raises:
             ~otto.result.CommandNotRunError: this is a dry run — see

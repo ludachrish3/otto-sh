@@ -377,8 +377,13 @@ Because it is one command over every landed file, a failure is not scoped to
 a single file: every still-successful entry flips to an error, naming the
 file, the user, and the reason. On containers, `get` accepts `--user`/`user=`
 and ignores it — reads are ownership-indifferent, so there is nothing to
-chown; every other host family refuses a non-`None` value on `get` loudly
-instead. See {doc}`../host/put`.
+chown.
+
+All of that is the *container* mechanism. A unix host reaches the same end by
+a different route — it authenticates as the user rather than chowning after
+the fact — so `put`, `get` and (on an `ssh`-term host) `exec` take `user=`
+there too, while `run` stays with `as_user`. See {doc}`../host/put` for both
+families.
 
 A container's actual **runtime** user — the identity its own process runs
 as — is a different concern from all of the above, and stays where compose

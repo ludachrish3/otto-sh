@@ -1993,3 +1993,97 @@ class TestHostSessionRunTimeout:
         session = HostSession.__new__(HostSession)
         with pytest.raises(ValueError, match="must be >= 0"):
             await session.run("echo hi", timeout=-5)
+
+
+class _FakeSshProcess:
+    """Minimal asyncssh process stand-in for the SSH_CHANNEL exec arm."""
+
+    def __init__(self, lines: list[str], exit_status: int = 0) -> None:
+        self.stdout = _async_lines(lines)
+        self._exit_status = exit_status
+
+    async def wait(self):
+        return SimpleNamespace(exit_status=self._exit_status)
+
+    def terminate(self) -> None: ...
+
+    def kill(self) -> None: ...
+
+
+async def _async_lines(lines: list[str]):
+    for line in lines:
+        yield line
+
+
+class TestExecLogsCommandExactlyOnce:
+    """`exec()` used to log the command BEFORE its route match; the SSH arm
+    now lives in `exec_on`, which logs itself. The command must still reach
+    `_log_command` exactly ONCE per call on EVERY route — a stale pre-match
+    log would double it on the SSH route, and dropping it would silence the
+    pooled route.
+    """
+
+    def _mgr(self, conn, logged: list[tuple[str, LogMode]]) -> SessionManager:
+        return SessionManager(
+            connections=conn,
+            session_factory=_StubExecSession,
+            log_command=lambda cmd, mode: logged.append((cmd, mode)),
+            host_id="h",
+        )
+
+    @pytest.mark.asyncio
+    async def test_ssh_channel_route_logs_once(self):
+        logged: list[tuple[str, LogMode]] = []
+        ssh_conn = SimpleNamespace(
+            create_process=AsyncMock(return_value=_FakeSshProcess(["out\n"]))
+        )
+        conn = SimpleNamespace(
+            credentials=("alice", "pw"),
+            login_target="alice",
+            proxy_hops=[],
+            term="ssh",
+            ssh=AsyncMock(return_value=ssh_conn),
+        )
+
+        result = await self._mgr(conn, logged).exec("id")
+
+        assert result.value == "out"
+        assert logged == [("id", LogMode.NORMAL)]
+
+    @pytest.mark.asyncio
+    async def test_pooled_route_logs_once(self):
+        logged: list[tuple[str, LogMode]] = []
+        conn = SimpleNamespace(
+            credentials=("alice", "pw"),
+            login_target="alice",
+            proxy_hops=[],
+            term="telnet",
+        )
+
+        await self._mgr(conn, logged).exec("id")
+
+        assert logged == [("id", LogMode.NORMAL)]
+
+    @pytest.mark.asyncio
+    async def test_exec_on_logs_the_command_itself(self):
+        """`exec_on` is entered directly by per-user exec — it owns its log."""
+        logged: list[tuple[str, LogMode]] = []
+        mgr = self._mgr(SimpleNamespace(), logged)
+        other_conn = SimpleNamespace(
+            create_process=AsyncMock(return_value=_FakeSshProcess(["uid=70\n"]))
+        )
+
+        result = await mgr.exec_on(other_conn, "id")
+
+        assert result.value == "uid=70"
+        assert logged == [("id", LogMode.NORMAL)]
+
+    @pytest.mark.asyncio
+    async def test_exec_on_never_mode_logs_nothing(self):
+        logged: list[tuple[str, LogMode]] = []
+        mgr = self._mgr(SimpleNamespace(), logged)
+        other_conn = SimpleNamespace(create_process=AsyncMock(return_value=_FakeSshProcess([])))
+
+        await mgr.exec_on(other_conn, "id", log=LogMode.NEVER)
+
+        assert logged == []

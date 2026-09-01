@@ -26,12 +26,12 @@ import contextlib
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from typing_extensions import override
 
 from ..registry import Registry, caller_module
-from .login_proxy import Cred, resolve_chain
+from .login_proxy import Cred, LoginProxyError, resolve_chain
 from .options import FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from .telnet import TelnetClient
 
@@ -220,6 +220,9 @@ class ConnectionManager:
                 self._sftp_conn = None
                 self._ftp_conn = None
                 self._telnet_conn = None
+                self._user_ssh_conns = {}
+                self._user_sftp_conns = {}
+                self._user_locks = {}
 
             async def ssh(self):
                 return self._ssh_conn
@@ -256,6 +259,13 @@ class ConnectionManager:
         self._sftp_conn: "SFTPClient | None" = None
         self._ftp_conn: "aioftp.Client | None" = None
         self._telnet_conn: TelnetClient | None = None
+
+        # Per-user connections (spec 2026-09-01 §3): ``ssh_as``/``sftp_as``
+        # authenticate the transport AS a given login, keyed by that login,
+        # separate from the primary ``login_target`` slots above.
+        self._user_ssh_conns: "dict[str, SSHClientConnection]" = {}
+        self._user_sftp_conns: "dict[str, SFTPClient]" = {}
+        self._user_locks: "dict[str, asyncio.Lock]" = {}
 
         # Concurrent callers of ``ssh()``/``telnet()``/``ftp()``/``sftp()``
         # would otherwise all see ``_*_conn is None``, all open their own
@@ -342,7 +352,14 @@ class ConnectionManager:
     @property
     def connected(self) -> bool:
         """Whether any raw connection is currently open."""
-        return bool(self._ssh_conn or self._telnet_conn or self._sftp_conn or self._ftp_conn)
+        return bool(
+            self._ssh_conn
+            or self._telnet_conn
+            or self._sftp_conn
+            or self._ftp_conn
+            or self._user_ssh_conns
+            or self._user_sftp_conns
+        )
 
     @property
     def has_tunnel(self) -> bool:
@@ -405,6 +422,71 @@ class ConnectionManager:
             sftp = await conn.start_sftp_client(**self._sftp_options._kwargs())  # noqa: SLF001 — intra-package access to SftpOptions._kwargs
             self._sftp_conn = sftp
             logger.debug(f"SFTP client connected for {self._name}")
+            return sftp
+
+    def _direct_cred_for(self, user: str) -> Cred:
+        """Resolve the cred to authenticate a transport as *user* — zero hops or refuse.
+
+        ``resolve_chain`` answers both halves: an unknown login raises its own
+        loud error; a known login reachable only through proxy hops refuses
+        here, because connection-level auth cannot replay interactive hops
+        (spec 2026-09-01 §2.4) — ``login(user=...)``/``as_user`` CAN, and the
+        message says so.
+        """
+        direct, hops = resolve_chain(self._creds, user)
+        if hops or direct.login != user:
+            raise LoginProxyError(
+                f"{self._name}: user {user!r} has no directly-loginable cred "
+                f"(resolves via {direct.login!r} + {len(hops)} hop(s)); "
+                f"stateless per-user auth cannot replay proxy hops — use "
+                f"login(user=...) or as_user() instead"
+            )
+        return direct
+
+    async def ssh_as(self, user: str) -> "SSHClientConnection":
+        """Return a cached SSH connection AUTHENTICATED AS *user* (spec 2026-09-01 §3).
+
+        Separate from :meth:`ssh` (the login-target connection) and keyed by
+        login. Same ip/tunnel path; same double-checked-locking shape as the
+        primary slots. Closed by :meth:`close` with everything else.
+        """
+        conn = self._user_ssh_conns.get(user)
+        if conn is not None:
+            return conn
+        lock = self._user_locks.setdefault(user, asyncio.Lock())
+        async with lock:
+            conn = self._user_ssh_conns.get(user)
+            if conn is not None:
+                return conn
+            direct = self._direct_cred_for(user)
+            logger.debug(f"Connecting to {self._name} via SSH as {user!r}")
+            tunnel = None
+            if self._hop is not None:
+                tunnel = await self._ensure_tunnel()
+            conn = await ssh_connect(
+                self._ip,
+                username=direct.login,
+                password=direct.password,
+                tunnel=tunnel,
+                **self._ssh_options._kwargs(),  # noqa: SLF001 — intra-package access to SshOptions._kwargs
+            )
+            await self._ssh_options._apply_post_connect(conn)  # noqa: SLF001 — intra-package access to SshOptions._apply_post_connect
+            self._user_ssh_conns[user] = conn
+            return conn
+
+    async def sftp_as(self, user: str) -> "SFTPClient":
+        """Return a cached SFTP client on :meth:`ssh_as`'s connection for *user*."""
+        sftp = self._user_sftp_conns.get(user)
+        if sftp is not None:
+            return sftp
+        lock = self._user_locks.setdefault(f"{user}\x00sftp", asyncio.Lock())
+        async with lock:
+            sftp = self._user_sftp_conns.get(user)
+            if sftp is not None:
+                return sftp
+            conn = await self.ssh_as(user)
+            sftp = await conn.start_sftp_client(**self._sftp_options._kwargs())  # noqa: SLF001 — intra-package access to SftpOptions._kwargs
+            self._user_sftp_conns[user] = sftp
             return sftp
 
     async def ftp(self) -> "aioftp.Client":
@@ -573,6 +655,28 @@ class ConnectionManager:
         ssh, self._ssh_conn = self._ssh_conn, None
         ftp, self._ftp_conn = self._ftp_conn, None
         telnet, self._telnet_conn = self._telnet_conn, None
+        user_sftp, self._user_sftp_conns = self._user_sftp_conns, {}
+        user_ssh, self._user_ssh_conns = self._user_ssh_conns, {}
+        self._user_locks = {}
+
+        for login, client in user_sftp.items():
+            with teardown_step(self._name, f"sftp-as-{login}"):
+                client.exit()
+
+        for login, conn in user_ssh.items():
+            with teardown_step(self._name, f"ssh-as-{login}"):
+                # Mirror the primary ssh slot's zombie-transport mitigation
+                # below: without it a hopped per-user connection can leave an
+                # asyncio transport with ``_closing=False`` after the OS
+                # socket is gone, firing a ``ResourceWarning`` on GC that
+                # pytest escalates against a later, unrelated test.
+                asyncio_transport = getattr(conn, "_transport", None)
+                try:
+                    conn.close()
+                    await conn.wait_closed()
+                finally:
+                    if asyncio_transport is not None:
+                        asyncio_transport.close()
 
         if sftp:
             with teardown_step(self._name, "sftp"):
@@ -625,6 +729,37 @@ class ConnectionManager:
         # leaked by unrelated tests — firing their ``__del__`` and letting
         # pytest's ``[unraisable]`` plugin escalate those warnings into a flake
         # on whatever test happens to be calling ``close()``.
+
+
+class _UserConnections:
+    """A per-user view over a :class:`ConnectionManager` for transfer backends.
+
+    Delegates everything to the primary manager except the two auth-carrying
+    accessors: ``ssh()``/``sftp()`` return the *user*'s own connection, so an
+    unchanged scp/sftp/nc backend runs over it and files land owned by the
+    user (spec 2026-09-01 §4). ``ftp()`` refuses — that client authenticates
+    separately with its own creds. Not a subclass: delegation via
+    ``__getattr__`` keeps this immune to manager fields it never heard of.
+    """
+
+    def __init__(self, primary: "ConnectionManager", user: str) -> None:
+        self._primary = primary
+        self._user = user
+
+    async def ssh(self) -> "SSHClientConnection":
+        return await self._primary.ssh_as(self._user)
+
+    async def sftp(self) -> "SFTPClient":
+        return await self._primary.sftp_as(self._user)
+
+    async def ftp(self) -> "NoReturn":
+        raise NotImplementedError(
+            f"{self._primary._name}: put/get(user=...) over ftp — "  # noqa: SLF001 — sibling class in the same module
+            f"the ftp backend authenticates separately with its own creds"
+        ) from None
+
+    def __getattr__(self, name: str) -> "Any":
+        return getattr(self._primary, name)
 
 
 @dataclass(frozen=True)

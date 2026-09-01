@@ -151,3 +151,44 @@ def test_teardown_step_lets_cancellation_through():
     """Force-abandon contract: a cancelled teardown stops loudly, not politely."""
     with pytest.raises(asyncio.CancelledError), teardown_step("box", "probe-step"):
         raise asyncio.CancelledError
+
+
+# ---------------------------------------------------------------------------
+# per-user connections (ssh_as/sftp_as, spec 2026-09-01 §3) drain in close()
+# ---------------------------------------------------------------------------
+
+
+class _FakeUserSsh:
+    def __init__(self) -> None:
+        self.closed = False
+        self._transport = _FakeTransport()
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        pass
+
+
+class _FakeUserSftp:
+    def __init__(self) -> None:
+        self.exited = False
+
+    def exit(self) -> None:
+        self.exited = True
+
+
+@pytest.mark.asyncio
+async def test_close_drains_per_user_connections():
+    mgr = ConnectionManager(ip="10.0.0.1", creds=[], user="u", term="ssh", name="box")
+    user_ssh = _FakeUserSsh()
+    user_sftp = _FakeUserSftp()
+    mgr._user_ssh_conns["postgres"] = user_ssh
+    mgr._user_sftp_conns["postgres"] = user_sftp
+
+    await mgr.close()
+
+    assert user_ssh.closed
+    assert user_sftp.exited
+    assert mgr._user_ssh_conns == {}
+    assert mgr._user_sftp_conns == {}

@@ -31,7 +31,12 @@ destination — completes against the host itself
 | Option | Default | Description |
 | ------ | ------- | ----------- |
 | `--mode TEXT` | backend default | **`put` only.** Octal permission bits for the uploaded file(s) — `755`, `0644`, `0o4755`. Always read as octal, never decimal |
-| `--user NAME` | none | Chown the landed file(s) to this owner. Containers only — every other host family refuses it on both `put` and `get`. On containers, `get` accepts it and ignores it: reads are ownership-indifferent. See {ref}`container-users` |
+| `--user NAME` | none | Transfer as this owner. On containers it chowns the landed file(s), and `get` accepts it and ignores it — reads are ownership-indifferent (see {ref}`container-users`). On unix hosts it *authenticates* as that user, so `put` lands the bytes already owned by them and `get` reads with their permissions — direct-cred users only, never over the `ftp` backend. Every other host family refuses it on both verbs |
+
+On a unix host the transfer rides that user's own connection, so a `DEST` that
+is still relative once
+[`default_dest_dir`](../../configuration/lab-config.md#common-optional) has been
+applied lands in *their* home directory, not the login user's.
 
 The mode is applied after the bytes land, in one batched `chmod` covering the
 whole transfer.  Hosts whose transfer backend has no permission model

@@ -264,7 +264,7 @@ host field — the third reservation level, beside the
 | `shelf` | integer | Shelf / rack position.  Not part of the host id. |
 | `hop` | string | Host id of an intermediate SSH jump host.  Otto opens an SSH tunnel through it and routes all subsequent connections automatically.  Hops can chain. |
 | `inventory` | string | Key of the inventory record this host is resolved from — see [Referencing the inventory](#referencing-the-inventory) below and {doc}`inventory`.  Inventory-owned fields must then be absent here. |
-| `default_dest_dir` | string | Directory an empty or relative `put`/`get` destination resolves against.  Defaults to empty — SCP/SFTP then land in the login user's home directory, and an embedded host with a mounted filesystem falls back to its mount point. |
+| `default_dest_dir` | string | Directory an empty or relative `put`/`get` destination resolves against.  Defaults to empty — SCP/SFTP then land in the login user's home directory (or the authenticated user's home when `--user` is given), and an embedded host with a mounted filesystem falls back to its mount point. |
 | `max_filename_len` | integer | Longest basename the host's filesystem accepts.  Defaults to `255` (the Linux `NAME_MAX`, and the typical LittleFS ceiling); lower it where the firmware enforces a tighter limit — e.g. `32` on a Zephyr build with a short-name FAT. |
 | `debug_log_globs` | array of strings | Remote log paths `get_debug_logs` fetches off this host.  A pattern (`*`, `?`, `[`) is expanded on the device itself, so embedded hosts — which have no shell to expand with — declare concrete paths.  See {doc}`../cli/host/capabilities/index`. |
 | `is_virtual` | boolean | `true` when the host is a VM or emulator. |

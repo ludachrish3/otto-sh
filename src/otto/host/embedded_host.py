@@ -484,7 +484,7 @@ class EmbeddedHost(RemoteHost):
     ) -> CommandResult:
         """Run a single command on the embedded host.
 
-        Unlike :meth:`~otto.host.unix_host.UnixHost.exec`, this is **not** concurrency-safe: an
+        Unlike :meth:`~otto.host.host.BaseHost.exec`, this is **not** concurrency-safe: an
         embedded target exposes a single console with no stateless exec
         primitive, so ``exec`` runs on the same persistent session as
         ``run``. It exists for API parity; use ``run`` for stateful
@@ -522,7 +522,10 @@ class EmbeddedHost(RemoteHost):
         dest_dir: Path,
         user: Annotated[
             str | None,
-            Opt(help="Not supported on this host type — containers only."),
+            Opt(
+                help="Not supported on this host type — containers chown, "
+                "unix hosts authenticate as the user."
+            ),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
@@ -559,7 +562,10 @@ class EmbeddedHost(RemoteHost):
         ] = None,
         user: Annotated[
             str | None,
-            Opt(help="Not supported on this host type — containers only."),
+            Opt(
+                help="Not supported on this host type — containers chown, "
+                "unix hosts authenticate as the user."
+            ),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:

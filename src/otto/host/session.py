@@ -1347,6 +1347,10 @@ class HostSession:
         Posix-only — raises ``NotImplementedError`` on
         hosts whose sessions do not support elevation (no creds).
 
+        See Also:
+            :meth:`as_user` — the scoped form; prefer it unless the switch
+            should outlive the block.
+
         Raises:
             ~otto.result.CommandNotRunError: this is a dry run — see
                 ``_refuse_elevation``.
@@ -1375,6 +1379,9 @@ class HostSession:
         Undoes each applied hop in reverse (innermost first) so a multi-hop
         ``via`` chain unwinds correctly, mirroring
         :meth:`~otto.host.privilege.PosixPrivilege.as_user`.
+
+        The scoped form of :meth:`switch_user` — same engine
+        (:func:`~otto.host.login_proxy.perform_switch`), plus undo.
 
         Raises:
             ~otto.result.CommandNotRunError: this is a dry run — see
@@ -1764,6 +1771,9 @@ class DeclinedSession(HostSession):
     async def switch_user(self, user: str = "", password: str | None = None) -> None:
         """Announce the elevation and refuse to claim it happened.
 
+        The dry-run stand-in for :meth:`HostSession.switch_user`; its scoped
+        sibling :meth:`as_user` declines the same way.
+
         Raises:
             ~otto.result.CommandNotRunError: always — see
                 ``HostSession._refuse_elevation``.
@@ -1776,6 +1786,9 @@ class DeclinedSession(HostSession):
         self, user: str = "root", password: str | None = None
     ) -> "AsyncIterator[HostSession]":
         """Announce the elevation and refuse to claim it happened.
+
+        The dry-run stand-in for :meth:`HostSession.as_user`, the scoped form
+        of :meth:`switch_user` — it declines the same way.
 
         Raises:
             ~otto.result.CommandNotRunError: always, on ENTRY, so no undo is
@@ -2250,7 +2263,7 @@ class SessionManager:
 
         When the login is proxied (:attr:`~otto.host.connections.ConnectionManager.proxy_hops`
         non-empty), both raw-exec fast paths below — the ``_exec_factory``
-        callable and the inline ``ssh_conn.create_process`` — are skipped in
+        callable and the :meth:`exec_on` SSH exec channel — are skipped in
         favor of the pooled named-session path (the same one Telnet always
         uses). Neither raw exec channel can replay proxy hops: they
         authenticate as the resolved DIRECT cred, so a proxied exec on
@@ -2272,9 +2285,10 @@ class SessionManager:
             return await self._exec_factory(cmd, timeout)
 
         assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no exec_factory (or hops force the pool path)
-        mode = log
-        if mode is not LogMode.NEVER:
-            self._log_command(cmd, mode)
+        # NO logging here: each surviving arm logs the command itself, exactly
+        # once. The pooled arm's `HostSession.run` logs every command it sends,
+        # and `exec_on` logs its own; a pre-match log would double the line on
+        # both (as it did on the pooled route before `exec_on` was extracted).
         match route:
             case _ExecRoute.POOLED_SHELL:
                 # Telnet has no stateless exec primitive (unlike SSH which
@@ -2297,57 +2311,82 @@ class SessionManager:
                 finally:
                     self._exec_pool.append(exec_session)
             case _ExecRoute.SSH_CHANNEL:
-                import asyncssh
-
                 ssh_conn = await self._connections.ssh()
-                process = await ssh_conn.create_process(
-                    cmd,
-                    stderr=asyncssh.STDOUT,
-                    stdin=asyncssh.DEVNULL,
-                )
-                lines: list[str] = []
-
-                async def _drain() -> None:
-                    async for raw_line in process.stdout:
-                        line = raw_line.rstrip("\n")
-                        lines.append(line)
-                        if mode is not LogMode.NEVER:
-                            self._log_output(line, mode)
-
-                try:
-                    await asyncio.wait_for(_drain(), timeout=timeout)
-                except asyncio.TimeoutError:
-                    # asyncssh's terminate() sends a signal to the *remote*
-                    # command, which (like a local subprocess) can ignore it —
-                    # so the reap must be bounded, and if it doesn't complete
-                    # in time we escalate to kill() (untrappable) rather than
-                    # leave the channel open indefinitely.
-                    process.terminate()
-                    try:
-                        await asyncio.wait_for(process.wait(), timeout=_EXEC_REAP_TIMEOUT)
-                    except asyncio.TimeoutError:
-                        process.kill()
-                        with suppress(asyncio.TimeoutError):
-                            await asyncio.wait_for(process.wait(), timeout=_EXEC_REAP_TIMEOUT)
-                    return CommandResult(
-                        status=Status.Error,
-                        value=f"Command timed out after {timeout}s\n" + "\n".join(lines),
-                        command=cmd,
-                        retcode=-1,
-                        timed_out=True,
-                    )
-                result = await process.wait()
-                status = Status.Success if result.exit_status == 0 else Status.Failed
-                return CommandResult(
-                    status=status,
-                    value="\n".join(lines),
-                    command=cmd,
-                    retcode=result.exit_status or 0,
-                )
+                return await self.exec_on(ssh_conn, cmd, timeout=timeout, log=log)
             case _:
                 raise ValueError(
                     f'{self._name}: unsupported terminal type "{self._connections.term}"'
                 )
+
+    async def exec_on(
+        self,
+        conn: "SSHClientConnection",
+        cmd: str,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
+        log: LogMode = LogMode.NORMAL,
+    ) -> CommandResult:
+        """Run *cmd* on a fresh exec channel of *conn* — the SSH stateless arm.
+
+        Extracted from :meth:`exec`'s ``SSH_CHANNEL`` route so per-user exec
+        (``UnixHost``'s :meth:`~otto.host.host.BaseHost.exec` with ``user=``,
+        spec 2026-09-01 §4) runs the byte-same channel body on a DIFFERENT
+        connection — the one :meth:`otto.host.connections.ConnectionManager.ssh_as`
+        authenticated as that user. Logging, drain, timeout escalation
+        (terminate → kill) and status mapping are unchanged.
+
+        This method logs the command itself (unless *log* is
+        :attr:`~otto.logger.mode.LogMode.NEVER`), so :meth:`exec` must NOT log
+        before dispatching here.
+        """
+        import asyncssh
+
+        mode = log
+        if mode is not LogMode.NEVER:
+            self._log_command(cmd, mode)
+        process = await conn.create_process(
+            cmd,
+            stderr=asyncssh.STDOUT,
+            stdin=asyncssh.DEVNULL,
+        )
+        lines: list[str] = []
+
+        async def _drain() -> None:
+            async for raw_line in process.stdout:
+                line = raw_line.rstrip("\n")
+                lines.append(line)
+                if mode is not LogMode.NEVER:
+                    self._log_output(line, mode)
+
+        try:
+            await asyncio.wait_for(_drain(), timeout=timeout)
+        except asyncio.TimeoutError:
+            # asyncssh's terminate() sends a signal to the *remote*
+            # command, which (like a local subprocess) can ignore it —
+            # so the reap must be bounded, and if it doesn't complete
+            # in time we escalate to kill() (untrappable) rather than
+            # leave the channel open indefinitely.
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=_EXEC_REAP_TIMEOUT)
+            except asyncio.TimeoutError:
+                process.kill()
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(process.wait(), timeout=_EXEC_REAP_TIMEOUT)
+            return CommandResult(
+                status=Status.Error,
+                value=f"Command timed out after {timeout}s\n" + "\n".join(lines),
+                command=cmd,
+                retcode=-1,
+                timed_out=True,
+            )
+        result = await process.wait()
+        status = Status.Success if result.exit_status == 0 else Status.Failed
+        return CommandResult(
+            status=status,
+            value="\n".join(lines),
+            command=cmd,
+            retcode=result.exit_status or 0,
+        )
 
     def _exec_route(self) -> _ExecRoute:
         """Which primitive :meth:`exec` would run a command on right now.

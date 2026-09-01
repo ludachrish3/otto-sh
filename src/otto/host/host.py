@@ -523,8 +523,11 @@ class Host(Protocol):
                 mechanism raises
                 :exc:`~otto.host.errors.UnsupportedOnUserlandError`.
             user: Run the commands as this user. Containers implement this
-                (``docker exec -u``); host families without user-switching
-                run semantics refuse loudly. ``None`` means the container's
+                (``docker exec -u``); every other family refuses loudly — a
+                persistent session's identity is
+                :meth:`~otto.host.privilege.PosixPrivilege.as_user`'s job,
+                and the stateless :meth:`exec`/:meth:`put`/:meth:`get` take
+                ``user=`` directly on unix. ``None`` means the container's
                 declared default, or the connection's own identity elsewhere.
                 On containers the persistent channel binds its user at open;
                 a later ``run()`` naming a different user refuses — ``close()``
@@ -558,10 +561,14 @@ class Host(Protocol):
             cmd: Shell command to run.
             timeout: Seconds before the command is abandoned.
             log: Logging disposition for this call.
-            user: Run the command as this user. Containers implement this
-                (``docker exec -u``); host families without user-switching
-                exec semantics refuse loudly. ``None`` means the container's
-                declared default, or the connection's own identity elsewhere.
+            user: Run the command as this user. Containers act via
+                ``docker exec -u``; ssh-term unix hosts AUTHENTICATE as the
+                user — the command runs over that user's own SSH connection,
+                so direct-cred users only (a login reachable only through
+                proxy hops refuses). Every other family (telnet-term unix,
+                embedded, local) refuses loudly. ``None`` means the
+                container's declared default, or the connection's own
+                identity elsewhere.
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
@@ -633,8 +640,11 @@ class Host(Protocol):
 
         ``user`` is accepted for interface uniformity with :meth:`put`.
         Containers ignore it — reads are ownership-indifferent, so there is
-        nothing to chown. Host families without a container's cp+chown
-        transfer path refuse it loudly instead of silently ignoring it.
+        nothing to chown. Unix hosts honour it by AUTHENTICATING as that
+        user — the transfer rides that user's own connection, so the read
+        happens with their permissions (direct-cred users only; never over the
+        ``ftp`` backend). Families with neither path refuse it loudly instead
+        of silently ignoring it.
 
         Returns a :class:`~otto.result.Result` whose ``value`` is a
         ``dict[Path, Result]`` mapping each source path — keyed exactly as
@@ -672,9 +682,14 @@ class Host(Protocol):
         default user may not own what ``docker cp`` just placed; a chown
         failure fails the transfer loudly, per file. Any form ``chown``
         itself accepts is passed through verbatim: a name, a UID, or the
-        ``UID:GID``/``name:group`` owner:group spelling. Host families whose
-        transfer path has no such notion of ownership refuse a non-``None``
-        ``user`` loudly rather than silently ignoring it.
+        ``UID:GID``/``name:group`` owner:group spelling. Unix hosts reach
+        the same end differently: the transfer AUTHENTICATES as that user and
+        rides their own connection, so the bytes land owned by them with
+        no chown step at all — direct-cred users only, never over the ``ftp``
+        backend, and a destination still relative after ``default_dest_dir``
+        resolution lands under *their* home. Host families with neither path
+        refuse a non-``None`` ``user`` loudly rather than silently ignoring
+        it.
 
         Returns a :class:`~otto.result.Result` whose ``value`` is a
         ``dict[Path, Result]`` mapping each source path — keyed exactly as
@@ -1270,8 +1285,10 @@ class BaseHost(ABC):
         user: Annotated[
             str | None,
             Opt(
-                help="Run as this user (containers only; other hosts refuse). "
-                "The persistent channel binds its user when it opens."
+                help="Run as this user — containers only; every other family "
+                "refuses a per-call user. On unix, put/get take --user; from "
+                "Python use as_user() or exec(user=...). The persistent "
+                "channel binds its user when it opens."
             ),
         ] = None,
     ) -> Results:
@@ -1310,8 +1327,11 @@ class BaseHost(ABC):
                 :exc:`~otto.host.errors.UnsupportedOnUserlandError` rather than
                 emitting a command that cannot work — see ``_elevate``.
             user: Run each command as this user. Containers implement this
-                (``docker exec -u``); host families without user-switching
-                run semantics refuse loudly. ``None`` means the container's
+                (``docker exec -u``); every other family refuses loudly — a
+                persistent session's identity is
+                :meth:`~otto.host.privilege.PosixPrivilege.as_user`'s job,
+                and the stateless :meth:`exec`/:meth:`put`/:meth:`get` take
+                ``user=`` directly on unix. ``None`` means the container's
                 declared default, or the connection's own identity elsewhere.
                 On containers the persistent channel binds its user at open;
                 a later run() naming a different user refuses — close() or
@@ -1417,10 +1437,14 @@ class BaseHost(ABC):
                 :data:`DEFAULT_COMMAND_TIMEOUT`; pass ``float("inf")`` for a
                 deliberately unbounded command.
             log: Logging disposition for this call.
-            user: Run the command as this user. Containers implement this
-                (``docker exec -u``); host families without user-switching
-                exec semantics refuse loudly. ``None`` means the container's
-                declared default, or the connection's own identity elsewhere.
+            user: Run the command as this user. Containers act via
+                ``docker exec -u``; ssh-term unix hosts AUTHENTICATE as the
+                user — the command runs over that user's own SSH connection,
+                so direct-cred users only (a login reachable only through
+                proxy hops refuses). Every other family (telnet-term unix,
+                embedded, local) refuses loudly. ``None`` means the
+                container's declared default, or the connection's own
+                identity elsewhere.
         """
         if user is not None:
             _validate_user(user)
