@@ -115,7 +115,7 @@ path domains, both already solved in the codebase:
   against the host's `default_dest_dir` under the host's own conventions.
   Written with forward slashes; never interpreted by the local OS.
 
-## 5. Generic core — `otto/config/declared.py`
+## 5. Generic core — `otto/declared.py`
 
 Seam-neutral, ~100 lines plus docs; the documented convention for future
 seams:
@@ -133,6 +133,10 @@ seams:
   `build(entries, host) -> list[T]` walks declaration order, first match per
   `name` wins, instances get `owner` stamped (unless the instance already
   names one — same deliberate carve-out as the provider loops).
+
+Placed at `otto/declared.py`, not under `otto/config/`: the config package's
+`__init__` boots the app on import, and the seam modules must import this
+core at module top (implementation finding, 2026-09-01).
 
 ## 6. Seam adapters and built-in kinds
 
@@ -156,6 +160,10 @@ seams:
 - Anything richer than `file` + command strings is a repo-registered kind —
   that is the mechanism working as intended, not a limitation.
 
+Declared command strings run under the host's default command timeout;
+longer operations belong to a repo-registered kind (a `timeout` param is a
+compatible later extension).
+
 ## 7. Ingest wiring
 
 At the existing chokepoint (`host/factory.py` — `create_host_from_dict`,
@@ -172,6 +180,22 @@ currently `apply_product_providers(host)` / `apply_dev_tool_providers(host)`):
 3. Parsing slots into `config/repo.py` beside `model.docker` →
    `self.declared_products` / `self.declared_dev_tools`
    (lists of `DeclaredEntry`).
+4. A repo whose `declared_products` or `declared_dev_tools` is non-empty is
+   "providing" for bootstrap's D2 scope-required check exactly like a repo
+   that registered a code provider — it must declare `[project]` or bootstrap
+   refuses it the same way.
+5. Entry collection (`declared_for_host`) never forces bootstrap: it probes
+   whether bootstrap has already run and returns no entries when it has not,
+   so an un-bootstrapped process collects nothing rather than paying
+   discovery's cost or running repo init imports just to answer.
+6. A repo the dependency pass skipped contributes **no** declared entries
+   (Chris, 2026-09-02): its settings were parsed in phase 1, but its init
+   modules never ran, so neither half of it — declared or code — applies;
+   collection filters against the dependency pass's survivors while keeping
+   discovery order for cross-repo first-match precedence. Consequently the
+   D2 scope-required check (point 4) judges declared entries over the same
+   survivor list as providers — a skipped repo's missing scope is vacuous,
+   and its missing dependency has already surfaced as its own finding.
 
 ## 8. Failure modes
 
