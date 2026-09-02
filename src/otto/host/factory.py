@@ -5,8 +5,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..models.host import HostSpec
+
+# Imported for its registration side effect: the built-in "file" kind must be
+# in both kind registries before any declared entry builds. The factory is the
+# only build call site, so this import is the guarantee.
+from . import file_kind  # noqa: F401
 from .capability import select_option_defaults, select_preferences
-from .dev_tool import apply_dev_tool_providers
+from .dev_tool import apply_declared_dev_tools, apply_dev_tool_providers
 from .inventory_ref import InventoryRef
 from .os_profile import (
     build_host_class,
@@ -15,7 +20,7 @@ from .os_profile import (
     get_os_profile,
     registered_profile_names,
 )
-from .product import apply_product_providers
+from .product import apply_declared_products, apply_product_providers
 from .remote_host import RemoteHost, make_host_id
 
 # Names of the option tables accepted on host dicts and in
@@ -220,7 +225,13 @@ def create_host_from_dict(
     host.element_metadata = dict(element_metadata or {})
     host.element_resources = frozenset(element_resources or ())
     host.inventory_ref = inventory_ref if inventory_ref is not None else InventoryRef()
+    # Declared before providers, per seam: the provider loops' name-dedup then
+    # skips any code instance whose name a settings entry already claimed —
+    # config wins, code is the fallback (spec 2026-09-01 §7). Both run after
+    # the source_lab stamp above, because both gates read it.
+    apply_declared_products(host)
     apply_product_providers(host)
+    apply_declared_dev_tools(host)
     apply_dev_tool_providers(host)
     return host
 

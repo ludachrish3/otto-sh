@@ -35,6 +35,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # package __init__ anyway; it costs this module nothing (no rich — `management`
 # is a lazy PEP 562 export) and it is what keeps the accepted level names below
 # from drifting out of the module that registers them.
+from ..declared import DeclaredEntry, MatchLeaf, validate_match_table
 from ..logger.levels import LEVEL_ALIASES
 from ..utils import anchor_path
 from .base import OttoModel
@@ -791,6 +792,46 @@ class ProjectScopeSpec(OttoModel):
         return v
 
 
+class DeclaredEntrySpec(OttoModel):
+    """Boundary spec for one ``[[products]]``/``[[dev_tools]]`` entry.
+
+    The one sanctioned ``extra='allow'`` beyond the historical-data readers:
+    every non-reserved key is a param for the entry's *kind*, whose factory —
+    not this spec — knows the param schema. Reserved keys are ``name``,
+    ``kind`` and ``match``; ``match`` is validated here, at parse, because a
+    match table is static (the :class:`ProjectScopeSpec` compile-at-parse
+    rule). Builds a :class:`~otto.declared.DeclaredEntry` via
+    :meth:`to_runtime`; the caller supplies what the TOML cannot know — the
+    declaring repo, its root, and which array the entry came from.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    kind: str
+    match: dict[str, MatchLeaf | list[MatchLeaf]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_match(self) -> "DeclaredEntrySpec":
+        try:
+            validate_match_table(self.match)
+        except ValueError as e:
+            raise ValueError(f"entry {self.name!r}: {e}") from e
+        return self
+
+    def to_runtime(self, *, owner: str, base_dir: Path, seam: str) -> DeclaredEntry:
+        """Build the runtime entry; extras become the kind's params, verbatim."""
+        return DeclaredEntry(
+            name=self.name,
+            kind=self.kind,
+            seam=seam,
+            owner=owner,
+            base_dir=base_dir,
+            match=dict(self.match),
+            params=dict(self.model_extra or {}),
+        )
+
+
 class SettingsModel(OttoModel):
     """Boundary model for a repo's ``.otto/settings.toml``.
 
@@ -825,6 +866,11 @@ class SettingsModel(OttoModel):
     dependencies: DependenciesSpec = DependenciesSpec()
     env: EnvSettingsSpec = EnvSettingsSpec()
     project: ProjectScopeSpec | None = None
+    products: list[DeclaredEntrySpec] = Field(default_factory=list)
+    """``[[products]]`` — settings-declared products (spec 2026-09-01
+    declared-products-tools §2); converted per-repo by ``Repo.parse_settings``."""
+    dev_tools: list[DeclaredEntrySpec] = Field(default_factory=list)
+    """``[[dev_tools]]`` — the identical schema feeding the dev-tool seam."""
 
     @model_validator(mode="before")
     @classmethod

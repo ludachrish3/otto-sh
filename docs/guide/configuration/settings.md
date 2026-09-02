@@ -139,9 +139,20 @@ init
   them).  Both are Python regexes matched with `re.fullmatch`; `host_patterns`
   defaults to `[".*"]` and `lab_patterns` has no default.  It bounds every
   fleet walk the repo drives and gates its product/dev-tool providers, and it
-  becomes **required** the moment the repo registers one of those providers.
-  See {ref}`project-scope` in {doc}`lab-config` for the full schema and
-  {doc}`../cli/run/defaults` for what it does to a walk.
+  becomes **required** the moment the repo registers one of those providers —
+  or declares a non-empty `[[products]]`/`[[dev_tools]]` array (see below):
+  either way the repo is *providing*, and bootstrap refuses a providing repo
+  with no `[project]` scope. See {ref}`project-scope` in {doc}`lab-config` for
+  the full schema and {doc}`../cli/run/defaults` for what it does to a walk.
+
+\[\[products\]\]
+: Optional array of declared products — settings-declared software under
+  test, matched to hosts and bound to registered kinds. See
+  {doc}`declared-products-tools`.
+
+\[\[dev_tools\]\]
+: Optional array of declared dev tools; the identical schema feeding the
+  dev-tool seam. See {doc}`declared-products-tools`.
 
 \[os_profiles\]
 : Optional table of named OS-profile bundles.  Each `[os_profiles.<name>]`

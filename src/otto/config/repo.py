@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from rich.panel import Panel
     from rich.text import Text
 
+    from ..declared import DeclaredEntry
     from ..host.os_profile import OsProfile
     from ..labs.sources import CompiledLabSource
     from ..models.dependencies import ParsedDependency
@@ -379,6 +380,13 @@ class Repo:
 
     declared_dependencies: list["ParsedDependency"] = field(default_factory=list, init=False)
     """Parsed ``[dependencies]`` entries — required first, then optional, declaration order."""
+
+    declared_products: list["DeclaredEntry"] = field(default_factory=list, init=False)
+    """Parsed ``[[products]]`` entries, in runtime form (``owner``/``base_dir`` stamped
+    at parse time). Consumed by :func:`otto.declared.declared_for_host`."""
+
+    declared_dev_tools: list["DeclaredEntry"] = field(default_factory=list, init=False)
+    """The identical schema's ``[[dev_tools]]`` twin — see :attr:`declared_products`."""
 
     dependencies: list["ResolvedDependency"] = field(default_factory=list, init=False)
     """Per-dependency resolution outcome; populated by bootstrap's dependency pass.
@@ -842,6 +850,14 @@ class Repo:
         self.docker_settings = model.docker.to_runtime()
         self.monitor_settings = model.monitor.to_runtime()
         self.env_backend = model.env.backend
+        self.declared_products = [
+            e.to_runtime(owner=model.name, base_dir=self.sut_dir, seam="products")
+            for e in model.products
+        ]
+        self.declared_dev_tools = [
+            e.to_runtime(owner=model.name, base_dir=self.sut_dir, seam="dev_tools")
+            for e in model.dev_tools
+        ]
 
     def _register_os_profiles(
         self,

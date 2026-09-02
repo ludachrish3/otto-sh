@@ -769,3 +769,78 @@ def test_lab_sources_parse_and_reach_repo(tmp_path):
     (src,) = repo.lab_sources
     assert src.label == "srcrepo/json#1"
     assert src.paths == [sut / "lab_data"]
+
+
+# ── [[products]] / [[dev_tools]] declared entries ────────────────────────────
+
+
+def test_declared_entry_minimal_and_extras_become_params():
+    from pathlib import Path
+
+    from otto.models.settings import DeclaredEntrySpec
+
+    spec = DeclaredEntrySpec.model_validate(
+        {"name": "fw", "kind": "file", "artifact": "build/fw.bin", "dest_dir": "/opt"}
+    )
+    entry = spec.to_runtime(owner="repo1", base_dir=Path("/repo"), seam="products")
+    assert (entry.name, entry.kind, entry.seam, entry.owner) == ("fw", "file", "products", "repo1")
+    assert entry.base_dir == Path("/repo")
+    assert entry.params == {"artifact": "build/fw.bin", "dest_dir": "/opt"}
+    assert entry.match == {}
+
+
+def test_declared_entry_requires_name_and_kind():
+    from otto.models.settings import DeclaredEntrySpec
+
+    with pytest.raises(ValidationError, match=r"(?m)^kind\n\s+Field required"):
+        DeclaredEntrySpec.model_validate({"name": "fw"})
+    with pytest.raises(ValidationError, match=r"(?m)^name\n\s+Field required"):
+        DeclaredEntrySpec.model_validate({"kind": "file"})
+
+
+@pytest.mark.parametrize(
+    ("match", "fragment"),
+    [
+        ({"is_virtual": True}, "is_virtual"),
+        ({"id": "bb["}, r"entry 'fw': match key 'id'"),
+        ({"os_version": ">=not.a.version"}, "not a valid version specifier"),
+    ],
+)
+def test_declared_entry_match_is_validated_at_parse(match, fragment):
+    from otto.models.settings import DeclaredEntrySpec
+
+    with pytest.raises(ValidationError, match=fragment.replace("[", r"\[").replace(".", r"\.")):
+        DeclaredEntrySpec.model_validate({"name": "fw", "kind": "file", "match": match})
+
+
+def test_declared_entry_reserved_keys_stay_out_of_params():
+    from pathlib import Path
+
+    from otto.models.settings import DeclaredEntrySpec
+
+    entry = DeclaredEntrySpec.model_validate(
+        {"name": "fw", "kind": "file", "match": {"id": "bb.*"}, "artifact": "a"}
+    ).to_runtime(owner="r", base_dir=Path("/r"), seam="dev_tools")
+    assert entry.params == {"artifact": "a"}  # match/name/kind did not leak
+    assert entry.seam == "dev_tools"
+
+
+def test_settings_model_accepts_products_and_dev_tools_arrays():
+    m = SettingsModel.model_validate(
+        {
+            **_minimal(),
+            "products": [
+                {"name": "fw", "kind": "file", "artifact": "a.bin", "match": {"id": "bb.*"}}
+            ],
+            "dev_tools": [{"name": "probe", "kind": "file", "artifact": "p.sh"}],
+        }
+    )
+    assert m.products[0].name == "fw"
+    assert m.dev_tools[0].kind == "file"
+    assert m.products[0].match == {"id": "bb.*"}
+
+
+def test_settings_model_defaults_to_empty_declared_arrays():
+    m = SettingsModel.model_validate(_minimal())
+    assert m.products == []
+    assert m.dev_tools == []

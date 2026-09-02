@@ -59,6 +59,7 @@ __all__ = [
     "get_lab",
     "get_ordered_repos",
     "get_repos",
+    "is_bootstrapped",
     "load_lab",
     "load_otto_env",
     "load_user_settings",
@@ -127,6 +128,25 @@ def get_repos() -> list[Repo]:
     from ..bootstrap import bootstrap
 
     return bootstrap().repos
+
+
+def is_bootstrapped() -> bool:
+    """Report whether bootstrap has already STARTED (running or done), WITHOUT forcing it.
+
+    A probe, not a trigger: unlike :func:`get_repos`/:func:`get_ordered_repos`,
+    reading this never runs discovery or a repo's init imports. True for the
+    whole span from the phase-2 import pass onward — including mid-bootstrap,
+    where ``get_repos()`` already answers correctly and for free — and false
+    only for a process that has not started bootstrap at all. Callers that
+    must not pay bootstrap's cost as a side effect of merely asking — e.g.
+    :func:`otto.declared.declared_for_host`, reached from
+    ``create_host_from_dict`` in bare-library and pre-bootstrap processes —
+    check this first and treat ``False`` as "nothing loaded yet" rather than
+    calling :func:`get_repos`.
+    """
+    from ..bootstrap import is_bootstrapped as _is
+
+    return _is()
 
 
 def get_ordered_repos() -> list[Repo]:

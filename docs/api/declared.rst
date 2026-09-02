@@ -1,0 +1,4 @@
+declared
+========
+
+.. automodule:: otto.declared

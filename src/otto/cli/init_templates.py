@@ -52,6 +52,19 @@ paths = ["lab_data"]
 #lab_patterns = ["example_lab"]   # labs this project applies to
 #host_patterns = [".*"]           # hosts of interest within those labs
 
+# --- [[products]] / [[dev_tools]] — attach things to hosts without a provider -
+# Same schema, different seam. See
+# docs/guide/configuration/declared-products-tools.md.
+#[[products]]
+#name = "firmware"
+#kind = "file"
+#artifact = "build/fw.bin"
+#match = {{ "metadata.hw_version" = "rev2" }}
+#[[dev_tools]]
+#name = "trace-probe"
+#kind = "file"
+#artifact = "tools/probe.sh"
+
 # --- [logging.levels] — the per-library noise floor --------------------------
 # Nothing needs registering: otto configures the root logger, so every logger
 # in the process is already captured. This table only says what ENTERS otto's

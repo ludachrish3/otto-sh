@@ -37,6 +37,7 @@ local and remote machines.
    interact
    product
    dev_tool
+   file_kind
    power
    privilege
    file_ops

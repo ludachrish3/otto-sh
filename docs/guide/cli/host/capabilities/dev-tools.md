@@ -9,7 +9,7 @@ seams, because the two kinds of tooling are owned differently:
 
 | Kind | Declared | Owned by | Installed by |
 |------|----------|----------|--------------|
-| **Dev tool** | in code, via a provider | the repo that registered it | `install-tools` (on by default) |
+| **Dev tool** | in `settings.toml` (`[[dev_tools]]`, {doc}`../../../configuration/declared-products-tools`) or in code, via a provider | the repo that declared/registered it | `install-tools` (on by default) |
 | **Toolchain tool** | in lab data, per host | the host — shared by every repo | `install-tools --toolchain` |
 
 | Method | Behavior |

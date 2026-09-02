@@ -11,6 +11,7 @@ settings
 lab-config
 host-options
 os-profiles
+declared-products-tools
 host-sources
 inventory
 ```

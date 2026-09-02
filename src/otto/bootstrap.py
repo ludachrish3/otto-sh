@@ -11,9 +11,10 @@ every user-module exec so one broken file becomes a framed
 :class:`BootstrapError` instead of bricking the process. After phase 2 — and
 only after, because the registries it reads are populated BY those imports —
 one check runs that does NOT get contained: a repo that registered product or
-dev-tool providers must have declared the labs it applies to
-(:class:`ProjectScopeError`, spec §D2). Lab loading is deliberately NOT part of
-bootstrap — it happens lazily at first access.
+dev-tool providers, OR that declares ``[[products]]``/``[[dev_tools]]``
+entries, must have declared the labs it applies to (:class:`ProjectScopeError`,
+spec §D2). Lab loading is deliberately NOT part of bootstrap — it happens
+lazily at first access.
 
 ``bootstrap()`` is idempotent: the CLI entrypoint calls it before argv
 parsing, ``open_context()`` calls it lazily, and repeated calls return the
@@ -123,9 +124,9 @@ _completion_names: dict[str, Any] | None = None
 
 
 _NO_LAB_PATTERNS = """\
-repo '{name}' registers product/dev-tool providers but declares no
-[project] lab_patterns in .otto/settings.toml. A providing repo must say
-which labs it applies to. Add:
+repo '{name}' registers product/dev-tool providers or declares
+[[products]]/[[dev_tools]] entries but declares no [project] lab_patterns in
+.otto/settings.toml. A providing repo must say which labs it applies to. Add:
 
     [project]
     lab_patterns = [".*"]   # every lab — make the reach explicit
@@ -137,9 +138,10 @@ and narrow the patterns to the labs this project actually targets.\
 a narrower declaration, it is the same "no lab" the missing key compiles to."""
 
 _NO_HOST_PATTERNS = """\
-repo '{name}' registers product/dev-tool providers but declares an empty
-[project] host_patterns in .otto/settings.toml, which admits no host in any
-lab — so every provider it registers is dead code. Either drop the key (it
+repo '{name}' registers product/dev-tool providers or declares
+[[products]]/[[dev_tools]] entries but declares an empty [project]
+host_patterns in .otto/settings.toml, which admits no host in any lab — so
+every provider/entry it registers is dead code. Either drop the key (it
 defaults to every host) or name them:
 
     [project]
@@ -147,27 +149,49 @@ defaults to every host) or name them:
 """
 """The other axis. ``host_patterns = []`` is reachable only by writing it out —
 the field defaults to ``[".*"]`` — so it is always a deliberate keystroke, and
-always the wrong one on a repo that registers providers."""
+always the wrong one on a repo that registers providers or declares entries."""
 
 
-def _check_providing_repos_declare_scope(repos: "list[Repo]") -> None:
-    """Refuse a repo that registered providers without declaring its fleet (D2).
+def _check_providing_repos_declare_scope(
+    all_repos: "list[Repo]", ordered_repos: "list[Repo]"
+) -> None:
+    """Refuse a repo that provides without declaring its fleet (D2).
 
-    Runs after phase 2, which is the earliest moment the question can be
-    answered: the registries are populated BY the init imports, so a check
-    that ran any sooner would see an empty registry and pass every repo.
+    "Provides" means either half of the design: a repo that registered a
+    product/dev-tool *provider* (the code-first seam) or one whose
+    ``.otto/settings.toml`` carries a non-empty ``[[products]]``/
+    ``[[dev_tools]]`` array (the declarative seam) — both reach hosts the
+    exact same way once built, so both owe the same ``[project]`` scope.
 
-    Both registries are read because they are separate lists (a provider can
-    only ever land in one of them). Providers with no owner — registered
-    outside any repo's init import, which in practice means test code calling
-    the register function directly — are skipped: there is no repo to name and
-    no ``settings.toml`` to point at. So is an owner naming a repo that is not
-    among *repos*, which is the same "nothing to point at" case reached from
-    the other side.
+    Both halves are judged over *ordered_repos* (the dependency pass's
+    survivors). For providers that is structural: a repo whose required deps
+    went unsatisfied never had its init module run, so it cannot have
+    registered anything — checking it would be vacuous. For declared entries
+    it is parity with :func:`otto.declared.declared_for_host`, which filters
+    a dependency-skipped repo's entries out at collection (Chris,
+    2026-09-02): entries that can never apply owe no scope, and refusing the
+    whole bootstrap over a repo that is already skipped (and already surfaced
+    as a dependency finding) would bury the real problem under a second one.
+
+    Runs after phase 2, which is the earliest moment the provider half of the
+    question can be answered: the provider registries are populated BY the
+    init imports, so a check that ran any sooner would see an empty registry
+    and pass every repo. (The declared-entry half is already final after
+    phase 1, but is judged here too, in the same pass, for one refusal path.)
+
+    Both provider registries are read because they are separate lists (a
+    provider can only ever land in one of them). Providers with no owner —
+    registered outside any repo's init import, which in practice means test
+    code calling the register function directly — are skipped: there is no
+    repo to name and no ``settings.toml`` to point at. So is an owner naming a
+    repo that is not among *all_repos*, which is the same "nothing to point
+    at" case reached from the other side.
 
     Args:
-        repos: The repos whose init modules ran (the dependency pass's order);
-            a skipped repo cannot have registered anything.
+        all_repos: Every repo phase 1 discovered, dependency-skipped ones
+            included — used only to resolve owner names back to repos.
+        ordered_repos: The repos whose init modules actually ran (the
+            dependency pass's order) — the list both halves are judged over.
 
     Raises:
         ProjectScopeError: On the first offending repo, sorted by name so a
@@ -176,8 +200,21 @@ def _check_providing_repos_declare_scope(repos: "list[Repo]") -> None:
     from .host.dev_tool import _DEV_TOOL_PROVIDERS
     from .host.product import _PRODUCT_PROVIDERS
 
-    owners = {owner for _, owner in [*_PRODUCT_PROVIDERS, *_DEV_TOOL_PROVIDERS] if owner}
-    by_name = {repo.name: repo for repo in repos}
+    # Structural guarantee, made explicit rather than assumed: `owner` is only
+    # ever stamped from the `registering_repo` marker bootstrap sets around an
+    # init import (see the module docstring), so a provider's owner can never
+    # name a repo outside `ordered_repos` in the first place. Intersecting
+    # anyway keeps this set's provenance honest against *this* call's inputs
+    # instead of a fact about a different function far away.
+    ordered_names = {repo.name for repo in ordered_repos}
+    provider_owners = {
+        owner for _, owner in [*_PRODUCT_PROVIDERS, *_DEV_TOOL_PROVIDERS] if owner
+    } & ordered_names
+    declared_owners = {
+        repo.name for repo in ordered_repos if repo.declared_products or repo.declared_dev_tools
+    }
+    owners = provider_owners | declared_owners
+    by_name = {repo.name: repo for repo in all_repos}
     for name in sorted(owners):
         repo = by_name.get(name)
         if repo is None:
@@ -289,7 +326,7 @@ def bootstrap() -> BootstrapResult:
         # contained failures above are "one repo's file is broken, the rest still
         # work", while an unscoped providing repo would silently apply its products
         # to every host in every lab — there is no degraded mode to offer.
-        _check_providing_repos_declare_scope(resolution.ordered)
+        _check_providing_repos_declare_scope(repos, resolution.ordered)
         _result = BootstrapResult(
             env=env,
             repos=repos,
@@ -304,6 +341,28 @@ def bootstrap() -> BootstrapResult:
         # re-run and fail the same way, not read a half-built answer.
         _in_progress = None
     return _result
+
+
+def is_bootstrapped() -> bool:
+    """Report whether bootstrap has already started — never forces it.
+
+    True once either ``_result`` (a completed, successful ``bootstrap()``) or
+    ``_in_progress`` (the phase-2 import pass is running, ``_result`` not yet
+    set) is non-None; false only before the first call, and after
+    :func:`invalidate`. Mid-bootstrap counts as bootstrapped ON PURPOSE: an
+    init module that builds a host — directly, or by way of a stamped host
+    whose product/dev-tool providers apply — is running INSIDE that window,
+    and :func:`~otto.config.get_repos` already answers correctly and for free
+    there (the re-entrant branch in :func:`bootstrap` returns
+    ``_in_progress``, whose ``repos``/``ordered_repos`` are final by then).
+    Treating that window as "not bootstrapped" would make a host built mid-
+    bootstrap silently drop its declared entries while its providers still
+    applied. The non-forcing probe: a caller that must not TRIGGER discovery
+    or repo init imports as a side effect of merely asking reads this instead
+    of calling :func:`bootstrap` or :func:`~otto.config.get_repos` — only a
+    process that has not started bootstrap at all collects nothing.
+    """
+    return _result is not None or _in_progress is not None
 
 
 def set_completion_names(names: "dict[str, Any] | None") -> None:

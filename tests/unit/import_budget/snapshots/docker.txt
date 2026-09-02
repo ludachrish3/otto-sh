@@ -15,6 +15,7 @@ otto.config.scope
 otto.config.version
 otto.console
 otto.context
+otto.declared
 otto.docker
 otto.docker._context_hash
 otto.docker.build
@@ -33,6 +34,7 @@ otto.host.embedded_filesystem
 otto.host.embedded_host
 otto.host.errors
 otto.host.factory
+otto.host.file_kind
 otto.host.file_ops
 otto.host.host
 otto.host.interact

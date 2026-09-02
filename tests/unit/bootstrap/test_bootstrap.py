@@ -2,6 +2,7 @@
 
 import pathlib
 import textwrap
+import types
 
 import pytest
 
@@ -465,6 +466,78 @@ def test_dev_tool_provider_repo_needs_lab_patterns_too(tmp_path, monkeypatch):
     _assert_names_the_missing_declaration(str(exc.value), "devtoolrepo")
 
 
+def _write_declaring_repo(tmp_path, stem: str, *, project: str = "", seam: str = "products") -> str:
+    """A repo with one ``[[products]]``/``[[dev_tools]]`` entry, plus *project* TOML.
+
+    Unlike :func:`_write_provider_repo`, no init module is needed:
+    ``declared_products``/``declared_dev_tools`` are populated straight from
+    ``Repo.parse_settings`` (settings parse alone), so a bare TOML array is
+    enough to trip D2 on the declarative seam.
+    """
+    entry = f'[[{seam}]]\nname = "{stem}-entry"\nkind = "noop"\n'
+    repo = make_sut_repo(tmp_path / stem, name=stem, extra=entry + textwrap.dedent(project))
+    return str(repo)
+
+
+def test_declaring_repo_without_lab_patterns_fails_bootstrap(tmp_path, monkeypatch):
+    """D2 parity: a repo with ``[[products]]`` entries but no ``[project]`` must fail too."""
+    monkeypatch.setenv("OTTO_SUT_DIRS", _write_declaring_repo(tmp_path, "declnolabs"))
+    with pytest.raises(bs.BootstrapError) as exc:
+        bs.bootstrap()
+    _assert_names_the_missing_declaration(str(exc.value), "declnolabs")
+    with pytest.raises(bs.BootstrapError):
+        bs.bootstrap()
+
+
+def test_declaring_repo_with_lab_patterns_bootstraps(tmp_path, monkeypatch):
+    """The declared case, WITH ``[project]``, must bootstrap clean."""
+    repo = _write_declaring_repo(
+        tmp_path, "decllabs", project='\n[project]\nlab_patterns = [".*"]\n'
+    )
+    monkeypatch.setenv("OTTO_SUT_DIRS", repo)
+    result = bs.bootstrap()
+    assert result.errors == []
+    assert [r.name for r in result.repos] == ["decllabs"]
+
+
+def test_dev_tools_declaring_repo_without_lab_patterns_fails_bootstrap(tmp_path, monkeypatch):
+    """The dev_tools array is a separate list from products — cover it too."""
+    monkeypatch.setenv(
+        "OTTO_SUT_DIRS", _write_declaring_repo(tmp_path, "devtdeclnolabs", seam="dev_tools")
+    )
+    with pytest.raises(bs.BootstrapError) as exc:
+        bs.bootstrap()
+    _assert_names_the_missing_declaration(str(exc.value), "devtdeclnolabs")
+
+
+def test_dependency_skipped_declaring_repo_is_excused_and_contributes_nothing(
+    tmp_path, monkeypatch
+):
+    """A dependency-skipped repo's declared entries neither gate nor apply.
+
+    Its `[[products]]` array was parsed in phase 1, but `declared_for_host`
+    filters skipped repos out at collection (Chris, 2026-09-02) — entries that
+    can never apply owe no `[project]` scope, and the missing dependency has
+    already surfaced as its own finding; refusing bootstrap over scope on top
+    would bury the real problem. Both directions pinned: bootstrap does not
+    raise, and the skipped repo's entries do not collect.
+    """
+    from otto.declared import declared_for_host
+
+    entry = '[[products]]\nname = "declskipped-entry"\nkind = "noop"\n'
+    repo = make_sut_repo(
+        tmp_path / "declskipped",
+        name="declskipped",
+        extra=entry + '[dependencies]\nrequired = ["ghost"]\n',
+    )
+    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    result = bs.bootstrap()
+    assert any("ghost" in str(e) for e in result.errors)  # the real finding
+    assert [r.name for r in result.ordered_repos] == []  # the repo was skipped
+    host = types.SimpleNamespace(id="h1", source_lab="")
+    assert declared_for_host(host, "declared_products") == []
+
+
 def test_providerless_repo_may_declare_an_empty_scope(tmp_path, monkeypatch):
     """The check is gated on what a repo REGISTERED, never on the shape of its config.
 
@@ -525,6 +598,66 @@ def test_an_init_module_that_reenters_gets_the_settled_repos(tmp_path, monkeypat
     assert [r.name for r in result.repos] == ["repo"]
 
 
+def test_a_host_built_mid_bootstrap_gets_its_declared_entries(tmp_path, monkeypatch):
+    """End-to-end pin of the non-forcing probe's `_in_progress` half.
+
+    An init module that builds a host runs INSIDE bootstrap's phase-2 import
+    window (`_in_progress` set, `_result` still None). The factory chokepoint
+    applies declared entries there via `declared_for_host`, whose probe must
+    answer "bootstrapped" mid-window — a probe that only counted `_result`
+    would silently drop declared entries for exactly these hosts while code
+    providers still applied. This is the one test that exercises the consumer
+    from inside the initialization window rather than around it.
+    """
+    body = """
+    from otto.host.factory import create_host_from_dict
+
+    _host = create_host_from_dict(
+        {
+            "element": "probe-box",
+            "os_type": "unix",
+            "ip": "10.0.0.9",
+            "creds": [{"login": "admin", "password": "admin"}],
+        },
+        lab_name="bench",
+    )
+    PRODUCTS = [(p.name, p.owner) for p in _host.products]
+    DEV_TOOLS = [(t.name, t.owner) for t in _host.dev_tools]
+    """
+    settings = textwrap.dedent("""\
+        init = ["declmid_init"]
+        libs = ["pylib"]
+
+        [project]
+        lab_patterns = [".*"]
+
+        [[products]]
+        name = "fw"
+        kind = "file"
+        artifact = "build/fw.bin"
+
+        [[dev_tools]]
+        name = "probe"
+        kind = "file"
+        artifact = "tools/probe.sh"
+        """)
+    repo = make_sut_repo(
+        tmp_path / "declmid",
+        name="declmid",
+        extra=settings,
+        files={"pylib/declmid_init.py": textwrap.dedent(body)},
+    )
+    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+
+    result = bs.bootstrap()
+
+    assert result.errors == []
+    import declmid_init  # the init module, imported by the bootstrap above
+
+    assert declmid_init.PRODUCTS == [("fw", "declmid")]
+    assert declmid_init.DEV_TOOLS == [("probe", "declmid")]
+
+
 def test_reentrance_does_not_compose_the_root_twice(tmp_path, monkeypatch):
     """The re-entrant call must NOT run a second, nested composition root.
 
@@ -583,3 +716,26 @@ def test_a_raising_bootstrap_leaves_no_partial_view_behind(tmp_path, monkeypatch
 
     assert bs._in_progress is None
     assert bs._result is None  # nothing was published
+
+
+# ── is_bootstrapped(): mid-bootstrap counts as bootstrapped ───────────────
+
+
+def test_is_bootstrapped_true_mid_bootstrap(monkeypatch):
+    """The phase-2 re-entrant window (`_in_progress` set, `_result` not yet)
+    must read as bootstrapped: `get_repos()` already answers correctly and
+    for free there (the re-entrant branch returns `_in_progress`, whose
+    `repos`/`ordered_repos` are final by then), so a host built by an init
+    module mid-bootstrap must not have its declared entries silently dropped
+    while its providers still apply.
+    """
+    monkeypatch.setattr(bs, "_result", None)
+    monkeypatch.setattr(bs, "_in_progress", bs.BootstrapResult(env=None, repos=[]))
+    assert bs.is_bootstrapped() is True
+
+
+def test_is_bootstrapped_false_before_any_call(monkeypatch):
+    """Only a process that has not started bootstrap at all collects nothing."""
+    monkeypatch.setattr(bs, "_result", None)
+    monkeypatch.setattr(bs, "_in_progress", None)
+    assert bs.is_bootstrapped() is False

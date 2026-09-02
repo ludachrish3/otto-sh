@@ -18,6 +18,7 @@ API Reference
    tunnel
    logger
    config
+   declared
    registry
    reservations
    labs

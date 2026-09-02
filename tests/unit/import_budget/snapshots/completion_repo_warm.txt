@@ -17,6 +17,7 @@ otto.config.user_settings
 otto.config.version
 otto.console
 otto.context
+otto.declared
 otto.errors
 otto.host
 otto.host.binary_loader
@@ -30,6 +31,7 @@ otto.host.embedded_filesystem
 otto.host.embedded_host
 otto.host.errors
 otto.host.factory
+otto.host.file_kind
 otto.host.file_ops
 otto.host.host
 otto.host.interact
