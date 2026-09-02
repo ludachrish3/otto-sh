@@ -87,10 +87,13 @@ something to add yourself.
 Needs beyond that are a custom kind:
 
 ```python
-from otto.host.product import register_product_kind  # register_dev_tool_kind is the twin, in otto.host.dev_tool
+# register_dev_tool_kind is the twin, in otto.host.dev_tool
+from otto.host.product import register_product_kind
+
 
 def make_ipk(entry, host):
     return IpkProduct(name=entry.name, **entry.params)
+
 
 register_product_kind("ipk", make_ipk)
 ```
