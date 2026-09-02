@@ -103,13 +103,16 @@ def test_import_budget(surface):
 def test_measure_reports_io_counts():
     result = harness.measure(["python"])
     io = result["io"]
-    assert set(io) == {"open", "scandir", "listdir", "open_fixture"}
+    assert set(io) == {"open", "scandir", "listdir", "open_fixture", "open_home"}
     assert all(isinstance(v, int) for v in io.values())
     # Importing otto reads files. Zero here means the hook was installed after
     # the work it exists to observe.
     assert io["open"] > 0
-    # ...and this child has no fixture at all, so the scoped half reads 0.
+    # ...and this child has neither a fixture nor an OTTO_HOME (a bare
+    # `measure` call passes the sanitized env, which carries no OTTO_*), so
+    # both scoped halves read 0.
     assert io["open_fixture"] == 0
+    assert io["open_home"] == 0
 
 
 def test_monitor_server_still_resolves():
@@ -222,7 +225,10 @@ def test_repo_bearing_surface_isolates_home_and_repo():
 
     assert Path(env["OTTO_SUT_DIRS"]).is_dir()
     assert "OTTO_HOME" in env
-    assert Path(env["OTTO_HOME"]) != Path.home() / ".otto"
+    # CONTAINMENT, not inequality. `!= ~/.otto` is satisfied by any path under
+    # it — `~/.otto/home-<uuid>` included — which is a home that writes into
+    # the developer's real one while reading as "not the real one".
+    assert Path.home() not in Path(env["OTTO_HOME"]).parents
 
     unpinned = [
         s.key
@@ -233,6 +239,43 @@ def test_repo_bearing_surface_isolates_home_and_repo():
         f"repo-bearing surfaces writing bytecode into the fixture tree: {unpinned} — "
         f"their gated open_fixture count becomes order-dependent"
     )
+
+
+def test_every_surface_pins_a_private_otto_home():
+    """``OTTO_HOME`` is pinned on EVERY surface, not only the repo-bearing ones.
+
+    ``open_home`` is gated, and it attributes by prefix against ``$OTTO_HOME``.
+    A surface that does not pin one therefore fails twice over: the child
+    resolves ``~/.otto``, so whatever home I/O it performs lands on the
+    runner's real home — machine state, and the counter reads whatever that
+    box happens to carry — and the prefix tuple is empty, so ``open_home``
+    reads 0 no matter what the child does. Either alone disqualifies the
+    counter as a gate.
+
+    Asserts the three properties that make the pin real: present, OUTSIDE the
+    runner's home entirely, and FRESH per call (two calls to one surface must
+    not share a home, or a warm cache would leak between measurements — the
+    property ``Surface.warm`` is built on).
+
+    The second one is CONTAINMENT rather than inequality, and the difference
+    is the whole assertion. ``!= ~/.otto`` is satisfied by every path UNDER
+    ``~/.otto`` — ``~/.otto/home-<uuid>`` is a plausible future spelling of
+    "fresh per call", and it would pass all three checks while every measured
+    child wrote its cache into the developer's real home.
+    """
+    homes = {}
+    for surface in harness.SURFACES:
+        env = harness.surface_env(surface)
+        assert "OTTO_HOME" in env, f"`{surface.key}` does not pin OTTO_HOME"
+        assert Path.home() not in Path(env["OTTO_HOME"]).parents, (
+            f"`{surface.key}` puts its home inside the runner's: {env['OTTO_HOME']}"
+        )
+        homes[surface.key] = env["OTTO_HOME"]
+
+    # Fresh per call, on every surface — the invariant `Surface.warm` depends on.
+    repeats = {s.key: harness.surface_env(s)["OTTO_HOME"] for s in harness.SURFACES}
+    shared = [key for key, home in homes.items() if repeats[key] == home]
+    assert not shared, f"surfaces reusing one OTTO_HOME across calls: {shared}"
 
 
 def test_version_does_not_read_the_corpus():
@@ -553,6 +596,45 @@ def test_open_fixture_is_the_gated_half_of_open():
 
     # ...and zero where there is no workspace at all, which is the other end.
     assert harness.measure_surface(harness.surface_by_key("run"))["io"]["open_fixture"] == 0
+
+
+def test_open_home_is_the_home_side_half_of_open_fixture():
+    """``open_home`` must be observed non-zero, and INSIDE the fixture total.
+
+    The goldens pin every surface's exact number, so why this: ``--update``
+    re-blesses whatever is measured. A counter that stopped counting reads 0
+    everywhere, a regeneration writes those zeros down, and every golden goes
+    green on a dead instrument — the same trap
+    ``test_open_fixture_is_the_gated_half_of_open`` exists for. A non-zero pin
+    is what survives a regeneration.
+
+    The subset relation is the second half, and it is what says the counter is
+    pointed at the right root: a repo-bearing surface's ``OTTO_HOME`` lives
+    INSIDE its fixture root (``surface_env``), so every home-side open is also
+    a fixture open and ``open_home <= open_fixture`` must hold. A counter
+    matching some other prefix — the real ``~/.otto``, say — could exceed it.
+
+    THE COLD-VS-WARM COMPARISON IS THE THIRD, and it covers the half the warm
+    number cannot see. The home is touched by two different call paths — the
+    hit's ``Path.read_text`` (an ``_io.open``) and the miss's atomic write (a
+    ``tempfile`` ``os.open``) — so a counter that went dead on the WRITE path
+    alone would leave the warm surface reading exactly what it reads now, drop
+    the cold one by the write's share, and pass every assertion above once
+    ``--update`` re-blessed the new number. Cold must exceed warm because a
+    miss pays a write that a hit never does. No magic number: the relation is
+    between two measurements, so it survives a legitimate change to either.
+    """
+    warm = harness.measure_surface(harness.surface_by_key("help_repo_warm"))["io"]
+    assert warm["open_home"] > 0, warm
+    assert warm["open_home"] <= warm["open_fixture"], warm
+
+    cold = harness.measure_surface(harness.surface_by_key("help_repo"))["io"]
+    assert cold["open_home"] > warm["open_home"], (cold, warm)
+
+    # ...and zero where there is no workspace to resolve a home for, which is
+    # the other end. The home IS pinned there (every surface pins one), so this
+    # zero is measured rather than structural.
+    assert harness.measure_surface(harness.surface_by_key("run"))["io"]["open_home"] == 0
 
 
 def test_bootstrap_repo_is_the_repo_bearing_sibling():

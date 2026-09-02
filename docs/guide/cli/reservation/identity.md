@@ -29,7 +29,7 @@ that can't list users simply omit it and `--as-user` still accepts free-form
 input.
 
 The values are cached with the same policy as host ids (otto's completion cache,
-invalidated by the settings fingerprint and `--clear-autocomplete-cache`), because
+invalidated by the settings fingerprint and `otto cache clear`), because
 enumerating users can be slow and the list changes rarely. The fingerprint is a
 stat over files, and a reservation backend's user list lives outside any of
 them — so a repo that configures one falls back to a short cache lifetime

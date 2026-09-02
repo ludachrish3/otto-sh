@@ -679,12 +679,6 @@ def test_reservation_cache_is_completion_only():
                 node.module or ""
             ):
                 names = {a.name for a in node.names}
-                # main.py may reach the cache for the --clear handler only.
-                if rel == "cli/main.py" and names <= {
-                    "REMOTE_CACHE_FILENAME",
-                    "clear_remote_cache",
-                }:
-                    continue
                 offenders.append(f"{rel}: {sorted(names)}")
             elif isinstance(node, ast.Import) and any(
                 "remote_completion_cache" in a.name for a in node.names

@@ -101,44 +101,6 @@ def version_callback(version: bool) -> None:
         raise typer.Exit
 
 
-def clear_autocomplete_cache_callback(value: bool) -> None:
-    """Delete the shell-completion cache files and exit when the flag is set.
-
-    Two files live in that directory: the fingerprinted ``completion_cache.json``
-    and the remote-path sidecar. One flag clears both — a user reaching for the
-    escape hatch wants completion state gone, not one half of it.
-    """
-    if not value:
-        return
-    from rich import print as rprint
-
-    from ..config.completion_cache import _cache_path, clear_cache
-    from ..config.remote_completion_cache import REMOTE_CACHE_FILENAME, clear_remote_cache
-
-    cache_path = _cache_path()
-    # Both calls run before anything is reported: `or` would short-circuit and
-    # leave the second cache on disk.
-    removed = [
-        path
-        for path, gone in (
-            (cache_path, clear_cache()),
-            (
-                cache_path.with_name(REMOTE_CACHE_FILENAME) if cache_path else None,
-                clear_remote_cache(),
-            ),
-        )
-        if gone
-    ]
-    if removed:
-        for path in removed:
-            rprint(f"Removed completion cache: {path}")
-    elif cache_path is None:
-        rprint("No completion cache to clear (OTTO_XDIR is not set).")
-    else:
-        rprint(f"No completion cache found at {cache_path}.")
-    raise typer.Exit
-
-
 def list_labs_callback(value: bool) -> None:
     """Print all available lab names (one panel per repo) and exit when the flag is set."""
     if value:
@@ -653,15 +615,6 @@ def main(  # noqa: PLR0913 — CLI command params
             help="Show program version and exit.",
         ),
     ] = None,
-    clear_autocomplete_cache: Annotated[  # noqa: ARG001 — required by Typer eager callback option signature
-        bool,
-        typer.Option(
-            "--clear-autocomplete-cache",
-            callback=clear_autocomplete_cache_callback,
-            is_eager=True,
-            help="Delete the shell-completion cache files and exit.",
-        ),
-    ] = False,
     as_user: Annotated[
         str | None,
         typer.Option(

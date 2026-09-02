@@ -42,8 +42,7 @@ starting a run.
   always queries the backend live, because stale reservation data is an
   acceptable trade for a deliberate TAB and never for a recalled command. A
   unit test enforces that boundary by AST-scanning the tree: nothing but
-  `otto.cli.remote_completion` may import the cache, the
-  `--clear-autocomplete-cache` handler aside.
+  `otto.cli.remote_completion` may import the cache.
 
 Backends are a registry like everything else (`json`, `none` built in;
 custom schedulers register by name — {doc}`registries`), and

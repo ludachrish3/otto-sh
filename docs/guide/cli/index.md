@@ -1,6 +1,6 @@
 # The otto CLI
 
-`otto` is one command with thirteen subcommand groups. This page covers what is
+`otto` is one command with fourteen subcommand groups. This page covers what is
 true of all of them — how an invocation is shaped, the options the top-level
 command owns, the environment variables that back them, and where each run
 writes its output. Each group then has its own page, and every subcommand of
@@ -39,7 +39,6 @@ These options are available on every `otto` command:
 | `--list-hosts` | | | List host IDs in the loaded lab and exit |
 | `--show-lab` | | | Print full lab details and exit |
 | `--lab-depth` | | `3` | Nesting depth for `--show-lab` output — how deep the lab's host details are expanded (0 = unlimited) |
-| `--clear-autocomplete-cache` | | | Delete the shell-completion cache files and exit |
 | `--version` | | | Show version and exit |
 | `--install-completion` | | | Install shell completion and exit |
 | `--show-completion` | | | Print shell completion script and exit |
@@ -114,8 +113,8 @@ answering the keystroke never runs your init modules or test code.
 floor) with a pytest-collected set that also includes dynamically-generated
 tests; that set warms itself from any real `otto test --list-tests` run, or
 from a one-time bounded collection on the first `--tests` TAB (see
-{doc}`test/index`).  `--clear-autocomplete-cache` drops the cache if it ever goes
-stale.
+{doc}`test/index`).  [`otto cache clear`](cache/index.md) drops the cache if
+it ever goes stale.
 
 ### Remote path completion
 
@@ -161,7 +160,7 @@ crossing a window edge invalidates it immediately (see
 [Reservation windows](reservation/windows.md)).
 Both live in `remote_completion_cache.json` in [the workspace
 home](#the-workspace-home), beside the main completion cache, and
-`--clear-autocomplete-cache` deletes both files.
+[`otto cache clear`](cache/index.md) deletes both files.
 
 The cached reservation answer is read by tab completion and by nothing else —
 see {doc}`reservation/windows` for why, and for what a window-aware backend
@@ -224,6 +223,12 @@ Everything under a workspace home is derived, so the whole directory is
 disposable — delete it and otto rebuilds what it needs on the next run.
 `OTTO_HOME` moves all of it at once.
 
+Nothing here shrinks on its own: every distinct `OTTO_SUT_DIRS` set gets its
+own workspace directory, and none is ever removed automatically.
+[`otto cache`](cache/index.md) is how you inspect, clear, and bound that
+growth — see {doc}`../startup-performance` for what it costs to keep this
+home on a network filesystem instead of local disk.
+
 `tls/` is the exception on both counts.  otto never creates it and never
 rebuilds it: it is the conventional per-user location a committed
 `[monitor]` table points its `tls_cert` / `tls_key` at (see
@@ -262,6 +267,7 @@ connection failed.
 | [`otto init`](init.md) | Scaffold a new otto repo, or validate an existing one |
 | [`otto env`](env/index.md) | Build and maintain this workspace's orchestration environment |
 | [`otto host`](host/index.md) | Run commands and transfer files on lab hosts |
+| [`otto cache`](cache/index.md) | Inspect, clear, and prune otto's per-workspace caches |
 | [`otto run`](run/index.md) | Run a registered instruction on the lab |
 | [`otto test`](test/index.md) | Run a registered `OttoSuite` test suite |
 | [`otto docker`](docker/index.md) | Build images and deploy use-case stacks on docker-capable lab hosts |
@@ -291,6 +297,7 @@ projects
 init
 env/index
 host/index
+cache/index
 run/index
 test/index
 docker/index

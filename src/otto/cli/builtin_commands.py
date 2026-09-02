@@ -1,7 +1,7 @@
 """First-party top-level command registrations — otto's own composition list.
 
 The direct analog of the backend registries' ``_register_builtin_*``
-functions: otto's thirteen subcommand groups travel the same public
+functions: otto's fourteen subcommand groups travel the same public
 :func:`~otto.cli.registry.register_cli_command` path a third-party plugin
 uses, with lazy ``"module:attr"`` loaders so nothing imports until dispatch.
 """
@@ -35,6 +35,20 @@ def register_builtin_commands() -> None:
     )
     register_cli_command(
         "host", "otto.cli.host:host_app", help="Run commands and transfer files on lab hosts."
+    )
+    register_cli_command(
+        "cache",
+        "otto.cli.cache:cache_app",
+        help="Inspect, clear, and prune otto's per-workspace caches.",
+        # Settings-only, like reservation/inventory/schema: every verb acts
+        # purely on the filesystem under OTTO_HOME, never a lab or a live
+        # host, and produces no output-dir artifacts of its own (a report
+        # goes to stdout). output_dir=False is not just documentation here --
+        # left at the True default, `otto cache clear` would create an
+        # output directory in the course of freeing disk space.
+        lab_free=True,
+        output_dir=False,
+        gate=False,
     )
     register_cli_command(
         "run",

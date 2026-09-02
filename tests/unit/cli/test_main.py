@@ -747,63 +747,17 @@ class TestDryRunMode:
         assert is_dry_run() is True
 
 
-# ── --clear-autocomplete-cache ───────────────────────────────────────────────
+# ── --clear-autocomplete-cache (removed, 0.10.0 breaking) ────────────────────
 
 
-class TestClearAutocompleteCache:
-    """One flag clears BOTH completion caches: the main file and the sidecar."""
+class TestClearAutocompleteCacheRemoved:
+    """The root escape hatch is gone -- cache management lives at `otto cache`."""
 
-    @pytest.fixture
-    def caches(self, tmp_path, monkeypatch):
-        main = tmp_path / ".otto" / "completion_cache.json"
-        main.parent.mkdir(parents=True)
-        monkeypatch.setattr("otto.config.completion_cache._cache_path", lambda: main)
-        return main, main.with_name("remote_completion_cache.json")
-
-    def _run(self, capsys):
-        import typer
-
-        from otto.cli.main import clear_autocomplete_cache_callback
-
-        with pytest.raises(typer.Exit) as excinfo:
-            clear_autocomplete_cache_callback(True)
-        # The escape hatch exits SUCCESSFULLY after clearing — bare Exit is 0.
-        assert excinfo.value.exit_code == 0
-        # rich hard-wraps long paths at the terminal width; unwrap before matching.
-        return capsys.readouterr().out.replace("\n", "")
-
-    def test_both_caches_removed(self, caches, capsys):
-        main, sidecar = caches
-        main.write_text("{}")
-        sidecar.write_text("{}")
-
-        out = self._run(capsys)
-
-        assert not main.exists()
-        assert not sidecar.exists(), "sidecar survived --clear-autocomplete-cache"
-        assert "completion_cache.json" in out
-        assert "remote_completion_cache.json" in out
-
-    def test_sidecar_alone_is_removed_and_reported(self, caches, capsys):
-        """The main cache being absent must not short-circuit the sidecar's removal."""
-        _main, sidecar = caches
-        sidecar.write_text("{}")
-
-        out = self._run(capsys)
-
-        assert not sidecar.exists()
-        assert "remote_completion_cache.json" in out
-
-    def test_nothing_to_remove_reports_the_main_path(self, caches, capsys):
-        main, _sidecar = caches
-        out = self._run(capsys)
-        assert "No completion cache found" in out
-        assert str(main) in out
-
-    def test_caching_disabled_reports_xdir(self, monkeypatch, capsys):
-        monkeypatch.setattr("otto.config.completion_cache._cache_path", lambda: None)
-        out = self._run(capsys)
-        assert "OTTO_XDIR" in out
+    def test_flag_no_longer_exists(self):
+        """The removed flag is an unknown option to Typer, not a silent no-op."""
+        result = runner.invoke(app, ["--clear-autocomplete-cache"])
+        assert result.exit_code != 0
+        assert "no such option" in result.output.lower()
 
 
 # ── Project activation switches: the WIRING (-I / -E) ────────────────────────

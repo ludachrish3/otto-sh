@@ -19,6 +19,7 @@ import pytest
 
 from otto.config.completion_cache import SCHEMA_VERSION
 from otto.config.home import workspace_key
+from otto.config.remote_completion_cache import REMOTE_CACHE_FILENAME
 from tests.e2e._otto_subprocess import REPO1, REPO_E2E, assert_no_output_dir, run_otto
 
 pytestmark = [pytest.mark.hostless, pytest.mark.xdist_group("completion_cache")]
@@ -416,15 +417,21 @@ def test_fast_path_returns_host_ids_for_host_subcommand(tmp_path: Path) -> None:
         assert host_id in blob, f"{host_id!r} missing from: {blob!r}"
 
 
-def test_clear_autocomplete_cache_removes_file(tmp_path: Path) -> None:
-    """The --clear-autocomplete-cache escape hatch unlinks the cache file."""
+def test_cache_clear_removes_both_cache_files(tmp_path: Path) -> None:
+    """`otto cache clear` (successor to the removed root flag) unlinks BOTH cache files."""
     _run_otto(["--help"], xdir=tmp_path)
     cache_file = _cache_file(tmp_path)
     assert cache_file.exists()
 
-    result = _run_otto(["--clear-autocomplete-cache"], xdir=tmp_path)
+    # The remote-path sidecar is only written by a live remote listing; seed
+    # it directly rather than driving that path for real.
+    sidecar = cache_file.with_name(REMOTE_CACHE_FILENAME)
+    sidecar.write_text("{}")
+
+    result = _run_otto(["cache", "clear"], xdir=tmp_path)
     assert result.returncode == 0, result.stderr
     assert not cache_file.exists()
+    assert not sidecar.exists(), "sidecar survived otto cache clear"
 
 
 @pytest.mark.serial_timing

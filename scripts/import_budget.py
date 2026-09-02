@@ -3,7 +3,9 @@
 The metric is *module count / module identity* and *file I/O*, never wall-clock.
 Each surface is measured in a fresh subprocess with a sanitized env (all OTTO_*
 vars stripped) so the footprint reflects otto-core only, regardless of the dev's
-labs / SUT dirs.
+labs / SUT dirs. The one thing put BACK is a throwaway ``OTTO_HOME``, on every
+surface: the runner's real ``~/.otto`` is machine state, and ``open_home``
+gates what a startup reads there (see :func:`surface_env`).
 
 WALL-CLOCK CANNOT GATE, WHICH IS WHY THE I/O GOLDENS EXIST. Syscall counts
 reproduced a real NFS deployment's cold `otto --version` to the one
@@ -20,9 +22,9 @@ are checked against the RUNNING interpreter's file; a missing file is a named
 failure, never a skip. `--update` regenerates only the running interpreter's.
 
 The ``real_entry`` surfaces are the deliberate exception: they run the console
-entry path against a GENERATED repo (and a private ``OTTO_HOME``), because
-startup I/O against an empty workspace is zero and therefore unmeasurable. They
-stay host-independent the same way — the harness creates what it measures.
+entry path against a GENERATED repo, because startup I/O against an empty
+workspace is zero and therefore unmeasurable. They stay host-independent the
+same way — the harness creates what it measures.
 
 Usage:
     python scripts/import_budget.py            # print a per-surface count table
@@ -344,6 +346,33 @@ SURFACES: list[Surface] = [
 # failure and as the input to the corpus-scaling deltas the unit suite
 # asserts — those compare two measurements from ONE environment, so the drift
 # cancels and ``open`` stays gated where it can be.
+#
+# ``open_home`` IS THE SAME MECHANISM POINTED AT ``OTTO_HOME`` — same dual
+# spelling, same bytes decode, same str-only guard — and it is a SECOND VIEW
+# rather than a partition. On a repo-bearing surface the temp home lives
+# inside the fixture root (`surface_env` puts it there so one atexit sweep
+# collects both), so the cache file a warm start reads is counted by BOTH
+# counters. The overlap is the point: `open_fixture` bounds the workspace I/O
+# as a whole, and inside that total a repo read and a home read are
+# indistinguishable, while the home half is the one that hurts when `$HOME` is
+# on a network filesystem and the repo half is not.
+#
+# IT GATES THE OPEN, NOT THE WHOLE FOOTPRINT. There is no stat audit event —
+# the same fact that makes `scandir` the only observable for the corpus walk —
+# so the warm read's existence stat and the user `settings.toml` probe ride
+# invisibly. The warm home footprint is 1 open + 2 stats; this counter is an
+# exact bound on the open, which is the term that dominates on a network home,
+# and NOT a claim that the open is all of it.
+#
+# IT ALSO NEEDS ``OTTO_HOME`` ON EVERY SURFACE, which is why
+# :func:`surface_env` mints one for the non-repo surfaces too. Without the var
+# (the sanitizer strips `OTTO_*`) two things are true at once: the prefix
+# tuple is empty, so the counter is structurally 0 for that surface — a gate
+# that cannot observe anything — and the child resolves `~/.otto`, so whatever
+# home I/O it does perform lands on the DEVELOPER'S REAL HOME and is charged
+# to `open` and to the gated `scandir`/`listdir`. A counter whose value
+# depends on what one box happens to keep under `~/.otto` is the drift class
+# `open` was rejected for.
 _CHILD_IO_PREAMBLE = """
 import os as _os
 import sys as _sys
@@ -354,16 +383,26 @@ if _fixture_root:
     _fixture_real = _os.path.realpath(_fixture_root) + _os.sep
     if _fixture_real not in _fixture_prefixes:
         _fixture_prefixes += (_fixture_real,)
-_io_counts = {"open": 0, "scandir": 0, "listdir": 0, "open_fixture": 0}
+_home_root = _os.environ.get("OTTO_HOME")
+_home_prefixes = ()
+if _home_root:
+    _home_prefixes = (_home_root + _os.sep,)
+    _home_real = _os.path.realpath(_home_root) + _os.sep
+    if _home_real not in _home_prefixes:
+        _home_prefixes += (_home_real,)
+_io_counts = {"open": 0, "scandir": 0, "listdir": 0, "open_fixture": 0, "open_home": 0}
 def _io_hook(event, args):
     if event == "open":
         _io_counts["open"] += 1
-        if _fixture_prefixes:
+        if _fixture_prefixes or _home_prefixes:
             _path = args[0]
             if isinstance(_path, bytes):
                 _path = _os.fsdecode(_path)
-            if isinstance(_path, str) and _path.startswith(_fixture_prefixes):
-                _io_counts["open_fixture"] += 1
+            if isinstance(_path, str):
+                if _fixture_prefixes and _path.startswith(_fixture_prefixes):
+                    _io_counts["open_fixture"] += 1
+                if _home_prefixes and _path.startswith(_home_prefixes):
+                    _io_counts["open_home"] += 1
     elif event == "os.scandir":
         _io_counts["scandir"] += 1
     elif event == "os.listdir":
@@ -486,9 +525,10 @@ def _sanitized_env() -> dict[str, str]:
 def _run_child(code: str, env: dict[str, str] | None = None) -> str:
     """Run *code* in a fresh interpreter and return its last stdout line.
 
-    *env* defaults to the sanitized env, which is what every otto-core surface
-    wants. A repo-bearing surface passes :func:`surface_env` instead, so its
-    generated repo and private ``OTTO_HOME`` reach the child.
+    *env* defaults to the sanitized env — no ``OTTO_*`` at all, which is the
+    right baseline for a direct ``measure`` call. A SURFACE always passes
+    :func:`surface_env` instead (via :func:`measure_surface`), so its private
+    ``OTTO_HOME`` — and, when it has one, its generated repo — reach the child.
     """
     out = subprocess.run(  # noqa: S603 (fixed interpreter + measured argv, no shell)
         [sys.executable, "-c", code],
@@ -500,16 +540,35 @@ def _run_child(code: str, env: dict[str, str] | None = None) -> str:
     return out.stdout.strip().splitlines()[-1]
 
 
-# Every generated fixture root, so the atexit sweep below removes them all.
-# They are throwaway trees under the system temp dir and must not accumulate.
+# Every temp tree the harness mints — generated fixture roots, and the parent
+# of the throwaway ``OTTO_HOME``s handed to surfaces that carry no fixture —
+# so the atexit sweep below removes them all. They live under the system temp
+# dir and must not accumulate.
 _FIXTURE_ROOTS: list[Path] = []
 
 
 @atexit.register
 def _remove_fixture_roots() -> None:
-    """Delete every generated fixture tree on interpreter exit."""
+    """Delete every generated temp tree on interpreter exit."""
     for root in _FIXTURE_ROOTS:
         shutil.rmtree(root, ignore_errors=True)
+
+
+@functools.cache
+def _home_parent_for_non_repo_surfaces() -> Path:
+    """Parent directory for the temp ``OTTO_HOME``s of non-repo surfaces.
+
+    A repo-bearing surface's home sits beside its generated repo, inside the
+    fixture root, so one sweep collects both. A surface with no fixture has no
+    such parent, and it still needs a pinned home (see
+    :data:`_CHILD_IO_PREAMBLE`) — so one throwaway parent is made on first use
+    and registered for the same sweep. Made ONCE per process, not per call:
+    only the leaf home has to be fresh per measurement, and the leaf is a name
+    rather than a directory the harness creates.
+    """
+    root = Path(tempfile.mkdtemp(prefix="otto-budget-homes-"))
+    _FIXTURE_ROOTS.append(root)
+    return root
 
 
 @functools.cache
@@ -546,12 +605,18 @@ strips ``OTTO_*``, so this one survives into the child either way.
 
 
 def surface_env(surface: Surface) -> dict[str, str]:
-    """Env for *surface*: sanitized, plus a generated repo and a FRESH OTTO_HOME.
+    """Env for *surface*: sanitized, a FRESH OTTO_HOME, plus any generated repo.
 
-    ``OTTO_HOME`` is not optional. ``workspace_home()`` resolves under
-    ``otto_home()`` = ``$OTTO_HOME`` else ``~/.otto``, and the sanitizer strips
-    ``OTTO_*`` — so without injection a repo-bearing surface reads and WRITES
-    the developer's real ``~/.otto``.
+    ``OTTO_HOME`` is not optional, AND IT IS PINNED ON EVERY SURFACE, not only
+    the repo-bearing ones. ``workspace_home()`` resolves under ``otto_home()``
+    = ``$OTTO_HOME`` else ``~/.otto``, and the sanitizer strips ``OTTO_*`` — so
+    without injection a child reads (and, on the surfaces that run the real
+    entry path, WRITES) the developer's real ``~/.otto``, whose contents are
+    machine state. Since ``open_home`` gates opens under this root, an
+    unpinned surface would also be structurally blind: no var, no prefix, a
+    counter that reads 0 whatever the child does. A non-repo surface's home
+    therefore comes from :func:`_home_parent_for_non_repo_surfaces` rather
+    than from a fixture root it does not have.
 
     IT IS ALSO FRESH PER CALL, and bytecode writing is off, because REPEATED
     MEASUREMENTS OF ONE SURFACE MUST BE INDEPENDENT. Two caches otherwise warm
@@ -561,8 +626,10 @@ def surface_env(surface: Surface) -> dict[str, str]:
     lands directly inside the corpus delta the gates assert.
 
     - The child writes ``completion_cache.json`` into its ``OTTO_HOME``, so the
-      home is a fresh directory per call. It stays inside the fixture root, so
-      the atexit sweep still collects it.
+      home is a fresh directory per call. For a repo-bearing surface it stays
+      inside the fixture root, so the atexit sweep still collects it — and so
+      that a home-side open is ALSO an ``open_fixture``, which is what makes
+      the two counters comparable on one surface.
     - The dominant one: importing the repo's init module and its top-level test
       files writes ``__pycache__`` INTO THE FIXTURE TREE, which is cached and
       therefore shared across calls. Measured directly — ``open`` reads 607,
@@ -578,9 +645,12 @@ def surface_env(surface: Surface) -> dict[str, str]:
     if surface.sut_files is not None:
         repo = _generated_repo_for(surface.key, surface.sut_files, surface.sut_dirs_count)
         env["OTTO_SUT_DIRS"] = str(repo)
-        env["OTTO_HOME"] = str(repo.parent / f"home-{uuid.uuid4().hex}")
         env[FIXTURE_ROOT_ENV_VAR] = str(repo.parent)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        home_parent = repo.parent
+    else:
+        home_parent = _home_parent_for_non_repo_surfaces()
+    env["OTTO_HOME"] = str(home_parent / f"home-{uuid.uuid4().hex}")
     # LAST, so a surface can set what the sanitizer strips (see Surface.env_extra).
     env.update(surface.env_extra)
     return env
@@ -627,7 +697,8 @@ def measure(
     *bootstrap* additionally runs the composition root, as a real invocation does.
     *real_entry* runs ``otto.cli.main.entry`` itself instead, which is the only
     way to observe bootstrap AND the completion/name caches on one path.
-    *env* defaults to the sanitized env; a repo-bearing surface passes its own.
+    *env* defaults to the sanitized env; a surface passes its own
+    (:func:`surface_env`), which is where ``OTTO_HOME`` comes from.
     """
     if real_entry:
         code = _CHILD_ENTRY.format(argv=argv)
@@ -695,16 +766,18 @@ def read_snapshot(key: str) -> list[str]:
     return [ln for ln in snapshot_path(key).read_text().splitlines() if ln]
 
 
-GATED_IO_COUNTERS = ("listdir", "open_fixture", "scandir")
+GATED_IO_COUNTERS = ("listdir", "open_fixture", "open_home", "scandir")
 """The I/O counters an I/O golden records and enforces EXACTLY.
 
 Not ``open``. The whole-process open total drifts with the environment rather
 than with otto — bytecode-cache state and the installed distribution set, both
 measured, both explained at :data:`_CHILD_IO_PREAMBLE` — so an exact golden on
-it would be a check that fails for reasons outside the change. These three do
-not drift: the two ``os.*`` counters observe otto's own directory work, and
+it would be a check that fails for reasons outside the change. These four do
+not drift: the two ``os.*`` counters observe otto's own directory work,
 ``open_fixture`` observes its file reads inside the workspace under
-measurement, which is the whole of what a startup-I/O budget is about.
+measurement, and ``open_home`` the half of those that land in the user's home
+— the term that dominates when ``$HOME`` is on a network filesystem, and the
+one a fixture total cannot be read back apart into.
 """
 
 

@@ -3,8 +3,8 @@
 Separate file from ``completion_cache.json`` because that cache is a
 fingerprinted snapshot rewritten only by the slow path, while this one takes
 a small write on every live remote listing.  Same directory, same
-``--clear-autocomplete-cache`` escape hatch, same "corrupt file = empty
-cache" degradation.
+``otto cache clear`` escape hatch, same "corrupt file = empty cache"
+degradation.
 
 Two sections:
 

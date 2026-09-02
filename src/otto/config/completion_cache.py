@@ -360,8 +360,8 @@ def _cache_path() -> Path | None:
 def clear_cache() -> bool:
     """Delete the completion cache file if it exists.
 
-    Returns True if a file was removed, False otherwise. Surface for the
-    ``--clear-autocomplete-cache`` CLI escape hatch.
+    Returns True if a file was removed, False otherwise. Surface for
+    ``otto cache clear``.
     """
     cache_path = _cache_path()
     if cache_path is None or not cache_path.is_file():
@@ -480,7 +480,7 @@ def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
     this cannot see without constructing the backend. ``build_lab_sources``
     hardcodes the ``cls(search_paths=...)`` contract for that name, so a
     replacement is deliberately impersonating the file backend; it inherits
-    file-backed invalidation and ``--clear-autocomplete-cache``.
+    file-backed invalidation and ``otto cache clear``.
     """
     for repo in repos:
         if any(src.backend != "json" for src in getattr(repo, "lab_sources", [])):

@@ -44,9 +44,9 @@ def lab_scoped_host_ids(ctx: typer.Context) -> list[str]:
     lab selected, the whole fleet is returned.
 
     Prefers the completion-cache entry populated by the slow path (same file
-    that backs suite/instruction completion, wiped by
-    ``--clear-autocomplete-cache``). Falls through to a live ``lab.json``
-    scan on cache miss so first-run completion still works.
+    that backs suite/instruction completion, wiped by ``otto cache clear``).
+    Falls through to a live ``lab.json`` scan on cache miss so first-run
+    completion still works.
     """
     from ..config import get_completion_names, get_repos
     from ..config.completion_cache import collect_host_ids

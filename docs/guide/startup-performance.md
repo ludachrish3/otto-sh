@@ -202,12 +202,13 @@ mount at all.
 That floor only holds if the file is reachable locally in the first place.
 It lives under `$OTTO_HOME` (default `~/.otto`), and on plenty of NFS
 deployments `$HOME` sits on the very mount you're trying to get off of — at
-which point the "one open" is a network round trip like any other. Point
-`OTTO_HOME` at local disk explicitly if that's your setup; see [the
-workspace home](cli/index.md#the-workspace-home) for what else lives there,
-and how `--clear-autocomplete-cache` clears the cache files by hand — worth
-knowing precisely because `actimeo`/`nocto` (above) raise the odds of a
-stale stat-based digest going unnoticed for longer.
+which point the "one open" is a network round trip like any other. See
+[When `$HOME` is on NFS](#when-home-is-on-nfs) below for the measured cost
+of that and the relocation experiment it motivates.
+[`otto cache`](cli/cache/index.md) (`info` / `clear` / `prune`) is the
+management story for what accumulates under the home — worth knowing
+precisely because `actimeo`/`nocto` (above) raise the odds of a stale
+stat-based digest going unnoticed for longer.
 
 What determines whether that one open is enough is what validating it has
 to touch. The `names` section, which serves root help and completion, is
@@ -229,3 +230,131 @@ third, simpler case — it touches neither the cache nor the corpus, because
 there's nothing in either one worth opening a file for. The cache is a
 lever that pays automatically when it can; it is never a tax charged on
 invocations that can't use it.
+
+## When `$HOME` is on NFS
+
+Everything above is about otto's own venv, your project tree, and
+`sys.path` — filesystems you choose where to put. This section is about the
+one otto puts things on for you: its own derived-state home, `$OTTO_HOME`
+(default `~/.otto`), which is `$HOME` itself on plenty of real deployments —
+the one directory you didn't get to relocate just by moving your checkout.
+
+### The measured footprint
+
+A warm `otto --help` touches the home exactly **three** times for an *empty*
+home — no user `settings.toml`, no cached inventory backend, the same
+configuration the release-profile golden measures (see [What holds these
+numbers in place](#what-holds-these-numbers-in-place)): a fresh, empty
+`OTTO_HOME` per surface. Those three: one `open` — reading
+`completion_cache.json` whole, once, the floor described
+[above](#the-caches-economics-on-a-network-filesystem) — and two `stat`s:
+one confirming that file exists before the open, and one probing for an
+optional user-level `~/.otto/settings.toml`. That probe runs on invocations
+that consult the completion cache, not simply whenever a repo is active —
+`otto --version` has one active and still touches the home zero times,
+because it [never opens the cache at
+all](#the-caches-economics-on-a-network-filesystem) — whether or not the
+settings file is there, finding out it isn't *is* the stat. Only the open is
+gated by name today: `open_home` joined the release profile's counters
+(`open_fixture`, `scandir`, `listdir` — see [What holds these numbers in
+place](#what-holds-these-numbers-in-place)) alongside a per-Python-minor
+golden, and every warm CLI surface now pins it at one. The two stats have no
+counterpart in that audit trail: there is no gated stat event at all, so both
+ride ungated regardless — the gated home-side event is `open_home`, already
+named above, not a stat. They stay a measured constant this page states
+rather than a number `make profile` can enforce; a cold invocation, with no
+valid cache to validate, cannot use the floor at all and pays the rebuild
+instead (write path included).
+
+That three-touch figure is a floor, not a ceiling: a present settings file
+turns its probing `stat` into a `stat` *and* an `open` — four touches — and a
+configured, cached `[inventory]` backend adds the biggest one of all, because
+its [snapshot
+cache](../library/inventory-backends.md#opting-into-the-snapshot-cache)
+content-hashes the stored snapshot against
+`<home>/inventory-cache/<slug>.meta.json` on every invocation that consults
+the cache — cold reads and completion, not just a warm `otto --help` — the
+largest home-side read there is, and the adder an NFS-home operator most
+needs to plan around.
+
+### Shared-home safety
+
+Nothing here assumes the home has one machine to itself. otto is safe to
+point several machines at the same NFS-mounted `$OTTO_HOME` because of how
+the cache is written and validated, not because of care taken at any one
+site:
+
+- **Key-file freshness digests are stat-based, not content-based.** Each
+  cache section's fingerprint folds in every key file's path, mtime, and
+  size — never its bytes. NFS mtime and size are server state: every client
+  sees the same values for the same file (modulo the attribute-cache
+  staleness `actimeo`/`nocto` already cover, above), so a digest computed on
+  the machine that wrote the cache and a digest computed on a different
+  machine reading it agree without either one re-reading the source files.
+  (The one content-based link in the chain is a cached inventory backend's
+  snapshot hash — a raw-byte sha256, not a stat — and it agrees cross-machine
+  at least as well: see [Opting into the snapshot
+  cache](../library/inventory-backends.md#opting-into-the-snapshot-cache).)
+- **Writes are atomic.** Every cache write lands in a tempfile beside the
+  target and `os.replace`s it into place; a reader — on any machine — sees
+  either the complete old file or the complete new one, never a partial
+  write straddling the two.
+- **The read-validate-serve path takes no locks**, so there is no lock
+  daemon involved and nothing for one to wedge. Two machines racing a write
+  settle by last-`replace`-wins: both versions were independently valid
+  documents, and the loser's update is superseded, not corrupted. The one
+  exception lives outside this path: tab-time test collection guards itself
+  with a short-lived `.completion_collect.lock`, a plain `O_EXCL` file
+  create with staleness-steal — still no lock daemon, just atomic file
+  creation instead of a read.
+- **A stale read of the cache file costs a rebuild, never a wrong
+  screen.** Under `nocto` or a high `actimeo`, a client can hold attributes
+  past the point another machine wrote a newer cache. That just makes the
+  digest comparison miss, so the worst case is one redundant rebuild, never
+  stale data served as current. The dangerous direction runs the other
+  way — stale attributes on a *source* file, not the cache — and this page
+  already flags it: see [NFS mount options](#nfs-mount-options-actimeo-and-nocto)
+  above, where a peer's edit can go unseen until the attribute cache
+  expires, bounded on the outside by the cache's own day-long TTL.
+
+### Accumulation
+
+None of the above shrinks the one cost that genuinely is NFS's fault:
+nothing removes a workspace's cache directory on its own, and every distinct
+`OTTO_SUT_DIRS` set a machine has ever run against leaves one behind
+forever. Inspecting, clearing, and bounding that by age is
+[`otto cache`](cli/cache/index.md)'s job — see that page for `info`,
+`clear`, `prune`, and the safety argument for why pruning can never touch
+anything but the two cache files.
+
+### The `OTTO_HOME` relocation experiment
+
+If `$HOME` itself is the NFS mount, the three-touch *empty-home* floor above
+is three network round trips no local lever removes — more once a settings
+file or a cached inventory backend is in the mix, per the adders described
+above. Pointing `OTTO_HOME` at local disk instead removes them outright:
+
+```console
+$ export OTTO_HOME=/local/disk/otto
+```
+
+Two things do not follow automatically from setting it:
+
+- **User settings move with it, but the file itself doesn't.**
+  `~/.otto/settings.toml` is read from wherever `OTTO_HOME` currently points,
+  so the moment you relocate it otto looks in the new place — copy the file
+  there yourself if you had one, or it reads as absent.
+- **`env/` activation state moves too.** The orchestration virtualenv
+  `otto env create` builds lives under the same per-workspace directory as
+  the caches, so relocating `OTTO_HOME` means every workspace's `env/` has
+  to be rebuilt at the new location; nothing carries an existing one over.
+
+Both come down to the same thing: each machine pays one cold start per
+workspace the first time it runs against the relocated home — a rebuilt
+cache, exactly like any other cache miss, and, for a workspace that had one,
+an `env/` that now reads as *absent* rather than rebuilt: nothing recreates
+it automatically, so it stays gone until someone runs `otto env create` or
+`otto env sync` again. That one-time cost, weighed against every round trip it
+removes from every invocation after, is the evidence a dedicated cache-dir
+option — splitting derived state out from under `$HOME` without relocating
+`$HOME` wholesale — would need before it's worth building.
