@@ -25,10 +25,18 @@ class TestPluginCommands:
         assert "pong" in r.stdout
 
     def test_plugin_commands_listed_in_root_help(self, tmp_path: Path) -> None:
-        r = run_otto(["--help"], xdir=tmp_path, sut_dirs=REPO_E2E)
-        assert r.returncode == 0
-        assert "e2e-hello" in r.stdout
-        assert "e2etool" in r.stdout
+        cold = run_otto(["--help"], xdir=tmp_path, sut_dirs=REPO_E2E)
+        assert cold.returncode == 0
+        assert "e2e-hello" in cold.stdout
+        assert "e2etool" in cold.stdout
+        # SECOND run, same per-test OTTO_HOME: served from the names section,
+        # not a fresh bootstrap. The WARM screen must keep the @cli_command
+        # leaf, not just the group — a collector that misclassifies decorated
+        # leaves as built-ins passes the cold run and fails only here.
+        warm = run_otto(["--help"], xdir=tmp_path, sut_dirs=REPO_E2E)
+        assert warm.returncode == 0
+        assert "e2e-hello" in warm.stdout
+        assert "e2etool" in warm.stdout
 
 
 class TestBootstrapContainment:

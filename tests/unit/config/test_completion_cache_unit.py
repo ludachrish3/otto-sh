@@ -28,29 +28,117 @@ from otto.labs.json_repository import LAB_FILENAME
 from otto.labs.sources import CompiledLabSource
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests._fixtures.sutrepo import touch_settings
+from tests.unit.config.test_completion_cache_inventory import (
+    _registered,
+    _Uncacheable,
+)
+from tests.unit.config.test_completion_cache_inventory import (
+    _repo as _inventory_repo,
+)
+
+
+def _sections_file(
+    repos: list,
+    *,
+    generated_at: int | None = None,
+    names_payload: dict | None = None,
+    tests_payload: dict | None = None,
+) -> dict:
+    """An on-disk v15 sections file with REAL digests for *repos*.
+
+    The hand-built counterpart of ``write_cache``, for tests that need to
+    plant an entry with a doctored timestamp/schema/payload and then watch
+    the reader's verdict.
+    """
+    from otto.config.cache_sections import SECTIONS, section_digest
+
+    at = int(time.time()) if generated_at is None else generated_at
+    payloads = {
+        "names": (
+            {"instructions": [], "suites": [], "hosts": []}
+            if names_payload is None
+            else names_payload
+        ),
+        "tests": {"tests": []} if tests_payload is None else tests_payload,
+    }
+    return {
+        "schema": cc.SCHEMA_VERSION,
+        "sections": {
+            s.name: {
+                "fingerprint": section_digest(s, repos),
+                "generated_at": at,
+                "tainted": False,
+                "payload": payloads[s.name],
+            }
+            for s in SECTIONS
+        },
+    }
 
 
 def test_read_cache_returns_none_for_empty_repos(tmp_path: Path, monkeypatch) -> None:
-    """Empty-repo fingerprints poison the cache if allowed; read must skip them."""
+    """Empty-repo digests poison the cache if allowed; read must skip them."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
-    # Write a plausible-looking cache entry keyed on the empty fingerprint.
+    # Plant a fully valid-shaped sections file computed FOR empty repos.
     cache_file = cc._cache_path()
     assert cache_file is not None
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    cache_file.write_text(
-        json.dumps(
-            {
-                cc.compute_fingerprint([]): {
-                    "schema_version": cc.SCHEMA_VERSION,
-                    "generated_at": int(time.time()),
-                    "instructions": [{"name": "poisoned", "options": []}],
-                    "suites": [],
-                },
-            }
-        )
+    poisoned = _sections_file(
+        [],
+        names_payload={
+            "instructions": [{"name": "poisoned", "options": []}],
+            "suites": [],
+            "hosts": [],
+        },
     )
+    cache_file.write_text(json.dumps(poisoned))
 
     assert cc.read_cache([]) is None
+
+
+# ── cache_rebuild_is_worthwhile: skip a collect that write_cache would drop ──
+
+
+def test_cache_rebuild_is_worthwhile_is_false_for_empty_repos(tmp_path: Path, monkeypatch) -> None:
+    """Empty repos must never start the collect-and-write dance at all.
+
+    write_cache refuses an empty-repos fingerprint (it would poison the cache
+    with the shared empty-sha256 key), so a caller that only checked
+    read_cache would collect on EVERY invocation with no repos configured
+    and throw the result away every time.
+    """
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
+    assert cc.cache_rebuild_is_worthwhile([]) is False
+
+
+def test_cache_rebuild_is_worthwhile_is_false_for_an_ephemeral_fingerprint(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An uncacheable inventory must refuse the collect even with a fresh-looking entry on disk.
+
+    ``write_cache`` never persists an entry keyed on an ephemeral fingerprint
+    (see ``test_completion_cache_inventory.test_an_uncacheable_inventory_writes_nothing_at_all``),
+    and the clock text baked into that fingerprint means an entry keyed on
+    "the fingerprint a moment ago" can never be read back as a hit either —
+    the very next ``compute_fingerprint`` call produces a different key.
+    ``cache_rebuild_is_worthwhile`` must refuse the O(corpus) collect for this
+    class BEFORE it ever asks ``read_cache``, because whatever it computed
+    would be thrown away by ``write_cache`` regardless.
+    """
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
+    with _registered("unit-ephemeral-worthwhile", _Uncacheable) as table:
+        repo = _inventory_repo(tmp_path, table)
+        cache_file = cc._cache_path()
+        assert cache_file is not None
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # As close to "a matching entry on disk" as an ephemeral digest can
+        # ever get: sections stamped with THIS moment's digests, which the
+        # clock text guarantees the next computation will not reproduce.
+        cache_file.write_text(json.dumps(_sections_file([repo])))
+
+        assert cc.cache_rebuild_is_worthwhile([repo]) is False, (
+            "an ephemeral fingerprint must never be judged worth an O(corpus) collect"
+        )
 
 
 # ── Effective TTL: a non-file host source has no invalidation signal ─────────
@@ -125,37 +213,23 @@ def test_read_cache_applies_the_short_ttl_to_a_custom_backend(tmp_path: Path, mo
     cache_file.parent.mkdir(parents=True, exist_ok=True)
 
     six_hours_ago = int(time.time()) - 6 * 60 * 60
-    entry = {
-        "schema_version": cc.SCHEMA_VERSION,
-        "generated_at": six_hours_ago,
-        "instructions": [],
-        "suites": [],
-        "hosts": [],
-        "hosts_by_lab": {},
-        "docker_hosts": [],
-        "term_backends": [],
-        "transfer_backends": [],
-        "usernames": [],
-        "commands": [],
-        "labs": [],
-        "tests": [],
-    }
-    cache_file.write_text(json.dumps({cc.compute_fingerprint([json_repo]): entry}))
+    cache_file.write_text(json.dumps(_sections_file([json_repo], generated_at=six_hours_ago)))
 
-    # Same fingerprint inputs (labs=[] either way), different backend verdict.
+    # Same digest inputs (labs=[] either way), different backend verdict.
     assert cc.read_cache([json_repo]) is not None, "6h is well inside the 24h TTL"
 
     custom = _ttl_repo(tmp_path, {"backend": "cmdb"})
-    assert cc.compute_fingerprint([custom]) == cc.compute_fingerprint([json_repo]), (
-        "positive control: the digest is identical — only the TTL differs"
-    )
+    from otto.config.cache_sections import SECTIONS, section_digest
+
+    assert [section_digest(s, [custom]) for s in SECTIONS] == [
+        section_digest(s, [json_repo]) for s in SECTIONS
+    ], "positive control: the digests are identical — only the TTL differs"
     assert cc.read_cache([custom]) is None, "6h is past the short TTL"
 
     # ...and a FRESH entry is still served to that same custom repo, so the
     # short TTL bounds staleness rather than disabling the cache (which would
     # put a full bootstrap behind every TAB).
-    entry["generated_at"] = int(time.time()) - 60
-    cache_file.write_text(json.dumps({cc.compute_fingerprint([custom]): entry}))
+    cache_file.write_text(json.dumps(_sections_file([custom], generated_at=int(time.time()) - 60)))
     assert cc.read_cache([custom]) is not None, "a 1-minute-old entry must still serve"
 
 
@@ -343,7 +417,7 @@ def test_write_cache_skips_empty_repos(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_read_cache_rejects_schema_mismatch(tmp_path: Path, monkeypatch) -> None:
-    """A cache with an older schema version is not consulted."""
+    """A cache whose top-level schema stamp is older is not consulted."""
     from unittest.mock import MagicMock
 
     fake_repo = MagicMock()
@@ -361,18 +435,9 @@ def test_read_cache_rejects_schema_mismatch(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     cache_file = cc._cache_path()
     cache_file.parent.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
-    cache_file.write_text(
-        json.dumps(
-            {  # type: ignore[union-attr]
-                cc.compute_fingerprint([fake_repo]): {
-                    "schema_version": cc.SCHEMA_VERSION - 1,
-                    "generated_at": int(time.time()),
-                    "instructions": [],
-                    "suites": [],
-                },
-            }
-        )
-    )
+    stale = _sections_file([fake_repo])
+    stale["schema"] = cc.SCHEMA_VERSION - 1  # digests valid, stamp old
+    cache_file.write_text(json.dumps(stale))  # type: ignore[union-attr]
 
     assert cc.read_cache([fake_repo]) is None
 
@@ -668,6 +733,33 @@ def test_cache_round_trips_third_party_commands(tmp_path: Path, monkeypatch) -> 
         assert {"name": "e2etool", "help": "Tool.", "lab_free": False} in commands
     finally:
         CLI_COMMANDS.unregister("e2etool")
+
+
+def test_collect_cli_commands_includes_decorator_registered_leaves() -> None:
+    """A third-party ``@cli_command`` leaf is cached like a direct registration.
+
+    The decorator registers by CALLING ``register_cli_command`` from inside
+    ``otto.cli.registry``, so a caller-frame origin capture attributes the
+    leaf to otto itself — and the built-in filter then drops it from the
+    ``commands`` payload. That is how warm root help silently lost every
+    decorated plugin leaf while groups registered by direct call survived.
+    The spec's origin must therefore be the module that APPLIED the
+    decorator, and the leaf must survive collection.
+    """
+    from otto.cli.registry import CLI_COMMANDS, cli_command
+    from otto.config.completion_cache import collect_cli_commands
+
+    @cli_command(name="_cc_probe_leaf", help="Probe leaf.", lab_free=True)
+    async def _probe() -> None: ...
+
+    try:
+        assert CLI_COMMANDS.get("_cc_probe_leaf").origin == __name__
+        commands = {c["name"]: c for c in collect_cli_commands()}
+        assert "_cc_probe_leaf" in commands
+        assert commands["_cc_probe_leaf"]["help"] == "Probe leaf."
+        assert commands["_cc_probe_leaf"]["lab_free"] is True
+    finally:
+        CLI_COMMANDS.unregister("_cc_probe_leaf")
 
 
 def test_collect_cli_commands_skips_otto_builtins() -> None:
@@ -1053,6 +1145,29 @@ def test_fingerprint_unresolved_module_token(tmp_path: Path) -> None:
     assert d_resolved != d_unresolved
 
 
+def test_an_unresolved_init_module_shortens_the_ttl(tmp_path: Path) -> None:
+    """An init name that never resolves under ``libs`` hashes as the literal
+    string ``unresolved:<name>`` (see ``test_fingerprint_unresolved_module_token``)
+    — a plugin upgrade neither moves that string nor invalidates the entry,
+    so a repo declaring one needs the same short TTL the other
+    unfingerprinted sources get.
+    """
+    repo = _make_fingerprint_repo(tmp_path, init=["no_such_plugin"], libs=[])
+    assert cc._has_unfingerprinted_source([repo]) is True
+    assert cc._cache_ttl_seconds([repo]) == cc.UNFINGERPRINTED_CACHE_TTL_SECONDS
+
+
+def test_a_resolved_init_module_keeps_the_long_ttl(tmp_path: Path) -> None:
+    """The positive control: a module that DOES resolve must not be flagged."""
+    lib_dir = tmp_path / "lib"
+    lib_dir.mkdir()
+    (lib_dir / "myplugin.py").write_text("# init module")
+
+    repo = _make_fingerprint_repo(tmp_path, init=["myplugin"], libs=[lib_dir])
+    assert cc._has_unfingerprinted_source([repo]) is False
+    assert cc._cache_ttl_seconds([repo]) == cc.CACHE_TTL_SECONDS
+
+
 def test_fingerprint_resolves_package_dir_module(tmp_path: Path) -> None:
     """A package-directory init module (lib/mypkg/__init__.py) is hashed via rglob."""
     lib_dir = tmp_path / "lib"
@@ -1337,7 +1452,7 @@ def test_the_walk_prunes_what_pytest_never_collects(tmp_path: Path) -> None:
 
 
 def test_a_directory_named_like_a_test_file_is_not_a_test_source(tmp_path: Path) -> None:
-    """`rglob` matched directories too, and `_hash_file` folded their mtime in,
+    """`rglob` matched directories too, and `hash_file` folded their mtime in,
     so writing an unrelated file INSIDE one moved the digest."""
     repo = _tests_repo(tmp_path)
     (tmp_path / "tests" / "test_dirname.py").mkdir(parents=True)
@@ -1612,10 +1727,10 @@ def test_write_read_cache_round_trips_docker_use_cases(tmp_path: Path, monkeypat
         "write_cache did not persist docker_use_cases, or read_cache did not return it"
     )
 
-    # ...and the entry on disk really carries the key, not just the reader's default.
-    entry = next(iter(json.loads(cc._cache_path().read_text()).values()))  # type: ignore[union-attr]
-    assert entry["docker_use_cases"] == ["integration", "soak"]
-    assert entry["schema_version"] == cc.SCHEMA_VERSION
+    # ...and the file on disk really carries the key, not just the reader's default.
+    data = json.loads(cc._cache_path().read_text())  # type: ignore[union-attr]
+    assert data["sections"]["names"]["payload"]["docker_use_cases"] == ["integration", "soak"]
+    assert data["schema"] == cc.SCHEMA_VERSION
 
     # The consumer end: the completer serves exactly what came off disk.
     from otto.cli.docker import _use_case_completer
@@ -1625,13 +1740,16 @@ def test_write_read_cache_round_trips_docker_use_cases(tmp_path: Path, monkeypat
 
 
 def test_a_v13_entry_is_not_served_for_docker_use_cases(tmp_path: Path, monkeypatch) -> None:
-    """WHY SCHEMA_VERSION had to move to 14, as an executable claim.
+    """A surviving pre-v14 entry must never be served, as an executable claim.
 
-    ``read_cache`` defaults the key with ``.get("docker_use_cases", [])``, so a
-    surviving pre-v14 entry validates as an EMPTY list rather than missing —
-    and the completer's ``isinstance(..., list)`` guard would then take the
-    cache branch and offer nothing instead of falling back to a live scan. The
-    bump is what makes that entry a miss.
+    ``read_cache`` defaults ``docker_use_cases`` to ``[]``, so an old entry
+    would validate as an EMPTY list rather than missing — the completer's
+    ``isinstance(..., list)`` guard would then take the cache branch and
+    offer nothing instead of falling back to a live scan. Under v14 the
+    per-entry schema stamp made it miss; under the v15 sections layout the
+    whole fingerprint-keyed file has no ``"schema"``/``"sections"`` keys
+    and misses structurally. The planted file stays byte-shaped as the
+    genuine artifact an upgrade finds on disk.
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     repo = _cache_repo(tmp_path)
@@ -1663,8 +1781,8 @@ def test_a_non_list_docker_use_cases_entry_is_rejected(tmp_path: Path, monkeypat
 
     cache_file = cc._cache_path()
     data = json.loads(cache_file.read_text())  # type: ignore[union-attr]
-    fingerprint = cc.compute_fingerprint([repo])
-    data[fingerprint]["docker_use_cases"] = "integration"  # a string, not a list
+    payload = data["sections"]["names"]["payload"]
+    payload["docker_use_cases"] = "integration"  # a string, not a list
     cache_file.write_text(json.dumps(data))  # type: ignore[union-attr]
 
     assert cc.read_cache([repo]) is None

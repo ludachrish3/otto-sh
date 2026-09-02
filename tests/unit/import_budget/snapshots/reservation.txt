@@ -8,8 +8,6 @@ otto.cli.registry
 otto.cli.reservation
 otto.config
 otto.config.env
-otto.config.fleet
-otto.config.lab
 otto.config.repo
 otto.config.scope
 otto.config.version
@@ -62,13 +60,6 @@ otto.host.transfer.unix_base
 otto.host.transport
 otto.host.unix_host
 otto.host.userland
-otto.labs
-otto.labs.composite
-otto.labs.errors
-otto.labs.json_repository
-otto.labs.protocol
-otto.labs.registry
-otto.labs.sources
 otto.link
 otto.link.impairer
 otto.link.model

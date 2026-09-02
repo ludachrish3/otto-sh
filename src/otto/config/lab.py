@@ -333,13 +333,6 @@ def logical_indices(hosts: "Iterable[Any]") -> dict[str, int]:
     return positions
 
 
-# Imported here (after Lab is fully defined) rather than at the top of the
-# module to avoid a circular-import bootstrap: json_repository imports Lab
-# from this module, so this import must wait until Lab is defined.
-from ..labs.composite import CompositeLabRepository, LabSource  # noqa: E402, I001 — import after Lab class definition to avoid circular-import bootstrap
-from ..labs.json_repository import JsonFileLabRepository  # noqa: E402 — import after Lab class definition to avoid circular-import bootstrap
-
-
 def load_lab(
     labnames: str | list[str],
     search_paths: list[Path] | None = None,
@@ -400,6 +393,16 @@ def load_lab(
             lab_names = labnames
 
     if repository is None:
+        # Imported inside the call rather than at module scope (where it used
+        # to sit, below the Lab class, to dodge json_repository's circular
+        # import back to Lab): `otto.labs.json_repository` imports
+        # `otto.host.factory`, so a module-level edge here put the whole
+        # 46-module otto.host.* subtree on every surface that so much as named
+        # `otto.config`. The function scope solves the cycle too, so the
+        # post-class placement and its noqa pair are both gone.
+        from ..labs.composite import CompositeLabRepository, LabSource
+        from ..labs.json_repository import JsonFileLabRepository
+
         # One json source still goes through the composite: lab existence and
         # the declared-but-memberless rule live there and nowhere else. A
         # caller-supplied repository is used as given.

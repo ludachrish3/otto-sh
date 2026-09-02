@@ -1,0 +1,4 @@
+# I/O golden: surface `version_repo`, CPython 3.13. Regenerate with `make import-snapshot` UNDER THIS INTERPRETER.
+listdir 15
+open_fixture 0
+scandir 0

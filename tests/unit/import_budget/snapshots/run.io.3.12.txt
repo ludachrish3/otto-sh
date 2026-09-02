@@ -1,0 +1,4 @@
+# I/O golden: surface `run`, CPython 3.12. Regenerate with `make import-snapshot` UNDER THIS INTERPRETER.
+listdir 34
+open_fixture 0
+scandir 0

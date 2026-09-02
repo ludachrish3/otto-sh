@@ -13,9 +13,13 @@ the ``-p no:tach`` scar key first (issue #193). Import from here — the leading
 underscore prevents pytest from collecting this as a test module.
 """
 
+import atexit
+import functools
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from otto.logger.management import _LOG_DIR_NAME_RE
@@ -53,6 +57,24 @@ def coverage_subprocess_env(
     return env
 
 
+@functools.cache
+def _fallback_otto_home() -> Path:
+    """One isolated ``OTTO_HOME`` per test process, for callers with no xdir.
+
+    Created lazily (and cached) so importing this module allocates nothing.
+    Shared within a process (one dir per xdist worker) rather than fresh per
+    call: the workspace key inside it already separates SUT-dir sets, and a
+    fresh home per call would make every child permanently cold, masking
+    warm-path regressions the same way pointing at the real ``~/.otto``
+    masked cold ones. Removed at interpreter exit — without that, one
+    scratch home per worker per session would accumulate in /tmp forever:
+    the exact unbounded growth pinning OTTO_HOME exists to stop, relocated.
+    """
+    path = tempfile.mkdtemp(prefix="otto-e2e-home-")
+    atexit.register(shutil.rmtree, path, ignore_errors=True)
+    return Path(path)
+
+
 def otto_subprocess_env(
     *,
     xdir: Path | None = None,
@@ -64,16 +86,27 @@ def otto_subprocess_env(
 
     The coverage dance plus the otto keys: ``OTTO_SUT_DIRS`` (omitted when
     *sut_dirs* is None), ``OTTO_XDIR`` (omitted when *xdir* is None), ``TERM``
-    (omitted when *term* is None — PTY drivers need one), and the #193 scar:
+    (omitted when *term* is None — PTY drivers need one), ``OTTO_HOME`` (see
+    below), and the #193 scar:
 
     the child's in-process pytest sessions must never load tach's pytest11
     plugin — its Rust extension sets a C-level Ctrl-C handler at import and
     panics (``MultipleHandlers``) when ``otto test`` runs consecutive sessions
     in one process. The dev venv can carry tach (lint group), so block it here
     rather than trust the env.
+
+    ``OTTO_HOME``: every child gets a PRIVATE user-level home. The completion
+    caches live in the workspace home — ``~/.otto`` without this — so an
+    unpinned child reads the developer's real cache state (making test
+    outcomes depend on what ran on the machine before) and writes fixture
+    corpora back into it on every invocation. Beside the xdir when there is
+    one (``<xdir>/otto-home`` — per-test, so a test's second run is
+    legitimately WARM), a per-process scratch home otherwise. *extra_env*
+    merges last, so tests probing home resolution itself still override.
     """
     env = coverage_subprocess_env()
     env["PYTEST_ADDOPTS"] = "-p no:tach"
+    env["OTTO_HOME"] = str(xdir / "otto-home" if xdir is not None else _fallback_otto_home())
     if sut_dirs is not None:
         env["OTTO_SUT_DIRS"] = str(sut_dirs)
     if xdir is not None:

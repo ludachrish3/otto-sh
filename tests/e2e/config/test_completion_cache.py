@@ -79,24 +79,27 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
     cache = _read_cache(tmp_path)
-    assert len(cache) == 1
-    entry = next(iter(cache.values()))
-    # Freshly seeded cache carries the current schema version; stale-version
-    # invalidation is separately pinned by the unit test that writes
-    # SCHEMA_VERSION - 1 (tests/unit/config/test_completion_cache_unit.py).
-    assert entry["schema_version"] == SCHEMA_VERSION
-    assert isinstance(entry["generated_at"], int)
-    instruction_names = {i["name"] for i in entry["instructions"]}
-    suite_names = {s["name"] for s in entry["suites"]}
+    # Freshly seeded cache carries the current top-level schema stamp;
+    # stale-version invalidation is separately pinned by the unit test that
+    # writes SCHEMA_VERSION - 1 (tests/unit/config/test_completion_cache_unit.py).
+    assert cache["schema"] == SCHEMA_VERSION
+    sections = cache["sections"]
+    assert set(sections) == {"names", "tests"}
+    names = sections["names"]
+    assert isinstance(names["generated_at"], int)
+    assert names["tainted"] is False
+    payload = names["payload"]
+    instruction_names = {i["name"] for i in payload["instructions"]}
+    suite_names = {s["name"] for s in payload["suites"]}
     assert "test-instruction" in instruction_names
     assert {"TestDevice", "TestCoverageProduct"} <= suite_names
     # Host IDs from tests/_fixtures/lab_data/tech1/lab.json — co-cached
     # alongside instructions/suites so `otto host <TAB>` hits the fast path.
-    assert {"test1", "test2", "test3"} <= set(entry["hosts"])
+    assert {"test1", "test2", "test3"} <= set(payload["hosts"])
     # docker-capable parents are cached separately so `otto docker --on <TAB>`
     # only suggests hosts that can actually run containers. All three unix
     # VMs are docker-capable (test1/test2 gained docker for the e2e pool).
-    assert entry["docker_hosts"] == ["test1", "test2", "test3"]
+    assert payload["docker_hosts"] == ["test1", "test2", "test3"]
     # `otto --help` is informational (it seeds the completion cache under
     # the workspace home, not an output dir) — no per-invocation run dir is created.
     assert_no_output_dir(tmp_path)
@@ -107,9 +110,9 @@ def test_slow_path_seeds_cache_with_option_schemas(tmp_path: Path) -> None:
     result = _run_otto(["--help"], xdir=tmp_path)
     assert result.returncode == 0, result.stderr
 
-    entry = next(iter(_read_cache(tmp_path).values()))
+    payload = _read_cache(tmp_path)["sections"]["names"]["payload"]
     # Pick a suite that we know has user-defined Options — TestDevice in repo1.
-    test_device = next(s for s in entry["suites"] if s["name"] == "TestDevice")
+    test_device = next(s for s in payload["suites"] if s["name"] == "TestDevice")
     opts = test_device["options"]
     assert opts, "expected TestDevice to have cached options"
     option_names = {o["name"] for o in opts}
@@ -239,22 +242,26 @@ def test_host_completion_unscoped_shows_all_hosts(tmp_path: Path) -> None:
 
 
 def test_touching_test_file_invalidates_cache(tmp_path: Path) -> None:
-    """Bumping a tracked test file's mtime produces a new fingerprint entry."""
+    """Bumping a tracked test file's mtime forces a rebuild with new digests."""
     _run_otto(["--help"], xdir=tmp_path)
-    before = _read_cache(tmp_path)
-    assert len(before) == 1
-    old_fp = next(iter(before))
+    before = _read_cache(tmp_path)["sections"]
 
-    # Bump mtime of a tracked file (fingerprint uses path|mtime_ns|size).
+    # Bump mtime of a tracked file (the digests use path|mtime_ns|size).
     tracked = REPO1 / "tests" / "test_example.py"
     st = tracked.stat()
     new_mtime = st.st_mtime_ns + 1_000_000_000  # +1s in ns
     os.utime(tracked, ns=(st.st_atime_ns, new_mtime))
     try:
         _run_otto(["--help"], xdir=tmp_path)
-        after = _read_cache(tmp_path)
-        assert len(after) == 2, f"expected a new fingerprint entry, got {list(after)}"
-        assert old_fp in after  # stale entries are left in place
+        after = _read_cache(tmp_path)["sections"]
+        # A TOP-LEVEL test file keys BOTH sections (it can register a suite,
+        # and it is a test source), so both digests must move. The sections
+        # map is rewritten in place: under v15 there is exactly one entry per
+        # section, so stale digests no longer pile up as dead top-level keys.
+        for name in ("names", "tests"):
+            assert after[name]["fingerprint"] != before[name]["fingerprint"], (
+                f"{name} digest did not move on a top-level test edit"
+            )
     finally:
         os.utime(tracked, ns=(st.st_atime_ns, st.st_mtime_ns))
 
@@ -427,13 +434,13 @@ def test_ttl_expiry_invalidates_cache(tmp_path: Path) -> None:
 
     _run_otto(["--help"], xdir=tmp_path)
     data = _read_cache(tmp_path)
-    # Push every entry 25h into the past — past the 24h TTL.
+    # Push every section 25h into the past — past the 24h TTL.
     stale_ts = int(_time.time()) - 25 * 60 * 60
-    for entry in data.values():
-        entry["generated_at"] = stale_ts
+    for section in data["sections"].values():
+        section["generated_at"] = stale_ts
     _cache_file(tmp_path).write_text(json.dumps(data))
 
-    # Run completion; fast path must reject the stale entries and rewrite.
+    # Run completion; fast path must reject the stale sections and rewrite.
     result = _run_otto(
         [],
         xdir=tmp_path,
@@ -442,11 +449,11 @@ def test_ttl_expiry_invalidates_cache(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
 
-    refreshed = _read_cache(tmp_path)
+    refreshed = _read_cache(tmp_path)["sections"]
     now = int(_time.time())
-    # At least one entry must carry a fresh generated_at. Using "any" rather
-    # than pinning to the original fingerprint keeps the test robust against
-    # sibling tests that race to bump tracked file mtimes.
-    assert any(abs(entry["generated_at"] - now) < 60 for entry in refreshed.values()), (
-        f"no refreshed entry after TTL expiry: {refreshed!r}"
+    # At least one section must carry a fresh generated_at. Using "any"
+    # rather than pinning both keeps the test robust against sibling tests
+    # that race to bump tracked file mtimes.
+    assert any(abs(s["generated_at"] - now) < 60 for s in refreshed.values()), (
+        f"no refreshed section after TTL expiry: {refreshed!r}"
     )

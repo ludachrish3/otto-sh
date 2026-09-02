@@ -1,0 +1,4 @@
+# I/O golden: surface `reservation`, CPython 3.10. Regenerate with `make import-snapshot` UNDER THIS INTERPRETER.
+listdir 39
+open_fixture 0
+scandir 0

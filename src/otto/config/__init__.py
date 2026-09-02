@@ -5,35 +5,17 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..models.settings import OttoEnvSettings
     from .dependencies import ResolvedDependency as ResolvedDependency
+    from .fleet import all_hosts as all_hosts
+    from .fleet import do_for_all_hosts as do_for_all_hosts
+    from .fleet import get_host as get_host
+    from .fleet import get_lab as get_lab
+    from .fleet import run_on_all_hosts as run_on_all_hosts
+    from .lab import load_lab as load_lab
     from .user_settings import load_user_settings as load_user_settings
     from .user_settings import user_settings_path as user_settings_path
 
 from .env import (
     load_otto_env as load_otto_env,
-)
-from .fleet import (
-    all_hosts as all_hosts,
-)
-from .fleet import (
-    do_for_all_hosts as do_for_all_hosts,
-)
-from .fleet import (
-    get_host as get_host,
-)
-from .fleet import (
-    get_lab as get_lab,
-)
-from .fleet import (
-    run_on_all_hosts as run_on_all_hosts,
-)
-
-# NOT re-exported: `otto.config.fleet.get_hosts_in_play` — it is the
-# reservation readers' tolerant spelling (an empty declared fleet is zero hosts
-# in play, never an abort), and a walk written against the most discoverable
-# name would silently touch nothing. Its three readers import it from
-# `otto.config.fleet` / `otto.context` by hand, which is the point.
-from .lab import (
-    load_lab as load_lab,
 )
 from .repo import (
     DockerCompose as DockerCompose,
@@ -54,6 +36,36 @@ from .version import (
     Version as Version,
 )
 
+# THE PUBLIC SURFACE, declared rather than inferred. A PEP 562 name never
+# enters the module dict, so without this `from otto.config import *` would
+# silently stop binding the six .fleet/.lab names it bound before they went
+# lazy — a library-user break with no error at either end. `__dir__` is the
+# second half of the same fix: `dir()` reads the module dict directly and
+# consults `__all__` not at all, so the names would stay invisible to
+# introspection, tab-completion and help() even after a successful access.
+__all__ = [
+    "DockerCompose",
+    "DockerImage",
+    "DockerSettings",
+    "MonitorSettings",
+    "Repo",
+    "ResolvedDependency",
+    "Version",
+    "all_hosts",
+    "do_for_all_hosts",
+    "get_completion_names",
+    "get_env",
+    "get_host",
+    "get_lab",
+    "get_ordered_repos",
+    "get_repos",
+    "load_lab",
+    "load_otto_env",
+    "load_user_settings",
+    "run_on_all_hosts",
+    "user_settings_path",
+]
+
 # name -> (source module, attribute) resolved on first access by __getattr__.
 # Kept lazy (PEP 562) because .dependencies imports ..bootstrap and
 # ..models.dependencies at module level, which would otherwise widen every
@@ -61,9 +73,28 @@ from .version import (
 # pair is here for the same reason and was MEASURED: exporting it eagerly put
 # otto.models.settings (and .color/.dependencies/.inventory/.home) on every CLI
 # surface and broke ten import-budget caps at once.
+#
+# The .fleet / .lab names are lazy for the same MEASURED reason: eager
+# re-exports made a bare `import otto.config` load the whole 46-module
+# otto.host.* subtree (.lab's post-class otto.labs.* imports -> json_repository
+# -> otto.host.factory). Callers reach them through this module's __getattr__
+# or import the submodule by hand, so the host graph only loads on the
+# surfaces that actually dispatch to a host.
+#
+# NOT re-exported: `otto.config.fleet.get_hosts_in_play` — it is the
+# reservation readers' tolerant spelling (an empty declared fleet is zero hosts
+# in play, never an abort), and a walk written against the most discoverable
+# name would silently touch nothing. Its three readers import it from
+# `otto.config.fleet` / `otto.context` by hand, which is the point.
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "ResolvedDependency": ("otto.config.dependencies", "ResolvedDependency"),
+    "all_hosts": ("otto.config.fleet", "all_hosts"),
+    "do_for_all_hosts": ("otto.config.fleet", "do_for_all_hosts"),
+    "get_host": ("otto.config.fleet", "get_host"),
+    "get_lab": ("otto.config.fleet", "get_lab"),
+    "load_lab": ("otto.config.lab", "load_lab"),
     "load_user_settings": ("otto.config.user_settings", "load_user_settings"),
+    "run_on_all_hosts": ("otto.config.fleet", "run_on_all_hosts"),
     "user_settings_path": ("otto.config.user_settings", "user_settings_path"),
 }
 
@@ -76,6 +107,19 @@ def __getattr__(name: str) -> object:
         module_name, attr = _LAZY_EXPORTS[name]
         return getattr(importlib.import_module(module_name), attr)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """List the eager module contents PLUS the lazy exports.
+
+    The resolver above deliberately does not write resolved names back into the
+    module dict (a cache would make laziness a one-shot property that no later
+    test could observe), so the default module ``__dir__`` — which is exactly
+    ``list(module.__dict__)`` — cannot see them at any point in the process's
+    life. Union, not ``__all__`` alone, so private helpers stay as discoverable
+    as they were.
+    """
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))
 
 
 def get_repos() -> list[Repo]:

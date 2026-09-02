@@ -3,6 +3,7 @@
 import dataclasses
 import importlib
 import os
+import sys
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -35,6 +36,7 @@ from .builtin_commands import register_builtin_commands
 
 if TYPE_CHECKING:
     from ..bootstrap import BootstrapResult
+    from ..config.repo import Repo
     from .registry import CommandSpec
 
 __version__ = get_version()
@@ -76,11 +78,26 @@ It is a list of paths to repo root directories, separated by ``,`` or the OS pat
 
 
 def version_callback(version: bool) -> None:
-    """Print the otto version string and exit when ``--version`` is passed."""
-    if version:
-        from rich import print as rprint
+    r"""Print the otto version string and exit when ``--version`` is passed.
 
-        rprint(f"otto version: {__version__}")
+    Builtin ``print``, deliberately, NOT rich's. Two reasons, both observable:
+
+    - ``otto._shim`` answers a bare ``otto --version`` without importing the
+      CLI at all (importing rich there would pay back the ~2400 syscalls the
+      shim exists to skip), so it must print plainly. If this callback used
+      rich the SAME BINARY would disagree with itself on a TTY: ``otto
+      --version`` plain, ``otto --version extra`` — which Typer's eager
+      callback answers here — highlighted.
+    - rich's ``ReprHighlighter`` colourises the numbers in a version string on
+      a TTY (``otto version: \x1b[1;36m0.9\x1b[0m.\x1b[1;36m0\x1b[0m``) and
+      would read ``[...]`` in a local/dev version as console markup. Neither
+      is wanted for a machine-readable one-liner.
+
+    A pipe hides all of this — rich auto-disables colour when stdout is not a
+    tty — so ``tests/unit/test_shim.py`` pins it under a pty.
+    """
+    if version:
+        print(f"otto version: {__version__}")  # noqa: T201 — see docstring
         raise typer.Exit
 
 
@@ -293,6 +310,19 @@ def _project_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # n
     return [name for name in names if name.startswith(incomplete)]
 
 
+def _stub_help(name: str, help_text: "str | None") -> str:
+    """Return the help line a stub for *name* shows — one spelling, both paths.
+
+    A command with no declared help still needs a line on the root screen, and
+    the registry-backed stub and the cache-backed one MUST choose the same
+    one: root help renders from whichever is available (a ``names``-section
+    hit skips bootstrap entirely), and a placeholder that appeared on only one
+    of them would make the same screen depend on whether the cache happened to
+    be warm.
+    """
+    return help_text or f"(run `otto {name} -h` for details)"
+
+
 class _OttoGroup(TyperGroup):
     """Root group: registry-backed lazy dispatch + pending-token snapshot.
 
@@ -358,9 +388,7 @@ class _OttoGroup(TyperGroup):
         cache = getattr(self, "_stub_cache", None) or {}
         self._stub_cache = cache
         if spec.name not in cache:
-            tmp = typer.Typer(
-                name=spec.name, help=spec.help or f"(run `otto {spec.name} -h` for details)"
-            )
+            tmp = typer.Typer(name=spec.name, help=_stub_help(spec.name, spec.help))
             # get_group (not get_command): an empty stub Typer has zero
             # registered commands, which get_command rejects outright.
             stub: Any = typer.main.get_group(tmp)
@@ -451,13 +479,14 @@ class _OttoGroup(TyperGroup):
             if cmd_name not in cache:
                 from ..config.completion_stubs import build_stub_command, build_stub_group
 
+                help_text = _stub_help(cmd_name, entry.get("help"))
                 if children:
-                    tmp = build_stub_group(cmd_name, entry.get("help"), children)
+                    tmp = build_stub_group(cmd_name, help_text, children)
                     rich_stub: Any = typer.main.get_group(tmp)
                 else:
                     # get_command flattens the single-command stub app to the
                     # bare leaf, matching how the real command would resolve.
-                    tmp = build_stub_command(cmd_name, options, help=entry.get("help"))
+                    tmp = build_stub_command(cmd_name, options, help=help_text)
                     rich_stub = typer.main.get_command(tmp)
                 rich_stub.name = cmd_name
                 cache[cmd_name] = rich_stub
@@ -805,14 +834,125 @@ def _emit_bootstrap_findings(result: "BootstrapResult") -> None:
         typer.echo(f"warning: {warn.message}", err=True)
 
 
+ROOT_HELP_ARGV: tuple[list[str], ...] = ([], ["--help"], ["-h"])
+"""The argv tails (``sys.argv[1:]``) that mean "render the root help screen".
+
+EXACT MATCHES, never a membership test. ``otto run --help`` is a subcommand
+invocation that needs the real registry, and ``otto host power --on -h`` is a
+leaf's own help — both contain a help token, and a scan for one would route
+them to a name list that cannot answer them. The empty tail is ``otto`` with
+no arguments, which the root Typer turns into help via ``no_args_is_help``.
+
+``-h`` is here because the root app declares ``help_option_names`` as
+``["-h", "--help"]``; adding a spelling there without adding it here costs
+only the fast path, never correctness.
+"""
+
+
+RAW_ITERATED_NAMES_KEYS: tuple[str, ...] = ("commands", "suites", "instructions")
+"""The ``names`` payload keys that reach a RAW iterator and so must be shape-checked.
+
+``_OttoGroup.list_commands`` / ``_OttoGroup._cached_stub`` iterate
+``commands`` directly; ``_attach_cached_stubs`` does the same for
+``suites`` and ``instructions`` — all three deep inside click's
+help/completion pipeline, well outside any containment ``entry()`` can offer.
+``_cached_names_payload`` loops over this constant to shape-check them; it
+is the only place it is spelled.
+
+(Literals, not ``:func:``/``:meth:`` roles: these are private module members
+that autodoc never documents, so a cross-reference role has no target to find
+and fails the ``-W`` docs build instead of linking anywhere.)
+"""
+
+DELEGATED_NAMES_KEYS: frozenset[str] = frozenset(
+    {
+        "hosts",
+        "hosts_by_lab",
+        "docker_hosts",
+        "docker_use_cases",
+        "term_backends",
+        "transfer_backends",
+        "usernames",
+        "labs",
+    }
+)
+"""The remaining ``names`` payload keys, each consumed by a completer that does
+its own ``isinstance`` check and falls back to a live collection — verified,
+not assumed. A twelfth key, ``tests``, lives in its own cache section that
+``_cached_names_payload`` never loads.
+
+``tests/unit/config/test_cache_sections.py`` pins that
+:data:`RAW_ITERATED_NAMES_KEYS` and this constant together equal the ``names``
+collector's live key set, so a key landing in the collector without joining
+either constant fails that test by name instead of drifting in silently.
+"""
+
+
+def _cached_names_payload(repos: "list[Repo]") -> "dict[str, Any] | None":
+    """Return the ``names`` section's payload if it is safe to install.
+
+    THE ONE READER for both fast paths — root help and completion. They are
+    siblings by construction (same section, same containment, same fallback),
+    and the shape check below is why they must not be spelled twice: the first
+    cut of this task applied it to root help only and left completion reading
+    the section raw, which turned a corrupt cache from a silent fallback into
+    a rendered traceback in the user's shell mid-TAB.
+
+    ``None`` on any miss — cold cache, moved digest, expired TTL, or a
+    section written while bootstrap reported errors (tainted). The caller
+    then takes the full load, which is the whole contract: cache-or-load,
+    never a degraded screen.
+
+    :data:`RAW_ITERATED_NAMES_KEYS` ARE CHECKED HERE, and
+    :data:`DELEGATED_NAMES_KEYS` are DELEGATED — the split is not arbitrary.
+    :func:`~otto.config.completion_cache.read_cache` type-checks all twelve
+    keys and remains a live reader today —
+    :func:`~otto.config.completion_cache.cache_rebuild_is_worthwhile` calls it
+    for the merged-view validity check — but a single-section read has no such
+    pass, so each key needs an owner here. The three in
+    :data:`RAW_ITERATED_NAMES_KEYS` reach a RAW iterator deep inside click's
+    help/completion pipeline — :meth:`_OttoGroup.list_commands` /
+    :meth:`_OttoGroup._cached_stub` for ``commands``, :func:`_attach_cached_stubs`
+    for ``suites`` and ``instructions`` — well outside any containment
+    ``entry()`` can offer, so a malformed one is a traceback in the user's
+    shell mid-TAB rather than a fallback. Every key in
+    :data:`DELEGATED_NAMES_KEYS` is consumed by a completer that does its own
+    ``isinstance`` and falls back to a live collection — verified, not
+    assumed — so re-checking them here would be a second spelling of a rule
+    that already has one. (``tests``, the twelfth key, lives in its own cache
+    section this reader never loads.)
+
+    Checked one level DEEP, not just ``isinstance(list)``: ``["plug", "x"]``
+    is a list, and every one of the three consumers immediately calls
+    ``.get("name")`` on its items.
+    """
+    from ..config.cache_sections import read_section
+
+    payload = read_section(repos, "names")
+    if payload is None:
+        return None
+    for key in RAW_ITERATED_NAMES_KEYS:
+        value = payload.get(key)
+        if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+            return None
+    return payload
+
+
 def entry() -> None:
     """Console-script entry: composition root, then the Typer app.
 
-    Completion invocations take the cache fast path (zero user code); everything
-    else runs :func:`otto.bootstrap.bootstrap` before argv parsing so registered
-    third-party commands exist when the root group is consulted. Contained
-    user-code failures print one framed warning line each; real command
-    dispatch fails loud in the invoke preamble.
+    Completion invocations and the ROOT HELP SCREEN take the cache fast path
+    (zero user code); everything else runs :func:`otto.bootstrap.bootstrap`
+    before argv parsing so registered third-party commands exist when the root
+    group is consulted. Contained user-code failures print one framed warning
+    line each; real command dispatch fails loud in the invoke preamble.
+
+    Root help is served from the ``names`` section alone
+    (:data:`ROOT_HELP_ARGV`), so it never validates — and therefore never
+    walks — the test corpus: the screen is a list of command names and their
+    one-line helps, which init trees and top-level test files determine. On
+    any miss it falls through to the same full bootstrap every other
+    invocation runs, so a cold cache still lists third-party commands.
     """
     import contextlib
 
@@ -821,7 +961,6 @@ def entry() -> None:
         DUMP_TESTS_ENV_VAR,
         dump_collected_test_names,
         is_completion_mode,
-        read_cache,
     )
 
     if os.environ.get(DUMP_TESTS_ENV_VAR):
@@ -839,8 +978,26 @@ def entry() -> None:
         # Completion must never traceback into the shell: any discovery
         # failure just leaves the cache unset and falls through to the
         # slow path below.
+        #
+        # The `names` section ALONE, not the merged view: every completion
+        # source except `--tests` is served from it, and validating the
+        # `tests` section here would make every TAB walk the whole corpus to
+        # answer `otto ho<TAB>`. `otto.cli.test._tests_completer` reads the
+        # section it needs, when it needs it.
+        #
+        # Through `_cached_names_payload`, exactly as root help does: the
+        # `suppress` above covers the READ, and nothing else — the payload it
+        # installs is consumed later, inside click, where a malformed
+        # `commands` list would traceback into the shell rather than fall
+        # through to the slow path.
         with contextlib.suppress(Exception):
-            bs.set_completion_names(read_cache(bs.discover().repos))
+            bs.set_completion_names(_cached_names_payload(bs.discover().repos))
+    elif sys.argv[1:] in ROOT_HELP_ARGV:
+        # Root help: the same names, the same reader, contained the same way —
+        # a broken cache must cost a full load, not a traceback in front of
+        # the help screen.
+        with contextlib.suppress(Exception):
+            bs.set_completion_names(_cached_names_payload(bs.discover().repos))
 
     if bs.get_completion_names() is None:
         try:
@@ -861,38 +1018,62 @@ def entry() -> None:
             typer.echo(f"error: {e}", err=True)
             raise SystemExit(1) from e
         _emit_bootstrap_findings(result)
-        from ..config.completion_cache import (
-            collect_backend_names,
-            collect_cli_commands,
-            collect_current_commands,
-            collect_docker_capable_host_ids,
-            collect_docker_use_case_names,
-            collect_host_ids,
-            collect_host_ids_by_lab,
-            collect_lab_names,
-            collect_reservation_usernames,
-            collect_test_names,
-            write_cache,
-        )
+        from ..config.completion_cache import cache_rebuild_is_worthwhile
 
-        instructions, suites = collect_current_commands()
-        backends = collect_backend_names()
-        with contextlib.suppress(OSError):
-            write_cache(
-                result.repos,
-                instructions,
-                suites,
-                collect_host_ids(result.repos),
-                docker_hosts=collect_docker_capable_host_ids(result.repos),
-                docker_use_cases=collect_docker_use_case_names(result.repos),
-                term_backends=backends["term_backends"],
-                transfer_backends=backends["transfer_backends"],
-                usernames=collect_reservation_usernames(result.repos),
-                commands=collect_cli_commands(),
-                labs=collect_lab_names(result.repos),
-                tests=collect_test_names(result.repos),
-                hosts_by_lab=collect_host_ids_by_lab(result.repos),
+        # Filled by the validity check, consumed by write_cache: each
+        # section's key set is stat-hashed at most once per invocation.
+        section_digests: dict[str, str] = {}
+        if cache_rebuild_is_worthwhile(result.repos, digests=section_digests):
+            from ..config.completion_cache import (
+                collect_backend_names,
+                collect_cli_commands,
+                collect_current_commands,
+                collect_docker_capable_host_ids,
+                collect_docker_use_case_names,
+                collect_host_ids,
+                collect_host_ids_by_lab,
+                collect_lab_names,
+                collect_reservation_usernames,
+                collect_test_names,
+                write_cache,
             )
+
+            instructions, suites = collect_current_commands()
+            backends = collect_backend_names()
+            with contextlib.suppress(OSError):
+                write_cache(
+                    result.repos,
+                    instructions,
+                    suites,
+                    collect_host_ids(result.repos),
+                    docker_hosts=collect_docker_capable_host_ids(result.repos),
+                    docker_use_cases=collect_docker_use_case_names(result.repos),
+                    term_backends=backends["term_backends"],
+                    transfer_backends=backends["transfer_backends"],
+                    usernames=collect_reservation_usernames(result.repos),
+                    commands=collect_cli_commands(),
+                    labs=collect_lab_names(result.repos),
+                    tests=collect_test_names(result.repos),
+                    hosts_by_lab=collect_host_ids_by_lab(result.repos),
+                    digests=section_digests,
+                    # A contained bootstrap error means registration did not
+                    # finish, so what was just collected is a PARTIAL picture
+                    # of this workspace. Storing it untainted would serve that
+                    # partial answer from every later `--help` and TAB until
+                    # the TTL — and not even then in practice, because the
+                    # broken file's stats are stable until someone edits it,
+                    # so the digest never moves. Written-but-never-served is
+                    # what keeps the next run on the full path, where the
+                    # framed warning is printed again.
+                    #
+                    # Both sections, not just `names`. The taint is about the
+                    # WORKSPACE the collect ran against, and `errors` carries
+                    # discovery failures too: a repo whose `settings.toml`
+                    # will not parse is absent from `result.repos` entirely,
+                    # so its corpus is missing from the `tests` floor exactly
+                    # as its instructions are missing from `names`.
+                    tainted=bool(result.errors),
+                )
 
     import traceback
 

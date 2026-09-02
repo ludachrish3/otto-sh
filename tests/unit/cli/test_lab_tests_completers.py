@@ -32,6 +32,21 @@ def _patch_no_collected(monkeypatch):
     monkeypatch.setattr(cc, "maybe_warm_collected_tests", lambda repos: None)
 
 
+def _patch_tests_section(monkeypatch, names):
+    """Serve *names* as the cached ``tests`` section floor.
+
+    The `--tests` floor moved off the ``get_completion_names`` snapshot when
+    the completion fast path was split: `entry()` installs the ``names``
+    section alone, so this completer is the one that reads its own section —
+    and this is therefore where these tests have to plant the cache.
+    """
+    import otto.config.cache_sections as cs
+
+    monkeypatch.setattr(
+        cs, "read_section", lambda repos, name: {"tests": names} if name == "tests" else None
+    )
+
+
 def test_lab_completer_continues_after_plus(monkeypatch):
     import otto.config as cm
 
@@ -45,9 +60,8 @@ def test_lab_completer_continues_after_plus(monkeypatch):
 
 def test_tests_completer_still_continues_after_comma(monkeypatch):
     """`--tests` keeps the comma — the separator generalization must not leak."""
-    import otto.config as cm
 
-    monkeypatch.setattr(cm, "get_completion_names", lambda: {"tests": ["test_a", "test_b"]})
+    _patch_tests_section(monkeypatch, ["test_a", "test_b"])
     _patch_no_collected(monkeypatch)
     from otto.cli.test import _tests_completer
 
@@ -55,13 +69,8 @@ def test_tests_completer_still_continues_after_comma(monkeypatch):
 
 
 def test_tests_completer_prefers_cache(monkeypatch):
-    import otto.config as cm
 
-    monkeypatch.setattr(
-        cm,
-        "get_completion_names",
-        lambda: {"tests": ["test_a", "test_b", "TestX::test_a"]},
-    )
+    _patch_tests_section(monkeypatch, ["test_a", "test_b", "TestX::test_a"])
     _patch_no_collected(monkeypatch)
     from otto.cli.test import _tests_completer
 
@@ -69,10 +78,10 @@ def test_tests_completer_prefers_cache(monkeypatch):
 
 
 def test_tests_completer_falls_back_to_live(monkeypatch):
-    import otto.config as cm
+    import otto.config.cache_sections as cs
     import otto.config.completion_cache as cc
 
-    monkeypatch.setattr(cm, "get_completion_names", lambda: None)
+    monkeypatch.setattr(cs, "read_section", lambda repos, name: None)
     monkeypatch.setattr(cc, "collect_test_names", lambda repos: ["test_smoke", "test_boot"])
     _patch_no_collected(monkeypatch)
     from otto.cli.test import _tests_completer
@@ -85,7 +94,7 @@ def test_tests_completer_unions_collected_over_floor(monkeypatch):
     import otto.config as cm
     import otto.config.completion_cache as cc
 
-    monkeypatch.setattr(cm, "get_completion_names", lambda: {"tests": ["test_static"]})
+    _patch_tests_section(monkeypatch, ["test_static"])
     monkeypatch.setattr(cm, "get_repos", list)
     # Collected is fresh (not None) → the warmer must NOT be consulted.
     monkeypatch.setattr(cc, "read_collected_tests", lambda repos: ["test_dynamic"])
@@ -104,7 +113,7 @@ def test_tests_completer_warms_on_cold_collected(monkeypatch):
     import otto.config as cm
     import otto.config.completion_cache as cc
 
-    monkeypatch.setattr(cm, "get_completion_names", lambda: {"tests": ["test_static"]})
+    _patch_tests_section(monkeypatch, ["test_static"])
     monkeypatch.setattr(cm, "get_repos", list)
     monkeypatch.setattr(cc, "read_collected_tests", lambda repos: None)
     warmed = []

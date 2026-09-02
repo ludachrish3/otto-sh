@@ -44,7 +44,7 @@ def _with_inventory(repo, inventory_settings: dict):
     """The SAME repo — same files, same mtimes — carrying a different ``[inventory]``.
 
     Calling ``_repo`` twice would rewrite ``settings.toml`` and ``lab.json``,
-    and :func:`_hash_file` reads ``st_mtime_ns``: the two digests would then
+    and :func:`hash_file` reads ``st_mtime_ns``: the two digests would then
     differ by TIMING rather than by the inventory, so the comparison would
     pass with the inventory term deleted whenever the two writes landed in
     different clock ticks. (Observed: mutating the term out left this file at

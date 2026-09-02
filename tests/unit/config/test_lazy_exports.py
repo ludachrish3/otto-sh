@@ -12,9 +12,14 @@ mean anything. A fresh subprocess gives a clean ``sys.modules`` to assert
 against.
 """
 
+import importlib
 import os
 import subprocess
 import sys
+
+from tests._fixtures.budget_harness import load_harness
+
+harness = load_harness()
 
 _SCRIPT = """
 import sys
@@ -179,3 +184,127 @@ def test_pynetbox_is_imported_only_by_the_first_netbox_fetch():
     )
     assert out.returncode == 0, out.stderr[-2000:]
     assert "LAZY IMPORT OK" in out.stdout
+
+
+def test_importing_config_does_not_load_host():
+    """Measured before: `import otto.config.lab` alone loaded 46 otto.host.* modules."""
+    import json
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys, json; import otto.config; "
+                "print(json.dumps([m for m in sys.modules if m.startswith('otto.host')]))"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(out.stdout.strip().splitlines()[-1]) == []
+
+
+def test_help_surface_does_not_load_host():
+    """The ENTRY PATH, which a bare ``import otto.config`` cannot speak for.
+
+    Root help loads only ``otto.cli.{main,builtin_commands,invoke,registry}``
+    and dispatches every verb lazily, so the cli modules that DO name config at
+    module scope today (``callbacks.py``, ``host.py``, ``docker.py``,
+    ``monitor.py``) are not on this surface at all — MEASURED, not assumed.
+
+    Which is exactly why this guard is worth its subprocess. A future
+    module-level ``from ..config import get_host`` in one of the four modules
+    root help DOES load would re-trigger the whole chain through
+    ``config.fleet``, and the in-process guard above — which imports
+    ``otto.config`` and nothing else — could never see it.
+    """
+    result = harness.measure_surface(harness.surface_by_key("help"))
+    assert [m for m in result["otto_modules"] if m.startswith("otto.host")] == []
+
+
+# name -> (owning module, attribute) for config's re-exported callables.
+# Written out BY HAND rather than read off `_LAZY_EXPORTS`: a test that derives
+# its expectation from the table it is checking asserts only that the table
+# equals itself, and would follow a typo straight into green.
+_PUBLIC_CALLABLES = {
+    "all_hosts": ("otto.config.fleet", "all_hosts"),
+    "do_for_all_hosts": ("otto.config.fleet", "do_for_all_hosts"),
+    "get_host": ("otto.config.fleet", "get_host"),
+    "get_lab": ("otto.config.fleet", "get_lab"),
+    "run_on_all_hosts": ("otto.config.fleet", "run_on_all_hosts"),
+    "load_lab": ("otto.config.lab", "load_lab"),
+    "load_otto_env": ("otto.config.env", "load_otto_env"),
+}
+
+
+def test_config_public_names_resolve_to_the_right_object():
+    """A lazy export that resolves to the WRONG object breaks users silently.
+
+    Identity against the owning module, never ``is not None``: MUTATION-PROVEN
+    that the weaker check cannot fail usefully — rebinding
+    ``"get_host": ("otto.config.fleet", "get_lab")`` in ``_LAZY_EXPORTS``
+    still hands back a callable, and every caller of ``otto.config.get_host``
+    would quietly receive a lab.
+
+    ``dir()`` membership is the second assertion, and it is not decoration: a
+    PEP 562 name never enters the module dict, so dropping ``__dir__`` from
+    ``otto.config`` would make every LAZY name in the table below invisible to
+    introspection while its ``getattr`` kept working. ``load_otto_env`` is in
+    the table as the control: it is an ordinary module-dict entry, so it stays
+    in ``dir()`` either way, and a mutation that only IT survives would mean
+    the check had stopped covering the lazy six.
+    """
+    import otto.config as c
+
+    for name, (module_name, attr) in _PUBLIC_CALLABLES.items():
+        expected = getattr(importlib.import_module(module_name), attr)
+        assert getattr(c, name) is expected, f"{name} resolved to the wrong object"
+        assert name in dir(c), f"{name} is missing from dir(otto.config)"
+
+
+_IMPORT_STAR_SCRIPT = """
+namespace = {}
+exec("from otto.config import *", namespace)
+
+missing = [
+    name
+    for name in (
+        "all_hosts", "do_for_all_hosts", "get_host", "get_lab",
+        "run_on_all_hosts", "load_lab", "load_otto_env",
+        "load_user_settings", "user_settings_path", "ResolvedDependency",
+        "Repo", "Version",
+    )
+    if name not in namespace
+]
+assert not missing, (
+    "`from otto.config import *` stopped binding " + repr(missing) + ": a PEP 562 "
+    "export is invisible to import-star unless __all__ names it"
+)
+print("IMPORT STAR OK")
+"""
+
+
+def test_import_star_still_binds_every_public_name():
+    """``from otto.config import *`` must bind what it bound before the names went lazy.
+
+    Import-star reads ``__all__`` when the module defines one and falls back to
+    the module dict when it does not — and a lazy export is in neither place by
+    default. Deleting ``__all__`` from ``otto.config`` therefore drops all nine
+    lazy names from import-star with no error raised anywhere, which is why
+    this is asserted rather than left to the export table's good intentions.
+
+    A subprocess for the usual reason: import-star must run at module scope,
+    and the child also keeps the real host subtree out of this worker.
+    """
+    out = subprocess.run(
+        [sys.executable, "-c", _IMPORT_STAR_SCRIPT],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert "IMPORT STAR OK" in out.stdout

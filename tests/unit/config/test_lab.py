@@ -90,8 +90,8 @@ class TestLabAddDedupesLinks:
 
 
 def test_load_lab_forwards_preferences(monkeypatch):
-    import otto.config.lab as lab_mod
-    from otto.config.lab import Lab
+    import otto.labs.json_repository as json_repo_mod
+    from otto.config.lab import Lab, load_lab
     from otto.host.factory import create_host_from_dict
 
     captured: dict[str, object] = {}
@@ -125,6 +125,12 @@ def test_load_lab_forwards_preferences(monkeypatch):
             )
             return lab
 
-    monkeypatch.setattr(lab_mod, "JsonFileLabRepository", FakeRepo)
-    lab_mod.load_lab("x", [], preferences={".*": {"transfer": ["scp"]}})
+    # Patched on the OWNING module, not on ``otto.config.lab``: ``load_lab``
+    # imports the json backend inside the call (a module-level edge there put
+    # the whole otto.host.* subtree on every surface that named
+    # ``otto.config``), so there is no module attribute on ``config.lab`` to
+    # replace — and a setattr that binds nothing would leave this test
+    # exercising the real backend while still passing.
+    monkeypatch.setattr(json_repo_mod, "JsonFileLabRepository", FakeRepo)
+    load_lab("x", [], preferences={".*": {"transfer": ["scp"]}})
     assert captured["preferences"] == {".*": {"transfer": ["scp"]}}

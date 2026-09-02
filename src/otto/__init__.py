@@ -3,9 +3,13 @@
 Public names are exported lazily (PEP 562): a bare ``import otto`` pulls almost
 nothing, and each name below resolves its source module on first attribute
 access. This keeps programmatic/library use cheap — the CLI/Typer and lab graph
-load only when the relevant API (or the console entry point ``otto:app``) is
-actually used. ``from otto import options`` then ``@options`` on an Options
-class still works (re-export of ``pydantic.dataclasses.dataclass``).
+load only when the relevant API is actually used. ``from otto import options``
+then ``@options`` on an Options class still works (re-export of
+``pydantic.dataclasses.dataclass``).
+
+The console script does not defeat this either: ``[project.scripts]`` points at
+``otto._shim:main`` (not at ``otto:app``), which answers ``otto --version`` off
+``otto.version`` alone and imports ``otto.cli`` only for argv that needs it.
 """
 
 import logging as _logging

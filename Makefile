@@ -544,9 +544,18 @@ docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, cl
 	@$(SAY) "capturing docs termynal blocks"
 	@uv run python scripts/capture_docs_termynal.py --mode force
 
-profile: hyperfine ## (Dev) Enforce the import budget (module-count caps + snapshots + denylist) + hyperfine wall-clock
-	@$(SAY) "import budget (module caps + snapshots + denylist) + hyperfine"
-	@uv run python scripts/import_budget.py --check --hyperfine
+# THE WALL-CLOCK DIAGNOSTIC LEFT THIS GATE, IT DID NOT LEAVE THE REPO: it is
+# `make hyperfine` (installs the tool) plus `import_budget.py --hyperfine`, run
+# by hand. Wall-clock cannot gate — it fails for reasons outside the change
+# (machine load, thermals, page cache), which is monitoring, not gating. File
+# I/O can: the syscall counts this target now enforces reproduced a real NFS
+# deployment's cold start to the one significant figure that field observation
+# carries (2,427 syscalls x 1.2 ms RTT ~ 2.9 s against an observed ~3 s), where
+# a dev-box wall-clock number predicted nothing about that machine at all — and
+# they repeat identically run to run. See docs/guide/startup-performance.md.
+profile: ## (Dev) Enforce the import budget (module-count caps + snapshots + denylist + per-interpreter I/O goldens)
+	@$(SAY) "import budget (module caps + snapshots + denylist + I/O goldens)"
+	@uv run python scripts/import_budget.py --check
 
 build: ## (Build & Release) Build the project with uv
 	@$(SAY) "uv build → dist/"
@@ -1278,7 +1287,7 @@ monitor-fixtures: ## (Dev) Regenerate the committed monitor dummy-data fixtures 
 	@$(SAY) "regenerating monitor fixtures → web/fixtures/"
 	@uv run python scripts/gen_monitor_fixtures.py web/fixtures
 
-import-snapshot: ## (Dev) Regenerate import-budget golden snapshots + print per-surface counts (run after an intentional import change, then review the diff and update caps)
+import-snapshot: ## (Dev) Regenerate import-budget golden snapshots — module sets, plus the I/O goldens for THIS interpreter only (`<key>.io.<major.minor>.txt`; the other minors need their own run) + print per-surface counts (run after an intentional import change, then review the diff and update caps)
 	@$(SAY) "updating import-budget golden snapshots"
 	@uv run python scripts/import_budget.py --update
 

@@ -93,6 +93,7 @@ def register_cli_command(
     gate: bool = True,
     async_leaves: bool = False,
     dry_run_preview: bool = False,
+    origin: str | None = None,
 ) -> None:
     """Register a top-level ``otto`` command or group.
 
@@ -103,6 +104,15 @@ def register_cli_command(
 
     *dry_run_preview* opts every leaf under this command out of the
     ``--dry-run`` seam default (see :attr:`CommandSpec.dry_run_preview`).
+
+    *origin* names the registering module; ``None`` (the default) captures
+    the caller's, which is right for every direct call. A WRAPPER that
+    registers on someone else's behalf must pass the real registrant — the
+    same seam :meth:`Registry.register <otto.registry.Registry.register>`
+    exposes, and for the same reason: ``@cli_command`` registers from inside
+    this module, and a frame-captured origin of ``otto.cli.registry`` made
+    the completion cache classify every decorated third-party leaf as a
+    BUILT-IN and silently drop it from warm root help.
     """
     if help is None and isinstance(loader, typer.Typer):
         # A live app already carries its Typer-native help — read it once here
@@ -111,7 +121,8 @@ def register_cli_command(
         # Lazy "pkg.mod:attr" loaders have nothing to read without importing;
         # that is what explicit help= is for.
         help = _live_app_help(loader)  # noqa: A001 — mirrors typer's own `help=` keyword
-    origin = caller_module()
+    if origin is None:
+        origin = caller_module()
     spec = CommandSpec(
         name=name,
         loader=loader,
@@ -173,6 +184,13 @@ def cli_command(
         # function-loader branch wraps it in a throwaway Typer on dispatch
         # (same as expose._synthesize_command), so it always resolves to a
         # leaf command, never a same-named nested group.
+        #
+        # origin= is the module APPLYING the decorator, captured here because
+        # the register_cli_command call below runs in THIS module's frame — a
+        # frame-captured origin would read "otto.cli.registry", the cache
+        # collector would classify a third-party leaf as a built-in, and warm
+        # root help would silently drop it (while direct registrations, whose
+        # frame IS the plugin module, survived).
         register_cli_command(
             cmd_name,
             target,
@@ -181,6 +199,7 @@ def cli_command(
             output_dir=output_dir,
             gate=gate,
             dry_run_preview=dry_run_preview,
+            origin=caller_module(),
         )
         return func
 

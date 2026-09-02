@@ -200,8 +200,18 @@ def _tests_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa:
     are fast and complete. Comma-separated, so only the in-progress segment is
     completed. ``--tests`` matches by base name, so parametrizations collapse to
     their base (``test_x`` runs every ``test_x[...]``).
+
+    THIS IS THE ONE COMPLETION SOURCE THE ``names`` SECTION CANNOT SERVE, so
+    it is the one that reads the ``tests`` section itself — rather than the
+    snapshot :func:`otto.bootstrap.get_completion_names` holds, which every
+    other completer reads. ``entry()`` installs the ``names`` section alone on
+    the completion fast path, precisely so that ``otto ho<TAB>`` never
+    validates the test corpus; the corpus digest is therefore computed
+    HERE, only when a ``--tests`` TAB actually needs the floor, and a miss
+    still falls back to the live ``ast`` scan.
     """
-    from ..config import get_completion_names, get_repos
+    from ..config import get_repos
+    from ..config.cache_sections import read_section
     from ..config.completion_cache import (
         collect_test_names,
         maybe_warm_collected_tests,
@@ -210,11 +220,9 @@ def _tests_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa:
     from ..utils import complete_separated_list
 
     repos = get_repos()
-    cached = get_completion_names()
-    if cached is not None and isinstance(cached.get("tests"), list):
-        names = set(cached["tests"])
-    else:
-        names = set(collect_test_names(repos))
+    section = read_section(repos, "tests")
+    floor = section.get("tests") if section is not None else None
+    names = set(floor) if isinstance(floor, list) else set(collect_test_names(repos))
 
     collected = read_collected_tests(repos)
     if collected is None:

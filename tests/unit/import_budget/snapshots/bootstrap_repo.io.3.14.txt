@@ -1,0 +1,4 @@
+# I/O golden: surface `bootstrap_repo`, CPython 3.14. Regenerate with `make import-snapshot` UNDER THIS INTERPRETER.
+listdir 51
+open_fixture 7
+scandir 1

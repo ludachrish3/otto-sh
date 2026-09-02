@@ -24,60 +24,63 @@ The workspace home is keyed by the normalized ``OTTO_SUT_DIRS`` set under
 and one workspace has exactly one cache however many directories otto is
 invoked from.
 
-Cache schema (version 9)
-------------------------
+Cache schema (version 16)
+-------------------------
 
-Single flat map, keyed by fingerprint hex digest. Each entry records both the
-schema version and the wall-clock time it was generated so a reader can drop
-stale entries without trusting the mtimes on-disk::
+One top-level ``"schema"`` stamp and one ``"sections"`` map — see
+:mod:`otto.config.cache_sections` for the registry defining the sections and
+their key sets. Each section carries its OWN stat-digest, the wall-clock time
+it was generated, and a taint flag, so a reader can validate exactly the
+section it needs without walking the corpus that keys the others::
 
     {
-        "<fingerprint>": {
-            "schema_version": 8,
-            "generated_at": 1745000000,
-            "instructions": [
-                {
-                    "name": "install",
-                    "options": [
-                        {
-                            "name": "debug",
-                            "flags": ["--field/--debug"],
-                            "kind": "bool",
-                            "default": false,
-                            "help": "...",
-                        },
-                        ...,
+        "schema": 16,
+        "sections": {
+            "names": {
+                "fingerprint": "<sha256 hex>",
+                "generated_at": 1745000000,
+                "tainted": false,
+                "payload": {
+                    "instructions": [{"name": "install", "options": [...]}, ...],
+                    "suites": [{"name": "TestDevice", "options": [...]}, ...],
+                    "hosts": ["test1", "test2", ...],
+                    "hosts_by_lab": {"unix": ["test1", "test2"], ...},
+                    "docker_hosts": ["test1", ...],
+                    "docker_use_cases": ["integration", ...],
+                    "term_backends": ["ssh", "telnet", ...],
+                    "transfer_backends": [
+                        {"name": "scp", "host_families": ["unix"]}, ...
                     ],
-                },
-                ...,
-            ],
-            "suites": [{"name": "TestDevice", "options": [...]}, ...],
-            "hosts": ["test1", "test2", ...],
-            "hosts_by_lab": {"unix": ["test1", "test2"], ...},
-            "docker_hosts": ["test1", ...],
-            "docker_use_cases": ["integration", ...],
-            "term_backends": ["ssh", "telnet", ...],
-            "transfer_backends": [{"name": "scp", "host_families": ["unix"]}, ...],
-            "labs": ["tech1", "tech2", ...],
-            "tests": ["test_smoke", "TestDevice::test_reachable", ...],
-            "commands": [
-                {"name": "flash", "help": "...", "lab_free": false},
-                # a third-party GROUP also carries recursive child metadata;
-                # a flattening single-command app carries "options" instead
-                # (both keys omitted when empty):
-                {
-                    "name": "e2etool",
-                    "help": "...",
-                    "lab_free": true,
+                    "usernames": ["alice", ...],
                     "commands": [
-                        {"name": "ping", "help": "...", "options": [...]},
-                        {"name": "nested", "help": "...", "commands": [...]},
+                        {"name": "flash", "help": "...", "lab_free": false},
+                        ...
                     ],
-                },
-                ...,
-            ],
+                    "labs": ["tech1", "tech2", ...]
+                }
+            },
+            "tests": {
+                "fingerprint": "<sha256 hex>",
+                "generated_at": 1745000000,
+                "tainted": false,
+                "payload": {
+                    "tests": ["test_smoke", "TestDevice::test_reachable", ...]
+                }
+            }
         }
     }
+
+Each ``options`` entry is a ``{"name", "flags", "kind", "default", "help"}``
+dict built by ``_serialize_options``; a third-party GROUP entry under
+``commands`` also carries recursive ``"commands"`` child metadata, and a
+flattening single-command app carries ``"options"`` instead (both keys
+omitted when empty). A tainted section — written while bootstrap reported
+errors — is stored but never served, so a broken repo forces the full load
+instead of silently serving partial names forever (the broken file's stats
+are stable until edited, so no digest would ever move). A file from an older
+schema keeps only its reserved ``__*__`` namespaces on the first new write:
+its entries can never be served again and are dropped rather than being
+parsed by every TAB forever.
 
 Collected test-name namespace
 -----------------------------
@@ -103,6 +106,12 @@ in its own key means the two writers touch disjoint data and can't clobber.
 
 Fingerprint
 -----------
+
+The ``sections`` map above is validated by PER-SECTION digests
+(:mod:`otto.config.cache_sections`), each built from the hashing rule
+described here over that section's own key subset. The full-corpus
+fingerprint below remains the key for the reserved namespaces (collected
+test names, tunnel ids).
 
 sha256 over ``(path, mtime_ns, size)`` triples for every file whose change
 would alter the registered name sets: each SUT's ``settings.toml``, every
@@ -155,6 +164,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Sequence
 
     from ..labs import HostSummary
+    from .cache_sections import Section
     from .repo import Repo
 
 
@@ -177,7 +187,22 @@ CACHE_FILENAME = "completion_cache.json"
 #      as an empty list, `_use_case_completer`'s `isinstance(..., list)` guard
 #      would take the CACHE branch, and every tab-complete would offer nothing
 #      instead of falling back to a live scan of the repos.
-SCHEMA_VERSION = 14
+# v15: sections layout — the top-level fingerprint key is GONE. Entries live
+#      under {"schema": N, "sections": {name: {fingerprint, generated_at,
+#      tainted, payload}}} with a PER-SECTION digest, so a names-only reader
+#      can locate and validate its entry without the corpus walk
+#      (otto.config.cache_sections). Old fingerprint-keyed files have no
+#      "schema"/"sections" keys and miss structurally; the first new write
+#      drops their dead entries while carrying the reserved __*__ namespaces
+#      forward.
+# v16: layout unchanged from v15 — the bump corrects CONTENT. v15 writers
+#      misattributed @cli_command-decorated third-party leaves to
+#      otto.cli.registry (the decorator's frame) and the built-in filter
+#      dropped them from the "commands" payload. The section's digest keys on
+#      the REPO's files, not on otto's code, so without the bump a surviving
+#      v15 entry would keep serving a root help missing those commands for up
+#      to the full TTL after the fixed otto ships.
+SCHEMA_VERSION = 16
 
 # One home, two readers: `collect_test_names` decides which files to PARSE for
 # names, and `compute_fingerprint` decides which files to STAT for
@@ -349,13 +374,89 @@ def clear_cache() -> bool:
         return True
 
 
+def resolved_init_paths(repo: "Repo") -> list[Path]:
+    """Every ``.py`` file one of *repo*'s ``init`` names resolves to under ``libs``.
+
+    THE enumeration of the init trees: :func:`compute_fingerprint` and the
+    ``names`` section's key set (:mod:`otto.config.cache_sections`) both hash
+    exactly this list, so the two digests can never disagree about which
+    files make up a registered instruction's source. Resolution rule: a
+    package directory contributes its whole ``*.py`` tree, a plain
+    ``<mod>.py`` contributes itself; a name may resolve under several
+    ``libs`` entries and every match counts.
+
+    Direct attribute access on ``init``/``libs``, deliberately: this is the
+    DIGEST path, and a malformed repo double missing a pinned attribute must
+    fail by name, not silently hash "nothing declared". The TTL path keeps
+    its own ``getattr`` tolerance — see :func:`_has_unresolved_init_module`.
+    """
+    found: list[Path] = []
+    for init_mod in repo.init:
+        mod_base = init_mod.split(".")[0]
+        for lib in repo.libs:
+            mod_dir = lib / mod_base
+            mod_file = lib / f"{mod_base}.py"
+            if mod_dir.is_dir():
+                found.extend(sorted(mod_dir.rglob("*.py")))
+            elif mod_file.is_file():
+                found.append(mod_file)
+    return found
+
+
+def unresolved_init_modules(repo: "Repo") -> list[str]:
+    """*repo*'s ``init`` names that resolve under none of ``libs``, in declaration order.
+
+    The complement of :func:`resolved_init_paths`, sharing its resolution
+    rule and its direct-access rationale. Each name contributes the literal
+    ``unresolved:<name>`` to the digests instead of file stats — a
+    pip-installed plugin whose init module lives outside ``libs`` hashes as
+    that constant string, which an upgrade never moves, so any entry here
+    also shortens the TTL (:func:`_has_unresolved_init_module`).
+    """
+    unresolved: list[str] = []
+    for init_mod in repo.init:
+        mod_base = init_mod.split(".")[0]
+        resolved = any(
+            (lib / mod_base).is_dir() or (lib / f"{mod_base}.py").is_file() for lib in repo.libs
+        )
+        if not resolved:
+            unresolved.append(init_mod)
+    return unresolved
+
+
+def _has_unresolved_init_module(repo: "Repo") -> bool:
+    """Whether any of *repo*'s ``init`` names fails to resolve under its ``libs``.
+
+    The yes/no view of :func:`unresolved_init_modules`' resolution rule, for
+    the TTL decision: an unresolvable init module's digest contribution is a
+    constant, so the short TTL is the only staleness bound such a repo has.
+
+    NOT a delegation, although the rule is the same: this is the TTL path,
+    where ``getattr(..., [])`` tolerance is load-bearing — a test double
+    built with ``MagicMock(spec=[...])`` that omits ``init``/``libs`` must
+    read as "nothing declared", not raise — while the digest enumerators
+    above deliberately fail by name on such a double.
+    """
+    libs = getattr(repo, "libs", [])
+    for init_mod in getattr(repo, "init", []):
+        mod_base = init_mod.split(".")[0]
+        resolved = any(
+            (lib / mod_base).is_dir() or (lib / f"{mod_base}.py").is_file() for lib in libs
+        )
+        if not resolved:
+            return True
+    return False
+
+
 def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
     """Report whether any repo's completion data comes from outside the digest.
 
-    Two such sources, both read off already-parsed settings — the compiled
-    source list and the raw ``[reservations]`` dict — with no pydantic, no
-    backend construction and no I/O, so this is safe on the completion fast
-    path:
+    Three such sources, all read off already-parsed settings — the compiled
+    source list, the raw ``[reservations]`` dict, and the ``init`` name list —
+    with no pydantic and no backend construction, so this is safe on the
+    completion fast path (the third bullet stats candidate init paths via
+    ``is_dir()``/``is_file()`` — a handful of stats bounded by the ``init``
+    list, never a walk):
 
     - any ``[[lab.sources]]`` entry with a non-json backend (hosts, lab
       names).
@@ -363,6 +464,11 @@ def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
       reservation backend does not implement username completion at all, so
       that field is populated *exclusively* by custom, typically networked
       backends — the same constant-digest problem, one field over.
+    - any ``init`` name that does not resolve under ``libs``
+      (:func:`_has_unresolved_init_module`). ``compute_fingerprint`` hashes
+      that as the literal string ``"unresolved:<name>"``, which a plugin
+      upgrade never moves — the same constant-digest problem the two bullets
+      above have, from a source that is not a backend choice at all.
 
     Switching either backend rewrites ``settings.toml``, whose mtime IS in the
     digest, so a repo can never inherit a cache entry written under a
@@ -385,6 +491,8 @@ def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
         # auto-attribute iterates empty.
         reservations = getattr(repo, "reservation_settings", None)
         if isinstance(reservations, dict) and reservations:
+            return True
+        if _has_unresolved_init_module(repo):
             return True
     return False
 
@@ -454,11 +562,11 @@ def _is_norecurse_dir(name: str) -> bool:
     return name.startswith(".") or name.endswith(".egg") or name in _NORECURSE_NAMES
 
 
-def _test_sources(test_dir: Path, sut_dir: Path, patterns: "Sequence[str]") -> set[Path]:
+def test_sources(test_dir: Path, sut_dir: Path, patterns: "Sequence[str]") -> set[Path]:
     """Every path whose edit can change a ``--tests`` name under *test_dir*.
 
     A set, because ``test_a_test.py`` matches both patterns. Paths that do not
-    exist are fine and wanted — :func:`_hash_file` records them as ``missing:``,
+    exist are fine and wanted — :func:`hash_file` records them as ``missing:``,
     so the digest moves when one appears.
     """
     found = _match_py_files(test_dir, [*patterns, CONFTEST_FILENAME])
@@ -474,7 +582,14 @@ def _test_sources(test_dir: Path, sut_dir: Path, patterns: "Sequence[str]") -> s
     return found
 
 
-def _hash_file(h: "hashlib._Hash", path: Path) -> None:
+def hash_file(h: "hashlib._Hash", path: Path) -> None:
+    """Fold *path*'s ``(path, mtime_ns, size)`` stat triple into digest *h*.
+
+    A path that fails to stat folds in as ``missing:<path>`` — deliberately,
+    so the digest moves when the file APPEARS. Contents are never read. The
+    shared primitive under :func:`compute_fingerprint` and
+    :func:`otto.config.cache_sections.section_digest`.
+    """
     try:
         st = path.stat()
     except OSError:
@@ -487,38 +602,29 @@ def compute_fingerprint(repos: list["Repo"]) -> str:
     """Stat-based sha256 of every file that contributes instruction/suite names."""
     h = hashlib.sha256()
     for repo in sorted(repos, key=lambda r: str(r.sut_dir)):
-        _hash_file(h, repo.sut_dir / ".otto" / "settings.toml")
+        hash_file(h, repo.sut_dir / ".otto" / "settings.toml")
 
-        # Init-module files: resolve each `init` name under the configured
-        # `libs` directories. Either a package directory or a plain .py file.
-        for init_mod in repo.init:
-            mod_base = init_mod.split(".")[0]
-            resolved = False
-            for lib in repo.libs:
-                mod_dir = lib / mod_base
-                mod_file = lib / f"{mod_base}.py"
-                if mod_dir.is_dir():
-                    for py in sorted(mod_dir.rglob("*.py")):
-                        _hash_file(h, py)
-                    resolved = True
-                elif mod_file.is_file():
-                    _hash_file(h, mod_file)
-                    resolved = True
-            if not resolved:
-                h.update(f"unresolved:{init_mod}\n".encode())
+        # Init-module files: every file an `init` name resolves to under the
+        # configured `libs` (package tree or plain .py). Names that resolve
+        # nowhere contribute a literal token instead, so "module missing" is
+        # a state of its own rather than an absence.
+        for py in resolved_init_paths(repo):
+            hash_file(h, py)
+        for init_mod in unresolved_init_modules(repo):
+            h.update(f"unresolved:{init_mod}\n".encode())
 
         # The pytest config files themselves: `python_files` decides which
         # files below even count, so an edit to it must move the digest as
         # surely as an edit to a test. Missing ones hash as "missing:", which
         # is what lets ADDING a pytest.ini invalidate the cache.
         for cfg in pytest_config_paths(repo.sut_dir):
-            _hash_file(h, cfg)
+            hash_file(h, cfg)
 
         patterns = configured_python_files(repo.sut_dir)
         for test_dir in repo.tests:
             if test_dir.is_dir():
-                for t in sorted(_test_sources(test_dir, repo.sut_dir, patterns)):
-                    _hash_file(h, t)
+                for t in sorted(test_sources(test_dir, repo.sut_dir, patterns)):
+                    hash_file(h, t)
 
         # Host-ID sources: the lab files every compiled [[lab.sources]] entry
         # reads. Adding these to the fingerprint lets the cache self-invalidate
@@ -527,7 +633,7 @@ def compute_fingerprint(repos: list["Repo"]) -> str:
         # TTL instead (_cache_ttl_seconds / UNFINGERPRINTED_CACHE_TTL_SECONDS).
         for src in repo.lab_sources:
             for lab_file in src.lab_files():
-                _hash_file(h, lab_file)
+                hash_file(h, lab_file)
 
     # Outside the per-repo loop: a process has exactly ONE inventory (spec §8),
     # resolved across every active repo plus the user file, so mixing it in
@@ -614,6 +720,18 @@ def _fingerprint_is_ephemeral(repos: list["Repo"]) -> bool:
     anyway.
     """
     return not _inventory_fingerprint(repos).cacheable
+
+
+def inventory_digest_text(repos: list["Repo"]) -> str:
+    """Return the inventory's digest line — the public seam for the section registry.
+
+    Every section digest ends with this text
+    (:mod:`otto.config.cache_sections`), for the same reason
+    :func:`compute_fingerprint` mixes it in: the process has exactly ONE
+    inventory, resolved across every active repo plus the user file, and a
+    change in that resolution must invalidate what was cached under it.
+    """
+    return _inventory_fingerprint(repos).text
 
 
 # ---------------------------------------------------------------------------
@@ -755,29 +873,67 @@ def _serialize_options(
 # ---------------------------------------------------------------------------
 
 
-def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
-    """Return the cached command lists for the current fingerprint, or ``None``.
+def _section_payload_if_fresh(
+    entry: Any, digest: str, *, ttl: int, now: float
+) -> dict[str, Any] | None:
+    """Return one section's payload iff its stored entry is servable, else ``None``.
 
-    ``None`` means any of: caching disabled, empty repos (would produce the
-    empty-sha256 fingerprint and poison the cache for other shells), cache
-    file missing, cache file corrupt, fingerprint mismatch, schema mismatch,
-    or TTL expired. In every case the caller should fall back to the slow
-    path.
-
-    On success returns a dict with ``instructions``, ``suites``, ``hosts``,
-    ``docker_hosts``, ``docker_use_cases``, ``term_backends``,
-    ``transfer_backends``, and ``commands`` keys. The first two are lists of
-    ``{"name": str, "options": [...]}`` dicts; ``hosts`` and ``docker_hosts``
-    are plain lists of host-ID strings; ``docker_use_cases`` is a plain list of
-    declared use-case names; ``term_backends`` is a list of
-    backend-name strings; ``transfer_backends`` is a list of
-    ``{"name": str, "host_families": [str, ...]}`` dicts; ``commands`` is a
-    list of ``{"name": str, "help": str | None, "lab_free": bool}`` dicts for
-    third-party top-level CLI commands (default ``[]`` when absent).
+    Servable: a dict, NOT tainted, carrying a numeric ``generated_at``
+    inside *ttl* of *now*, a ``fingerprint`` equal to the freshly computed
+    *digest*, and a dict ``payload``.
     """
+    if not isinstance(entry, dict) or entry.get("tainted"):
+        return None
+    generated_at = entry.get("generated_at")
+    if not isinstance(generated_at, (int, float)) or now - generated_at > ttl:
+        return None
+    if entry.get("fingerprint") != digest:
+        return None
+    payload = entry.get("payload")
+    return payload if isinstance(payload, dict) else None
+
+
+def read_sections(
+    repos: list["Repo"],
+    names: "Collection[str]",
+    *,
+    digests: dict[str, str] | None = None,
+) -> dict[str, dict[str, Any]] | None:
+    """Return the validated payload per requested section, or ``None``.
+
+    *names* is REQUIRED, and deliberately has no "all registered sections"
+    default: reading every section is what makes a reader pay for corpora it
+    does not consume, and an implicit default would silently re-enlist every
+    existing caller into each new :class:`~otto.config.cache_sections.Section`
+    — the exact trap :data:`~otto.config.cache_sections.MERGED_VIEW_SECTIONS`
+    exists to close on the write side. An unknown name raises ``KeyError``
+    rather than reading as a miss. ``None`` means at least one requested
+    section cannot be served — file missing or corrupt, top-level schema
+    mismatch, section absent, TAINTED, digest mismatch, or TTL expired — and
+    the caller should fall back to loading. All-or-nothing across the
+    REQUESTED sections only: a names-only reader is unaffected by a stale
+    tests section, which is the point of the split.
+
+    One file, ONE open per read — the network-filesystem optimum, preserved
+    deliberately across the section split.
+
+    *digests*, when given, is both a memo and a return channel: section
+    digests already present in it are trusted (not recomputed), and every
+    digest computed here is recorded back. Threading that dict from
+    :func:`cache_rebuild_is_worthwhile` into :func:`write_cache` is what
+    keeps each section's key set stat-hashed AT MOST ONCE per invocation.
+
+    The TTL is one value for the whole file (:func:`_cache_ttl_seconds` —
+    the unfingerprinted-source rules are repo-wide, not per-section) but is
+    enforced against each section's own ``generated_at``.
+    """
+    from .cache_sections import section_by_name, section_digests
+
+    # Resolve names FIRST: an unknown section is a caller bug and must raise
+    # even when the cache file is absent, not read as a miss.
+    chosen = [section_by_name(name) for name in names]
     if not repos:
         return None
-
     cache_path = _cache_path()
     if cache_path is None or not cache_path.is_file():
         return None
@@ -785,32 +941,77 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
         data = json.loads(cache_path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or data.get("schema") != SCHEMA_VERSION:
+        return None
+    stored = data.get("sections")
+    if not isinstance(stored, dict):
         return None
 
-    fingerprint = compute_fingerprint(repos)
-    entry = data.get(fingerprint)
-    if not isinstance(entry, dict):
+    fresh = section_digests(repos, chosen, known=digests)
+    if digests is not None:
+        digests.update(fresh)
+
+    ttl = _cache_ttl_seconds(repos)
+    now = time.time()
+    payloads: dict[str, dict[str, Any]] = {}
+    for section in chosen:
+        payload = _section_payload_if_fresh(
+            stored.get(section.name), fresh[section.name], ttl=ttl, now=now
+        )
+        if payload is None:
+            return None
+        payloads[section.name] = payload
+    return payloads
+
+
+def read_cache(
+    repos: list["Repo"], *, digests: dict[str, str] | None = None
+) -> dict[str, Any] | None:
+    """Return the merged completion payload across every section, or ``None``.
+
+    Valid iff EVERY merged-view section validates — present, untainted, its
+    digest matching, inside the TTL (:func:`read_sections` over
+    :data:`otto.config.cache_sections.MERGED_VIEW_SECTIONS`; the membership
+    is FIXED, so registering a new Section widens neither this view nor its
+    validation, and the read/write pair stays in lockstep). ``None`` also
+    covers: empty repos (would produce the empty-tree digests any shell
+    without ``OTTO_SUT_DIRS`` computes, poisoning the cache for other
+    shells), cache file missing or corrupt, and schema mismatch. In every
+    case the caller should fall back to the slow path.
+
+    On success returns one flat dict — the sections' payloads merged — with
+    ``instructions``, ``suites``, ``hosts``, ``hosts_by_lab``,
+    ``docker_hosts``, ``docker_use_cases``, ``term_backends``,
+    ``transfer_backends``, ``usernames``, ``commands``, ``labs`` and
+    ``tests`` keys: exactly the view the completion fast path consumed when
+    all of it lived in one fingerprint-keyed entry. The first three are
+    required; the rest default to empty when a payload omits them.
+
+    *digests*, when given, collects the per-section digests computed here
+    for reuse by a subsequent :func:`write_cache` — see
+    :func:`read_sections`.
+    """
+    from .cache_sections import MERGED_VIEW_SECTIONS
+
+    payloads = read_sections(repos, MERGED_VIEW_SECTIONS, digests=digests)
+    if payloads is None:
         return None
-    if entry.get("schema_version") != SCHEMA_VERSION:
-        return None
-    generated_at = entry.get("generated_at")
-    if not isinstance(generated_at, (int, float)):
-        return None
-    if time.time() - generated_at > _cache_ttl_seconds(repos):
-        return None
-    instructions = entry.get("instructions")
-    suites = entry.get("suites")
-    hosts = entry.get("hosts")
-    hosts_by_lab = entry.get("hosts_by_lab", {})
-    docker_hosts = entry.get("docker_hosts", [])
-    docker_use_cases = entry.get("docker_use_cases", [])
-    term_backends = entry.get("term_backends", [])
-    transfer_backends = entry.get("transfer_backends", [])
-    usernames = entry.get("usernames", [])
-    commands = entry.get("commands", [])
-    labs = entry.get("labs", [])
-    tests = entry.get("tests", [])
+    merged: dict[str, Any] = {}
+    for payload in payloads.values():
+        merged.update(payload)
+
+    instructions = merged.get("instructions")
+    suites = merged.get("suites")
+    hosts = merged.get("hosts")
+    hosts_by_lab = merged.get("hosts_by_lab", {})
+    docker_hosts = merged.get("docker_hosts", [])
+    docker_use_cases = merged.get("docker_use_cases", [])
+    term_backends = merged.get("term_backends", [])
+    transfer_backends = merged.get("transfer_backends", [])
+    usernames = merged.get("usernames", [])
+    commands = merged.get("commands", [])
+    labs = merged.get("labs", [])
+    tests = merged.get("tests", [])
     if (
         not isinstance(instructions, list)
         or not isinstance(suites, list)
@@ -842,6 +1043,28 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
     }
 
 
+def cache_rebuild_is_worthwhile(
+    repos: list["Repo"], *, digests: dict[str, str] | None = None
+) -> bool:
+    """Whether collecting and writing a fresh entry would do any good.
+
+    False when write_cache would drop the result (empty repos, no cache
+    path, ephemeral fingerprint) or when every on-disk section is already
+    valid — in every False case the caller should skip the O(corpus)
+    collect. ``not repos`` is checked FIRST: the ephemeral probe resolves
+    the process inventory, which may be a networked backend, and an
+    empty-repos caller must not pay that for an answer that is always
+    False.
+
+    *digests* is filled with the per-section digests the validity check
+    computes, for the caller to hand straight to :func:`write_cache` on a
+    miss — never compute a digest twice (:func:`read_sections`).
+    """
+    if not repos or _cache_path() is None or _fingerprint_is_ephemeral(repos):
+        return False
+    return read_cache(repos, digests=digests) is None
+
+
 def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by design
     repos: list["Repo"],
     instructions: list[dict[str, Any]],
@@ -857,21 +1080,127 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     labs: list[str] | None = None,
     tests: list[str] | None = None,
     hosts_by_lab: dict[str, list[str]] | None = None,
+    digests: dict[str, str] | None = None,
+    tainted: bool = False,
 ) -> None:
-    """Write (or update) the entry for the current fingerprint.
+    """Write every section from the slow path's collected name sets.
 
-    Skipped silently when repos is empty — an empty-repo fingerprint is the
-    empty-string sha256, which any shell without ``OTTO_SUT_DIRS`` would
-    also compute, and that would wrongly override a real entry's meaning.
+    The compatibility writer over :func:`write_sections`: one keyword per
+    cached name-set, split across the merged-view sections
+    (:data:`otto.config.cache_sections.MERGED_VIEW_SECTIONS`) — everything
+    here except ``tests`` is ``names`` payload. A NEW cached item should be a
+    ``Section`` registration written through
+    :func:`otto.config.cache_sections.write_section`, not another keyword.
 
-    Also skipped when the process inventory cannot report freshness — see
-    :func:`_fingerprint_is_ephemeral`; this is the entry with the largest
+    Skipped silently when repos is empty — an empty-repo digest is what any
+    shell without ``OTTO_SUT_DIRS`` would also compute, and that would
+    wrongly override a real entry's meaning. Also skipped when the process
+    inventory cannot report freshness — see
+    :func:`_fingerprint_is_ephemeral`; this is the write with the largest
     payload, so it is where the unbounded growth would have hurt most.
 
-    Atomic via ``tempfile`` + :func:`os.replace` so a concurrent otto
-    invocation can't observe a half-written file. Stale entries from past
-    SUT_DIRS combinations are left in place and ignored.
+    Atomic via ``tempfile`` + ``os.replace`` so a concurrent otto
+    invocation can't observe a half-written file.
+
+    *digests*: hand it the dict a preceding
+    :func:`cache_rebuild_is_worthwhile` filled, so the digests its validity
+    check computed are stored rather than recomputed
+    (:func:`write_sections`).
+
+    *tainted* marks every written section unservable — pass
+    ``bool(result.errors)`` from the composition root, so a partial workspace
+    is stored (it still records what the digests were) but never served. See
+    :func:`write_sections`.
     """
+    write_sections(
+        repos,
+        {
+            "names": {
+                "instructions": instructions,
+                "suites": suites,
+                "hosts": hosts,
+                "hosts_by_lab": hosts_by_lab or {},
+                "docker_hosts": docker_hosts or [],
+                "docker_use_cases": docker_use_cases or [],
+                "term_backends": term_backends or [],
+                "transfer_backends": transfer_backends or [],
+                "usernames": usernames or [],
+                "commands": commands or [],
+                "labs": labs or [],
+            },
+            "tests": {"tests": tests or []},
+        },
+        tainted=tainted,
+        digests=digests,
+    )
+
+
+def _tainted_entry_is_already_current(
+    stored: dict[str, Any], sections: "list[Section]", fresh: dict[str, str]
+) -> bool:
+    """Whether re-writing these sections as tainted would change nothing.
+
+    True iff EVERY section about to be written already sits on disk marked
+    tainted with the identical digest. A tainted section is never served, so
+    such a write is pure cost — and it is not a one-off: the entry it would
+    replace is byte-for-byte the entry it just refused to serve, so a broken
+    workspace would rewrite the cache on every single invocation, forever.
+    That defeats the already-valid-entry write skip, on that skip's own
+    rationale (a write on a network filesystem needs a commit and invalidates
+    client cache), at exactly the moment a user is TABbing repeatedly to work
+    out what broke.
+
+    Both halves are load-bearing. An UNTAINTED stored entry with a matching
+    digest must still be overwritten — it would otherwise keep being SERVED
+    for a workspace that no longer loads. A MOVED digest must still be
+    written: that is the user editing the broken file, and the fix has to be
+    able to land.
+    """
+    for section in sections:
+        entry = stored.get(section.name)
+        if not isinstance(entry, dict) or not entry.get("tainted"):
+            return False
+        if entry.get("fingerprint") != fresh[section.name]:
+            return False
+    return True
+
+
+def write_sections(
+    repos: list["Repo"],
+    payloads: dict[str, dict[str, Any]],
+    *,
+    tainted: bool = False,
+    digests: dict[str, str] | None = None,
+) -> None:
+    """Write (or update) the named sections' payloads in ONE atomic file update.
+
+    ``KeyError`` for a payload keyed on an unregistered section name, raised
+    before any I/O. Skipped silently for empty repos and for an ephemeral
+    inventory digest, for the reasons :func:`write_cache` documents — this
+    is the single writer under both it and
+    :func:`otto.config.cache_sections.write_section`.
+
+    Sections not named in *payloads* are left as they are. Reserved
+    ``__*__`` namespaces (collected tests, tunnel ids) are carried forward
+    untouched. A file from an OLDER schema contributes only those
+    namespaces: its entries can never be served again, so they are dropped
+    here rather than being parsed by every TAB forever.
+
+    *tainted* marks every section this call writes; a tainted section is
+    stored but never served (see :func:`read_sections`). A wholly tainted
+    write whose entries are ALREADY on disk, tainted, with matching digests
+    is skipped — see :func:`_tainted_entry_is_already_current`.
+
+    *digests*: per-section digests to trust instead of recomputing —
+    :func:`cache_rebuild_is_worthwhile` fills it on the miss that triggered
+    this write, so no key set is hashed twice. The stored digest then
+    describes the tree AS THE VALIDITY CHECK SAW IT; anything user code
+    moved in between simply makes the next read a miss, which is the safe
+    direction.
+    """
+    from .cache_sections import section_by_name, section_digests
+
+    chosen = [section_by_name(name) for name in payloads]
     if not repos or _fingerprint_is_ephemeral(repos):
         return
 
@@ -890,25 +1219,31 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
         except (OSError, json.JSONDecodeError):
             pass
 
-    fingerprint = compute_fingerprint(repos)
-    existing[fingerprint] = {
-        "schema_version": SCHEMA_VERSION,
-        "generated_at": int(time.time()),
-        "instructions": instructions,
-        "suites": suites,
-        "hosts": hosts,
-        "hosts_by_lab": hosts_by_lab or {},
-        "docker_hosts": docker_hosts or [],
-        "docker_use_cases": docker_use_cases or [],
-        "term_backends": term_backends or [],
-        "transfer_backends": transfer_backends or [],
-        "usernames": usernames or [],
-        "commands": commands or [],
-        "labs": labs or [],
-        "tests": tests or [],
+    top: dict[str, Any] = {
+        key: value
+        for key, value in existing.items()
+        if isinstance(key, str) and key.startswith("__") and key.endswith("__")
     }
-
-    _atomic_write_json(cache_path, existing)
+    stored = existing.get("sections")
+    sections_map: dict[str, Any] = (
+        dict(stored)
+        if existing.get("schema") == SCHEMA_VERSION and isinstance(stored, dict)
+        else {}
+    )
+    fresh = section_digests(repos, chosen, known=digests)
+    if tainted and _tainted_entry_is_already_current(sections_map, chosen, fresh):
+        return
+    now = int(time.time())
+    for section in chosen:
+        sections_map[section.name] = {
+            "fingerprint": fresh[section.name],
+            "generated_at": now,
+            "tainted": bool(tainted),
+            "payload": payloads[section.name],
+        }
+    top["schema"] = SCHEMA_VERSION
+    top["sections"] = sections_map
+    _atomic_write_json(cache_path, top)
 
 
 def _atomic_write_json(cache_path: Path, obj: dict[str, Any]) -> None:

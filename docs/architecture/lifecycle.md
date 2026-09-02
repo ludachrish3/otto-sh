@@ -1,17 +1,27 @@
 # The command lifecycle
 
-Every `otto` invocation walks the same path before a first-party command
-takes over: compose the process, dispatch one command, prepare the
+Almost every `otto` invocation walks the same path before a first-party
+command takes over: compose the process, dispatch one command, prepare the
 invocation, run it, tear it down deterministically. This page covers that
 shared path; the pages below cover what each command does once it has
 control.
+
+The exception is the console script's own front door. `[project.scripts]`
+points at `otto._shim:main`, not at `entry()`: a bare `otto --version` is
+answered there, off `otto.version` alone, and never enters the path below.
+It exists because otto's framework import graph cost thousands of path
+syscalls, every one paid at module import — before `entry()` runs a line,
+so nothing inside `entry()` could have avoided them — see
+{doc}`../guide/startup-performance` for the measured budget. Every other
+argv, including `python -m otto`, is handed straight to `entry()` unchanged.
 
 ```{graphviz}
 digraph lifecycle {
     rankdir=TB;
     node [shape=box];
 
-    entry [label="entry() — console script"];
+    shim [label="otto._shim:main — console script\n--version answered here, CLI never imported", style=dashed];
+    entry [label="entry() — the composition root"];
     completion [label="completion fast path\ncache hit → zero user code", style=dashed];
     discovery [label="bootstrap phase 1: discovery\nOTTO_* env + settings.toml\n(no user code runs)"];
     registration [label="bootstrap phase 2: registration\ninit modules + test files\n(per-file failures contained)"];
@@ -20,6 +30,7 @@ digraph lifecycle {
     body [label="command body\n(command-specific — pages below)"];
     teardown [label="teardown\nHostScope closes remaining hosts;\nexit code derived from the Result"];
 
+    shim -> entry [label=" every argv but a bare --version"];
     entry -> completion [label=" completion request"];
     entry -> discovery;
     discovery -> registration;

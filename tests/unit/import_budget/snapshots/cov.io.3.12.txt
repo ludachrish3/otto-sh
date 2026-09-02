@@ -1,0 +1,4 @@
+# I/O golden: surface `cov`, CPython 3.12. Regenerate with `make import-snapshot` UNDER THIS INTERPRETER.
+listdir 46
+open_fixture 0
+scandir 0
