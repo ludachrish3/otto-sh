@@ -8,8 +8,6 @@ sets to ``__main__``.)  The controlled environment and subprocess-coverage
 wiring come from :func:`tests.e2e._otto_subprocess.run_otto`.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import subprocess
