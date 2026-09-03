@@ -4,7 +4,6 @@ Every match= below is anchored on the phrase the guard exists for, never on a
 bare word a repr or a locals dump could satisfy.
 """
 
-import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -214,22 +213,57 @@ def test_url_must_be_non_empty():
         NetBoxInventory(url="")
 
 
-def test_a_netbox_that_stops_answering_times_out_instead_of_blocking_the_command():
+def test_every_request_a_fetch_makes_carries_the_configured_timeout(monkeypatch):
     """An UNREACHABLE NetBox must not hold a lab-bound command for the kernel's TCP timeout.
 
     pynetbox issues ``http_session.get(...)`` with no ``timeout``, and
     requests' ``Session.send`` then passes ``timeout=None`` EXPLICITLY — so
     the bound has to come from an adapter that OVERWRITES a ``None`` that is
-    already there. A ``setdefault`` would never fire, and the elapsed
-    assertion below is what that distinction goes red on.
+    already there. A ``setdefault`` would never fire, and that is exactly what
+    this reads: the ``timeout`` the base adapter is handed on every request of
+    a real fetch, which a ``setdefault`` leaves as ``None``.
+
+    Observed at the adapter seam rather than by elapsed wall time. The earlier
+    form of this test asserted ``elapsed < 0.9`` against a stub that slept 1s
+    — a wall-clock discriminator in a plain unit test, which xdist load can
+    counterfeit as a false red (the ``serial_timing`` class); the seam says the
+    same thing deterministically.
     """
-    with NetBoxStub([device(1, "d1")], delay=1.0) as stub:
-        inv = _inv(stub, timeout=0.2)
-        started = time.monotonic()
-        with pytest.raises(InventoryError, match=r"netbox inventory .*: Read timed out"):
-            inv.list_keys()
-        elapsed = time.monotonic() - started
-    assert elapsed < 0.9, f"the request was never bounded: it took {elapsed:.2f}s"
+    from requests.adapters import HTTPAdapter
+
+    seen: list = []
+    real_send = HTTPAdapter.send
+
+    def spy(self, request, **kw):
+        seen.append(kw.get("timeout"))
+        return real_send(self, request, **kw)
+
+    monkeypatch.setattr(HTTPAdapter, "send", spy)
+    with NetBoxStub([device(1, "d1")]) as stub:
+        _inv(stub, timeout=0.2).list_keys()
+    assert seen, "the fetch made no request through the mounted adapter"
+    assert all(t == 0.2 for t in seen), f"unbounded request(s) in the fetch: {seen}"
+
+
+def test_an_explicit_timeout_on_a_request_is_not_overridden(monkeypatch):
+    """The adapter fills in a MISSING bound; it does not clobber one a caller set."""
+    from requests import Session
+    from requests.adapters import HTTPAdapter
+
+    seen: list = []
+    real_send = HTTPAdapter.send
+
+    def spy(self, request, **kw):
+        seen.append(kw.get("timeout"))
+        return real_send(self, request, **kw)
+
+    monkeypatch.setattr(HTTPAdapter, "send", spy)
+    with NetBoxStub([device(1, "d1")]) as stub:
+        session = Session()
+        _inv(stub, timeout=0.2)._mount_timeout(session)
+        session.get(stub.base + "/api/dcim/devices/", timeout=7.5)
+        session.get(stub.base + "/api/dcim/devices/")
+    assert seen == [7.5, 0.2]
 
 
 def test_the_default_timeout_is_thirty_seconds():
