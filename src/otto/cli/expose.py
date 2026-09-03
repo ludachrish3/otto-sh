@@ -67,7 +67,8 @@ def make_method_command(
         # CLI-sourced keys (kw) are always kept so unexpected ones raise a loud TypeError.
         # The binding is built from the first-registered sample_func; a different
         # host class may implement the same verb without some internal params
-        # (e.g. DockerContainerHost.put has no show_progress).
+        # (DockerContainerHost.put lacked show_progress until 2026-09-03; the
+        # filter stays because the binding is still per-verb, not per-class).
         try:
             method_sig = inspect.signature(method)
         except (ValueError, TypeError):

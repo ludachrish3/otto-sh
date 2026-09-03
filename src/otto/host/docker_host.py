@@ -35,7 +35,7 @@ from typing_extensions import override
 
 from ..logger.mode import LogMode
 from ..result import CommandNotRunError, CommandResult, Result
-from ..utils import Arg, Opt, Status, cli_exposed
+from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .connections import teardown_step
 from .dev_tool import DevTool
 from .file_ops import PosixFileOps
@@ -782,8 +782,17 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 "(defaults to the declared service user)."
             ),
         ] = None,
+        show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
         """Upload local files into the container.
+
+        *show_progress* governs the STAGING leg — the ``parent.put`` to the
+        parent host, an ordinary transfer that renders per-file bars — and is
+        forwarded there untouched; the ``docker cp`` step is opaque and has
+        no progress of its own. Declared on the
+        :class:`~otto.host.host.Host` protocol: without the keyword a caller
+        suppressing bars for a bulk transfer through the protocol (the
+        coverage fetcher does) raised ``TypeError`` on this family alone.
 
         Two-step: ``parent.put`` to a per-container staging dir, then
         ``docker cp`` from there into the container. The staging dir is
@@ -832,7 +841,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 msg = f"failed to create staging dir on parent: {mkdir.value}"
                 return aggregate_transfer({f: Result(Status.Error, msg=msg) for f in files})
 
-            stage_result = await self.parent.put(files, stage)
+            stage_result = await self.parent.put(files, stage, show_progress=show_progress)
             if not stage_result.is_ok:
                 # Staged-but-not-copied files must not read as Success: the
                 # batch aborted before any docker cp, so they never reached
@@ -949,8 +958,12 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 "so containers ignore it."
             ),
         ] = None,
+        show_progress: Annotated[bool, Exclude] = True,
     ) -> Result:
         """Download files from the container to the local machine.
+
+        *show_progress* is forwarded to the staging leg (``parent.get`` from
+        the parent host to the local machine) — see :meth:`put`.
 
         Two-step: ``docker cp`` from the container into a per-container
         staging dir on the parent, then ``parent.get`` to the local dir.
@@ -1017,7 +1030,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             # parent.get keys its per-file dict by the staged paths; re-key it
             # back to the container source paths (as passed) so the caller sees
             # the keys it handed in.
-            parent_result = await self.parent.get(staged_paths, dest_dir)
+            parent_result = await self.parent.get(
+                staged_paths, dest_dir, show_progress=show_progress
+            )
             staged_map = parent_result.value if isinstance(parent_result.value, dict) else {}
             fallback = Result(parent_result.status, msg=parent_result.msg)
             per_file = {f: staged_map.get(stage / f.name, fallback) for f in files}

@@ -69,6 +69,49 @@ class TestGcdaFetcher:
         assert len(gcda_paths) == 2
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "family",
+        ["UnixHost", "LocalHost", "EmbeddedHost", "DockerContainerHost"],
+    )
+    async def test_the_fetch_call_binds_on_every_family(self, tmp_path, fake_config_module, family):
+        """The fetcher calls ``get`` through the ``Host`` protocol; every family's
+        real ``get`` signature must bind that call.
+
+        The double's ``get`` binds the fetcher's actual arguments against the
+        family's REAL signature before answering — a ``TypeError`` here is the
+        one production raised on containers (``show_progress`` missing from
+        ``DockerContainerHost.get``, shipped in v0.10.0) with nothing but a
+        mock in the way. A plain ``AsyncMock`` accepts any keyword and could
+        never see it.
+        """
+        import importlib
+        import inspect
+
+        module = {
+            "UnixHost": "otto.host.unix_host",
+            "LocalHost": "otto.host.local_host",
+            "EmbeddedHost": "otto.host.embedded_host",
+            "DockerContainerHost": "otto.host.docker_host",
+        }[family]
+        cls = getattr(importlib.import_module(module), family)
+        signature = inspect.signature(cls.get)
+        host = _make_mock_host("host1")
+        host.exec.return_value = CommandResult(
+            Status.Success, value="/var/cov/foo.gcda\n", command="find ...", retcode=0
+        )
+
+        async def _get_like_the_family(*args, **kwargs):
+            signature.bind(host, *args, **kwargs)  # raises exactly as the real method would
+            return Result(Status.Success, value={})
+
+        host.get = AsyncMock(side_effect=_get_like_the_family)
+        fake_config_module(host)
+
+        result = await GcdaFetcher(tmp_path / "staging").fetch_all("/var/cov")
+
+        assert "host1" in result, f"{family}.get did not bind the fetcher's call"
+
+    @pytest.mark.asyncio
     async def test_fetch_all_no_gcda_files(self, tmp_path, fake_config_module):
         host = _make_mock_host()
         host.exec.return_value = CommandResult(

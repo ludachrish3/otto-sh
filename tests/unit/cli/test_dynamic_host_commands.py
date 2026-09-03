@@ -625,8 +625,16 @@ def test_build_cli_binding_embedded_put():
     assert "show_progress" in binding.excluded
 
 
-def test_build_cli_binding_docker_put_no_show_progress():
-    """build_cli_binding(DockerContainerHost.put) has no show_progress (docker doesn't have it)."""
+def test_build_cli_binding_docker_put_excludes_show_progress_like_unix():
+    """build_cli_binding(DockerContainerHost.put) treats show_progress exactly as unix's does.
+
+    Until 2026-09-03 this test pinned the OPPOSITE — that docker's put had no
+    show_progress at all — which was the signature non-uniformity behind the
+    coverage fetcher's TypeError on containers (the Host protocol declared
+    the keyword's absence nowhere, and one family lacked it). Docker now
+    accepts the keyword (forwarding it to its staging leg), so the CLI binding hides it the
+    same way it hides unix's: an Exclude'd internal, never a CLI option.
+    """
     from otto.cli.param_synth import build_cli_binding
     from otto.host.docker_host import DockerContainerHost
 
@@ -635,7 +643,7 @@ def test_build_cli_binding_docker_put_no_show_progress():
 
     assert "src_files" in param_names
     assert "dest_dir" in param_names
-    assert "show_progress" not in binding.excluded
+    assert "show_progress" in binding.excluded
     assert "show_progress" not in param_names
 
 

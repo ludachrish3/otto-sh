@@ -635,8 +635,16 @@ class Host(Protocol):
         src_files: list[Path] | Path,
         dest_dir: Path,
         user: str | None = None,
+        show_progress: bool = True,
     ) -> Result:
         """Download one or more files from the host to a local directory.
+
+        ``show_progress`` renders a per-file transfer bar where a transfer
+        leg reports progress; a family whose own step cannot (containers —
+        ``docker cp`` is opaque) still honours it on the legs that can (the
+        staging transfer through the parent host), so a caller suppressing
+        bars for a bulk fetch can do so through the protocol on every family
+        alike.
 
         ``user`` is accepted for interface uniformity with :meth:`put`.
         Containers ignore it — reads are ownership-indifferent, so there is
@@ -667,8 +675,13 @@ class Host(Protocol):
         dest_dir: Path,
         mode: int | str | None = None,
         user: str | None = None,
+        show_progress: bool = True,
     ) -> Result:
         """Upload one or more local files to a directory on the host.
+
+        ``show_progress`` renders a per-file transfer bar on every leg that
+        reports progress (for containers, the staging transfer through the
+        parent host) — see :meth:`get`.
 
         ``mode`` sets the permission bits on the uploaded files: an ``int``
         (``0o755``) from Python, or a string always read as octal (``"755"``,
@@ -1560,6 +1573,7 @@ class BaseHost(ABC):
         src_files: list[Path] | Path,
         dest_dir: Path,
         user: str | None = None,
+        show_progress: bool = True,
     ) -> Result:
         """Download files from the host to a local directory. Subclasses must override."""
         raise NotImplementedError from None
@@ -1570,6 +1584,7 @@ class BaseHost(ABC):
         dest_dir: Path,
         mode: int | str | None = None,
         user: str | None = None,
+        show_progress: bool = True,
     ) -> Result:
         """Upload local files to a directory on the host. Subclasses must override."""
         raise NotImplementedError from None

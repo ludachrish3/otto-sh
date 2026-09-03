@@ -1153,6 +1153,27 @@ async def test_get_two_step_via_parent():
     assert cp_call.kwargs.get("timeout") == float("inf")
 
 
+@pytest.mark.asyncio
+async def test_show_progress_reaches_the_staging_leg():
+    """``show_progress=False`` must reach the parent-host transfer, not stop at the container.
+
+    The ``docker cp`` step has no progress to render, but the staging leg is
+    an ordinary transfer to/from the parent host that DOES — so a caller
+    suppressing bars through the ``Host`` protocol (the coverage fetcher's
+    bulk gcda fetch) gets bars from the parent leg unless the flag is
+    forwarded. Accepting the keyword and dropping it would pass every
+    signature test and still render.
+    """
+    parent = _mock_parent()
+    h = _make_container(parent)
+
+    await h.put(Path("a.bin"), Path("/data"), show_progress=False)
+    await h.get(Path("/etc/os-release"), Path("./out"), show_progress=False)
+
+    assert parent.put.call_args.kwargs.get("show_progress") is False
+    assert parent.get.call_args.kwargs.get("show_progress") is False
+
+
 # ---------------------------------------------------------------------------
 # put/get user= — docker chown flow
 # ---------------------------------------------------------------------------

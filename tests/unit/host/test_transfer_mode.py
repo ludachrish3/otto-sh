@@ -431,8 +431,11 @@ async def test_docker_put_chmods_inside_the_container(monkeypatch):
     assert not any("chmod" in c for c in parent_execs)
     # The staging put must NOT carry the mode — staging is deleted anyway, and
     # relying on `docker cp` to preserve it is exactly what we are avoiding.
+    # (An allowlist rather than "no kwargs at all": show_progress legitimately
+    # rides the staging leg, which is the transfer that renders bars; nothing
+    # else — not mode, not user — may.)
     assert not staged_put_kwargs["args"]
-    assert not staged_put_kwargs["kwargs"]
+    assert set(staged_put_kwargs["kwargs"]) <= {"show_progress"}
 
 
 @pytest.mark.asyncio
