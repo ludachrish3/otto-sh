@@ -10,6 +10,7 @@ import io
 import shutil
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -374,6 +375,144 @@ class TestGateLifecycle:
         worktree_list = _git(repo, "worktree", "list")
         assert worktree_list.count("\n") == 1, "only the main checkout remains"
         assert "prunable" not in worktree_list, "no stale worktree registration should survive"
+
+
+class TestLanesFinishBeforeCleanup:
+    """The runner returns only when everything the lanes spawned has exited.
+
+    ``subprocess.run`` returns when its direct child exits; ``make`` exits the
+    moment its recipe does, while the recipe's own children (xdist workers, a
+    test's subprocesses) can outlive it — and that gap is where ``git worktree
+    remove`` used to run, racing a writer and blocking a push from ``main`` on
+    2026-09-03. The runner now waits on the lanes' whole process group.
+    """
+
+    def test_a_backgrounded_grandchild_is_waited_for(self, tmp_path: Path):
+        """The direct child exits at once, leaving a grandchild behind; the
+        runner must not return until that grandchild is gone.
+
+        Deterministic, not timed: the grandchild records its own pid, and the
+        assertion is that the pid no longer exists when the runner returns —
+        a runner that returned on the direct child's exit would find it alive.
+        """
+        import os
+
+        pid_file = tmp_path / "grandchild.pid"
+        script = f"sleep 2 & echo $! > {pid_file}; exit 0"
+        rc = gate_fresh._run_awaiting_descendants(["sh", "-c", script], tmp_path)
+        assert rc == 0
+        pid = int(pid_file.read_text())
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+
+    @pytest.mark.timeout(20)
+    def test_an_interrupt_is_relayed_to_the_group_and_still_waited_for(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Ctrl+C during the lanes must reach the lanes, and the runner must
+        still not return (raise) until they are gone.
+
+        ``start_new_session`` takes the child out of the terminal's foreground
+        group, so the SIGINT the runner receives is NOT delivered to the child
+        by the terminal any more — the runner relays it. Injected: the first
+        ``Popen.wait`` raises ``KeyboardInterrupt`` once the grandchild has
+        recorded its pid. Without the relay the child (waiting on a 30s
+        ``sleep``) lives on past this test's 20s timeout; with it, the group
+        is interrupted, drained, and the pid is gone on re-raise.
+
+        The child is a Python spawner, not ``sh -c "sleep & wait"``: a
+        non-interactive shell starts ``&`` jobs with SIGINT IGNORED (POSIX
+        async-list rule), so such a grandchild can never be interrupted and
+        the test would fail for a reason that is not the runner's. Real lane
+        descendants (xdist workers, test subprocesses) are spawned the
+        Python way and take the default disposition.
+        """
+        import os
+        import sys
+
+        pid_file = tmp_path / "grandchild.pid"
+        real_wait = subprocess.Popen.wait
+        interrupted: list[int] = []
+
+        def wait_then_interrupt(self, timeout=None):
+            if not interrupted:
+                interrupted.append(self.pid)
+                while not pid_file.exists():  # the grandchild exists before we interrupt
+                    time.sleep(0.02)
+                raise KeyboardInterrupt
+            return real_wait(self, timeout)
+
+        monkeypatch.setattr(subprocess.Popen, "wait", wait_then_interrupt)
+        spawner = (
+            "import subprocess, pathlib; p = subprocess.Popen(['sleep', '30']); "
+            f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid)); p.wait()"
+        )
+        with pytest.raises(KeyboardInterrupt):
+            gate_fresh._run_awaiting_descendants([sys.executable, "-c", spawner], tmp_path)
+        pid = int(pid_file.read_text())
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+
+    @pytest.mark.timeout(20)
+    def test_an_interrupt_during_the_lingering_wait_is_relayed_too(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """The phase this change exists for — direct child gone, descendants
+        alive, the runner polling the group — must relay a Ctrl+C as well.
+
+        Injected on the first poll of the post-child wait: the spawner
+        ``os._exit``s right after recording its grandchild's pid, so the
+        direct child has exited when ``time.sleep`` in the wait loop first
+        runs and raises. A relay that only wrapped the child's own wait
+        would propagate here with the grandchild alive (the review's probe).
+        """
+        import os
+        import sys
+
+        pid_file = tmp_path / "grandchild.pid"
+        real_sleep = time.sleep
+        raised: list[bool] = []
+
+        def sleep_then_interrupt(seconds):
+            if not raised:
+                raised.append(True)
+                raise KeyboardInterrupt
+            real_sleep(seconds)
+
+        monkeypatch.setattr(gate_fresh.time, "sleep", sleep_then_interrupt)
+        spawner = (
+            "import subprocess, pathlib, os; p = subprocess.Popen(['sleep', '30']); "
+            f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid)); os._exit(0)"
+        )
+        with pytest.raises(KeyboardInterrupt):
+            gate_fresh._run_awaiting_descendants([sys.executable, "-c", spawner], tmp_path)
+        assert raised, "the interrupt was never injected — the wait loop did not poll"
+        pid = int(pid_file.read_text())
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+
+    def test_pids_in_group_reads_the_proc_field(self):
+        """The /proc field arithmetic finds this very process in its own group."""
+        import os
+
+        assert os.getpid() in gate_fresh._pids_in_group(os.getpgid(0))
+
+    def test_the_direct_childs_exit_code_is_reported(self, tmp_path: Path):
+        rc = gate_fresh._run_awaiting_descendants(["sh", "-c", "exit 3"], tmp_path)
+        assert rc == 3
+
+    def test_run_targets_stops_at_a_failed_sync(self, tmp_path: Path, monkeypatch):
+        """``_run_targets`` still short-circuits on a failed ``uv sync`` — the
+        wait wrapper must not have changed the two-step control flow."""
+        calls: list[list[str]] = []
+
+        def fake(cmd: list[str], cwd: Path) -> int:
+            calls.append(cmd)
+            return 1
+
+        monkeypatch.setattr(gate_fresh, "_run_awaiting_descendants", fake)
+        assert gate_fresh._run_targets(tmp_path, ["lint-python"]) is False
+        assert calls == [["uv", "sync"]]
 
 
 class TestMain:

@@ -18,10 +18,13 @@ Usage::
 
 import argparse
 import contextlib
+import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -148,19 +151,125 @@ class GateResult:
     kept: bool
 
 
+_LINGER_REPORT_INTERVAL_S = 10.0
+# Index of `pgrp` in /proc/<pid>/stat once the `pid (comm)` prefix is stripped.
+_STAT_PGRP_FIELD = 2
+
+
+def _pids_in_group(pgid: int) -> list[int]:
+    """PIDs currently in process group *pgid* — diagnostic only, Linux ``/proc``.
+
+    Empty where ``/proc`` is absent; the wait itself never depends on this.
+    """
+    found: list[int] = []
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return found
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text()
+        except OSError:
+            continue
+        # `pid (comm) state ppid pgrp ...` — comm may contain spaces/parens,
+        # so split after the LAST ')'; `state` is then field 0, `pgrp` field 2.
+        fields = stat[stat.rfind(")") + 2 :].split()
+        if len(fields) > _STAT_PGRP_FIELD and fields[_STAT_PGRP_FIELD] == str(pgid):
+            found.append(int(entry.name))
+    return found
+
+
+def _wait_for_process_group(pgid: int) -> None:
+    """Block until NO process is left in process group *pgid*.
+
+    ``os.killpg(pgid, 0)`` delivers nothing and raises ``ProcessLookupError``
+    exactly when the group is empty; polling it is the whole mechanism. No
+    deadline and no kill on purpose: the gate's job here is to never start
+    disposing of the worktree while anything the lanes spawned is still
+    alive in it, and a wait that gives up after N seconds would just move the
+    overlap to N seconds. A process that never exits holds the gate visibly,
+    naming itself below, instead of racing the cleanup silently.
+
+    Assumes a reaping init: a zombie is still a group member, so under a
+    PID 1 that never reaps (a bare ``tail -f`` container init) an orphaned
+    descendant would hold this forever. The dev VM (systemd) and CI
+    (``ubuntu-latest`` VMs) both reap.
+    """
+    reported_at = time.monotonic()
+    while True:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            # A member exists but is not ours to signal (a lane that escalated
+            # via sudo): that is "alive", not "gone".
+            pass
+        now = time.monotonic()
+        if now - reported_at >= _LINGER_REPORT_INTERVAL_S:
+            reported_at = now
+            pids = _pids_in_group(pgid)
+            print(
+                "gate-fresh: the lanes returned but processes they spawned are still "
+                f"running; waiting for them before touching the worktree "
+                f"(pids: {pids or 'unknown'})",
+                flush=True,
+            )
+        time.sleep(0.1)
+
+
+def _run_awaiting_descendants(cmd: list[str], cwd: Path) -> int:
+    """Run *cmd* in ITS OWN process group and return only when the group is empty.
+
+    Why a group and not ``subprocess.run`` alone: ``run`` returns when the
+    direct child exits, and ``make`` exits the moment its recipe does — but
+    the recipe's own children (xdist workers, a test's subprocesses, an
+    ``e2e`` daemon under teardown) can outlive it by a moment, still holding
+    the worktree as their cwd or still writing ``.coverage.*``/``reports/``
+    into it. That moment is exactly when ``git worktree remove`` used to run,
+    and a removal that races a writer fails — which blocked a push from
+    ``main`` on 2026-09-03 with a green lane. ``start_new_session`` puts the
+    child and every descendant that does not ``setsid`` itself into one
+    group; :func:`_wait_for_process_group` then holds until it is empty.
+    """
+    # Popen rather than run(): the wait below needs the child's pid, which is
+    # the group's id, and CompletedProcess does not carry it.
+    with subprocess.Popen(cmd, cwd=cwd, start_new_session=True) as proc:  # noqa: S603
+        try:
+            proc.wait()
+            _wait_for_process_group(proc.pid)
+        except KeyboardInterrupt:
+            # The new session took the lanes out of the terminal's foreground
+            # group, so the Ctrl+C that reached us never reached them (the
+            # old subprocess.run child got it for free). Relay it to the whole
+            # group, then keep the promise the normal path makes — nothing
+            # of theirs is alive when this returns — before propagating, so
+            # gate()'s exception-path `worktree remove` never runs over a
+            # lane that is still winding down. ONE clause for BOTH phases:
+            # the interrupt is at least as likely during the lingering wait
+            # (make returned, descendants alive, the report line printing)
+            # as during the lanes themselves. A second Ctrl+C during the
+            # drain propagates without draining — the deliberate escape from
+            # an otherwise unbounded wait.
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGINT)
+            proc.wait()
+            _wait_for_process_group(proc.pid)
+            raise
+    return proc.returncode
+
+
 def _run_targets(worktree: Path, targets: list[str]) -> bool:
-    """Sync a fresh venv, then run the gated make targets in the worktree."""
-    sync = subprocess.run(["uv", "sync"], cwd=worktree, check=False)  # noqa: S607
-    if sync.returncode != 0:
+    """Sync a fresh venv, then run the gated make targets in the worktree.
+
+    Both steps run through :func:`_run_awaiting_descendants`, so the caller
+    is guaranteed that nothing the lanes started is still alive when this
+    returns — the precondition the cleanup in :func:`gate` relies on.
+    """
+    if _run_awaiting_descendants(["uv", "sync"], worktree) != 0:
         return False
-    return (
-        subprocess.run(  # noqa: S603
-            ["make", *targets],  # noqa: S607
-            cwd=worktree,
-            check=False,
-        ).returncode
-        == 0
-    )
+    return _run_awaiting_descendants(["make", *targets], worktree) == 0
 
 
 def _reconcile_after_cleanup_failure(repo: Path, holder: Path) -> None:
@@ -203,6 +312,11 @@ def gate(
     so leaving ``holder`` alone would leak an empty directory into system temp
     on every single passing run — including one where ``git worktree add``
     itself fails before ``worktree`` ever exists.
+
+    The runner's contract is that it returns only when nothing it spawned is
+    still alive — the default :func:`_run_targets` guarantees it by waiting
+    on the lanes' whole process group — so the removal below never races a
+    late xdist worker or test subprocess still writing into the worktree.
 
     Cleanup failure (``git worktree remove`` itself raising, e.g. because the
     worktree was already corrupted) is handled the same way regardless of
