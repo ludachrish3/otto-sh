@@ -629,11 +629,10 @@ async def _connect_cov_hosts() -> tuple[
         ``(repos, cov_repo, cov_config, cov_pattern, cov_hosts, unix_hosts,
         gcda_remote_dir)``.
     """
-    import re
-
     from ..config import all_hosts, get_repos
     from ..config.scope import EmptySelectionError
-    from ..coverage.config import get_cov_config, get_cov_repo
+    from ..coverage.config import get_cov_config, get_cov_repo, load_hosts_pattern
+    from ..coverage.errors import CoverageConfigError
     from ..host import UnixHost
 
     repos = get_repos()
@@ -643,9 +642,13 @@ async def _connect_cov_hosts() -> tuple[
         raise _CovError("No [coverage] section found in .otto/settings.toml")
 
     # Same repo-declared selector collect_coverage uses to keep infrastructure
-    # hosts (e.g. an SSH hop) out of the coverage set.
-    hosts_pattern: str | None = cov_config.get("hosts")
-    cov_pattern = re.compile(hosts_pattern) if hosts_pattern else None
+    # hosts (e.g. an SSH hop) out of the coverage set; a malformed value is
+    # refused by name in the shared loader, re-framed as this file's error the
+    # same way EmptySelectionError is below.
+    try:
+        cov_pattern = load_hosts_pattern(cov_config)
+    except CoverageConfigError as e:
+        raise _CovError(str(e)) from e
 
     # Re-framed as a `_CovError`, which is what every caller's sync wrapper
     # already prints without a traceback. The message is passed through

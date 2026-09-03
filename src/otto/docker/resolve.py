@@ -84,14 +84,14 @@ def select_fragments(
             f"no active repo declares use-case {use_case!r}; declared: {known}"
         )
 
-    provide = dict(provide or {})
+    provide_map: dict[str, str] = dict(provide) if provide is not None else {}
     unconditional = [sf for sf in candidates if sf.fragment.provides is None]
     by_capability: dict[str, list[SelectedFragment]] = {}
     for sf in candidates:
         if sf.fragment.provides is not None:
             by_capability.setdefault(sf.fragment.provides, []).append(sf)
 
-    unknown_caps = sorted(set(provide) - set(by_capability))
+    unknown_caps = sorted(set(provide_map) - set(by_capability))
     if unknown_caps:
         names = ", ".join(unknown_caps)
         provided = ", ".join(sorted(by_capability)) or "<none>"
@@ -104,7 +104,7 @@ def select_fragments(
     winners: list[SelectedFragment] = []
     displaced: list[Displacement] = []
     for capability, contenders in by_capability.items():
-        winner = _pick_winner(use_case, capability, contenders, provide.get(capability))
+        winner = _pick_winner(use_case, capability, contenders, provide_map.get(capability))
         winners.append(winner)
         displaced.extend(
             Displacement(

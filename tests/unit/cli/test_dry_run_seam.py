@@ -805,22 +805,9 @@ def _root_options(*, dry_run: bool, probe: bool) -> Any:
     either field turns these tests red instead of silently answering "no
     probe" through ``getattr``'s default.
     """
-    from pathlib import Path
+    from tests._fixtures.rootoptions import make_root_options
 
-    from otto.cli.invoke import RootOptions
-
-    return RootOptions(
-        labs=None,
-        xdir=Path(),
-        log_days=30,
-        log_level="INFO",
-        rich_log_file=False,
-        show_time=False,
-        dry_run=dry_run,
-        as_user=None,
-        skip_reservation_check=False,
-        probe=probe,
-    )
+    return make_root_options(dry_run=dry_run, probe=probe)
 
 
 def _dialable_host(element: str = "dut1", ip: str = "198.51.100.1") -> Any:

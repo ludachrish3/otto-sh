@@ -42,6 +42,7 @@ from otto.monitor.session import new_frame
 from otto.reservations import ReservationGateResult
 from otto.result import CommandResult, Results
 from otto.utils import Status
+from tests._fixtures.rootoptions import make_root_options
 
 runner = CliRunner()
 
@@ -544,7 +545,7 @@ class TestTlsResolvedBeforeDbCreation:
         self, live_mode_mocks, tmp_path
     ):
         db_file = tmp_path / "metrics.db"
-        ctx = _make_ctx({"_otto_root_options": object(), "_otto_lab_ready": True})
+        ctx = _make_ctx({"_otto_root_options": make_root_options(), "_otto_lab_ready": True})
         with (
             patch("otto.cli.monitor._resolve_monitor_tls", side_effect=typer.Exit(1)),
             # Source module, not otto.cli.monitor — see the note above.

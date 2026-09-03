@@ -25,6 +25,7 @@ from otto.cli.registry import CommandSpec
 from otto.reservations import MissingReservationError, ReservationGateResult
 from tests._fixtures.bootstrapstub import bootstrap_stub
 from tests._fixtures.clickctx import chain
+from tests._fixtures.rootoptions import make_root_options
 
 
 class _FakeCtx:
@@ -39,11 +40,9 @@ class _FakeCtx:
         self.parent = chain("otto")
         self.meta: dict[str, Any] = {
             "_otto_command_spec": spec,
-            # RootOptions-shaped, not a bare sentinel: the preamble reads the
+            # A real RootOptions, not a bare sentinel: the preamble reads the
             # -I/-E tuples off this object before it reaches the gate.
-            "_otto_root_options": SimpleNamespace(
-                labs=None, include_projects=(), exclude_projects=()
-            ),
+            "_otto_root_options": make_root_options(),
         }
         if reservation is not None:
             self.meta["otto_reservation"] = reservation

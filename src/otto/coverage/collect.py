@@ -27,7 +27,6 @@ otto.coverage.collect`` stays cheap for library callers and the existing
 
 import dataclasses
 import logging
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -164,7 +163,7 @@ async def collect_coverage(
     """
     from ..config import all_hosts, get_repos
     from ..host import UnixHost
-    from .config import get_cov_config
+    from .config import get_cov_config, load_hosts_pattern
     from .fetcher.embedded import collect_embedded_coverage
     from .fetcher.remote import GcdaFetcher
 
@@ -182,8 +181,7 @@ async def collect_coverage(
     # defaulting to every host in the lab. This is how a lab's SSH **hop** (e.g.
     # `test4` fronting `zephyr37_llext`) is kept out of the coverage set — it is
     # excluded by the pattern, not inferred from the fact that it emits no .gcda.
-    hosts_pattern: str | None = cov_config.get("hosts")
-    cov_pattern = re.compile(hosts_pattern) if hosts_pattern else None
+    cov_pattern = load_hosts_pattern(cov_config)
 
     # Unix hosts compile the SUT and emit .gcda to a filesystem we fetch over
     # the network. EmbeddedHost/DockerContainerHost are skipped by the fetcher.

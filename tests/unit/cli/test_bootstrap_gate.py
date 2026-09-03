@@ -10,6 +10,7 @@ import typer
 from otto import bootstrap as bs
 from otto.cli.invoke import fail_loud_on_bootstrap_errors
 from otto.config.scope import ProjectScopeConfig
+from tests._fixtures.rootoptions import make_root_options
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +30,7 @@ def _install_result(monkeypatch, *, errors=(), warnings=(), repos=()):
 
 def _fake_ctx(*, labs=None, include=(), exclude=()):
     """The one slice of a click ctx the gate reads: meta['_otto_root_options']."""
-    opts = SimpleNamespace(
+    opts = make_root_options(
         labs=labs,
         include_projects=tuple(include),
         exclude_projects=tuple(exclude),

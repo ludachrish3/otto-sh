@@ -115,7 +115,8 @@ def parse_info(
             line = raw.strip()
             if line.startswith("SF:"):
                 current = line[3:]
-                lines, branches = {}, {}
+                lines = {}
+                branches = {}
             elif line.startswith("DA:") and current is not None:
                 parts = line[3:].split(",")
                 lines[int(parts[0])] = lines.get(int(parts[0]), 0) + int(parts[1])

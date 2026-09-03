@@ -107,10 +107,10 @@ def teardown_step(name: str, step: str) -> "Iterator[None]":
         logger.warning(f"{name}: {step} teardown failed: {e}")
 
 
-_tunneled_ftp_client_cls: type | None = None
+_tunneled_ftp_client_cls: "type[aioftp.Client] | None" = None
 
 
-def _build_tunneled_ftp_client_cls() -> type:
+def _build_tunneled_ftp_client_cls() -> "type[aioftp.Client]":
     """Build (once) the ``aioftp.Client`` subclass that routes FTP data connections through a hop.
 
     Defined lazily — and cached — so merely importing this module does not pull

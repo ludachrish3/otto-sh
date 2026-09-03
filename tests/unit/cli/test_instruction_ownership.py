@@ -40,6 +40,7 @@ from otto.instructions import INSTRUCTIONS, InstructionEntry
 from otto.registry import registering_repo
 from tests._fixtures.bootstrapstub import bootstrap_stub
 from tests._fixtures.clickctx import chain
+from tests._fixtures.rootoptions import make_root_options
 from tests._fixtures.scoping import verdict
 
 
@@ -485,9 +486,7 @@ class _PreambleCtx:
         self.parent = chain("otto", "run")
         self.meta: "dict[str, Any]" = {
             "_otto_command_spec": spec,
-            "_otto_root_options": SimpleNamespace(
-                labs=None, include_projects=(), exclude_projects=()
-            ),
+            "_otto_root_options": make_root_options(),
         }
 
 

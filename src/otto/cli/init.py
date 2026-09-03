@@ -838,8 +838,10 @@ async def init_command(
         typer.echo("settings.toml is the repo marker — scaffolding it first.")
 
     if interactive and "settings" in missing_names:
-        name = name or typer.prompt("Product name", default=root.name)
-        version = typer.prompt("Version", default=version)
+        # str() pins what click already guarantees: with a str default and no
+        # ``type=``, prompt returns str — but its declared return type is Any.
+        name = name or str(typer.prompt("Product name", default=root.name))
+        version = str(typer.prompt("Version", default=version))
     cfg = InitConfig(name=name or _existing_settings_name(root) or root.name, version=version)
 
     scaffolded: list[str] = []

@@ -138,7 +138,9 @@ def read_cov_source_roots(cov_dirs: list[Path]) -> dict[str, Path]:
     except FileNotFoundError:
         return {}
 
-    raw: dict[str, str] = meta.get("source_roots", {})
+    # dict[str, Any], not dict[str, str]: the metadata is unvalidated JSON, and
+    # Path() below is what pins each value.
+    raw: dict[str, Any] = meta.get("source_roots", {})
     return {host_id: Path(v) for host_id, v in raw.items()}
 
 

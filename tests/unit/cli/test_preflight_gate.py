@@ -30,6 +30,7 @@ from otto.cli import invoke
 from otto.cli.invoke import refuse_unsatisfied_dependencies
 from otto.cli.registry import CommandSpec
 from tests._fixtures.clickctx import chain
+from tests._fixtures.rootoptions import make_root_options
 from tests._fixtures.scoping import verdict
 
 ABSENT = "otto-fixture-beetroot"
@@ -284,9 +285,7 @@ class _PreambleCtx:
         self.parent = chain("otto", parent_name)
         self.meta: "dict[str, Any]" = {
             "_otto_command_spec": spec,
-            "_otto_root_options": types.SimpleNamespace(
-                labs=None, include_projects=(), exclude_projects=()
-            ),
+            "_otto_root_options": make_root_options(),
         }
 
 

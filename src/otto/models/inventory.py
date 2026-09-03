@@ -94,7 +94,7 @@ times is a partition rule that will eventually disagree with itself.
 """
 
 FILLABLE_INVENTORY_FIELDS: frozenset[str] = (
-    frozenset(InventoryRecord.model_fields) - SUPPLIES_EXEMPT_FIELDS
+    frozenset[str](InventoryRecord.model_fields) - SUPPLIES_EXEMPT_FIELDS
 )
 """The MOST a backend may supply (spec §4). Derived, so a new field cannot dodge enforcement."""
 

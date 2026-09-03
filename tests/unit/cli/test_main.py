@@ -796,14 +796,18 @@ class TestProjectSwitchWiring:
         captured: dict = {}
         real = invoke_mod.RootOptions
 
-        def _spy(**kwargs):
-            opts = real(**kwargs)
-            captured["opts"] = opts
-            return opts
+        # A SUBCLASS, not a wrapper function: the typed meta accessors
+        # (invoke.root_options) isinstance-check the stash against this same
+        # module global at call time, and a plain function there would make
+        # isinstance raise TypeError inside the preamble.
+        class _SpyOptions(real):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+                captured["opts"] = self
 
         # main() imports RootOptions from .invoke inside its body, so the
         # attribute is resolved at call time and patching the source works.
-        monkeypatch.setattr("otto.cli.invoke.RootOptions", _spy)
+        monkeypatch.setattr("otto.cli.invoke.RootOptions", _SpyOptions)
         return captured
 
     def _capture_context(self, monkeypatch):

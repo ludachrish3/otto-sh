@@ -1718,3 +1718,22 @@ class TestCaptureAnnotations:
         )
         assert tester == {"name": "Al", "email": "al@x"}
         assert (ticket, note) == ("T-1", None)
+
+
+# ── [coverage].hosts selector validation ─────────────────────────────────────
+
+
+class TestConnectCovHostsSelectorValidation:
+    """A non-string ``[coverage].hosts`` is refused by name, not by re.compile."""
+
+    @pytest.mark.asyncio
+    async def test_non_string_hosts_selector_is_refused_by_name(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from otto.cli.cov import _connect_cov_hosts, _CovError
+
+        repo = SimpleNamespace(settings={"coverage": {"hosts": ["host1", "host2"]}})
+        # ``_connect_cov_hosts`` re-imports lazily at call time, so patch the source.
+        monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
+        with pytest.raises(_CovError, match="hosts must be a string"):
+            await _connect_cov_hosts()

@@ -38,21 +38,9 @@ def _make_ctx(meta: dict) -> typer.Context:
 
 def _root_options(labs: list[str] | None):
     """A RootOptions with only the fields the reservation commands read set meaningfully."""
-    from pathlib import Path
+    from tests._fixtures.rootoptions import make_root_options
 
-    from otto.cli.invoke import RootOptions
-
-    return RootOptions(
-        labs=labs,
-        xdir=Path(),
-        log_days=30,
-        log_level="INFO",
-        rich_log_file=False,
-        show_time=False,
-        dry_run=False,
-        as_user=None,
-        skip_reservation_check=False,
-    )
+    return make_root_options(labs=labs)
 
 
 class _FakeBackend:

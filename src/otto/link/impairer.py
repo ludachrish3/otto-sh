@@ -66,7 +66,7 @@ class LinkImpairer:
     orchestration layer (``otto.link.manage``) runs them on hosts.
     """
 
-    host_families: ClassVar[frozenset[str]] = frozenset()
+    host_families: ClassVar[frozenset[str]] = frozenset[str]()
     """Host families this impairer serves (e.g. ``frozenset({"unix"})``)."""
 
     supports_selectors: ClassVar[bool] = False

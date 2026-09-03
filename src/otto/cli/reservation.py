@@ -62,7 +62,10 @@ def _reservation_gate(ctx: typer.Context) -> ReservationGate | None:
     res = ctx.meta.get("otto_reservation")
     if res is not None:
         return res
-    opts = ctx.meta.get("_otto_root_options")
+
+    from .invoke import maybe_root_options
+
+    opts = maybe_root_options(ctx)
     if opts is None:
         return None
 
@@ -96,8 +99,9 @@ def whoami(ctx: typer.Context) -> None:
         raise typer.Exit(1)
 
     from ..config.lab import LAB_SEPARATOR
+    from .invoke import maybe_root_options
 
-    opts = ctx.meta.get("_otto_root_options")
+    opts = maybe_root_options(ctx)
     labs = LAB_SEPARATOR.join(opts.labs) if opts is not None and opts.labs else "<none>"
     rprint(
         f"username: [bold]{identity.username}[/bold]\n"

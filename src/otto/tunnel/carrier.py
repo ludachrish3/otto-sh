@@ -30,7 +30,7 @@ class TunnelCarrier:
     ``otto.host.daemon.launch_command``.
     """
 
-    supported_protocols: ClassVar[frozenset[str]] = frozenset()
+    supported_protocols: ClassVar[frozenset[str]] = frozenset[str]()
     """Service protocols this carrier can forward (e.g. ``frozenset({"tcp"})``)."""
 
     requirements_command: ClassVar[str] = ""

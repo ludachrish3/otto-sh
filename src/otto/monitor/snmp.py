@@ -428,7 +428,7 @@ class SnmpClient:
         )
 
         mp_model = 1 if self.version == "2c" else 0
-        result: dict[str, float | None] = dict.fromkeys(oids)
+        result: dict[str, float | None] = {oid: None for oid in oids}  # noqa: C420 — dict.fromkeys infers dict[str, Any | None], tripping ty's unsound-assignment; the comprehension types cleanly
 
         # One dispatcher per GET; close it in finally so the UDP socket isn't
         # leaked (otherwise it lingers until GC and trips ResourceWarning).

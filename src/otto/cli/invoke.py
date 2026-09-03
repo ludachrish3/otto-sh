@@ -333,6 +333,47 @@ class RootOptions:
     """``-E``: PEP-503-normalized names switched off (spec §2)."""
 
 
+def root_options(ctx: typer.Context) -> RootOptions:
+    """Typed read of the root callback's stash — ``meta['_otto_root_options']``.
+
+    ``ctx.meta`` is click's untyped per-invocation dict; this is the one seam
+    that narrows the stash back to :class:`RootOptions`, so the readers don't
+    each carry an unsound ``Any`` assignment. Absence stays a ``KeyError``:
+    the strict readers run only after the root callback has stored the options.
+    """
+    opts = ctx.meta["_otto_root_options"]
+    assert isinstance(opts, RootOptions), (  # noqa: S101 — internal invariant: the root callback stashed a RootOptions
+        f"meta['_otto_root_options'] holds {type(opts).__name__}, not RootOptions"
+    )
+    return opts
+
+
+def maybe_root_options(ctx: "typer.Context | None") -> "RootOptions | None":
+    """:func:`root_options` for paths where the root callback may not have run.
+
+    Library callers and tests invoke some gates without a ctx (or with a ctx
+    the root callback never saw); both simply mean "no root options".
+    """
+    if ctx is None or ctx.meta.get("_otto_root_options") is None:
+        return None
+    return root_options(ctx)
+
+
+def command_spec(ctx: typer.Context) -> "CommandSpec":
+    """Typed read of the invoked command's spec — ``meta['_otto_command_spec']``.
+
+    Stashed by the leaf-invoke wrapper (and ``otto test``'s direct entry) before
+    the preamble runs; same seam-per-key rule as :func:`root_options`.
+    """
+    from .registry import CommandSpec
+
+    spec = ctx.meta["_otto_command_spec"]
+    assert isinstance(spec, CommandSpec), (  # noqa: S101 — internal invariant: the invoke wrapper stashed a CommandSpec
+        f"meta['_otto_command_spec'] holds {type(spec).__name__}, not CommandSpec"
+    )
+    return spec
+
+
 def ensure_cli_session(ctx: typer.Context) -> None:
     """Initialise CLI logging once per invocation (idempotent).
 
@@ -363,7 +404,7 @@ def ensure_cli_session(ctx: typer.Context) -> None:
     from ..host import HostFilter
     from ..logger import management
 
-    opts: RootOptions = meta["_otto_root_options"]
+    opts = root_options(ctx)
 
     management.init_cli_logging(
         xdir=opts.xdir,
@@ -527,7 +568,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     if meta.get("_otto_lab_ready"):
         return get_context()
 
-    opts: RootOptions = meta["_otto_root_options"]
+    opts = root_options(ctx)
 
     from ..config import get_repos
 
@@ -641,7 +682,7 @@ def validate_project_switches(ctx: typer.Context) -> None:
     vendored click fork uncaught, which is why ``ensure_lab_context``
     hand-writes its missing-``--lab`` usage text too.
     """
-    opts: "RootOptions | None" = ctx.meta.get("_otto_root_options")
+    opts = maybe_root_options(ctx)
     if opts is None or not (opts.include_projects or opts.exclude_projects):
         return
     import difflib
@@ -687,7 +728,7 @@ def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
         return
 
     fatal = list(result.errors)
-    opts: "RootOptions | None" = ctx.meta.get("_otto_root_options") if ctx is not None else None
+    opts = maybe_root_options(ctx)
     if opts is not None:
         from ..config.scope import inactive_before_lab
         from ..models.dependencies import normalize_name
@@ -1049,7 +1090,7 @@ def command_preamble(ctx: typer.Context) -> None:
     validate_project_switches(ctx)
     fail_loud_on_bootstrap_errors(ctx)
 
-    spec: CommandSpec = meta["_otto_command_spec"]
+    spec = command_spec(ctx)
     if not spec.lab_free:
         ensure_lab_session(ctx, spec)
         # After the session (the lab verdicts it installs ARE the input) and

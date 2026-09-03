@@ -265,7 +265,7 @@ class BaseFileTransfer(ABC):
     invoked, not just that the methods exist.
     """
 
-    host_families: frozenset[str] = frozenset()
+    host_families: frozenset[str] = frozenset[str]()
     """
     Host-family selectors this backend serves — a subset of ``{'unix', 'embedded'}``.
     Subclasses declare it; the spec field_validator rejects a backend on a host

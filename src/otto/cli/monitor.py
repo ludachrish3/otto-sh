@@ -281,10 +281,10 @@ def monitor(
     # which mock out get_lab()/all_hosts() instead) never went through the
     # root callback, so there is no root state to resolve a lab from and
     # nothing to enforce.
-    from .invoke import ensure_lab_session, fail, present_reservation_gate
+    from .invoke import command_spec, ensure_lab_session, fail, present_reservation_gate
 
     if ctx.meta.get("_otto_root_options") is not None and not ctx.meta.get("_otto_lab_ready"):
-        ensure_lab_session(ctx, ctx.meta["_otto_command_spec"])
+        ensure_lab_session(ctx, command_spec(ctx))
 
     present_reservation_gate(ctx)
 

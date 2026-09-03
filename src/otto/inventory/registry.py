@@ -7,16 +7,30 @@ registers a bare name from an ``init`` module, and ``[inventory] backend =
 through the same path.
 """
 
+from typing import TYPE_CHECKING
+
 from ..registry import Registry, caller_module
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from .protocol import Inventory
 
 # Name -> Inventory-compatible class. ``build_inventory`` constructs the
 # resolved class from the ``[inventory]`` settings table.
-INVENTORY_BACKENDS: Registry[type] = Registry(
+#
+# ``Callable[..., Inventory]``, not ``type[Inventory]``: each backend declares
+# its own constructor signature (json takes ``path``/``supplies``, a custom
+# backend takes ``repo_dir`` + its settings kwargs), so the registry's contract
+# is "constructs an Inventory", not "shares an ``__init__``".
+INVENTORY_BACKENDS: "Registry[Callable[..., Inventory]]" = Registry(
     "inventory backend", register_hint="otto.inventory.registry.register_inventory_backend()"
 )
 
 
-def register_inventory_backend(name: str, cls: type, *, overwrite: bool = False) -> None:
+def register_inventory_backend(
+    name: str, cls: "Callable[..., Inventory]", *, overwrite: bool = False
+) -> None:
     """Make a custom inventory backend selectable as ``backend = "<name>"``.
 
     Call from an ``init`` module listed in ``.otto/settings.toml``. The class
@@ -28,7 +42,7 @@ def register_inventory_backend(name: str, cls: type, *, overwrite: bool = False)
     INVENTORY_BACKENDS.register(name, cls, overwrite=overwrite, origin=caller_module())
 
 
-def get_inventory_backend_class(name: str) -> type:
+def get_inventory_backend_class(name: str) -> "Callable[..., Inventory]":
     """Return the backend class registered under *name*.
 
     Raises

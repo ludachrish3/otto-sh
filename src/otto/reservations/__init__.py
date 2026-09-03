@@ -6,7 +6,7 @@ See :mod:`otto.reservations.protocol` for the backend contract and
 """
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..utils import anchor_path
 from .check import (
@@ -66,6 +66,9 @@ from .protocol import (
 from .registry import (
     register_reservation_backend as register_reservation_backend,
 )
+
+if TYPE_CHECKING:
+    from ..config.repo import Repo
 
 
 def build_backend(
@@ -151,7 +154,7 @@ def build_backend(
 
 
 def build_reservation_gate(
-    repos: list[Any],
+    repos: "list[Repo]",
     *,
     as_user: str | None,
     skip_reservation_check: bool,
