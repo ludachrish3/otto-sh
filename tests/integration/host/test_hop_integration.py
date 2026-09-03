@@ -22,6 +22,7 @@ Skip hop tests::
 """
 
 import gc
+from collections.abc import Iterator
 from contextlib import suppress
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from otto.host import UnixHost
 from otto.host.login_proxy import Cred
 from otto.logger.mode import LogMode
 from otto.utils import Status
+from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.fd_watermark import open_fd_count
 from tests.conftest import host_data
 from tests.integration.host._transfer_retry import transfer_with_retry
@@ -47,15 +49,43 @@ pytestmark = [pytest.mark.timeout(30)]
 # `_find_free_port` serialises port allocation within a UnixHost, but nothing
 # coordinates across xdist workers: two nc transfers racing the same host's
 # port scan in the TOCTOU window before `nc -l` binds can both pick 9000 and
-# cross-wire. The hop tests hard-code `test2` and take no pool lease, so they
-# are the most exposed of all, and the two descriptor tests below make it far
-# likelier by doing eight rapid transfers where the others do one.
+# cross-wire. The group only co-locates the tests that CARRY it, so it is one
+# of TWO layers: this module's nc tests hard-code `test2`, and every OTHER
+# suite that can put a transfer on test2 reaches it through the flock host
+# pool (`tests/_fixtures/_host_pool.py`) — so the nc tests below additionally
+# hold the pool lease on test2 (`_test2_nc_lease`), which is what serializes
+# them against those suites. The two descriptor tests make a collision far
+# likelier than the rest by doing eight rapid transfers where the others do
+# one.
 #
 # Observed 2026-08-10 on the nox 3.14 leg, under xdist with the full suite
 # live: "nc transfer to /tmp/fwd_accum.txt: expected 33 bytes, got 20" — the
 # "wrong file contents" outcome the group's original comment predicts. Not
-# reproducible serially (11 clean runs across two interpreters).
+# reproducible serially (11 clean runs across two interpreters). Observed
+# again 2026-09-03 on the nox 3.10 leg with the missing layer identified:
+# this module's accumulation test crossed with `tests/e2e/host/
+# test_host_transfer_e2e.py`'s roundtrip, which had LEASED test2 from the
+# pool — the byte counts swapped exactly (146↔33), each transfer landing in
+# the other's listener. The group could never have prevented that: the e2e
+# test is outside it by design (it leases; these tests didn't).
 _NC_SERIAL_GROUP = pytest.mark.xdist_group("nc-serial")
+
+
+@pytest.fixture
+def _test2_nc_lease(tmp_path_factory) -> "Iterator[None]":
+    """Hold the host pool's test2 lease for the duration of an nc test.
+
+    The cross-worker half of the serialization story above: an nc transfer's
+    port scan must never race another transfer on the same host, and the rest
+    of the suite coordinates its test2 use through `lease_unix_host`. A
+    single-candidate lease is that pool's per-host mutex — it polls until
+    test2 is free, so a concurrently leased e2e test delays this one instead
+    of cross-wiring with it. Scoped to the nc tests only: scp/sftp/ftp hop
+    tests have no port scan to race.
+    """
+    lock_dir = Path(tmp_path_factory.getbasetemp()).parent
+    with lease_unix_host(lock_dir, ("test2",)):
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -375,6 +405,7 @@ class TestFileTransferThroughHop:
     @pytest.mark.asyncio
     @pytest.mark.hops
     @_NC_SERIAL_GROUP
+    @pytest.mark.usefixtures("_test2_nc_lease")
     async def test_nc_put_through_hop(self, tmp_path: Path):
         """Upload a file through an SSH hop via netcat (port-forwarded)."""
         data = host_data("test2")
@@ -408,6 +439,7 @@ class TestFileTransferThroughHop:
     @pytest.mark.asyncio
     @pytest.mark.hops
     @_NC_SERIAL_GROUP
+    @pytest.mark.usefixtures("_test2_nc_lease")
     async def test_nc_get_through_hop(self, tmp_path: Path):
         """Download a file through an SSH hop via netcat (reversed-listener)."""
         data = host_data("test2")
@@ -510,6 +542,7 @@ def _nc_hop_host() -> UnixHost:
 @pytest.mark.asyncio
 @pytest.mark.hops
 @_NC_SERIAL_GROUP
+@pytest.mark.usefixtures("_test2_nc_lease")
 async def test_hop_transfers_do_not_accumulate_port_forwards(tmp_path: Path):
     """Repeated transfers on ONE hop host must not grow the descriptor count.
 
@@ -584,6 +617,7 @@ async def test_hop_transfers_do_not_accumulate_port_forwards(tmp_path: Path):
 @pytest.mark.asyncio
 @pytest.mark.hops
 @_NC_SERIAL_GROUP
+@pytest.mark.usefixtures("_test2_nc_lease")
 async def test_a_bulk_hop_put_does_not_strand_a_forward_per_file(tmp_path: Path):
     """ONE put of N files must not leave N forwards behind either.
 
