@@ -19,9 +19,22 @@ module is deliberate about, each of them a defect this branch already ate once:
   (a real ``host``-parented chain), never inherited.
 
 Registry isolation is the ROOT conftest's ``_isolate_registries``, which
-snapshots every ``otto.registry.Registry`` around every test — the same thing
-``tests/unit/cli/test_default_instructions.py`` relies on rather than rolling
-its own. ``test_a_registration_here_does_not_leak`` pins that reliance.
+snapshots every ``otto.registry.Registry`` around every test.
+``test_a_registration_here_does_not_leak`` pins that reliance — for the
+direction it covers. It covers ONE: a registration made here cannot leak OUT,
+because the snapshot is taken at this test's setup and restored at its
+teardown. Whatever was already in the registry AT setup is inside that
+snapshot and stays — so a first-party ``install`` registered earlier on this
+xdist worker (by whatever ran ``bootstrap()`` or imported
+``otto.project.instructions`` outside a per-test snapshot — issue #283 names
+an earlier test's bootstrap; the exact path was not observed) leaks IN, and a
+bare ``INSTRUCTIONS.register("install", ...)`` here collides on it
+(ordering-dependent, hence flaky). The test that needs a
+first-party name therefore OWNS it first — ``_own_first_party`` drops the
+inherited entry before installing this module's, exactly the way
+``tests/unit/cli/test_default_instructions.py`` rolls its own
+``_clear_first_party`` — and the fixture's teardown restore puts the inherited
+one back.
 """
 
 import io
@@ -63,6 +76,20 @@ def _install_entry(name: str, registered_by: "str | None") -> None:
         InstructionEntry(name=name, sub_app=typer.Typer(), module="m", registered_by=registered_by),
         origin="m",
     )
+
+
+def _own_first_party(name: str) -> None:
+    """Install first-party *name* as THIS module's entry, whatever this process already holds.
+
+    The leak-IN case the module docstring describes: an earlier test on this
+    worker may have left the real ``otto.project.instructions`` registration
+    of *name* inside our isolation snapshot, and registering over it raises.
+    Dropping it first is safe because ``_isolate_registries`` restores the
+    snapshot — inherited entry included — at teardown.
+    """
+    if name in INSTRUCTIONS:
+        INSTRUCTIONS.unregister(name)
+    _install_entry(name, None)
 
 
 _NARROW_WIDTH = 80
@@ -258,9 +285,36 @@ class TestRefusal:
         refuse_inactive_instruction(_dispatch_ctx("flash-b"))  # must not raise
 
     def test_first_party_is_never_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _install_entry("install", None)
+        _own_first_party("install")
         self._wire_context(monkeypatch, exclude=("otto",))
         refuse_inactive_instruction(_dispatch_ctx("install"))  # must not raise
+
+    def test_owning_a_first_party_name_survives_an_inherited_registration(self) -> None:
+        """Issue #283, injected rather than waited for: the real first-party
+        ``install`` is already registered when the test starts (as it is on any
+        worker that imported ``otto.project.instructions`` earlier), and owning
+        the name must still succeed — and must not be a silent no-op that
+        leaves the INHERITED entry (owner ``otto.project.instructions``, not
+        this module) as the one under test.
+
+        The simulated inherited entry is installed over whatever this worker
+        already holds — the real one may be present (that is the condition
+        under test), and registering over it would raise here for the very
+        reason the fix exists."""
+        if "install" in INSTRUCTIONS:
+            INSTRUCTIONS.unregister("install")
+        INSTRUCTIONS.register(
+            "install",
+            InstructionEntry(
+                name="install",
+                sub_app=typer.Typer(),
+                module="otto.project.instructions",
+                registered_by=None,
+            ),
+            origin="otto.project.instructions",
+        )
+        _own_first_party("install")
+        assert INSTRUCTIONS.get("install").module == "m"
 
     def test_lab_excluded_owner_names_both_fixes(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
