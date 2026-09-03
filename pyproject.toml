@@ -168,7 +168,7 @@ dev = [
     "ruff>=0.15.20",
     "sphinx>=8.0",
     "doc8>=1.1",
-    "ty==0.0.73",
+    "ty==0.0.75",
     # Stub-only package for `requests`, which ships no py.typed and no
     # annotations at all: without it a checker reads `Session.verify`'s type
     # off the bare `self.verify = True` in requests/sessions.py and concludes
