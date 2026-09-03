@@ -897,17 +897,22 @@ conformance: ## Run the host-contract conformance suite (`conformance`-marked; e
 # session seed exactly as the hermetic lane does.
 #
 # ITS OWN WALL-CLOCK CAP, larger than PYTEST_TIMEOUT and stated rather than
-# inherited: 565 items reach real hardware here, the seven single-client
+# inherited: 657 items reach real hardware here, the seven single-client
 # console cells serialize against each other through
-# `tests/conformance/_console_safety.py`'s exclusive lock, and the integration
-# tree measured full one-group bed serialization at >450s. PYTEST_TIMEOUT is
-# the cap for lanes whose slowest leg is a local VM; this one is not that lane.
+# `tests/conformance/_console_safety.py`'s exclusive lock, the BusyBox cells
+# serialize against each other on that module's family lock, and the
+# integration tree measured full one-group bed serialization at >450s.
+# PYTEST_TIMEOUT is the cap for lanes whose slowest leg is a local VM; this
+# one is not that lane.
 #
 # The item count was 284 until the support matrix's POSITIVE CONTROLS landed
 # beside the contracts (one per surface, parametrized over the same cells), and
 # the cap did NOT need raising with it: measured 2026-08-24 at start load 0.81,
-# the whole 565-item lane is 91.65s -- the added items are mostly one or two
-# extra commands on a session that was being opened anyway.
+# the whole 565-item lane was 91.65s -- the added items are mostly one or two
+# extra commands on a session that was being opened anyway. Re-measured
+# 2026-09-02 with the BusyBox family lock in place (`aa957c5d`): 657 items,
+# 105.87s -- 14s over the 2026-08-24 figure, from the 92 added items and the
+# new serialization together; nowhere near this cap.
 CONFORMANCE_CELLS ?= all
 CONFORMANCE_BED_TIMEOUT := 1200s
 conformance-bed: ## Run the host-contract conformance suite against the REAL BED (dev VM only; needs the lab VMs and the Zephyr guests): the same exec/transfer/timeout contracts as `make conformance`, crossed over every (term, transfer) each bed host's menus permit. Exhaustive by default; CONFORMANCE_CELLS=N samples N cells off the session seed instead. Ends by folding what it measured into schemas/support_matrix.json (`make support-matrix`) — review the diff and commit it, or let `make release-matrix` do both when the change is not a downgrade. JUnit XML lands in reports/junit/conformance-bed/.

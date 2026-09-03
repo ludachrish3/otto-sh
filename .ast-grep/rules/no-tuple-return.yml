@@ -28,14 +28,15 @@ note: >
   trap for a third party.
 
   BASELINE IS NOT ZERO, unlike its sibling. 18 public sites existed when this
-  landed on 2026-08-05; each carries an inline
+  landed on 2026-08-05 (16 remain as of 2026-09-03); each carries an inline
   `# ast-grep-ignore: no-tuple-return` with a one-line reason, and
   tests/unit/test_tuple_return_debt.py holds the enumerated list so the set can
   only SHRINK — adding a site fails the gate, and fixing one without removing
-  its entry fails the test. 6 of the 18 are argued as permanent (a version sort
-  key, a composite dict key, an immutable id sequence, a dedup key, a sqlite
-  parameter row, and the pytest hook); the other 12 are debt, tracked in
-  todo/churn-review-remaining-work-2026-08-05.md.
+  its entry fails the test. 6 are argued as permanent (a version sort key, a
+  composite dict key, an immutable id sequence, a dedup key, a sqlite parameter
+  row, and the pytest hook); the rest are debt, tracked in
+  todo/churn-review-remaining-work-2026-08-05.md — that test's DEBT table is
+  the live count, this note is not.
 
   The regex admits ONE optional leading quote, and that is not cosmetic: this
   repo bans `from __future__ import annotations` (it trips Sphinx `-W`), so a

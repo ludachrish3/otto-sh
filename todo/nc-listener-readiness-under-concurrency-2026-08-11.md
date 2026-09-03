@@ -119,5 +119,14 @@ fan-out has been unbounded far longer than the teardown fix has existed.
   for a lab that cares.
 - The earlier 3.14 failure of this SAME test (`expected 33 bytes, got 20`, fixed
   2026-08-10 by putting the nc tests in the `nc-serial` xdist group) was a
-  cross-WORKER port collision. That fix closed the cross-worker window and left
-  this one open. `nc-serial` serializes tests, never the transfers inside one.
+  cross-WORKER port collision. That fix closed the cross-worker window only
+  between the tests that CARRY the group: on 2026-09-03 the same test crossed
+  streams with an e2e roundtrip that reaches test2 through the flock host-pool
+  lease instead (byte counts swapped exactly, 146↔33), and `dcd9c56f` closed
+  that by making the hop nc tests hold the test2 lease too. Neither layer
+  touches this window: `nc-serial` and the lease serialize tests, never the
+  transfers inside one. The collision-proof port negotiation that would let
+  transfers to one host run concurrently is deferred (Chris, 2026-09-03: the
+  lease "is just to serialize the testing"; the end state is real concurrency
+  on hosts that support it, which needs bind-then-report or a per-connection
+  handshake so a crossed stream is detected regardless of size).

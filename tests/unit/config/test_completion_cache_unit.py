@@ -510,7 +510,7 @@ class TestCollectCurrentCommands:
 
         monkeypatch.setattr(
             "otto.instructions.INSTRUCTIONS",
-            Registry("instruction", register_hint="@otto.instruction()"),
+            Registry("instruction", register_hint="@otto.cli.run.instruction()"),
         )
         instructions, _suites = cc.collect_current_commands()
         assert instructions == []

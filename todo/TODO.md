@@ -58,7 +58,7 @@
 - Move around the body of the test_instruction function into a library. Make the test suite and the instruction call that library function. Verify that behavior seems consistent in both cases.
 - Add a `.tainted` property to hosts that checks the /proc/kernel/tainted flag.
 
-- Add a method named something like `log_failures()` in the CommandStatus class so that there is a standard way of logging failed commands. Maybe call this automatically, with a specific option that defaults to True on run()?
+- Add a method named something like `log_failures()` in the CommandResult class so that there is a standard way of logging failed commands. Maybe call this automatically, with a specific option that defaults to True on run()?
 - Look into using the `@cache` decorator. Could it help with making the host database accesses faster?
 - Bug: Safari overdraws to the right side of the screen. It's the hovering toolbar that overhangs. Claude is quite confused by this and kept coming up with more and more ways to make it all line up. If this is fixed by Claude, it needs to be made very clear just what is overhanging so that it can be fixed.
 - Add a `compress` argument to get/put, which is False by default.

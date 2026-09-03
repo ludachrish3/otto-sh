@@ -24,13 +24,13 @@ otto's interface is still freely changing, and that is fine. Do **not** start
 bulk library ports yet. Only do work that tolerates or *informs* otto's churn:
 
 - [ ] Draft the **migration-stable contract** (target list, not yet frozen):
-  - [ ] Host: `Host` protocol + `RunResult` / `CommandStatus` / `Status` /
+  - [ ] Host: `Host` protocol + `Result` / `CommandResult` / `Results` / `Status` /
         `ShellCommand` / `Expect` / `HostSession`.
   - [ ] Logging: plain stdlib `logging.Logger` (libraries call
         `logging.getLogger(__name__)`; otto's logger is a `Logger` subclass).
   - [ ] Config: the **decomposed** pieces — `get_lab()` / `get_host()` /
         `all_hosts()` / `Lab` for lab+host data (the old `getConfigModule()`
-        bundle was removed in WS#1); `getRepos()` for repos (import-time
+        bundle was removed in WS#1); `get_repos()` for repos (import-time
         environment, not per-invocation); a project-owned `RepoOptions`
         dataclass for repo-wide options; the suite/instruction `Options`
         dataclass for per-invocation CLI values. There is **no single config

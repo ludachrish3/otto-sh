@@ -48,7 +48,7 @@ class InstructionEntry:
 # consumed lazily by run_app's RegistryBackedGroup, Repo's instruction
 # panel, and the completion cache's live-registry snapshot.
 INSTRUCTIONS: Registry[InstructionEntry] = Registry(
-    "instruction", register_hint="@otto.instruction()"
+    "instruction", register_hint="@otto.cli.run.instruction()"
 )
 
 FIRST_PARTY_INSTRUCTIONS: frozenset[str] = frozenset(
