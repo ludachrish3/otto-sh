@@ -168,7 +168,7 @@ dev = [
     "ruff>=0.15.20",
     "sphinx>=8.0",
     "doc8>=1.1",
-    "ty==0.0.73",
+    "ty==0.0.75",
     # Stub-only package for `requests`, which ships no py.typed and no
     # annotations at all: without it a checker reads `Session.verify`'s type
     # off the bare `self.verify = True` in requests/sessions.py and concludes
@@ -244,6 +244,15 @@ all = "error"
 # carries its type. That is a real improvement and a breaking API change across
 # ~30 files — its own workstream, not a dev-dependency bump.
 unsound-return-statement = "ignore"
+
+# ty 0.0.74 added unsound-assignment, the rule above's assignment-side twin.
+# NOT demoted: 23 of its 29 hits were fixed at the source ahead of this bump,
+# and the 6 with no honest fix — `Result.value` reads (x2), `getattr` over a
+# stdlib LogRecord, asyncssh's dynamically-attached `readuntil_pattern`, and
+# typeshed's `create_future() -> Future[Any]` (x2) — carry inline
+# `ty: ignore[unsound-assignment]` comments at the site, each with its reason,
+# so the rule stays enforced for all new code. The Result[T] workstream
+# retires the two Result.value sites and earns back the demotion above.
 
 [tool.pytest.ini_options]
 testpaths = [

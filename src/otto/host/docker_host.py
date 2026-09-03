@@ -818,7 +818,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         mode_check = parse_file_mode(mode)
         if not mode_check.is_ok:
             return aggregate_transfer({f: Result(Status.Error, msg=mode_check.msg) for f in files})
-        resolved_mode: int | None = mode_check.value
+        resolved_mode: int | None = mode_check.value  # ty: ignore[unsound-assignment] — Result.value is Any by design (payload slot); retired by the Result[T] workstream
         effective = self._effective_user(user)
         await self._ensure_running()
 

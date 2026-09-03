@@ -1207,7 +1207,7 @@ class NcFileTransfer(UnixFileTransfer):
             handler = progress_factory() if progress_factory is not None else None
             _logger.debug(f"{self._name}: NC get {src} -> {dst}")
 
-            done: asyncio.Future[Result] = asyncio.get_running_loop().create_future()
+            done: asyncio.Future[Result] = asyncio.get_running_loop().create_future()  # ty: ignore[unsound-assignment] — typeshed types create_future() as Future[Any]
 
             async def _on_connect(
                 reader: asyncio.StreamReader, writer: asyncio.StreamWriter

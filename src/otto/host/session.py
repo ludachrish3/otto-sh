@@ -1034,7 +1034,7 @@ class TelnetSession(ShellSession):
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
         # telnetlib3 operates in bytes mode — compile a bytes version of the pattern
         bytes_pattern = re.compile(pattern.pattern.encode())
-        raw: bytes = await self._reader.readuntil_pattern(bytes_pattern)  # type: ignore[attr-defined]
+        raw: bytes = await self._reader.readuntil_pattern(bytes_pattern)  # type: ignore[attr-defined]  # ty: ignore[unsound-assignment] — asyncssh attaches readuntil_pattern dynamically; returns Any
         return raw.decode("utf-8", errors="replace")
 
     @override

@@ -2386,7 +2386,7 @@ class HostFilter(Filter):
         # Non-command records (no host tag) — e.g. warnings/errors — always pass.
         if host is None:
             return True
-        mode: LogMode = getattr(record, "log_mode", LogMode.NORMAL)
+        mode: LogMode = getattr(record, "log_mode", LogMode.NORMAL)  # ty: ignore[unsound-assignment] — dynamic LogRecord attr; getattr over stdlib records has no typed spelling
         if mode is not LogMode.NORMAL:  # QUIET or NEVER → not on the console side
             return False
         return get_logging_command_output_enabled()

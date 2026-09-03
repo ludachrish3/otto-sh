@@ -359,7 +359,7 @@ class BaseFileTransfer(ABC):
             return aggregate_transfer(
                 {f: Result(mode_check.status, msg=mode_check.msg) for f in src_files}
             )
-        resolved_mode: int | None = mode_check.value
+        resolved_mode: int | None = mode_check.value  # ty: ignore[unsound-assignment] — Result.value is Any by design (payload slot); retired by the Result[T] workstream
         if resolved_mode is not None and not self.supports_mode:
             msg = (
                 f"host {self._name!r}: {type(self).__name__} has no permission "

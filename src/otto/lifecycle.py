@@ -572,7 +572,7 @@ async def compensate(
     expiry: "asyncio.Future[None] | None" = None
     if timeout is not None:
         loop = asyncio.get_running_loop()
-        expiry = loop.create_future()
+        expiry = loop.create_future()  # ty: ignore[unsound-assignment] — typeshed types create_future() as Future[Any]
         timeout_timer = loop.call_later(timeout, _mark_expired, expiry)
     try:
         while True:
