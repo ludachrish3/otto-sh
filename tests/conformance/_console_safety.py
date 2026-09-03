@@ -53,15 +53,28 @@ WHAT THIS DOES NOT PROTECT AGAINST, stated here rather than discovered later:
   while providing none.
 - ANY CLIENT THAT IS NOT A PYTEST ITEM -- a person on ``telnet``, a
   ``scripts/`` tool, a stale forward from an earlier run.
-- THE BUSYBOX GUESTS. Their ``telnetd`` serves several clients, so they carry
-  no wedge risk; what they do carry is a CPU risk (five TCG guests sharing
-  ``test1``'s two cores) that the integration tree answers with a family
-  ``xdist_group``. This tree does not, and 10 of its 49 cells are BusyBox.
-  That is a THROUGHPUT exposure, not a wedge, and it is recorded rather than
-  fixed.
 - A SINGLE client wedging a guest on its own. #260's re-init path was not
   reproduced by any one- or two-client probe, so nothing here can claim it is
   impossible.
+
+THE BUSYBOX GUESTS get their own, SEPARATE lock (:func:`serialized_family`),
+and for a different reason. Their ``telnetd`` serves several clients, so they
+carry no wedge risk; what they carry is a CPU risk (five TCG guests sharing
+``test1``'s two cores) that the integration tree answers with a family
+``xdist_group``. This tree recorded that THROUGHPUT exposure rather than
+fixing it — until 2026-09-02, when a ``make release`` run paid for it: two
+``telnet:nc`` cells on DIFFERENT guests (bb1281, bb1161) failed "Remote nc
+listener on port 9000 not ready within 5.0s" on two workers simultaneously,
+and both passed standalone in 2.3s. Parallel BusyBox cells starve each
+other's guest CPU until otto's listener-readiness poll — contention-sensitive
+by design, see ``src/otto/host/transfer/nc.py`` — expires. So BusyBox items
+now serialize against EACH OTHER on a second writer-fair lock (its own
+gate/resource files — holding the console lock for them would serialize them
+against the Zephyr cells too, which share no resource with them), while
+staying parallel with everything else. The same ``xdist_group`` and
+timeout-raising alternatives were considered and rejected for the same
+reasons as above — a distribution hint fails silently, and a longer timeout
+just moves the load level at which the flake returns.
 
 WHY NOT ``xdist_group``, which is what the integration tree uses -- AND THE
 PLAN'S REASON FOR RULING IT OUT DOES NOT HOLD HERE, so this records the one
@@ -114,7 +127,7 @@ from pathlib import Path
 
 from otto.host.telnet import abort_console_transports
 from tests._fixtures._console_lock import RESOURCE_NAME, console_access
-from tests.conformance._bed import BED_ZEPHYR
+from tests.conformance._bed import BED_BUSYBOX, BED_ZEPHYR
 from tests.conformance._resolved import ResolvedCell
 
 # Which venue kinds stand up a console that serves ONE client at a time.
@@ -132,6 +145,18 @@ from tests.conformance._resolved import ResolvedCell
 # so a renamed kind reddens there instead of silently unprotecting a guest.
 SINGLE_CLIENT_CONSOLE_KINDS = frozenset({BED_ZEPHYR})
 
+# Which venue kinds stand up guests that CONTEND FOR ONE CPU BUDGET (the five
+# TCG BusyBox guests on `test1`'s two cores). Family members serialize against
+# each other on their own lock (see the module docstring's BusyBox paragraph);
+# they neither need nor take the single-client console lock.
+SHARED_CPU_FAMILY_KINDS = frozenset({BED_BUSYBOX})
+
+# The family lock's own files — a SEPARATE lock from the console one, so a
+# BusyBox item and a Zephyr item still run in parallel (they share no
+# resource; only same-family CPU contention is being serialized away).
+FAMILY_GATE_NAME = "busybox_family.gate"
+FAMILY_RESOURCE_NAME = "busybox_family.resource"
+
 # The lock this process currently holds, innermost last. A list rather than a
 # bool so the state is the PATH: the guard below re-derives nothing, it probes
 # the very file the hold was taken on.
@@ -141,6 +166,31 @@ _HELD: "list[Path]" = []
 def opens_a_single_client_console(resolved: ResolvedCell) -> bool:
     """Whether standing *resolved* up puts a client on a single-client console."""
     return resolved.kind in SINGLE_CLIENT_CONSOLE_KINDS
+
+
+def shares_a_family_cpu_budget(resolved: ResolvedCell) -> bool:
+    """Whether *resolved*'s guest contends for one CPU budget with its family."""
+    return resolved.kind in SHARED_CPU_FAMILY_KINDS
+
+
+@contextmanager
+def serialized_family(lock_dir: Path) -> "Iterator[None]":
+    """Hold the shared-CPU family lock EXCLUSIVELY for the duration of the block.
+
+    One family item at a time across this session's workers — the runtime-lock
+    translation of the integration tree's family ``xdist_group``. Unlike
+    :func:`serialized_console` there is no held-path record and no transport
+    sweep on exit: an interrupted BusyBox item leaves nothing wedged (its
+    ``telnetd`` is multi-client), so the only job here is the flock itself,
+    and closing the fds releases that even through a pytest-timeout signal.
+    """
+    with console_access(
+        lock_dir,
+        exclusive=True,
+        gate_name=FAMILY_GATE_NAME,
+        resource_name=FAMILY_RESOURCE_NAME,
+    ):
+        yield
 
 
 def console_lock_dir(tmp_path_factory) -> Path:

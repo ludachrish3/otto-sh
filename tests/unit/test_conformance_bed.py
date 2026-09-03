@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import types
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
@@ -64,9 +65,12 @@ from tests.conformance._bed import (
 )
 from tests.conformance._cells import hermetic_space
 from tests.conformance._console_safety import (
+    FAMILY_RESOURCE_NAME,
     console_lock_dir,
     opens_a_single_client_console,
     serialized_console,
+    serialized_family,
+    shares_a_family_cpu_budget,
     unhonored_console_lock,
 )
 from tests.conformance._controls import discover_controls
@@ -1262,6 +1266,85 @@ def test_a_cell_that_opens_no_console_is_not_serialized():
     """The predicate has to be able to say no, or the space would serialize whole."""
     assert not opens_a_single_client_console(_resolved(DEFAULT_CELL))
     assert opens_a_single_client_console(_resolved(("zephyr37_fat", "telnet", "console")))
+
+
+def test_the_family_predicate_selects_exactly_the_busybox_cells():
+    """One family, by kind: every BusyBox cell is in it, nothing else is.
+
+    Space-driven like the console cross-check above, so a renamed kind or a
+    membership typo reddens here rather than silently unserializing the
+    family. Disjointness from the console set is asserted too: a cell in both
+    would take both locks nested, which is a deadlock shape (two items
+    acquiring the pair in opposite orders), and today no kind needs both.
+    """
+    for r in bed_space():
+        assert shares_a_family_cpu_budget(r) == (r.kind == BED_BUSYBOX)
+        assert not (shares_a_family_cpu_budget(r) and opens_a_single_client_console(r))
+    assert shares_a_family_cpu_budget(_resolved(("bb1281", "telnet", "nc")))
+    assert not shares_a_family_cpu_budget(_resolved(DEFAULT_CELL))
+
+
+def test_the_family_lock_excludes_a_second_holder_but_not_the_console(tmp_path):
+    """Inside the block a probe on the family file is refused; the console lock
+    is untouched (a Zephyr cell must still be able to run in parallel)."""
+    with serialized_family(tmp_path):
+        probe = os.open(str(tmp_path / FAMILY_RESOURCE_NAME), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(probe, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        finally:
+            os.close(probe)
+        # The CONSOLE lock's file is free while the family lock is held.
+        with serialized_console(tmp_path):
+            pass
+    # And released on the way out.
+    probe = os.open(str(tmp_path / FAMILY_RESOURCE_NAME), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(probe, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    finally:
+        os.close(probe)
+
+
+def test_the_family_fixture_locks_busybox_cells_and_only_those(monkeypatch, tmp_path):
+    """The conftest wiring: the autouse fixture takes the family lock for a
+    BusyBox cell and stays a no-op for a unix one.
+
+    Driven through the fixture's own function with a recording lock, because
+    what can rot independently of the predicate is the FIXTURE — its cell
+    lookup, its early-outs, whether it is still autouse at all is pinned by
+    deleting it and watching this import fail.
+    """
+    import tests.conformance.conftest as _conftest
+
+    held: list[str] = []
+
+    @contextlib.contextmanager
+    def _recording(lock_dir):
+        held.append("family")
+        yield
+
+    monkeypatch.setattr(_conftest, "serialized_family", _recording)
+    fixture_fn = _conftest._shared_cpu_family.__wrapped__
+
+    class _Req:
+        def __init__(self, node):
+            self.node = node
+
+    class _Node:
+        def __init__(self, resolved):
+            self.callspec = types.SimpleNamespace(params={"resolved_cell": resolved})
+
+    class _Factory:
+        def getbasetemp(self):
+            return tmp_path / "basetemp"
+
+    for triple, expect in ((("bb1281", "telnet", "nc"), ["family"]), (DEFAULT_CELL, [])):
+        held.clear()
+        gen = fixture_fn(_Req(_Node(_resolved(triple))), _Factory())
+        next(gen)
+        assert held == expect, triple
+        with pytest.raises(StopIteration):
+            next(gen)
 
 
 def test_the_serialized_console_holds_a_lock_the_kernel_agrees_with(tmp_path):

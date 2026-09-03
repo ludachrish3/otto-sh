@@ -27,16 +27,27 @@ RESOURCE_NAME = "zephyr_console.resource"
 
 
 @contextmanager
-def console_access(lock_dir: Path, *, exclusive: bool) -> Iterator[None]:
+def console_access(
+    lock_dir: Path,
+    *,
+    exclusive: bool,
+    gate_name: str = GATE_NAME,
+    resource_name: str = RESOURCE_NAME,
+) -> Iterator[None]:
     """Acquire the fair console lock — SHARED (``exclusive=False``) or EXCLUSIVE.
 
     ``lock_dir`` must be common to every xdist worker (use
     ``tmp_path_factory.getbasetemp().parent``). Closing the fds in ``finally``
     releases the locks even if an explicit unlock is skipped — e.g. a
     pytest-timeout signal interrupts the holder.
+
+    ``gate_name``/``resource_name`` select WHICH lock this is; the defaults are
+    the Zephyr console lock every existing caller means. A caller naming its
+    own pair gets an independent lock with the same writer-fair mechanics
+    (``tests/conformance/_console_safety.py``'s BusyBox family lock).
     """
-    gate_fd = os.open(str(lock_dir / GATE_NAME), os.O_RDWR | os.O_CREAT, 0o644)
-    resource_fd = os.open(str(lock_dir / RESOURCE_NAME), os.O_RDWR | os.O_CREAT, 0o644)
+    gate_fd = os.open(str(lock_dir / gate_name), os.O_RDWR | os.O_CREAT, 0o644)
+    resource_fd = os.open(str(lock_dir / resource_name), os.O_RDWR | os.O_CREAT, 0o644)
     try:
         fcntl.flock(gate_fd, fcntl.LOCK_EX)  # enter the turnstile
         if exclusive:

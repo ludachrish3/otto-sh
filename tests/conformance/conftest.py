@@ -53,6 +53,8 @@ from tests.conformance._console_safety import (
     console_lock_dir,
     opens_a_single_client_console,
     serialized_console,
+    serialized_family,
+    shares_a_family_cpu_budget,
     unhonored_console_lock,
 )
 from tests.conformance._observable import note_observable as _note_observable
@@ -362,6 +364,34 @@ def _single_client_console(request: pytest.FixtureRequest, tmp_path_factory):
         yield
         return
     with serialized_console(console_lock_dir(tmp_path_factory)):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _shared_cpu_family(request: pytest.FixtureRequest, tmp_path_factory):
+    """Serialize items of one shared-CPU guest family against each other.
+
+    The BusyBox guests are multi-client (no console to protect) but five TCG
+    guests share ``test1``'s two cores, so parallel BusyBox cells starve each
+    other's guest CPU until otto's 5s nc listener-readiness poll expires —
+    exactly what took down a ``make release`` on 2026-09-02 (two ``telnet:nc``
+    cells on DIFFERENT guests, simultaneously, both green standalone). The
+    integration tree answers this with a family ``xdist_group``; this tree's
+    translation is a runtime lock, for the reasons
+    ``tests/conformance/_console_safety.py`` records against distribution
+    hints.
+
+    A SEPARATE lock from ``_single_client_console``'s, held the same way
+    (autouse, function-scoped, spanning the whole window the body can have the
+    host open): family members serialize against each other only, and still
+    run in parallel with the Zephyr and unix cells they share nothing with.
+    A no-op for every non-family cell.
+    """
+    resolved = _cell_under_test(request.node)
+    if resolved is None or not shares_a_family_cpu_budget(resolved):
+        yield
+        return
+    with serialized_family(console_lock_dir(tmp_path_factory)):
         yield
 
 
