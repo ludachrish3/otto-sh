@@ -101,6 +101,61 @@ class TestLabRepositoryConformance:
         with pytest.raises(AssertionError, match=r"must accept an inventory= keyword"):
             assert_lab_repository_conforms(NoInventoryKeyword())
 
+    def test_host_summaries_without_an_inventory_keyword_is_a_violation(self):
+        """The optional capability owes the same keyword, and the asserter must
+        call it the way production does.
+
+        ``otto.labs.list_host_summaries`` calls ``list_host_summaries(inventory=…)``
+        by keyword; a backend spelling the method with no parameters passes the
+        behavioural rules (this one summarizes nothing and builds nothing, so
+        every set agrees) and TypeErrors in the shell. The asserter itself used
+        to call it with no arguments, which is why this backend used to pass.
+        """
+        from otto.config.lab import Lab
+
+        class NoKeywordOnSummaries:
+            def load_lab(self, name, preferences=None, inventory=None):
+                if name != "mylab":
+                    raise LabNotFoundError(name)
+                return Lab(name=name)
+
+            def list_labs(self):
+                return ["mylab"]
+
+            def list_host_summaries(self):
+                return []
+
+        with pytest.raises(
+            AssertionError, match=r"list_host_summaries must accept an inventory= keyword"
+        ):
+            assert_lab_repository_conforms(NoKeywordOnSummaries())
+
+    def test_a_conforming_host_summaries_backend_is_called_by_keyword(self):
+        """The asserter's own call shape: keyword ``inventory=``, never positional
+        — pinned so the check cannot drift back to the shape it certified wrongly."""
+        from otto.config.lab import Lab
+
+        calls: list = []
+
+        class Recording:
+            def load_lab(self, name, preferences=None, inventory=None):
+                if name != "mylab":
+                    raise LabNotFoundError(name)
+                return Lab(name=name)
+
+            def list_labs(self):
+                return ["mylab"]
+
+            # Keyword-only AND required: a positional call from the asserter
+            # TypeErrors here, and so does a no-argument one (the shape this
+            # asserter used to have) — a green run proves the keyword shape.
+            def list_host_summaries(self, *, inventory):
+                calls.append(inventory)
+                return []
+
+        assert_lab_repository_conforms(Recording())
+        assert calls == [None]
+
     def test_missing_list_labs_raises_assertion_not_attribute_error(self):
         """A repo with no list_labs at all must aggregate an AssertionError,
         not propagate an AttributeError before raise_if_failures()."""

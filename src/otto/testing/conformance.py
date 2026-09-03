@@ -213,8 +213,23 @@ def _expect_host_summaries_conform(
     say) is reported by the caller's own rules; letting its hosts count here
     made the first rule report every one of them as undispatchable.
     """
+    # The call shape production uses (``otto.labs.list_host_summaries`` passes
+    # ``inventory=`` by keyword, spec 2026-08-28 host-inventory §6), checked on
+    # the SIGNATURE first for the same reason ``load_lab``'s is: a backend whose
+    # data holds no referenced entry passes every behavioural rule below with
+    # a no-argument method — and then TypeErrors in the shell the first time
+    # otto calls it for real. This asserter once called it with no arguments
+    # itself, certifying exactly that backend.
+    params = inspect.signature(repo.list_host_summaries).parameters
+    c.expect(
+        "inventory" in params,
+        "SupportsHostSummaries: list_host_summaries must accept an inventory= keyword "
+        "(spec 2026-08-28 host-inventory §6; production calls it that way)",
+    )
+    if "inventory" not in params:
+        return
     try:
-        summaries = repo.list_host_summaries()
+        summaries = repo.list_host_summaries(inventory=None)
     except Exception as e:  # noqa: BLE001 — conformance check, any failure is a violation
         c.expect(
             False, f"SupportsHostSummaries: list_host_summaries() raised {type(e).__name__}: {e}"

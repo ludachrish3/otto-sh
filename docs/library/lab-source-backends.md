@@ -50,9 +50,12 @@ just make it a decision rather than an omission.
 
 ### One optional capability
 
-`list_host_summaries() -> list[HostSummary]`
+`list_host_summaries(inventory=None) -> list[HostSummary]`
 : Enumerate hosts *without building them*, for tab completion and tunnel
-  path-narrowing. Implementing
+  path-narrowing. `inventory` carries the same meaning as `load_lab`'s (see
+  the {doc}`migration note <inventory-backends>`); otto always passes it by
+  keyword, and `assert_lab_repository_conforms` checks the signature.
+  Implementing
   [`SupportsHostSummaries`](../api/labs.rst) is purely an optimization —
   otto detects it structurally, and a backend that omits it still gets
   completion, because otto falls back to `list_labs()` + `load_lab()`.
