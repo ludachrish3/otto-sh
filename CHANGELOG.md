@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-09-03
+
+### Added
+
+- **BREAKING** **cli**: cache management moves to otto cache — root flag removed
+- **host**: declared products & dev tools — [[products]]/[[dev_tools]] in settings.toml
+- **BREAKING** **host**: unix user= parity — exec/put/get authenticate as the user
+- **BREAKING** **host**: uniform user= across the host API — container users
+- **BREAKING** **docker**: use-cases — cross-repo compose composition with provider competition
+
+
+### Changed
+
+- **startup**: file I/O budget — no-import shim, sectioned cache, lazy config, I/O goldens
+
+
+### Documentation
+
+- **products**: format the register_product_kind fence — lint-python green
+- **spec**: cache management — otto cache group, home I/O budget, NFS operation
+- **spec**: declared products/tools — implementation amendments to §5, §6, §7
+- **spec**: startup I/O budget — shim, sectioned cache, I/O measurement standard
+- version in the title, and a banner marking untagged builds
+- **agents**: squash-aware gate economy — reduced gates inside a to-be-squashed branch
+- **spec**: docker use-cases design — cross-repo composition, provider competition, roles placement
+
+
+### Maintenance
+
+- **matrix**: re-measure the bed support matrix
+
+
 ## [0.9.0] - 2026-08-31
 
 ### Added
@@ -1519,7 +1551,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/ludachrish3/otto-sh/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/ludachrish3/otto-sh/compare/v0.8.8...v0.9.0
 [0.8.8]: https://github.com/ludachrish3/otto-sh/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/ludachrish3/otto-sh/compare/v0.8.6...v0.8.7
