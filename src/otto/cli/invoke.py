@@ -305,6 +305,35 @@ def report_lab_context_error(err: "LabContextError") -> None:
     raise typer.Exit(code=err.exit_code)
 
 
+def ensure_inline_lab(ctx: typer.Context) -> None:
+    """Load the lab for a flag that inspects it INLINE and exits (``--show-lab``, ``--list-hosts``).
+
+    The lab loads lazily in :func:`command_preamble`, which runs at the LEAF
+    verb — so a group-level flag that wants live lab state has to load it
+    itself, and it must do so the way dispatch does. The root callback grew
+    this sequence for its own two flags; ``otto host --list-hosts`` had kept
+    an eager Typer callback from before the lazy load existed, which called
+    ``get_lab()`` (``otto.config.fleet``) before any context could exist and tracebacked
+    ``No active OttoContext`` on the documented form ``otto --lab L host
+    --list-hosts`` (2026-09-03). One helper, both callers.
+
+    Same two gates in the same order as :func:`command_preamble` — a typo'd
+    ``-I``/``-E`` name is a typo here too, and a half-registered world fails
+    loud rather than surfacing a secondary error — then the CLI session BEFORE
+    the lab load: the session applies each repo's ``[logging.levels]`` floor
+    and the HostFilter, so the load's own notices (the cross-source override
+    warning from ``otto.labs.composite``, notably) render through it. A lab
+    that cannot load reports and exits with the loud path's message and code.
+    """
+    validate_project_switches(ctx)
+    fail_loud_on_bootstrap_errors(ctx)
+    ensure_cli_session(ctx)
+    try:
+        ensure_lab_context(ctx)
+    except LabContextError as e:
+        report_lab_context_error(e)
+
+
 @dataclasses.dataclass(frozen=True)
 class RootOptions:
     """The root-callback options the preamble needs, stashed on ``ctx.meta``.

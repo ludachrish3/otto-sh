@@ -659,15 +659,7 @@ def main(  # noqa: PLR0913 — CLI command params
     if ctx.resilient_parsing:
         return
 
-    from .invoke import (
-        LabContextError,
-        RootOptions,
-        ensure_cli_session,
-        ensure_lab_context,
-        fail_loud_on_bootstrap_errors,
-        report_lab_context_error,
-        validate_project_switches,
-    )
+    from .invoke import RootOptions, ensure_inline_lab
 
     if probe and not dry_run:
         # A usage error, not a silent promotion to a dry run: --probe DIALS
@@ -712,30 +704,11 @@ def main(  # noqa: PLR0913 — CLI command params
     management.install_console(log_level, show_time=show_time)
 
     if show_lab or list_hosts:
-        # These root flags inspect live lab state, which depends on the
-        # registered world — fail the same way dispatch does rather than
-        # surfacing a confusing secondary error from a half-registered world.
-        # Same two calls in the same order as `command_preamble`: a typo'd
-        # -I/-E name is a typo here too, not an input to the demotion decision.
-        validate_project_switches(ctx)
-        fail_loud_on_bootstrap_errors(ctx)
-        # Open the CLI session BEFORE loading the lab. The console handler is
-        # already up (installed above), so this is no longer a rescue from a
-        # swallowed warning: the session is what applies each repo's
-        # [logging.levels] floor and the HostFilter, and what records the
-        # xdir/retention state — all of it before the lab load has anything to
-        # say, notably the cross-source override warning
-        # (`otto.labs.composite`: "host X in lab Y: A overrides B"), the one
-        # notice that tells an operator a local source is shadowing the global
-        # database. Every other lab-loading path opens the session first
-        # (`ensure_lab_session`); this one had grown its own inline load and
-        # skipped it.
-        ensure_cli_session(ctx)
-        # Load the lab now, print, exit.
-        try:
-            ensure_lab_context(ctx)
-        except LabContextError as e:
-            report_lab_context_error(e)
+        # These root flags inspect live lab state: gates, session and lab load
+        # exactly as dispatch orders them (`ensure_inline_lab` — shared with
+        # `otto host --list-hosts`, which used to load nothing and traceback),
+        # then print and exit.
+        ensure_inline_lab(ctx)
         if show_lab:
             from rich.pretty import pprint
 

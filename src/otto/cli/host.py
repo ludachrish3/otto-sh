@@ -132,14 +132,9 @@ def main(
             help="Override the file transfer protocol for this session.",
         ),
     ] = None,
-    list_hosts: Annotated[  # noqa: ARG001 — required by Typer eager callback option signature
+    list_hosts: Annotated[
         bool,
-        typer.Option(
-            "--list-hosts",
-            callback=list_hosts_callback,
-            is_eager=True,
-            help="Show all valid host IDs.",
-        ),
+        typer.Option("--list-hosts", help="Show all valid host IDs."),
     ] = False,
 ) -> None:
     """Record the host request; the resolved host is built lazily by the leaf verb.
@@ -154,6 +149,18 @@ def main(
     """
     if ctx.resilient_parsing:
         return
+
+    if list_hosts:
+        # The same inline load the root flag uses: the lab is otherwise built
+        # lazily at the leaf verb, so the eager Typer callback this option
+        # carried until 2026-09-03 (the shape from before the lazy load) ran
+        # before any context existed and tracebacked on the documented
+        # `otto --lab L host --list-hosts`.
+        from .invoke import ensure_inline_lab
+
+        ensure_inline_lab(ctx)
+        list_hosts_callback(True)
+        raise typer.Exit
 
     if not host_id or ctx.invoked_subcommand is None:
         rprint(ctx.get_help())

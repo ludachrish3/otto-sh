@@ -101,3 +101,26 @@ def test_list_hosts_includes_builtin_local(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stderr
     assert "local" in r.stdout
     assert_no_output_dir(tmp_path)
+
+
+def test_host_subapp_list_hosts_matches_the_root_flag(tmp_path: Path) -> None:
+    """``otto --lab L host --list-hosts`` — the form the host page documents — lists the lab.
+
+    Until 2026-09-03 the subapp's option kept an eager Typer callback from
+    before the lazy lab load, which called ``get_lab()`` before any context
+    existed and tracebacked ``No active OttoContext``; the root flag had long
+    since moved to an inline load. Both forms now share ``ensure_inline_lab``.
+    """
+    r = run_otto(["--lab", "unix", "host", "--list-hosts"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    assert r.returncode == 0, r.stderr
+    assert "test1" in r.stdout
+    assert "Traceback" not in r.stderr
+    assert_no_output_dir(tmp_path)  # inspects lab state, runs no verb — no run dir
+
+
+def test_host_subapp_list_hosts_without_a_lab_refuses_cleanly(tmp_path: Path) -> None:
+    """No ``--lab`` on the subapp form gets the root form's usage error, never a traceback."""
+    r = run_otto(["host", "--list-hosts"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    assert r.returncode != 0
+    assert "Traceback" not in r.stderr
+    assert "--lab" in r.stderr + r.stdout
