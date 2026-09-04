@@ -435,6 +435,7 @@ class JsonFileLabRepository:
         id, unioning their ``labs``.
         """
         from ..inventory import InventoryError, resolve_host_entry  # lazy: see the note above
+        from .drops import record_drop
 
         by_id: dict[str, HostSummary] = {}
 
@@ -447,10 +448,14 @@ class JsonFileLabRepository:
         for doc in docs:
             for element in doc.elements:
                 labs = [n for n in declared if element.matches(n)]
-                for flat in element.flatten():
+                for index, flat in enumerate(element.flatten()):
                     try:
                         identity = host_identity(resolve_host_entry(flat, inventory).host_data)
-                    except (ValueError, TypeError, InventoryError):
+                    except (ValueError, TypeError, InventoryError) as e:
+                        # Skipped, never raised — but SAID: this is the one
+                        # place a referenced entry silently fell out of
+                        # completion (see otto.labs.drops).
+                        record_drop(f"{doc.path}: element {element.name!r} hosts[{index}]", str(e))
                         continue
                     existing = by_id.get(identity.id)
                     if existing is not None:
@@ -509,12 +514,15 @@ class JsonFileLabRepository:
                     seen_labs=seen_labs,
                     seen_elements=seen_elements,
                 )
-            except LabRepositoryError:
+            except LabRepositoryError as e:
                 if not best_effort:
                     raise
+                from .drops import record_drop
+
                 logger.debug(
                     f"skipping lab file {lab_file} while enumerating (malformed or duplicating)"
                 )
+                record_drop(str(lab_file), str(e))
                 continue
             docs.append(_Document(lab_file, entries, elements, sections["links"]))
         return docs

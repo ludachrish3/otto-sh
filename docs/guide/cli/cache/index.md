@@ -58,6 +58,13 @@ home: ~/.otto (default)
 │ e5f6a7b8-repo3       │        14B │        3h │ yes  │             0 │
 ╰──────────────────────┴────────────┴───────────┴──────┴───────────────╯
 3 workspace(s), 70B total, 1 older than 60d
+this workspace: e5f6a7b8-repo3
+  completion names: fresh — TAB is served from it (written 3h ago)
+  inventory: json:/home/me/.otto/inventory.json
+  lab files (repo3/local): /home/me/repo3/lab/lab.json, /home/me/repo3/hosts.json
+  hosts offered: 3 — dut1 dut2 local
+  dropped: 1 — not offered, and why:
+    [repo3] /home/me/repo3/hosts.json: element 'dut3' hosts[0]: inventory key 'dut-3' ...
 ```
 
 The home line names the resolved path and says whether `$OTTO_HOME` decided it
@@ -73,6 +80,30 @@ threshold — the same number `prune` (with no `--age`) would remove from. A
 workspace `otto cache` cannot read (permission trouble, most often) is
 omitted from the table rather than aborting the rest of the listing, and an
 empty or missing home prints `no cached workspaces` and exits 0.
+
+The block after the caption is about the workspace `otto` is running *in* —
+the repos on `OTTO_SUT_DIRS` — and is the answer to "why does my host not
+complete". Completion is best-effort by contract: a lab entry it cannot build
+is skipped, never warned about, because a warning printed into a completing
+shell corrupts the candidate list the shell is parsing. So the silence gets
+explained here instead. `completion names` is the standing of this
+workspace's cache entry — `fresh` means TAB is served from it; `stale`,
+`expired` and `outdated` mean the next TAB rebuilds it; `tainted` means it was
+written while startup reported errors and is never served, so every TAB runs
+the full load until the error is fixed. `inventory` is the host inventory as
+completion resolved it — once per process, the way commands do, so a broken
+`[inventory]` table shows as `BROKEN` and empties every repo — followed by the
+lab files each declared source actually read (a source on a custom backend is
+marked `not file-backed`). While the inventory is broken, or cannot report
+freshness, nothing is written for the workspace at all, and the standing line
+says so instead of promising a rebuild. `hosts offered` lists the ids
+the entry holds, and `dropped` every entry the enumeration left out, with
+where it was and why: a reference to an inventory key that does not exist, a
+lab file that did not parse, a source that failed or did not answer in time.
+The block reads the entry whatever its standing — a stale entry still records
+the last enumeration, which is what the question is about — and says `hosts
+offered: unknown` when no entry has been written yet. Without a workspace
+(no `OTTO_SUT_DIRS`) the listing above is all there is.
 
 ## clear
 

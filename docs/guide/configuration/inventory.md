@@ -454,6 +454,18 @@ hash for a cached remote one. So NetBox-backed completion caches exactly as a
 file-backed one does, and no TAB keystroke depends on the inventory service
 being reachable.
 
+Completion resolves the inventory **once per process**, the way commands do:
+the repos on `OTTO_SUT_DIRS` that agree on a declaration, else the user file
+([Resolution order](#resolution-order)). A repo that only *references* keys
+therefore completes against an inventory another repo — or the user file —
+declares, and a broken declaration empties completion for every repo, not just
+the one carrying it, until it is fixed. An entry completion could not build is
+skipped silently, never warned about — a warning printed into a completing
+shell would corrupt the candidate list — so when a host does not come up, ask
+[`otto cache info`](../cli/cache/index.md#info): its closing block shows the
+inventory as completion resolved it, the hosts offered, and every entry
+dropped with the reason.
+
 Two situations leave completion **uncached**. Both stay correct — the ids still
 come from a real load — and cost only speed:
 

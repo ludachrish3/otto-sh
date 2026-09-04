@@ -73,7 +73,10 @@ def host_summaries(
         try:
             lab = repository.load_lab(name, inventory=inventory)
         except Exception as e:  # noqa: BLE001 — enumeration is best-effort
+            from .drops import record_drop
+
             logger.debug(f"skipping lab {name!r} while summarizing hosts: {e}")
+            record_drop(f"lab {name!r}", f"could not load: {e}")
             continue
         for host in lab.hosts.values():
             existing = by_id.get(host.id)

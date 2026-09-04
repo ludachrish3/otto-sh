@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ..config.cache_maintenance import MaintenanceReport
+    from ..config.completion_cache import InventoryDescription, SectionStatus
 
 cache_app = typer.Typer(
     name="cache",
@@ -155,6 +156,7 @@ def info() -> None:
     workspaces = iter_workspaces(home)
     if not workspaces:
         typer.echo("no cached workspaces")
+        _print_this_workspace()
         return
 
     now = time.time()
@@ -192,6 +194,96 @@ def info() -> None:
         f"{len(workspaces)} workspace(s), {_fmt_bytes(total_bytes)} total, "
         f"{over_threshold} older than {DEFAULT_MAX_AGE_DAYS:g}d"
     )
+    _print_this_workspace()
+
+
+_SECTION_STATE_HEAD = {
+    "fresh": "fresh — TAB is served from it",
+    "stale": "stale — a key file changed since it was written",
+    "expired": "expired — older than its TTL",
+    "tainted": (
+        "tainted — written while startup reported errors, so it is never served: "
+        "every TAB runs the full load until the error is fixed"
+    ),
+    "outdated": "outdated — written by an older otto",
+    "unreadable": "unreadable — corrupt",
+    "missing": "missing — no entry yet",
+}
+
+
+def _section_state_text(status: "SectionStatus", inventory: "InventoryDescription") -> str:
+    """Word the `completion names` line: the standing, and what happens next — truthfully.
+
+    "The next TAB rebuilds it" holds only while an entry CAN be written. A
+    broken declaration, or an inventory that cannot report freshness, makes
+    the digest ephemeral so nothing is stored (completion_cache R18): the
+    standing then stays whatever it is until the inventory is fixed, and the
+    line says so rather than promising a write that cannot happen.
+    """
+    text = _SECTION_STATE_HEAD.get(status.state, status.state)
+    if status.state not in ("fresh", "tainted"):
+        if inventory.blocker is not None:
+            text += f"; nothing is written while the inventory {inventory.blocker}"
+        elif status.state == "missing":
+            text += "; any TAB or otto command writes one"
+        else:
+            text += "; the next TAB rebuilds it"
+    if status.generated_at is not None and status.state in ("fresh", "stale"):
+        text += f" (written {_fmt_age(time.time() - status.generated_at)} ago)"
+    return text
+
+
+def _print_this_workspace() -> None:
+    """Explain what completion offers for the CURRENT workspace, and what it left out.
+
+    The outlet for completion's best-effort contract (``otto.labs.drops``): a
+    TAB never warns, so this is where "why does my host not complete" gets
+    answered — the section's standing, the inventory as completion resolves
+    it, the lab files each source read, the hosts the cache offers and every
+    entry the enumeration dropped, with its reason. Reads the ``names``
+    entry whatever its standing: a stale entry still records the LAST
+    enumeration, which is what the question is about.
+
+    Nothing to say without a workspace (no ``OTTO_SUT_DIRS``, no repo): the
+    home-wide listing above already covered the rest.
+    """
+    from ..bootstrap import discover
+    from ..config.completion_cache import describe_inventory, inspect_section
+    from ..config.home import workspace_key
+
+    repos = discover().repos
+    if not repos:
+        return
+    status = inspect_section(repos, "names")
+    inventory = describe_inventory(repos)
+    typer.echo(f"this workspace: {workspace_key([r.sut_dir for r in repos])}")
+    typer.echo(f"  completion names: {_section_state_text(status, inventory)}")
+    typer.echo(f"  inventory: {inventory.text}")
+    for repo in repos:
+        for source in repo.lab_sources:
+            if source.backend != "json":
+                files = f"not file-backed ({source.backend})"
+            else:
+                files = ", ".join(str(p) for p in source.lab_files()) or "no lab file found"
+            typer.echo(f"  lab files ({source.label}): {files}")
+    payload = status.payload
+    if payload is None:
+        typer.echo("  hosts offered: unknown — no entry to read")
+        return
+    raw_hosts = payload.get("hosts")
+    hosts = [str(h) for h in raw_hosts] if isinstance(raw_hosts, list) else []
+    offered = f"  hosts offered: {len(hosts)}"
+    typer.echo(f"{offered} — {' '.join(hosts)}" if hosts else offered)
+    raw_drops = payload.get("host_drops")
+    drops = raw_drops if isinstance(raw_drops, list) else []
+    if not drops:
+        typer.echo("  dropped: none")
+        return
+    typer.echo(f"  dropped: {len(drops)} — not offered, and why:")
+    for drop in drops:
+        if not isinstance(drop, dict):
+            continue
+        typer.echo(f"    [{drop.get('repo')}] {drop.get('where')}: {drop.get('reason')}")
 
 
 @cache_app.command("clear")

@@ -113,6 +113,7 @@ def _collect_names(repos: list[Repo]) -> dict[str, Any]:
         "suites": suites,
         "hosts": _cc.collect_host_ids(repos),
         "hosts_by_lab": _cc.collect_host_ids_by_lab(repos),
+        "host_drops": _cc.collect_host_drops(repos),
         "docker_hosts": _cc.collect_docker_capable_host_ids(repos),
         "docker_use_cases": _cc.collect_docker_use_case_names(repos),
         "term_backends": backends["term_backends"],

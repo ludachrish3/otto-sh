@@ -227,7 +227,10 @@ class CompositeLabRepository:
             try:
                 summaries = host_summaries(source.repository, inventory=inventory)
             except Exception as e:  # noqa: BLE001 — completion path, best-effort by contract
+                from .drops import record_drop
+
                 logger.debug(f"skipping source {source.label} while summarizing hosts: {e}")
+                record_drop(f"source {source.label}", str(e))
                 continue
             for s in summaries:
                 by_id[s.id] = _merged_summary(s, by_id.get(s.id), names)

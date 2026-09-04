@@ -84,6 +84,7 @@ otto.inventory.resolve
 otto.inventory.snapshot
 otto.labs
 otto.labs.composite
+otto.labs.drops
 otto.labs.errors
 otto.labs.json_repository
 otto.labs.protocol

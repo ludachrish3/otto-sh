@@ -427,3 +427,17 @@ registry machinery behind this and every other seam otto can be extended at.
   `sources`. The repo is skipped with a framed startup error, so the commands
   that need its hosts fail loud. [Declaring sources](#declaring-sources) above
   has the full shape.
+
+A host `otto --list-hosts` shows does not complete on TAB
+: Completion never warns — a warning printed into a completing shell corrupts
+  the candidate list — so an entry it could not build is dropped silently.
+  [`otto cache info`](../cli/cache/index.md#info) ends with a block for the
+  current workspace: the cache entry's standing, the inventory as completion
+  resolved it, the lab files each source read, the hosts offered, and every
+  entry dropped with where it was and why. A supplement file missing from a
+  source's `paths` shows as a lab file that is not listed; a reference to an
+  inventory key that does not exist and a lab file that did not parse each
+  show as a drop naming the entry; an `[inventory]` table that fails to build
+  — one without a `path`, say — shows on the `inventory` line as `BROKEN`,
+  naming the settings file and the error, and empties completion for every
+  repo until it is fixed.

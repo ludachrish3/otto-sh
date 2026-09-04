@@ -45,6 +45,7 @@ section it needs without walking the corpus that keys the others::
                     "suites": [{"name": "TestDevice", "options": [...]}, ...],
                     "hosts": ["test1", "test2", ...],
                     "hosts_by_lab": {"unix": ["test1", "test2"], ...},
+                    "host_drops": [{"repo": "sut", "where": "...", "reason": "..."}],
                     "docker_hosts": ["test1", ...],
                     "docker_use_cases": ["integration", ...],
                     "term_backends": ["ssh", "telnet", ...],
@@ -151,7 +152,7 @@ import os
 import tempfile
 import time
 import types
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
@@ -165,6 +166,7 @@ if TYPE_CHECKING:
 
     from ..inventory.protocol import Inventory
     from ..labs import HostSummary
+    from ..labs.drops import HostDrop
     from .cache_sections import Section
     from .repo import Repo
 
@@ -1020,6 +1022,7 @@ def read_cache(
     commands = merged.get("commands", [])
     labs = merged.get("labs", [])
     tests = merged.get("tests", [])
+    host_drops = merged.get("host_drops", [])
     if (
         not isinstance(instructions, list)
         or not isinstance(suites, list)
@@ -1033,6 +1036,7 @@ def read_cache(
         or not isinstance(commands, list)
         or not isinstance(labs, list)
         or not isinstance(tests, list)
+        or not isinstance(host_drops, list)
     ):
         return None
     return {
@@ -1040,6 +1044,7 @@ def read_cache(
         "suites": suites,
         "hosts": hosts,
         "hosts_by_lab": hosts_by_lab,
+        "host_drops": host_drops,
         "docker_hosts": docker_hosts,
         "docker_use_cases": docker_use_cases,
         "term_backends": term_backends,
@@ -1088,6 +1093,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     labs: list[str] | None = None,
     tests: list[str] | None = None,
     hosts_by_lab: dict[str, list[str]] | None = None,
+    host_drops: list[dict[str, str]] | None = None,
     digests: dict[str, str] | None = None,
     tainted: bool = False,
 ) -> None:
@@ -1128,6 +1134,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
                 "suites": suites,
                 "hosts": hosts,
                 "hosts_by_lab": hosts_by_lab or {},
+                "host_drops": host_drops or [],
                 "docker_hosts": docker_hosts or [],
                 "docker_use_cases": docker_use_cases or [],
                 "term_backends": term_backends or [],
@@ -1502,9 +1509,22 @@ def _host_summary_deadline() -> float:
     return value if value > 0 else HOST_SUMMARY_DEADLINE_SECONDS
 
 
-def _bounded(
-    work: "Callable[[threading.Event], list[HostSummary]]", repo: "Repo"
-) -> list["HostSummary"]:
+@dataclass(frozen=True)
+class RepoEnumeration:
+    """What one repo's host enumeration produced: the summaries, and what it left out.
+
+    ``drops`` is the outlet (:mod:`otto.labs.drops`): every entry, file, lab
+    or source the best-effort enumeration skipped, with the reason, plus the
+    enumeration's own failure or deadline when it had one. Stored beside the
+    summaries in the per-process memo so the writer collects both from ONE
+    enumeration, and served by ``otto cache info`` from the ``names`` payload.
+    """
+
+    summaries: list["HostSummary"] = field(default_factory=list)
+    drops: list["HostDrop"] = field(default_factory=list)
+
+
+def _bounded(work: "Callable[[threading.Event], RepoEnumeration]", repo: "Repo") -> RepoEnumeration:
     """Run *work*, giving up after :func:`_host_summary_deadline`.
 
     A daemon thread, so a backend still blocked at process exit cannot keep
@@ -1522,8 +1542,10 @@ def _bounded(
     """
     import threading
 
+    from ..labs.drops import HostDrop
+
     deadline = _host_summary_deadline()
-    box: list[list[HostSummary]] = []
+    box: list[RepoEnumeration] = []
     abandoned = threading.Event()
 
     def _run() -> None:
@@ -1535,15 +1557,15 @@ def _bounded(
     thread.join(deadline)
     if thread.is_alive():
         abandoned.set()
-        logging.getLogger(__name__).warning(
-            rf"\[completion] host source for {repo.sut_dir} did not answer within "
-            f"{deadline}s — offering no hosts for it. Raise "
-            f"{HOST_SUMMARY_DEADLINE_ENV_VAR} if it is merely slow."
+        reason = (
+            f"host source did not answer within {deadline}s — offering no hosts for it. "
+            f"Raise {HOST_SUMMARY_DEADLINE_ENV_VAR} if it is merely slow."
         )
-        return []
-    # `or []` rather than `box[0]`: a work() returning None would otherwise
-    # hand every caller a None to iterate.
-    return (box[0] if box else None) or []
+        logging.getLogger(__name__).warning(rf"\[completion] {repo.sut_dir}: {reason}")
+        return RepoEnumeration(drops=[HostDrop(where=str(repo.sut_dir), reason=reason)])
+    # `or RepoEnumeration()` rather than `box[0]`: a work() returning None
+    # would otherwise hand every caller a None to read attributes off.
+    return (box[0] if box else None) or RepoEnumeration()
 
 
 @dataclass(frozen=True)
@@ -1566,7 +1588,11 @@ class InventoryResolution:
         """Identity for memo keys: the backend's label, ``none``, or the error."""
         if self.error is not None:
             return f"error:{self.error}"
-        return "none" if self.inventory is None else self.inventory.label
+        if self.inventory is None:
+            return "none"
+        # getattr, not the protocol attribute: this runs on the TAB path, and a
+        # third-party backend missing `label` must not crash the shell.
+        return getattr(self.inventory, "label", type(self.inventory).__name__)
 
 
 def resolve_process_inventory(repos: "Sequence[Repo]") -> InventoryResolution:
@@ -1630,6 +1656,24 @@ def repo_host_summaries(repo: "Repo", resolution: InventoryResolution) -> list["
     """
     if resolution.error is not None:
         return []
+    return _repo_enumeration(repo, resolution).summaries
+
+
+def repo_host_drops(repo: "Repo", resolution: InventoryResolution) -> list["HostDrop"]:
+    """Return what *repo*'s enumeration left OUT, with reasons — the outlet's read side.
+
+    The same memoized enumeration :func:`repo_host_summaries` reads, so
+    asking costs nothing extra. A failed inventory resolution is NOT a drop:
+    nothing is enumerated, and — its digest being ephemeral — nothing is
+    written that ``otto cache info`` could read a drop from. That case is
+    reported on the ``inventory`` line instead (:func:`describe_inventory`).
+    """
+    if resolution.error is not None:
+        return []
+    return list(_repo_enumeration(repo, resolution).drops)
+
+
+def _repo_enumeration(repo: "Repo", resolution: InventoryResolution) -> RepoEnumeration:
     key = f"{getattr(repo, 'sut_dir', repo)}|{resolution.label}"
     cached = _SUMMARY_MEMO.get(key)
     if cached is None:
@@ -1647,25 +1691,53 @@ def repo_host_summaries(repo: "Repo", resolution: InventoryResolution) -> list["
 #: collector and not another, writing a cache where `otto host <TAB>` is full
 #: and `otto docker --on <TAB>` is empty. Process-lifetime only, like the cache
 #: itself; nothing invalidates it because nothing lives long enough to need to.
-_SUMMARY_MEMO: dict[str, list["HostSummary"]] = {}
+_SUMMARY_MEMO: dict[str, RepoEnumeration] = {}
 
 
 def _enumerate_host_summaries(
     repo: "Repo",
     inventory: "Inventory | None",
     abandoned: "threading.Event | None" = None,
-) -> list["HostSummary"]:
+) -> RepoEnumeration:
     from ..labs import build_lab_sources, host_summaries
+    from ..labs.drops import HostDrop, collecting_drops
 
-    try:
-        repository = build_lab_sources([repo])
-        return host_summaries(repository, inventory=inventory)
-    except Exception as e:  # noqa: BLE001 — completion never crashes the shell
-        if abandoned is None or not abandoned.is_set():
-            logging.getLogger(__name__).warning(
-                rf"\[completion] could not enumerate hosts for {repo.sut_dir}: {e}"
-            )
-        return []
+    # The sink is opened HERE, on the enumerating thread (`_bounded` runs this
+    # on a worker), so every skip the backends record lands in this list.
+    with collecting_drops() as drops:
+        try:
+            repository = build_lab_sources([repo])
+            summaries = host_summaries(repository, inventory=inventory)
+        except Exception as e:  # noqa: BLE001 — completion never crashes the shell
+            if abandoned is None or not abandoned.is_set():
+                logging.getLogger(__name__).warning(
+                    rf"\[completion] could not enumerate hosts for {repo.sut_dir}: {e}"
+                )
+            drops.append(HostDrop(where=str(repo.sut_dir), reason=f"host source failed: {e}"))
+            summaries = []
+    # One enumeration loads the documents more than once (labs, then
+    # summaries), so a malformed file is recorded once per load; the outlet
+    # reports each drop once. dict.fromkeys keeps first-seen order.
+    return RepoEnumeration(summaries=summaries, drops=list(dict.fromkeys(drops)))
+
+
+def collect_host_drops(repos: list["Repo"]) -> list[dict[str, str]]:
+    """Everything the host enumeration left out, per repo — the ``names`` payload's ``host_drops``.
+
+    ``[{"repo", "where", "reason"}, ...]``, JSON-shaped for the cache. Read
+    back by ``otto cache info``, which is the outlet: a TAB stays silent by
+    contract, and this is where its silence gets explained. Enumerates
+    nothing of its own — it reads the same memo the id collectors filled.
+    """
+    resolution = resolve_process_inventory(repos)
+    out: list[dict[str, str]] = []
+    for repo in repos:
+        label = getattr(repo, "name", None) or str(repo.sut_dir)
+        out.extend(
+            {"repo": str(label), "where": drop.where, "reason": drop.reason}
+            for drop in repo_host_drops(repo, resolution)
+        )
+    return out
 
 
 def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
@@ -2358,3 +2430,111 @@ def read_tunnel_ids(repos: list["Repo"]) -> list[str] | None:
         return None
     ids = entry.get("ids")
     return ids if isinstance(ids, list) else None
+
+
+# --- `otto cache info`: the outlet's read side -------------------------------
+
+
+@dataclass(frozen=True)
+class SectionStatus:
+    """How one cache section stands for THIS workspace — what ``otto cache info`` reports.
+
+    ``state`` is one of ``fresh`` (the fast path serves it), ``stale`` (a key
+    file changed since it was written), ``expired`` (older than the TTL),
+    ``tainted`` (written while bootstrap reported errors — never served),
+    ``outdated`` (an older schema), ``unreadable`` (a corrupt file or entry)
+    or ``missing``. ``payload`` is the stored payload whenever the entry has
+    one, servable or not: a stale entry still says what the LAST enumeration
+    offered and dropped, which is usually the answer being looked for.
+    """
+
+    state: str
+    generated_at: float | None = None
+    ttl: int = CACHE_TTL_SECONDS
+    payload: dict[str, Any] | None = None
+
+
+def inspect_section(repos: list["Repo"], name: str) -> SectionStatus:
+    """Return section *name*'s standing for *repos*, judged as :func:`read_sections` judges it.
+
+    Same file, same schema check, same order of tests — taint, then TTL, then
+    digest — but a verdict with a reason instead of ``None``, and the payload
+    regardless of the verdict. ``KeyError`` for an unregistered *name*.
+    """
+    from .cache_sections import section_by_name, section_digests
+
+    section = section_by_name(name)
+    cache_path = _cache_path()
+    if not repos or cache_path is None or not cache_path.is_file():
+        return SectionStatus(state="missing")
+    try:
+        data = json.loads(cache_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return SectionStatus(state="unreadable")
+    if not isinstance(data, dict) or data.get("schema") != SCHEMA_VERSION:
+        return SectionStatus(state="outdated")
+    stored = data.get("sections")
+    entry = stored.get(name) if isinstance(stored, dict) else None
+    if not isinstance(entry, dict):
+        return SectionStatus(state="missing")
+    raw_payload = entry.get("payload")
+    payload = raw_payload if isinstance(raw_payload, dict) else None
+    raw_generated = entry.get("generated_at")
+    generated_at = float(raw_generated) if isinstance(raw_generated, (int, float)) else None
+    ttl = _cache_ttl_seconds(repos)
+    if entry.get("tainted"):
+        state = "tainted"
+    elif generated_at is None or time.time() - generated_at > ttl:
+        state = "expired"
+    elif entry.get("fingerprint") != section_digests(repos, [section])[name]:
+        state = "stale"
+    elif payload is None:
+        state = "unreadable"
+    else:
+        state = "fresh"
+    return SectionStatus(state=state, generated_at=generated_at, ttl=ttl, payload=payload)
+
+
+@dataclass(frozen=True)
+class InventoryDescription:
+    """The process inventory as ``otto cache info`` reports it.
+
+    ``blocker`` is ``None`` when an entry can be keyed on this inventory;
+    otherwise the clause saying why nothing is written for the workspace —
+    ``"is broken"`` for a declaration that failed to build, ``"cannot report
+    freshness"`` for a backend whose ``fingerprint()`` is ``None`` (both make
+    the digest ephemeral, R18) — so the section's standing can be worded
+    truthfully beside it instead of promising a rebuild that cannot happen.
+    """
+
+    text: str
+    blocker: str | None = None
+
+
+def describe_inventory(repos: list["Repo"]) -> InventoryDescription:
+    """Return the process inventory for ``otto cache info``, resolved as completion resolves it.
+
+    :func:`resolve_process_inventory` without the warning — this line IS the
+    report — then classed the way the digest classes it: a broken declaration
+    and a backend that cannot report freshness are both named, because each
+    is why nothing is ever written for the workspace and every TAB reloads.
+    """
+    from ..inventory import build_inventory
+
+    try:
+        inventory = build_inventory(list(repos))
+        if inventory is None:
+            return InventoryDescription(text="none declared")
+        label = getattr(inventory, "label", type(inventory).__name__)
+        fingerprint = inventory.fingerprint()
+    except Exception as e:  # noqa: BLE001 — a broken declaration is the finding, not a crash
+        return InventoryDescription(
+            text=f"BROKEN — {type(e).__name__}: {e} (no host completes until it is fixed)",
+            blocker="is broken",
+        )
+    if fingerprint is None:
+        return InventoryDescription(
+            text=f"{label} — cannot report freshness, so completion never caches",
+            blocker="cannot report freshness",
+        )
+    return InventoryDescription(text=label)

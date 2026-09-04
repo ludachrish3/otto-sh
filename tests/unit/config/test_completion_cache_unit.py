@@ -1555,14 +1555,14 @@ def test_a_working_host_source_is_untouched_by_the_deadline(monkeypatch) -> None
     """The bound must not cost the normal path its answer."""
     from otto.labs import HostSummary
 
-    expected = [HostSummary(id="test1", labs=["unix"])]
+    expected = cc.RepoEnumeration(summaries=[HostSummary(id="test1", labs=["unix"])])
     monkeypatch.setattr(
         cc, "_enumerate_host_summaries", lambda _repo, _inventory, _abandoned=None: expected
     )
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
     repo = MagicMock()
     repo.sut_dir = Path("/nowhere-ok")
-    assert cc.repo_host_summaries(repo, cc.InventoryResolution()) == expected
+    assert cc.repo_host_summaries(repo, cc.InventoryResolution()) == expected.summaries
 
 
 def test_one_enumeration_per_repo_however_many_collectors_ask(monkeypatch) -> None:
@@ -1580,7 +1580,7 @@ def test_one_enumeration_per_repo_however_many_collectors_ask(monkeypatch) -> No
     def _count(_repo, _inventory, _abandoned=None):
         nonlocal calls
         calls += 1
-        return [HostSummary(id="test1", labs=["unix"])]
+        return cc.RepoEnumeration(summaries=[HostSummary(id="test1", labs=["unix"])])
 
     monkeypatch.setattr(cc, "_enumerate_host_summaries", _count)
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})

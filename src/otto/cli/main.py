@@ -794,6 +794,7 @@ DELEGATED_NAMES_KEYS: frozenset[str] = frozenset(
     {
         "hosts",
         "hosts_by_lab",
+        "host_drops",
         "docker_hosts",
         "docker_use_cases",
         "term_backends",
@@ -802,9 +803,11 @@ DELEGATED_NAMES_KEYS: frozenset[str] = frozenset(
         "labs",
     }
 )
-"""The remaining ``names`` payload keys, each consumed by a completer that does
-its own ``isinstance`` check and falls back to a live collection — verified,
-not assumed. A twelfth key, ``tests``, lives in its own cache section that
+"""The remaining ``names`` payload keys. Each is consumed by a completer that
+does its own ``isinstance`` check and falls back to a live collection —
+verified, not assumed — except ``host_drops``, the outlet's payload: read by
+``otto cache info`` straight from the cache file, consumed by no completer.
+A further key, ``tests``, lives in its own cache section that
 ``_cached_names_payload`` never loads.
 
 ``tests/unit/config/test_cache_sections.py`` pins that
@@ -956,6 +959,7 @@ def entry() -> None:
                 collect_current_commands,
                 collect_docker_capable_host_ids,
                 collect_docker_use_case_names,
+                collect_host_drops,
                 collect_host_ids,
                 collect_host_ids_by_lab,
                 collect_lab_names,
@@ -981,6 +985,7 @@ def entry() -> None:
                     labs=collect_lab_names(result.repos),
                     tests=collect_test_names(result.repos),
                     hosts_by_lab=collect_host_ids_by_lab(result.repos),
+                    host_drops=collect_host_drops(result.repos),
                     digests=section_digests,
                     # A contained bootstrap error means registration did not
                     # finish, so what was just collected is a PARTIAL picture
