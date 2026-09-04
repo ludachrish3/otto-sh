@@ -88,11 +88,12 @@ def _ip_by_host(repos: list["Repo"]) -> dict[str, str]:
     building hosts. Malformed entries are silently skipped: the caller falls
     back to the unnarrowed host list on any error, so this must never raise.
     """
-    from ..config.completion_cache import repo_host_summaries
+    from ..config.completion_cache import repo_host_summaries, resolve_process_inventory
 
     ip_by_host: dict[str, str] = {}
+    resolution = resolve_process_inventory(repos)
     for repo in repos:
-        for summary in repo_host_summaries(repo):
+        for summary in repo_host_summaries(repo, resolution):
             if summary.ip:
                 ip_by_host[summary.id] = summary.ip
     return ip_by_host

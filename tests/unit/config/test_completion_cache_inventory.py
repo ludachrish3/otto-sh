@@ -9,6 +9,7 @@ cannot live at module scope.
 
 import contextlib
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,9 +24,15 @@ _REFERENCED = {"inventory": "dut-1", "element": "dut", "creds": [{"login": "u", 
 _RECORD = {"dut-1": {"ip": "10.0.0.1"}}
 
 
-def _repo(tmp_path: Path, inventory_settings: dict, *, hosts: list[dict] | None = None):
-    """A Repo stand-in with one json lab source and the given ``[inventory]`` table."""
-    sut = tmp_path / "sut"
+def _repo(
+    tmp_path: Path, inventory_settings: dict, *, hosts: list[dict] | None = None, name: str = "sut"
+):
+    """A Repo stand-in with one json lab source and the given ``[inventory]`` table.
+
+    *name* is the repo's directory under *tmp_path* — two stand-ins in one
+    workspace need two.
+    """
+    sut = tmp_path / name
     lab = sut / "lab"
     lab.mkdir(parents=True, exist_ok=True)
     touch_settings(sut)
@@ -55,16 +62,17 @@ def _with_inventory(repo, inventory_settings: dict):
     return SimpleNamespace(**{**vars(repo), "inventory_settings": dict(inventory_settings)})
 
 
-def _json_inventory(tmp_path: Path, records: dict) -> dict:
-    """Write ``sut/inventory.json`` and return the ``[inventory]`` table naming it.
+def _json_inventory(tmp_path: Path, records: dict, *, name: str = "sut") -> dict:
+    """Write ``<name>/inventory.json`` and return the ``[inventory]`` table naming it.
 
     Not a fingerprint input in its own right — only lab files are stat'd — so
     writing it does not move the digest by itself. It reaches the digest only
     through the inventory's own ``fingerprint()``, which is the term under
-    test.
+    test. The table's relative ``path`` anchors to the declaring repo, so
+    *name* must be that repo's directory.
     """
-    (tmp_path / "sut").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "sut" / "inventory.json").write_text(json.dumps(records))
+    (tmp_path / name).mkdir(parents=True, exist_ok=True)
+    (tmp_path / name / "inventory.json").write_text(json.dumps(records))
     return {"backend": "json", "path": "inventory.json", "supplies": ["ip"]}
 
 
@@ -281,8 +289,61 @@ def test_a_referenced_host_completes_only_with_the_inventory(tmp_path, monkeypat
     without = _repo(tmp_path, {}, hosts=[_REFERENCED])
 
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
-    summaries = {s.id: s for s in cc.repo_host_summaries(with_inventory)}
+    resolved = cc.resolve_process_inventory([with_inventory])
+    summaries = {s.id: s for s in cc.repo_host_summaries(with_inventory, resolved)}
     assert summaries["dut"].ip == "10.0.0.1"
 
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
-    assert cc.repo_host_summaries(without) == []
+    assert cc.repo_host_summaries(without, cc.resolve_process_inventory([without])) == []
+
+
+def test_a_host_referencing_another_repos_inventory_completes(tmp_path, monkeypatch):
+    """The inventory is resolved ONCE over every active repo (spec §8) — for completion too.
+
+    Repo ``inv`` declares ``[inventory]`` and carries no hosts; repo ``sut``
+    references a key and declares nothing. Dispatch resolves the process
+    inventory over both, so ``otto -l L --list-hosts`` listed ``dut`` — while
+    the enumeration resolved each repo against ITS OWN declaration, else the
+    user file, so ``dut`` completed nowhere and the cache was written that
+    way (observed 2026-09-03). Red against the per-repo resolution.
+    """
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    declaring = _repo(tmp_path, _json_inventory(tmp_path, _RECORD, name="inv"), name="inv")
+    referencing = _repo(tmp_path, {}, hosts=[_REFERENCED])
+
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    assert "dut" in cc.collect_host_ids([declaring, referencing])
+
+    # The same answer through the per-repo entry point, given the SAME
+    # resolution a collector makes over the whole workspace.
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    resolved = cc.resolve_process_inventory([declaring, referencing])
+    summaries = {s.id: s for s in cc.repo_host_summaries(referencing, resolved)}
+    assert summaries["dut"].ip == "10.0.0.1"
+
+
+def test_a_broken_declaration_empties_every_repo_and_warns_once(tmp_path, monkeypatch, caplog):
+    """A declaration that cannot be built fails EVERY lab load at dispatch, so
+    completion offers nothing for any repo — the inline host of a repo that
+    declared nothing included — and says why once, not once per repo.
+
+    Per-repo resolution offered that inline host (its own resolution saw no
+    error) while dispatch refuses it: an id that cannot dispatch, and a
+    warning the declaring repo repeated on every collector.
+    """
+    from otto.host.builtin_hosts import builtin_host_ids
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    broken = _repo(tmp_path, {"backend": "json"}, name="broken")  # json needs a path
+    creds = [{"login": "u", "password": "p"}]
+    inline_host = {"ip": "10.0.0.9", "element": "inline", "creds": creds}
+    inline = _repo(tmp_path, {}, hosts=[inline_host])
+
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    with caplog.at_level(logging.WARNING, logger="otto.config.completion_cache"):
+        ids = cc.collect_host_ids([broken, inline])
+
+    assert ids == sorted(builtin_host_ids()), ids
+    said = [r.message for r in caplog.records if "could not be resolved" in r.message]
+    assert len(said) == 1, caplog.text
+    assert "requires a 'path'" in said[0]

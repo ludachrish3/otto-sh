@@ -24,7 +24,7 @@ The workspace home is keyed by the normalized ``OTTO_SUT_DIRS`` set under
 and one workspace has exactly one cache however many directories otto is
 invoked from.
 
-Cache schema (version 16)
+Cache schema (version 17)
 -------------------------
 
 One top-level ``"schema"`` stamp and one ``"sections"`` map — see
@@ -163,6 +163,7 @@ if TYPE_CHECKING:
     import threading
     from collections.abc import Callable, Collection, Sequence
 
+    from ..inventory.protocol import Inventory
     from ..labs import HostSummary
     from .cache_sections import Section
     from .repo import Repo
@@ -202,7 +203,14 @@ CACHE_FILENAME = "completion_cache.json"
 #      the REPO's files, not on otto's code, so without the bump a surviving
 #      v15 entry would keep serving a root help missing those commands for up
 #      to the full TTL after the fixed otto ships.
-SCHEMA_VERSION = 16
+# v17: layout unchanged — CONTENT again. v16 writers enumerated each repo's
+#      hosts against its OWN [inventory] (else the user file) instead of the
+#      process inventory dispatch resolves, so a workspace declaring the
+#      inventory in one repo and referencing it from another cached a hosts
+#      payload missing every referenced host. Same reasoning as v16: the
+#      digest keys on the repo's files, so without the bump that entry keeps
+#      serving the missing hosts for up to the TTL after the fix ships.
+SCHEMA_VERSION = 17
 
 # One home, two readers: `collect_test_names` decides which files to PARSE for
 # names, and `compute_fingerprint` decides which files to STAT for
@@ -1538,8 +1546,66 @@ def _bounded(
     return (box[0] if box else None) or []
 
 
-def repo_host_summaries(repo: "Repo") -> list["HostSummary"]:
+@dataclass(frozen=True)
+class InventoryResolution:
+    """The process inventory as the host enumeration joins against it (spec 2026-08-28 §8).
+
+    ``inventory`` is what ``build_inventory`` returned over EVERY active repo
+    plus the user file — the resolution dispatch runs — or ``None`` when
+    nothing declares one. ``error`` is set instead when that resolution
+    RAISED (a broken declaration): every repo then enumerates as empty,
+    because a broken declaration fails every lab load at dispatch too, and
+    an id that cannot dispatch is worse offered than withheld.
+    """
+
+    inventory: "Inventory | None" = None
+    error: "str | None" = None
+
+    @property
+    def label(self) -> str:
+        """Identity for memo keys: the backend's label, ``none``, or the error."""
+        if self.error is not None:
+            return f"error:{self.error}"
+        return "none" if self.inventory is None else self.inventory.label
+
+
+def resolve_process_inventory(repos: "Sequence[Repo]") -> InventoryResolution:
+    """Resolve the ONE inventory every repo's host enumeration joins against.
+
+    ``build_inventory(repos)`` over the whole active set — the same call, over
+    the same repos, that :func:`otto.context.open_context` and the invoke
+    preamble make for dispatch — never per repo. Until 2026-09-03 each repo
+    was enumerated against ``build_inventory([repo])``: its OWN declaration,
+    else the user file. A workspace whose ``[inventory]`` lives in one repo
+    and whose referencing hosts live in another therefore dispatched those
+    hosts (``--list-hosts`` showed them) while completion never offered them,
+    and cached that answer for a day. Spec §8 is one resolution per process,
+    first hit across the active repos; this is the completion side of it.
+
+    Never raises: a broken declaration is logged ONCE here and recorded on the
+    result, so :func:`repo_host_summaries` answers empty for every repo without
+    each of them repeating the warning.
+    """
+    from ..inventory import build_inventory
+
+    try:
+        return InventoryResolution(inventory=build_inventory(list(repos)))
+    except Exception as e:  # noqa: BLE001 — completion never crashes the shell
+        logging.getLogger(__name__).warning(
+            rf"\[completion] the host inventory could not be resolved, so no host "
+            f"completes until it is fixed: {e}"
+        )
+        return InventoryResolution(error=f"{type(e).__name__}: {e}")
+
+
+def repo_host_summaries(repo: "Repo", resolution: InventoryResolution) -> list["HostSummary"]:
     """Every host *repo*'s configured host source knows — best-effort.
+
+    *resolution* is the process inventory from :func:`resolve_process_inventory`
+    over the WHOLE active repo list, resolved by the caller once per pass and
+    handed to every repo: a referenced entry joins against the same inventory
+    it dispatches through, whichever repo declared it. A failed resolution
+    answers empty here for every repo, warned once where it failed.
 
     Goes through the repo's own ``[[lab.sources]]`` backends rather than
     reading its ``lab.json`` files directly, so a project with a custom host
@@ -1562,32 +1628,38 @@ def repo_host_summaries(repo: "Repo") -> list["HostSummary"]:
     transiently-unreachable custom backend would otherwise write an EMPTY host
     list into a cache that is then served for the next 24 hours, silently.
     """
-    key = str(getattr(repo, "sut_dir", repo))
+    if resolution.error is not None:
+        return []
+    key = f"{getattr(repo, 'sut_dir', repo)}|{resolution.label}"
     cached = _SUMMARY_MEMO.get(key)
     if cached is None:
-        cached = _bounded(lambda abandoned: _enumerate_host_summaries(repo, abandoned), repo)
+        cached = _bounded(
+            lambda abandoned: _enumerate_host_summaries(repo, resolution.inventory, abandoned),
+            repo,
+        )
         _SUMMARY_MEMO[key] = cached
     return cached
 
 
-#: Per-process memo, keyed by SUT dir. Three collectors enumerate the same
-#: repo on one cache-write pass; without this a stalled backend cost three
-#: deadlines and — worse — could time out for one collector and not another,
-#: writing a cache where `otto host <TAB>` is full and
-#: `otto docker --on <TAB>` is empty. Process-lifetime only, like the cache
+#: Per-process memo, keyed by SUT dir and the inventory's label. Three
+#: collectors enumerate the same repo on one cache-write pass; without this a
+#: stalled backend cost three deadlines and — worse — could time out for one
+#: collector and not another, writing a cache where `otto host <TAB>` is full
+#: and `otto docker --on <TAB>` is empty. Process-lifetime only, like the cache
 #: itself; nothing invalidates it because nothing lives long enough to need to.
 _SUMMARY_MEMO: dict[str, list["HostSummary"]] = {}
 
 
 def _enumerate_host_summaries(
-    repo: "Repo", abandoned: "threading.Event | None" = None
+    repo: "Repo",
+    inventory: "Inventory | None",
+    abandoned: "threading.Event | None" = None,
 ) -> list["HostSummary"]:
-    from ..inventory import build_inventory
     from ..labs import build_lab_sources, host_summaries
 
     try:
         repository = build_lab_sources([repo])
-        return host_summaries(repository, inventory=build_inventory([repo]))
+        return host_summaries(repository, inventory=inventory)
     except Exception as e:  # noqa: BLE001 — completion never crashes the shell
         if abandoned is None or not abandoned.is_set():
             logging.getLogger(__name__).warning(
@@ -1610,8 +1682,9 @@ def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
     now agree.
     """
     ids: set[str] = set()
+    resolution = resolve_process_inventory(repos)
     for repo in repos:
-        for summary in repo_host_summaries(repo):
+        for summary in repo_host_summaries(repo, resolution):
             if summary.docker_capable:
                 ids.add(summary.id)
     return sorted(ids)
@@ -1679,11 +1752,12 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     # matching how a real Lab merges hosts from multiple sources before
     # stamping.
     summarized: dict[str, "HostSummary"] = {}
+    resolution = resolve_process_inventory(repos)
     for repo in repos:
         # Docker-capable ids scoped to THIS repo, so the container ids
         # synthesized below pair each repo's composes with its own parents.
         docker_capable_ids: list[str] = []
-        for summary in repo_host_summaries(repo):
+        for summary in repo_host_summaries(repo, resolution):
             # Lab filter: keep only hosts tagged with a requested lab.
             if wanted is not None and wanted.isdisjoint(summary.labs):
                 continue
@@ -1881,8 +1955,9 @@ def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
     # Seed every known lab so one whose hosts all fail to enumerate still gets
     # an (empty) bucket, keeping this shape identical to the per-lab form.
     by_lab: dict[str, dict[str, "HostSummary"]] = {lab: {} for lab in collect_lab_names(repos)}
+    resolution = resolve_process_inventory(repos)
     for repo in repos:
-        for summary in repo_host_summaries(repo):
+        for summary in repo_host_summaries(repo, resolution):
             if summary.id in builtins:
                 continue
             for lab in summary.labs:

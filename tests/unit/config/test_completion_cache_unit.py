@@ -1529,7 +1529,7 @@ def test_a_hanging_host_source_is_bounded_not_waited_on(monkeypatch, caplog) -> 
     monkeypatch.setattr(cc, "HOST_SUMMARY_DEADLINE_SECONDS", 0.05)
     entered = threading.Event()
 
-    def _never_returns(_repo, _abandoned=None):
+    def _never_returns(_repo, _inventory, _abandoned=None):
         entered.set()
         time.sleep(30)  # pragma: no cover — the point is that we do not wait
 
@@ -1540,7 +1540,7 @@ def test_a_hanging_host_source_is_bounded_not_waited_on(monkeypatch, caplog) -> 
 
     started = time.monotonic()
     with caplog.at_level(logging.WARNING, logger="otto.config.completion_cache"):
-        result = cc.repo_host_summaries(repo)
+        result = cc.repo_host_summaries(repo, cc.InventoryResolution())
     elapsed = time.monotonic() - started
 
     assert result == []
@@ -1556,11 +1556,13 @@ def test_a_working_host_source_is_untouched_by_the_deadline(monkeypatch) -> None
     from otto.labs import HostSummary
 
     expected = [HostSummary(id="test1", labs=["unix"])]
-    monkeypatch.setattr(cc, "_enumerate_host_summaries", lambda _repo, _abandoned=None: expected)
+    monkeypatch.setattr(
+        cc, "_enumerate_host_summaries", lambda _repo, _inventory, _abandoned=None: expected
+    )
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
     repo = MagicMock()
     repo.sut_dir = Path("/nowhere-ok")
-    assert cc.repo_host_summaries(repo) == expected
+    assert cc.repo_host_summaries(repo, cc.InventoryResolution()) == expected
 
 
 def test_one_enumeration_per_repo_however_many_collectors_ask(monkeypatch) -> None:
@@ -1575,7 +1577,7 @@ def test_one_enumeration_per_repo_however_many_collectors_ask(monkeypatch) -> No
 
     calls = 0
 
-    def _count(_repo, _abandoned=None):
+    def _count(_repo, _inventory, _abandoned=None):
         nonlocal calls
         calls += 1
         return [HostSummary(id="test1", labs=["unix"])]
@@ -1586,7 +1588,7 @@ def test_one_enumeration_per_repo_however_many_collectors_ask(monkeypatch) -> No
     repo.sut_dir = Path("/memo")
 
     for _ in range(3):
-        assert [s.id for s in cc.repo_host_summaries(repo)] == ["test1"]
+        assert [s.id for s in cc.repo_host_summaries(repo, cc.InventoryResolution())] == ["test1"]
     assert calls == 1, f"enumerated {calls} times for one repo"
 
 
@@ -1613,7 +1615,7 @@ def test_a_backend_that_explodes_does_not_reach_the_terminal(monkeypatch, capsys
     and prints a full traceback to the user's terminal mid-TAB — which is
     exactly what this function's "never crashes the shell" contract forbids."""
 
-    def _explodes(_repo, _abandoned=None):
+    def _explodes(_repo, _inventory, _abandoned=None):
         raise KeyboardInterrupt  # a BaseException: `except Exception` misses it
 
     monkeypatch.setattr(cc, "_enumerate_host_summaries", _explodes)
@@ -1621,7 +1623,7 @@ def test_a_backend_that_explodes_does_not_reach_the_terminal(monkeypatch, capsys
     repo = MagicMock()
     repo.sut_dir = Path("/boom")
 
-    assert cc.repo_host_summaries(repo) == []
+    assert cc.repo_host_summaries(repo, cc.InventoryResolution()) == []
     assert "Traceback" not in capsys.readouterr().err
 
 
