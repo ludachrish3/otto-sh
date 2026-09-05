@@ -153,7 +153,9 @@ def test_parse_dumped_names_rejects_missing_or_reversed_markers():
 def test_maybe_warm_records_and_returns(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     repos = [_fake_repo(tmp_path)]
-    monkeypatch.setattr(cc, "_run_collect_subprocess", lambda: ["test_dynamic"])
+    monkeypatch.setattr(
+        cc, "_run_collect_subprocess", lambda: cc.CollectedDump(names=["test_dynamic"], markers=[])
+    )
 
     assert cc.maybe_warm_collected_tests(repos) == ["test_dynamic"]
     assert cc.read_collected_tests(repos) == ["test_dynamic"]
@@ -194,3 +196,41 @@ def test_record_from_items_round_trip(tmp_path: Path, monkeypatch):
     ]
     cc.record_collected_tests_from_items(repos, items)
     assert cc.read_collected_tests(repos) == ["TestC::test_m", "test_a", "test_m"]
+
+
+def test_collected_entry_round_trips_markers(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
+    repo = _fake_repo(tmp_path)
+    cc._record_collected_tests([repo], ["test_a"], markers=["slow", "smoke"])
+    assert cc.read_collected_tests([repo]) == ["test_a"]
+    assert cc.read_collected_markers([repo]) == ["slow", "smoke"]
+
+
+def test_markers_from_items_unions_and_sorts():
+    items = [
+        SimpleNamespace(name="t[a]", cls_name=None, markers=["smoke", "parametrize"]),
+        SimpleNamespace(name="u", cls_name="TestX", markers=["deep"]),
+    ]
+    assert cc._marker_names_from_items(items) == ["deep", "parametrize", "smoke"]
+
+
+def test_dump_carries_a_markers_frame():
+    out = (
+        f"{cc._DUMP_BEGIN}\ntest_a\n{cc._DUMP_END}\n"
+        f"{cc._DUMP_MARKERS_BEGIN}\nsmoke\n{cc._DUMP_MARKERS_END}"
+    )
+    assert cc._parse_dumped_names(out) == ["test_a"]
+    assert cc._parse_dumped_markers(out) == ["smoke"]
+
+
+def test_schema_one_entries_read_as_a_miss(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
+    repo = _fake_repo(tmp_path)
+    cc._record_collected_tests([repo], ["test_a"], markers=["smoke"])
+    path = cc._cache_path()
+    data = json.loads(path.read_text())
+    entry = next(iter(data[cc.COLLECTED_TESTS_KEY].values()))
+    entry["schema_version"] = 1
+    path.write_text(json.dumps(data))
+    assert cc.read_collected_tests([repo]) is None
+    assert cc.read_collected_markers([repo]) is None

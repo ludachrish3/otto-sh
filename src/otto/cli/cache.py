@@ -244,11 +244,17 @@ def _print_this_workspace() -> None:
     entry whatever its standing: a stale entry still records the LAST
     enumeration, which is what the question is about.
 
+    The ``shim`` line is the SAME validator the console script runs on a TAB,
+    so it says whether the next TAB is answered without loading otto and, if
+    not, the exact reason (a stale key file, an opaque inventory, an expired
+    or tainted entry). It touches the marker like a TAB does.
+
     Nothing to say without a workspace (no ``OTTO_SUT_DIRS``, no repo): the
     home-wide listing above already covered the rest.
     """
+    from .._shim_complete import inspect_shim
     from ..bootstrap import discover
-    from ..config.completion_cache import describe_inventory, inspect_section
+    from ..config.completion_cache import _cache_path, describe_inventory, inspect_section
     from ..config.home import workspace_key
 
     repos = discover().repos
@@ -258,6 +264,11 @@ def _print_this_workspace() -> None:
     inventory = describe_inventory(repos)
     typer.echo(f"this workspace: {workspace_key([r.sut_dir for r in repos])}")
     typer.echo(f"  completion names: {_section_state_text(status, inventory)}")
+    cache_path = _cache_path()
+    shim_text = (
+        inspect_shim(cache_path) if cache_path is not None else "handing over — no cache path"
+    )
+    typer.echo(f"  shim: {shim_text}")
     typer.echo(f"  inventory: {inventory.text}")
     for repo in repos:
         for source in repo.lab_sources:

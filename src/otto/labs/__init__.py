@@ -91,6 +91,7 @@ def host_summaries(
                 element=getattr(host, "element", "") or "",
                 element_id=getattr(host, "element_id", None),
                 docker_capable=bool(getattr(host, "docker_capable", False)),
+                os_type=getattr(host, "os_type", None),
             )
     return sorted(by_id.values(), key=lambda s: s.id)
 

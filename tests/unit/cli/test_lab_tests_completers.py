@@ -127,3 +127,72 @@ def test_tests_completer_warms_on_cold_collected(monkeypatch):
 
     assert _tests_completer(None, "test_") == ["test_generated", "test_static"]
     assert warmed == [True]
+
+
+def _patch_tests_section_with_markers(monkeypatch, names, markers):
+    import otto.config.cache_sections as cs
+
+    monkeypatch.setattr(
+        cs,
+        "read_section",
+        lambda repos, name: {"tests": names, "markers": markers} if name == "tests" else None,
+    )
+
+
+def test_markers_completer_unions_collected_over_floor(monkeypatch):
+    import otto.config as cm
+    import otto.config.completion_cache as cc
+
+    _patch_tests_section_with_markers(monkeypatch, [], ["smoke"])
+    monkeypatch.setattr(cm, "get_repos", list)
+    monkeypatch.setattr(cc, "read_collected_markers", lambda repos: ["slow"])
+
+    def _boom(repos):
+        raise AssertionError("warmer must not run when the collected set is fresh")
+
+    monkeypatch.setattr(cc, "maybe_warm_collected_tests", _boom)
+    from otto.cli.test import _markers_completer
+
+    assert _markers_completer(None, "smoke and s") == ["smoke and slow", "smoke and smoke"]
+
+
+def test_markers_completer_warms_on_cold_collected(monkeypatch):
+    import otto.config as cm
+    import otto.config.completion_cache as cc
+
+    _patch_tests_section_with_markers(monkeypatch, [], ["smoke"])
+    monkeypatch.setattr(cm, "get_repos", list)
+    reads = iter([None, ["deep"]])
+    monkeypatch.setattr(cc, "read_collected_markers", lambda repos: next(reads))
+    warmed = []
+    monkeypatch.setattr(cc, "maybe_warm_collected_tests", lambda repos: warmed.append(True))
+    from otto.cli.test import _markers_completer
+
+    assert _markers_completer(None, "") == ["deep", "smoke"]
+    assert warmed == [True]
+
+
+def test_markers_completer_falls_back_to_the_live_scan(monkeypatch):
+    import otto.config as cm
+    import otto.config.cache_sections as cs
+    import otto.config.completion_cache as cc
+
+    monkeypatch.setattr(cs, "read_section", lambda repos, name: None)
+    monkeypatch.setattr(cm, "get_repos", list)
+    monkeypatch.setattr(cc, "collect_marker_names", lambda repos: ["live"])
+    monkeypatch.setattr(cc, "read_collected_markers", lambda repos: [])
+    from otto.cli.test import _markers_completer
+
+    assert _markers_completer(None, "l") == ["live"]
+
+
+def test_markers_option_advertises_the_completer():
+    import inspect
+    from typing import get_args
+
+    from otto.cli import test as test_module
+
+    sig = inspect.signature(test_module.main)  # the callback that declares `markers`
+    metadata = get_args(sig.parameters["markers"].annotation)
+    option = next(m for m in metadata if hasattr(m, "autocompletion"))
+    assert option.autocompletion is test_module._markers_completer

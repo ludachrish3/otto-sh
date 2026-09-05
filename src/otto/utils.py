@@ -89,6 +89,29 @@ def complete_separated_list(candidates: list[str], incomplete: str, sep: str = "
     return [prefix + c for c in candidates if c.startswith(frag) and c not in already]
 
 
+_MARKER_EXPRESSION_KEYWORDS = frozenset({"and", "or", "not"})
+
+
+def complete_marker_expression(candidates: list[str], incomplete: str) -> list[str]:
+    """Complete the trailing identifier of a pytest ``-m`` expression; keep the head verbatim.
+
+    ``smoke and not (sl`` → the head is everything up to and including the
+    last whitespace or ``(`` (``smoke and not (``), the tail ``sl`` is what is
+    being typed. Candidates are the marker names starting with the tail, each
+    emitted as head plus name, in the order given; the expression keywords
+    are never offered. Mirrored byte-for-byte by the completion shim
+    (``otto._shim_complete``), so change both or neither.
+
+    >>> complete_marker_expression(["slow", "smoke"], "smoke and s")
+    ['smoke and slow', 'smoke and smoke']
+    """
+    cut = max(incomplete.rfind(" "), incomplete.rfind("\t"), incomplete.rfind("("))
+    head, tail = incomplete[: cut + 1], incomplete[cut + 1 :]
+    return [
+        head + c for c in candidates if c.startswith(tail) and c not in _MARKER_EXPRESSION_KEYWORDS
+    ]
+
+
 class WaitTimeoutError(OttoError, TimeoutError):
     """Raised by :func:`wait_for` / :func:`wait_for_async` when the budget expires.
 

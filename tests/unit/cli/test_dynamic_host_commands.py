@@ -725,15 +725,16 @@ def test_ls_path_stays_positional_and_power_state_positional(monkeypatch):
     assert captured["power"] == "on"
 
 
-def test_class_for_skips_host_build_during_completion(monkeypatch):
+def test_class_for_never_builds_a_host_during_completion(monkeypatch):
     """During shell completion (``ctx.resilient_parsing``), verb scoping must NOT
-    build the host: ``_class_for`` returns ``None`` (→ the full unscoped menu) so
-    completion never pays the ``get_host`` lab-load/host-construction cost.
+    build the host: ``_class_for`` never calls ``host_class_for_id`` (which builds
+    one via ``get_host``), and defers instead to the cached class map.
     """
     from otto.cli import expose as expose_mod
 
     calls: list[str | None] = []
     monkeypatch.setattr(expose_mod, "host_class_for_id", lambda hid: calls.append(hid) or None)
+    monkeypatch.setattr(expose_mod, "cached_host_class_for_id", lambda hid: None)
     grp = HostGroup(name="host")
 
     class _CompletionCtx:

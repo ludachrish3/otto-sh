@@ -163,11 +163,12 @@ def test_missing_home_is_empty_not_an_error(tmp_path):
 def test_cache_file_names_matches_the_source_constants():
     """The module-level assert this used to be is elided under `python -O`;
     this test is the real pin, and it runs every time, `-O` or not."""
-    from otto.config.cache_maintenance import CACHE_FILE_NAMES
+    from otto.config.cache_maintenance import CACHE_FILE_NAMES, MARKER_FILENAMES
     from otto.config.completion_cache import CACHE_FILENAME
     from otto.config.remote_completion_cache import REMOTE_CACHE_FILENAME
 
-    assert CACHE_FILE_NAMES == [CACHE_FILENAME, REMOTE_CACHE_FILENAME]
+    expected = [CACHE_FILENAME, REMOTE_CACHE_FILENAME, *MARKER_FILENAMES.values()]
+    assert expected == CACHE_FILE_NAMES
 
 
 def test_prune_survives_a_directory_named_like_a_cache_file(tmp_path):

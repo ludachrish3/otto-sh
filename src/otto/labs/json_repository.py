@@ -59,7 +59,7 @@ _GLOB_CHARS = frozenset("*?[")
 # a sys.modules lookup beside a pydantic validation.
 
 
-def expand_lab_paths(paths: "Iterable[Path]") -> list[Path]:
+def expand_lab_paths(paths: "Iterable[Path]", *, visited: "set[Path] | None" = None) -> list[Path]:
     """Every lab file a list of ``paths`` entries names (spec §2.4).
 
     THE single home of the entry-to-files rule, read by the json backend, the
@@ -75,6 +75,12 @@ def expand_lab_paths(paths: "Iterable[Path]") -> list[Path]:
     listing ``d/lab.json`` twice would trip the in-source duplicate rule
     (:func:`check_in_source_duplicates`) against the file itself. Identity is
     the RESOLVED path, so two spellings of one file collapse.
+
+    When *visited* is given, every directory this walk enters is added to it
+    (the glob's non-glob root, each match's parent, a bare directory entry, a
+    ``.json`` entry's parent) — so a caller building a stat-only key set can
+    see "a file appeared here" by the directory's own mtime instead of
+    re-running the glob.
     """
     found: list[Path] = []
     seen: set[Path] = set()
@@ -95,13 +101,24 @@ def expand_lab_paths(paths: "Iterable[Path]") -> list[Path]:
             first_glob = next(i for i, p in enumerate(parts) if any(c in p for c in _GLOB_CHARS))
             root = Path(*parts[:first_glob]) if first_glob else Path()
             pattern = str(Path(*parts[first_glob:]))
+            if visited is not None:
+                visited.add(root)
             matches = sorted(p for p in root.glob(pattern) if p.is_file() and p.suffix == ".json")
             if not matches:
                 logger.debug(f"lab path glob {text!r} matched no .json file")
             for match in matches:
                 add(match)
+                if visited is not None:
+                    visited.add(match.parent)
             continue
-        candidate = entry if entry.suffix == ".json" else entry / LAB_FILENAME
+        if entry.suffix == ".json":
+            candidate = entry
+            if visited is not None and candidate.parent.is_dir():
+                visited.add(candidate.parent)
+        else:
+            candidate = entry / LAB_FILENAME
+            if visited is not None and entry.is_dir():
+                visited.add(entry)
         if candidate.is_file():
             add(candidate)
     return found
@@ -450,7 +467,8 @@ class JsonFileLabRepository:
                 labs = [n for n in declared if element.matches(n)]
                 for index, flat in enumerate(element.flatten()):
                     try:
-                        identity = host_identity(resolve_host_entry(flat, inventory).host_data)
+                        host_data = resolve_host_entry(flat, inventory).host_data
+                        identity = host_identity(host_data)
                     except (ValueError, TypeError, InventoryError) as e:
                         # Skipped, never raised — but SAID: this is the one
                         # place a referenced entry silently fell out of
@@ -472,6 +490,7 @@ class JsonFileLabRepository:
                         element=identity.element,
                         element_id=identity.element_id,
                         docker_capable=identity.docker_capable,
+                        os_type=str(host_data.get("os_type", "unix")),
                     )
 
         return sorted(by_id.values(), key=lambda s: s.id)

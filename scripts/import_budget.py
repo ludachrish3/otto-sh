@@ -133,6 +133,15 @@ _ALL_HEAVY = ("fastapi", "uvicorn", "starlette", "pytest")
 # across 3.10-3.14, so one cap (baseline + ~15 headroom) holds on every gated
 # interpreter. This is the same "stable across dependency/version upgrades"
 # rule the design already applies to the otto-only golden snapshot.
+#
+# The ~15 headroom is for a FULL-PATH surface: one whose deny list still lets
+# some third-party stack (typer, click, rich, ...) through, so a version bump
+# in one of those can move its count without otto importing anything new. A
+# surface whose deny list forbids every third party instead (`version_repo`,
+# `completion_repo_warm`) has a module set that is structurally fixed by that
+# deny list — nothing outside otto's own graph can ever appear — so it gets
+# an exact cap with no headroom, the same way the golden snapshot itself is
+# exact.
 SURFACES: list[Surface] = [
     Surface("import_otto", ["python"], _ALL_HEAVY, cap=19),  # lazy __init__ (Part D)
     Surface("help", ["otto", "--help"], _ALL_HEAVY, cap=188),
@@ -218,7 +227,14 @@ SURFACES: list[Surface] = [
         "help_repo",
         ["otto", "--help"],
         ("pytest",),
-        cap=411,
+        # 411 -> 463: a cold cache write now calls build_shim_payload,
+        # which serialises the WHOLE CLI tree (every subcommand group, not
+        # just the root) to build the `shim` section's tree — resolving each
+        # one for the first time pulls in its own module plus its backends
+        # (otto.coverage.*, otto.docker.*, otto.tunnel.*, otto.link.*, ...).
+        # help_repo_warm is unaffected: a warm run never reaches the slow
+        # path that calls it.
+        cap=463,
         sut_files=50,
         sut_dirs_count=5,
         real_entry=True,
@@ -259,15 +275,18 @@ SURFACES: list[Surface] = [
     #
     # WARM, like `help_repo_warm` and for the same reason: a cold cache means
     # a miss, and a miss is a full bootstrap by design — completion never
-    # degrades to a wrong answer. The steady state is the second and every
-    # later TAB, served from the `names` section, and that is what a budget
-    # should bound. The seed is the same child against the same home, so it
-    # leaves exactly the cache the measured run reads.
+    # degrades to a wrong answer. The seed run now also leaves the `shim`
+    # section (written by `entry()` on every cache write, spec §3.1), and the
+    # measured run is the shim's stat pass plus one JSON read: `otto._shim`
+    # answers the TAB from the cache without ever importing `otto.cli`,
+    # `otto.config`, typer, click, or rich. The steady state is the
+    # second and every later TAB, served from the shim's stat-and-marker
+    # validator, and that is what a budget should bound.
     Surface(
         "completion_repo_warm",
         ["otto"],
-        _ALL_HEAVY,
-        cap=279,
+        (*_ALL_HEAVY, "typer", "click", "rich", "pydantic", "pydantic_settings"),
+        cap=3,
         sut_files=50,
         sut_dirs_count=5,
         real_entry=True,
@@ -276,6 +295,48 @@ SURFACES: list[Surface] = [
             ("_OTTO_COMPLETE", "complete_bash"),
             ("COMP_WORDS", "otto "),
             ("COMP_CWORD", "1"),
+        ),
+    ),
+    # THE FALLBACK'S TAB COST. `otto tunnel remove <TAB>` (COMP_CWORD=3) is a
+    # `live` site (spec §1 decision 3): the resolver hands over rather than
+    # answering, and the shim falls through to the unchanged full CLI path.
+    # This is a DIFFERENT site than `completion_repo_warm`'s — that one
+    # completes top-level command NAMES (COMP_CWORD=1), which never resolves
+    # a specific command's module; this one resolves three levels deep into
+    # `tunnel remove`'s own argument completer, which imports `otto.cli.tunnel`
+    # and, transitively, all of `otto.tunnel`, `otto.project`,
+    # `otto.instructions`, `otto.host.daemon`, and `otto.config.fleet`/`lab`/
+    # `dependencies` — modules the top-level site never touches. Its module
+    # set is therefore what THIS SAME TAB cost before the shim existed, plus
+    # `otto._shim_complete` (the one new import the resolver adds on the way
+    # to deciding to hand over). The goldens show `open_home 4, scandir 2`
+    # against the warm surface's `2, 0`, and that is not a regression against
+    # it: the warm surface is a different, shallower site with a different,
+    # much smaller baseline, so "as cheap as the warm path" was never the bar
+    # here. This site has no pre-shim golden to diff against, so the
+    # shim's own contribution here is not a measured delta; it is a fact of
+    # `otto._shim.main`'s construction — a cache read, the stat pass, and a
+    # marker touch always happen before it can decide to hand over, on every
+    # path, this one included.
+    Surface(
+        "completion_repo_handover",
+        ["otto"],
+        _ALL_HEAVY,
+        # cap=315: measured 300 non-stdlib modules + ~15 headroom, like every
+        # other full-CLI-path surface (see the SURFACES-level comment above) —
+        # this surface's deny list does not fix its module set the way
+        # `completion_repo_warm`'s does, so a typer/click dependency bump that
+        # every peer absorbs in headroom would otherwise make this the one
+        # surface that goes red on it.
+        cap=315,
+        sut_files=50,
+        sut_dirs_count=5,
+        real_entry=True,
+        warm=True,
+        env_extra=(
+            ("_OTTO_COMPLETE", "complete_bash"),
+            ("COMP_WORDS", "otto tunnel remove "),
+            ("COMP_CWORD", "3"),
         ),
     ),
 ]

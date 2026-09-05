@@ -68,7 +68,7 @@ def _sections_file(
                 "fingerprint": section_digest(s, repos),
                 "generated_at": at,
                 "tainted": False,
-                "payload": payloads[s.name],
+                "payload": payloads.get(s.name, {}),
             }
             for s in SECTIONS
         },
@@ -981,6 +981,50 @@ def test_read_cache_defaults_hosts_by_lab_to_empty_dict(tmp_path: Path, monkeypa
     out = cc.read_cache([fake_repo])
     assert out is not None
     assert out["hosts_by_lab"] == {}
+
+
+def test_write_read_cache_round_trips_the_class_map_projects_and_links(tmp_path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
+    fake_repo = MagicMock()
+    fake_repo.sut_dir = tmp_path / "sut"
+    fake_repo.sut_dir.mkdir()
+    touch_settings(fake_repo.sut_dir)
+    fake_repo.init = []
+    fake_repo.libs = []
+    fake_repo.tests = []
+    fake_repo.inventory_settings = {}
+    cc.write_cache(
+        [fake_repo],
+        instructions=[],
+        suites=[],
+        hosts=["z1"],
+        host_classes_by_id={"z1": "zephyr"},
+        projects=["b", "a"],
+        links=[{"id": "l", "hosts": ["z1", "u1"]}],
+    )
+    out = cc.read_cache([fake_repo])
+    assert out is not None
+    assert out["host_classes_by_id"] == {"z1": "zephyr"}
+    assert out["projects"] == ["b", "a"]
+    assert out["links"] == [{"id": "l", "hosts": ["z1", "u1"]}]
+
+
+def test_read_cache_rejects_a_malformed_class_map(tmp_path, monkeypatch):
+    """A dict is what every consumer indexes; anything else is a miss, not a crash."""
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
+    fake_repo = MagicMock()
+    fake_repo.sut_dir = tmp_path / "sut"
+    fake_repo.sut_dir.mkdir()
+    touch_settings(fake_repo.sut_dir)
+    fake_repo.init = []
+    fake_repo.libs = []
+    fake_repo.tests = []
+    fake_repo.inventory_settings = {}
+    cc.write_cache([fake_repo], instructions=[], suites=[], hosts=[])
+    data = json.loads(cc._cache_path().read_text())
+    data["sections"]["names"]["payload"]["host_classes_by_id"] = ["not", "a", "dict"]
+    cc._cache_path().write_text(json.dumps(data))
+    assert cc.read_cache([fake_repo]) is None
 
 
 # ---------------------------------------------------------------------------

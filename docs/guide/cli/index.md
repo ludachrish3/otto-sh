@@ -108,13 +108,44 @@ instruction names, host ids and their per-class verbs, transfer/term
 backends, reservation usernames, and — multi-value lists included — `--lab`
 names (`+`-combined) and `--tests` names (comma-separated).  It is served
 from a cache in [the workspace home](#the-workspace-home) so the process
-answering the keystroke never runs your init modules or test code.
+answering the keystroke never runs your init modules or test code — true
+whether the fast path answers or the full path does.
+
+When every file and directory the entry depends on still stats the same as
+when it was written, the `otto` console script answers straight from that
+cache: three modules (`otto`, `otto._shim`, `otto._shim_complete`), one JSON
+read, one stat per recorded path — nothing of otto's CLI, its config layer,
+Typer or rich.  Any TAB that check can't answer runs the full path instead.
+The candidates are the same either way: the fast path is only faster, never
+a different or a shorter list.
+
 `--tests` completes by base name and layers a static source scan (the instant
 floor) with a pytest-collected set that also includes dynamically-generated
 tests; that set warms itself from any real `otto test --list-tests` run, or
 from a one-time bounded collection on the first `--tests` TAB (see
 {doc}`test/index`).  [`otto cache clear`](cache/index.md) drops the cache if
 it ever goes stale.
+
+After a successful check the script leaves a marker beside the cache and
+trusts it for sixty seconds, so a burst of TABs costs one check; an edit
+inside that minute can be missed by at most that minute.  On NFS the client's
+attribute cache can delay a change by a few seconds more.  A couple of other
+small, known gaps between the shim's answer and the framework's are listed
+next to the window on
+{doc}`the architecture page <../../architecture/subsystems/completion>`.
+
+What hands over: any shell but bash, tunnel ids, remote paths, a `tunnel add
+--hosts` list past its first comma, a value written onto a flag that takes
+none (`otto --debug=x <TAB>`), an inventory backend that cannot report
+which files it read, a cold pytest-collected set, and any entry
+[`otto cache info`](cache/index.md#info) reports as `handing over`.
+
+`-m`/`--markers` completes marker names inside an expression (`smoke and not
+(sl<TAB>`), from the same two layers `--tests` uses: declared, built-in and
+statically spelled names, then the pytest-collected set.
+
+Host verbs complete per host: `otto host <id> <TAB>` offers the verbs of that
+host's class (from its `os_type`), warm or cold.
 
 ### Remote path completion
 

@@ -174,12 +174,17 @@ class CollectedTest:
         Absolute path to the test file.
     cls_name :
         Class name if the test belongs to a class, else ``None``.
+    markers :
+        Names of the markers applied to this item (``item.iter_markers()``),
+        own plus inherited from its class/module — the collected-layer
+        counterpart of the ``ast``-scanned marker floor.
     """
 
     nodeid: str
     name: str
     path: Path
     cls_name: str | None
+    markers: list[str] = field(default_factory=list)
 
 
 #: pytest's own ``python_files`` default, used when nothing overrides it.
@@ -673,6 +678,7 @@ class Repo:
                     name=item.name,
                     path=item.path,
                     cls_name=cls_name,
+                    markers=sorted({m.name for m in item.iter_markers()}),
                 )
             )
         return collected
@@ -916,7 +922,7 @@ class Repo:
         for mod in self.init:
             importlib.import_module(mod)
 
-    def iter_test_files(self) -> list[Path]:
+    def iter_test_files(self, *, visited: "set[Path] | None" = None) -> list[Path]:
         r"""Top-level ``test_*.py`` in each configured tests dir, sorted.
 
         Deliberately NOT recursive, and deliberately not pytest's
@@ -957,6 +963,10 @@ class Repo:
         proves to be a papercut; it narrows the blast radius but does not
         remove it, since a suite file can still fail at import.
 
+        *visited*, when given, receives each configured tests dir that
+        exists — so a caller building a stat-only key set sees a new
+        top-level test file by that directory's own mtime, without re-globbing.
+
         This bounds REGISTRATION only. ``otto test`` hands the same
         directories to pytest (:meth:`collect_tests`), which recurses
         normally, so a nested ``test_*`` function still runs and still
@@ -967,6 +977,8 @@ class Repo:
         found: list[Path] = []
         for test_dir in self.tests:
             if test_dir.is_dir():
+                if visited is not None:
+                    visited.add(test_dir)
                 found.extend(sorted(test_dir.glob("test_*.py")))
         return found
 

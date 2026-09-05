@@ -212,7 +212,18 @@ CACHE_FILENAME = "completion_cache.json"
 #      payload missing every referenced host. Same reasoning as v16: the
 #      digest keys on the repo's files, so without the bump that entry keeps
 #      serving the missing hosts for up to the TTL after the fix ships.
-SCHEMA_VERSION = 17
+# v18: the ``shim`` section — the self-describing entry the console-script
+#      shim answers a bash TAB from, keyed on ``names`` U ``tests``, written
+#      by every real invocation. Also folds in three prior CONTENT-only
+#      changes that never got their own bump: the ``tests`` payload gained
+#      ``markers`` (a surviving v17 entry would make every ``-m`` TAB fall
+#      back to a live corpus scan for a full TTL, because the section would
+#      validate but its payload lacks the key the fast path now reads); the
+#      marker floor now mixes in otto's OWN ``otto.suite.markers.OTTO_MARKERS``
+#      alongside the repo-scanned ones, which the repo-file digest cannot see
+#      (a future addition there needs a bump of its own); and the three
+#      ``names`` keys ``host_classes_by_id``, ``projects`` and ``links``.
+SCHEMA_VERSION = 18
 
 # One home, two readers: `collect_test_names` decides which files to PARSE for
 # names, and `compute_fingerprint` decides which files to STAT for
@@ -290,7 +301,7 @@ UNFINGERPRINTED_CACHE_TTL_SECONDS = 5 * 60
 # by a deliberate collection (a real ``otto test`` run, or a bounded subprocess
 # spawned at tab time). The two writers touch disjoint keys and can't clobber.
 COLLECTED_TESTS_KEY = "__collected_tests__"
-COLLECTED_SCHEMA_VERSION = 1
+COLLECTED_SCHEMA_VERSION = 2  # 2: entries carry "markers" beside "names"
 
 # Env var that flips ``otto`` into the one-shot "collect and print test names"
 # subprocess the completer spawns to warm the collected cache. Handled as an
@@ -316,6 +327,8 @@ COLLECT_LOCK_STALE_SECONDS = COLLECT_TIMEOUT_SECONDS + 30
 # discovery emits stray stdout before them.
 _DUMP_BEGIN = "__OTTO_TESTS_BEGIN__"
 _DUMP_END = "__OTTO_TESTS_END__"
+_DUMP_MARKERS_BEGIN = "__OTTO_MARKERS_BEGIN__"
+_DUMP_MARKERS_END = "__OTTO_MARKERS_END__"
 
 
 # Python type <-> serialized kind. Kept intentionally small: these are the
@@ -531,7 +544,9 @@ def _cache_ttl_seconds(repos: list["Repo"]) -> int:
     return CACHE_TTL_SECONDS
 
 
-def _match_py_files(test_dir: Path, patterns: "Sequence[str]") -> set[Path]:
+def _match_py_files(
+    test_dir: Path, patterns: "Sequence[str]", *, visited: "set[Path] | None" = None
+) -> set[Path]:
     """FILES under *test_dir* whose name matches *patterns*, in ONE pruned walk.
 
     Recursive, because a test tree is a tree: otto's own ``tests/`` has 405
@@ -554,11 +569,18 @@ def _match_py_files(test_dir: Path, patterns: "Sequence[str]") -> set[Path]:
     ``fnmatchcase`` rather than ``fnmatch``: the latter normalizes case
     per-platform, which would silently widen the match on a case-insensitive
     filesystem.
+
+    When *visited* is given, every unpruned ``os.walk`` root is added to it —
+    so a caller building a stat-only key set can see a new or renamed file
+    under a directory it already visited by that directory's own mtime,
+    without re-running this walk.
     """
     found: set[Path] = set()
     for root, dirs, files in os.walk(test_dir):
         dirs[:] = [d for d in dirs if not _is_norecurse_dir(d)]
         base = Path(root)
+        if visited is not None:
+            visited.add(base)
         found.update(base / name for name in files if any(fnmatchcase(name, q) for q in patterns))
     return found
 
@@ -572,14 +594,21 @@ def _is_norecurse_dir(name: str) -> bool:
     return name.startswith(".") or name.endswith(".egg") or name in _NORECURSE_NAMES
 
 
-def test_sources(test_dir: Path, sut_dir: Path, patterns: "Sequence[str]") -> set[Path]:
+def iter_test_sources(
+    test_dir: Path,
+    sut_dir: Path,
+    patterns: "Sequence[str]",
+    *,
+    visited: "set[Path] | None" = None,
+) -> set[Path]:
     """Every path whose edit can change a ``--tests`` name under *test_dir*.
 
     A set, because ``test_a_test.py`` matches both patterns. Paths that do not
     exist are fine and wanted — :func:`hash_file` records them as ``missing:``,
-    so the digest moves when one appears.
+    so the digest moves when one appears. *visited*, when given, is passed
+    through to :func:`_match_py_files`.
     """
-    found = _match_py_files(test_dir, [*patterns, CONFTEST_FILENAME])
+    found = _match_py_files(test_dir, [*patterns, CONFTEST_FILENAME], visited=visited)
     # conftest.py ABOVE the tests dir counts too. `Repo.collect_tests` passes
     # the tests dirs as pytest args with the SUT as rootdir, so a conftest
     # anywhere between them is loaded, and a `pytest_generate_tests` there
@@ -633,7 +662,7 @@ def compute_fingerprint(repos: list["Repo"]) -> str:
         patterns = configured_python_files(repo.sut_dir)
         for test_dir in repo.tests:
             if test_dir.is_dir():
-                for t in sorted(test_sources(test_dir, repo.sut_dir, patterns)):
+                for t in sorted(iter_test_sources(test_dir, repo.sut_dir, patterns)):
                     hash_file(h, t)
 
         # Host-ID sources: the lab files every compiled [[lab.sources]] entry
@@ -975,7 +1004,10 @@ def read_sections(
 
 
 def read_cache(
-    repos: list["Repo"], *, digests: dict[str, str] | None = None
+    repos: list["Repo"],
+    *,
+    digests: dict[str, str] | None = None,
+    require: "Collection[str]" = (),
 ) -> dict[str, Any] | None:
     """Return the merged completion payload across every section, or ``None``.
 
@@ -989,13 +1021,22 @@ def read_cache(
     shells), cache file missing or corrupt, and schema mismatch. In every
     case the caller should fall back to the slow path.
 
-    On success returns one flat dict — the sections' payloads merged — with
-    ``instructions``, ``suites``, ``hosts``, ``hosts_by_lab``,
+    *require* names further sections that must ALSO validate — read in the
+    SAME :func:`read_sections` call (the single open stays single) but NOT
+    merged into the returned view: they widen validation only, never the
+    payload. :func:`cache_rebuild_is_worthwhile` passes ``require=("shim",)``
+    so a lost or stale ``shim`` section makes a rebuild worthwhile even while
+    both merged-view siblings still validate on their own.
+
+    On success returns one flat dict — the merged-view sections' payloads
+    merged — with ``instructions``, ``suites``, ``hosts``, ``hosts_by_lab``,
     ``docker_hosts``, ``docker_use_cases``, ``term_backends``,
-    ``transfer_backends``, ``usernames``, ``commands``, ``labs`` and
-    ``tests`` keys: exactly the view the completion fast path consumed when
-    all of it lived in one fingerprint-keyed entry. The first three are
-    required; the rest default to empty when a payload omits them.
+    ``transfer_backends``, ``usernames``, ``commands``, ``labs``,
+    ``host_classes_by_id``, ``projects``, ``links``, ``tests`` and
+    ``markers`` keys:
+    exactly the view the completion fast path consumed when all of it lived
+    in one fingerprint-keyed entry. The first three are required; the rest
+    default to empty when a payload omits them.
 
     *digests*, when given, collects the per-section digests computed here
     for reuse by a subsequent :func:`write_cache` — see
@@ -1003,12 +1044,12 @@ def read_cache(
     """
     from .cache_sections import MERGED_VIEW_SECTIONS
 
-    payloads = read_sections(repos, MERGED_VIEW_SECTIONS, digests=digests)
+    payloads = read_sections(repos, [*MERGED_VIEW_SECTIONS, *require], digests=digests)
     if payloads is None:
         return None
     merged: dict[str, Any] = {}
-    for payload in payloads.values():
-        merged.update(payload)
+    for name in MERGED_VIEW_SECTIONS:
+        merged.update(payloads[name])
 
     instructions = merged.get("instructions")
     suites = merged.get("suites")
@@ -1022,7 +1063,11 @@ def read_cache(
     commands = merged.get("commands", [])
     labs = merged.get("labs", [])
     tests = merged.get("tests", [])
+    markers = merged.get("markers", [])
     host_drops = merged.get("host_drops", [])
+    host_classes_by_id = merged.get("host_classes_by_id", {})
+    projects = merged.get("projects", [])
+    links = merged.get("links", [])
     if (
         not isinstance(instructions, list)
         or not isinstance(suites, list)
@@ -1036,7 +1081,11 @@ def read_cache(
         or not isinstance(commands, list)
         or not isinstance(labs, list)
         or not isinstance(tests, list)
+        or not isinstance(markers, list)
         or not isinstance(host_drops, list)
+        or not isinstance(host_classes_by_id, dict)
+        or not isinstance(projects, list)
+        or not isinstance(links, list)
     ):
         return None
     return {
@@ -1052,7 +1101,11 @@ def read_cache(
         "usernames": usernames,
         "commands": commands,
         "labs": labs,
+        "host_classes_by_id": host_classes_by_id,
+        "projects": projects,
+        "links": links,
         "tests": tests,
+        "markers": markers,
     }
 
 
@@ -1072,10 +1125,19 @@ def cache_rebuild_is_worthwhile(
     *digests* is filled with the per-section digests the validity check
     computes, for the caller to hand straight to :func:`write_cache` on a
     miss — never compute a digest twice (:func:`read_sections`).
+
+    Also requires the ``shim`` section to validate (:func:`read_cache`'s
+    *require*): a lost or stale ``shim`` entry is a miss for the WRITER, so a
+    deleted or hand-edited entry is rebuilt on the next real invocation
+    instead of handing over forever — without a second open of the cache
+    file, since the digest it needs is computed in the same
+    :func:`read_sections` call as the merged-view check above.
     """
+    from .cache_sections import SHIM_SECTION
+
     if not repos or _cache_path() is None or _fingerprint_is_ephemeral(repos):
         return False
-    return read_cache(repos, digests=digests) is None
+    return read_cache(repos, digests=digests, require=(SHIM_SECTION,)) is None
 
 
 def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by design
@@ -1092,8 +1154,13 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     commands: list[dict[str, Any]] | None = None,
     labs: list[str] | None = None,
     tests: list[str] | None = None,
+    markers: list[str] | None = None,
     hosts_by_lab: dict[str, list[str]] | None = None,
     host_drops: list[dict[str, str]] | None = None,
+    host_classes_by_id: dict[str, str] | None = None,
+    projects: list[str] | None = None,
+    links: list[dict[str, Any]] | None = None,
+    shim: dict[str, Any] | None = None,
     digests: dict[str, str] | None = None,
     tainted: bool = False,
 ) -> None:
@@ -1102,9 +1169,19 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     The compatibility writer over :func:`write_sections`: one keyword per
     cached name-set, split across the merged-view sections
     (:data:`otto.config.cache_sections.MERGED_VIEW_SECTIONS`) — everything
-    here except ``tests`` is ``names`` payload. A NEW cached item should be a
+    here except ``tests`` and ``markers`` is ``names`` payload; those two
+    share the ``tests`` section (one ``ast`` pass produces both). A NEW
+    cached item should be a
     ``Section`` registration written through
     :func:`otto.config.cache_sections.write_section`, not another keyword.
+
+    *shim* is the exception: it is a THIRD, already-registered section (not
+    a merged-view keyword), added here so ``entry()`` writes it in the same
+    atomic update as its siblings. ``entry()`` always passes it, so the
+    section is rewritten with its siblings; a caller that omits it leaves the
+    stored entry with a stale digest, so every later invocation reads as a
+    miss and re-collects — pass ``shim=`` or write it through
+    :func:`otto.config.cache_sections.write_section`.
 
     Skipped silently when repos is empty — an empty-repo digest is what any
     shell without ``OTTO_SUT_DIRS`` would also compute, and that would
@@ -1126,25 +1203,31 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     is stored (it still records what the digests were) but never served. See
     :func:`write_sections`.
     """
+    payloads: dict[str, dict[str, Any]] = {
+        "names": {
+            "instructions": instructions,
+            "suites": suites,
+            "hosts": hosts,
+            "hosts_by_lab": hosts_by_lab or {},
+            "host_drops": host_drops or [],
+            "docker_hosts": docker_hosts or [],
+            "docker_use_cases": docker_use_cases or [],
+            "term_backends": term_backends or [],
+            "transfer_backends": transfer_backends or [],
+            "usernames": usernames or [],
+            "commands": commands or [],
+            "labs": labs or [],
+            "host_classes_by_id": host_classes_by_id or {},
+            "projects": projects or [],
+            "links": links or [],
+        },
+        "tests": {"tests": tests or [], "markers": markers or []},
+    }
+    if shim is not None:
+        payloads["shim"] = shim
     write_sections(
         repos,
-        {
-            "names": {
-                "instructions": instructions,
-                "suites": suites,
-                "hosts": hosts,
-                "hosts_by_lab": hosts_by_lab or {},
-                "host_drops": host_drops or [],
-                "docker_hosts": docker_hosts or [],
-                "docker_use_cases": docker_use_cases or [],
-                "term_backends": term_backends or [],
-                "transfer_backends": transfer_backends or [],
-                "usernames": usernames or [],
-                "commands": commands or [],
-                "labs": labs or [],
-            },
-            "tests": {"tests": tests or []},
-        },
+        payloads,
         tainted=tainted,
         digests=digests,
     )
@@ -1947,30 +2030,55 @@ def collect_link_ids(
     ``LabRepository`` enumeration; this stayed a direct read), so malformed
     entries are silently skipped: completion must never crash on bad data.
     """
+    return sorted(
+        link_id
+        for link_id, hosts in _declared_links(repos)
+        if loaded_ids is None or any(h in loaded_ids for h in hosts)
+    )
+
+
+def _declared_links(repos: list["Repo"]) -> list[tuple[str, list[str]]]:
+    """``(link id, endpoint host ids)`` per declared static link, first-seen order.
+
+    One entry per id: an id declared twice (two sources, two entries) keeps the
+    endpoint hosts of EVERY declaration, so a reader's "any endpoint in the lab"
+    test equals the per-entry filter (an id passes if any declaration passes).
+    """
     from ..link.derive import raw_endpoint_host_ids
     from ..link.model import LinkEndpoint, make_static_link_id
 
-    ids: set[str] = set()
+    out: dict[str, list[str]] = {}
     for repo in repos:
         for src in repo.lab_sources:
             for lab_file in src.lab_files():
                 for entry in _read_lab_links(lab_file):
                     if not isinstance(entry, dict):
                         continue
-                    if loaded_ids is not None and not any(
-                        host_id in loaded_ids for host_id in raw_endpoint_host_ids(entry)
-                    ):
-                        continue
+                    hosts = [h for h in raw_endpoint_host_ids(entry) if isinstance(h, str) and h]
                     name = entry.get("name")
                     if isinstance(name, str) and name:
-                        ids.add(name)
-                        continue
-                    hosts = raw_endpoint_host_ids(entry)
-                    if len(hosts) != 2 or not all(h for h in hosts):  # noqa: PLR2004
-                        continue
-                    a, b = (LinkEndpoint(host=h) for h in hosts)
-                    ids.add(make_static_link_id(a, b, None))
-    return sorted(ids)
+                        link_id = name
+                    else:
+                        raw = raw_endpoint_host_ids(entry)
+                        if len(raw) != 2 or not all(h for h in raw):  # noqa: PLR2004
+                            continue
+                        a, b = (LinkEndpoint(host=h) for h in raw)
+                        link_id = make_static_link_id(a, b, None)
+                    bucket = out.setdefault(link_id, [])
+                    bucket.extend(h for h in hosts if h not in bucket)
+    return list(out.items())
+
+
+def collect_links(repos: list["Repo"]) -> list[dict[str, Any]]:
+    """Return declared static links with their endpoint host ids, for lab-scoped cache completion.
+
+    The same enumeration :func:`collect_link_ids` filters live; storing the
+    endpoints lets a reader apply that filter (offer a link when ANY endpoint
+    host is in the selected lab's host set) without reading a lab file.
+    """
+    # `_declared_links` merges the endpoints of an id declared twice, so the reader's
+    # "any endpoint in the selected lab" test equals collect_link_ids' per-entry filter.
+    return [{"id": link_id, "hosts": hosts} for link_id, hosts in sorted(_declared_links(repos))]
 
 
 def collect_lab_names(repos: list["Repo"]) -> list[str]:
@@ -2050,8 +2158,79 @@ def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
     return buckets
 
 
-def collect_test_names(repos: list["Repo"]) -> list[str]:
-    """Statically discover test names for ``otto test --tests`` completion.
+def collect_host_classes_by_id(repos: list["Repo"]) -> dict[str, str]:
+    """Map every enumerable host id (and logical handle) to its registered host-class name.
+
+    ``otto host <id> <TAB>`` scopes the verb menu to the host's class. On the
+    dispatch path that class comes from building the host; completion must
+    not build hosts, so the class is derived here from the summary's
+    ``os_type`` through the same profile lookup the factory uses
+    (``get_os_profile(os_type).base``), data-only. A host whose backend does
+    not report an ``os_type``, or whose profile is not registered in THIS
+    process, is omitted rather than guessed — the completer then offers the
+    union menu, exactly as it did before the map existed.
+
+    Logical handles (``server1``) map to the class of the host they resolve
+    to, computed over the whole fleet as :func:`collect_host_ids` computes them.
+    """
+    from ..host.os_profile import get_os_profile
+    from ..host.remote_host import slug
+    from .lab import logical_indices
+
+    classes: dict[str, str] = {}
+    summarized: dict[str, "HostSummary"] = {}
+    resolution = resolve_process_inventory(repos)
+    for repo in repos:
+        for summary in repo_host_summaries(repo, resolution):
+            summarized[summary.id] = summary
+            if summary.os_type is None:
+                continue
+            profile = get_os_profile(summary.os_type)
+            if profile is not None:
+                classes[summary.id] = profile.base  # the registered class NAME
+    for host_id, pos in logical_indices(summarized.values()).items():
+        if host_id in classes:
+            classes[f"{slug(summarized[host_id].element)}{pos}"] = classes[host_id]
+    return dict(sorted(classes.items()))
+
+
+def collect_project_names() -> list[str]:
+    """Return the discovered repo names, in discovery order — what ``-I``/``-E`` complete.
+
+    Phase 1 only (:func:`otto.bootstrap.discover`), for the reason
+    ``otto.cli.main._project_completer`` gives: ``get_repos`` is phase 2 and
+    runs user code. The payload and the completer read the same list so the
+    warm and cold answers cannot differ.
+    """
+    from ..bootstrap import discover
+
+    return [repo.name for repo in discover().repos]
+
+
+@dataclass(frozen=True)
+class CorpusScan:
+    """What one static pass over the test corpus yields: test names AND marker names."""
+
+    names: list[str]
+    markers: list[str]
+
+
+def _marker_name(node: Any) -> str | None:
+    """``pytest.mark.<name>`` / ``mark.<name>``, bare or called → ``<name>``; else ``None``."""
+    import ast
+
+    if isinstance(node, ast.Call):
+        node = node.func
+    if isinstance(node, ast.Attribute):
+        owner = node.value
+        owner_name = owner.attr if isinstance(owner, ast.Attribute) else getattr(owner, "id", None)
+        if owner_name == "mark":
+            return node.attr
+    return None
+
+
+def scan_test_corpus(repos: list["Repo"]) -> CorpusScan:
+    """Statically discover test names and marker names for completion — one ``ast`` pass.
 
     Parses every file matching the repo's pytest ``python_files`` (its own, if
     it configures one — see :func:`~otto.config.repo.configured_python_files`)
@@ -2070,10 +2249,18 @@ def collect_test_names(repos: list["Repo"]) -> list[str]:
     ever executing test code at tab time. ``python_files`` is read from the
     repo's pytest config; ``python_classes`` / ``python_functions`` are still
     assumed to be pytest's defaults.
+
+    Marker names come from every ``@pytest.mark.<name>`` decorator (bare or
+    called) on any function or class in the file, and from a module-level
+    ``pytestmark = <marker>`` or ``pytestmark = [<marker>, ...]``. The rule is
+    deliberately loose (``<anything>.mark.<name>``) so an aliased
+    ``from pytest import mark`` still counts; a marker otto cannot see
+    statically is added by the pytest-collected layer, as for test names.
     """
     import ast
 
     names: set[str] = set()
+    markers: set[str] = set()
     for repo in repos:
         patterns = configured_python_files(repo.sut_dir)
         for test_dir in repo.tests:
@@ -2095,6 +2282,41 @@ def collect_test_names(repos: list["Repo"]) -> list[str]:
                             ) and method.name.startswith("test"):
                                 names.add(method.name)
                                 names.add(f"{node.name}::{method.name}")
+                    if isinstance(node, ast.Assign) and any(
+                        isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets
+                    ):
+                        value = node.value
+                        values = value.elts if isinstance(value, (ast.List, ast.Tuple)) else [value]
+                        markers.update(m for m in (_marker_name(v) for v in values) if m)
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        markers.update(
+                            m for m in (_marker_name(d) for d in node.decorator_list) if m
+                        )
+    return CorpusScan(names=sorted(names), markers=sorted(markers))
+
+
+def collect_test_names(repos: list["Repo"]) -> list[str]:
+    """Return the static ``--tests`` name floor — :func:`scan_test_corpus`'s names."""
+    return scan_test_corpus(repos).names
+
+
+def collect_marker_names(repos: list["Repo"], *, scan: CorpusScan | None = None) -> list[str]:
+    """Return the static ``-m`` marker floor: declared, built-in and statically spelled names.
+
+    ``Repo.configured_markers()`` (the pyproject ``[tool.pytest.ini_options].markers``
+    names — real ``Repo`` instances only; stand-ins carry no pyproject), the
+    names ``otto.suite.markers.OTTO_MARKERS`` registers, and every marker the
+    scan saw. Pass *scan* to reuse a pass already paid for.
+    """
+    from ..suite.markers import OTTO_MARKERS
+    from .repo import Repo
+
+    names: set[str] = set(OTTO_MARKERS)
+    for repo in repos:
+        if isinstance(repo, Repo):
+            names.update(repo.configured_markers())
+    names.update((scan or scan_test_corpus(repos)).markers)
     return sorted(names)
 
 
@@ -2123,8 +2345,13 @@ def _test_names_from_items(items: list[Any]) -> list[str]:
     return sorted(names)
 
 
+def _marker_names_from_items(items: list[Any]) -> list[str]:
+    """Sorted union of the marker names on collected items (duck-typed on ``.markers``)."""
+    return sorted({m for item in items for m in (getattr(item, "markers", None) or [])})
+
+
 def dump_collected_test_names(repos: list["Repo"]) -> None:
-    """Collect every repo's tests and print a framed name list to stdout.
+    """Collect every repo's tests and print framed name and marker lists to stdout.
 
     The child side of the tab-time warm: run by :func:`otto.cli.main.entry`
     when :data:`DUMP_TESTS_ENV_VAR` is set. Collection runs here — in a
@@ -2139,21 +2366,44 @@ def dump_collected_test_names(repos: list["Repo"]) -> None:
     for repo in repos:
         items.extend(repo.collect_tests())
     names = _test_names_from_items(items)
-    sys.stdout.write("\n".join([_DUMP_BEGIN, *names, _DUMP_END]) + "\n")
+    markers = _marker_names_from_items(items)
+    sys.stdout.write(
+        "\n".join(
+            [
+                _DUMP_BEGIN,
+                *names,
+                _DUMP_END,
+                _DUMP_MARKERS_BEGIN,
+                *markers,
+                _DUMP_MARKERS_END,
+            ]
+        )
+        + "\n"
+    )
     sys.stdout.flush()
+
+
+def _parse_frame(stdout: str, begin: str, end: str) -> list[str] | None:
+    """Recover a framed line list bounded by *begin*/*end* markers, or ``None``."""
+    lines = stdout.splitlines()
+    try:
+        start = lines.index(begin)
+        stop = lines.index(end)
+    except ValueError:
+        return None
+    if stop < start:
+        return None
+    return [ln for ln in lines[start + 1 : stop] if ln.strip()]
 
 
 def _parse_dumped_names(stdout: str) -> list[str] | None:
     """Recover the framed name list from the dump subprocess's stdout."""
-    lines = stdout.splitlines()
-    try:
-        start = lines.index(_DUMP_BEGIN)
-        end = lines.index(_DUMP_END)
-    except ValueError:
-        return None
-    if end < start:
-        return None
-    return [ln for ln in lines[start + 1 : end] if ln.strip()]
+    return _parse_frame(stdout, _DUMP_BEGIN, _DUMP_END)
+
+
+def _parse_dumped_markers(stdout: str) -> list[str] | None:
+    """Recover the framed marker list from the dump subprocess's stdout."""
+    return _parse_frame(stdout, _DUMP_MARKERS_BEGIN, _DUMP_MARKERS_END)
 
 
 def _collected_cache_entry(repos: list["Repo"]) -> dict[str, Any] | None:
@@ -2176,15 +2426,12 @@ def _collected_cache_entry(repos: list["Repo"]) -> dict[str, Any] | None:
     return entry if isinstance(entry, dict) else None
 
 
-def read_collected_tests(repos: list["Repo"]) -> list[str] | None:
-    """Return the fresh pytest-collected test names for ``--tests``, or ``None``.
+def _fresh_collected_entry(repos: list["Repo"]) -> dict[str, Any] | None:
+    """Return the raw collected-cache entry, gated on schema, timestamp shape and TTL.
 
-    ``None`` means the collected set is cold for the completer: caching
-    disabled, no entry for this fingerprint, wrong schema, TTL-expired, a
-    recorded *failed* attempt (``names`` is ``null``), or malformed data. The
-    completer then falls back to the static floor and may warm the cache via
-    :func:`maybe_warm_collected_tests`. Fingerprint keying means any test-file
-    edit invalidates this automatically, exactly like the main cache.
+    Factors the freshness checks shared by :func:`read_collected_tests` and
+    :func:`read_collected_markers` — both read the same entry, differing only
+    in which key of it they trust.
     """
     entry = _collected_cache_entry(repos)
     if entry is None:
@@ -2196,19 +2443,50 @@ def read_collected_tests(repos: list["Repo"]) -> list[str] | None:
         return None
     if time.time() - generated_at > CACHE_TTL_SECONDS:
         return None
-    names = entry.get("names")
-    if not isinstance(names, list):
+    return entry
+
+
+def read_collected_tests(repos: list["Repo"]) -> list[str] | None:
+    """Return the fresh pytest-collected test names for ``--tests``, or ``None``.
+
+    ``None`` means the collected set is cold for the completer: caching
+    disabled, no entry for this fingerprint, wrong schema, TTL-expired, a
+    recorded *failed* attempt (``names`` is ``null``), or malformed data. The
+    completer then falls back to the static floor and may warm the cache via
+    :func:`maybe_warm_collected_tests`. Fingerprint keying means any test-file
+    edit invalidates this automatically, exactly like the main cache.
+    """
+    entry = _fresh_collected_entry(repos)
+    if entry is None:
         return None
-    return names
+    names = entry.get("names")
+    return names if isinstance(names, list) else None
 
 
-def _record_collected_tests(repos: list["Repo"], names: list[str] | None) -> None:
+def read_collected_markers(repos: list["Repo"]) -> list[str] | None:
+    """Return the fresh pytest-collected marker names for ``-m``, or ``None``.
+
+    Same freshness contract as :func:`read_collected_tests` — the two live in
+    the same entry, written together by :func:`_record_collected_tests`.
+    """
+    entry = _fresh_collected_entry(repos)
+    if entry is None:
+        return None
+    markers = entry.get("markers")
+    return markers if isinstance(markers, list) else None
+
+
+def _record_collected_tests(
+    repos: list["Repo"], names: list[str] | None, *, markers: list[str] | None = None
+) -> None:
     """Merge a collected-cache result for the current fingerprint.
 
     ``names=None`` records a *failed* attempt; its timestamp drives the
-    tab-time retry cooldown. Only the reserved :data:`COLLECTED_TESTS_KEY`
-    namespace is touched — every main fingerprint entry is preserved — so this
-    warmer and the slow-path writer never clobber each other.
+    tab-time retry cooldown. ``markers`` defaults to ``None`` alongside a
+    failed attempt; a successful collection passes both. Only the reserved
+    :data:`COLLECTED_TESTS_KEY` namespace is touched — every main fingerprint
+    entry is preserved — so this warmer and the slow-path writer never
+    clobber each other.
 
     Skipped, like every fingerprint-keyed writer, when the digest is ephemeral
     (:func:`_fingerprint_is_ephemeral`).
@@ -2236,6 +2514,7 @@ def _record_collected_tests(repos: list["Repo"], names: list[str] | None) -> Non
         "schema_version": COLLECTED_SCHEMA_VERSION,
         "generated_at": int(time.time()),
         "names": names,  # None => a failed attempt (cooldown marker only)
+        "markers": markers,
     }
     existing[COLLECTED_TESTS_KEY] = namespace
     _atomic_write_json(cache_path, existing)
@@ -2250,7 +2529,9 @@ def record_collected_tests_from_items(repos: list["Repo"], items: list[Any]) -> 
     only pass an *unfiltered* item list — a marker/suite-narrowed collection
     would cache an incomplete set.
     """
-    _record_collected_tests(repos, _test_names_from_items(items))
+    _record_collected_tests(
+        repos, _test_names_from_items(items), markers=_marker_names_from_items(items)
+    )
 
 
 def _acquire_collect_lock(lock: Path) -> bool:
@@ -2283,13 +2564,23 @@ def _acquire_collect_lock(lock: Path) -> bool:
     return True
 
 
-def _run_collect_subprocess() -> list[str] | None:
-    """Spawn the bounded ``DUMP_TESTS_ENV_VAR`` subprocess and parse its names.
+@dataclass(frozen=True)
+class CollectedDump:
+    """What the collection subprocess reports: base test names and marker names."""
 
-    Returns the collected names, or ``None`` on timeout / non-zero exit / spawn
-    failure. Runs the *venv* ``otto`` binary (so ``entry`` runs, unlike ``python
-    -m otto``) with the completion env vars stripped, so the child dumps names
-    instead of recursing into another completion.
+    names: list[str]
+    markers: list[str]
+
+
+def _run_collect_subprocess() -> CollectedDump | None:
+    """Spawn the bounded ``DUMP_TESTS_ENV_VAR`` subprocess and parse its dump.
+
+    Returns the collected names and markers, or ``None`` on timeout /
+    non-zero exit / spawn failure / a missing names frame. Runs the *venv*
+    ``otto`` binary (so ``entry`` runs, unlike ``python -m otto``) with the
+    completion env vars stripped, so the child dumps names instead of
+    recursing into another completion. A missing markers frame (an older
+    child binary) degrades to an empty marker list rather than a miss.
     """
     import subprocess
     import sys
@@ -2314,7 +2605,10 @@ def _run_collect_subprocess() -> list[str] | None:
         return None
     if proc.returncode != 0:
         return None
-    return _parse_dumped_names(proc.stdout)
+    names = _parse_dumped_names(proc.stdout)
+    if names is None:
+        return None
+    return CollectedDump(names=names, markers=_parse_dumped_markers(proc.stdout) or [])
 
 
 def maybe_warm_collected_tests(repos: list["Repo"]) -> list[str] | None:
@@ -2351,13 +2645,18 @@ def _warm_collected_tests(repos: list["Repo"], cache_path: Path) -> list[str] | 
     if not _acquire_collect_lock(lock):
         return None
     try:
-        names = _run_collect_subprocess()
+        dump = _run_collect_subprocess()
     finally:
         with contextlib.suppress(OSError):
             lock.unlink()
     with contextlib.suppress(OSError):
-        _record_collected_tests(repos, names)  # names=None stamps the cooldown
-    return names
+        # dump=None stamps the cooldown (names=None, markers=None).
+        _record_collected_tests(
+            repos,
+            dump.names if dump else None,
+            markers=dump.markers if dump else None,
+        )
+    return dump.names if dump else None
 
 
 # ---------------------------------------------------------------------------

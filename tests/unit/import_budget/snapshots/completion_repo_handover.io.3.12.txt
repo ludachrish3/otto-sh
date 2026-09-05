@@ -1,0 +1,5 @@
+# I/O golden: surface `completion_repo_handover`, CPython 3.12. Regenerate with `make import-snapshot` UNDER THIS INTERPRETER.
+listdir 51
+open_fixture 11
+open_home 4
+scandir 2

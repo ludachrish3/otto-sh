@@ -45,6 +45,7 @@ def test_surfaces_table_well_formed():
         "help_repo_warm",
         "bootstrap_repo",
         "completion_repo_warm",
+        "completion_repo_handover",
     }
     assert set(keys) == expected
 
@@ -502,7 +503,13 @@ def test_cap_exemption_covers_exactly_the_repo_bearing_surfaces():
     import dataclasses
 
     eligible = {s.key for s in harness.SURFACES if s.real_entry}
-    assert eligible == {"version_repo", "help_repo", "help_repo_warm", "completion_repo_warm"}
+    assert eligible == {
+        "version_repo",
+        "help_repo",
+        "help_repo_warm",
+        "completion_repo_warm",
+        "completion_repo_handover",
+    }
     capless = {s.key for s in harness.SURFACES if s.cap is None}
     assert capless == set(), f"every repo-bearing surface is capped now; still capless: {capless}"
 
@@ -663,11 +670,13 @@ def test_completion_env_reaches_the_child():
     reaching the child.
 
     ON THE MODULE COUNT, NOT ON I/O, and the failure that produced this test
-    is the reason: measured, the two agree on every gated I/O counter
-    (``scandir`` 1, ``open_fixture`` 2), because bare ``otto`` is served from
-    the same cached ``names`` section completion is. What separates them is
-    that completion renders NOTHING — no rich markdown, no pygments — which
-    the module count sees and the workspace I/O, correctly, does not.
+    is the reason: the warm completion golden is 3 modules and ``scandir`` 0
+    — the shim answers the TAB straight from the cache without ever
+    importing ``otto.cli`` — while bare ``otto`` (no ``_OTTO_COMPLETE`` in
+    the env) falls through the shim and renders the root help through the
+    full CLI path, pulling in the whole command tree. What separates them is
+    that fork in the shim itself, which the module count sees directly and
+    the workspace I/O, correctly, does not have to.
     """
     surface = harness.surface_by_key("completion_repo_warm")
     env = harness.surface_env(surface)
@@ -694,6 +703,13 @@ def test_completion_io_does_not_scale_with_corpus_size():
     comparable across environments, but a DELTA between two measurements taken
     in one environment is — whatever the bytecode cache and the installed dists
     add, they add to both sides.
+
+    Post-shim, the warm answer's own walk is the freshness check's stat pass
+    over the cache entry's stored key paths — O(key paths), which does scale
+    with what a real repo would put in the cache — but ``stat`` is not one of
+    the gated counters here (only ``open``/``scandir`` are), so that growth is
+    invisible to this pin by construction; only a corpus-driven ``open`` or
+    ``scandir`` regression on the warm path would show up here.
     """
     import dataclasses
 
@@ -709,6 +725,41 @@ def test_completion_io_does_not_scale_with_corpus_size():
     )
     assert io_large["scandir"] - io_small["scandir"] <= 5, (
         f"completion walks scale with corpus: {io_small['scandir']} -> {io_large['scandir']}"
+    )
+
+
+def test_completion_handover_io_does_not_scale_with_corpus_size():
+    """The FALLBACK's corpus cost must be O(1) too — the shim's cheapness buys nothing here.
+
+    ``completion_repo_warm``'s sibling test above pins the shim's own answer
+    path, which reads one JSON file and cannot witness a corpus-scaling walk
+    by construction. ``completion_repo_handover`` is the other side of the
+    same TAB: a `live` site the shim hands over on, which falls through to
+    the unchanged full CLI path — the one that resolves ``tunnel remove``'s
+    own module tree (spec `otto.cli.tunnel`, `otto.tunnel`, project/instructions)
+    and DOES walk the generated repo to discover it. A corpus-size regression
+    on that walk is exactly the kind of thing the shim's cheapness on the warm
+    path would otherwise let slip past unnoticed, so it needs its own pin.
+    """
+    import dataclasses
+
+    base = harness.surface_by_key("completion_repo_handover")
+    small = dataclasses.replace(
+        base, key="completion_handover_small", sut_files=50, sut_dirs_count=5
+    )
+    large = dataclasses.replace(
+        base, key="completion_handover_large", sut_files=200, sut_dirs_count=20
+    )
+
+    io_small = harness.measure_surface(small)["io"]
+    io_large = harness.measure_surface(large)["io"]
+
+    assert io_large["open"] - io_small["open"] <= 5, (
+        f"completion handover reads scale with corpus: {io_small['open']} -> {io_large['open']}"
+    )
+    assert io_large["scandir"] - io_small["scandir"] <= 5, (
+        f"completion handover walks scale with corpus: "
+        f"{io_small['scandir']} -> {io_large['scandir']}"
     )
 
 

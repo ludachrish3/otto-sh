@@ -7,24 +7,33 @@ construction from configuration and never discovered from records.
 """
 
 from collections.abc import Iterable
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from ..models.inventory import FILLABLE_INVENTORY_FIELDS, INVENTORY_KEY_FIELDS, InventoryRecord
 from .errors import InventoryError
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @runtime_checkable
 class Inventory(Protocol):
     """Tool-agnostic host facts, keyed by an opaque inventory key."""
 
-    label: str
-    """Names this inventory in provenance and errors, e.g. ``json:/home/me/inventory.json``."""
+    # Read-only on the protocol: a backend sets these once in its own ``__init__``,
+    # and a wrapper (``CredsOverlay``) derives them lazily from its inner backend.
+    @property
+    def label(self) -> str:
+        """Name this inventory in provenance and errors, e.g. ``json:/home/me/inventory.json``."""
+        ...
 
-    supplies: frozenset[str]
-    """Record fields this instance supplies; always contains ``"ip"``.
+    @property
+    def supplies(self) -> frozenset[str]:
+        """Record fields this instance supplies; always contains ``"ip"``.
 
-    Validated by :func:`check_supplies`.
-    """
+        Validated by :func:`check_supplies`.
+        """
+        ...
 
     def lookup(self, key: str) -> InventoryRecord:
         """Return the record for *key*.
@@ -43,6 +52,22 @@ class Inventory(Protocol):
 
         ``None`` means "not cacheable".
         """
+        ...
+
+
+@runtime_checkable
+class SupportsStatPaths(Protocol):
+    """Optional capability: name the files whose stat IS this backend's freshness.
+
+    The completion shim (``otto._shim_complete``) revalidates the cache by
+    ``os.stat`` alone. A backend whose :meth:`Inventory.fingerprint` is
+    derived from files it can name implements this and returns them; one
+    whose fingerprint is a content hash (the snapshot cache) returns ``None``
+    and the shim hands over.
+    """
+
+    def stat_paths(self) -> "list[Path] | None":
+        """Return the files whose stat decides this backend's freshness, or ``None``."""
         ...
 
 

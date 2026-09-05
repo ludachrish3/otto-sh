@@ -3,6 +3,7 @@ otto.bootstrap
 otto.cli
 otto.cli.builtin_commands
 otto.cli.callbacks
+otto.cli.completers
 otto.cli.expose
 otto.cli.host
 otto.cli.invoke

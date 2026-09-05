@@ -57,6 +57,7 @@ ignore = [
 "docs/conf.py" = ["INP001", "ANN", "D"]  # Sphinx build config — not autodoc'd; annotations and pydocstyle add nothing here
 "docs/examples/**" = ["INP001", "T201"]  # an example project is not a package; its scripts print
 "**/__init__.py" = ["F401"]
+"src/otto/_shim_complete.py" = ["PTH"]  # the completion shim: os.path by design — pathlib costs file syscalls on every TAB
 
 [lint.pylint]
 # Maximum number of arguments for function / method

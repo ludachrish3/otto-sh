@@ -1908,6 +1908,75 @@ def _drop_richs_cached_console():
     rich._console = None
 
 
+# The host-class SPEC table: the plain ``dict`` that lives beside
+# ``HOST_CLASSES``. ``register_host_class`` (otto/host/os_profile.py) writes
+# BOTH — the class into the ``Registry`` ``_isolate_registries`` can see, the
+# spec into this dict it cannot, because its discovery scans for ``Registry``
+# instances. Restoring only the registry leaves the two tables disagreeing, and
+# ``_nearest_registered_spec`` reads them TOGETHER
+# (``{HOST_CLASSES.get(n): _HOST_SPECS[n] for n in _HOST_SPECS}``): a spec left
+# behind for a class that was dropped makes the very next
+# ``register_host_class`` ANYWHERE in the process die with
+# ``ValueError: Unknown host class '<leaked name>'``.
+_HOST_SPEC_TABLE = ("otto.host.os_profile", "_HOST_SPECS")
+
+
+def _host_spec_snapshot() -> "dict[str, object] | None":
+    """Copy the host-spec table, or ``None`` when ``otto.host.os_profile`` is unloaded.
+
+    ``None`` is "there was nothing to snapshot", not "empty" — the distinction
+    :func:`_restore_host_specs` has to treat specially, exactly as
+    :func:`_provider_snapshot` does. ``getattr`` with no default so a rename of
+    the global fails loudly here, at the snapshot READ, rather than silently
+    minting a new attribute in the restore.
+    """
+    mod_name, attr = _HOST_SPEC_TABLE
+    mod = sys.modules.get(mod_name)
+    return None if mod is None else dict(getattr(mod, attr))
+
+
+def _restore_host_specs(snapshot: "dict[str, object] | None") -> None:
+    """Put the host-spec table back, IN PLACE, agreeing with the restored ``HOST_CLASSES``.
+
+    IN PLACE (``clear()`` + ``update()``), never a rebind: ``_nearest_registered_spec``
+    and ``build_host_spec`` read the module global, and a rebound attribute
+    would leave every reader that bound it by ``from … import`` holding the
+    leaked dict.
+
+    Two cases, mirroring what :func:`_restore_registries` just did to
+    ``HOST_CLASSES``:
+
+    * the module was loaded when the test started — the snapshot is the whole
+      truth, so put exactly it back;
+    * it was NOT loaded then but is now (the test imported it) — there is no
+      pre-test copy to return to, and the registry restore has already reduced
+      ``HOST_CLASSES`` to its otto-origin (import-time) entries. Match that:
+      a spec whose class survived stays, everything else goes — COMPUTING the
+      ``set(_HOST_SPECS) == set(HOST_CLASSES.names())`` that
+      ``_nearest_registered_spec`` needs to hold.
+
+    The loaded case does not compute that equality, it INHERITS it: it restores
+    a snapshot which the previous teardown had already left agreeing with
+    ``HOST_CLASSES``, and ``_restore_registries`` has just put ``HOST_CLASSES``
+    back to the matching snapshot.
+
+    Call it AFTER the registry restore: it reads the ``HOST_CLASSES`` that
+    restore leaves behind.
+    """
+    mod_name, attr = _HOST_SPEC_TABLE
+    mod = sys.modules.get(mod_name)
+    if mod is None:
+        return
+    specs = getattr(mod, attr)
+    if snapshot is None:
+        registered = set(mod.HOST_CLASSES.names())
+        for name in [n for n in specs if n not in registered]:
+            del specs[name]
+        return
+    specs.clear()
+    specs.update(snapshot)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_registries():
     """Snapshot every global otto ``Registry`` before each test; restore after.
@@ -1928,6 +1997,12 @@ def _isolate_registries():
     registry byte-for-byte stable across tests and across repeat iterations of
     the same test in one process. Built-in registrations (present at import)
     survive because they are part of the snapshot.
+
+    ``HOST_CLASSES`` needs one thing more than the scan can give it: its
+    entries are half of a pair, the other half being the plain
+    ``otto.host.os_profile._HOST_SPECS`` dict (see :data:`_HOST_SPEC_TABLE`).
+    So this fixture snapshot-restores that dict too, right after the registry
+    restore.
 
     The ``tests/unit/suite`` package additionally keeps its own
     ``_isolate_suites`` fixture: it *clears* ``SUITES`` to an empty baseline that
@@ -1958,10 +2033,15 @@ def _isolate_registries():
         for reg in _loaded_registries()
     ]
     modules_before = frozenset(sys.modules)
+    host_specs = _host_spec_snapshot()
 
     yield
 
     _restore_registries(snapshots, modules_before)
+    # After, not beside: the spec-table restore reads the ``HOST_CLASSES`` the
+    # call above leaves behind. Same fixture rather than a sibling autouse one
+    # so the order is stated here instead of inferred from collection order.
+    _restore_host_specs(host_specs)
 
 
 def _restore_registries(

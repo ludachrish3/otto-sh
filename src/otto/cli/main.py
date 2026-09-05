@@ -33,6 +33,7 @@ from ..config.env import (
 )
 from ..version import get_version
 from .builtin_commands import register_builtin_commands
+from .completers import completion_source
 
 if TYPE_CHECKING:
     from ..bootstrap import BootstrapResult
@@ -127,6 +128,7 @@ def log_level_callback(value: str) -> str:
     return value.upper()
 
 
+@completion_source(kind="payload", key="usernames", sort=True)
 def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Completion source for ``--as-user``: usernames the reservation backend knows.
 
@@ -145,6 +147,7 @@ def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # 
     return sorted(n for n in names if n.startswith(incomplete))
 
 
+@completion_source(kind="payload", key="labs", sort=True, sep="+")
 def _lab_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Completion source for ``--lab``: lab names referenced by the lab.json files.
 
@@ -242,6 +245,7 @@ def _refuse_contradictory_switches(
         )
 
 
+@completion_source(kind="payload", key="projects", sort=False)
 def _project_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Completion source for -I/-E: the DISCOVERED repo names.
 
@@ -285,6 +289,11 @@ def _stub_help(name: str, help_text: "str | None") -> str:
     return help_text or f"(run `otto {name} -h` for details)"
 
 
+PENDING_SUBCMD_ARGS_KEY = "_pending_subcmd_args"
+"""The ``ctx.meta`` key the root group's dispatch protocol reads; the
+completion tree serialiser sets it to resolve each child real."""
+
+
 class _OttoGroup(TyperGroup):
     """Root group: registry-backed lazy dispatch + pending-token snapshot.
 
@@ -312,14 +321,14 @@ class _OttoGroup(TyperGroup):
         result = super().parse_args(ctx, args)
         # Save the pending subcommand tokens (subcommand name + its args) so
         # the main() callback can inspect them even after invoke() clears them.
-        ctx.meta["_pending_subcmd_args"] = list(
+        ctx.meta[PENDING_SUBCMD_ARGS_KEY] = list(
             getattr(ctx, "_protected_args", []) + getattr(ctx, "args", [])
         )
         return result
 
     def _dispatch_target(self, ctx: Any) -> str | None:
         """Return the subcommand name pending dispatch, if any."""
-        pending = ctx.meta.get("_pending_subcmd_args") or []
+        pending = ctx.meta.get(PENDING_SUBCMD_ARGS_KEY) or []
         return pending[0] if pending else None
 
     @override
@@ -801,14 +810,24 @@ DELEGATED_NAMES_KEYS: frozenset[str] = frozenset(
         "transfer_backends",
         "usernames",
         "labs",
+        "host_classes_by_id",
+        "projects",
+        "links",
     }
 )
 """The remaining ``names`` payload keys. Each is consumed by a completer that
 does its own ``isinstance`` check and falls back to a live collection —
-verified, not assumed — except ``host_drops``, the outlet's payload: read by
-``otto cache info`` straight from the cache file, consumed by no completer.
-A further key, ``tests``, lives in its own cache section that
-``_cached_names_payload`` never loads.
+verified, not assumed — except ``host_drops``, ``projects`` and ``links``,
+which no Typer completer reads at all. ``host_drops`` is the outlet's payload:
+read by ``otto cache info`` straight from the cache file.
+``host_classes_by_id`` is consumed by
+``otto.cli.expose.cached_host_class_for_id`` to scope a host
+verb's TAB menu without building the host; ``projects`` and ``links`` are
+consumed by the shim's resolver, which reads the whole payload behind one
+broad ``except`` and hands over — their Typer-side completers
+(``_project_completer`` and the link-id completer) stay live, spec §5 lists
+no change to them. A further key, ``tests``, lives in its own cache section
+that ``_cached_names_payload`` never loads.
 
 ``tests/unit/config/test_cache_sections.py`` pins that
 :data:`RAW_ITERATED_NAMES_KEYS` and this constant together equal the ``names``
@@ -845,10 +864,12 @@ def _cached_names_payload(repos: "list[Repo]") -> "dict[str, Any] | None":
     for ``suites`` and ``instructions`` — well outside any containment
     ``entry()`` can offer, so a malformed one is a traceback in the user's
     shell mid-TAB rather than a fallback. Every key in
-    :data:`DELEGATED_NAMES_KEYS` is consumed by a completer that does its own
-    ``isinstance`` and falls back to a live collection — verified, not
-    assumed — so re-checking them here would be a second spelling of a rule
-    that already has one. (``tests``, the twelfth key, lives in its own cache
+    :data:`DELEGATED_NAMES_KEYS` reaches its reader inside a containment that
+    already falls back — a completer's own ``isinstance`` for most of them,
+    ``otto cache info``'s own reader for ``host_drops``, the shim's broad
+    ``except``-and-hand-over for ``projects`` and ``links`` (see that
+    constant's own note) — so re-checking them here would be a second
+    spelling of a rule that already has one. (``tests``, the twelfth key, lives in its own cache
     section this reader never loads.)
 
     Checked one level DEEP, not just ``isinstance(list)``: ``["plug", "x"]``
@@ -959,18 +980,28 @@ def entry() -> None:
                 collect_current_commands,
                 collect_docker_capable_host_ids,
                 collect_docker_use_case_names,
+                collect_host_classes_by_id,
                 collect_host_drops,
                 collect_host_ids,
                 collect_host_ids_by_lab,
                 collect_lab_names,
+                collect_links,
+                collect_marker_names,
+                collect_project_names,
                 collect_reservation_usernames,
-                collect_test_names,
+                scan_test_corpus,
                 write_cache,
             )
+            from ..config.completion_tree import build_shim_payload
 
             instructions, suites = collect_current_commands()
             backends = collect_backend_names()
             with contextlib.suppress(OSError):
+                # Inside the suppression, where the call it replaced sat as a
+                # write_cache keyword: it walks the corpus and reads pytest config,
+                # both of which guard OSError themselves today — but the containment
+                # is what this site promises, not what its callees happen to do.
+                scan = scan_test_corpus(result.repos)
                 write_cache(
                     result.repos,
                     instructions,
@@ -983,9 +1014,17 @@ def entry() -> None:
                     usernames=collect_reservation_usernames(result.repos),
                     commands=collect_cli_commands(),
                     labs=collect_lab_names(result.repos),
-                    tests=collect_test_names(result.repos),
+                    tests=scan.names,
+                    markers=collect_marker_names(result.repos, scan=scan),
                     hosts_by_lab=collect_host_ids_by_lab(result.repos),
                     host_drops=collect_host_drops(result.repos),
+                    host_classes_by_id=collect_host_classes_by_id(result.repos),
+                    projects=collect_project_names(),
+                    links=collect_links(result.repos),
+                    # No explicit `app`: the Section's `_collect_shim` and this
+                    # call both default to `otto.cli.main.app`, so the tree
+                    # has one source and cannot drift between the two.
+                    shim=build_shim_payload(result.repos),
                     digests=section_digests,
                     # A contained bootstrap error means registration did not
                     # finish, so what was just collected is a PARTIAL picture

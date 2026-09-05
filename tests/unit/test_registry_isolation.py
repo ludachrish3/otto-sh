@@ -20,7 +20,10 @@ import types
 
 from otto.registry import Registry
 from tests.conftest import (
+    _host_spec_snapshot,
+    _loaded_registries,
     _provider_snapshot,
+    _restore_host_specs,
     _restore_provider_snapshot,
     _restore_registries,
 )
@@ -288,3 +291,139 @@ def test_a_late_registrys_extension_origin_is_evicted_so_reimport_re_registers()
     finally:
         sys.modules.pop("otto._fake_late_ext_home", None)
         sys.modules.pop("custom_frames_ext", None)
+
+
+# ── the host-class SPEC table: a plain dict, half of a pair with a Registry ──
+#
+# ``register_host_class`` writes ``HOST_CLASSES`` (a ``Registry``) and
+# ``otto.host.os_profile._HOST_SPECS`` (a ``dict``) together, and
+# ``_nearest_registered_spec`` reads them together. Restoring only the half the
+# ``Registry`` scan can see leaves a spec whose class is gone, and the next
+# ``register_host_class`` anywhere in the process — the next test's bootstrap of
+# a repo whose init registers a host class, say — dies on
+# ``ValueError: Unknown host class '<the leaked name>'``. As with the provider
+# seams above, these tests INJECT the hostile condition into the guard's restore
+# rather than hoping to observe a leak from a neighbouring test. Their otto
+# imports are function-local like ``_providers``: a module-scope import would
+# run at COLLECTION, inside the root guard's own baseline.
+
+
+def _guard_snapshot():
+    """Exactly what ``_isolate_registries`` records at setup."""
+    return (
+        [(reg, _snapshot(reg)) for reg in _loaded_registries()],
+        frozenset(sys.modules),
+        _host_spec_snapshot(),
+    )
+
+
+def _guard_restore(state) -> None:
+    """Exactly what ``_isolate_registries`` runs at teardown, in its order."""
+    snapshots, modules_before, host_specs = state
+    _restore_registries(snapshots, modules_before)
+    _restore_host_specs(host_specs)
+
+
+def test_host_spec_registered_during_a_test_is_dropped_by_the_restore() -> None:
+    """The injection: register a host class, restore, expect BOTH tables clean.
+
+    The third assertion is the call that actually failed: a leftover spec is not
+    merely untidy, it POISONS ``_nearest_registered_spec`` for every later
+    registration in the process.
+    """
+    from otto.host import os_profile
+    from otto.host.unix_host import UnixHost
+
+    class _PinHost(UnixHost):
+        pass
+
+    class _NextPinHost(UnixHost):
+        pass
+
+    state = _guard_snapshot()
+    os_profile.register_host_class("pinhostos", _PinHost)
+    # The hostile condition is real, in both halves of the pair.
+    assert "pinhostos" in os_profile.HOST_CLASSES.names()
+    assert "pinhostos" in os_profile._HOST_SPECS
+
+    _guard_restore(state)
+
+    assert "pinhostos" not in os_profile.HOST_CLASSES.names()
+    assert "pinhostos" not in os_profile._HOST_SPECS
+    try:
+        os_profile.register_host_class("nextpinhostos", _NextPinHost)
+    finally:
+        _guard_restore(state)
+
+
+def test_host_specs_present_before_the_test_survive_the_restore() -> None:
+    """Restore, not reset: a spec that predates the snapshot is still there, identical.
+
+    A module- or session-scoped fixture registering a host class sets up BEFORE
+    any function-scoped snapshot, so its spec is inside the snapshot and has to
+    come back out of it — the same distinction the provider survival pin above
+    draws. A guard that cleared the dict instead would kill that fixture with
+    its first test, and take otto's own built-in specs with it.
+    """
+    from otto.host import os_profile
+    from otto.host.unix_host import UnixHost
+    from otto.models.host import UnixHostSpec
+
+    class _PreExistingHost(UnixHost):
+        pass
+
+    class _PreExistingSpec(UnixHostSpec):
+        pass
+
+    class _AddedHost(UnixHost):
+        pass
+
+    pristine = _guard_snapshot()
+    try:
+        os_profile.register_host_class("preexistingos", _PreExistingHost, spec=_PreExistingSpec)
+
+        state = _guard_snapshot()
+        os_profile.register_host_class("addedbythetestos", _AddedHost)
+
+        _guard_restore(state)
+
+        assert os_profile._HOST_SPECS["preexistingos"] is _PreExistingSpec
+        assert os_profile._HOST_SPECS["unix"] is UnixHostSpec
+    finally:
+        _guard_restore(pristine)
+
+
+def test_a_spec_table_first_seen_mid_test_is_reduced_to_the_surviving_classes() -> None:
+    """No pre-test copy to return to: agree with the ``HOST_CLASSES`` the restore left.
+
+    A snapshot taken while ``otto.host.os_profile`` is UNLOADED records
+    ``None`` — "there was nothing to snapshot", not "empty" — and a guard that
+    then skipped the restore would let everything the test registered survive.
+    The registry restore has meanwhile reduced ``HOST_CLASSES`` to its
+    import-time entries, so the one correct answer is the set that agrees with
+    it: ``set(_HOST_SPECS) == set(HOST_CLASSES.names())``, which is precisely
+    what ``_nearest_registered_spec`` iterates.
+    """
+    from otto.host import os_profile
+    from otto.host.unix_host import UnixHost
+
+    class _LatePinHost(UnixHost):
+        pass
+
+    snapshots = [(reg, _snapshot(reg)) for reg in _loaded_registries()]
+    modules_before = frozenset(sys.modules)
+    real = sys.modules["otto.host.os_profile"]
+    try:
+        del sys.modules["otto.host.os_profile"]
+        host_specs = _host_spec_snapshot()
+        assert host_specs is None
+    finally:
+        sys.modules["otto.host.os_profile"] = real
+
+    os_profile.register_host_class("latepinhostos", _LatePinHost)
+
+    _restore_registries(snapshots, modules_before)
+    _restore_host_specs(host_specs)
+
+    assert "latepinhostos" not in os_profile._HOST_SPECS
+    assert set(os_profile._HOST_SPECS) == set(os_profile.HOST_CLASSES.names())

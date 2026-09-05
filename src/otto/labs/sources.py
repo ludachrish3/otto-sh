@@ -38,7 +38,7 @@ class CompiledLabSource:
     kwargs: dict[str, Any] = field(default_factory=dict)
     """Constructor kwargs passed verbatim (custom backends only)."""
 
-    def lab_files(self) -> list[Path]:
+    def lab_files(self, *, visited: "set[Path] | None" = None) -> list[Path]:
         """Return the lab files a json source reads (empty for custom backends).
 
         The reader on the CONFIG side — completion's fingerprint and raw link
@@ -48,10 +48,14 @@ class CompiledLabSource:
         expands to the sorted ``.json`` files it matches), so they can never
         disagree with the backend about which files matter. Entries that
         resolve to no existing file contribute nothing, exactly as at load.
+
+        *visited*, when given, is passed through to
+        :func:`~otto.labs.json_repository.expand_lab_paths` so a caller can
+        collect the directories this enumeration entered.
         """
         from .json_repository import expand_lab_paths  # lazy: keep this module light
 
-        return expand_lab_paths(self.paths)
+        return expand_lab_paths(self.paths, visited=visited)
 
 
 def compile_lab_sources(

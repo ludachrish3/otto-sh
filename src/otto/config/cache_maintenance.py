@@ -54,16 +54,31 @@ docstring. Kept narrow on purpose: widening it to something like `.+` is
 exactly the mutation `test_prune_ignores_non_matching_names` exists to catch.
 """
 
-CACHE_FILE_NAMES = ["completion_cache.json", "remote_completion_cache.json"]
-"""The two prune-target filenames, one per workspace directory.
+CACHE_FILE_NAMES = [
+    "completion_cache.json",
+    "remote_completion_cache.json",
+    "completion_cache.names.ok",
+    "completion_cache.tests.ok",
+]
+"""The four prune-target filenames, one per workspace directory.
 
-Written as literals (not `[CACHE_FILENAME, REMOTE_CACHE_FILENAME]`) so this
-list reads standalone. Deliberately NOT pinned by a module-level `assert`:
+Written as literals (not `[CACHE_FILENAME, REMOTE_CACHE_FILENAME,
+*MARKER_FILENAMES.values()]`) so this list reads standalone. The two marker
+files are derived state the shim recreates on its next validating pass, never
+handmade -- so `clear` and `prune` remove them right along with the cache
+files they vouch for. Deliberately NOT pinned by a module-level `assert`:
 that would be elided entirely under `python -O`, silently disarming the one
-check that would catch this list drifting from its two source constants.
+check that would catch this list drifting from its four source constants.
 `test_cache_file_names_matches_the_source_constants` in this module's test
 suite is the pin instead -- it runs every time, `-O` or not.
 """
+
+MARKER_FILENAMES = {"names": "completion_cache.names.ok", "tests": "completion_cache.tests.ok"}
+"""Per key set, the marker beside the cache whose fresh mtime lets the shim skip its stat pass.
+
+Pinned equal to `otto._shim_complete.MARKER_FILENAMES` by tests/unit/shim."""
+SHIM_WINDOW_SECONDS = 60
+"""How long a marker is trusted (Chris, 2026-09-04: one minute). Mirrored in otto._shim_complete."""
 
 _ENV_DIRNAME = "env"
 

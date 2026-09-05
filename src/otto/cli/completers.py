@@ -6,7 +6,39 @@ Host-id completion must be lab-scoped everywhere host ids are accepted —
 live here rather than in any one subapp.
 """
 
+from collections.abc import Callable
+from typing import Any, TypeVar
+
 import typer
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def completion_source(**source: Any) -> Callable[[_F], _F]:
+    """Declare how a completer's answer can be reproduced WITHOUT calling it.
+
+    The completion shim (``otto._shim_complete``) answers a warm TAB from the
+    cache alone, so every completer must say, in data, which payload key it
+    reads and how it filters (spec §3.4). The tree serialiser
+    (:mod:`otto.config.completion_tree`) copies this dict into the cached
+    tree; a completer WITHOUT one is serialised ``live`` — a hand-over — and
+    ``tests/unit/config/test_completion_tree.py`` fails by name, so a new
+    completer cannot silently become a slow TAB. Change the completer's
+    filter and this declaration together, or the shim's answer will differ
+    from Typer's — the differential test is the net.
+
+    Typer's ``compat_autocompletion`` wrapper additionally keeps only the
+    values that start with the fragment; every source kind the shim knows
+    filters by prefix already, so that extra filter is a no-op it mirrors
+    for free.
+    """
+
+    def mark(fn: _F) -> _F:
+        # Decorator attribute, read by the tree serialiser (otto.config.completion_tree).
+        fn.__completion_source__ = dict(source)  # ty: ignore[unresolved-attribute]
+        return fn
+
+    return mark
 
 
 def selected_lab_names(ctx: typer.Context) -> list[str]:

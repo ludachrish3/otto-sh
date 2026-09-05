@@ -69,6 +69,11 @@ _DEMO_LABS: dict[str, list[dict[str, Any]]] = {
             "ip": "10.0.1.1",
             "element": "router2",
             "creds": [{"login": "admin", "password": "admin"}],
+            # Spelled out although "unix" is the factory's default: this selector
+            # is what `list_host_summaries` reports and what scopes the verb menu
+            # of `otto host router2 <TAB>`. A backend that drops it keeps working
+            # and quietly offers every class's verbs.
+            "os_type": "unix",
         },
     ],
 }
@@ -176,7 +181,8 @@ class ExampleLabRepository:
         for name, hosts in self._labs.items():
             for host_data in hosts:
                 try:
-                    identity = host_identity(resolve_host_entry(host_data, inventory).host_data)
+                    resolved = resolve_host_entry(host_data, inventory).host_data
+                    identity = host_identity(resolved)
                 except (ValueError, TypeError, InventoryError):
                     continue
                 existing = by_id.get(identity.id)
@@ -190,5 +196,6 @@ class ExampleLabRepository:
                     element=identity.element,
                     element_id=identity.element_id,
                     docker_capable=identity.docker_capable,
+                    os_type=str(resolved.get("os_type", "unix")),
                 )
         return sorted(by_id.values(), key=lambda s: s.id)

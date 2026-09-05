@@ -39,6 +39,7 @@ from ..config.lab import Lab
 from ..docker import build_images, compose_ps
 from ..host.unix_host import UnixHost
 from ..utils import Status
+from .completers import completion_source
 from .invoke import fail, print_error
 
 if TYPE_CHECKING:
@@ -87,6 +88,7 @@ def docker_callback(ctx: typer.Context) -> None:
         return
 
 
+@completion_source(kind="payload", key="docker_hosts", lab_scoped=True, intersect=True, sort=True)
 def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     """Shell-completion source for ``--on``.
 
@@ -115,6 +117,7 @@ def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     return sorted(h for h in ids if h.startswith(incomplete))
 
 
+@completion_source(kind="payload", key="docker_use_cases", sort=True)
 def _use_case_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Shell-completion source for the ``USE_CASE`` positional.
 

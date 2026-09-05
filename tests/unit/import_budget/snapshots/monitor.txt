@@ -2,6 +2,7 @@ otto
 otto.bootstrap
 otto.cli
 otto.cli.builtin_commands
+otto.cli.completers
 otto.cli.invoke
 otto.cli.main
 otto.cli.monitor

@@ -60,14 +60,28 @@ class CredsOverlay:
     is read on the first ``lookup``, so a lab with no referenced entry never
     touches it. ``inner`` and ``creds_path`` are public — the doctor reads
     the file's mode, ``otto inventory refresh`` walks down to the cache.
+
+    ``label``/``supplies`` are properties over ``inner``, not attributes
+    copied at construction: an ``inner`` that answers only ``fingerprint``/
+    ``stat_paths`` (the shim's opaque-inventory probe, :func:`stat_paths`)
+    can still be wrapped and asked ``stat_paths()`` without ever needing a
+    ``label`` or ``supplies`` it does not have.
     """
 
     def __init__(self, inner: Inventory, *, path: Path) -> None:
         self.inner = inner
         self.creds_path = Path(path)
-        self.label = inner.label
-        self.supplies = frozenset(inner.supplies) | {"creds"}
         self._creds: "dict[str, list[dict[str, Any]]] | None" = None
+
+    @property
+    def label(self) -> str:
+        """Return the inner backend's label."""
+        return self.inner.label
+
+    @property
+    def supplies(self) -> frozenset[str]:
+        """Return the inner backend's supplied fields plus ``creds``."""
+        return frozenset(self.inner.supplies) | {"creds"}
 
     def _load(self) -> dict[str, list[dict[str, Any]]]:
         if self._creds is None:
@@ -99,3 +113,14 @@ class CredsOverlay:
         except OSError:
             return f"{inner}|creds:missing"
         return f"{inner}|creds:{st.st_mtime_ns}:{st.st_size}"
+
+    def stat_paths(self) -> "list[Path] | None":
+        """Return the inner backend's stat paths plus the creds file, or ``None`` when opaque.
+
+        ``None`` when the inner has no ``stat_paths`` at all, or when it has
+        one but returns ``None`` (its own fingerprint is not stat-derived) —
+        an overlay can never be more stat-checkable than what it wraps.
+        """
+        inner = getattr(self.inner, "stat_paths", None)
+        paths = inner() if callable(inner) else None
+        return None if paths is None else [*paths, self.creds_path]

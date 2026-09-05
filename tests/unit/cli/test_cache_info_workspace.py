@@ -8,6 +8,7 @@ as completion resolves it, so a stand-in would test nothing.
 """
 
 import json
+import re
 from types import SimpleNamespace
 
 from typer.testing import CliRunner
@@ -181,3 +182,25 @@ def test_info_stays_home_wide_without_a_workspace(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert "this workspace" not in result.output
+
+
+def test_info_reports_the_shim_standing(tmp_path, monkeypatch):
+    from otto import _shim_complete as sc
+    from otto.cli.cache import cache_app
+
+    _workspace(tmp_path, monkeypatch, references=["dut-1"])
+    out = runner.invoke(cache_app, ["info"]).output
+    assert "  shim: handing over — no cache file" in out  # no entry yet
+    # entry() writes the entry on any real invocation; write one the way it does.
+    from otto import bootstrap as bs
+    from otto.config import completion_cache as cc
+    from otto.config.completion_tree import build_shim_payload
+
+    repos = bs.discover().repos
+    cc.write_cache(repos, [], [], [], shim=build_shim_payload(repos))
+    out = runner.invoke(cache_app, ["info"]).output
+    assert "  shim: served (validated now)" in out
+    out = runner.invoke(cache_app, ["info"]).output
+    assert re.search(r"  shim: served \(validated \d+s ago\)", out), out
+    monkeypatch.setattr(sc, "inspect_shim", lambda path: "handing over — opaque inventory")
+    assert "  shim: handing over — opaque inventory" in runner.invoke(cache_app, ["info"]).output

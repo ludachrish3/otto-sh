@@ -215,6 +215,11 @@ _SWEEP_EXCLUSIONS = frozenset(
     {
         # KeyboardInterrupt by signal contract — see test above.
         "SyncPhaseInterrupt",
+        # A control-flow signal, not an error: the completion shim raises it to
+        # say "hand this TAB to the full path", and otto._shim_complete may
+        # import nothing of otto (the per-TAB import budget), so OttoError is
+        # unreachable there by design. Caught in-module; never escapes.
+        "Handover",
     }
 )
 

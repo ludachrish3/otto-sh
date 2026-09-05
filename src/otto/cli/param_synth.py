@@ -18,6 +18,7 @@ from typing import Annotated, Any, Union, get_args, get_origin, get_type_hints
 import typer
 
 from ..utils import Arg, Exclude, Opt, split_on
+from .completers import completion_source
 
 
 def coerce_scalar(value: str, target: type) -> Any:
@@ -64,6 +65,7 @@ def _remote_completer(marker: "Arg | Opt | None") -> Any:
     if kind is None:
         return None
 
+    @completion_source(kind="live")
     def _complete(ctx: typer.Context, incomplete: str) -> list[str]:
         from . import remote_completion
 

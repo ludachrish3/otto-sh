@@ -22,6 +22,7 @@ from ..tunnel import (
     remove_tunnel,
 )
 from ..utils import complete_separated_list
+from .completers import completion_source
 from .invoke import fail, print_error
 
 if TYPE_CHECKING:
@@ -99,6 +100,9 @@ def _ip_by_host(repos: list["Repo"]) -> dict[str, str]:
     return ip_by_host
 
 
+@completion_source(
+    kind="payload", key="hosts", lab_scoped=True, sort=True, sep=",", live_past_sep=True
+)
 def _hosts_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     from .completers import lab_scoped_host_ids
 
@@ -132,6 +136,7 @@ def _hosts_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     return complete_separated_list(sorted(ids), incomplete)
 
 
+@completion_source(kind="live")
 def _tunnel_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001
     try:
         ids = read_tunnel_ids(get_repos()) or []

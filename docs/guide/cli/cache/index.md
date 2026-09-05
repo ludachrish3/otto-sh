@@ -60,6 +60,7 @@ home: ~/.otto (default)
 3 workspace(s), 70B total, 1 older than 60d
 this workspace: e5f6a7b8-repo3
   completion names: fresh — TAB is served from it (written 3h ago)
+  shim: served (validated 12s ago)
   inventory: json:/home/me/.otto/inventory.json
   lab files (repo3/local): /home/me/repo3/lab/lab.json, /home/me/repo3/hosts.json
   hosts offered: 3 — dut1 dut2 local
@@ -90,20 +91,30 @@ explained here instead. `completion names` is the standing of this
 workspace's cache entry — `fresh` means TAB is served from it; `stale`,
 `expired` and `outdated` mean the next TAB rebuilds it; `tainted` means it was
 written while startup reported errors and is never served, so every TAB runs
-the full load until the error is fixed. `inventory` is the host inventory as
-completion resolved it — once per process, the way commands do, so a broken
-`[inventory]` table shows as `BROKEN` and empties every repo — followed by the
-lab files each declared source actually read (a source on a custom backend is
-marked `not file-backed`). While the inventory is broken, or cannot report
-freshness, nothing is written for the workspace at all, and the standing line
-says so instead of promising a rebuild. `hosts offered` lists the ids
-the entry holds, and `dropped` every entry the enumeration left out, with
-where it was and why: a reference to an inventory key that does not exist, a
-lab file that did not parse, a source that failed or did not answer in time.
-The block reads the entry whatever its standing — a stale entry still records
-the last enumeration, which is what the question is about — and says `hosts
-offered: unknown` when no entry has been written yet. Without a workspace
-(no `OTTO_SUT_DIRS`) the listing above is all there is.
+the full load until the error is fixed.
+
+`shim` is the standing of the fast answer — a warm TAB is answered by the
+console script from the cache alone when the entry's recorded files and
+directories still stat the same (or were checked within the last minute);
+`handing over — <reason>` names why the next TAB will run the full path instead
+(which still answers correctly, just slower). The two `.ok` marker files beside
+the cache are the minute's memory; `clear` and `prune` remove them with the
+cache. See [the CLI page's completion section](../index.md#shell-completion)
+for how the shim fits into completion overall.
+
+`inventory` is the host inventory as completion resolved it — once per process,
+the way commands do, so a broken `[inventory]` table shows as `BROKEN` and
+empties every repo — followed by the lab files each declared source actually
+read (a source on a custom backend is marked `not file-backed`). While the
+inventory is broken, or cannot report freshness, nothing is written for the
+workspace at all, and the standing line says so instead of promising a rebuild.
+`hosts offered` lists the ids the entry holds, and `dropped` every entry the
+enumeration left out, with where it was and why: a reference to an inventory
+key that does not exist, a lab file that did not parse, a source that failed or
+did not answer in time. The block reads the entry whatever its standing — a
+stale entry still records the last enumeration, which is what the question is
+about — and says `hosts offered: unknown` when no entry has been written yet.
+Without a workspace (no `OTTO_SUT_DIRS`) the listing above is all there is.
 
 ## clear
 

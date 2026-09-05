@@ -135,6 +135,59 @@ def host_class_for_id(host_id: str | None) -> type | None:
         return None
 
 
+# Process-lifetime memo for the cold-cache fallback in `cached_host_class_for_id`
+# (see that function's docstring for why one memo per process is correct).
+_discovered_host_classes: dict[str, str] | None = None
+
+
+def cached_host_class_for_id(host_id: str) -> type | None:
+    """Completion-time class lookup: the cached class map, else the same collector over discovery.
+
+    Never builds a host and never probes a lab — ``host_class_for_id`` does
+    both, which is why ``HostGroup._class_for`` used to give up under
+    resilient parsing and offer every class's verbs. The map is
+    ``host_classes_by_id`` from the ``names`` payload
+    (:func:`otto.config.completion_cache.collect_host_classes_by_id`); on a
+    cold cache the collector runs over ``otto.bootstrap.discover().repos``
+    (settings and lab data only — NEVER ``get_repos()``, which would run
+    bootstrap and with it user init code inside a TAB). ``None`` — unknown
+    id, unregistered class, any failure — means the union menu, exactly as
+    before.
+
+    The cold-cache result is memoized at module scope in
+    ``_discovered_host_classes``: click's bash completer resolves every
+    candidate verb through ``HostGroup.get_command`` for a single TAB (with
+    an empty prefix, that is every verb), and each of those calls reaches
+    this function again. Without the memo a cold cache would re-run the
+    collector — a fresh lab enumeration — once per verb instead of once per
+    TAB. A completion process is one-shot (it answers one TAB and exits), so
+    the memo can never go stale in practice.
+    """
+    global _discovered_host_classes  # noqa: PLW0603 — process-lifetime memo, see docstring
+    from ..config import get_completion_names
+
+    cached = get_completion_names()
+    mapping = cached.get("host_classes_by_id") if cached is not None else None
+    if not isinstance(mapping, dict):
+        if _discovered_host_classes is not None:
+            mapping = _discovered_host_classes
+        else:
+            try:
+                from .. import bootstrap
+                from ..config.completion_cache import collect_host_classes_by_id
+
+                mapping = collect_host_classes_by_id(bootstrap.discover().repos)
+            except Exception:  # noqa: BLE001 — completion never crashes the shell
+                return None
+            _discovered_host_classes = mapping
+    name = mapping.get(host_id)
+    if not isinstance(name, str):
+        return None
+    from ..host.os_profile import get_host_class
+
+    return get_host_class(name)
+
+
 def exposed_cli_names(cls: type | None) -> set[str]:
     """Return the set of ``@cli_exposed`` cli-names defined on *cls* (empty for ``None``)."""
     return set(collect_exposed_methods(cls)) if cls is not None else set()
@@ -260,14 +313,6 @@ def _make_host_group() -> "type[TyperGroup]":
                 self._dynamic_names.add(cli_name)
 
         def _class_for(self, ctx: Any) -> type | None:
-            # During shell completion (``resilient_parsing``) skip resolving the
-            # host's class: ``host_class_for_id`` calls ``get_host``, which loads the
-            # lab and constructs the host just to scope the menu. Returning ``None``
-            # offers the full unscoped verb list — correct for completion — without
-            # paying that cost. Verbs are synthesized live either way, so nothing
-            # goes stale.
-            if getattr(ctx, "resilient_parsing", False):
-                return None
             # No host id to scope by (e.g. `otto host --help`, `otto host <TAB>`):
             # skip the lab probe entirely. Probing with no id can only ever return
             # None anyway, and doing so on a help path used to trigger a full lab
@@ -276,6 +321,11 @@ def _make_host_group() -> "type[TyperGroup]":
             host_id = (ctx.params or {}).get("host_id")
             if not host_id:
                 return None
+            if getattr(ctx, "resilient_parsing", False):
+                # Completion: scope honestly from the cached class map — no
+                # lab probe, no host construction (the two reasons this used
+                # to return None and offer every class's verbs).
+                return cached_host_class_for_id(host_id)
             # Real dispatch with an id: the lab loads lazily (leaf-invoke preamble),
             # which runs AFTER this parse-time scoping. Ensure it here as a soft
             # probe so ``host_class_for_id`` → ``get_host`` can resolve the concrete
@@ -287,16 +337,38 @@ def _make_host_group() -> "type[TyperGroup]":
             try_ensure_lab(ctx)
             return host_class_for_id(host_id)
 
-        @override
-        def list_commands(self, ctx: Any) -> list[str]:
+        def scoped_names(self, ctx: Any, cls: type) -> list[str]:
+            """Return the verb menu for *cls*: static commands plus *cls*'s verbs, in menu order."""
             self._ensure_dynamic()
-            cls = self._class_for(ctx)
-            allowed = exposed_cli_names(cls) if cls is not None else self._dynamic_names
+            allowed = exposed_cli_names(cls)
             return [
                 n
                 for n in super().list_commands(ctx)
                 if n not in self._dynamic_names or n in allowed
             ]
+
+        def scoped_command(self, ctx: Any, cls: type, cmd_name: str) -> Any:
+            """Return what *cmd_name* resolves to for *cls* (``None`` if not on its menu).
+
+            The body is the former ``get_command`` tail moved here VERBATIM
+            (a verb the class exposes is built for it even when the name is
+            not in ``_dynamic_names`` yet) — do not "simplify" it.
+            """
+            self._ensure_dynamic()
+            verbs = collect_exposed_methods(cls)
+            if cmd_name in self._dynamic_names and cmd_name not in verbs:
+                return None
+            if cmd_name in verbs:
+                return self._class_command(cls, cmd_name, verbs[cmd_name])
+            return super().get_command(ctx, cmd_name)
+
+        @override
+        def list_commands(self, ctx: Any) -> list[str]:
+            self._ensure_dynamic()
+            cls = self._class_for(ctx)
+            if cls is None:
+                return list(super().list_commands(ctx))
+            return self.scoped_names(ctx, cls)
 
         def _class_command(self, cls: type, cmd_name: str, attr_name: str) -> Any:
             """Build (and cache) the verb's command from *cls*'s own method.
@@ -322,14 +394,8 @@ def _make_host_group() -> "type[TyperGroup]":
             self._ensure_dynamic()
             cls = self._class_for(ctx)
             if cls is None:
-                # Completion / unresolved host → the unscoped global command.
                 return super().get_command(ctx, cmd_name)
-            verbs = collect_exposed_methods(cls)
-            if cmd_name in self._dynamic_names and cmd_name not in verbs:
-                return None  # dynamic verb not exposed on this host class
-            if cmd_name in verbs:
-                return self._class_command(cls, cmd_name, verbs[cmd_name])
-            return super().get_command(ctx, cmd_name)  # static (non-dynamic) commands
+            return self.scoped_command(ctx, cls, cmd_name)
 
     return HostGroup
 

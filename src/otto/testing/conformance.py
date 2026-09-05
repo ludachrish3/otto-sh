@@ -326,11 +326,21 @@ def _expect_host_summaries_conform(
                 summary.docker_capable,
                 bool(getattr(host, "docker_capable", False)),
             ),
+            # A constructed host ALWAYS carries a selector (the factory defaults
+            # it to "unix"), so a summary leaving it None is a backend that did
+            # not record it, not a host that has none.
+            ("os_type", summary.os_type, getattr(host, "os_type", None)),
         ):
             c.expect(
                 summarized == built,
                 f"SupportsHostSummaries: {summary.id!r}.{field} is {summarized!r} in the "
-                f"summary but {built!r} on the constructed host",
+                f"summary but {built!r} on the constructed host"
+                + (
+                    " — `otto host <id> <TAB>` would offer every class's verbs "
+                    "instead of this host's"
+                    if field == "os_type"
+                    else ""
+                ),
             )
         produced_in = labs_of.get(summary.id, set())
         claimed = set(summary.labs)

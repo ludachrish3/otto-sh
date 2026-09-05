@@ -14,14 +14,21 @@ Both entry paths route here — the ``otto`` console script (``pyproject.toml``'
 ``[project.scripts]``) and ``python -m otto`` (``otto/__main__.py``). One fast
 path, so the two cannot diverge.
 
+A third trivial invocation is answered here too: a bash TAB
+(``_OTTO_COMPLETE=complete_bash``), served from the completion cache by
+``otto._shim_complete.answer`` when the cache validates (docs/superpowers/
+specs/2026-09-04-shim-completion-design.md). Nothing is written to stdout
+before that decision is made — the same rule the resolver itself follows.
+
 Imports nothing from otto at module scope.
 """
 
+import os
 import sys
 
 
 def main() -> None:
-    """Answer ``--version`` directly; otherwise hand off to the full CLI."""
+    """Answer ``--version`` or a bash TAB directly; otherwise hand off to the full CLI."""
     # Exact match, never membership: `otto host put --version` is a real
     # subcommand invocation that needs the registry.
     if sys.argv[1:] == ["--version"]:
@@ -37,6 +44,31 @@ def main() -> None:
         # console script itself, and stdout is its entire contract.
         print(f"otto version: {get_version()}")  # noqa: T201
         raise SystemExit(0)
+
+    if os.environ.get("_OTTO_COMPLETE") == "complete_bash":
+        # A bash TAB: answered from the completion cache by the standard
+        # library alone when the cache validates (docs/superpowers/specs/
+        # 2026-09-04-shim-completion-design.md); anything else falls through
+        # to the full path below, which is always right.
+        from ._shim_complete import answer
+
+        text = answer(dict(os.environ))
+        if text is not None:
+            try:
+                # What Typer's echo of comp.complete() prints: the values joined
+                # by newlines, plus one trailing newline.
+                sys.stdout.write(text + "\n")
+                sys.stdout.flush()
+            except UnicodeEncodeError:
+                # An ASCII-configured stdout (no PEP 538/540 coercion) and a
+                # non-ASCII candidate: click's echo degrades with
+                # errors="replace" where this would traceback into the user's
+                # shell mid-TAB. TextIOWrapper encodes before it buffers, so
+                # NOTHING was written and the full path below can answer the
+                # same TAB the way click does.
+                pass
+            else:
+                raise SystemExit(0)
 
     from .cli.main import entry
 

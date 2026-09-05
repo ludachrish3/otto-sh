@@ -16,10 +16,12 @@ from ..context import get_context
 from ..host.remote_host import RemoteHost
 from ..host.unix_host import UnixHost
 from .callbacks import list_hosts_callback
+from .completers import completion_source
 from .expose import HostGroup
 from .invoke import fail, print_error
 
 
+@completion_source(kind="payload", key="hosts", lab_scoped=True, sort=True)
 def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     """Shell-completion source for the ``host_id`` positional argument.
 
@@ -31,6 +33,7 @@ def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     return sorted(h for h in lab_scoped_host_ids(ctx) if h.startswith(incomplete))
 
 
+@completion_source(kind="payload", key="term_backends", sort=True)
 def _term_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Completion source for ``--term``: registered term backends.
 
@@ -50,6 +53,7 @@ def _term_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: 
     return sorted(n for n in names if n.startswith(incomplete))
 
 
+@completion_source(kind="payload", key="transfer_backends", family="unix", sort=True)
 def _transfer_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Completion source for ``--transfer``: unix-applicable transfer backends.
 

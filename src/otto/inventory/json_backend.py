@@ -101,3 +101,7 @@ class JsonInventory:
         except OSError:
             return f"{self.path}|missing"
         return f"{self.path}|{st.st_mtime_ns}|{st.st_size}"
+
+    def stat_paths(self) -> "list[Path] | None":
+        """Return the one file this backend's fingerprint is derived from."""
+        return [self.path]

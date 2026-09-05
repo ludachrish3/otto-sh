@@ -31,7 +31,7 @@ from ..link import (
     repair_all,
     repair_link,
 )
-from .completers import lab_scoped_host_ids, selected_lab_names
+from .completers import completion_source, lab_scoped_host_ids, selected_lab_names
 from .invoke import fail, print_error
 
 link_app = typer.Typer(
@@ -51,6 +51,7 @@ def link_callback(ctx: typer.Context) -> None:
         return
 
 
+@completion_source(kind="payload", key="links", lab_scoped=True, sort=True)
 def _link_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     """Offer the selected lab's declared links, matching what dispatch loads.
 

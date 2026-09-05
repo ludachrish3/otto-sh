@@ -15,7 +15,7 @@ preserved deliberately. Reserved ``__*__`` namespaces (the collected-test
 names, the dynamic tunnel ids) live beside ``"sections"`` at the top level,
 unchanged.
 
-Two sections at introduction:
+Three sections:
 
 - ``names`` — everything whose registration source is bounded: instruction
   and suite names, hosts, backends, third-party CLI commands. Keys on the
@@ -27,10 +27,19 @@ Two sections at introduction:
   monolithic fingerprint).
 - ``tests`` — the static ``--tests`` name floor. Keys on the full corpus
   walk: every file whose edit can change a statically-scanned test name.
+- ``shim`` — the self-describing entry the console-script shim answers a
+  bash TAB from; keys on both siblings' key sets (``names`` U ``tests``), so
+  it is rewritten whenever either is.
 
-Adding a third cached item is ONE ``Section(...)`` entry in
-:data:`SECTIONS` — no new digest function, no reader branch, no writer
-keyword, no schema bump.
+Adding a further cached item normally needs just ONE ``Section(...)`` entry
+in :data:`SECTIONS` — no new digest function, no reader branch, no schema
+bump, and no writer keyword: a plain new section is read and written through
+:func:`read_section` / :func:`write_section`, never through
+:func:`completion_cache.write_cache <otto.config.completion_cache.write_cache>`.
+``shim`` is the one exception so far: ``entry()`` needs it written in the SAME
+atomic update as its merged-view siblings, which is why ``write_cache`` grew a
+``shim=`` keyword solely for that ordering guarantee — a section that does not
+need atomicity with the merged view should not assume it needs one too.
 
 Digest contributions that are not stat-able files — the literal
 ``unresolved:<name>`` token for an init module that resolves under no
@@ -54,6 +63,13 @@ from typing import Any
 from . import completion_cache as _cc
 from .repo import Repo, configured_python_files, pytest_config_paths
 
+SHIM_SECTION = "shim"
+"""Storage name of the `shim` section. Defined here, not in :mod:`.completion_tree` (which
+re-exports it), because this module sits on the WARM completion-read path (a plain
+`read_cache` call lazily imports it) while `completion_tree` is cold-path-only (it resolves the
+whole CLI tree); a module-scope import the other way round would drag `completion_tree` — and
+everything IT imports — onto every TAB, not just a cache write."""
+
 
 def _names_key_paths(repos: list[Repo]) -> list[Path]:
     """Every path whose edit can change a REGISTERED name.
@@ -65,38 +81,58 @@ def _names_key_paths(repos: list[Repo]) -> list[Path]:
     lab files. Nested test files deliberately do NOT key this section: they
     cannot register, and skipping them is the point — this key set stays
     O(top-level) while the ``tests`` section pays the corpus walk.
+
+    Every directory the enumeration entered is a key path too — its mtime
+    moves when a file appears, is removed or is renamed there, which is how a
+    NEW lab file or top-level test file is seen by a reader that never
+    re-runs the glob (the completion shim). Those directories are appended,
+    sorted, after the files.
     """
     paths: list[Path] = []
+    visited: set[Path] = set()
     for repo in repos:
         paths.append(repo.sut_dir / ".otto" / "settings.toml")
         paths.extend(_cc.resolved_init_paths(repo))
         paths.extend(pytest_config_paths(repo.sut_dir))
-        paths.extend(Repo.iter_test_files(repo))
+        paths.extend(Repo.iter_test_files(repo, visited=visited))
         # Direct attribute access throughout, as in compute_fingerprint: this
         # is the digest path, and a malformed repo double missing a pinned
         # attribute must fail by name, not hash "nothing declared".
         for src in repo.lab_sources:
-            paths.extend(src.lab_files())
-    return paths
+            paths.extend(src.lab_files(visited=visited))
+    return [*paths, *sorted(visited)]
 
 
 def _tests_key_paths(repos: list[Repo]) -> list[Path]:
-    """Every path whose edit can change a static ``--tests`` name.
+    """Every path whose edit can change a static ``--tests`` name -- or a ``-m`` one.
 
     The full corpus walk: the repo's own ``python_files`` patterns (plus
     ``conftest.py``) under every tests dir, the conftests on the path from a
     tests dir up to the SUT root, and the files that decide which patterns
     and directories apply at all (the pytest configs and ``settings.toml``).
+
+    The same set guards the section's OTHER payload, the ``-m`` marker floor:
+    :func:`completion_cache.collect_marker_names` reads the markers the same
+    scan saw and the ``markers =`` declarations in ``pyproject.toml`` -- both
+    already here, the second as one of the pytest configs. Its third source,
+    ``otto.suite.markers.OTTO_MARKERS``, is otto's own code and moves with the
+    otto version, not with a workspace path.
+
+    Every directory the walk entered is a key path too — see
+    :func:`_names_key_paths` for why — appended, sorted, after the files.
     """
     paths: list[Path] = []
+    visited: set[Path] = set()
     for repo in repos:
         paths.append(repo.sut_dir / ".otto" / "settings.toml")
         paths.extend(pytest_config_paths(repo.sut_dir))
         patterns = configured_python_files(repo.sut_dir)
         for test_dir in repo.tests:
             if test_dir.is_dir():
-                paths.extend(_cc.test_sources(test_dir, repo.sut_dir, patterns))
-    return paths
+                paths.extend(
+                    _cc.iter_test_sources(test_dir, repo.sut_dir, patterns, visited=visited)
+                )
+    return [*paths, *sorted(visited)]
 
 
 def _collect_names(repos: list[Repo]) -> dict[str, Any]:
@@ -121,12 +157,27 @@ def _collect_names(repos: list[Repo]) -> dict[str, Any]:
         "usernames": _cc.collect_reservation_usernames(repos),
         "commands": _cc.collect_cli_commands(),
         "labs": _cc.collect_lab_names(repos),
+        "host_classes_by_id": _cc.collect_host_classes_by_id(repos),
+        "projects": _cc.collect_project_names(),
+        "links": _cc.collect_links(repos),
     }
 
 
 def _collect_tests(repos: list[Repo]) -> dict[str, Any]:
-    """Assemble the ``tests`` payload: the ast-scanned static name floor."""
-    return {"tests": _cc.collect_test_names(repos)}
+    """Assemble the ``tests`` payload: the ast-scanned name and marker floors, one pass."""
+    scan = _cc.scan_test_corpus(repos)
+    return {"tests": scan.names, "markers": _cc.collect_marker_names(repos, scan=scan)}
+
+
+def _shim_key_paths(repos: list[Repo]) -> list[Path]:
+    """Names U tests: the shim entry must be rewritten whenever EITHER sibling is (spec §3.1)."""
+    return [*_names_key_paths(repos), *_tests_key_paths(repos)]
+
+
+def _collect_shim(repos: list[Repo]) -> dict[str, Any]:
+    from .completion_tree import build_shim_payload  # lazy: imports the CLI
+
+    return build_shim_payload(repos)
 
 
 @dataclass(frozen=True)
@@ -147,17 +198,21 @@ class Section:
 SECTIONS: list[Section] = [
     Section(name="names", key_paths=_names_key_paths, collect=_collect_names),
     Section(name="tests", key_paths=_tests_key_paths, collect=_collect_tests),
+    Section(name=SHIM_SECTION, key_paths=_shim_key_paths, collect=_collect_shim),
 ]
 
 MERGED_VIEW_SECTIONS: list[str] = ["names", "tests"]
 """Membership of the LEGACY merged view — the sections
 :func:`completion_cache.read_cache <otto.config.completion_cache.read_cache>`
-validates and :func:`completion_cache.write_cache
-<otto.config.completion_cache.write_cache>` writes, kept in lockstep so a
-freshly written cache always reads back as a hit. A NEW section does NOT
-join this list: it is read and written through :func:`read_section` /
-:func:`write_section`, and widening the completion fast path's payload is a
-deliberate change here, never a side effect of registering a Section."""
+merges into its returned payload and :func:`completion_cache.write_cache
+<otto.config.completion_cache.write_cache>` writes from its keyword
+arguments, kept in lockstep so a freshly written cache always reads back as
+a hit. A NEW section does NOT join this list: it is read and written
+through :func:`read_section` / :func:`write_section` (or, like ``shim``,
+folded into a ``write_cache`` call as an EXTRA keyword that is written but
+never merged — see :func:`completion_cache.read_cache`'s *require*), and
+widening the completion fast path's MERGED payload is a deliberate change
+here, never a side effect of registering a Section."""
 
 
 def section_by_name(name: str) -> Section:

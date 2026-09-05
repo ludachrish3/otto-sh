@@ -178,7 +178,11 @@ def test_a_third_registered_section_does_not_break_the_merged_view(repos, monkey
     )
     monkeypatch.setattr(cs, "SECTIONS", [*cs.SECTIONS, throwaway])
 
-    cc.write_cache(discovered, [], [], [])
+    # `shim` too: it is a REAL registered section `cache_rebuild_is_worthwhile`
+    # requires (unlike `throwaway`, which registering alone must not affect
+    # the verdict) — a call site that omits it here would be pinning the
+    # wrong thing.
+    cc.write_cache(discovered, [], [], [], shim={})
     assert cc.cache_rebuild_is_worthwhile(discovered) is False, (
         "a freshly written cache reads as a permanent miss once a 3rd section is registered"
     )
@@ -290,6 +294,37 @@ def test_write_cache_split_matches_the_collectors(repos):
         for b in section_names[i + 1 :]:
             overlap = keys_by_section[a] & keys_by_section[b]
             assert not overlap, f"sections {a!r} and {b!r} both claim {sorted(overlap)}"
+
+
+def test_the_tests_collector_and_the_writer_agree_on_the_payload_itself(repos):
+    """Keys AND values, for the two spellings of "collect the tests payload".
+
+    ``entry()`` writes the section through ``write_cache``'s ``tests=`` /
+    ``markers=`` keywords off one ``scan_test_corpus`` pass; the section
+    registry rebuilds it through ``_collect_tests``.
+    ``test_write_cache_split_matches_the_collectors`` pins that their KEY sets
+    cannot drift, which a collector returning the right key with the wrong
+    contents still satisfies -- and ``markers``, the half added last, is
+    assembled from three sources on one path and one call on the other.
+    """
+    from otto.config import completion_cache as cc
+    from otto.config.cache_sections import section_by_name
+
+    _, discovered = repos
+    scan = cc.scan_test_corpus(discovered)
+    cc.write_cache(
+        discovered,
+        [],
+        [],
+        [],
+        tests=scan.names,
+        markers=cc.collect_marker_names(discovered, scan=scan),
+    )
+    stored = json.loads(cc._cache_path().read_text())["sections"]["tests"]["payload"]
+    assert stored == section_by_name("tests").collect(discovered)
+    # Both halves non-empty: `{} == {}` would pass while proving nothing.
+    assert stored["tests"], stored
+    assert stored["markers"], stored
 
 
 def test_names_payload_keys_are_all_checked_or_delegated(repos):

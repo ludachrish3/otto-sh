@@ -192,3 +192,52 @@ def test_loaded_ids_scopes_to_the_selected_lab(
         ],
     )
     assert collect_link_ids([repo], loaded_ids=selected) == expected
+
+
+def test_collect_links_carries_endpoint_hosts_for_lab_scoping(tmp_path: Path) -> None:
+    from otto.config.completion_cache import collect_links
+
+    repo = _repo_with_lab(
+        tmp_path,
+        hosts=[_TEST1, _TEST2],
+        links=[
+            {"endpoints": [{"host": "test1"}, {"host": "test2"}], "name": "edge"},
+            {"endpoints": [{"host": "test1"}, {"host": "test2"}]},
+        ],
+    )
+    assert collect_links([repo]) == [
+        {"id": "edge", "hosts": ["test1", "test2"]},
+        {"id": "test1--test2", "hosts": ["test1", "test2"]},
+    ]
+
+
+def test_declared_twice_with_disjoint_hosts_merges_both_declarations(tmp_path: Path) -> None:
+    """`_declared_links` merges an id's declarations rather than keeping only the first.
+
+    Two entries share the ``name`` "x" but touch disjoint host pairs — the
+    shape a lab.json can produce with two lab-sources declaring the same
+    named link over different elements. `collect_link_ids`'s own contract
+    is "an id passes if any declaration passes" (its docstring), so a
+    reader scoped to only the SECOND declaration's hosts must still be
+    offered "x" — that requires BOTH declarations' hosts to have reached
+    the merged bucket, not just the first one seen. `collect_links`' stored
+    ``hosts`` list must carry every declaration's endpoints for the same
+    reason: a lab-scoped reader unions the stored list against its lab's
+    host set instead of re-reading the lab file.
+    """
+    from otto.config.completion_cache import collect_links
+
+    alt = [
+        {**_TEST1, "element": "alt1"},
+        {**_TEST2, "element": "alt2"},
+    ]
+    repo = _repo_with_lab(
+        tmp_path,
+        hosts=[_TEST1, _TEST2, *alt],
+        links=[
+            {"endpoints": [{"host": "test1"}, {"host": "test2"}], "name": "x"},
+            {"endpoints": [{"host": "alt1"}, {"host": "alt2"}], "name": "x"},
+        ],
+    )
+    assert collect_link_ids([repo], loaded_ids={"alt1", "alt2"}) == ["x"]
+    assert collect_links([repo]) == [{"id": "x", "hosts": ["test1", "test2", "alt1", "alt2"]}]

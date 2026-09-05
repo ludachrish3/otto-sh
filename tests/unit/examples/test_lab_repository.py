@@ -68,3 +68,10 @@ def test_registrable_by_name():
         assert LAB_REPOSITORIES.get("example-host-source-test") is ExampleLabRepository
     finally:
         LAB_REPOSITORIES.unregister("example-host-source-test")
+
+
+def test_list_host_summaries_applies_the_factory_default_when_none_is_declared():
+    """Neither demo host declares ``os_type``, so the fast path applies the
+    same default (``"unix"``) the factory would apply when building the host."""
+    summaries = {s.id: s for s in ExampleLabRepository().list_host_summaries()}
+    assert summaries["router1"].os_type == "unix"

@@ -178,6 +178,7 @@ from ..suite.register import SUITES
 from ..suite.run import RUN_OPTIONS_KEY, NoTestsMatchedError, RunOptions
 from ..suite.run import run_selection as _run_selection_lib
 from ..suite.selection import UnknownSelectionError
+from .completers import completion_source
 from .invoke import make_registry_group
 
 # ---------------------------------------------------------------------------
@@ -185,6 +186,7 @@ from .invoke import make_registry_group
 # ---------------------------------------------------------------------------
 
 
+@completion_source(kind="tests", sep=",")
 def _tests_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Completion source for ``--tests``: static floor + pytest-collected names.
 
@@ -231,6 +233,39 @@ def _tests_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa:
         names.update(collected)
 
     return complete_separated_list(sorted(names), incomplete)
+
+
+@completion_source(kind="markers")
+def _markers_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
+    """Completion source for ``-m``/``--markers``: the two layers ``--tests`` uses, for markers.
+
+    The floor is the ``tests`` section's ``markers`` (declared, built-in and
+    statically spelled names — :func:`~otto.config.completion_cache.collect_marker_names`,
+    live on a miss); the pytest-collected record adds the markers only
+    collection can see, warming itself exactly as ``--tests`` does. The
+    expression rule (:func:`otto.utils.complete_marker_expression`) completes
+    the identifier being typed and keeps the rest of the expression.
+    """
+    from ..config import get_repos
+    from ..config.cache_sections import read_section
+    from ..config.completion_cache import (
+        collect_marker_names,
+        maybe_warm_collected_tests,
+        read_collected_markers,
+    )
+    from ..utils import complete_marker_expression
+
+    repos = get_repos()
+    section = read_section(repos, "tests")
+    floor = section.get("markers") if section is not None else None
+    names = set(floor) if isinstance(floor, list) else set(collect_marker_names(repos))
+    collected = read_collected_markers(repos)
+    if collected is None:
+        maybe_warm_collected_tests(repos)
+        collected = read_collected_markers(repos)
+    if collected:
+        names.update(collected)
+    return complete_marker_expression(sorted(names), incomplete)
 
 
 def run_selection(ctx: typer.Context) -> None:
@@ -370,6 +405,7 @@ def main(  # noqa: PLR0913 — CLI command params
             "--markers",
             "-m",
             metavar="EXPRESSION",
+            autocompletion=_markers_completer,
             help=(
                 "pytest -m marker expression applied after collection. With no "
                 "suite name, runs a suite-less selection across all repos."

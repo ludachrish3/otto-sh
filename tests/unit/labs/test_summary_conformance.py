@@ -1,9 +1,10 @@
 """The `SupportsHostSummaries` contract is about FIELDS, not just ids.
 
-A summary drives four completion surfaces — `--lab` scoping (`labs`), the
+A summary drives five completion surfaces — `--lab` scoping (`labs`), the
 positional handles (`element`/`element_id`), `otto docker --on`
-(`docker_capable`) and tunnel narrowing (`ip`). A backend that fills in only
-`id` used to pass every rule while silently breaking all four.
+(`docker_capable`), tunnel narrowing (`ip`) and the class-scoped verb menu
+(`os_type`). A backend that fills in only `id` used to pass every rule while
+silently breaking all five.
 """
 
 import pytest
@@ -57,6 +58,7 @@ class _Backend:
                 element=h.element,
                 element_id=h.element_id,
                 docker_capable=h.docker_capable,
+                os_type=h.os_type,
             )
             for h in self._hosts.values()
         ]
@@ -78,6 +80,10 @@ def _summaries_of() -> list[HostSummary]:
         ("element", "not-test1"),
         ("element_id", 7),
         ("docker_capable", False),
+        ("os_type", "zephyr"),
+        # None is the shape a backend that never recorded it produces, and the
+        # host it was built from always has one: same violation, quietest form.
+        ("os_type", None),
     ],
 )
 def test_a_field_that_disagrees_with_the_built_host_is_a_violation(field, wrong) -> None:
@@ -88,7 +94,15 @@ def test_a_field_that_disagrees_with_the_built_host_is_a_violation(field, wrong)
         **{
             **{
                 f: getattr(summaries[0], f)
-                for f in ("id", "labs", "ip", "element", "element_id", "docker_capable")
+                for f in (
+                    "id",
+                    "labs",
+                    "ip",
+                    "element",
+                    "element_id",
+                    "docker_capable",
+                    "os_type",
+                )
             },
             field: wrong,
         }

@@ -83,7 +83,7 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
     # writes SCHEMA_VERSION - 1 (tests/unit/config/test_completion_cache_unit.py).
     assert cache["schema"] == SCHEMA_VERSION
     sections = cache["sections"]
-    assert set(sections) == {"names", "tests"}
+    assert set(sections) == {"names", "tests", "shim"}
     names = sections["names"]
     assert isinstance(names["generated_at"], int)
     assert names["tainted"] is False
