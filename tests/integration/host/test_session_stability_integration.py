@@ -23,7 +23,7 @@ import pytest
 
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult, Result
-from tests._fixtures.bed_hygiene import _NC_LISTENER_PROBE
+from tests._fixtures.bed_hygiene import _NC_LISTENER_PROBE, local_nc_listeners
 from tests.integration.host._transfer_retry import transfer_with_retry
 
 # Real I/O is meaningfully slower than mocked; bump the per-test ceiling.
@@ -333,6 +333,12 @@ async def test_real_nc_concurrent_gets(
         await transfer_host.run(f"echo content_{i} > {remote}")
         remote_paths.append(Path(remote))
 
+    # Snapshot BEFORE the gets, so the check below measures the listeners this
+    # test created rather than whatever the box was already carrying — the
+    # sibling cancellation test above takes the same before/after reading on
+    # the remote side.
+    listeners_before = local_nc_listeners()
+
     try:
         statuses = await asyncio.gather(
             *(
@@ -356,20 +362,19 @@ async def test_real_nc_concurrent_gets(
             assert content == f"content_{i}", f"get {i} content mismatch: got {content!r}"
 
         # Local-listener leak check: with ``_get_files_nc`` we listen locally
-        # and have the remote ``nc`` connect to us. Any leftover ``nc -l``
-        # *on the local box* would indicate the orchestrator's local listener
-        # wasn't reaped.
-        import subprocess
-
-        local_listeners = subprocess.run(  # noqa: ASYNC221 — test harness, blocking subprocess acceptable
-            ["pgrep", "-af", "nc -l"],
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout.strip()
-        assert not local_listeners, (
-            f"leftover local nc listeners after concurrent get: {local_listeners}"
-        )
+        # and have the remote ``nc`` connect to us, so a leftover listener
+        # *on the local box* means the orchestrator's own listener wasn't
+        # reaped.
+        #
+        # NEW listeners only. This used to assert that the box had none at
+        # all, which made it a test of the machine's history rather than of
+        # this transfer: a single orphan from any source pinned it red for
+        # every later run, and one from 2026-08-26 duly did — nine days of a
+        # deterministic failure that no amount of correct reaping could clear.
+        # It also matched by command-line substring, so any process merely
+        # MENTIONING "nc -l" counted, this module included.
+        leaked = [line for line in local_nc_listeners() if line not in listeners_before]
+        assert not leaked, f"concurrent get orphaned local nc listener(s): {leaked}"
     finally:
         for p in remote_paths:
             await transfer_host.run(f"rm -f {p}")

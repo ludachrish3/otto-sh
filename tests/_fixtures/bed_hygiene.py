@@ -83,6 +83,38 @@ _DOCKER_NET_PROBE = (
 _PROBE_TIMEOUT = 30
 
 
+def local_nc_listeners() -> list[str]:
+    """``nc`` listeners on THIS box, as ``pgrep -af`` lines.
+
+    The local counterpart of running :data:`_NC_LISTENER_PROBE` on a bed host,
+    and deliberately the same probe text rather than a second spelling: the
+    flag-cluster pattern is the accumulated answer to ``-Nl``, ``-lp`` and
+    ``nc -l -p PORT``, and a hand-rolled local ``pgrep -af "nc -l"`` re-opens
+    every hole that comment records. Running it through ``sh -c`` is what lets
+    the probe stay one string; the bracket trick in :func:`argv_pattern` is
+    what keeps that wrapper shell — whose own argv carries the pattern — from
+    matching itself.
+
+    Returns the raw lines. Callers compare a BEFORE list against an AFTER one:
+    an absolute "no listeners exist" assertion inherits every orphan the box
+    was already carrying, which is not this test's leak and reddens it for
+    reasons no run of it can fix.
+    """
+    import subprocess
+
+    return (
+        subprocess.run(
+            ["sh", "-c", _NC_LISTENER_PROBE],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_PROBE_TIMEOUT,
+        )
+        .stdout.strip()
+        .splitlines()
+    )
+
+
 class ProbeFailedError(RuntimeError):
     """A bed probe itself failed — its answer is MISSING, not clean.
 
