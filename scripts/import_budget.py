@@ -129,14 +129,25 @@ _ALL_HEAVY = ("fastapi", "uvicorn", "starlette", "pytest")
 # Caps are on the NON-STDLIB module count (otto + third-party), never the full
 # sys.modules total. The stdlib import graph drifts across Python versions
 # (e.g. 3.14 pulls in compression.zstd, annotationlib, asyncio.graph, ...):
-# noise unrelated to otto's own footprint. The non-stdlib count is identical
-# across 3.10-3.14, so one cap (baseline + ~15 headroom) holds on every gated
-# interpreter. This is the same "stable across dependency/version upgrades"
-# rule the design already applies to the otto-only golden snapshot.
+# noise unrelated to otto's own footprint. One cap (baseline + ~15 headroom)
+# then holds on every gated interpreter. This is the same "stable across
+# dependency/version upgrades" rule the design already applies to the
+# otto-only golden snapshot.
+#
+# THE NON-STDLIB COUNT IS NOT IDENTICAL ACROSS INTERPRETERS, so a cap is
+# baselined on the HIGHEST-MEASURING gated one — today 3.10. A third party may
+# import a compat module only on the older interpreter: `markdown_it._compat`
+# is on `help_repo` under 3.10 and gone under 3.11+, which puts 3.10 one module
+# above every other version on that surface (464 vs 463 as of typer 0.27.2).
+# A cap baselined on 3.11+ is therefore already breached on 3.10 the day it
+# lands, and the 3.10 lane is the only one that says so — #303.
 #
 # The ~15 headroom is for a FULL-PATH surface: one whose deny list still lets
 # some third-party stack (typer, click, rich, ...) through, so a version bump
-# in one of those can move its count without otto importing anything new. A
+# in one of those can move its count without otto importing anything new —
+# exactly what opened #303, where typer 0.27.2 reparented its vendored click
+# exceptions onto a new `typer.exceptions` module and every typer-bearing
+# surface gained one module that otto neither imports nor can defer. A
 # surface whose deny list forbids every third party instead (`version_repo`,
 # `completion_repo_warm`) has a module set that is structurally fixed by that
 # deny list — nothing outside otto's own graph can ever appear — so it gets
@@ -170,7 +181,9 @@ SURFACES: list[Surface] = [
     # which never bootstraps), and the DIFFERENCE between the two snapshots is
     # the composition root's own footprint. `run` is the argv because the verbs
     # bootstrap registers are `otto run`'s.
-    Surface("run_bootstrapped", ["otto", "run", "--help"], _ALL_HEAVY, cap=267, bootstrap=True),
+    # cap 267 -> 278 per #303: 263 measured on 3.10 + 15, restoring the
+    # headroom a full-path surface is supposed to carry.
+    Surface("run_bootstrapped", ["otto", "run", "--help"], _ALL_HEAVY, cap=278, bootstrap=True),
     # EVERY SURFACE ABOVE MEASURES AN EMPTY WORKSPACE. The sanitized env strips
     # OTTO_*, so `sut_dirs` is empty, discovery finds zero repos, and the walk
     # this spec exists to remove costs nothing on any of them — `scandir` reads
@@ -234,7 +247,12 @@ SURFACES: list[Surface] = [
         # (otto.coverage.*, otto.docker.*, otto.tunnel.*, otto.link.*, ...).
         # help_repo_warm is unaffected: a warm run never reaches the slow
         # path that calls it.
-        cap=463,
+        #
+        # 463 -> 479: 463 was the RAW 3.10 measurement, i.e. a full-path
+        # surface carrying zero headroom, so the first third-party module to
+        # appear anywhere on it was a CI failure (#303). Re-baselined to the
+        # policy above: 464 measured on 3.10 + 15.
+        cap=479,
         sut_files=50,
         sut_dirs_count=5,
         real_entry=True,
@@ -243,7 +261,9 @@ SURFACES: list[Surface] = [
         "help_repo_warm",
         ["otto", "--help"],
         ("pytest",),
-        cap=390,
+        # 390 -> 404: raw-measurement baseline, same #303 re-baseline as its
+        # cold twin — 389 measured on 3.10 + 15.
+        cap=404,
         sut_files=50,
         sut_dirs_count=5,
         real_entry=True,
@@ -262,7 +282,9 @@ SURFACES: list[Surface] = [
         "bootstrap_repo",
         ["otto", "run", "--help"],
         _ALL_HEAVY,
-        cap=274,
+        # 274 -> 288: raw-measurement baseline, re-baselined per #303 —
+        # 273 measured on 3.10 + 15.
+        cap=288,
         bootstrap=True,
         sut_files=50,
         sut_dirs_count=5,
