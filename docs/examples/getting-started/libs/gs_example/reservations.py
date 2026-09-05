@@ -1,22 +1,24 @@
 """A reservation backend for a scheduler that is a text file.
 
-The shape every backend has: three read-only methods, a constructor that
-accepts what otto passes, and one exception for every failure. Replace the
-file read with your scheduler's API and the rest stands.
+The shape every backend has: the base class, three read-only methods, a
+constructor that forwards what otto passes, and one exception for every
+failure. Replace the file read with your scheduler's API and the rest stands.
 """
 
 # doc: begin team-backend
 from pathlib import Path
 
-from otto.reservations import ReservationBackendError
+from otto.reservations import ReservationBackendBase, ReservationBackendError
 
 
-class TeamFileBackend:
+class TeamFileBackend(ReservationBackendBase):
     """Read ``<user> <resource>`` lines; one line per holding."""
 
-    def __init__(self, *, repo_dir: Path | None = None, path: str) -> None:
+    def __init__(self, *, url: str | None = None, repo_dir: Path | None = None, path: str) -> None:
+        # url and repo_dir are otto's; path is this backend's own setting.
+        super().__init__(url=url, repo_dir=repo_dir)
         # otto always passes repo_dir; relative paths anchor to it.
-        self._path = (repo_dir or Path()) / path
+        self._path = (self.repo_dir or Path()) / path
 
     def _holdings(self) -> list[tuple[str, str]]:
         try:

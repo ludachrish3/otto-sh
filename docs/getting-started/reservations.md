@@ -73,9 +73,10 @@ backend that cannot answer fails the run rather than letting it through.
 ## A backend of your own
 
 The JSON file is a stand-in for the scheduler your team already has. A
-backend is a class with three read-only methods and a constructor that takes
-what otto passes; this one reads a text file, and everything but the file
-read and its `path` setting is what every backend looks like:
+backend subclasses `ReservationBackendBase`, implements its three read-only
+methods, and forwards the two constructor arguments otto passes (`url`,
+`repo_dir`) to the base; this one reads a text file, and everything but the
+file read and its `path` setting is what every backend looks like:
 
 ```{literalinclude} ../examples/getting-started/libs/gs_example/reservations.py
 :language: python
@@ -97,9 +98,12 @@ Registered by name from the `init` module, then selected by that name:
 :end-before: "# doc: end team-backend-config"
 ```
 
-otto ships the conformance test a backend must pass, and this page runs it
-on the backend above every time the documentation builds (`GS_EXAMPLE` and
-the `sys.path` line are as on {doc}`boards-of-interest`):
+The base class catches a forgotten method at instantiation. What it cannot
+check is meaning — that a failure raises rather than returning empty, that
+identifiers match the lab file byte for byte — so otto also ships the
+conformance test a backend must pass, and this page runs it on the backend
+above every time the documentation builds (`GS_EXAMPLE` and the `sys.path`
+line are as on {doc}`boards-of-interest`):
 
 ```{doctest}
 >>> import sys
@@ -115,5 +119,5 @@ the `sys.path` line are as on {doc}`boards-of-interest`):
 
 The rules it checks — never mutate, return the full set, raise for every
 failure, match identifiers byte for byte — and the optional capabilities
-(reservation windows, username completion) are in
-{doc}`../library/reservation-backends`.
+(reservation windows, username completion: implement the method and otto
+detects it) are in {doc}`../library/reservation-backends`.

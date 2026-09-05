@@ -81,6 +81,7 @@ otto.models.options
 otto.params
 otto.registry
 otto.reservations
+otto.reservations.base
 otto.reservations.check
 otto.reservations.identity
 otto.reservations.json_backend

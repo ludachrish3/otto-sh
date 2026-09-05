@@ -161,6 +161,7 @@ otto.project.orchestrator
 otto.project.state
 otto.registry
 otto.reservations
+otto.reservations.base
 otto.reservations.check
 otto.reservations.identity
 otto.reservations.json_backend

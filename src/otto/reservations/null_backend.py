@@ -8,27 +8,34 @@ set up a scheduler yet aren't blocked.
 
 from typing import TYPE_CHECKING
 
+from typing_extensions import override
+
+from .base import ReservationBackendBase
+
 if TYPE_CHECKING:
     from .protocol import ReservationBackend
 
 
-class NullReservationBackend:
+class NullReservationBackend(ReservationBackendBase):
     """Always returns "no reservations known" — the check is a no-op."""
 
+    @override
     def get_reserved_resources(
         self,
-        username: str,  # noqa: ARG002 — required by ReservationBackend protocol signature
+        username: str,
     ) -> set[str]:
         """Return an empty set — this backend tracks no reservations."""
         return set()
 
+    @override
     def who_reserved(
         self,
-        resource: str,  # noqa: ARG002 — required by ReservationBackend protocol signature
+        resource: str,
     ) -> list[str]:
         """Return an empty list — this backend tracks no reservations."""
         return []
 
+    @override
     def backend_name(self) -> str:
         """Return the registry key for this backend (``"none"``)."""
         return "none"

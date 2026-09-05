@@ -7,10 +7,38 @@ your team already uses. The `json` backend ships with otto
 register from your own repo.
 
 When your team already has a scheduler (Jira, a web API, a database), write a
-backend that talks to it instead of using the JSON file. A backend implements
-the [`ReservationBackend`](../api/reservations.rst) Protocol — three read-only
-methods (`get_reserved_resources`, `who_reserved`, `backend_name`). Otto never
-calls a write method; the scheduler stays authoritative.
+backend that talks to it instead of using the JSON file. A backend is a
+subclass of [`ReservationBackendBase`](../api/reservations.rst) that
+implements its three abstract read-only methods (`get_reserved_resources`,
+`who_reserved`, `backend_name`). Otto never calls a write method; the
+scheduler stays authoritative.
+
+The base class is the recommended starting point, not a requirement: what
+otto actually checks is the [`ReservationBackend`](../api/reservations.rst)
+Protocol, satisfied by any class with the three methods. Inheriting buys you a
+`TypeError` naming any method you forgot the moment the class is
+instantiated, and a constructor that already accepts the two keyword
+arguments otto passes — `url` (when the setting is present) and `repo_dir`
+(always). Declare your own `[reservations.<name>]` settings as further keyword
+parameters and forward the two otto-owned ones to `super().__init__`:
+
+```python
+from pathlib import Path
+
+from otto.reservations import ReservationBackendBase, ReservationBackendError
+
+
+class MyTeamBackend(ReservationBackendBase):
+    def __init__(
+        self, *, url: str | None = None, repo_dir: Path | None = None, api_key_env: str
+    ) -> None:
+        super().__init__(url=url, repo_dir=repo_dir)
+        self._api_key_env = api_key_env
+
+    def get_reserved_resources(self, username: str) -> set[str]: ...
+    def who_reserved(self, resource: str) -> list[str]: ...
+    def backend_name(self) -> str: ...
+```
 
 Otto ships a small, dependency-free reference implementation —
 [`otto.examples.reservations.ExampleReservationBackend`](../api/examples.rst) —
@@ -131,6 +159,21 @@ def test_my_backend_conforms():
 - **Optionally implement `get_reservation_windows()`** if your scheduler knows
   *when* bookings start and end (see
   [Reservation windows](../guide/cli/reservation/windows.md)).
+
+## Signalling optional capabilities
+
+Implementing the method **is** the signal. Otto detects each capability with
+`isinstance` against a `runtime_checkable` Protocol —
+[`SupportsUsernameCompletion`](../api/reservations.rst) is "has a callable
+`list_usernames`", [`SupportsReservationWindows`](../api/reservations.rst) is
+"has a callable `get_reservation_windows`". There is no flag to set, nothing to
+register, and nothing on the base class to override: add the method to your
+subclass and the feature is on from the next run.
+
+If you want the intent visible in the class header, name the capability
+Protocol as an extra base — `class MyTeamBackend(ReservationBackendBase,
+SupportsReservationWindows)`. That changes nothing at runtime; it lets a type
+checker hold your signature to the contract.
 
 ## Using the reservation library in your own CLI
 

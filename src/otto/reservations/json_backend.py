@@ -29,7 +29,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
+from typing_extensions import override
 
+from .base import ReservationBackendBase
 from .check import ReservationBackendError
 from .protocol import ReservationWindow
 
@@ -46,7 +48,7 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _FAR_FUTURE = datetime(9999, 1, 1, tzinfo=timezone.utc)
 
 
-class JsonReservationBackend:
+class JsonReservationBackend(ReservationBackendBase):
     """Read reservations from a JSON file on disk.
 
     Parameters
@@ -61,16 +63,19 @@ class JsonReservationBackend:
 
     def __init__(
         self,
-        url: str | None = None,  # noqa: ARG002 — required by registry-seam constructor signature (build_backend passes url= to all reservation backends)
+        url: str | None = None,
         *,
         path: Path,
     ) -> None:
+        super().__init__(url=url)
         self._path = Path(path)
 
+    @override
     def backend_name(self) -> str:
         """Return the registry key for this backend (``"json"``)."""
         return "json"
 
+    @override
     def get_reserved_resources(
         self,
         username: str,
@@ -90,6 +95,7 @@ class JsonReservationBackend:
                 resources.update(entry.resources)
         return resources
 
+    @override
     def who_reserved(
         self,
         resource: str,

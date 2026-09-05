@@ -21,10 +21,15 @@ Package summary
 The backend contract
 --------------------
 
-Third-party backends implement the :class:`~otto.reservations.protocol.ReservationBackend`
+Third-party backends satisfy the :class:`~otto.reservations.protocol.ReservationBackend`
 Protocol.  The contract is deliberately small — three read-only
 methods, no write methods of any kind.  Otto never mutates scheduler
-state.
+state.  The recommended way to satisfy it is to inherit
+:class:`~otto.reservations.ReservationBackendBase`, which declares the three
+methods as abstract and spells out the constructor the factory calls.
+
+.. autoclass:: otto.reservations.ReservationBackendBase
+   :members:
 
 Two optional capabilities sit alongside it: a backend that can enumerate its
 users implements ``list_usernames`` and a backend that knows when bookings
@@ -115,8 +120,9 @@ Extension points for implementers
 A custom backend needs three pieces:
 
 1. **A class** that satisfies :class:`~otto.reservations.protocol.ReservationBackend`.
-   Protocol satisfaction is structural — no explicit inheritance is required (and none is
-   recommended).
+   Inherit :class:`~otto.reservations.ReservationBackendBase` and implement its three
+   abstract methods.  Protocol satisfaction is structural, so a class that merely has
+   the three methods also works — the base is the recommendation, not a requirement.
 2. **An init module** that registers the class under a bare name::
 
       from otto.reservations import register_reservation_backend

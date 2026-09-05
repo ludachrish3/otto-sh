@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..utils import anchor_path
+from .base import (
+    ReservationBackendBase as ReservationBackendBase,
+)
 from .check import (
     MissingReservationError as MissingReservationError,
 )
