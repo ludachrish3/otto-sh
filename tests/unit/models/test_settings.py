@@ -155,10 +155,33 @@ def test_os_profile_spec_bare_minimum_defaults_to_empty():
     assert OsProfileSpec(base="unix").defaults == {}
 
 
-def test_reservation_config_defaults_to_none_backend():
-    cfg = ReservationConfigSpec()
+def test_reservation_config_requires_backend():
+    """A present ``[reservations]`` table is a specified checker: it must name
+    its backend. ``backend = "none"`` stays the explicit "no scheduler yet"."""
+    with pytest.raises(ValidationError, match=r"(?m)^backend\n\s+Field required"):
+        ReservationConfigSpec.model_validate({})
+    with pytest.raises(ValidationError, match=r"(?m)^backend\n\s+Field required"):
+        ReservationConfigSpec.model_validate({"url": "https://sched.example"})
+    cfg = ReservationConfigSpec.model_validate({"backend": "none"})
     assert cfg.backend == "none"
     assert cfg.url is None
+
+
+def test_settings_without_a_reservations_table_have_no_checker():
+    """Absent table → ``None``: no gate. Present-but-bare → refused at load,
+    naming the field, so a url-only or empty ``[reservations]`` can never
+    resolve to the allow-all null backend by default."""
+    from otto.models.settings import SettingsModel
+
+    base = {"name": "p", "version": "1.0.0"}
+    assert SettingsModel.model_validate(base).reservations is None
+    with pytest.raises(ValidationError, match=r"(?m)^reservations\.backend\n\s+Field required"):
+        SettingsModel.model_validate({**base, "reservations": {}})
+    with pytest.raises(ValidationError, match=r"(?m)^reservations\.backend\n\s+Field required"):
+        SettingsModel.model_validate({**base, "reservations": {"url": "https://sched.example"}})
+    ok = SettingsModel.model_validate({**base, "reservations": {"backend": "none"}})
+    assert ok.reservations is not None
+    assert ok.reservations.backend == "none"
 
 
 def test_reservation_config_keeps_open_backend_subtable():

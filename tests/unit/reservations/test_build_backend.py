@@ -23,9 +23,17 @@ class TestNoneBackend:
         backend = build_backend({"backend": "none"}, tmp_path)
         assert isinstance(backend, NullReservationBackend)
 
-    def test_missing_backend_defaults_to_none(self, tmp_path):
+    def test_absent_section_is_the_null_backend(self, tmp_path):
+        # {} is what build_reservation_gate passes when NO repo has a
+        # [reservations] table — no checker specified, nothing to gate.
         backend = build_backend({}, tmp_path)
         assert isinstance(backend, NullReservationBackend)
+
+    def test_present_section_without_backend_is_refused(self, tmp_path):
+        # A table with keys but no `backend` is a specified checker missing
+        # its one required key — never a silent allow-all.
+        with pytest.raises(ValueError, match=r"(?s)Invalid \[reservations\] settings.*backend"):
+            build_backend({"url": "https://sched.example"}, tmp_path)
 
 
 class TestEnvelopeValidation:

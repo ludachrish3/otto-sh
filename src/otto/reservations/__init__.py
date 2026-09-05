@@ -87,8 +87,10 @@ def build_backend(
         Expected keys:
 
         * ``backend`` — ``"json"``, ``"none"``, or a name registered via
-          :func:`register_reservation_backend` from an init module. Defaults to
-          ``"none"`` when absent.
+          :func:`register_reservation_backend` from an init module. Required
+          whenever the dict has any key: a present ``[reservations]`` table is
+          a specified checker and must name its backend. Only an EMPTY dict —
+          no ``[reservations]`` table in any repo — resolves to ``"none"``.
         * ``url`` — optional string, forwarded as ``url=...`` to the
           backend constructor when present.
         * ``<backend-name>`` — optional nested table with backend-specific
@@ -117,6 +119,13 @@ def build_backend(
 
     from ..models.settings import ReservationConfigSpec
 
+    # An empty dict is the ABSENT table — what build_reservation_gate passes
+    # when no repo declares [reservations] — and means no checker. It is the
+    # only shape that resolves to "none" implicitly: the spec makes `backend`
+    # required, so a table with keys but no backend is refused below rather
+    # than silently becoming the allow-all null backend.
+    if not settings:
+        settings = {"backend": "none"}
     try:
         cfg = ReservationConfigSpec.model_validate(settings)
     except ValidationError as e:

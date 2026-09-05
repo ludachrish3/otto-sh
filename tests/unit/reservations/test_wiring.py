@@ -76,3 +76,47 @@ def test_as_user_sets_identity(tmp_path):
     )
     assert gate.identity.username == "bob"
     assert gate.identity.source == "--as-user"
+
+
+class TestAPresentTableMustNameItsBackend:
+    """The settings load is where a half-written ``[reservations]`` is refused.
+
+    Absent table → no checker (``reservation_settings`` is ``{}`` and the gate
+    builds the null backend). A present table — even a bare header — must name
+    ``backend``: before this pin the key defaulted to ``"none"``, so a url-only
+    table passed every gated command with the held column reading ``n/a``.
+    """
+
+    def test_absent_table_means_no_checker(self, tmp_path):
+        from otto.config.repo import Repo
+        from tests._fixtures.sutrepo import make_sut_repo
+
+        repo = Repo(sut_dir=make_sut_repo(tmp_path))
+        assert repo.reservation_settings == {}
+
+    def test_bare_header_refuses_the_load_naming_the_key(self, tmp_path):
+        from pydantic import ValidationError
+
+        from otto.config.repo import Repo
+        from tests._fixtures.sutrepo import make_sut_repo
+
+        sut = make_sut_repo(tmp_path, extra="[reservations]\n")
+        with pytest.raises(ValidationError, match=r"reservations\.backend"):
+            Repo(sut_dir=sut)
+
+    def test_url_only_table_refuses_the_load_naming_the_key(self, tmp_path):
+        from pydantic import ValidationError
+
+        from otto.config.repo import Repo
+        from tests._fixtures.sutrepo import make_sut_repo
+
+        sut = make_sut_repo(tmp_path, extra='[reservations]\nurl = "https://sched.example"\n')
+        with pytest.raises(ValidationError, match=r"reservations\.backend"):
+            Repo(sut_dir=sut)
+
+    def test_explicit_none_still_loads(self, tmp_path):
+        from otto.config.repo import Repo
+        from tests._fixtures.sutrepo import make_sut_repo
+
+        repo = Repo(sut_dir=make_sut_repo(tmp_path, extra='[reservations]\nbackend = "none"\n'))
+        assert repo.reservation_settings == {"backend": "none"}

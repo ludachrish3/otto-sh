@@ -305,13 +305,21 @@ class OsProfileSpec(OttoModel):
 class ReservationConfigSpec(OttoModel):
     """The otto-owned ``[reservations]`` envelope: ``backend`` + optional ``url``.
 
+    ``backend`` is required. A present ``[reservations]`` table is a specified
+    checker, and a specified checker names its backend — ``"none"`` when there
+    is no scheduler yet. Before this the key defaulted to ``"none"``, so a
+    table holding only ``url`` or a backend sub-table (a typo'd or half-pasted
+    config) silently resolved to the allow-all null backend, exactly where a
+    gate was being asked for. Only an ABSENT table means no gate; see
+    :attr:`SettingsModel.reservations`.
+
     ``extra='allow'`` keeps the backend-specific ``[reservations.<backend>]``
     sub-table open — otto-core cannot type a third-party backend's kwargs.
     """
 
     model_config = ConfigDict(extra="allow")
 
-    backend: str = "none"
+    backend: str
     url: str | None = None
 
 
@@ -856,7 +864,10 @@ class SettingsModel(OttoModel):
     monitor: MonitorSettingsSpec = MonitorSettingsSpec()
     lab: LabConfigSpec | None = None
     logging: LoggingConfigSpec = LoggingConfigSpec()
-    reservations: ReservationConfigSpec = ReservationConfigSpec()
+    reservations: ReservationConfigSpec | None = None
+    """``None`` when the table is absent — no checker, no gate. A present
+    table validates as :class:`ReservationConfigSpec`, whose ``backend`` is
+    required, so ``[reservations]`` with nothing under it refuses the load."""
     inventory: InventoryConfigSpec | None = None
     """Per-project inventory override (spec 2026-08-28 host-inventory §8).
 

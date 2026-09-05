@@ -96,7 +96,7 @@ See the :doc:`user guide <../guide/cli/reservation/index>` for the file format.
 Null backend
 ~~~~~~~~~~~~
 
-Default when no ``[reservations]`` section is configured, or when
+Selected when no ``[reservations]`` section is configured at all, or when
 ``backend = "none"`` is set.
 :func:`~otto.reservations.check.check_reservations` recognizes this
 type and becomes a no-op.

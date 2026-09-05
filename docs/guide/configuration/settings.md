@@ -173,9 +173,12 @@ init
 
 \[reservations\]
 : Optional table enabling the **reservation gate** — otto refuses to start
-  live-lab commands against resources the current user doesn't hold. `backend`
-  names a registered scheduler source (`"none"` — the default — disables the
-  gate; `"json"` reads a reservation file). See {doc}`../cli/reservation/index` for backends,
+  live-lab commands against resources the current user doesn't hold. Leaving
+  the table out means no gate. Once the table is present, `backend` is
+  required and names a registered scheduler source (`"none"` disables the
+  gate explicitly; `"json"` reads a reservation file) — a table without it,
+  even a bare `[reservations]` header, refuses the load rather than silently
+  allowing everything. See {doc}`../cli/reservation/index` for backends,
   the file format, and the `--as-user` / `-R` break-glass overrides.
 
 \[inventory\]

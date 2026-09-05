@@ -184,10 +184,12 @@ own CLI) can run the exact same check without going through `otto` at all.
 Four steps:
 
 1. **Build** a backend from your tool's own settings with
-   [`build_backend`](../api/reservations.rst). An unconfigured (or `"none"`)
-   backend setting resolves to
+   [`build_backend`](../api/reservations.rst). An empty settings dict (no
+   `[reservations]` table at all) or `backend = "none"` resolves to
    [`NullReservationBackend`](../api/reservations.rst) — a no-op, so this step
-   needs no live scheduler to exercise in a test.
+   needs no live scheduler to exercise in a test. A dict with keys but no
+   `backend` is refused: a present table is a specified checker and must name
+   its backend.
 2. **Resolve** the effective identity with
    [`resolve_username`](../api/reservations.rst).
 3. **Construct** a [`ReservationGate`](../api/reservations.rst) from the
