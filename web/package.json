@@ -25,7 +25,7 @@
     "@tailwindcss/vite": "4.3.3",
     "@untitledui/file-icons": "0.0.9",
     "@untitledui/icons": "0.0.22",
-    "@xyflow/react": "12.11.5",
+    "@xyflow/react": "12.11.6",
     "echarts": "6.1.0",
     "input-otp": "1.5.0",
     "react": "19.2.8",
