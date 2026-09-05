@@ -9,6 +9,7 @@ flag that reproduces the order.
 """
 
 import logging
+import sys
 import textwrap
 
 import pytest
@@ -68,7 +69,10 @@ class TestRunnerArgv:
 def _write_suite(tmp_path, name):
     # Unique basename per test: both inner sessions run IN-PROCESS, and a
     # module already imported under one basename cannot be collected again
-    # from a different directory ("import file mismatch").
+    # from a different directory ("import file mismatch"). Unique-per-test is
+    # not enough on its own -- the same test running twice in one process gets
+    # a fresh tmp_path under the same basename -- so _inner_session evicts the
+    # module afterwards.
     suite = tmp_path / f"test_{name}.py"
     suite.write_text(
         textwrap.dedent(
@@ -87,23 +91,31 @@ def _write_suite(tmp_path, name):
 def _inner_session(suite_path, extra, plugin):
     from otto.suite.run import ASYNCIO_LOOP_ARGS
 
-    return pytest.main(
-        [
-            "-s",
-            "-p",
-            "no:cacheprovider",
-            "-p",
-            "no:playwright",
-            "--override-ini",
-            "addopts=",
-            "-o",
-            "asyncio_mode=auto",
-            *ASYNCIO_LOOP_ARGS,
-            *extra,
-            str(suite_path),
-        ],
-        plugins=[plugin],
-    )
+    try:
+        return pytest.main(
+            [
+                "-s",
+                "-p",
+                "no:cacheprovider",
+                "-p",
+                "no:playwright",
+                "--override-ini",
+                "addopts=",
+                "-o",
+                "asyncio_mode=auto",
+                *ASYNCIO_LOOP_ARGS,
+                *extra,
+                str(suite_path),
+            ],
+            plugins=[plugin],
+        )
+    finally:
+        # This in-process pytest.main() imports the generated suite as a
+        # top-level module keyed by stem. Evict it so a second run of this
+        # test in the same process (the unit-repeat isolation lane runs
+        # `pytest --count=2 --repeat-scope=session`) imports a fresh module
+        # from its own tmp_path instead of hitting "import file mismatch".
+        sys.modules.pop(suite_path.stem, None)
 
 
 class TestSeedIsAnnounced:
