@@ -66,6 +66,13 @@ class RunOptions:
 
     markers: str = ""
     tests: str = ""
+    random_order: bool = True
+    """Shuffle test order (pytest-randomly). ``False`` unregisters the plugin
+    for the session — ``--no-random`` — so order follows the source file."""
+    seed: int | None = None
+    """Fixed pytest-randomly seed (``--seed N``); ``None`` draws one. Only
+    meaningful with ``random_order``: the CLI refuses the combination
+    ``--no-random --seed N`` and library callers get the same refusal here."""
     iterations: int = 0
     duration: int = 0
     threshold: float = 100.0
@@ -546,6 +553,16 @@ def _run_pytest_session(
     ]
     if keyword:
         base_args += ["-k", keyword]
+    # pytest-randomly is a runtime dependency and pytest auto-loads it, so
+    # random order is the default and costs no argument; only the two
+    # departures are spelled out. `--no-header` above hides the plugin's own
+    # "Using --randomly-seed=N" line — OttoPlugin logs the seed instead.
+    if not opts.random_order:
+        if opts.seed is not None:
+            raise ValueError("seed requires random_order: a seed with nothing to seed")
+        base_args += ["-p", "no:randomly"]
+    elif opts.seed is not None:
+        base_args.append(f"--randomly-seed={opts.seed}")
     if opts.markers:
         # Re-apply -m at run time: resolve_selection() filtered by markers during
         # collection, and we apply again here so name resolution and live session can

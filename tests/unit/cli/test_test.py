@@ -388,6 +388,48 @@ class TestParentRunnerOptionsCtx:
         ctx_obj = self._capture_ctx(["--iterations", "5"], "_CtxIterSuite")
         assert ctx_obj.get("iterations") == 5
 
+    def test_random_order_defaults_on_with_no_seed(self):
+        class _CtxRandDefSuite(OttoSuite):
+            pass
+
+        register_suite_class(_CtxRandDefSuite)
+
+        ctx_obj = self._capture_ctx([], "_CtxRandDefSuite")
+        assert ctx_obj.get("random_order") is True
+        assert ctx_obj.get("seed") is None
+
+    def test_no_random_forwarded_via_ctx(self):
+        class _CtxNoRandSuite(OttoSuite):
+            pass
+
+        register_suite_class(_CtxNoRandSuite)
+
+        ctx_obj = self._capture_ctx(["--no-random"], "_CtxNoRandSuite")
+        assert ctx_obj.get("random_order") is False
+
+    def test_seed_forwarded_via_ctx(self):
+        class _CtxSeedSuite(OttoSuite):
+            pass
+
+        register_suite_class(_CtxSeedSuite)
+
+        ctx_obj = self._capture_ctx(["--seed", "7"], "_CtxSeedSuite")
+        assert ctx_obj.get("seed") == 7
+        assert ctx_obj.get("random_order") is True
+
+    def test_seed_with_no_random_is_a_usage_error(self):
+        """A seed with nothing to seed is a contradiction: refuse, don't guess."""
+
+        class _CtxSeedNoRandSuite(OttoSuite):
+            pass
+
+        register_suite_class(_CtxSeedNoRandSuite)
+
+        result = runner.invoke(suite_app, ["--no-random", "--seed", "7", "_CtxSeedNoRandSuite"])
+        assert result.exit_code == 2
+        assert "--seed" in result.output
+        assert "--no-random" in result.output
+
     def test_markers_forwarded_via_ctx(self):
         class _CtxMarkSuite(OttoSuite):
             pass

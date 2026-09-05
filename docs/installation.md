@@ -496,6 +496,7 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 | `pytest` | 9.1.1 | Test runner; otto imports user test files at runtime |
 | `pytest-asyncio` | 1.4.0 | Async test support for pytest |
 | `pytest-timeout` | 2.3.1 | Per-test timeouts for `otto test` (`@pytest.mark.timeout`) |
+| `pytest-randomly` | 4.1.0 | Random test order for `otto test` (`--random`, `--seed N` to reproduce) |
 | `pyyaml` | 6.0.3 | Parses rendered compose YAML to collect `env_file:` sidecar references |
 | `requests` | 2.20.0 | HTTP adapter mounted directly by the `netbox` inventory backend to bound each request |
 | `rich` | 15.0.0 | Terminal formatting, panels, and tables |

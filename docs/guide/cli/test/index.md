@@ -64,6 +64,8 @@ are applied.
 | `--list-markers` | | List the markers available to `--markers` and exit |
 | `--markers, -m EXPR` | `""` | Pytest marker expression (e.g. `"not integration"`). With no suite name, runs the marker selection in every repo that has a match |
 | `--tests NAME[,NAME...]` | `""` | Run specific tests by exact name across all suites/repos, no suite name needed; `TestClass::name` disambiguates |
+| `--random / --no-random` | on | Shuffle test order (pytest-randomly); the seed is logged at session start. `--no-random` runs tests in source order |
+| `--seed N` | drawn | Fix the random-order seed to reproduce a previous run's order (implies `--random`; refused with `--no-random`) |
 | `--iterations, -i N` | `0` | Repeat each test N times in one setup/teardown cycle |
 | `--duration, -d SECONDS` | `0` | Repeat tests for SECONDS in one setup/teardown cycle |
 | `--threshold FLOAT` | `100.0` | Minimum per-test pass rate percent in stability mode (0-100) |
@@ -88,6 +90,27 @@ flags only exist on that suite's own subcommand (`otto test <Suite>
 --help` to see them. Selection runs default-construct each suite's
 `Options`; a suite with a required option fails its own tests with a hint
 to run the suite form directly.
+
+### Test order and reproducibility
+
+Tests run in a **random order** by default, reseeded per test, so an
+order dependence between two tests surfaces as a failure instead of hiding
+behind source order. Every run logs the seed it drew at session start:
+
+```text
+INFO     random test order, seed 1234 (reproduce with --seed 1234)
+```
+
+Pass that value back to replay the exact order that failed, or opt out for
+a suite whose tests genuinely depend on each other:
+
+```bash
+otto --lab my_lab test TestDevice --seed 1234      # same order as the run that logged 1234
+otto --lab my_lab test TestDevice --no-random      # source order
+```
+
+`--seed` implies `--random`; combining it with `--no-random` is a usage
+error, since a seed with nothing to seed is a contradiction.
 
 ### Repeating a test
 

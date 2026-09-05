@@ -425,6 +425,24 @@ def main(  # noqa: PLR0913 — CLI command params
             ),
         ),
     ] = "",
+    random_order: Annotated[
+        bool,
+        typer.Option(
+            "--random/--no-random",
+            help=(
+                "Shuffle test order (pytest-randomly). On by default; the seed is "
+                "logged at session start. --no-random runs tests in source order."
+            ),
+        ),
+    ] = True,
+    seed: Annotated[
+        int | None,
+        typer.Option(
+            "--seed",
+            metavar="N",
+            help="Fix the random-order seed (the value a previous run logged). Implies --random.",
+        ),
+    ] = None,
     iterations: Annotated[
         int,
         typer.Option(
@@ -599,6 +617,14 @@ def main(  # noqa: PLR0913 — CLI command params
             param_hint="--tests",
         )
 
+    if seed is not None and not random_order:
+        # A seed with nothing to seed is a contradiction — refuse rather than
+        # guess which of the two flags the user meant.
+        raise typer.BadParameter(
+            "--seed fixes the random test order, so it cannot be combined with --no-random",
+            param_hint="--seed",
+        )
+
     if list_tests:
         suite = ctx.invoked_subcommand
         repos = get_repos()
@@ -670,6 +696,8 @@ def main(  # noqa: PLR0913 — CLI command params
     ctx.meta[RUN_OPTIONS_KEY] = RunOptions(
         markers=markers,
         tests=tests,
+        random_order=random_order,
+        seed=seed,
         iterations=iterations,
         duration=duration,
         threshold=threshold,

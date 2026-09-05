@@ -160,6 +160,7 @@ class OttoPlugin:
         self._monitor_interval = monitor_interval
         self._monitor_output = monitor_output
         self._monitor_hosts = monitor_hosts
+        self._seed: int | None = None
 
     def pytest_configure(self, config: pytest.Config) -> None:
         """Enforce auto asyncio mode for OttoSuites.
@@ -175,6 +176,15 @@ class OttoPlugin:
         config.option.asyncio_mode = "auto"
         config.stash[otto_cov_key] = self._cov
         config.stash[otto_plugin_key] = self
+        # pytest-randomly resolves its seed in ITS pytest_configure (a drawn
+        # int, `--randomly-seed=N`, or `last`) and writes the int back onto
+        # config.option. This hook runs after it — plugins passed to
+        # pytest.main(plugins=...) register after entry-point plugins — so the
+        # value is final here. READ here, LOGGED in pytest_sessionstart: see
+        # the note there. `default=None` is load-bearing: under `-p no:randomly`
+        # the option is unregistered and getoption raises on an undeclared
+        # name unless a default is supplied.
+        self._seed = config.getoption("randomly_seed", default=None)
 
     def class_monitor_interval(self) -> float | None:
         """Seconds between monitor samples while a class runs; ``None`` with ``--monitor`` off.
@@ -208,6 +218,19 @@ class OttoPlugin:
         the next writer. Collection counts are tracked separately and stay
         intact.
         """
+        # The seed line. The runner passes --no-header, which hides
+        # pytest-randomly's own "Using --randomly-seed=N", so this is the only
+        # place a user learns the seed to pass back as `--seed N`. Emitted HERE
+        # and not in pytest_configure, where the value was read: pytest's
+        # logging plugin arms its capture handlers around sessionstart,
+        # collection and the run loop, and nothing earlier — a record emitted
+        # at configure time escapes the session and lands in whatever handlers
+        # the ENCLOSING process has. Invisible in production; in a pytester
+        # in-process run it broke the inner session's output capture outright.
+        if self._seed is not None:
+            logger.info(
+                "random test order, seed %s (reproduce with --seed %s)", self._seed, self._seed
+            )
         tr = session.config.pluginmanager.get_plugin("terminalreporter")
         if tr is not None:
             tr.showfspath = False

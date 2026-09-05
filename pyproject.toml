@@ -58,6 +58,11 @@ dependencies = [
     # `otto test` relies on pytest-timeout to honor `@pytest.mark.timeout(N)`.
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    # pytest-randomly is a runtime dep because `otto test` shuffles user
+    # suites by default (`--random`, `--seed N` to reproduce): pytest
+    # auto-loads it, and a runner whose ordering depends on which extras
+    # happen to be installed is not a feature, it is an accident.
+    "pytest-randomly>=4.1.0",
     "pytest-timeout>=2.3.1",
     # `otto.docker.staging` parses a rendered compose file's YAML to collect
     # `env_file:` sidecar references (spec §8); imported function-scope to
@@ -177,7 +182,6 @@ dev = [
     # package is what lives here: `requests` itself is a direct runtime
     # dependency above, but nothing at runtime imports these stubs.
     "types-requests>=2.32",
-    "pytest-randomly>=4.1.0",
 ]
 # Architecture-gate tools, kept OUT of the dev group on purpose: tach ships a
 # `pytest11` entry-point plugin whose Rust extension installs a C-level Ctrl-C
