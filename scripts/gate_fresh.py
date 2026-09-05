@@ -29,7 +29,36 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-GATED_TARGETS = ["lint-python", "lint-arch", "typecheck-python", "coverage-hostless"]
+# Pre-push runs while git holds the connection to the remote OPEN: git dials
+# the remote first (it needs the remote refs to feed the hook on stdin), then
+# runs this, then pushes. So every second here is a second an idle SSH channel
+# has to survive, and GitHub closes one long before a full test suite finishes
+# — the push then fails with "Connection to github.com closed by remote host"
+# AFTER this reports PASS, which reads as a broken gate rather than a timed-out
+# transport. Runtime is therefore a correctness property of this hook, not a
+# convenience.
+#
+# What is kept is chosen by which failure class each lane actually catches in a
+# pristine, assets-absent tree, not by thoroughness:
+#
+#   lint-python / lint-arch  — the architecture gates; cheap, and they read the
+#                              committed tree rather than the dev tree's state.
+#   typecheck-python         — a module that is imported but never committed
+#                              fails here.
+#   collect-check            — imports EVERY test module with no artifacts
+#                              present. This is where a forgotten `git add` and
+#                              a gitignored-artifact dependency surface (issue
+#                              #196 arrived exactly this way, as a collect-time
+#                              trip), for ~20s instead of ~400s.
+#
+# `coverage-hostless` was dropped: it is the same suite the author already ran
+# locally and CI runs again before merge, it was ~400s of the ~10 minutes, and
+# the only thing it uniquely catches here is a RUNTIME (not import-time)
+# dependency on a build artifact. That is the rarest class, and CI still gates
+# it — trading it for a hook that finishes inside the transport's lifetime is
+# the better bargain, because a gate that cannot deliver its verdict protects
+# nothing.
+GATED_TARGETS = ["lint-python", "lint-arch", "typecheck-python", "collect-check"]
 
 ZERO_SHA = "0" * 40
 _PRE_PUSH_LINE_FIELDS = 4
@@ -267,7 +296,13 @@ def _run_targets(worktree: Path, targets: list[str]) -> bool:
     is guaranteed that nothing the lanes started is still alive when this
     returns — the precondition the cleanup in :func:`gate` relies on.
     """
-    if _run_awaiting_descendants(["uv", "sync"], worktree) != 0:
+    # `--locked` rather than a bare `uv sync`, because the bare form RESOLVES
+    # an out-of-date lock instead of refusing it: it would rewrite uv.lock
+    # inside this throwaway worktree, pass, and discard the evidence — so the
+    # "unsynced uv.lock" failure this gate advertises catching was never
+    # actually caught. `--locked` fails instead, which is the whole point of
+    # gating a committed tree.
+    if _run_awaiting_descendants(["uv", "sync", "--locked"], worktree) != 0:
         return False
     return _run_awaiting_descendants(["make", *targets], worktree) == 0
 

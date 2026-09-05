@@ -869,10 +869,21 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_busybox_tier():
     markerless: "list[tuple[str, list[str]]]" = []
     for label, invocations in surfaces:
         assert invocations, f"no pytest invocation found in {label} (guard misparse?)"
-        markerless += [(label, tokens) for tokens in invocations if "-m" not in tokens]
+        # A ``--collect-only`` lane imports every module it names and executes
+        # none: the tier's side effects — the artifact download here, the
+        # throwaway sshd in G11f — live in test bodies and fixtures, which
+        # collection never reaches. ``collect-check`` is such a lane on purpose
+        # (a forgotten ``git add`` of a marked module is exactly what it exists
+        # to catch), so it is exempt from a rule about what a lane RUNS.
+        markerless += [
+            (label, tokens)
+            for tokens in invocations
+            if "-m" not in tokens and "--collect-only" not in tokens
+        ]
     # Without this the guard is green whenever the scanners break, which is the
     # one failure mode a scanner-based rule really has. Two `-m`-less lanes
-    # exist today (both `pytest ... src/otto` doctest runs), so an empty result
+    # exist today after the collect-only exemption (both `pytest ... src/otto`
+    # doctest runs), so an empty result
     # means the parse stopped seeing invocations, not that the repo stopped
     # having them.
     assert markerless, (
@@ -1403,7 +1414,17 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_conformance_tier():
     markerless: "list[tuple[str, list[str]]]" = []
     for label, invocations in surfaces:
         assert invocations, f"no pytest invocation found in {label} (guard misparse?)"
-        markerless += [(label, tokens) for tokens in invocations if "-m" not in tokens]
+        # A ``--collect-only`` lane imports every module it names and executes
+        # none: the tier's side effects — the artifact download here, the
+        # throwaway sshd in G11f — live in test bodies and fixtures, which
+        # collection never reaches. ``collect-check`` is such a lane on purpose
+        # (a forgotten ``git add`` of a marked module is exactly what it exists
+        # to catch), so it is exempt from a rule about what a lane RUNS.
+        markerless += [
+            (label, tokens)
+            for tokens in invocations
+            if "-m" not in tokens and "--collect-only" not in tokens
+        ]
     assert markerless, (
         "no `-m`-less pytest invocation found in any surface (guard misparse?) — "
         "this rule is about the lanes marker reasoning cannot see, so with none "

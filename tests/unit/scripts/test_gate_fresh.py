@@ -276,7 +276,7 @@ class TestGateLifecycle:
             resolve_ref(repo, "HEAD"),
             runner=lambda wt, targets: captured.append(targets) or True,
         )
-        assert captured == [["lint-python", "lint-arch", "typecheck-python", "coverage-hostless"]]
+        assert captured == [["lint-python", "lint-arch", "typecheck-python", "collect-check"]]
 
     def test_an_exception_mid_run_leaks_no_registered_worktree(self, tmp_path: Path):
         repo = _repo(tmp_path)
@@ -502,8 +502,8 @@ class TestLanesFinishBeforeCleanup:
         assert rc == 3
 
     def test_run_targets_stops_at_a_failed_sync(self, tmp_path: Path, monkeypatch):
-        """``_run_targets`` still short-circuits on a failed ``uv sync`` — the
-        wait wrapper must not have changed the two-step control flow."""
+        """``_run_targets`` still short-circuits on a failed ``uv sync --locked`` —
+        the wait wrapper must not have changed the two-step control flow."""
         calls: list[list[str]] = []
 
         def fake(cmd: list[str], cwd: Path) -> int:
@@ -512,7 +512,7 @@ class TestLanesFinishBeforeCleanup:
 
         monkeypatch.setattr(gate_fresh, "_run_awaiting_descendants", fake)
         assert gate_fresh._run_targets(tmp_path, ["lint-python"]) is False
-        assert calls == [["uv", "sync"]]
+        assert calls == [["uv", "sync", "--locked"]]
 
 
 class TestMain:

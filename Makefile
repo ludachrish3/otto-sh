@@ -651,6 +651,10 @@ coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) 
 	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(CI_COVERAGE_THRESHOLD)% on the full fold)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "serial_timing and $(M_HOSTLESS)" -n0 --cov-append --cov-fail-under=$(CI_COVERAGE_THRESHOLD) $(call junitxml,coverage-hostless-serial)
 
+collect-check: ## (Quality) Import every test module without running anything — the cheap half of what gate-fresh exists to catch (forgotten `git add`, a module that only imports because the dev tree has gitignored build artifacts). No VMs.
+	@$(SAY) "pytest: collect-only over the whole tree (imports, no execution)"
+	@uv run pytest --collect-only -q -p no:randomly --no-cov
+
 coverage-unix: ## Run the Unix-VM resource slice (incl. multi-hop) with a coverage report (no gate). Requires lab VMs. JUnit XML in reports/junit/coverage-unix/.
 	@$(SAY) "pytest: Unix-VM slice, incl. multi-hop (no gate)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "$(M_UNIX) and not serial_timing" $(call junitxml,coverage-unix)
