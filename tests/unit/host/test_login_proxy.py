@@ -18,6 +18,7 @@ from otto.host.login_proxy import (
     run_undo,
 )
 from otto.logger.mode import LogMode
+from otto.utils import wait_for_async
 from tests._fixtures.fake_shell import ShellModel
 
 
@@ -640,9 +641,9 @@ async def test_a_root_caller_is_not_watched_for_a_prompt_it_cannot_get():
     """
     io = RecorderIO(user="root")
     await run_proxy(io, MYSQL, via=Cred(login="root"), host_id="h1")
-    assert not any(
-        text == f"{MYSQL.password}\n" for text, _ in io.sent
-    ), "sent a password to a `su` that never asks"
+    assert not any(text == f"{MYSQL.password}\n" for text, _ in io.sent), (
+        "sent a password to a `su` that never asks"
+    )
 
 
 @pytest.mark.asyncio
@@ -694,25 +695,47 @@ class _SlowPromptIO:
         elif self._su_at is not None and not self._prompted:
             self.wrote_into_startup_window.append(text)
 
-    async def expect(self, pattern, timeout: float = 10.0) -> str:
+    def _reply_now(self, pattern) -> str | None:
+        """What this host has to say RIGHT NOW, or None while it is still quiet.
+
+        Split out from the wait so the waiting itself can be
+        :func:`~otto.utils.wait_for_async` rather than a hand-rolled poll: the
+        state machine is the interesting part, the loop is not (gate G6).
+        """
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
-        while loop.time() < deadline:
-            if self._su_at is not None and loop.time() - self._su_at >= self.delay:
-                if not self._prompted:
-                    self._prompted = True
-                    if pattern.search("Password:"):
-                        return "Password:"
-                if any(t.strip() == "sqlpw" for t in self.sent):
-                    for text in reversed(self.sent):
-                        found = re.search(r'echo "(__OTTO_[0-9a-f]+_RECOVER__)', text)
-                        if found:
-                            reply = f"{found.group(1)}0__{self.target}__"
-                            if pattern.search(reply):
-                                return reply
-                            break
-            await asyncio.sleep(0.005)
-        raise asyncio.TimeoutError()
+        if self._su_at is None or loop.time() - self._su_at < self.delay:
+            return None  # su is still starting up; the prompt is not out yet
+        if not self._prompted:
+            self._prompted = True
+            return "Password:" if pattern.search("Password:") else None
+        if not any(t.strip() == "sqlpw" for t in self.sent):
+            return None
+        for text in reversed(self.sent):
+            found = re.search(r'echo "(__OTTO_[0-9a-f]+_RECOVER__)', text)
+            if found:
+                reply = f"{found.group(1)}0__{self.target}__"
+                return reply if pattern.search(reply) else None
+        return None
+
+    async def expect(self, pattern, timeout: float = 10.0) -> str:
+        seen: list[str] = []
+
+        def answered() -> bool:
+            reply = self._reply_now(pattern)
+            if reply is None:
+                return False
+            seen.append(reply)
+            return True
+
+        # WaitTimeoutError IS a TimeoutError, which is what a real `expect`
+        # raises and what the resync suppresses — so expiry stays in contract.
+        await wait_for_async(
+            answered,
+            timeout,
+            interval=0.005,
+            on_timeout=lambda: "slow-prompt host said nothing before the deadline",
+        )
+        return seen[0]
 
 
 @pytest.mark.asyncio
