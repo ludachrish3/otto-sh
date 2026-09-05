@@ -111,6 +111,31 @@ _EXPECTED_APPLETS = {
     },
 }
 
+# NOT lifted from the deleted harness like the three tables above -- this one
+# is a NEW measurement, taken 2026-09-04 by running `su --help` against the
+# five pinned artifacts in `~/.cache/otto/busybox/` (the same builds
+# `tests/_fixtures/busybox.py`'s BUSYBOX_MATRIX fetches) and re-asserted below
+# against the live guests. Its provenance is called out because the module
+# docstring's "never regenerated from the guests" is a statement about those
+# three, and a reader is entitled to know which claim covers which table.
+#
+# What it records is the LOGIN-SHELL FLAG's SPELLING, and it is why
+# `otto.host.login_proxy._su_proxy` sends `su - <login>` rather than the
+# `su -l <login>` that reads more explicitly: 1.16.1's `su` documents
+# `su [OPTIONS] [-] [USERNAME]` and offers no `-l` at all, while 1.21.1 and
+# every later row list `-,-l` together. The bare `-` is advertised on all
+# five, so one spelling reaches the whole matrix -- which makes this a
+# constraint on otto's implementation rather than a gap in its support, and
+# the reason it is pinned per row is that `-l` is exactly what a later
+# "clarifying" rewrite would reach for.
+_EXPECTED_SU_DASH_L = {
+    "1.16.1": False,
+    "1.21.1": True,
+    "1.28.1": True,
+    "1.31.0": True,
+    "1.35.0": True,
+}
+
 # Where `busybox --list` is staged. Written and removed inside one command, so
 # a red row leaves nothing behind on a guest whose whole filesystem is RAM.
 _APPLET_LIST_PATH = "/tmp/otto-applet-list"
@@ -170,6 +195,47 @@ async def test_standalone_shell_matches_what_the_matrix_records(guest):
         f"{host.element} (BusyBox {version}): standalone-shell resolution "
         f"{'appeared' if seen else 'is absent'} relative to the recorded matrix "
         f"({_EXPECTED_STANDALONE_SHELL[version]}): {res.value!r}"
+    )
+
+
+async def test_su_login_flag_spelling_matches_what_the_matrix_records(guest):
+    """``-`` is universal and ``-l`` is not -- the constraint that picks otto's spelling.
+
+    ONE probe carries both halves, and the bare ``-`` is the POSITIVE CONTROL
+    rather than an aside: it is the form
+    ``otto.host.login_proxy._su_proxy`` actually sends, and a probe that
+    measured nothing at all -- a `su` that vanished, a shell that ate the
+    pipeline -- would report ``-l`` absent on every row and so agree with the
+    1.16.1 expectation by accident. Asserting the row otto depends on in the
+    same breath is what stops the negative half from passing for the wrong
+    reason.
+
+    Asserted per row rather than as "some row lacks ``-l``", for the reason
+    ``test_base64_presence_matches_what_the_matrix_records`` gives: an
+    aggregate passes when the WRONG guest is the one missing it.
+
+    BusyBox writes applet usage to STDERR and exits non-zero for ``--help``,
+    hence the ``2>&1`` and the deliberate absence of a retcode assertion --
+    here the OUTPUT is the measurement and the status is noise.
+    """
+    host, version = guest
+    res = await host.exec(
+        "su --help 2>&1 | grep -q -- '\\[-\\]' && echo DASH_OK || echo DASH_MISSING; "
+        "su --help 2>&1 | grep -qE -- '(^|[^a-zA-Z])-l([^a-zA-Z]|$)' "
+        "&& echo HAS_L || echo NO_L"
+    )
+    assert "DASH_OK" in res.value, (
+        f"{host.element} (BusyBox {version}) does not advertise the bare `-` "
+        f"login-shell form that otto.host.login_proxy._su_proxy sends on every "
+        f"switch, so this row's `-l` answer proves nothing either: {res.value!r}"
+    )
+    seen = "HAS_L" in res.value
+    assert seen is _EXPECTED_SU_DASH_L[version], (
+        f"{host.element} (BusyBox {version}): `su -l` "
+        f"{'appeared' if seen else 'vanished'} relative to the recorded matrix "
+        f"({_EXPECTED_SU_DASH_L[version]}). The table is the oracle -- if this "
+        f"guest's build really changed, update it in the same commit that "
+        f"explains why: {res.value!r}"
     )
 
 

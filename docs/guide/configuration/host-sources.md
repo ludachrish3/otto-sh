@@ -274,7 +274,34 @@ required `login` and four optional fields:
 | `password` | string or `null` | Password, or omit/`null` for key/agent auth on SSH (an empty line on telnet). |
 | `proxy` | string | Name of a registered login proxy (see {doc}`../../library/extending-backends`) that drives the steps to *become* this login, after authenticating as `via`. Omit for a directly-loginable account — a proxy-less entry still uses the built-in `"su"` proxy when `switch_user`/`as_user` switches to it. |
 | `via` | string | The `login` of another entry in this same list to authenticate as first. Only valid alongside `proxy`. Omit to default to the first proxy-less (directly-loginable) entry. |
-| `params` | object | Free-form data handed to the proxy callable (e.g. a container name, a service name) — otto itself never interprets it. |
+| `params` | object | Free-form data handed to the proxy callable (e.g. a container name, a service name). Otto interprets only two keys, and only in the built-in `"su"` proxy: `login_shell` (default `true`) and `expect_prompt` — see below. |
+
+The built-in `"su"` proxy switches with `su - <login>`, a **login shell**: the
+target's environment is set up from its own profile and the shell starts in
+the target's home directory, rather than inheriting the caller's `PATH`,
+`HOME`, `USER` and cwd. That is what a service account almost always wants.
+A cred that needs the old inheriting form asks for it explicitly:
+
+```json
+{"login": "mysql", "proxy": "su", "via": "admin",
+ "params": {"login_shell": false}}
+```
+
+Note that `params` (like `via`) is only valid alongside `proxy`, so opting out
+means naming `"proxy": "su"` even though it is the default.
+
+The other key, `expect_prompt`, is an escape hatch you are unlikely to need.
+Otto does not wait to discover whether `su` will ask for a password: it knows
+that `su` challenges based on **who is asking**, and that root is not
+challenged, so it skips the wait entirely on hops that cannot be challenged.
+On a host whose PAM stack drops `pam_rootok` and challenges even root, that
+prediction is wrong and the switch fails with an identity error naming this
+key; setting it to `true` forces otto to wait for the prompt again:
+
+```json
+{"login": "mysql", "proxy": "su", "via": "root",
+ "params": {"expect_prompt": true}}
+```
 
 **The first entry is the default login** — the user otto authenticates as
 unless `user` names a different entry:

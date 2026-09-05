@@ -264,16 +264,77 @@ is a proxy like any other, registered the same way:
 ```python
 async def _su_proxy(io: ProxyIO, ctx: ProxyContext) -> None:
     login = ctx.target.login
-    cmd = "su" if not login else f"su {shlex.quote(login)}"
+    dash = " -" if bool(ctx.target.params.get("login_shell", True)) else ""
+    cmd = f"su{dash}" if not login else f"su{dash} {shlex.quote(login)}"
     await io.send(cmd + "\n")
-    if ctx.target.password is not None:
-        await io.expect(r"[Pp]assword:")
-        await io.send(ctx.target.password + "\n", log=LogMode.NEVER)
+
+
+register_login_proxy("su", _su_proxy, prompt=r"[Pp]assword:")
 ```
 
-Note the `log=LogMode.NEVER` on the password send — otto's password-hygiene
-convention for logged output applies inside a proxy step exactly as it does
-everywhere else a credential is sent.
+It sends the switch line and stops. Notice what is *not* there: the proxy
+never waits for a password prompt and never sends one. It declares the prompt
+its mechanism can raise, and the engine answers it.
+
+That split exists because whether `su` challenges depends on **who is
+asking**, not on the cred. The same `mysql` entry prompts when reached from an
+unprivileged account and stays silent when reached from `root`, and a cred
+cannot know which hop it is on. A proxy that waited whenever a password was
+configured would stall every switch the host was willing to perform for free —
+for the whole of a command timeout.
+
+So the prompt is answered where otto is already listening. Every hop ends with
+a shell resync that settles, then probes until the new shell answers; that
+settle is spent *watching* for the declared prompt instead of sleeping through
+it, and every probe afterwards can still recognise one. A password is sent only
+when it is wanted, and exactly **once** when it is; a
+cred with no password gets an error naming the account that asked — rather
+than letting otto's own probes spend authentication attempts against it, which
+is how a lockout policy gets tripped by an automation that meant no harm.
+
+Waiting out a watch costs real time, so otto arms one only where a prompt can
+actually arrive. Whether `su` challenges depends on **who is asking** — root is
+not authenticated, everyone else is — and every hop's resync already *proves*
+the identity it left the shell in, so this is decided from state otto holds
+rather than discovered by waiting. On the bed that takes a root-to-service-
+account switch from 1.44s to 1.25s, and leaves a challenged switch unchanged at
+0.63s, because a real prompt ends the watch in milliseconds.
+
+The watch is never merely *shortened* to buy that time. A prompt arriving just
+after a too-short wait would be met by otto's first probe, and a probe typed at
+a live password prompt is itself a failed authentication — the outcome this
+design exists to prevent. A host that challenges even root (a PAM stack without
+`pam_rootok`) sets `params={"expect_prompt": true}` on the cred to force the
+watch back on.
+
+The probe reads back `id -un` as well as `$?`, so the resync also proves
+**who** answered. A rejected password is otherwise invisible: `su` reports the
+failure and exits back to the calling shell, which then answers a liveness
+probe perfectly well. Checking identity is what turns that into a clear error
+instead of a session that quietly runs the block as the wrong user.
+
+:::{warning}
+Declare `prompt=` only if your proxy does **not** answer the prompt itself. If
+it does both, the engine finds the prompt already gone, and the password it
+sends next is read by the new shell as a *command* — landing in shell history
+and in `ps`. A proxy that handles its own credentials simply omits `prompt=`.
+:::
+
+Note the `log=LogMode.NEVER` otto puts on every password send — the
+password-hygiene convention for logged output applies inside a proxy step
+exactly as it does everywhere else a credential is sent.
+
+It sends the **login-shell** form, `su - <login>`. The accounts that need a
+proxy are usually service accounts whose whole point is their own
+environment, and plain `su` gives them the caller's `PATH`, `HOME` and
+`USER` without sourcing their profile — frequently leaving the target's own
+tooling off `PATH` entirely. Two consequences follow from `-` and are worth
+knowing before you rely on either: the new shell starts in the **target's
+home directory**, not the caller's cwd, and the environment is reset rather
+than inherited. A cred that needs the inheriting form sets
+`params={"login_shell": false}` — the one key otto itself reads out of
+`params`, and the reason you rarely need a custom proxy just to drop the
+dash.
 
 Register your own the same way, with an optional `undo=` that reverses the
 steps for `as_user` restore. The default reversal (used by `"su"`) sends a

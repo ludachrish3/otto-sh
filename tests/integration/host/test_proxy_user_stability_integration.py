@@ -50,6 +50,7 @@ Runs via ``make stability-unix`` (``-m "stability and integration"``,
 """
 
 import asyncio
+import time
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -334,5 +335,96 @@ async def test_proxied_exec_fanout(leased_host: tuple[str, str]) -> None:
 
         for i, r in enumerate(statuses):
             assert f"mysql_{i}" in r.value, f"exec {i} got mangled output: {r.value!r}"
+    finally:
+        await host.close()
+
+
+# ---------------------------------------------------------------------------
+# 5. The su password prompt: both branches, soaked
+#
+# Whether `su` challenges is a property of WHO IS ASKING, not of the cred, so
+# the SAME password-carrying cred has to work on both sides of that fork. Each
+# iteration below exercises both, because the failure this guards is a
+# CROSSOVER: answering when nothing asked, or waiting for something that never
+# comes. Running only one arm would pass while the other stalled.
+#
+# `test` is a plain bash account with a real password on every bed VM
+# (`provision_test_vm`), so `su - test` from vagrant genuinely prompts; via
+# root it genuinely does not.
+# ---------------------------------------------------------------------------
+
+_PROMPTED_CREDS: list[dict[str, str]] = [
+    {"login": "vagrant", "password": "vagrant"},
+    {"login": "test", "password": "Password1"},
+]
+
+_UNPROMPTED_CREDS: list[dict[str, str]] = [
+    {"login": "vagrant", "password": "vagrant"},
+    {"login": "root", "proxy": "sudo-su-shell", "via": "vagrant"},
+    {"login": "test", "password": "Password1", "proxy": "su", "via": "root"},
+]
+
+# A switch is a couple of round trips plus the engine's own fixed settle per
+# transition; the defect this bounds is a STALL of a whole command timeout
+# (30s), so the budget only has to sit clearly between the two. Deliberately
+# not a tight performance assertion: under `--count` soak on a loaded bed the
+# healthy case still has to pass every iteration, and a bound that doubles as
+# a benchmark would flake for reasons that are not this bug.
+_SWITCH_BUDGET_S = 20.0
+
+
+@pytest.mark.asyncio
+async def test_su_prompt_is_answered_when_it_appears(leased_host: tuple[str, str]) -> None:
+    """vagrant -> test: `su` challenges, and the configured password answers it.
+
+    The positive arm. Soaked because the answer is driven by matching prompt
+    text out of a live pty stream, which is exactly the kind of thing that
+    works ninety-nine times and drops a byte on the hundredth.
+    """
+    element, ip = leased_host
+    host = create_host_from_dict(
+        {"ip": ip, "element": element, "creds": [dict(c) for c in _PROMPTED_CREDS]}
+    )
+    try:
+        started = time.monotonic()
+        async with host.as_user("test"):
+            elapsed = time.monotonic() - started
+            assert elapsed < _SWITCH_BUDGET_S, f"prompted switch took {elapsed:.1f}s"
+            assert (await host.run("whoami")).only.value.strip() == "test"
+            assert (await host.run("echo alive")).only.value.strip() == "alive"
+        assert (await host.run("whoami")).only.value.strip() == "vagrant"
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_su_password_does_not_stall_when_no_prompt_appears(
+    leased_host: tuple[str, str],
+) -> None:
+    """vagrant -> root -> test: root is not challenged, so nothing is answered.
+
+    The negative arm, and the regression that matters: a cred carrying a
+    password must not wait for a prompt that is never coming. Pre-fix this
+    burned the full 30s command timeout and then failed the switch outright.
+
+    Asserted as WALL CLOCK on purpose. The bug is a hang, so a purely
+    functional assertion ("we ended up as test") would pass just as happily
+    against a switch that took thirty seconds to get there.
+    """
+    element, ip = leased_host
+    host = create_host_from_dict(
+        {"ip": ip, "element": element, "creds": [dict(c) for c in _UNPROMPTED_CREDS]}
+    )
+    try:
+        started = time.monotonic()
+        async with host.as_user("test"):
+            elapsed = time.monotonic() - started
+            assert elapsed < _SWITCH_BUDGET_S, (
+                f"unprompted switch took {elapsed:.1f}s — a configured password stalled "
+                f"waiting for a challenge that root never receives"
+            )
+            assert (await host.run("whoami")).only.value.strip() == "test"
+            assert (await host.run("echo alive")).only.value.strip() == "alive"
+        assert (await host.run("whoami")).only.value.strip() == "vagrant"
     finally:
         await host.close()

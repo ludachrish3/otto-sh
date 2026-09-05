@@ -3,6 +3,7 @@
 import ast
 import asyncio
 import inspect
+import re
 from typing import get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,6 +18,7 @@ from otto.logger.mode import LogMode
 from otto.models.options import UserlandOptionsSpec
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.fake_shell import ShellModel
 
 
 def _without_resync(sent: list[str]) -> list[str]:
@@ -34,12 +36,53 @@ def _without_resync(sent: list[str]) -> list[str]:
     return [s for s in sent if 'echo "__OTTO_' not in s]
 
 
-def _mock_session_mgr():
-    """AsyncMock session-mgr whose send/expect are awaitable but whose
-    current_user bookkeeping is synchronous (no un-awaited coroutines)."""
+def _model_io(*, prompts: bool = True, user: str = "admin", **model_kw):
+    """A ShellModel plus the two closures a ProxyIO-ish fake needs.
+
+    The model tracks the `su` lines it is sent, so the identity it reports in
+    a probe reply follows the switch under test instead of being pinned per
+    test -- which is what makes the resync's identity check meaningful here
+    rather than something every fake has to be told the answer to.
+    """
+    shell = ShellModel(user=user, challenges=prompts, **model_kw)
+
+    def wrote(text: str) -> None:
+        shell.wrote(text)
+
+    def reply() -> str:
+        out = shell.reply()
+        return out if out is not None else ""
+
+    return shell, wrote, reply
+
+
+def _mock_session_mgr(*, prompts: bool = True, user: str = "admin", **model_kw):
+    """AsyncMock session-mgr backed by an honest :class:`ShellModel`.
+
+    ``expect`` returns a STRING (AsyncMock's default MagicMock violates the
+    ``ProxyIO`` return contract, which used to be invisible because nothing
+    read it), and probe replies carry the model's current user so the resync
+    can check identity.
+    """
     mgr = AsyncMock()
+    shell, wrote, reply = _model_io(prompts=prompts, user=user, **model_kw)
+
+    async def _send(text, **_kw) -> None:
+        wrote(text)
+
+    async def _expect(_pat, _timeout=10.0) -> str:
+        return reply()
+
+    mgr.send = AsyncMock(side_effect=_send)
+    mgr.expect = AsyncMock(side_effect=_expect)
+    mgr.shell = shell
     mgr._set_current_user = MagicMock()
-    mgr.current_user = ""
+    # One `user` for both sides on purpose. Setting `current_user` apart from
+    # the model's starting identity describes a session that believes it is
+    # someone the shell is not, and the undo's identity check reads the
+    # resulting mismatch as a failed transition -- a fake disagreeing with
+    # itself, presenting as a product bug.
+    mgr.current_user = user
     return mgr
 
 
@@ -49,18 +92,21 @@ async def test_perform_switch_builds_command_and_returns_target():
 
     sent = []
 
+    _shell, wrote, reply = _model_io(prompts=True)
+
     class _Io:
         async def send(self, text, log=LogMode.NORMAL):
             sent.append((text, log))
+            wrote(text)
 
         async def expect(self, pat, timeout=10.0):
-            return "Password:"
+            return reply()
 
     applied = await perform_switch(
         _Io(), [Cred(login="root", password="rootpw")], "root", None, "", "h"
     )
     assert applied[-1].login == "root"
-    assert ("su root\n", LogMode.NORMAL) in sent
+    assert ("su - root\n", LogMode.NORMAL) in sent
     assert ("rootpw\n", LogMode.NEVER) in sent
 
 
@@ -70,16 +116,21 @@ async def test_perform_switch_no_user_means_root_no_quote():
 
     sent = []
 
+    # No password anywhere in this test, so the shell it describes is one
+    # that does not challenge.
+    _shell, wrote, reply = _model_io(prompts=False)
+
     class _Io:
         async def send(self, text, log=LogMode.NORMAL):
             sent.append(text)
+            wrote(text)
 
         async def expect(self, pat, timeout=10.0):
-            return "Password:"
+            return reply()
 
     applied = await perform_switch(_Io(), [], "", None, "", "h")
     assert (applied[-1].login or "root") == "root"
-    assert "su\n" in sent  # bare `su`, no username, no password sent
+    assert "su -\n" in sent  # bare `su`, no username, no password sent
 
 
 @pytest.mark.asyncio
@@ -109,8 +160,7 @@ async def test_as_user_restores_previous_user():
         user="admin",
         log=LogMode.QUIET,
     )
-    mgr = _mock_session_mgr()
-    mgr.current_user = "admin"
+    mgr = _mock_session_mgr(user="admin")
     host._session_mgr = mgr
     async with host.as_user("root"):
         pass
@@ -240,7 +290,7 @@ async def test_switch_user_sends_su_and_password():
     )
     host._session_mgr = _mock_session_mgr()
     await host.switch_user("root")
-    host._session_mgr.send.assert_any_await("su root\n", log=LogMode.NORMAL)
+    host._session_mgr.send.assert_any_await("su - root\n", log=LogMode.NORMAL)
     host._session_mgr.send.assert_any_await("rootpw\n", log=LogMode.NEVER)
 
 
@@ -255,10 +305,10 @@ async def test_switch_user_default_is_root_no_user_arg():
         user="admin",
         log=LogMode.NORMAL,
     )
-    host._session_mgr = _mock_session_mgr()
+    host._session_mgr = _mock_session_mgr(prompts=False)
     host._session_mgr.expect.return_value = "Password:"
     await host.switch_user()  # default root, no creds entry for root → no password sent
-    host._session_mgr.send.assert_any_await("su\n", log=LogMode.NORMAL)
+    host._session_mgr.send.assert_any_await("su -\n", log=LogMode.NORMAL)
 
 
 @pytest.mark.asyncio
@@ -285,9 +335,9 @@ async def test_as_user_switches_then_exits():
     async with host.as_user("root"):
         pass
     sent = [c.args[0] for c in host._session_mgr.send.await_args_list]
-    assert "su root\n" in sent  # entered
+    assert "su - root\n" in sent  # entered
     assert "exit\n" in sent  # returned
-    assert sent.index("su root\n") < sent.index("exit\n")
+    assert sent.index("su - root\n") < sent.index("exit\n")
 
 
 @pytest.mark.asyncio
@@ -327,15 +377,20 @@ async def test_switch_user_password_not_logged(caplog):
     mock_transport = MagicMock(spec=ShellSession)
     mock_transport.alive = True
     mock_transport.current_user = "admin"
-    mock_transport.send = AsyncMock()
-    mock_transport.expect = AsyncMock(return_value="Password:")
+    _model, _wrote, _reply = _model_io(prompts=True)
+
+    async def _mock_transport_send(text, **_kw):
+        _wrote(text)
+
+    mock_transport.send = AsyncMock(side_effect=_mock_transport_send)
+    mock_transport.expect = AsyncMock(side_effect=lambda *_a, **_k: _reply())
     host._session_mgr._session = mock_transport
 
     with caplog.at_level(logging.INFO, logger="otto"):
         await host.switch_user("root")
 
     # The su command line must be logged (proves suppression is surgical).
-    assert "su root" in caplog.text
+    assert "su - root" in caplog.text
     # The password must NOT appear in the logs.
     assert "rootpw" not in caplog.text
 
@@ -353,13 +408,13 @@ async def test_switch_user_quotes_special_char_username():
         log=LogMode.QUIET,
     )
     # Replace the session manager with a mock to capture what was sent.
-    host._session_mgr = _mock_session_mgr()
+    host._session_mgr = _mock_session_mgr(prompts=False)
 
     await host.switch_user("od d")  # space in username — must be shell-quoted
 
     # The first send must be the shlex-quoted su command.
     first_call = host._session_mgr.send.await_args_list[0]
-    assert first_call.args[0] == "su 'od d'\n"
+    assert first_call.args[0] == "su - 'od d'\n"
 
 
 @pytest.mark.asyncio
@@ -392,15 +447,14 @@ async def test_as_user_multi_hop_undoes_in_reverse():
     host = UnixHost(
         ip="10.0.0.1", element="box", creds=_MULTI_HOP_CREDS, user="root", log=LogMode.QUIET
     )
-    mgr = _mock_session_mgr()
-    mgr.current_user = "root"
+    mgr = _mock_session_mgr(user="root")
     host._session_mgr = mgr
 
     async with host.as_user("mysql"):
         sent_inside = [c.args[0] for c in mgr.send.await_args_list]
-        assert "su admin\n" in sent_inside
-        assert "su mysql\n" in sent_inside
-        assert sent_inside.index("su admin\n") < sent_inside.index("su mysql\n")
+        assert "su - admin\n" in sent_inside
+        assert "su - mysql\n" in sent_inside
+        assert sent_inside.index("su - admin\n") < sent_inside.index("su - mysql\n")
 
     sent = [c.args[0] for c in mgr.send.await_args_list]
     assert sent.count("exit\n") == 2  # one exit per hop, undone in reverse
@@ -420,14 +474,13 @@ async def test_switch_user_from_via_user_runs_only_final_hop():
     host = UnixHost(
         ip="10.0.0.1", element="box", creds=_MULTI_HOP_CREDS, user="root", log=LogMode.QUIET
     )
-    mgr = _mock_session_mgr()
-    mgr.current_user = "admin"  # already at mysql's `via` user
+    mgr = _mock_session_mgr(user="admin")  # already at mysql's `via` user
     host._session_mgr = mgr
 
     await host.switch_user("mysql")
 
     sent = [c.args[0] for c in mgr.send.await_args_list]
-    assert _without_resync(sent) == ["su mysql\n", "mysqlpw\n"]  # no "su admin" hop re-run
+    assert _without_resync(sent) == ["su - mysql\n", "mysqlpw\n"]  # no "su admin" hop re-run
     mgr._set_current_user.assert_called_once_with("mysql")
 
 
@@ -443,8 +496,13 @@ async def test_host_session_switch_user_on_proxied_cred_stamps_current_user():
 
     shell = MagicMock(spec=ShellSession)
     shell.current_user = "admin"  # already at mysql's `via` user
-    shell.send = AsyncMock()
-    shell.expect = AsyncMock(return_value="Password:")
+    _model, _wrote, _reply = _model_io(prompts=True)
+
+    async def _shell_send(text, **_kw):
+        _wrote(text)
+
+    shell.send = AsyncMock(side_effect=_shell_send)
+    shell.expect = AsyncMock(side_effect=lambda *_a, **_k: _reply())
     hs = HostSession(
         "n",
         shell,
@@ -459,7 +517,7 @@ async def test_host_session_switch_user_on_proxied_cred_stamps_current_user():
 
     assert hs.current_user == "mysql"
     sent = [c.args[0] for c in shell.send.await_args_list]
-    assert _without_resync(sent) == ["su mysql\n", "mysqlpw\n"]  # only the final hop ran
+    assert _without_resync(sent) == ["su - mysql\n", "mysqlpw\n"]  # only the final hop ran
 
 
 @pytest.mark.asyncio
@@ -486,8 +544,13 @@ async def test_sudo_password_reflects_current_user_after_switch():
     mock_transport = MagicMock(spec=ShellSession)
     mock_transport.alive = True
     mock_transport.current_user = "admin"
-    mock_transport.send = AsyncMock()
-    mock_transport.expect = AsyncMock(return_value="Password:")
+    _model, _wrote, _reply = _model_io(prompts=True)
+
+    async def _mock_transport_send(text, **_kw):
+        _wrote(text)
+
+    mock_transport.send = AsyncMock(side_effect=_mock_transport_send)
+    mock_transport.expect = AsyncMock(side_effect=lambda *_a, **_k: _reply())
     host._session_mgr._session = mock_transport
 
     # Before any switch: sudo uses the login user's (admin's) password.
@@ -544,8 +607,15 @@ async def test_as_user_undo_via_ordering_observable_host():
         user="root",
         log=LogMode.QUIET,
     )
-    mgr = _mock_session_mgr()
-    mgr.current_user = "root"
+    # This proxy drives a `become`/`leave` wrapper rather than `su`, so the
+    # model is told that verb: otherwise the shell it stands for would report
+    # the same identity forever and the resync's identity check -- which every
+    # hop now runs -- would read a working switch as one that never took.
+    mgr = _mock_session_mgr(
+        user="root",
+        switch_re=re.compile(r"^\s*become\b(.*)$", re.MULTILINE),
+        exit_re=re.compile(r"^\s*leave\s*$", re.MULTILINE),
+    )
     host._session_mgr = mgr
 
     async with host.as_user("mysql"):
@@ -568,11 +638,17 @@ async def test_as_user_undo_survives_cancellation():
     host = UnixHost(
         ip="10.0.0.1", element="box", creds=_MULTI_HOP_CREDS, user="root", log=LogMode.QUIET
     )
-    mgr = _mock_session_mgr()
-    mgr.current_user = "root"
+    mgr = _mock_session_mgr(user="root")
 
-    async def _yielding_send(*_a, **_k) -> None:
-        await asyncio.sleep(0)  # a real suspension per send, so a cancel CAN land mid-undo
+    model_send = mgr.send.side_effect
+
+    async def _yielding_send(*a, **k) -> None:
+        # Suspend on every send, so a cancel CAN land mid-undo -- but still
+        # feed the model. Replacing the side effect outright would leave the
+        # shell frozen as the login user, and the resync's identity check
+        # would then fail a switch this test is not about.
+        await asyncio.sleep(0)
+        await model_send(*a, **k)
 
     mgr.send.side_effect = _yielding_send
     host._session_mgr = mgr

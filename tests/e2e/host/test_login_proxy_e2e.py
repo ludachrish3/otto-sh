@@ -79,6 +79,7 @@ the dev-VM load rule this module is intended to be run as a single pass
 import asyncio
 import contextlib
 import json
+import time
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -463,5 +464,63 @@ async def test_builtin_su_proxy_switch_user_does_not_hang(leased_host: tuple[str
         # The default "exit" undo's own resync must not drop the next command.
         after = (await host.run("whoami")).only.value.strip()
         assert after == "vagrant"
+    finally:
+        await host.close()
+
+
+# ---------------------------------------------------------------------------
+# Test 8: a configured password against a `su` that does not challenge
+# ---------------------------------------------------------------------------
+
+# vagrant -> root (passwordless sudo, no prompt) -> test (built-in `su`).
+# The `test` cred CARRIES a password and root's `su` does NOT ask for it, which
+# is the whole point: whether `su` challenges is a property of who is asking,
+# not of the cred, and the same entry does prompt when reached from vagrant
+# (test 7 above drives exactly that path).
+_UNPROMPTED_CREDS: list[dict[str, str]] = [
+    {"login": "vagrant", "password": "vagrant"},
+    {"login": "root", "proxy": "sudo-su-shell", "via": "vagrant"},
+    {"login": "test", "password": "Password1", "proxy": "su", "via": "root"},
+]
+
+
+@pytest.mark.asyncio
+async def test_builtin_su_proxy_does_not_stall_when_root_is_not_challenged(
+    leased_host: tuple[str, str],
+) -> None:
+    """A known password must not stall a switch the host performs for free.
+
+    THE REGRESSION THIS PINS IS A HANG, so it is asserted as WALL CLOCK and not
+    merely as "it worked". Before the fix the built-in proxy awaited
+    ``[Pp]assword:`` unconditionally whenever a password was configured; from
+    root that prompt never comes, so the hop burned the full
+    ``DEFAULT_COMMAND_TIMEOUT`` (30s) and then raised ``LoginProxyError``. The
+    budget below is far under that and far over a healthy two-hop switch, so it
+    fails for the right reason on either side.
+
+    It also exercises the via-chain end to end on the real bed: ``test`` is
+    reached through ``root``, each hop runs its own proxy (custom then
+    built-in), and the undo unwinds both innermost-first.
+    """
+    element, ip = leased_host
+    host = create_host_from_dict(
+        _builtin_su_host_dict(ip, element, creds=[dict(c) for c in _UNPROMPTED_CREDS])
+    )
+    try:
+        assert (await host.run("whoami")).only.value.strip() == "vagrant"
+
+        started = time.monotonic()
+        async with host.as_user("test"):
+            elapsed = time.monotonic() - started
+            assert elapsed < 20.0, (
+                f"the switch took {elapsed:.1f}s: a configured password stalled on a "
+                f"`su` that never challenged (the pre-fix behavior waited the full "
+                f"30s command timeout before failing)"
+            )
+            assert (await host.run("whoami")).only.value.strip() == "test"
+            # Nothing was dropped by a hop that sent no password.
+            assert (await host.run("echo alive")).only.value.strip() == "alive"
+
+        assert (await host.run("whoami")).only.value.strip() == "vagrant"
     finally:
         await host.close()

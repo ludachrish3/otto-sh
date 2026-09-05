@@ -28,6 +28,7 @@ from otto.logger import management
 from otto.logger.mode import LogMode
 from otto.result import CommandNotRunError, CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
+from tests._fixtures.fake_shell import ShellModel
 from tests.conftest import active_context
 
 
@@ -1692,6 +1693,10 @@ class _RecordingShellSession(ShellSession):
         self.closed = False
         self._output = output
         self._match = match
+        # Passwordless: these hosts' switches are about the DRY-RUN guard, not
+        # about authentication, and a prompting shell would put a credential
+        # exchange in the middle of every positive control.
+        self.model = ShellModel(user="admin", challenges=False)
 
     async def _open(self) -> None: ...
 
@@ -1724,10 +1729,15 @@ class _RecordingShellSession(ShellSession):
 
     async def send(self, text: str) -> None:
         self.sent.append(text)
+        self.model.wrote(text)
 
     async def expect(self, pattern, timeout: float = 30.0) -> str:
         self.awaited.append(str(getattr(pattern, "pattern", pattern)))
-        return self._match
+        # The model answers the login-proxy resync's identity probe -- the
+        # positive controls below really do switch user, and a transport that
+        # only ever said "real match" would fail them from inside the product.
+        # Everything else still gets the canned reply this double promises.
+        return self.model.reply() or self._match
 
 
 async def _live_session(host) -> "tuple[HostSession, _RecordingShellSession]":
@@ -2312,7 +2322,7 @@ class TestADryRunDrivesNoSessionItAlreadyHolds:
         # POSITIVE CONTROL, same session, same transport: the su IS typed and
         # the session really does become root.
         await session.switch_user("root")
-        assert transport.sent[0] == "su root\n", "no su was typed even WITHOUT --dry-run"
+        assert transport.sent[0] == "su - root\n", "no su was typed even WITHOUT --dry-run"
         assert session.current_user == "root"
 
     @pytest.mark.asyncio
@@ -2362,7 +2372,7 @@ class TestADryRunDrivesNoSessionItAlreadyHolds:
         # POSITIVE CONTROL, same host, same transport, no dry run: the su IS
         # typed and the host really does track the new user.
         await host.switch_user("root")
-        assert transport.sent[0] == "su root\n", "no su was typed even WITHOUT --dry-run"
+        assert transport.sent[0] == "su - root\n", "no su was typed even WITHOUT --dry-run"
         assert host._session_mgr.current_user == "root"
 
     @pytest.mark.asyncio

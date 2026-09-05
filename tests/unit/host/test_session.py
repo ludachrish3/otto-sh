@@ -23,6 +23,7 @@ from otto.host.command_frame import CommandFrame, ZephyrFrame, ZephyrSerialFrame
 from otto.host.local_host import LocalHost
 from otto.host.session import LocalSession, SessionManager, ShellSession
 from otto.utils import Status, wait_for_async
+from tests._fixtures.fake_shell import ShellModel
 from tests.unit.host._session_feed import FeedAfterWriteMixin
 
 
@@ -1276,6 +1277,29 @@ async def test_host_session_switch_user_without_resolver_raises():
         await hs.switch_user("root")
 
 
+def _realistic_shell_expect(shell, **model_kw) -> None:
+    """Back ``shell.send``/``shell.expect`` with one honest :class:`ShellModel`.
+
+    The fake this replaced answered ``"Password:"`` to every read that was not
+    a probe reply -- a shell that re-challenges after being answered, which is
+    a REJECTED password, not a prompt. It also had no idea WHO it was, so it
+    could not tell a switch that took from one that did not. The model does
+    both, and takes its starting identity from ``shell.current_user`` so the
+    fake cannot disagree with the session it stands for.
+    """
+    model = ShellModel(user=shell.current_user, challenges=True, **model_kw)
+
+    async def _send(text, **_k) -> None:
+        model.wrote(text)
+
+    async def _expect(*_a, **_k) -> str:
+        return model.reply() or ""
+
+    shell.send = AsyncMock(side_effect=_send)
+    shell.expect = AsyncMock(side_effect=_expect)
+    shell.model = model
+
+
 @pytest.mark.asyncio
 async def test_host_session_switch_user_elevates_and_stamps():
     from otto.host.login_proxy import Cred
@@ -1283,7 +1307,7 @@ async def test_host_session_switch_user_elevates_and_stamps():
 
     shell = AsyncMock(spec=ShellSession)
     shell.current_user = "alice"
-    shell.expect.return_value = "Password:"
+    _realistic_shell_expect(shell)
     hs = HostSession(
         "n",
         shell,
@@ -1296,7 +1320,7 @@ async def test_host_session_switch_user_elevates_and_stamps():
     await hs.switch_user("root")
     assert shell.current_user == "root"
     sent = [c.args[0] for c in shell.send.await_args_list]
-    assert "su root\n" in sent
+    assert "su - root\n" in sent
     assert "rootpw\n" in sent
 
 
@@ -1307,7 +1331,7 @@ async def test_host_session_as_user_restores_previous():
 
     shell = AsyncMock(spec=ShellSession)
     shell.current_user = "alice"
-    shell.expect.return_value = "Password:"
+    _realistic_shell_expect(shell)
     hs = HostSession(
         "n",
         shell,
@@ -1332,10 +1356,17 @@ async def test_host_session_as_user_undo_survives_cancellation():
 
     shell = AsyncMock(spec=ShellSession)
     shell.current_user = "alice"
-    shell.expect.return_value = "Password:"
+    _realistic_shell_expect(shell)
 
-    async def _yielding_send(*_a, **_k) -> None:
-        await asyncio.sleep(0)  # a real suspension per send, so a cancel CAN land mid-undo
+    model_send = shell.send.side_effect
+
+    async def _yielding_send(*a, **k) -> None:
+        # Suspend on every send so a cancel CAN land mid-undo -- but still feed
+        # the model. Replacing the side effect outright freezes the shell as
+        # the login user, and the resync's identity check then fails a switch
+        # this test is not about.
+        await asyncio.sleep(0)
+        await model_send(*a, **k)
 
     shell.send.side_effect = _yielding_send
     hs = HostSession(
@@ -1431,7 +1462,7 @@ async def test_named_session_elevation_does_not_touch_default():
     default_shell.current_user = "alice"
     named_shell = AsyncMock(spec=ShellSession)
     named_shell.current_user = "alice"
-    named_shell.expect.return_value = "Password:"
+    _realistic_shell_expect(named_shell)
     hs = HostSession(
         "mon",
         named_shell,
@@ -1454,7 +1485,7 @@ async def test_host_session_as_user_nested_restores_each_level():
 
     shell = AsyncMock(spec=ShellSession)
     shell.current_user = "alice"
-    shell.expect.return_value = "Password:"
+    _realistic_shell_expect(shell)
     hs = HostSession(
         "mon",
         shell,
@@ -1498,7 +1529,14 @@ async def test_host_session_as_user_undo_via_ordering_observable():
 
     shell = AsyncMock(spec=ShellSession)
     shell.current_user = "root"
-    shell.expect.return_value = "Password:"
+    # This proxy switches with `become`/`leave`, not `su` -- tell the model, or
+    # the shell it stands for reports one identity forever and the resync's
+    # identity check reads a working hop as one that never took.
+    _realistic_shell_expect(
+        shell,
+        switch_re=re.compile(r"^\s*become\b(.*)$", re.MULTILINE),
+        exit_re=re.compile(r"^\s*leave\s*$", re.MULTILINE),
+    )
     hs = HostSession(
         "mon",
         shell,
@@ -1533,44 +1571,48 @@ from otto.logger.mode import LogMode
 
 
 class _ImmediateSession(ShellSession):
-    """A ``ShellSession`` whose handshake succeeds instantly.
+    """A ``ShellSession`` whose handshake succeeds instantly, backed by a model.
 
     Mirrors ``_AliveStubSession`` in test_session_logging.py — no async
     orchestration is needed to drive it past readiness, so these tests can
     call ``_ensure_session``/``open_session`` directly and assert on the
-    raw writes a login-proxy hop produces. ``expect()`` only returns a
-    canned response (``expect_response``) rather than driving a real
-    read loop — most hops here send a password directly (log=NEVER)
-    without waiting on a prompt, since that interplay is already covered
-    by the built-in ``su`` proxy's own tests (test_login_proxy.py) and
-    Task 6's switch_user/as_user tests; the one test that does exercise
-    the built-in ``su`` proxy's ``expect()`` call supplies a response.
+    raw writes a login-proxy hop produces.
+
+    Reads are answered by a :class:`ShellModel` rather than a canned string,
+    because the resync no longer just checks that SOMETHING answered: it reads
+    the identity out of the reply. A fake that replays one fixed string cannot
+    say who it is, so it cannot distinguish a switch that took from one that
+    did not — the exact blindness the identity check exists to remove.
+
+    Args:
+        user: the login this shell starts as (the connection's own credential).
+        prompts: whether a switch challenges for a password. Most hops here
+            send the password unconditionally without waiting for a prompt;
+            set it for the test that drives the built-in proxy's prompt path.
+        switch_re: this host's user-switching verb, when it is not ``su``.
     """
 
-    def __init__(self, expect_response: str | None = None) -> None:
+    def __init__(self, *, user: str = "admin", prompts: bool = False, **model_kw: object) -> None:
         super().__init__()
         self.writes: list[str] = []
         self.closed = False
-        self._expect_response = expect_response
+        self.model = ShellModel(user=user, challenges=prompts, **model_kw)  # ty: ignore[invalid-argument-type]
 
     async def _open(self) -> None: ...
 
     async def _write(self, data: str) -> None:
         self.writes.append(data)
+        self.model.wrote(data)
 
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
-        # Resync-aware: otto.host.login_proxy.run_proxy/run_undo now end every
-        # hop with a post-transition echo-proof `$?`-digit resync probe
-        # (echo "<recover>$?__") — answer that transparently with a real
-        # shell's digit-form reply (most hops here never call expect()
-        # themselves, so without this every hop replay would raise below).
-        if self.writes and self.writes[-1].startswith('echo "__OTTO_'):
-            m = re.search(r'"(.*?)\$\?__"', self.writes[-1])
-            marker = m.group(1)
-            return f"\n{marker}0__\n"
-        if self._expect_response is not None:
-            return self._expect_response
-        raise AssertionError("this fake does not support expect(); pass expect_response=...")
+        reply = self.model.reply()
+        if reply is None:
+            # Nothing to say. That is not a broken fake — the login-proxy
+            # engine WATCHES for a credential prompt during its settle, so
+            # every hop performs one read that a non-prompting shell has no
+            # answer for, and timing out is exactly what a real expect() does.
+            raise asyncio.TimeoutError("this fake's shell has nothing further to say")
+        return reply
 
     async def close(self) -> None:
         self.closed = True
@@ -1628,7 +1670,7 @@ class TestLoginProxyAtSessionEstablishment:
 
         assert mgr._session is built[0]
         assert mgr._session.current_user == "mysql"
-        assert "su mysql\n" in built[0].writes
+        assert "su - mysql\n" in built[0].writes
         assert len(built) == 1  # a proxy success must not trigger a rebuild
 
     @pytest.mark.asyncio
@@ -1685,7 +1727,7 @@ class TestLoginProxyAtSessionEstablishment:
         logged_out: list[tuple[str, LogMode]] = []
 
         def factory() -> _ImmediateSession:
-            return _ImmediateSession(expect_response="Password: ")
+            return _ImmediateSession(prompts=True)
 
         mgr = SessionManager(
             connections=conn,
@@ -1698,10 +1740,12 @@ class TestLoginProxyAtSessionEstablishment:
         await mgr._ensure_session()
 
         assert mgr._session.current_user == "mysql"
-        assert _without_resync_writes(mgr._session.writes) == ["su mysql\n", "mysqlpw\n"]
-        assert ("su mysql", LogMode.NORMAL) in logged_cmds
+        assert _without_resync_writes(mgr._session.writes) == ["su - mysql\n", "mysqlpw\n"]
+        assert ("su - mysql", LogMode.NORMAL) in logged_cmds
         assert not any(cmd == "mysqlpw" for cmd, _ in logged_cmds)
-        assert ("Password: ", LogMode.NORMAL) in logged_out
+        # The model's prompt text, verbatim: what matters is that the string
+        # expect() matched reached _log_output, not its exact spelling.
+        assert ("Password:", LogMode.NORMAL) in logged_out
 
     @pytest.mark.asyncio
     async def test_ensure_session_multi_hop_via_chain_ordering(self):
@@ -1724,6 +1768,13 @@ class TestLoginProxyAtSessionEstablishment:
             Cred(login="mysql", password="mysqlpw", proxy="task7-record-via", via="admin"),
         ]
         conn = _proxy_connections(hops, login_target="mysql", credentials=("root", "rootpw"))
+
+        def factory() -> _ImmediateSession:
+            # Logged in as root, and this host switches with `become`, not `su`.
+            return _ImmediateSession(
+                user="root", switch_re=re.compile(r"^\s*become\b(.*)$", re.MULTILINE)
+            )
+
         # SessionManager._creds is the list _apply_login_proxy resolves `via`
         # against (the full cred, incl. password) — the same list HostSession
         # elevation uses. The via accounts must carry passwords here so a bare
@@ -1731,7 +1782,7 @@ class TestLoginProxyAtSessionEstablishment:
         mgr = SessionManager(
             connections=conn,
             name="h",
-            session_factory=_ImmediateSession,
+            session_factory=factory,
             host_id="h",
             creds=[
                 Cred(login="root", password="rootpw"),
@@ -1788,7 +1839,7 @@ class TestLoginProxyAtSessionEstablishment:
         hs = await mgr.open_session("mon")
 
         assert hs.current_user == "mysql"
-        assert "su mysql\n" in built[0].writes
+        assert "su - mysql\n" in built[0].writes
 
     @pytest.mark.asyncio
     async def test_open_session_failed_hop_leaves_no_named_session(self):
@@ -1845,22 +1896,22 @@ class _StubExecSession(ShellSession):
         super().__init__()
         self.run_cmd_calls: list[str] = []
         self.writes: list[str] = []
+        # The proxied-exec tests log in as `admin` and hop to `mysql` with a
+        # passwordless built-in `su`; the model follows that switch so the
+        # resync's identity check sees the target it was promised.
+        self.model = ShellModel(user="admin", challenges=False)
 
     async def _open(self) -> None: ...
 
     async def _write(self, data: str) -> None:
         self.writes.append(data)
+        self.model.wrote(data)
 
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
-        # Resync-aware (see _ImmediateSession): the proxied-exec tests
-        # below use a passwordless built-in `su` hop, so the only expect()
-        # call this stub ever sees is the engine's post-transition echo-proof
-        # `$?`-digit resync probe.
-        if self.writes and self.writes[-1].startswith('echo "__OTTO_'):
-            m = re.search(r'"(.*?)\$\?__"', self.writes[-1])
-            marker = m.group(1)
-            return f"\n{marker}0__\n"
-        raise AssertionError("stub does not read")
+        reply = self.model.reply()
+        if reply is None:
+            raise asyncio.TimeoutError("stub does not read: this shell does not prompt")
+        return reply
 
     async def close(self) -> None:
         self._alive = False

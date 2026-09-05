@@ -40,6 +40,7 @@ from otto.host.login_proxy import (
     run_proxy,
 )
 from otto.logger.mode import LogMode
+from tests._fixtures.fake_shell import replay
 
 # ---------------------------------------------------------------------------
 # _strip_ansi
@@ -1000,17 +1001,24 @@ def _is_resync_probe(write: bytes) -> bool:
     return write.startswith(_RESYNC_ECHO_PREFIX)
 
 
-def _resync_reply(write: bytes) -> bytes:
-    """Build a read_remote() reply that satisfies expect() for the marker in *write*.
+def _resync_reply(sent: list[bytes]) -> bytes:
+    """Build a read_remote() reply that satisfies expect() for the last probe.
 
-    The probe is ``echo "<recover>$?__"\\n``; a real shell prints the digit
-    form ``<recover>0__`` (exit code 0), which is what confirm_live's
-    ``recover_pattern`` actually matches — echoing the probe text back
-    verbatim (with its literal ``$?``) does not.
+    The probe is ``echo "<recover>$?__$(id -un)__"\n``; a real shell prints
+    the expanded form ``<recover>0__<user>__``, which is what the resync
+    pattern matches — echoing the probe text back verbatim (with its literal
+    ``$?`` and ``$(id -un)``) does not. The USER half matters as much as the
+    digit: the resync proves who answered, not merely that someone did, and
+    checks it against the login the hop set out to become.
+
+    So the identity is DERIVED by replaying the writes so far, not pinned to a
+    constant. A pinned one answers every hop with the same name — which passes
+    only while nothing reads it, and goes stale the moment a test grows a hop.
     """
-    m = re.search(rb'"(.*?)\$\?__"', write)
+    m = re.search(rb'"(.*?)\$\?__', sent[-1])
     marker = m.group(1)
-    return b"\n" + marker + b"0__\n"
+    user = replay(sent).user.encode()
+    return b"\n" + marker + b"0__" + user + b"__\n"
 
 
 def _drop_resync_probes(writes: list[bytes]) -> list[bytes]:
@@ -1029,14 +1037,14 @@ class TestReplaySuHopOverBridge:
 
         async def read_remote() -> bytes:
             if sent and _is_resync_probe(sent[-1]):
-                return _resync_reply(sent[-1])
+                return _resync_reply(sent)
             return chunks.pop(0) if chunks else b""
 
         io = _BridgeProxyIO(write_remote, read_remote, newline=b"\n")
         hop = Cred(login="mysql", password="sqlpw", proxy="su", via="admin")
         await run_proxy(io, hop, via=Cred(login="admin"), host_id="h1")
 
-        assert _drop_resync_probes(sent) == [b"su mysql\n", b"sqlpw\n"]
+        assert _drop_resync_probes(sent) == [b"su - mysql\n", b"sqlpw\n"]
 
     @pytest.mark.asyncio
     async def test_timeout_surfaces_as_login_proxy_error_with_context(self):
@@ -1100,7 +1108,7 @@ class TestReplayProxyHops:
 
         async def read_remote() -> bytes:
             if sent and _is_resync_probe(sent[-1]):
-                return _resync_reply(sent[-1])
+                return _resync_reply(sent)
             return replies.pop(0) if replies else b""
 
         hops = [
@@ -1115,7 +1123,7 @@ class TestReplayProxyHops:
             via_login="admin",
             host_id="h1",
         )
-        assert _drop_resync_probes(sent) == [b"su mysql\n", b"pw1\n", b"su app\n", b"pw2\n"]
+        assert _drop_resync_probes(sent) == [b"su - mysql\n", b"pw1\n", b"su - app\n", b"pw2\n"]
 
     @pytest.mark.asyncio
     async def test_each_hop_waits_for_its_own_fresh_prompt(self):
@@ -1139,7 +1147,7 @@ class TestReplayProxyHops:
             nonlocal read_calls
             read_calls += 1
             if sent and _is_resync_probe(sent[-1]):
-                return _resync_reply(sent[-1])
+                return _resync_reply(sent)
             return prompts.pop(0) if prompts else b""
 
         hops = [
@@ -1167,6 +1175,10 @@ class TestReplayProxyHops:
 
         async def track_via(io: object, ctx: object) -> None:
             seen_vias.append(ctx.via.login)  # type: ignore[attr-defined]
+            # Send the switch too. A proxy that records and sends nothing
+            # describes a hop that never happened, and the resync's identity
+            # check reads it as exactly that.
+            await io.send(f"su - {ctx.target.login}\n")  # type: ignore[attr-defined]
 
         register_login_proxy("track-via-test", track_via)
         try:
@@ -1176,8 +1188,16 @@ class TestReplayProxyHops:
 
             async def read_remote() -> bytes:
                 if sent and _is_resync_probe(sent[-1]):
-                    return _resync_reply(sent[-1])
-                return b""
+                    return _resync_reply(sent)
+                # This shell is QUIET: it neither answers nor closes. b"" is
+                # EOF to the bridge and endless noise spins the read loop, so
+                # the honest model is a read that simply never returns --
+                # `_BridgeProxyIO.expect` wraps this in `asyncio.wait_for`,
+                # which cancels it and raises TimeoutError on schedule. The
+                # engine now spends its settle watching for a credential
+                # prompt, so every hop performs one such read.
+                await asyncio.Event().wait()
+                raise AssertionError("unreachable")
 
             hops = [
                 Cred(login="mysql", proxy="track-via-test"),
@@ -1240,15 +1260,15 @@ class TestResyncSoundInBothEchoModes:
         async def read_remote() -> bytes:
             nonlocal reads
             reads += 1
-            probe = sent[-1].decode("utf-8")  # 'echo "<recover>$?__"\n'
-            m = re.search(r'"(.*?)\$\?__"', probe)
+            probe = sent[-1].decode("utf-8")  # 'echo "<recover>$?__$(id -un)__"\n'
+            m = re.search(r'"(.*?)\$\?__', probe)
             marker = m.group(1)
             if reads == 1:
                 # Only the echoed probe comes back — literal "$?", not
                 # digits. recover_pattern (`<recover>(\d+)__`) must reject it.
                 return probe.encode()
-            # The shell's real output: `$?` evaluated to the digit form.
-            return f"{marker}0__\n".encode()
+            # The shell's real output: `$?` and `$(id -un)` both evaluated.
+            return f"{marker}0__mysql__\n".encode()
 
         io = _BridgeProxyIO(write_remote, read_remote, newline=b"\n")
         await _resync_shell(io, host_id="h1", hop_login="mysql")
@@ -1273,11 +1293,11 @@ class TestResyncSoundInBothEchoModes:
 
         async def read_remote() -> bytes:
             probe = sent[-1].decode("utf-8")
-            m = re.search(r'"(.*?)\$\?__"', probe)
+            m = re.search(r'"(.*?)\$\?__', probe)
             marker = m.group(1)
             # Echo-off: no echoed probe; the shell's digit-form output glues
             # onto a fake prompt.
-            return f"test@test1:/home/vagrant$ {marker}0__\r\n".encode()
+            return f"test@test1:/home/vagrant$ {marker}0__mysql__\r\n".encode()
 
         io = _BridgeProxyIO(write_remote, read_remote, newline=b"\n")
         # Must NOT raise (a line-anchor would time out all attempts and raise).

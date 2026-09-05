@@ -40,6 +40,19 @@ absent and measured present on all five matrix artifacts; `sudo` is absent but
 adapted to, as above; and `reboot` — which the survey paired with `shutdown` —
 is an applet everywhere, so only the `shutdown` half is a gap.
 
+`su` carries one of these adaptations itself, and it is a **version** boundary
+rather than a build-config one. Otto's built-in `"su"` login proxy switches
+into a login shell, and it spells that `su - <login>` and never
+`su -l <login>`: BusyBox 1.16.1's `su` documents
+`su [OPTIONS] [-] [USERNAME]` and offers no `-l` at all, while 1.21.1 and every
+later matrix row list `-,-l` together. The bare `-` is advertised on all five,
+so a single spelling reaches the whole matrix and there is no gap to declare —
+but the discrepancy is real, and the spelling that does *not* survive it is the
+more explicit one a later cleanup would naturally reach for. So it is pinned
+per row by `_EXPECTED_SU_DASH_L` in
+`tests/integration/busybox_bed/test_applet_userland.py`, where a rewrite to
+`-l` reddens on the 1.16.1 guest instead of quietly dropping it.
+
 ## The rule: measured-broken refuses up front, unmeasured runs
 
 Every record carries one of two statuses, and the status decides whether otto

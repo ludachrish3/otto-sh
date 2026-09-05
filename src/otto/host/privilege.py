@@ -46,7 +46,7 @@ from ..logger.mode import LogMode
 from .command_frame import history_prefix
 from .errors import UnsupportedOnUserlandError
 from .host import DEFAULT_COMMAND_TIMEOUT, is_dry_run, refuse_declined_elevation
-from .login_proxy import _SU_PROMPT, Cred, cred_for, perform_switch, run_undo
+from .login_proxy import _SU_PROMPT, _SU_TARGET, Cred, cred_for, perform_switch, run_undo
 from .userland import UserlandHost
 
 if TYPE_CHECKING:
@@ -56,10 +56,6 @@ if TYPE_CHECKING:
 
 # Recognizable, locale-independent sudo prompt we match on.
 _SUDO_PROMPT = "otto-sudo:"
-
-# The login `su` with no argument targets, and so the cred whose password
-# answers its prompt.
-_SU_TARGET = "root"
 
 
 class _HostProxyIO:
