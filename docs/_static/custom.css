@@ -23,3 +23,14 @@ body[data-md-color-scheme="slate"],
     --md-typeset-a-color: #ffd54f !important;
     --md-accent-fg-color: #ffeb3b !important;
 }
+
+/* Width. The theme caps every grid row at 61rem, and on a wide display the
+   nav and table-of-contents sidebars eat ~24rem of that, leaving the prose
+   column squeezed to ~37rem. Above the breakpoint where both sidebars are
+   shown, let the grid track the viewport instead, with a cap that still
+   keeps code blocks and tables from stretching past a readable line. */
+@media screen and (min-width: 76.25em) {
+    .md-grid {
+        max-width: min(100% - 3rem, 92rem);
+    }
+}
