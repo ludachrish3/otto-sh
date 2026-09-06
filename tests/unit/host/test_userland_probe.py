@@ -246,7 +246,6 @@ async def test_the_printed_pin_parses_as_the_lab_data_key_a_host_entry_really_ca
 
     entry = {
         "ip": "10.0.0.1",
-        "element": "bb",
         "creds": [{"login": "u", "password": "p"}],
         **json.loads("{" + _pin_text(lines) + "}"),
     }

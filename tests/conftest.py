@@ -1047,6 +1047,7 @@ def real_sync_phase():
 
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.labdata import (  # noqa: F401
+    element_for,
     flat_hosts,
     flatten_lab_doc,
     host_data,
@@ -1221,7 +1222,7 @@ async def host1(request):
         # Embedded backends round-trip through the factory so the same lab-data
         # entry tests target as `otto host` / `EmbeddedHost(...)` users do.
         data = host_data(_ZEPHYR_BACKEND_NE[backend])
-        h = create_host_from_dict(data)
+        h = create_host_from_dict(data, element=element_for(_ZEPHYR_BACKEND_NE[backend]))
         yield h
         await h.close()
         return
@@ -1229,7 +1230,7 @@ async def host1(request):
         # BusyBox bed guests round-trip through the factory: term/transfer
         # resolve from the entry's menus (telnet/shell), hop from test1.
         data = host_data(_BUSYBOX_BACKEND_NE[backend])
-        h = create_host_from_dict(data)
+        h = create_host_from_dict(data, element=element_for(_BUSYBOX_BACKEND_NE[backend]))
         yield h
         await h.close()
         return
@@ -1279,10 +1280,10 @@ async def hop_host(request):
     ne, hop_ne, term, transfer = request.param
     target_data = host_data(ne)
     hop_data = host_data(hop_ne)
-    hop_id = make_host_id(hop_data["element"], None, hop_data.get("board"), None)
+    hop_id = make_host_id(element_for(hop_ne).name, hop_data.get("board"), None)
     h = UnixHost(
         ip=target_data["ip"],
-        element=target_data["element"],
+        element=element_for(ne),
         creds=[Cred(**c) for c in target_data["creds"]],
         board=target_data.get("board"),
         is_virtual=target_data.get("is_virtual", False),
@@ -1326,7 +1327,7 @@ async def transfer_host(request, tmp_path_factory):
     param = request.param
     if isinstance(param, tuple) and len(param) == 2 and param[1] in BUSYBOX_GUEST_NES:
         transfer, ne = param
-        h = create_host_from_dict({**host_data(ne), "transfer": transfer})
+        h = create_host_from_dict({**host_data(ne), "transfer": transfer}, element=element_for(ne))
         try:
             yield h
         finally:

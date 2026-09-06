@@ -23,6 +23,7 @@ from otto.docker import resolve as resolve_mod
 from otto.docker.adapter import AdapterResult
 from otto.docker.deployment import UseCaseStack, deploy, deployed, teardown
 from otto.docker.resolve import UseCaseResolutionError
+from otto.host.element import Element
 from otto.host.errors import HostCommandError
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
@@ -69,7 +70,7 @@ def _repo(name, *fragments, composes=(), images=()):
 def _host(host_id: str, ip: str, *, roles=()) -> UnixHost:
     host = UnixHost(
         ip=ip,
-        element=host_id,
+        element=Element(host_id),
         creds=[Cred(login="vagrant", password="vagrant")],
         docker_capable=True,
     )
@@ -542,31 +543,32 @@ async def test_teardown_on_that_names_no_host_is_refused(single):
         await teardown("integration", on="ghost")
 
 
-@pytest.mark.asyncio
-async def test_on_is_canonicalized_through_the_labs_handle_resolver(tmp_path):
-    """`on` accepts every typed handle the rest of otto does, canonical id or not.
+def test_canonical_on_resolves_through_the_labs_host_table():
+    """`_canonical_on` looks up `on` directly against `lab.hosts` — there is
+    no handle-resolution layer any more (spec 2026-09-05 §2.4, §7).
 
-    Asserted through the resolver rather than by passing an id that happens
-    to be canonical already: `on="test3"` would pass a straight
-    `lab.hosts[on]` lookup too, so it proves nothing about handles.
+    Exercised directly against `_canonical_on` rather than through the whole
+    `deploy()` pipeline: `_parent_for` (further down that same pipeline) does
+    its own `lab.hosts.get(host_id)` with the same key, so a spy installed
+    once on `lab.hosts` and checked only for "test3" being *somewhere* in it
+    cannot tell "`_canonical_on` looked it up" from "something downstream did
+    instead" — gutting `_canonical_on` to `return on` unchanged would still
+    leave that version green. Calling it directly and asserting the spy saw
+    EXACTLY one lookup closes that gap.
     """
-    compose = _compose_file(tmp_path, "core")
-    repo = _repo("a", _frag(), composes=[compose])
-    host = _wire(_host("test3", "10.10.200.13"))
+    host = _host("test3", "10.10.200.13")
     lab = _lab(host)
     seen: list[str] = []
-    real_resolver = lab.resolve_handle
 
-    def _spy(handle):
-        seen.append(handle)
-        return real_resolver("test3") if handle == "edge-box" else real_resolver(handle)
+    class _SpyHosts(dict):
+        def get(self, key, default=None):
+            seen.append(key)
+            return super().get(key, default)
 
-    lab.resolve_handle = _spy  # type: ignore[method-assign]
-    with _install(lab, [repo]):
-        stack = await deploy("integration", on="edge-box")
+    lab.hosts = _SpyHosts(lab.hosts)  # type: ignore[assignment]
 
-    assert seen == ["edge-box"]
-    assert list(stack.projects) == ["test3"]
+    assert deploy_mod._canonical_on(lab, "test3") == "test3"
+    assert seen == ["test3"]
 
 
 # ---------------------------------------------------------------------------

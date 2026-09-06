@@ -1,4 +1,5 @@
 from otto.config.lab import Lab
+from otto.host.element import Element
 from otto.link import Link, LinkEndpoint, Provenance
 
 
@@ -117,10 +118,10 @@ def test_load_lab_forwards_preferences(monkeypatch):
                 create_host_from_dict(
                     {
                         "ip": "10.0.0.1",
-                        "element": "fake",
                         "creds": [{"login": "u", "password": "p"}],
                     },
                     lab_name=name,
+                    element=Element("fake"),
                 )
             )
             return lab

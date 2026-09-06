@@ -16,6 +16,7 @@ import pytest
 from otto.host import userland as userland_module
 from otto.host.app_shell import AppShell
 from otto.host.docker_host import DockerContainerHost
+from otto.host.element import Element
 from otto.host.file_ops import refuse_if_base64_is_absent
 from otto.host.host import HostFilter, is_dry_run
 from otto.host.local_host import LocalHost
@@ -168,7 +169,7 @@ class TestGlobalDryRun:
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element="box",
+                element=Element("box"),
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
@@ -186,7 +187,7 @@ class TestGlobalDryRun:
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element="box",
+                element=Element("box"),
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
@@ -201,7 +202,7 @@ class TestGlobalDryRun:
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element="box",
+                element=Element("box"),
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
@@ -217,7 +218,7 @@ class TestGlobalDryRun:
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element="box",
+                element=Element("box"),
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
@@ -229,7 +230,7 @@ class TestGlobalDryRun:
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element="box",
+                element=Element("box"),
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
@@ -244,7 +245,7 @@ class TestGlobalDryRun:
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element="box",
+                element=Element("box"),
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
@@ -263,7 +264,7 @@ class TestGlobalDryRun:
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
-                element="box",
+                element=Element("box"),
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
@@ -281,7 +282,7 @@ def _dry_run_host() -> UnixHost:
     """A host whose ``exec`` a dry run answers synthetically. Build inside the context."""
     return UnixHost(
         ip="10.0.0.1",
-        element="box",
+        element=Element("box"),
         creds=[Cred(login="user", password="pass")],
         log=LogMode.QUIET,
     )
@@ -481,7 +482,7 @@ def _local(log: LogMode = LogMode.NORMAL) -> LocalHost:
 
 def _unix(log: LogMode = LogMode.NORMAL) -> UnixHost:
     return UnixHost(
-        ip="10.0.0.1", element="box", creds=[Cred(login="user", password="pass")], log=log
+        ip="10.0.0.1", element=Element("box"), creds=[Cred(login="user", password="pass")], log=log
     )
 
 
@@ -785,7 +786,10 @@ def _zephyr_with_fs(log: LogMode = LogMode.QUIET):
     from otto.host.embedded_host import ZephyrHost
 
     return ZephyrHost(
-        ip="192.0.2.1", element="zephyr37_fat", log=log, filesystem=build_filesystem("fat-ram")
+        ip="192.0.2.1",
+        element=Element("zephyr37_fat"),
+        log=log,
+        filesystem=build_filesystem("fat-ram"),
     )
 
 
@@ -2386,7 +2390,7 @@ class TestADryRunDrivesNoSessionItAlreadyHolds:
         """
         from otto.host.embedded_host import ZephyrHost
 
-        embedded = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET)
+        embedded = ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
         try:
             embedded._session_mgr._session_factory = _RecordingShellSession
             session = await embedded._session_mgr.open_session("probe")

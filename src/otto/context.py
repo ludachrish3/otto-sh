@@ -269,7 +269,7 @@ class OttoContext:
         """Look up *host_id* in the active lab, apply any keyword overrides, and register it."""
         from .config.fleet import _apply_option_overrides
 
-        host = self.lab.resolve_handle(host_id)
+        host = self.lab.hosts.get(host_id)
         if host is None:
             # The sentinel LIBRARY_LAB_NAME lab is what run_suite()/run_selection()
             # install for a library caller with no active context (see

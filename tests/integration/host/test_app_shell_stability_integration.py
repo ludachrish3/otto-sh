@@ -51,6 +51,7 @@ from collections.abc import Iterator
 import pytest
 
 from otto import AppShell, Parsed, register_login_proxy
+from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
@@ -101,7 +102,6 @@ def _mysql_host_dict(ip: str, element: str, **overrides: object) -> dict[str, ob
     """Build an inline host dict carrying the mysql proxied cred (default user vagrant)."""
     data: dict[str, object] = {
         "ip": ip,
-        "element": element,
         "creds": [dict(c) for c in _MYSQL_CREDS],
     }
     data.update(overrides)
@@ -212,7 +212,9 @@ async def test_mysql_appshell_cycle(leased_host: tuple[str, str]) -> None:
     element, ip = leased_host
     await _assert_sshd_reachable(element, ip)
 
-    host = create_host_from_dict(_mysql_host_dict(ip, element))  # default user: vagrant
+    host = create_host_from_dict(
+        _mysql_host_dict(ip, element), element=Element(element)
+    )  # default user: vagrant
     try:
         async with host.app_shell(MySql) as sql:
             # Literal table name inline (no interpolation) — the table is a fixed

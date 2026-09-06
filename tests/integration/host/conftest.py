@@ -54,6 +54,8 @@ from tests.conftest import (
 ensure_custom_hosts_on_path()
 from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame
 
+from tests._fixtures.labdata import element_for
+
 # custom_hosts/__init__.py (tests/custom_hosts/custom_hosts/__init__.py) already
 # registers this exact class as an import-time side effect of the line above —
 # importing the ``custom_hosts.zephyr_inline`` submodule runs the parent
@@ -89,7 +91,7 @@ def _install_integration_lab() -> None:
         lab.add_host(
             UnixHost(
                 ip=data["ip"],
-                element=data["element"],
+                element=element_for(ne),
                 creds=[Cred(**c) for c in data["creds"]],
                 board=data.get("board"),
                 is_virtual=data.get("is_virtual", False),

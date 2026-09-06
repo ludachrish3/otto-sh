@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import otto.host.connections as connections_mod
+from otto.host.element import Element
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
@@ -21,7 +22,10 @@ from otto.utils import Status
 
 def _unix_host() -> UnixHost:
     return UnixHost(
-        ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
+        ip="10.0.0.1",
+        element=Element("box"),
+        creds=[Cred(login="u", password="p")],
+        log=LogMode.QUIET,
     )
 
 

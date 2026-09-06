@@ -14,6 +14,7 @@ import pytest
 
 from otto.config.repo import DockerCompose
 from otto.docker.staging import stage_compose_files
+from otto.host.element import Element
 from otto.host.errors import HostCommandError, HostUnreachableError
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
@@ -24,7 +25,7 @@ from otto.utils import Status
 def _parent() -> UnixHost:
     return UnixHost(
         ip="10.10.200.13",
-        element="test3",
+        element=Element("test3"),
         creds=[Cred(login="vagrant", password="vagrant")],
         docker_capable=True,
     )

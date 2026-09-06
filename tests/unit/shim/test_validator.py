@@ -211,8 +211,9 @@ def test_answer_or_reason_end_to_end(workspace, monkeypatch):
 def test_a_node_missing_a_required_key_hands_over_rather_than_guessing(workspace, monkeypatch):
     """A Node without ``group`` is a payload the shim cannot read — not a leaf.
 
-    ``SCHEMA`` deliberately stays 18 across this plan, so an entry written by an
-    earlier commit on this branch VALIDATES and yet has no ``group`` key. Read with
+    ``SCHEMA`` does not move for a payload-shape change like this one, so an entry
+    written by an earlier commit on this branch VALIDATES and yet has no ``group``
+    key. Read with
     ``.get`` that would silently parse every group with leaf semantics (an
     option-looking word after a group's positional parsed as an option, which is
     exactly the mismatch the differential caught); indexed, it raises and

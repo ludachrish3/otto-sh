@@ -62,7 +62,7 @@ from otto.host.embedded_host import EmbeddedHost
 from otto.host.factory import create_host_from_dict
 from otto.host.host import BaseHost
 from otto.host.remote_host import RemoteHost
-from tests._fixtures.labdata import host_data
+from tests._fixtures.labdata import element_for, host_data
 from tests._fixtures.profiles import Cell, _ensure_custom_frames, axes_for, axis_space
 from tests.conformance._lab_context import bed_lab_context
 from tests.conformance._resolved import ResolvedCell
@@ -220,7 +220,10 @@ def build_bed_host(cell: "Cell") -> "RemoteHost":
     """
     _ensure_custom_frames()
     entry = dict(host_data(cell.element, BED_TECH))
-    host = create_host_from_dict({**entry, "term": cell.term, "transfer": cell.transfer})
+    host = create_host_from_dict(
+        {**entry, "term": cell.term, "transfer": cell.transfer},
+        element=element_for(cell.element, BED_TECH),
+    )
     if (host.term, host.transfer) != (cell.term, cell.transfer):
         raise RuntimeError(
             f"bed cell {cell.element}:{cell.term}:{cell.transfer} built a host reporting "
@@ -353,7 +356,9 @@ def bed_scratch_dir(element: str) -> "Path | None":
     ``assert [] == ['zephyr37_llext', 'zephyr37_nofs', 'zephyr44_llext']``.
     """
     _ensure_custom_frames()
-    host = create_host_from_dict(dict(host_data(element, BED_TECH)))
+    host = create_host_from_dict(
+        dict(host_data(element, BED_TECH)), element=element_for(element, BED_TECH)
+    )
     if isinstance(host, EmbeddedHost) and not host.filesystem.supports_transfer:
         return None
     if host.default_dest_dir != Path():

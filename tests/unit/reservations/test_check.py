@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import pytest
 
 from otto.config.lab import Lab
+from otto.host.element import Element
 from otto.reservations import (
     MissingReservationError,
     NullReservationBackend,
@@ -151,25 +152,25 @@ def _three_level_lab() -> Lab:
     ``tests/_fixtures/labdata.py:host_data``), and tech1 has no
     ``chassis1``/``chassis2``/``gw`` elements to look up — so real fixture
     ids (``test1``/``test2``/``test3``) are used to construct valid hosts,
-    then ``id``/``element``/``element_id`` are overridden (plain dataclass
-    fields, settable post-construction) to this scenario's shape: two hosts
-    sharing one chassis element, plus a gateway host with no resources of
-    its own.
+    then ``id``/``element`` are overridden (plain dataclass fields, settable
+    post-construction) to this scenario's shape: two hosts sharing one chassis
+    element, plus a gateway host with no resources of its own.
     """
+    chassis = Element("chassis", id=1, resources=frozenset({"chassis-1"}))
     h1 = make_host("test1")
-    h1.id, h1.element, h1.element_id = "chassis1", "chassis", 1
-    h1.element_resources, h1.resources = frozenset({"chassis-1"}), frozenset({"slot-1"})
+    h1.id, h1.element, h1.resources = "chassis1", chassis, frozenset({"slot-1"})
     h2 = make_host("test2")
-    h2.id, h2.element, h2.element_id = "chassis2", "chassis", 1
-    h2.element_resources, h2.resources = frozenset({"chassis-1"}), frozenset({"slot-2"})
+    h2.id, h2.element, h2.resources = "chassis2", chassis, frozenset({"slot-2"})
     gw = make_host("test3")
-    gw.id, gw.element, gw.element_id = "gw", "gw", None
+    gw.id, gw.element = "gw", Element("gw")
     return Lab(name="rig", resources={"rig-pdu"}, hosts={"chassis1": h1, "chassis2": h2, "gw": gw})
 
 
 def test_origins_cover_all_three_levels_in_a_stable_order():
     assert required_resource_origins(_three_level_lab()) == [
-        ResourceOrigin("chassis-1", "element", "('chassis', 1)"),
+        # The element owner is its slug — the element's ``id`` is data and
+        # never labels anything (spec 2026-09-05 §2.1).
+        ResourceOrigin("chassis-1", "element", "chassis"),
         ResourceOrigin("rig-pdu", "lab", "rig"),
         ResourceOrigin("slot-1", "host", "chassis1"),
         ResourceOrigin("slot-2", "host", "chassis2"),
@@ -220,44 +221,13 @@ def test_missing_error_names_each_origin_and_holder():
         check_reservations(lab, "chris", backend, host_ids=["gw"])
 
 
-def test_a_host_with_element_resources_but_no_element_identity_is_a_loud_error():
-    """A RemoteHost with a non-empty ``element_resources`` but no ``element`` is a
-    loader invariant violation — must fail loud, not render an empty-string
-    owner that looks like a real one (the pre-fix ``('', None)`` behavior)."""
-    host = make_host("test1")
-    host.element_resources = frozenset({"chassis-1"})
-    del host.element
-    lab = Lab(name="rig", hosts={"test1": host})
-    with pytest.raises(RuntimeError, match=r"carries element resources but no element identity"):
-        required_resource_origins(lab)
-
-
-def test_an_empty_element_name_is_no_more_of_an_identity_than_a_missing_one():
-    """``element=""`` must raise, not render the empty-string owner R17 forbids.
-
-    The absent attribute and the blank one are the same loader break, and the
-    blank one is the likelier of the two to reach a user: it renders a row that
-    looks like a real element and names nothing.
-
-    Red at HEAD (``if element is None``): no raise, and the owner rendered as
-    ``''`` — blank, not even the ``('', None)`` a reader might catch as broken.
-    """
-    host = make_host("test1")
-    host.element_resources = frozenset({"chassis-1"})
-    host.element = ""
-    lab = Lab(name="rig", hosts={"test1": host})
-    with pytest.raises(RuntimeError, match=r"carries element resources but no element identity"):
-        required_resource_origins(lab)
-
-
 def test_the_null_backend_does_not_suppress_the_unknown_host_id_bug():
     """``backend = "none"`` is no scheduler, not a licence to skip the walk.
 
-    The unknown-``host_ids`` ``ValueError`` (spec §4) and the R17 element
-    invariant are BUG detectors, and a deployment with no backend configured is
-    exactly where a broken lab file would otherwise sit unnoticed longest. The
-    contract the move must not break is "never queried": a
-    ``NullReservationBackend`` still answers nothing here.
+    The unknown-``host_ids`` ``ValueError`` (spec §4) is a BUG detector, and a
+    deployment with no backend configured is exactly where a broken lab file
+    would otherwise sit unnoticed longest. The contract the move must not break
+    is "never queried": a ``NullReservationBackend`` still answers nothing here.
 
     Red at HEAD (``if is_null_backend(backend): return`` above the walk):
     ``check_reservations`` returned ``None`` and said nothing.
@@ -265,16 +235,6 @@ def test_the_null_backend_does_not_suppress_the_unknown_host_id_bug():
     lab = _three_level_lab()
     with pytest.raises(ValueError, match=r"not in lab 'rig': \['ghost'\]"):
         check_reservations(lab, "chris", NullReservationBackend(), host_ids=["ghost"])
-
-
-def test_the_null_backend_still_reaches_the_element_identity_invariant():
-    """Same move, the other detector: R17 fires under ``backend = "none"`` too."""
-    host = make_host("test1")
-    host.element_resources = frozenset({"chassis-1"})
-    del host.element
-    lab = Lab(name="rig", hosts={"test1": host})
-    with pytest.raises(RuntimeError, match=r"carries element resources but no element identity"):
-        check_reservations(lab, "chris", NullReservationBackend())
 
 
 def test_message_padding_aligns_the_level_column_for_different_length_resources():
@@ -292,7 +252,23 @@ def test_message_padding_aligns_the_level_column_for_different_length_resources(
 
 def test_a_single_instance_element_renders_its_bare_name():
     gw = make_host("test3")
-    gw.id, gw.element, gw.element_id = "gw", "gw", None
-    gw.element_resources = frozenset({"gw-lock"})
+    gw.id, gw.element = "gw", Element("gw", resources=frozenset({"gw-lock"}))
     lab = Lab(name="rig", hosts={"gw": gw})
     assert ResourceOrigin("gw-lock", "element", "gw") in required_resource_origins(lab)
+
+
+def test_the_element_owner_is_the_slug_not_the_written_name():
+    """The owner label is ``element.slug``, and here that differs from ``name``.
+
+    Every other element in this file (``chassis``, ``gw``) is spelled in a form
+    its own slug reproduces, so ``owner = element.name`` reads identically at
+    all of them and would survive. ``Chassis A`` is the shape that separates
+    the two: its slug is ``chassis-a``, and the owner column is a correlation
+    key — the same token the host ids of that element are prefixed with.
+    """
+    cab = make_host("test3")
+    cab.id = "cab"
+    cab.element = Element("Chassis A", resources=frozenset({"chassis-a-lock"}))
+    lab = Lab(name="rig", hosts={"cab": cab})
+    origins = required_resource_origins(lab)
+    assert ResourceOrigin("chassis-a-lock", "element", "chassis-a") in origins

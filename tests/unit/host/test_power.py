@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.power import (
     CommandPowerController,
@@ -27,7 +28,7 @@ def _target_with_controller(runner):
 
     target = UnixHost(
         ip="10.0.0.9",
-        element="vm",
+        element=Element("vm"),
         creds=[Cred(login="u", password="p")],
         name="vm1",
         log=LogMode.QUIET,
@@ -114,7 +115,7 @@ def test_unix_power_control_coerced_from_dict():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element="box",
+        element=Element("box"),
         creds=[Cred(login="u", password="p")],
         log=LogMode.QUIET,
         power_control={"type": "command", "on_cmd": "o", "off_cmd": "f"},
@@ -127,7 +128,7 @@ def test_hosts_default_power_control_none():
     from otto.host.local_host import LocalHost
 
     assert LocalHost().power_control is None
-    zephyr = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET)
+    zephyr = ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
     assert zephyr.power_control is None
 
 
@@ -208,7 +209,10 @@ async def test_unix_soft_reboot_issues_reboot_sudo():
     from otto.host.unix_host import UnixHost
 
     host = UnixHost(
-        ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
+        ip="10.0.0.1",
+        element=Element("box"),
+        creds=[Cred(login="u", password="p")],
+        log=LogMode.QUIET,
     )
     with patch.object(UnixHost, "run", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = Results.collect([])
@@ -221,7 +225,7 @@ async def test_unix_soft_reboot_issues_reboot_sudo():
 async def test_zephyr_soft_reboot_issues_kernel_reboot():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET)
+    host = ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET)
     with patch.object(ZephyrHost, "run", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = Results.collect([])
         result = await host.reboot()
@@ -288,7 +292,10 @@ async def test_remote_is_reachable_reflects_verify_connection(monkeypatch):
     from otto.host.unix_host import UnixHost
 
     host = UnixHost(
-        ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
+        ip="10.0.0.1",
+        element=Element("box"),
+        creds=[Cred(login="u", password="p")],
+        log=LogMode.QUIET,
     )
     monkeypatch.setattr(
         host,
@@ -476,7 +483,10 @@ async def _userland_declaring(**applets: str) -> Userland:
 def _busybox_host(userland: Userland) -> UnixHost:
     """A UnixHost wired to *userland*, so nothing builds one against a real device."""
     host = UnixHost(
-        ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
+        ip="10.0.0.1",
+        element=Element("box"),
+        creds=[Cred(login="u", password="p")],
+        log=LogMode.QUIET,
     )
     host._userland_cache = userland
     return host

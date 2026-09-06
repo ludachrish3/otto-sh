@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 
 from otto.cli import host as host_module
 from otto.cli.host import _host_id_completer, _resolve_host, host_app
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.session import SessionManager, ShellSession
 from otto.host.unix_host import UnixHost
@@ -44,7 +45,7 @@ def _make_host(name: str = "router1") -> UnixHost:
     """Return a real UnixHost (no connection is made on construction)."""
     return UnixHost(
         ip="10.0.0.1",
-        element=name,
+        element=Element(name),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.NORMAL,
     )
@@ -107,7 +108,7 @@ def _make_host_with_session(
     """
     host = UnixHost(
         ip="10.0.0.1",
-        element=name,
+        element=Element(name),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.NORMAL,
     )
@@ -213,27 +214,28 @@ class TestResolveHost:
 
 
 class TestResolveCliHostHop:
-    def test_hop_handle_resolves_to_canonical_id(self):
-        """A positional-handle ``--hop`` (e.g. "dut1", the N-th "dut" host by
-        logical index) must be canonicalized before being stored on
-        ``host.hop`` — downstream hop lookups (e.g.
-        ``RemoteHost._build_hop_transport``'s ``lab.hosts[hop_id]``) are
-        canonical-id-only and would KeyError on a raw handle.
+    def test_hop_is_resolved_through_get_host_and_stored_by_id(self):
+        """``--hop`` is resolved through ``get_host`` — the same lab-lookup
+        boundary the target goes through — and the RESOLVED host's ``.id`` is
+        what gets stored on ``host.hop``, not the raw request string.
 
-        ``get_host`` is the lab-data-lookup I/O boundary (see conftest mock
-        policy), so it's faked here to mimic ``Lab.resolve_handle``: "dut1"
-        (the positional handle) resolves to the host whose canonical id is
-        "dut47" (a repeated "dut" element whose lowest element_id sorts to
-        logical index 1).
+        The hop request (``"hop-input"``) is deliberately a different string
+        from the resolved host's id (``"dut47"``): if ``resolve_cli_host``
+        skipped resolution and stored the raw request, or stored something
+        other than what ``get_host`` returned, ``host.hop`` would come back
+        ``"hop-input"``, not ``"dut47"`` — and the call log would be missing
+        the hop lookup entirely.
         """
         target_host = _make_host("router1")
-        canonical_hop_host = _make_host("dut47")
+        hop_host = _make_host("dut47")
+        calls: list[str] = []
 
         def _fake_get_host(host_id: str, **_overrides: object) -> UnixHost:
+            calls.append(host_id)
             if host_id == "router1":
                 return target_host
-            if host_id == "dut1":
-                return canonical_hop_host
+            if host_id == "hop-input":
+                return hop_host
             raise KeyError(host_id)
 
         ctx = SimpleNamespace(
@@ -241,7 +243,7 @@ class TestResolveCliHostHop:
             meta={
                 "_otto_host_request": {
                     "host_id": "router1",
-                    "hop": "dut1",
+                    "hop": "hop-input",
                     "term": None,
                     "transfer": None,
                 }
@@ -251,7 +253,27 @@ class TestResolveCliHostHop:
         with patch.object(host_module, "get_host", side_effect=_fake_get_host):
             host = host_module.resolve_cli_host(ctx)
 
+        assert calls == ["router1", "hop-input"]
         assert host.hop == "dut47"
+
+    def test_unknown_hop_fails_loud_through_the_same_path_as_an_unknown_target(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        """A hop naming no host fails exactly like an unknown target does:
+        the same ``_resolve_host`` boundary, the same "No host with ID"
+        message, the same ``typer.Exit(1)`` — not a silently-``None`` hop and
+        not a different error shape.
+        """
+        _slot_fleet(monkeypatch, tmp_path)
+        ctx = _host_ctx(None, "slot1", hop="ghost-hop")
+
+        with pytest.raises(typer.Exit) as exc:
+            host_module.resolve_cli_host(ctx)
+
+        assert exc.value.exit_code == 1
+        out = capsys.readouterr().out
+        assert "No host with ID" in out
+        assert "ghost-hop" in out
 
 
 # ── An explicitly named host is reserved too ──────────────────────────────────
@@ -451,7 +473,7 @@ def test_an_out_of_fleet_host_with_no_slot_of_its_own_is_never_queried(monkeypat
 
     lab.add_host(_host("gw", "rig", 9))  # no resources, no element_resources
     assert not lab.hosts["gw"].resources  # the premise, stated
-    assert not lab.hosts["gw"].element_resources
+    assert not lab.hosts["gw"].element.resources
 
     calls = []
     monkeypatch.setattr(

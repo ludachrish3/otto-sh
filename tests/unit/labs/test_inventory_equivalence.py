@@ -19,7 +19,6 @@ _ATTRS = [
     "id",
     "ip",
     "element",
-    "element_id",
     "is_virtual",
     "site",
     "rack",
@@ -28,7 +27,6 @@ _ATTRS = [
     "valid_terms",
     "valid_transfers",
     "source_lab",
-    "element_metadata",
     "lab_info",
     "hop",
 ]
@@ -43,18 +41,25 @@ def inventory():
     return construct_inventory(compile_inventory(user.inventory, anchor_dir=root, origin="fixture"))
 
 
-def _flat(tech):
+def _entries(tech):
     repo = JsonFileLabRepository(search_paths=[lab_data_dir() / tech])
-    # The fixture's parsed elements, exactly as the loader sees them.
+    # The fixture's parsed elements, exactly as the loader sees them: the first
+    # host entry of each, paired with the element it belongs to.
     docs = repo._load_documents()
-    return {el.name: el.flatten()[0] for doc in docs for el in doc.elements if el.name in _UNIX}
+    return {
+        el.name: (el.hosts[0], el.to_element())
+        for doc in docs
+        for el in doc.elements
+        if el.name in _UNIX
+    }
 
 
 def test_resolved_entries_equal_the_inline_entries(inventory):
-    inline = _flat("tech1")
-    referenced = _flat("tech1-inventory")
+    inline = _entries("tech1")
+    referenced = _entries("tech1-inventory")
     for name in _UNIX:
-        assert resolve_host_entry(referenced[name], inventory).host_data == inline[name], name
+        entry, element = referenced[name]
+        assert resolve_host_entry(entry, inventory, element).host_data == inline[name][0], name
 
 
 def test_built_hosts_agree(inventory):

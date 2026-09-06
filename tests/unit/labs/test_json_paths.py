@@ -115,8 +115,53 @@ def test_duplicate_element_across_files_of_one_source_errors(tmp_path: Path) -> 
     write_lab_json(tmp_path / "one.json", [HOST], declare_labs=False)
     write_lab_json(tmp_path / "two.json", [dict(HOST, ip="10.0.0.9")], declare_labs=False)
     repo = JsonFileLabRepository([tmp_path / "*.json"])
-    with pytest.raises(LabRepositoryError, match=r"element alt1 in .*one\.json.*two\.json"):
+    # Identical spellings take the plain duplicate form, the same one
+    # ``parse_elements`` uses within a file (spec §6), with the two paths
+    # standing where its two entry indices stand.
+    match = r"duplicate element 'alt1' in .*one\.json and .*two\.json"
+    with pytest.raises(LabRepositoryError, match=match):
         repo.load_lab("veg")
+
+
+def test_elements_that_slug_alike_across_files_of_one_source_error(tmp_path: Path) -> None:
+    """Identity is the slug, so two spellings of one name are one element (spec §2.3).
+
+    Spellings that differ take the OTHER of the two forms — what each file
+    wrote and the slug they share — rather than the duplicate form above:
+    ``Alt1`` and ``alt1`` are different strings, and a message quoting one of
+    them as though both files contained it names half the problem.
+    """
+    write_lab_json(tmp_path / "one.json", [HOST], declare_labs=False)
+    write_lab_json(
+        tmp_path / "two.json", [dict(HOST, element="Alt1", ip="10.0.0.9")], declare_labs=False
+    )
+    repo = JsonFileLabRepository([tmp_path / "*.json"])
+    match = r"one\.json 'alt1' and .*two\.json 'Alt1' both slug to 'alt1'"
+    with pytest.raises(LabRepositoryError, match=match):
+        repo.load_lab("veg")
+
+
+def test_the_first_files_spelling_survives_the_cross_file_slug_error(tmp_path: Path) -> None:
+    """BOTH spellings are named, so neither file's author hunts a string it lacks.
+
+    The running state is keyed by the slug; recording only that key loses the
+    first file's spelling, and the message then quotes the second file's twice.
+    ``ALT1`` appears nowhere in ``two.json`` and ``Alt1`` nowhere in
+    ``one.json`` — a message carrying one of them names half the problem.
+    """
+    write_lab_json(tmp_path / "one.json", [dict(HOST, element="ALT1")], declare_labs=False)
+    write_lab_json(
+        tmp_path / "two.json", [dict(HOST, element="Alt1", ip="10.0.0.9")], declare_labs=False
+    )
+    repo = JsonFileLabRepository([tmp_path / "*.json"])
+    with pytest.raises(LabRepositoryError) as excinfo:
+        repo.load_lab("veg")
+    message = str(excinfo.value)
+    assert "'ALT1'" in message, message
+    assert "'Alt1'" in message, message
+    assert "both slug to 'alt1'" in message, message
+    assert "one.json" in message, message
+    assert "two.json" in message, message
 
 
 def test_duplicate_lab_declaration_across_files_of_one_source_errors(tmp_path: Path) -> None:

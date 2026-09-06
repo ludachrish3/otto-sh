@@ -44,6 +44,7 @@ from ..utils import (
 if TYPE_CHECKING:
     from .app_shell import AppShell
     from .dev_tool import DevTool
+    from .element import Element
     from .inventory_ref import InventoryRef
     from .lab_info import LabInfo
     from .power import PowerController
@@ -458,14 +459,21 @@ class Host(Protocol):
     three-level-reservations §3); empty for containers and ``local``. The lab's
     are on :attr:`lab_info`."""
 
-    element_resources: frozenset[str]
-    """The reservation identifiers of the ELEMENT this host belongs to (spec
-    2026-08-28 three-level-reservations §3) — stamped by the loader, like
-    ``element_metadata``; empty for containers and ``local``.
+    @property
+    def element(self) -> "Element | None":
+        """The element this host belongs to, or ``None`` for a container/``local``.
 
-    Carried per member host because there is no element registry at runtime:
-    an element is in play exactly when one of its hosts is, so the union over
-    elements in play falls out of the union over hosts in play."""
+        ``None`` for a container or the built-in ``local`` (spec 2026-09-05
+        §4). Element-level reservation identifiers are ``element.resources``;
+        there is no element registry at runtime — an element is in play exactly
+        when one of its hosts is.
+
+        READ-ONLY on the protocol, unlike its neighbours: a remote host narrows
+        it to a non-optional ``Element``, and a mutable protocol member is
+        invariant — declaring it as a plain attribute would make every
+        ``RemoteHost`` fail the protocol (it accepts no write of ``None``).
+        """
+        ...
 
     inventory_ref: "InventoryRef"
     """Inventory provenance (see :class:`~otto.host.inventory_ref.InventoryRef`); empty for an
@@ -901,7 +909,7 @@ class BaseHost(ABC):
     log: LogMode
     lab_info: "LabInfo"
     resources: frozenset[str]
-    element_resources: frozenset[str]
+    element: "Element | None"
     inventory_ref: "InventoryRef"
     products: list["Product"]
     dev_tools: list["DevTool"]

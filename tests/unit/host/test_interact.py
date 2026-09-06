@@ -20,6 +20,7 @@ import pytest
 
 from otto import lifecycle
 from otto.host import interact
+from otto.host.element import Element
 from otto.host.interact import (
     _ESCAPE_BYTE,
     _BridgeProxyIO,
@@ -548,7 +549,7 @@ class TestUnixHostLoginDispatch:
 
         host = UnixHost(
             ip="10.0.0.1",
-            element="router",
+            element=Element("router"),
             creds=[Cred(login="u", password="p")],
             term="ssh",
             log=LogMode.QUIET,
@@ -572,7 +573,7 @@ class TestUnixHostLoginDispatch:
 
         host = UnixHost(
             ip="10.0.0.1",
-            element="router",
+            element=Element("router"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -614,7 +615,7 @@ class TestUnixHostLoginUser:
         # resolves through admin via a single su hop.
         host = UnixHost(
             ip="10.0.0.1",
-            element="router",
+            element=Element("router"),
             creds=[
                 Cred(login="admin", password="hunter2"),
                 Cred(login="mysql", password="sqlpw", proxy="su", via="admin"),
@@ -649,7 +650,7 @@ class TestUnixHostLoginUser:
 
         host = UnixHost(
             ip="10.0.0.1",
-            element="router",
+            element=Element("router"),
             creds=[
                 Cred(login="other", password="op"),
                 Cred(login="admin", password="ap"),
@@ -675,7 +676,7 @@ class TestUnixHostLoginUser:
 
         host = UnixHost(
             ip="10.0.0.1",
-            element="router",
+            element=Element("router"),
             creds=[
                 Cred(login="admin", password="hunter2"),
                 Cred(login="mysql", password="sqlpw", proxy="su", via="admin"),
@@ -708,7 +709,7 @@ class TestUnixHostLoginUser:
 
         host = UnixHost(
             ip="10.0.0.1",
-            element="router",
+            element=Element("router"),
             creds=[
                 Cred(login="other", password="op"),
                 Cred(login="admin", password="ap"),

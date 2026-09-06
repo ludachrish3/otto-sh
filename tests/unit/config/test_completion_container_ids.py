@@ -29,8 +29,7 @@ def _repo(tmp_path: Path, *, name: str, docker: DockerSettings) -> SimpleNamespa
         [
             {
                 "ip": "10.0.0.1",
-                "element": "server",
-                "element_id": 47,
+                "element": "server47",
                 "labs": ["east"],
                 "docker_capable": True,
                 "creds": [{"login": "u", "password": "p"}],

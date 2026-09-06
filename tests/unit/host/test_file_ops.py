@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from otto.host.element import Element
 from otto.host.local_host import LocalHost
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
@@ -332,7 +333,7 @@ def _zephyr_with_fs():
 
     return ZephyrHost(
         ip="192.0.2.1",
-        element="zephyr37_fat",
+        element=Element("zephyr37_fat"),
         log=LogMode.QUIET,
         filesystem=build_filesystem("fat-ram"),
     )

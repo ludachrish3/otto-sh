@@ -49,6 +49,7 @@ assert GUESTS, (
     "parametrized over that roster and would empty-param-SKIP rather than fail, "
     "so it is asserted here instead."
 )
+from tests._fixtures.labdata import element_for
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -91,7 +92,7 @@ def _load_lab():
     lab.add_host(
         UnixHost(
             ip=data["ip"],
-            element=data["element"],
+            element=element_for("test1"),
             creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
             is_virtual=True,
@@ -144,7 +145,9 @@ def _require_guest(ne: str) -> None:
 
 def _build_guest(ne: str, **overrides):
     data = {**host_data(ne), **overrides}
-    return create_host_from_dict(data, lab_name="busybox"), data["sw_version"]
+    return create_host_from_dict(data, lab_name="busybox", element=element_for(ne)), data[
+        "sw_version"
+    ]
 
 
 @pytest_asyncio.fixture(params=GUESTS)

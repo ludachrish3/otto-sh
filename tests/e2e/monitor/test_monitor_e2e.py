@@ -342,9 +342,9 @@ def _uptime_rows(db_path: Path, host: str) -> int:
     hosts declare no board, so that name, the leased pool element and the
     ``.id`` that keys parser registration are all one string (``"test1"``).
     The substring match is kept rather than tightened to equality because
-    ``name`` is a display label that composes in a board and a logical index
-    for any host that has them — a bed host that grows either must not
-    silently stop matching.
+    ``name`` is a display label that composes in a board and a slot for any
+    host that has them — a bed host that grows either must not silently stop
+    matching.
     """
     with contextlib.closing(sqlite3.connect(db_path)) as conn:
         return conn.execute(

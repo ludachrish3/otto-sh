@@ -62,6 +62,7 @@ from otto.docker.compose import (
 )
 from otto.docker.staging import stage_compose_files, stage_image_context
 from otto.host.docker_host import DockerContainerHost
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.result import CommandNotRunError, CommandResult, NotRunResult, Result
@@ -90,7 +91,7 @@ def _fail(out: str = "boom") -> CommandResult:
 def _bare_parent() -> UnixHost:
     return UnixHost(
         ip=_PARENT_IP,
-        element="probe",
+        element=Element("probe"),
         creds=[Cred(login="u", password="p")],
         board="seed",
         docker_capable=True,

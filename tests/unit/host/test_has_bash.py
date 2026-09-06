@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 
 from otto.host.command_frame import ZephyrFrame
 from otto.host.docker_host import DockerContainerHost
+from otto.host.element import Element
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.factory import create_host_from_dict
 from otto.host.local_host import LocalHost
@@ -33,11 +34,15 @@ class TestHasBashPerClassDefault:
     """Each concrete host class's own default, absent any lab-data override."""
 
     def test_unix_host_default_true(self):
-        host = UnixHost(ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")])
+        host = UnixHost(
+            ip="10.0.0.1", element=Element("box"), creds=[Cred(login="u", password="p")]
+        )
         assert host.has_bash is True
 
     def test_embedded_host_default_false(self):
-        host = EmbeddedHost(ip="192.0.2.1", element="zephyr37_fat", command_frame=ZephyrFrame())
+        host = EmbeddedHost(
+            ip="192.0.2.1", element=Element("zephyr37_fat"), command_frame=ZephyrFrame()
+        )
         assert host.has_bash is False
 
     def test_local_host_default_true(self):
@@ -61,9 +66,9 @@ class TestHasBashFromLabData:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "alt1",
                 "creds": [{"login": "v", "password": "v"}],
-            }
+            },
+            element=Element("alt1"),
         )
         assert host.has_bash is True
 
@@ -71,10 +76,10 @@ class TestHasBashFromLabData:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
-            }
+            },
+            element=Element("zephyr37_fat"),
         )
         assert host.has_bash is False
 
@@ -82,10 +87,10 @@ class TestHasBashFromLabData:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "alt1",
                 "creds": [{"login": "v", "password": "v"}],
                 "has_bash": False,
-            }
+            },
+            element=Element("alt1"),
         )
         assert host.has_bash is False
 
@@ -93,10 +98,10 @@ class TestHasBashFromLabData:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "has_bash": True,
-            }
+            },
+            element=Element("zephyr37_fat"),
         )
         assert host.has_bash is True

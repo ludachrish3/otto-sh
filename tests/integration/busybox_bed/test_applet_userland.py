@@ -27,7 +27,7 @@ import pytest
 
 from otto.host.factory import create_host_from_dict
 from otto.host.userland import APPLET_PRESENT, applet_capability
-from tests._fixtures.labdata import host_data
+from tests._fixtures.labdata import element_for, host_data
 
 pytestmark = [pytest.mark.asyncio]
 
@@ -150,10 +150,10 @@ async def test_base64_presence_matches_what_the_matrix_records(guest):
     """
     host, version = guest
     res = await host.exec("command -v base64 >/dev/null 2>&1 && echo yes || echo no")
-    assert res.retcode == 0, f"the probe did not run on {host.element}: {res.value!r}"
+    assert res.retcode == 0, f"the probe did not run on {host.element.name}: {res.value!r}"
     seen = res.value.strip() == "yes"
     assert seen is _EXPECTED_BASE64[version], (
-        f"{host.element} (BusyBox {version}): base64 "
+        f"{host.element.name} (BusyBox {version}): base64 "
         f"{'appeared' if seen else 'vanished'} relative to the recorded matrix "
         f"({_EXPECTED_BASE64[version]}). The table is the oracle -- if this guest's "
         f"build really changed, update it in the same commit that explains why"
@@ -187,12 +187,12 @@ async def test_standalone_shell_matches_what_the_matrix_records(guest):
         "PATH=/nonexistent; command -v ls && echo RESOLVED || echo BLOCKED)"
     )
     assert "SANE" in res.value, (
-        f"ls did not resolve on {host.element} even with PATH=/bin, so the "
+        f"ls did not resolve on {host.element.name} even with PATH=/bin, so the "
         f"no-PATH result says nothing about standalone-shell support: {res.value!r}"
     )
     seen = "RESOLVED" in res.value
     assert seen is _EXPECTED_STANDALONE_SHELL[version], (
-        f"{host.element} (BusyBox {version}): standalone-shell resolution "
+        f"{host.element.name} (BusyBox {version}): standalone-shell resolution "
         f"{'appeared' if seen else 'is absent'} relative to the recorded matrix "
         f"({_EXPECTED_STANDALONE_SHELL[version]}): {res.value!r}"
     )
@@ -225,13 +225,13 @@ async def test_su_login_flag_spelling_matches_what_the_matrix_records(guest):
         "&& echo HAS_L || echo NO_L"
     )
     assert "DASH_OK" in res.value, (
-        f"{host.element} (BusyBox {version}) does not advertise the bare `-` "
+        f"{host.element.name} (BusyBox {version}) does not advertise the bare `-` "
         f"login-shell form that otto.host.login_proxy._su_proxy sends on every "
         f"switch, so this row's `-l` answer proves nothing either: {res.value!r}"
     )
     seen = "HAS_L" in res.value
     assert seen is _EXPECTED_SU_DASH_L[version], (
-        f"{host.element} (BusyBox {version}): `su -l` "
+        f"{host.element.name} (BusyBox {version}): `su -l` "
         f"{'appeared' if seen else 'vanished'} relative to the recorded matrix "
         f"({_EXPECTED_SU_DASH_L[version]}). The table is the oracle -- if this "
         f"guest's build really changed, update it in the same commit that "
@@ -264,26 +264,28 @@ async def test_applet_enumeration_is_unavailable_on_the_oldest_row(guest):
         f"rm -f {_APPLET_LIST_PATH}"
     )
     lines = res.value.splitlines()
-    assert len(lines) == 3, f"the probe on {host.element} answered {res.value!r}, not three lines"
+    assert len(lines) == 3, (
+        f"the probe on {host.element.name} answered {res.value!r}, not three lines"
+    )
     rc, base64_lines, refusal_lines = lines[0], int(lines[1]), int(lines[2])
 
     if version == "1.16.1":
         assert rc != "rc=0", (
-            f"`busybox --list` now works on {host.element} (BusyBox {version}); the "
+            f"`busybox --list` now works on {host.element.name} (BusyBox {version}); the "
             f"per-name batch in the userland resolver was chosen because it did not, "
             f"so re-read that decision rather than only this table"
         )
         assert refusal_lines >= 1, (
-            f"{host.element} refused `--list` differently -- no `applet not found` "
+            f"{host.element.name} refused `--list` differently -- no `applet not found` "
             f"in its output: {res.value!r}"
         )
     else:
         assert rc == "rc=0", (
-            f"`busybox --list` failed on {host.element} (BusyBox {version}); the "
+            f"`busybox --list` failed on {host.element.name} (BusyBox {version}); the "
             f"recorded finding is that 1.16.1 alone lacks it: {res.value!r}"
         )
         assert base64_lines == 1, (
-            f"`--list` on {host.element} enumerated nothing recognisable -- no "
+            f"`--list` on {host.element.name} enumerated nothing recognisable -- no "
             f"`base64` line in {base64_lines} matches: {res.value!r}"
         )
 
@@ -304,9 +306,9 @@ async def test_a_pinless_live_recon_matches_the_recorded_expectations(guest):
     shaped reply saying nothing at all.
     """
     host, version = guest
-    ne = host.element
+    ne = host.element.name
     data = {k: v for k, v in host_data(ne).items() if k != "userland_options"}
-    pinless = create_host_from_dict(data, lab_name="busybox")
+    pinless = create_host_from_dict(data, lab_name="busybox", element=element_for(ne))
     try:
         userland = pinless._userland()
         await userland.resolve()

@@ -15,16 +15,23 @@ from otto.models.inventory import (
 def test_every_record_field_except_extra_is_a_hostspec_field():
     """Spec §4: record field names are HostSpec field names, 1:1 — no mapping table in core.
 
-    No exceptions. ``hw_version``/``sw_version`` were carved out while they were
-    declared on ``UnixHostSpec`` alone; the open question that carve-out was
-    holding open is answered — both are base fields now — so the guard is a
-    plain subset check again, and a stray record field anywhere fails it.
+    ``hw_version``/``sw_version`` were carved out while they were declared on
+    ``UnixHostSpec`` alone; the open question that carve-out was holding open is
+    answered — both are base fields now.
+
+    The one standing exception is :data:`~otto.models.inventory.INVENTORY_KEY_FIELDS`
+    (``element_id``): a key is a fact the record ASSERTS about the element the
+    host belongs to, cross-checked against ``element.id`` and never filled
+    (spec 2026-09-05 §8.6), so it names an ``Element`` field rather than a host
+    entry's. Every other record field is a host field, and a stray one fails
+    this.
     """
     record_fields = set(InventoryRecord.model_fields) - {"extra"}
-    assert record_fields <= set(HostSpec.model_fields), sorted(
-        record_fields - set(HostSpec.model_fields)
-    )
+    allowed = set(HostSpec.model_fields) | INVENTORY_KEY_FIELDS
+    assert record_fields <= allowed, sorted(record_fields - allowed)
     assert "ip" in record_fields  # not vacuous
+    # The exception is exactly the key set, not a licence for any absent field.
+    assert INVENTORY_KEY_FIELDS.isdisjoint(HostSpec.model_fields)
 
 
 def test_fillable_fields_are_derived_not_listed():

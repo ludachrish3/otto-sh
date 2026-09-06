@@ -15,6 +15,7 @@ import pytest_asyncio
 from otto.config.repo import Repo
 from otto.docker import build_images
 from otto.docker.build import image_latest_tag
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
@@ -52,7 +53,7 @@ async def parent(test3_lease):
     are real (~1s of asyncssh handshake per test)."""
     h = UnixHost(
         ip="10.10.200.13",
-        element="test3",
+        element=Element("test3"),
         creds=[Cred(login="vagrant", password="vagrant")],
         is_virtual=True,
         term="ssh",

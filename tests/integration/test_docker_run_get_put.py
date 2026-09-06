@@ -14,6 +14,7 @@ import pytest_asyncio
 from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.docker import build_images, compose_down, compose_up
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
@@ -56,7 +57,7 @@ async def stack(test3_lease):
     after the first test and corrupt the cached SSH connection)."""
     parent = UnixHost(
         ip="10.10.200.13",
-        element="test3",
+        element=Element("test3"),
         creds=[Cred(login="vagrant", password="vagrant")],
         is_virtual=True,
         term="ssh",

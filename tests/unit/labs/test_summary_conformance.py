@@ -1,15 +1,15 @@
 """The `SupportsHostSummaries` contract is about FIELDS, not just ids.
 
-A summary drives five completion surfaces — `--lab` scoping (`labs`), the
-positional handles (`element`/`element_id`), `otto docker --on`
-(`docker_capable`), tunnel narrowing (`ip`) and the class-scoped verb menu
-(`os_type`). A backend that fills in only `id` used to pass every rule while
-silently breaking all five.
+A summary drives four completion surfaces — `--lab` scoping (`labs`), `otto
+docker --on` (`docker_capable`), tunnel narrowing (`ip`) and the class-scoped
+verb menu (`os_type`). A backend that fills in only `id` used to pass every
+rule while silently breaking all of them.
 """
 
 import pytest
 
 from otto.config.lab import Lab
+from otto.host.element import Element
 from otto.host.unix_host import UnixHost
 from otto.labs import HostSummary, LabNotFoundError
 from otto.models.host import Cred
@@ -19,7 +19,7 @@ from otto.testing.conformance import assert_lab_repository_conforms
 def _host(element: str, *, ip: str = "10.0.0.1", docker: bool = False) -> UnixHost:
     return UnixHost(
         ip=ip,
-        element=element,
+        element=Element(element),
         creds=[Cred(login="u", password="p")],
         docker_capable=docker,
     )
@@ -55,8 +55,6 @@ class _Backend:
                 id=h.id,
                 labs=["unix"],
                 ip=h.ip,
-                element=h.element,
-                element_id=h.element_id,
                 docker_capable=h.docker_capable,
                 os_type=h.os_type,
             )
@@ -77,8 +75,6 @@ def _summaries_of() -> list[HostSummary]:
     ("field", "wrong"),
     [
         ("ip", "192.0.2.99"),
-        ("element", "not-test1"),
-        ("element_id", 7),
         ("docker_capable", False),
         ("os_type", "zephyr"),
         # None is the shape a backend that never recorded it produces, and the
@@ -94,15 +90,7 @@ def test_a_field_that_disagrees_with_the_built_host_is_a_violation(field, wrong)
         **{
             **{
                 f: getattr(summaries[0], f)
-                for f in (
-                    "id",
-                    "labs",
-                    "ip",
-                    "element",
-                    "element_id",
-                    "docker_capable",
-                    "os_type",
-                )
+                for f in ("id", "labs", "ip", "docker_capable", "os_type")
             },
             field: wrong,
         }
@@ -127,8 +115,6 @@ def test_a_labless_summary_loses_lab_scoped_completion() -> None:
         id=summaries[0].id,
         labs=[],
         ip=summaries[0].ip,
-        element=summaries[0].element,
-        element_id=summaries[0].element_id,
         docker_capable=summaries[0].docker_capable,
     )
     with pytest.raises(AssertionError, match="--lab-scoped completion would drop it"):
@@ -139,7 +125,7 @@ def test_an_id_no_lab_produces_is_still_a_violation() -> None:
     """The original rule, kept: offering an id that cannot dispatch is worse
     than offering none."""
     summaries = _summaries_of()
-    summaries.append(HostSummary(id="ghost_seed", labs=["unix"], ip="1.1.1.1", element="ghost"))
+    summaries.append(HostSummary(id="ghost_seed", labs=["unix"], ip="1.1.1.1"))
     with pytest.raises(AssertionError, match="cannot dispatch"):
         assert_lab_repository_conforms(_Backend(summaries), expected_labs=["unix", "unix_alt"])
 
@@ -158,26 +144,7 @@ def test_claiming_a_lab_that_does_not_contain_the_host_is_a_violation() -> None:
         id=first.id,
         labs=["unix", "unix_alt"],  # `unix_alt` loads, and does not hold it
         ip=first.ip,
-        element=first.element,
-        element_id=first.element_id,
         docker_capable=first.docker_capable,
     )
     with pytest.raises(AssertionError, match="cannot dispatch"):
-        assert_lab_repository_conforms(_Backend(summaries), expected_labs=["unix", "unix_alt"])
-
-
-def test_a_float_element_id_is_a_violation() -> None:
-    """`7 == 7.0` in Python, so an un-normalized comparison misses exactly the
-    divergence `host_identity` exists to prevent (`dut3.0` vs `dut3`)."""
-    summaries = _summaries_of()
-    first = summaries[0]
-    summaries[0] = HostSummary(
-        id=first.id,
-        labs=first.labs,
-        ip=first.ip,
-        element=first.element,
-        element_id=0.0 if first.element_id is None else float(first.element_id),
-        docker_capable=first.docker_capable,
-    )
-    with pytest.raises(AssertionError, match="element_id"):
         assert_lab_repository_conforms(_Backend(summaries), expected_labs=["unix", "unix_alt"])

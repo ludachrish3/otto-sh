@@ -3,11 +3,12 @@
 import pytest
 
 from otto.config.lab import Lab
+from otto.host.element import Element
 from otto.host.unix_host import UnixHost
 
 
 def _mk(element, ip="10.0.0.1", element_id=None):
-    return UnixHost(ip=ip, creds=[], element=element, element_id=element_id)
+    return UnixHost(ip=ip, creds=[], element=Element(element, id=element_id))
 
 
 def test_add_host_rejects_duplicate():
@@ -54,6 +55,16 @@ def test_merge_error_names_pre_merge_lab_not_already_merged_name():
 def test_distinct_slug_collision_detected():
     # Two different raw elements that slug to the same id collide.
     a = Lab(name="a")
-    a.add_host(UnixHost(ip="10.0.0.1", creds=[], element="Lab X Server"))
+    a.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("Lab X Server")))
     with pytest.raises((KeyError, ValueError), match="lab-x-server"):
-        a.add_host(UnixHost(ip="10.0.0.2", creds=[], element="lab-x-server"))
+        a.add_host(UnixHost(ip="10.0.0.2", creds=[], element=Element("lab-x-server")))
+
+
+def test_lab_has_no_handle_resolution():
+    assert not hasattr(Lab, "resolve_handle")
+
+
+def test_a_numbered_form_of_an_id_is_not_a_host():
+    lab = Lab(name="t")
+    lab.add_host(_mk("server"))
+    assert lab.hosts.get("server1") is None

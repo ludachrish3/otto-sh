@@ -20,6 +20,7 @@ import re
 import pytest
 import pytest_asyncio
 
+from otto.host.element import Element
 from otto.host.session import ShellSession
 from tests.unit.host._session_feed import FeedAfterWriteMixin
 
@@ -381,7 +382,9 @@ from otto.logger.mode import effective_mode
 
 
 def _make_unix_host(log=LogMode.NORMAL) -> UnixHost:
-    return UnixHost(ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=log)
+    return UnixHost(
+        ip="10.0.0.1", element=Element("box"), creds=[Cred(login="u", password="p")], log=log
+    )
 
 
 def test_effective_log_composes_host_and_command():

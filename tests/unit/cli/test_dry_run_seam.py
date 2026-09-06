@@ -19,6 +19,7 @@ import typer
 from otto.cli.expose import HostGroup
 from otto.cli.invoke import LabReference, render_leaf_value
 from otto.cli.registry import CommandSpec, cli_command, register_cli_command
+from otto.host.element import Element
 from otto.result import CommandResult, NotRunResult, Result
 from otto.suite import OttoSuite
 from otto.utils import DRY_RUN_HEADLINE, Status, cli_exposed
@@ -822,7 +823,7 @@ def _dialable_host(element: str = "dut1", ip: str = "198.51.100.1") -> Any:
     from otto.host.login_proxy import Cred
     from otto.host.unix_host import UnixHost
 
-    return UnixHost(ip=ip, creds=[Cred(login="root", password="x")], element=element)
+    return UnixHost(ip=ip, creds=[Cred(login="root", password="x")], element=Element(element))
 
 
 def _lab_with(*hosts: Any) -> Any:

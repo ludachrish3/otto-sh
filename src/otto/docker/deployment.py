@@ -110,19 +110,18 @@ class UseCaseStack:
 
 
 def _canonical_on(lab: "Lab", on: "str | None") -> "str | None":
-    """Canonicalize an ``on=`` handle to a host id, refusing one the lab lacks.
+    """Canonicalize an ``on=`` host id, refusing one the lab lacks.
 
     ``on`` is the one placement knob that bypasses roles, pins and scope
     entirely (spec §5 knob 1), so nothing downstream ever checks it: an
     unknown value would be handed to ``resolve_placement`` as the group key
     and only surface as a ``KeyError``-ish failure a host lookup later, with
-    the user's typo nowhere in the message. Resolved through
-    ``Lab.resolve_handle`` so ``on`` accepts the same typed handles every
-    other host-taking verb does, not only canonical ids.
+    the user's typo nowhere in the message. Looked up through ``lab.hosts``
+    so the error below can report the actual id, not a lookup surprise.
     """
     if on is None:
         return None
-    host = lab.resolve_handle(on)
+    host = lab.hosts.get(on)
     if host is None:
         raise UseCaseResolutionError(
             f"on={on!r} matches no host in lab {lab.name!r} — a use-case cannot be "
@@ -624,8 +623,8 @@ async def deploy(
             own intersection, and a host left with none is skipped.
         env: Caller overrides, the last layer of the merge (§6).
         env_files: ``K=V`` files merged under *env* and over the adapters.
-        on: Collapse every fragment onto this host (§5 knob 1). Accepts any
-            typed handle ``Lab.resolve_handle`` understands.
+        on: Collapse every fragment onto this host (§5 knob 1). Accepts the
+            host's id.
         provide: ``capability -> repo`` overrides for the provider
             competition (§4).
         build: Build each participating repo's declared images first.

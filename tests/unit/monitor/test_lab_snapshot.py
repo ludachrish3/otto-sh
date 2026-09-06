@@ -1,5 +1,6 @@
 """Lab snapshot builder — static links only, never credentials (spec 2026-07-10 §2/§3)."""
 
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.link.model import Link, LinkEndpoint, Provenance
@@ -9,10 +10,12 @@ from otto.monitor.session import snapshot_lab
 def _host(**over):
     base = {
         "ip": "10.0.0.1",
-        "element": "gw",
+        "element": Element("gw"),
         "creds": [Cred(login="admin", password="hunter2")],
     }
     base.update(over)
+    if isinstance(base.get("element"), str):
+        base["element"] = Element(base["element"])
     return UnixHost(**base)
 
 

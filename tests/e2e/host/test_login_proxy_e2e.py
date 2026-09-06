@@ -88,6 +88,7 @@ import asyncssh
 import pytest
 
 from otto import register_login_proxy
+from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
 from otto.utils import Status
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
@@ -141,7 +142,6 @@ def _mysql_host_dict(ip: str, element: str, **overrides: object) -> dict[str, ob
     """
     data: dict[str, object] = {
         "ip": ip,
-        "element": element,
         "creds": [dict(c) for c in _MYSQL_CREDS],
     }
     data.update(overrides)
@@ -231,7 +231,9 @@ async def test_direct_ssh_as_mysql_is_denied(leased_host: tuple[str, str]) -> No
 async def test_proxied_default_session(leased_host: tuple[str, str]) -> None:
     """A host configured with ``user='mysql'`` must land its default session on mysql."""
     element, ip = leased_host
-    host = create_host_from_dict(_mysql_host_dict(ip, element, user="mysql"))
+    host = create_host_from_dict(
+        _mysql_host_dict(ip, element, user="mysql"), element=Element(element)
+    )
     try:
         result = (await host.run("whoami")).only
         assert result.status == Status.Success, f"whoami failed: {result.value!r}"
@@ -249,7 +251,9 @@ async def test_proxied_default_session(leased_host: tuple[str, str]) -> None:
 async def test_switch_user_roundtrip(leased_host: tuple[str, str]) -> None:
     """``as_user('mysql')`` switches in, runs as mysql, and restores vagrant on exit."""
     element, ip = leased_host
-    host = create_host_from_dict(_mysql_host_dict(ip, element))  # default user: vagrant
+    host = create_host_from_dict(
+        _mysql_host_dict(ip, element), element=Element(element)
+    )  # default user: vagrant
     try:
         before = (await host.run("whoami")).only.value.strip()
         assert before == "vagrant"
@@ -273,7 +277,9 @@ async def test_switch_user_roundtrip(leased_host: tuple[str, str]) -> None:
 async def test_exec_runs_as_proxied_user(leased_host: tuple[str, str]) -> None:
     """``exec`` on a proxied-user host must route through the proxied pool session."""
     element, ip = leased_host
-    host = create_host_from_dict(_mysql_host_dict(ip, element, user="mysql"))
+    host = create_host_from_dict(
+        _mysql_host_dict(ip, element, user="mysql"), element=Element(element)
+    )
     try:
         result = await host.exec("whoami")
         assert result.status == Status.Success, f"exec whoami failed: {result.value!r}"
@@ -291,7 +297,9 @@ async def test_exec_runs_as_proxied_user(leased_host: tuple[str, str]) -> None:
 async def test_nc_put_owned_by_proxied_user(leased_host: tuple[str, str], tmp_path: Path) -> None:
     """A file ``put`` via ``nc`` to a proxied-user host must land owned by that user."""
     element, ip = leased_host
-    host = create_host_from_dict(_mysql_host_dict(ip, element, user="mysql", transfer="nc"))
+    host = create_host_from_dict(
+        _mysql_host_dict(ip, element, user="mysql", transfer="nc"), element=Element(element)
+    )
 
     remote_dir = f"/tmp/otto_lp_{uuid.uuid4().hex}"
     filename = "owned.txt"
@@ -425,7 +433,6 @@ def _builtin_su_host_dict(ip: str, element: str, **overrides: object) -> dict[st
     """
     data: dict[str, object] = {
         "ip": ip,
-        "element": element,
         "creds": [dict(c) for c in _BUILTIN_SU_CREDS],
     }
     data.update(overrides)
@@ -449,7 +456,9 @@ async def test_builtin_su_proxy_switch_user_does_not_hang(leased_host: tuple[str
     out) vs GREEN (this test, passing) evidence.
     """
     element, ip = leased_host
-    host = create_host_from_dict(_builtin_su_host_dict(ip, element))  # default user: vagrant
+    host = create_host_from_dict(
+        _builtin_su_host_dict(ip, element), element=Element(element)
+    )  # default user: vagrant
     try:
         before = (await host.run("whoami")).only.value.strip()
         assert before == "vagrant"
@@ -504,7 +513,8 @@ async def test_builtin_su_proxy_does_not_stall_when_root_is_not_challenged(
     """
     element, ip = leased_host
     host = create_host_from_dict(
-        _builtin_su_host_dict(ip, element, creds=[dict(c) for c in _UNPROMPTED_CREDS])
+        _builtin_su_host_dict(ip, element, creds=[dict(c) for c in _UNPROMPTED_CREDS]),
+        element=Element(element),
     )
     try:
         assert (await host.run("whoami")).only.value.strip() == "vagrant"

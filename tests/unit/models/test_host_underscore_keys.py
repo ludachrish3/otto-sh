@@ -7,7 +7,6 @@ from otto.models.host import UnixHostSpec
 
 MINIMAL = {
     "ip": "192.0.2.1",
-    "element": "example-device",
     "os_type": "unix",
     "creds": [{"login": "u", "password": "p"}],
 }
@@ -17,7 +16,7 @@ def test_underscore_key_is_ignored() -> None:
     spec = UnixHostSpec.model_validate(
         MINIMAL | {"_comment": "see docs/guide/configuration/host-sources.md"}
     )
-    assert spec.element == "example-device"
+    assert spec.ip == "192.0.2.1"
 
 
 def test_multiple_underscore_keys_are_ignored() -> None:

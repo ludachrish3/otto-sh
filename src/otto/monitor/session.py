@@ -64,7 +64,7 @@ def _host_snapshot(host: RemoteHost) -> HostSnapshot:
     """
     return HostSnapshot(
         id=host.id,
-        element=host.element,
+        element=host.element.name,
         name=host.name,
         board=host.board,
         slot=host.slot,

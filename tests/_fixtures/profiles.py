@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from otto.host.command_frame import FRAME_CLASSES
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.factory import create_host_from_dict
-from tests._fixtures.labdata import flat_hosts
+from tests._fixtures.labdata import element_of, entry_of, flat_hosts
 from tests._fixtures.paths import ensure_custom_hosts_on_path
 
 
@@ -162,7 +162,7 @@ def axes_for(element: str, tech: str = "tech1") -> HostAxes:
     if element not in entries:
         raise KeyError(f"{element!r} is not in the {tech} lab data")
     data = entries[element]
-    host = create_host_from_dict(dict(data))
+    host = create_host_from_dict(entry_of(data), element=element_of(data))
     # Every axis the host object carries is read OFF THE HOST, including the
     # version fields and docker_capable. Measured: bb1350 declares no
     # `docker_capable` in lab.json but its host reports False, so reading the

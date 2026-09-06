@@ -228,7 +228,9 @@ def test_the_examples_backend_resolves_and_skips_like_the_json_one(inventory):
     from otto.examples.lab_repository import ExampleLabRepository
 
     example = ExampleLabRepository(
-        labs={"ref": [{"inventory": "dut-1", "element": "dut", "creds": [{"login": "u"}]}]},
+        labs={
+            "ref": [{"name": "dut", "hosts": [{"inventory": "dut-1", "creds": [{"login": "u"}]}]}]
+        },
         resources={"ref": set()},
     )
     lab = example.load_lab("ref", inventory=inventory)

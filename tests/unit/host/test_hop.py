@@ -12,6 +12,7 @@ import pytest
 from asyncssh import SSHClientConnection
 
 from otto.host.connections import ConnectionManager
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.options import NcOptions
 from otto.host.session import SessionManager
@@ -44,7 +45,7 @@ def host() -> UnixHost:
     """A simple host with no hop."""
     return UnixHost(
         ip="10.0.0.1",
-        element="target",
+        element=Element("target"),
         creds=[Cred(login="user", password="pass")],
         log=LogMode.QUIET,
     )
@@ -55,7 +56,7 @@ def hop_host() -> UnixHost:
     """A host configured with a hop."""
     return UnixHost(
         ip="10.0.0.2",
-        element="target",
+        element=Element("target"),
         creds=[Cred(login="user", password="pass")],
         hop="jumpbox",
         log=LogMode.QUIET,
@@ -493,7 +494,7 @@ class TestRebuildConnections:
     def test_rebuild_adds_tunnel(self):
         host = UnixHost(
             ip="10.0.0.1",
-            element="target",
+            element=Element("target"),
             creds=[Cred(login="user", password="pass")],
             log=LogMode.QUIET,
         )
@@ -506,7 +507,7 @@ class TestRebuildConnections:
     def test_rebuild_removes_tunnel(self):
         host = UnixHost(
             ip="10.0.0.1",
-            element="target",
+            element=Element("target"),
             creds=[Cred(login="user", password="pass")],
             hop="some_hop",
             log=LogMode.QUIET,
@@ -830,14 +831,14 @@ class TestCycleDetection:
 
         host_a = UnixHost(
             ip="10.0.0.1",
-            element="hostA",
+            element=Element("hostA"),
             creds=[Cred(login="user", password="pass")],
             hop="hostb",
             log=LogMode.QUIET,
         )
         host_b = UnixHost(
             ip="10.0.0.2",
-            element="hostB",
+            element=Element("hostB"),
             creds=[Cred(login="user", password="pass")],
             hop="hosta",
             log=LogMode.QUIET,
@@ -876,13 +877,13 @@ class TestCycleDetection:
         with patch("asyncssh.connect", AsyncMock(return_value=mock_ssh_conn)):
             jumpbox = UnixHost(
                 ip="10.10.0.1",
-                element="jumpbox",
+                element=Element("jumpbox"),
                 creds=[Cred(login="admin", password="secret")],
                 log=LogMode.QUIET,
             )
             target = UnixHost(
                 ip="10.10.0.2",
-                element="target",
+                element=Element("target"),
                 creds=[Cred(login="user", password="pass")],
                 hop="jumpbox",
                 log=LogMode.QUIET,
@@ -927,7 +928,7 @@ class TestStandaloneHostHopResolution:
             # Build the hop TARGET and add it to a Lab.
             jumpbox = UnixHost(
                 ip="10.20.0.1",
-                element="jumpbox",
+                element=Element("jumpbox"),
                 creds=[Cred(login="admin", password="secret")],
                 log=LogMode.QUIET,
             )
@@ -942,7 +943,7 @@ class TestStandaloneHostHopResolution:
                 # Its _lab remains None; the hop target must come from the active context.
                 standalone = UnixHost(
                     ip="10.20.0.2",
-                    element="target",
+                    element=Element("target"),
                     creds=[Cred(login="user", password="pass")],
                     hop="jumpbox",
                     log=LogMode.QUIET,

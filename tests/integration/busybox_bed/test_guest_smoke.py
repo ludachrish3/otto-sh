@@ -42,9 +42,9 @@ async def test_telnet_login_reaches_this_versions_own_ash(guest):
     """The shell behind the login prompt is the BusyBox milestone this row names."""
     host, version = guest
     result = (await host.run("busybox 2>&1 | head -n 1")).only
-    assert result.retcode == 0, f"`busybox` failed on {host.element}: {result.value!r}"
+    assert result.retcode == 0, f"`busybox` failed on {host.element.name}: {result.value!r}"
     assert f"BusyBox v{version} " in result.value, (
-        f"{host.element} answered {result.value!r}, which is not the "
+        f"{host.element.name} answered {result.value!r}, which is not the "
         f"BusyBox v{version} this lab entry claims"
     )
 
@@ -55,13 +55,13 @@ async def test_no_gnu_userland_hides_behind_the_guest(guest):
     result = (await host.run("[ -e /usr/bin/sed ] || [ -e /bin/bash ] || echo clean")).only
     assert result.retcode == 0
     assert "clean" in result.value, (
-        f"{host.element} carries a GNU userland alongside BusyBox "
+        f"{host.element.name} carries a GNU userland alongside BusyBox "
         f"(probe said {result.value!r}) — the tier's premise is gone"
     )
     link = (await host.run("readlink /bin/sh")).only
-    assert link.retcode == 0, f"/bin/sh is not a symlink on {host.element}"
+    assert link.retcode == 0, f"/bin/sh is not a symlink on {host.element.name}"
     assert link.value.strip().endswith("busybox"), (
-        f"/bin/sh on {host.element} points at {link.value.strip()!r}, not busybox"
+        f"/bin/sh on {host.element.name} points at {link.value.strip()!r}, not busybox"
     )
 
 
@@ -71,6 +71,6 @@ async def test_ssh_is_dead_by_construction(guest):
     result = (await host.run("command -v sshd || echo no-sshd")).only
     assert result.retcode == 0
     assert "no-sshd" in result.value, (
-        f"{host.element} has an sshd at {result.value.strip()!r}; the bed's "
+        f"{host.element.name} has an sshd at {result.value.strip()!r}; the bed's "
         "only ssh-absent guests just stopped being ssh-absent"
     )

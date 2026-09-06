@@ -30,6 +30,7 @@ import pytest
 import pytest_asyncio
 
 from otto import register_login_proxy
+from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
 from otto.utils import Status, wait_for_async
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
@@ -95,11 +96,10 @@ async def make_host():
         def _make(ip: str, element: str, **overrides: object):
             data: dict[str, object] = {
                 "ip": ip,
-                "element": element,
                 "creds": [dict(c) for c in _CREDS],
             }
             data.update(overrides)
-            host = create_host_from_dict(data)
+            host = create_host_from_dict(data, element=Element(element))
             # close() is idempotent, so tests that also use `async with host:`
             # are free to close early — this just guarantees it happens.
             stack.push_async_callback(host.close)

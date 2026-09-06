@@ -1,6 +1,7 @@
 """Generic declared-entry core: typed match table, kind registry, repo collection."""
 
 import logging
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +12,7 @@ from otto.declared import (
     host_matches,
     validate_match_table,
 )
+from otto.host.element import Element
 
 
 @pytest.fixture(autouse=True)
@@ -20,9 +22,15 @@ def _reset_warned_versions(monkeypatch):
 
 
 def _host(**attrs):
-    """Minimal host double — the matcher reads plain attributes only."""
+    """Minimal host double — plain attributes, ``element`` defaulting to None.
+
+    ``element`` defaults to ``None`` (the ``LocalHost``/``DockerContainerHost``
+    case) so a case exercising element paths passes its own
+    ``element=Element(...)`` override explicitly.
+    """
     attrs.setdefault("id", "h1")
     attrs.setdefault("source_lab", "")
+    attrs.setdefault("element", None)
     return SimpleNamespace(**attrs)
 
 
@@ -40,8 +48,8 @@ def _host(**attrs):
         ({"os_version": ">=3.7"}, {"os_version": "2.7"}, False),
         ({"os_version": "!=3.7"}, {"os_version": "3.8"}, True),
         # bool / number = equality
-        ({"element_id": 3}, {"element_id": 3}, True),
-        ({"element_id": 3}, {"element_id": 4}, False),
+        ({"element.id": 3}, {"element": Element("e", id=3)}, True),
+        ({"element.id": 3}, {"element": Element("e", id=4)}, False),
         # list = any-of, elements typed by the same rules
         ({"os_name": ["Linux", "Zephyr"]}, {"os_name": "Zephyr"}, True),
         ({"os_name": ["Linux", "Zephyr"]}, {"os_name": "VxWorks"}, False),
@@ -67,14 +75,23 @@ def test_value_semantics(match, attrs, expected):
 def test_dotted_metadata_paths():
     host = _host(
         metadata={"hw_version": "rev2", "nested": {"deep": "x"}},
-        element_metadata={"site": "lab-a"},
+        element=Element("e", metadata={"site": "lab-a"}),
     )
     assert host_matches({"metadata.hw_version": "rev2"}, host)
     assert host_matches({"metadata.nested.deep": "x"}, host)
-    assert host_matches({"element_metadata.site": "lab-.*"}, host)
+    assert host_matches({"element.metadata.site": "lab-.*"}, host)
     # a missing metadata key is a no-match, never an error: presence varies per lab
     assert not host_matches({"metadata.absent": ".*"}, host)
     assert not host_matches({"metadata.nested.absent": ".*"}, host)
+
+
+def test_metadata_path_never_falls_through_to_python_attributes():
+    # A non-dict leaf under a metadata root must be a no-match, not a further
+    # ATTRIBUTE lookup — an int's `.denominator` (== 1) or a str's
+    # `.__class__` are real Python attributes that would otherwise leak
+    # through and silently "match" a path the lab data never declared.
+    host = _host(metadata={"count": 3})
+    assert not host_matches({"metadata.count.denominator": 1}, host)
 
 
 def test_unknown_key_raises_naming_the_key_and_the_valid_set():
@@ -99,7 +116,7 @@ def test_unparseable_host_version_is_a_no_match_with_one_warning(caplog):
 
 def test_validate_accepts_a_well_formed_table():
     validate_match_table(
-        {"id": "bb.*", "os_version": ">=3.7", "element_id": 3, "metadata.hw": ["a", "b"]}
+        {"id": "bb.*", "os_version": ">=3.7", "element.id": 3, "metadata.hw": ["a", "b"]}
     )
 
 
@@ -110,6 +127,7 @@ def test_validate_accepts_a_well_formed_table():
         ({"id": "bb["}, "bb["),  # regex that does not compile
         ({"os_version": ">=not.a.version"}, "not.a.version"),  # bad specifier
         ({"metadata": "x"}, "metadata"),  # bare metadata without a dotted path
+        ({"element.metadata": "x"}, "element.metadata"),  # bare element.metadata, same rule
     ],
 )
 def test_validate_rejects_malformed_tables(match, fragment):
@@ -120,10 +138,89 @@ def test_validate_rejects_malformed_tables(match, fragment):
 def test_match_keys_is_the_documented_provider_surface():
     assert (
         frozenset(
-            {"id", "element", "element_id", "os_type", "os_name", "os_version", "ip", "source_lab"}
+            {
+                "id",
+                "element.name",
+                "element.id",
+                "os_type",
+                "os_name",
+                "os_version",
+                "ip",
+                "source_lab",
+            }
         )
         == MATCH_KEYS
     )
+
+
+def _element_host(**overrides):
+    """A host double with an Element; ``overrides`` replace any attribute
+    (``element=None`` included).
+
+    Distinct from this module's existing ``_host`` helper, which stays as is.
+    """
+    attrs: dict = {
+        "id": "dut_cpu1",
+        "element": Element("dut", id=7, metadata={"rev": "B", "site": {"row": 3}}),
+        "metadata": {"tag": "x"},
+        "os_type": "unix",
+        "os_name": "Linux",
+        "os_version": "6.1",
+        "ip": "10.0.0.1",
+        "source_lab": "bench",
+    }
+    attrs.update(overrides)
+    return SimpleNamespace(**attrs)
+
+
+@pytest.mark.parametrize(
+    ("match", "expected"),
+    [
+        ({"element.name": "dut"}, True),
+        ({"element.name": "server"}, False),
+        ({"element.id": 7}, True),
+        ({"element.id": "7"}, True),
+        ({"element.metadata.rev": "B"}, True),
+        ({"element.metadata.site.row": 3}, True),
+        ({"element.metadata.missing": ".*"}, False),
+        ({"metadata.tag": "x"}, True),
+    ],
+)
+def test_element_paths_match(match, expected):
+    validate_match_table(match)
+    assert host_matches(match, _element_host()) is expected
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("element", "element.name"),
+        ("element_id", "element.id"),
+        ("element_metadata.rev", "element.metadata.rev"),
+    ],
+)
+def test_retired_keys_name_their_replacement(old, new):
+    # Anchored on the retired-spelling PHRASE, not just the substrings: the
+    # generic "unknown match key" message also lists MATCH_KEYS, which
+    # contains the literal 'element.name' / 'element.id' strings — a loose
+    # ``old.*new`` pattern would pass even if the retired-key naming were
+    # deleted and every key fell through to the generic message.
+    with pytest.raises(ValueError, match=rf"{re.escape(old)}.*is now spelled '{re.escape(new)}'"):
+        validate_match_table({old: "x"})
+
+
+def test_bare_element_object_is_never_a_match_value():
+    with pytest.raises(ValueError, match=r"is now spelled 'element\.name'"):
+        host_matches({"element": "dut"}, _element_host())
+
+
+def test_element_less_host_never_matches_element_keys():
+    assert host_matches({"element.name": ".*"}, _element_host(element=None)) is False
+
+
+def test_unknown_element_subpath_is_not_a_retired_key():
+    with pytest.raises(ValueError, match=r"unknown match key 'element\.resources'"):
+        validate_match_table({"element.resources": "x"})
 
 
 # ── KindRegistry.build ───────────────────────────────────────────────────────

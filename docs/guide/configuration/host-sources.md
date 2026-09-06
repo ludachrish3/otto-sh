@@ -109,9 +109,9 @@ lab_data/
 ```
 
 Within **one** source a duplicate is a typo, never an override: the same lab
-declared by two of the source's files, or the same element `(name, id)`
-carried by two of them, fails the load naming both files. Overriding is the
-opt-in of a *second* `[[lab.sources]]` entry — see [Ordering and
+declared by two of the source's files, or an element name repeated (compared
+by slug) across two of them, fails the load naming both files. Overriding is
+the opt-in of a *second* `[[lab.sources]]` entry — see [Ordering and
 overrides](#ordering-and-overrides) below.
 
 The `lab.json` schema itself — the `labs` table, the element entry, every host
@@ -171,14 +171,14 @@ live — otto never drops one because another already answered.
 
 ### Ordering and overrides
 
-The unit of override is the **element**, keyed by its `(name, id)` — not the
+The unit of override is the **element**, keyed by its name's slug — not the
 host. When two sources carry the same element in the same lab, the **later**
 source's element replaces the earlier one *wholesale* — its hosts, its
 `metadata`, and the membership it states — and otto logs a warning naming both
 labels:
 
 ```text
-element ('alt1', None) in lab 'site': my_project/virtual overrides my_project/global
+element 'alt1' in lab 'site': my_project/virtual overrides my_project/global
 ```
 
 That warning is the whole transparency story: an override is a deliberate act,
@@ -409,7 +409,7 @@ registry machinery behind this and every other seam otto can be extended at.
   name against the registered list the message prints, and confirm the `init`
   module that calls `register_lab_repository(...)` is listed in `init = [...]`.
 
-`"element ('X', None) in lab 'Y': A overrides B"` / `"labs entry 'Y': A overrides B"`
+`"element 'X' in lab 'Y': A overrides B"` / `"labs entry 'Y': A overrides B"`
 : Sources `A` and `B` both carry element `X` (or both declare lab `Y`), and
   `A` — the later entry — won it whole. Expected when you are deliberately
   layering a repo source over a global one. A *surprise* means two sources own
@@ -419,7 +419,7 @@ registry machinery behind this and every other seam otto can be extended at.
 `LabRepositoryError: host id 'X' in lab 'Y': element ... collides with element ...`
 : Two *different* elements — surviving the merge, so not an override — produce
   the same host id. The message names both elements and the source each came
-  from; give one a distinct `name`, an element `id`, or a `board`/`slot`.
+  from; give the elements distinct names, or set `board`/`slot`.
 
 `LabNotFoundError: Lab '...' is not declared by any configured source (...)`
 : No source's `labs` table (or backend `list_labs`) declares that name. A lab

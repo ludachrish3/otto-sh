@@ -201,25 +201,26 @@ walkthrough (including a complete, runnable example CLI to copy), see
 You do not need a `lab.json` on disk. Build a `Lab` from host dicts, install
 it as the active context, and the zero-argument selectors (`all_hosts`,
 `get_host`) operate on it directly — useful for tests and ad-hoc scripts.
-These are **flat** host dicts: the shape the loader hands the factory once an
-element's identity has been folded in, which is why `element` is a key here
-and never one in the file. Selection touches no network, so this runs as-is:
+A host dict describes the host alone; its element is a separate argument, the
+same `Element` every host of that element shares. Selection touches no
+network, so this runs as-is:
 
 ```{doctest}
 >>> import re
+>>> from otto.host.element import Element
 >>> from otto.host.factory import create_host_from_dict
 >>> from otto.config.lab import Lab
 >>> from otto.context import OttoContext, set_context, reset_context
 >>> from otto.config import all_hosts, get_host
->>> hosts = [create_host_from_dict(spec) for spec in [
-...     {"ip": "10.0.0.11", "element": "test1", "creds": [{"login": "admin", "password": "x"}]},
-...     {"ip": "10.0.0.12", "element": "test2", "creds": [{"login": "admin", "password": "x"}]},
+>>> hosts = [create_host_from_dict(spec, element=element) for spec, element in [
+...     ({"ip": "10.0.0.11", "creds": [{"login": "admin", "password": "x"}]}, Element("test1")),
+...     ({"ip": "10.0.0.12", "creds": [{"login": "admin", "password": "x"}]}, Element("test2")),
 ... ]]
 >>> lab = Lab(name="unix", hosts={h.id: h for h in hosts})
 >>> token = set_context(OttoContext(lab=lab))
->>> [h.element for h in all_hosts(re.compile("test2"))]
+>>> [h.element.name for h in all_hosts(re.compile("test2"))]
 ['test2']
->>> get_host("test1").element
+>>> get_host("test1").element.name
 'test1'
 >>> reset_context(token)
 ```

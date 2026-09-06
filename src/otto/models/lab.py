@@ -5,24 +5,28 @@ name) — what belongs to the lab as a whole: its reservable ``resources`` and
 opaque ``metadata``. ``ElementSpec`` is one ``elements`` entry: identity
 (``name`` / ``id``), lab membership as fullmatch patterns, opaque
 ``metadata``, and the host entries it groups. Neither carries an operational
-host field; ``ElementSpec.flatten()`` stamps ``element`` / ``element_id``
-onto copies of its host dicts so the flat host-dict API (the factory,
-``host_identity``, custom backends) is untouched by the file shape.
-``ElementKey`` is an element's identity — ``ElementSpec.key`` — the value the
+host field; the element reaches the factory as one
+:class:`~otto.host.element.Element` (``ElementSpec.to_element``), so a host
+entry describes the host and nothing else.
+``ElementSpec.key`` is the element's identity — ``slug(name)`` — the value the
 loader and the multi-source merge key elements by.
 """
 
 import re
-from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, field_validator, model_validator
-from typing_extensions import override
 
 from .base import OttoModel
 
+if TYPE_CHECKING:
+    from ..host.element import Element
+
 HOISTED_HOST_KEYS: frozenset[str] = frozenset({"element", "element_id", "labs"})
-"""Keys that live ABOVE the host entry in v2 and are errors inside one.
+"""Keys that live above the host entry and are errors inside one.
+
+``element`` and ``element_id`` are the element's ``name``/``id``, ``labs`` its
+membership.
 
 ``resources`` left this set with spec 2026-08-28 three-level-reservations: a
 host entry may declare its own (a slot), beside the element's and the lab's.
@@ -42,39 +46,6 @@ def resources_nonempty(v: set[str]) -> set[str]:
     if any(not r.strip() for r in v):
         raise ValueError("resources must be non-empty strings")
     return v
-
-
-@dataclass(frozen=True)
-class ElementKey:
-    """An element's identity: its ``name`` and its optional repeat ``id``.
-
-    A frozen dataclass rather than the ``(name, id)`` pair it replaces
-    (``.ast-grep/rules/no-tuple-return.yml``): frozen and hashable, so it is
-    still the dict key the multi-source element merge needs (spec §6), while an
-    identity component added later cannot break an unpacking site.
-    """
-
-    name: str
-    """The element's ``name`` — the host id's ``slug(element)`` part."""
-
-    id: int | None = None
-    """The element's ``id``; ``None`` when the name alone is the identity."""
-
-    @override
-    def __str__(self) -> str:
-        """Render as ``bb1350`` when there is no repeat ``id``, else ``('dut', 1)``.
-
-        Error messages name an element by this (``f"duplicate element {key}"``),
-        not by ``repr``: the dataclass repr leaks a type name the ``lab.json``
-        author never typed. Most elements have no repeat ``id`` — the common
-        case — so the pair would show a bare ``None`` (``('bb1350', None)``),
-        which reads as a bug rather than as identity; the bare name is exactly
-        what the author wrote in that case, just as the pair is when an ``id``
-        is present.
-        """
-        if self.id is None:
-            return self.name
-        return f"({self.name!r}, {self.id!r})"
 
 
 def _strip_comment_keys(data: object) -> object:
@@ -125,13 +96,14 @@ class ElementSpec(OttoModel):
     """Element name — the host id's ``slug(element)`` part."""
 
     id: int | None = None
-    """Repeat disambiguator (today's ``element_id``); ``None`` when unique."""
+    """Data the author assigned to the element; never part of a host id, a name,
+    an ordering, or a key (spec 2026-09-05 §2.1)."""
 
     labs: list[str] = Field(min_length=1)
     """Membership patterns, ``re.fullmatch``-ed against a lab name."""
 
     metadata: dict[str, Any] = Field(default_factory=dict)
-    """Opaque element-level user data; copied onto each host as ``element_metadata``."""
+    """Opaque element-level user data; reached as ``host.element.metadata``."""
 
     resources: set[str] = Field(default_factory=set)
     """Reservation identifiers for the element as one unit (spec 2026-08-28
@@ -143,7 +115,7 @@ class ElementSpec(OttoModel):
     """
 
     hosts: list[dict[str, Any]] = Field(min_length=1)
-    """Raw host entries; validated by the host specs after :meth:`flatten`."""
+    """Raw host entries; validated by the host specs as the file has them."""
 
     @model_validator(mode="before")
     @classmethod
@@ -185,17 +157,27 @@ class ElementSpec(OttoModel):
         return self
 
     @property
-    def key(self) -> ElementKey:
-        """This element's :class:`ElementKey` — the unit of multi-source replacement (spec §6)."""
-        return ElementKey(self.name, self.id)
+    def key(self) -> str:
+        """This element's identity token — ``slug(name)`` (spec 2026-09-05 §2.3)."""
+        from ..host.remote_host import slug
+
+        return slug(self.name)
+
+    def to_element(self) -> "Element":
+        """Build the runtime :class:`~otto.host.element.Element` this entry declares.
+
+        Built once per element by the loader and handed to every member host;
+        ``labs`` and ``hosts`` stay here — they are file-shape, not element data.
+        """
+        from ..host.element import Element  # lazy: models must not import host at module level
+
+        return Element(
+            self.name,
+            id=self.id,
+            metadata=dict(self.metadata),
+            resources=frozenset(self.resources),
+        )
 
     def matches(self, lab: str) -> bool:
         """Whether this element is a member of *lab* (any pattern fullmatches)."""
         return any(re.fullmatch(p, lab) for p in self.labs)
-
-    def flatten(self) -> list[dict[str, Any]]:
-        """Return copies of the host entries, ``element`` / ``element_id`` stamped on."""
-        identity: dict[str, Any] = {"element": self.name}
-        if self.id is not None:
-            identity["element_id"] = self.id
-        return [{**dict(h), **identity} for h in self.hosts]

@@ -205,7 +205,7 @@ def _check_named_host_reservations(ctx: typer.Context, named: "list[RemoteHost]"
       backend for exactly that set, and asking again for the same answer is a
       second query per command.
     * A named out-of-fleet host that declares neither ``resources`` nor
-      ``element_resources`` can add nothing to the requirement:
+      element resources can add nothing to the requirement:
       :func:`~otto.reservations.check.required_resource_origins` seeds the
       lab-level set unconditionally, so checking such a host re-asks for
       exactly what the preamble already required. Without this, naming any
@@ -232,7 +232,9 @@ def _check_named_host_reservations(ctx: typer.Context, named: "list[RemoteHost]"
 
     fleet = get_hosts_in_play()
     outside = [host for host in named if host.id not in fleet and not is_builtin_host(host)]
-    if not any(host.resources or host.element_resources for host in outside):
+    if not any(
+        host.resources or (host.element.resources if host.element else ()) for host in outside
+    ):
         return
 
     from ..config import get_lab
@@ -273,11 +275,8 @@ def resolve_cli_host(ctx: typer.Context) -> RemoteHost:
     request = ctx.meta["_otto_host_request"]
     host: RemoteHost = _resolve_host(request["host_id"])
 
-    # _resolve_host accepts a positional handle (e.g. dut1) as well as a
-    # canonical id. Resolved BEFORE the reservation check so the hop is one of
-    # the hosts that check covers, and its canonical id is what gets stored:
-    # downstream canonical-only lookups (e.g. RemoteHost._build_hop_transport's
-    # `lab.hosts[hop_id]`) would KeyError on a raw handle. A hop that names no
+    # Resolved BEFORE the reservation check so the hop is one of the hosts
+    # that check covers, and its id is what gets stored — a hop that names no
     # host therefore reports "No host with ID" ahead of any reservation
     # verdict, which is the same order the target already had.
     hop = request.get("hop")

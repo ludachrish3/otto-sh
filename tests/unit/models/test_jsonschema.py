@@ -137,14 +137,14 @@ def test_version_stamp_present():
         assert doc["x-otto-version"] == get_version()
 
 
-def test_element_host_entries_drop_the_hoisted_keys():
-    """A host entry nested in an element may not carry ``element``/``element_id``.
+def test_no_host_entry_schema_offers_an_element_key():
+    """No host-entry schema — nested or standalone — may carry ``element``/``element_id``.
 
-    ``ElementSpec`` rejects every ``HOISTED_HOST_KEYS`` member inside a host
-    entry (they live on the element / the ``labs`` table now), so the nested
-    host sub-schemas must neither require nor permit them — while the
-    standalone per-spec documents, which describe the FLAT host dict the
-    factory still takes, keep them.
+    The element is the FACTORY's argument since spec 2026-09-05 §2.6, so
+    ``HostSpec`` declares no such field and no generated document can offer
+    one. ``ElementSpec`` rejects every ``HOISTED_HOST_KEYS`` member inside a
+    host entry, and ``additionalProperties: false`` is what makes an unmigrated
+    entry squiggle in the editor rather than validate.
     """
     from otto.models.lab import HOISTED_HOST_KEYS
 
@@ -155,8 +155,10 @@ def test_element_host_entries_drop_the_hoisted_keys():
         assert not props & HOISTED_HOST_KEYS, name
         assert not set(defs[name].get("required", [])) & HOISTED_HOST_KEYS, name
         assert defs[name]["additionalProperties"] is False  # so they are REJECTED, not ignored
-    # The flat-dict documents are unchanged: element identity still belongs there.
-    assert "element" in docs["unix-host"]["properties"]
+        assert "ip" in props, name  # not vacuous: the entry's own fields are still there
+    # The standalone per-spec documents describe the same entry, so they agree.
+    assert not set(docs["unix-host"]["properties"]) & HOISTED_HOST_KEYS
+    assert not set(docs["embedded-host"]["properties"]) & HOISTED_HOST_KEYS
 
 
 def test_link_schema_emitted():

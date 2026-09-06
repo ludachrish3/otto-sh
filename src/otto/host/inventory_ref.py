@@ -1,7 +1,7 @@
 """``InventoryRef`` — where a host's inventory-owned fields came from (spec §7).
 
 Stamped by :func:`otto.host.factory.create_host_from_dict` at build, before the
-product providers run, like ``element_metadata``. An inline host, a container
+product providers run, like the host's ``element``. An inline host, a container
 and the builtin ``local`` host carry an empty ref.
 """
 

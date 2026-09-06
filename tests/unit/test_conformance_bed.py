@@ -31,12 +31,19 @@ from typing_extensions import Self
 
 from otto.context import _active, try_get_context
 from otto.host.command_frame import FRAME_CLASSES
+from otto.host.element import Element
 from otto.host.embedded_filesystem import build_filesystem
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.remote_host import RemoteHost
 from otto.result import CommandResult, Results, Status
 from tests._fixtures._console_lock import RESOURCE_NAME
-from tests._fixtures.labdata import flat_hosts, host_data, write_lab_json
+from tests._fixtures.labdata import (
+    element_of,
+    entry_of,
+    flat_hosts,
+    host_data,
+    write_lab_json,
+)
 from tests._fixtures.paths import PROJECT_ROOT
 from tests._fixtures.profiles import (
     Cell,
@@ -629,15 +636,17 @@ def test_the_openers_reuse_ottos_factory_rather_than_constructing_a_host(monkeyp
     calls = []
 
     def recorder(entry, *args, **kwargs):
-        calls.append(entry)
+        calls.append((entry, kwargs.get("element")))
         return SimpleNamespace(term=entry["term"], transfer=entry["transfer"])
 
     monkeypatch.setattr(_bed, "create_host_from_dict", recorder)
     build_bed_host(Cell(*OFF_DEFAULT_CELL))
     assert len(calls) == 1, "build_bed_host did not go through otto's factory exactly once"
-    assert calls[0]["element"] == "test1"
-    assert (calls[0]["term"], calls[0]["transfer"]) == OFF_DEFAULT_CELL[1:]
-    assert calls[0]["ip"] == "10.10.200.11", (
+    entry, element = calls[0]
+    assert element is not None
+    assert element.name == "test1"
+    assert (entry["term"], entry["transfer"]) == OFF_DEFAULT_CELL[1:]
+    assert entry["ip"] == "10.10.200.11", (
         "the entry handed to the factory is not the committed lab entry"
     )
 
@@ -755,6 +764,8 @@ def _entry(element: str, *, hop: "str | None" = None, board: "str | None" = None
     fail menu validation long before reaching what the test is about.
     """
     entry = dict(host_data("test1", BED_TECH))
+    # A flat v1-style dict: `write_lab_json` hoists `element` back onto the
+    # element wrapper, and `_fabricate_lab_data` reads it back off below.
     entry["element"] = element
     entry.pop("hop", None)
     entry.pop("board", None)
@@ -768,19 +779,21 @@ def _entry(element: str, *, hop: "str | None" = None, board: "str | None" = None
 def _fabricate_lab_data(monkeypatch, tmp_path, entries: "list[dict]") -> None:
     """Point ``_lab_context`` at a lab file *this test* wrote.
 
-    Both readers are replaced, because the module reads the file twice by two
-    different routes -- the whole roster through ``lab_data_path`` and one
-    entry at a time through ``host_data`` -- and a fabrication that moved only
-    one of them would have the derivation and the construction disagreeing
-    about which lab they are in.
+    Every reader is replaced, because the module reads the file by three
+    different routes -- the whole roster through ``lab_data_path``, one entry
+    at a time through ``host_data``, and that entry's element through
+    ``element_for`` -- and a fabrication that moved only some of them would
+    have the derivation and the construction disagreeing about which lab they
+    are in.
     """
     path = write_lab_json(tmp_path / "lab.json", entries)
+
+    def _flat(ne):
+        return next(e for e in entries if e["element"] == ne)
+
     monkeypatch.setattr(_lab_context, "lab_data_path", lambda tech="tech1": path)
-    monkeypatch.setattr(
-        _lab_context,
-        "host_data",
-        lambda ne, tech="tech1": next(e for e in entries if e["element"] == ne),
-    )
+    monkeypatch.setattr(_lab_context, "host_data", lambda ne, tech="tech1": entry_of(_flat(ne)))
+    monkeypatch.setattr(_lab_context, "element_for", lambda ne, tech="tech1": element_of(_flat(ne)))
 
 
 @pytest.mark.asyncio
@@ -1706,16 +1719,19 @@ def test_the_domain_is_read_off_the_filesystem_not_the_element_name(monkeypatch)
     of these. So does one that read the `filesystem` STRING and listed the
     variants it knew, once a variant it had not heard of appears.
     """
-    innocuous = dict(host_data("zephyr37_nofs", BED_TECH))
-    innocuous["element"] = "a-name-that-says-nothing"
-    telling = dict(host_data("zephyr37_fat", BED_TECH))
-    telling["element"] = "zephyr99_nofs_llext"
-    entries = {entry["element"]: entry for entry in (innocuous, telling)}
+    entries = {
+        "a-name-that-says-nothing": dict(host_data("zephyr37_nofs", BED_TECH)),
+        "zephyr99_nofs_llext": dict(host_data("zephyr37_fat", BED_TECH)),
+    }
 
     # Injected at the LAB DATA, which is where a new guest actually comes
     # from -- not at the built host. A resolver that stopped reading lab data
-    # and started reading a table would go green here without this.
+    # and started reading a table would go green here without this. Both
+    # readers are replaced: the entry and the element it belongs to are two
+    # arguments now, and patching one alone would leave the other reading the
+    # committed file for a name that is not in it.
     monkeypatch.setattr(_bed, "host_data", lambda element, tech=BED_TECH: entries[element])
+    monkeypatch.setattr(_bed, "element_for", lambda element, tech=BED_TECH: Element(element))
 
     assert bed_scratch_dir("a-name-that-says-nothing") is None
     assert str(bed_scratch_dir("zephyr99_nofs_llext")) == "/RAM:"
@@ -1729,9 +1745,9 @@ def test_a_host_that_declares_its_own_landing_directory_is_honoured(monkeypatch)
     today. Injected rather than inherited for exactly that reason.
     """
     entry = dict(host_data("test1", BED_TECH))
-    entry["element"] = "declares-its-own"
     entry["default_dest_dir"] = "/var/tmp/otto-scratch"
     monkeypatch.setattr(_bed, "host_data", lambda element, tech=BED_TECH: entry)
+    monkeypatch.setattr(_bed, "element_for", lambda element, tech=BED_TECH: Element(element))
 
     answer = bed_scratch_dir("declares-its-own")
     assert str(answer) == "/var/tmp/otto-scratch"

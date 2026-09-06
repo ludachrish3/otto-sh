@@ -71,7 +71,7 @@ from otto.host.factory import create_host_from_dict
 from otto.host.host import BaseHost
 from otto.host.local_host import LocalHost
 from tests._fixtures.busybox import BUSYBOX_MATRIX, BusyBoxRelease, busybox_binary, can_run
-from tests._fixtures.labdata import flatten_lab_doc
+from tests._fixtures.labdata import element_of, entry_of, flatten_lab_doc
 from tests._fixtures.profiles import Cell
 from tests.conformance._bed import bed_space
 from tests.conformance._resolved import ResolvedCell
@@ -202,8 +202,8 @@ def _loopback_ssh_cells() -> "list[ResolvedCell]":
         root = Path(tmp)
         make_loopback_target(root, port=free_port(), client_key=root / "unused-at-resolve-time")
         entry = _loopback_entry(root)
-        host = create_host_from_dict(dict(entry))
-        element = host.element
+        host = create_host_from_dict(entry_of(entry), element=element_of(entry))
+        element = host.element.name
         # Never sorted. Menus are emitted in the order the host reported
         # them, for the reason `axis_space` gives and re-measured here:
         # `axes_for` reports ['telnet', 'ssh'] for test2 against
@@ -266,8 +266,9 @@ def _loopback_opener(
                 # `ValueError: term 'telnet' is not in this host's term menu
                 # ['ssh']`, and `{"transfer": "console"}` and
                 # `{"transfer": "nc"}` raise the transfer analogue.
-                pinned = dict(_loopback_entry(root)) | {"term": term, "transfer": transfer}
-                async with create_host_from_dict(pinned) as host:
+                flat = _loopback_entry(root)
+                pinned = entry_of(flat) | {"term": term, "transfer": transfer}
+                async with create_host_from_dict(pinned, element=element_of(flat)) as host:
                     yield host
             finally:
                 sshd.stop()

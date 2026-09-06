@@ -48,6 +48,8 @@ from .product import Product
 if TYPE_CHECKING:
     import re
 
+    from .element import Element
+
 from .power import PowerController
 from .session import Expect, HostSession, SessionManager, ShellSession, _DockerSshSession
 from .toolchain import Toolchain
@@ -134,10 +136,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     the contract's fields itself (R11) — a read before anything assigns one is
     an ``AttributeError`` the type checker cannot see."""
 
-    element_resources: frozenset[str] = field(default_factory=frozenset, repr=False)
-    """Always empty — a container belongs to no element, and the loader that
-    stamps this never builds one. Declared for the same reason as
-    :attr:`resources` above."""
+    element: "Element | None" = field(default=None, repr=False)
+    """Always ``None`` — belongs to no element. Declared to satisfy the
+    :class:`~otto.host.host.Host` contract."""
 
     inventory_ref: InventoryRef = field(default_factory=InventoryRef, repr=False)
     """Inventory provenance; empty unless this host was resolved from a record."""

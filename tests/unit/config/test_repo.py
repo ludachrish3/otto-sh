@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from otto.config.repo import Repo
+from otto.host.element import Element
 from tests._fixtures.mockrepo import MockRepo
 from tests._fixtures.paths import TESTS_ROOT
 from tests._fixtures.sutrepo import make_sut_repo
@@ -464,10 +465,10 @@ class TestOsProfilesIntegration:
             host = create_host_from_dict(
                 {
                     "ip": "192.0.2.13",
-                    "element": "zephyr27_demo",
                     "os_type": "zephyr-2.7",
                     "filesystem": "fat-ram",
-                }
+                },
+                element=Element("zephyr27_demo"),
             )
         finally:
             if added:

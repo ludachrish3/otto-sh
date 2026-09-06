@@ -1,10 +1,10 @@
 """In-memory reference :class:`~otto.labs.protocol.LabRepository` (sample).
 
 A teaching/reference host-source backend: it holds a mapping of lab name to a
-list of host dicts and builds real hosts via
-:func:`otto.host.factory.create_host_from_dict`. It needs no files or network, so it
-runs inside doctests and the conformance suite, and SUT authors can copy it as a
-starting point.
+list of element dicts, each grouping its own host dicts, and builds real hosts
+via :func:`otto.host.factory.create_host_from_dict`. It needs no files or
+network, so it runs inside doctests and the conformance suite, and SUT authors
+can copy it as a starting point.
 
 Register it from an ``init`` module and select it by name::
 
@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..config.lab import Lab
+from ..host.element import Element
 from ..host.factory import create_host_from_dict, host_identity
 from ..inventory import InventoryError, resolve_host_entry
 from ..labs import HostSummary, LabNotFoundError
@@ -47,36 +48,52 @@ if TYPE_CHECKING:
     from ..inventory import Inventory
 
 # A tiny built-in dataset so the sample works out of the box (doctests +
-# conformance). Each value is a list of host dicts as they'd appear in a
-# lab.json entry; the mapping key supplies lab membership here, so the
-# host-level "labs" field is unnecessary. This sample declares resources only
-# at the LAB level, in ``_DEMO_RESOURCES`` below — one of the three levels a
-# lab may use (spec 2026-08-28 three-level-reservations §2). A host dict MAY
-# carry its own "resources", and an element's set reaches a host through
-# ``create_host_from_dict(..., element_resources=...)``; a backend whose
-# equipment is reserved per chassis or per slot has to populate those too,
-# because otto reads all three off the built lab.
+# conformance). Each value is a list of ELEMENT dicts, each carrying the host
+# dicts of that element as they'd appear in a lab.json entry; the mapping key
+# supplies lab membership here, so the element-level "labs" field is
+# unnecessary. This sample declares resources only at the LAB level, in
+# ``_DEMO_RESOURCES`` below — one of the three levels a lab may use (spec
+# 2026-08-28 three-level-reservations §2). A host dict MAY carry its own
+# "resources", and an element's metadata and resources ride on the ``Element``
+# handed to the factory; a backend whose equipment is reserved per chassis or
+# per slot has to populate those too, because otto reads all three off the
+# built lab.
 _DEMO_LABS: dict[str, list[dict[str, Any]]] = {
     "east": [
         {
-            "ip": "10.0.0.1",
-            "element": "router1",
-            "creds": [{"login": "admin", "password": "admin"}],
+            "name": "router1",
+            "hosts": [{"ip": "10.0.0.1", "creds": [{"login": "admin", "password": "admin"}]}],
         },
     ],
     "west": [
         {
-            "ip": "10.0.1.1",
-            "element": "router2",
-            "creds": [{"login": "admin", "password": "admin"}],
-            # Spelled out although "unix" is the factory's default: this selector
-            # is what `list_host_summaries` reports and what scopes the verb menu
-            # of `otto host router2 <TAB>`. A backend that drops it keeps working
-            # and quietly offers every class's verbs.
-            "os_type": "unix",
+            "name": "router2",
+            "hosts": [
+                {
+                    "ip": "10.0.1.1",
+                    "creds": [{"login": "admin", "password": "admin"}],
+                    # Spelled out although "unix" is the factory's default: this
+                    # selector is what `list_host_summaries` reports and what
+                    # scopes the verb menu of `otto host router2 <TAB>`. A
+                    # backend that drops it keeps working and quietly offers
+                    # every class's verbs.
+                    "os_type": "unix",
+                },
+            ],
         },
     ],
 }
+
+
+def _element_of(entry: dict[str, Any]) -> Element:
+    """Build the runtime element an element dict of the dataset declares."""
+    return Element(
+        entry["name"],
+        id=entry.get("id"),
+        metadata=dict(entry.get("metadata", {})),
+        resources=frozenset(entry.get("resources", ())),
+    )
+
 
 _DEMO_RESOURCES: dict[str, set[str]] = {"east": {"router1"}, "west": {"router2"}}
 """What each demo lab reserves — the ``labs`` table's ``resources``, in miniature."""
@@ -92,8 +109,9 @@ class ExampleLabRepository:
         constructs a custom backend as ``cls(repo_dir=..., **kwargs)``. This
         in-memory sample has no files to resolve, so it is ignored.
     labs : dict[str, list[dict]] | None
-        Optional mapping of lab name to host dicts. Defaults to a small built-in
-        demo dataset.
+        Optional mapping of lab name to element dicts (``name``, optional
+        ``id``/``metadata``/``resources``, and the ``hosts`` list). Defaults to
+        a small built-in demo dataset.
     resources : dict[str, set[str]] | None
         Optional mapping of lab name to the resources that lab reserves — the
         ``labs`` table's ``resources``, the LAB level of the three a lab may
@@ -140,15 +158,21 @@ class ExampleLabRepository:
             known = ", ".join(sorted(self._labs)) or "(none)"
             raise LabNotFoundError(f"Lab {name!r} not found. Known labs: {known}")
         lab = Lab(name=name)
-        for host_data in self._labs[name]:
-            entry = resolve_host_entry(host_data, inventory)
-            host = create_host_from_dict(
-                entry.host_data,
-                preferences=preferences,
-                lab_name=name,
-                inventory_ref=entry.ref,
-            )
-            lab.add_host(host)
+        for entry in self._labs[name]:
+            # One Element per element dict, shared by every host of it — what
+            # the lab loader does, and what makes ``host_a.element is
+            # host_b.element`` hold for siblings.
+            element = _element_of(entry)
+            for host_data in entry["hosts"]:
+                resolved = resolve_host_entry(host_data, inventory, element)
+                host = create_host_from_dict(
+                    resolved.host_data,
+                    preferences=preferences,
+                    lab_name=name,
+                    element=element,
+                    inventory_ref=resolved.ref,
+                )
+                lab.add_host(host)
         # Declared, never derived: the lab carries its own set (spec §8.1), and
         # UNIONING the hosts' sets into it is exactly what v2 removed. The
         # element and host levels are not folded in here either — they stay on
@@ -173,29 +197,40 @@ class ExampleLabRepository:
         Note the ids come from :func:`~otto.host.factory.host_identity`, not
         from formatting the record by hand — that is what guarantees an id
         offered by completion is one ``load_lab`` will actually produce. And
-        note the per-record ``try``: enumeration feeds tab completion, so one
+        note the two ``try`` blocks: enumeration feeds tab completion, so one
         bad record must be skipped, never raised — an entry this process's
         *inventory* cannot resolve included.
+
+        There are TWO because there are two records. The dataset is
+        caller-supplied and never validated, so the ELEMENT entry can be bad on
+        its own: ``_element_of`` raises ``KeyError`` without a ``name`` and
+        ``ValueError`` on a name that slugs to nothing, before any host of it
+        is looked at. That skip is per element, and the inner one stays per
+        host, so one bad host does not take its siblings down with it.
         """
         by_id: dict[str, HostSummary] = {}
-        for name, hosts in self._labs.items():
-            for host_data in hosts:
+        for name, entries in self._labs.items():
+            for entry in entries:
                 try:
-                    resolved = resolve_host_entry(host_data, inventory).host_data
-                    identity = host_identity(resolved)
-                except (ValueError, TypeError, InventoryError):
+                    element = _element_of(entry)
+                    hosts = entry["hosts"]
+                except (ValueError, TypeError, KeyError):
                     continue
-                existing = by_id.get(identity.id)
-                if existing is not None:
-                    existing.labs.append(name)
-                    continue
-                by_id[identity.id] = HostSummary(
-                    id=identity.id,
-                    labs=[name],
-                    ip=identity.ip,
-                    element=identity.element,
-                    element_id=identity.element_id,
-                    docker_capable=identity.docker_capable,
-                    os_type=str(resolved.get("os_type", "unix")),
-                )
+                for host_data in hosts:
+                    try:
+                        resolved = resolve_host_entry(host_data, inventory, element).host_data
+                        identity = host_identity(resolved, element)
+                    except (ValueError, TypeError, KeyError, InventoryError):
+                        continue
+                    existing = by_id.get(identity.id)
+                    if existing is not None:
+                        existing.labs.append(name)
+                        continue
+                    by_id[identity.id] = HostSummary(
+                        id=identity.id,
+                        labs=[name],
+                        ip=identity.ip,
+                        docker_capable=identity.docker_capable,
+                        os_type=str(resolved.get("os_type", "unix")),
+                    )
         return sorted(by_id.values(), key=lambda s: s.id)

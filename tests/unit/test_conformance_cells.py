@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from otto.host.element import Element
 from tests._fixtures.paths import PROJECT_ROOT
 from tests._fixtures.profiles import Cell
 from tests.conformance import _cells
@@ -122,12 +123,12 @@ def test_a_menu_entry_the_venue_cannot_serve_is_excluded_not_offered() -> None:
     dropped, and the servable pairs must survive.
     """
     monkeyed = SimpleNamespace(
-        element="loopback",
+        element=Element("loopback"),
         valid_terms=["ssh", "telnet"],
         valid_transfers=["sftp", "console", "scp"],
     )
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_cells, "create_host_from_dict", lambda data: monkeyed)
+        mp.setattr(_cells, "create_host_from_dict", lambda data, **kw: monkeyed)
         space = _cells.hermetic_space()
     pairs = {(c.cell.term, c.cell.transfer) for c in space if c.kind == "loopback-ssh"}
     assert pairs == {("ssh", "sftp"), ("ssh", "scp")}
@@ -140,9 +141,11 @@ def test_loopback_cells_are_read_off_the_built_host_not_hardcoded() -> None:
     target stopped agreeing with it, so the menu is mutated here and the space
     must follow it.
     """
-    monkeyed = SimpleNamespace(element="loopback", valid_terms=["ssh"], valid_transfers=["nc"])
+    monkeyed = SimpleNamespace(
+        element=Element("loopback"), valid_terms=["ssh"], valid_transfers=["nc"]
+    )
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_cells, "create_host_from_dict", lambda data: monkeyed)
+        mp.setattr(_cells, "create_host_from_dict", lambda data, **kw: monkeyed)
         space = _cells.hermetic_space()
     loopback = [c.cell for c in space if c.kind == "loopback-ssh"]
     assert [(c.term, c.transfer) for c in loopback] == [("ssh", "nc")]

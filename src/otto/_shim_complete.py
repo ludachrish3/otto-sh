@@ -27,7 +27,7 @@ import time
 from typing import Any
 
 CACHE_FILENAME = "completion_cache.json"
-SCHEMA = 18
+SCHEMA = 19
 """Must equal ``otto.config.completion_cache.SCHEMA_VERSION`` (pinned by tests/unit/shim)."""
 WINDOW_SECONDS = 60
 MARKER_FILENAMES = {"names": "completion_cache.names.ok", "tests": "completion_cache.tests.ok"}
@@ -241,9 +241,9 @@ def resolve(tree: dict[str, Any], args: list[str], classes: dict[str, str]) -> R
     index, total = 0, len(args)
     while index < total:
         # Indexed, never `.get`: "group" is a REQUIRED Node key, like "params" and
-        # "commands". A payload without it (one written before the key existed —
-        # SCHEMA stays 18) must raise and hand over, not silently parse every group
-        # with leaf semantics. `.get` is for the genuinely optional keys below
+        # "commands". A payload without it (one written before the key existed,
+        # under the same SCHEMA) must raise and hand over, not silently parse every
+        # group with leaf semantics. `.get` is for the genuinely optional keys below
         # ("scoped_by", "host_classes").
         is_group = res.node["group"]
         while index < total:  # _process_args_for_options

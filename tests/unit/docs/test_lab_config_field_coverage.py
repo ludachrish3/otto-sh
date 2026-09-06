@@ -67,16 +67,16 @@ def _section(text: str, heading: "str | None", page: Path) -> str:
             "inventory record",
             sorted(InventoryRecord.model_fields),
         ),
-        # HOISTED_HOST_KEYS are excluded for host specs: `element` and
-        # `element_id` survive on HostSpec because the flat host-dict API
-        # composes the host id from them (spec §14), but in a v2 FILE they are
-        # the element's `name` / `id` and are errors inside a host entry. They
-        # are documented under "Elements"; a per-host row for them would teach
-        # exactly the shape v2 forbids. (`labs`, the other hoisted key, left
-        # HostSpec outright; `resources` is a host field again since spec
-        # 2026-08-28 three-level-reservations and therefore needs its row.)
+        # No exception for HOISTED_HOST_KEYS: a builtin host spec declares none
+        # of them since spec 2026-09-05 §2.6 (`element`/`element_id` are the
+        # element's `name`/`id`, `labs` its membership), so every field a spec
+        # DOES declare owes a row. Subtracting the set instead would excuse a
+        # spec that re-added one from ever being documented, which is the one
+        # thing this sweep exists to catch —
+        # `test_no_builtin_host_spec_declares_a_hoisted_key` below pins the
+        # premise so the removal cannot rot.
         *[
-            (_PAGE, None, stem, sorted(set(spec.model_fields) - HOISTED_HOST_KEYS))
+            (_PAGE, None, stem, sorted(spec.model_fields))
             for stem, spec in registered_host_specs(builtins_only=True).items()
         ],
     ],
@@ -88,3 +88,14 @@ def test_every_field_has_a_row(
     missing = [f for f in fields if f"| `{f}`" not in text]
     where = f"{page.name}" if heading is None else f"{page.name} under {heading!r}"
     assert not missing, f"{owner}: undocumented in {where}: {missing}"
+
+
+def test_no_builtin_host_spec_declares_a_hoisted_key():
+    """The premise the sweep above rests on, asserted rather than subtracted.
+
+    ``element``/``element_id``/``labs`` live above the host entry (spec
+    2026-09-05 §2.6, and §7 of the v2 spec for ``labs``), so no builtin spec
+    declares one and the field-row parametrization needs no exception for them.
+    """
+    for stem, spec in registered_host_specs(builtins_only=True).items():
+        assert not HOISTED_HOST_KEYS & set(spec.model_fields), stem

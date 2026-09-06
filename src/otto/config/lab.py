@@ -13,8 +13,6 @@ from typing import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
     from ..host.host import Host
     from ..inventory import Inventory
     from ..labs.protocol import LabRepository
@@ -163,75 +161,6 @@ class Lab:
             merged[link.id] = link
         return list(merged.values())
 
-    def _assign_logical_indices(self) -> None:
-        """Stamp each host's ``logical_index`` within its element-slug group.
-
-        Delegates grouping/ordering to :func:`logical_indices` (the single source
-        shared with completion), refreshes non-overridden display names, and warns
-        when a canonical id shadows a different host's logical position. Idempotent.
-        """
-        from ..host.remote_host import RemoteHost, slug
-
-        positions = logical_indices(self.hosts.values())
-        by_group_pos: "dict[tuple[str, int], RemoteHost]" = {}
-        for host in self.hosts.values():
-            if not (isinstance(host, RemoteHost) and host.element):
-                continue
-            host.logical_index = positions.get(host.id)
-            _refresh_name(host)
-            if host.logical_index is not None:
-                by_group_pos[(slug(host.element), host.logical_index)] = host
-        # Shadow warning: a canonical id <element-slug><element_id> that resolves to
-        # a DIFFERENT host than that group's element_id-th by logical index means
-        # "type what you see" would reach the wrong host (only possible for a small
-        # element_id colliding with a logical position — see the spec's {2,5} case).
-        for host in self.hosts.values():
-            if not (
-                isinstance(host, RemoteHost)
-                and host.logical_index is not None
-                and host.element_id is not None
-            ):
-                continue
-            key = slug(host.element)
-            shadowed = self.hosts.get(f"{key}{host.element_id}")
-            positional = by_group_pos.get((key, host.element_id))
-            if shadowed is not None and positional is not None and shadowed is not positional:
-                getLogger(__name__).warning(
-                    "Host id %r shadows the display label of %r (logical %d): "
-                    "typing %r reaches the id-%d host, not the labelled one.",
-                    shadowed.id,
-                    positional.name,
-                    host.element_id,
-                    shadowed.id,
-                    host.element_id,
-                )
-
-    def resolve_handle(self, handle: str) -> "Host | None":
-        """Resolve a typed CLI handle to a host.
-
-        Exact canonical id wins, else the positional ``<element-slug><N>``
-        form (N-th host of that element by logical index), else ``None``.
-        """
-        host = self.hosts.get(handle)
-        if host is not None:
-            return host
-        import re
-
-        from ..host.remote_host import RemoteHost, slug
-
-        m = re.fullmatch(r"(.*?)(\d+)", handle)
-        if not m:
-            return None
-        prefix, number = m.group(1), int(m.group(2))
-        for candidate in self.hosts.values():
-            if (
-                isinstance(candidate, RemoteHost)
-                and candidate.logical_index == number
-                and slug(candidate.element) == prefix
-            ):
-                return candidate
-        return None
-
     def __add__(
         self,
         other: "Lab",
@@ -277,8 +206,7 @@ class Lab:
                 raise ValueError(
                     f"Duplicate host id {host.id!r} for different hosts "
                     f"({existing.ip} in {pre_merge_name!r} vs {host.ip} in {other.name!r}). "
-                    f"Differentiate the element string, assign/uniquify element_id, "
-                    f"or set board/slot."
+                    "Give the elements distinct names, or set board/slot."
                 )
             self.hosts[host.id] = host
 
@@ -286,51 +214,7 @@ class Lab:
         by_id.update({link.id: link for link in other.links})
         self.links = list(by_id.values())
 
-        self._assign_logical_indices()
-
         return self
-
-
-def _refresh_name(host: "Host") -> None:
-    """Recompute a non-overridden host's display name from its current logical_index."""
-    if getattr(host, "_name_overridden", False):
-        return
-    generate = getattr(host, "_generate_name", None)
-    if generate is not None:
-        host.name = generate()
-
-
-def logical_indices(hosts: "Iterable[Any]") -> dict[str, int]:
-    """Host id -> 1-based logical index within its ``slug(element)`` group.
-
-    Ordered by ``element_id`` ascending (``id`` tie-break); only groups with more
-    than one member are numbered (a unique element is absent from the map).
-    Accepts a :class:`~otto.host.remote_host.RemoteHost` or a
-    :class:`~otto.labs.protocol.HostSummary` (completion numbers hosts it has
-    only summarized, never built) — anything else, and any empty-``element``
-    entry, is skipped. That exclusion is load-bearing: built-in hosts and
-    synthesized container hosts are not remote hosts and must never take a
-    positional handle. THE single source of truth for logical positions, shared
-    by ``Lab._assign_logical_indices`` (stamping) and completion (handles), so
-    the CLI's positional handles always match ``resolve_handle``.
-    """
-    from collections import defaultdict
-
-    from ..host.remote_host import RemoteHost, slug
-    from ..labs import HostSummary
-
-    groups: "dict[str, list[Any]]" = defaultdict(list)
-    for host in hosts:
-        if isinstance(host, (RemoteHost, HostSummary)) and host.element:
-            groups[slug(host.element)].append(host)
-    positions: dict[str, int] = {}
-    for members in groups.values():
-        if len(members) < 2:  # noqa: PLR2004 — a group of 1 is "unique", not numbered
-            continue
-        ordered = sorted(members, key=lambda h: (h.element_id is None, h.element_id or 0, h.id))
-        for pos, host in enumerate(ordered, start=1):
-            positions[host.id] = pos
-    return positions
 
 
 def load_lab(
@@ -435,7 +319,7 @@ def load_lab(
         for component_host in component.hosts.values():
             component_host.source_lab = component_host.source_lab or component.name
             # A per-host COPY of the metadata table (mutation isolation, like
-            # element_metadata): ``LabInfo`` copies it in ``__post_init__``, so
+            # the element's own metadata): ``LabInfo`` copies it in ``__post_init__``, so
             # one host's write into it can never reach the lab's table or a
             # sibling host's.
             component_host.lab_info = LabInfo(
@@ -487,7 +371,5 @@ def load_lab(
             lab.name,
             BUILTIN_LOCAL_HOST_ID,
         )
-
-    lab._assign_logical_indices()  # noqa: SLF001 — intra-package: load_lab lives beside Lab in this module
 
     return lab

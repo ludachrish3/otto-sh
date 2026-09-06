@@ -42,6 +42,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from otto.host import userland as userland_module
+from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.options import ScpOptions, UserlandOptions
 from otto.host.os_profile import get_os_profile
@@ -216,7 +217,7 @@ def _unix_host(*, resolverless: bool = False):
     cls = _Resolverless if resolverless else UnixHost
     return cls(
         ip="10.0.0.9",
-        element="box",
+        element=Element("box"),
         creds=[Cred(login="u", password="p")],
         log=LogMode.QUIET,
     )

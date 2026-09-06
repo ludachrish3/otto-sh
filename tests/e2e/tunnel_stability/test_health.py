@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from otto.config.lab import Lab
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.options import SshOptions
 from otto.host.unix_host import UnixHost
@@ -55,7 +56,7 @@ def build_phantom_host() -> UnixHost:
     creds = [Cred(**c) for c in host_data("test1")["creds"]]
     return UnixHost(
         ip=PHANTOM_IP,
-        element="phantom",
+        element=Element("phantom"),
         creds=creds,
         term="ssh",
         transfer="scp",

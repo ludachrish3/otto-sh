@@ -16,6 +16,7 @@ from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.docker import build_images, compose_down, compose_up, composed
 from otto.host.docker_host import DockerContainerHost
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
@@ -48,7 +49,7 @@ def test3_lease(tmp_path_factory):
 async def parent(test3_lease):
     h = UnixHost(
         ip="10.10.200.13",
-        element="test3",
+        element=Element("test3"),
         creds=[Cred(login="vagrant", password="vagrant")],
         is_virtual=True,
         term="ssh",

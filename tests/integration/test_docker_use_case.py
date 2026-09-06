@@ -42,7 +42,7 @@ from otto.docker.deployment import deploy, teardown
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from tests._fixtures._host_pool import lease_unix_host
-from tests._fixtures.labdata import host_data
+from tests._fixtures.labdata import element_for, host_data
 from tests._fixtures.paths import TESTS_ROOT
 
 REPO1_DIR = TESTS_ROOT / "repo1"
@@ -82,7 +82,7 @@ async def parent(test3_lease):
     data = host_data("test3")
     h = UnixHost(
         ip=data["ip"],
-        element=data["element"],
+        element=element_for("test3"),
         creds=[Cred(**c) for c in data["creds"]],
         is_virtual=True,
         term="ssh",

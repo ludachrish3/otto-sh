@@ -60,7 +60,7 @@ three: *what must this user hold before this run starts?*
 The answer is a list of **origins**, not a bare set of strings.
 {class}`~otto.reservations.check.ResourceOrigin` carries the identifier, the
 level that declared it (`lab`/`element`/`host`), and the owner at that level —
-the lab name, the element rendered as `('chassis', 1)`, or the host id.
+the lab name, the element's slug, or the host id.
 {func}`~otto.reservations.check.required_resource_origins` builds them;
 {func}`~otto.reservations.check.required_resources` is the projection down to
 the identifiers, so there is one derivation and two views of it. Keeping the
@@ -69,9 +69,10 @@ which string, and what lets `otto reservation check` explain a requirement it
 would otherwise just assert.
 
 Carriage is by the road each level's neighbour already travels: the lab set
-stays on `host.lab_info.resources`, the element's is stamped onto every host of
-the element as `host.element_resources` (beside `element_metadata`), and the
-host entry's is `host.resources`. Both host-side fields are `frozenset[str]`,
+stays on `host.lab_info.resources`, the element's rides the `Element` every
+host of that element carries, as `host.element.resources` (beside
+`host.element.metadata`), and the host entry's is `host.resources`. Both
+host-side sets are `frozenset[str]`,
 so no caller can mutate one lab's declaration through a host it happens to
 hold.
 

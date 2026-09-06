@@ -1,5 +1,6 @@
 """Tests for build_monitor_collector — choosing SNMP vs shell collection mode."""
 
+from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
 from otto.monitor.factory import build_monitor_collector
 
@@ -9,11 +10,11 @@ class TestBuildMonitorCollector:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "snmp": {"port": 16101, "oids": ["1.3.6.1.2.1.1.3.0"]},
-            }
+            },
+            element=Element("zephyr37_fat"),
         )
         collector = build_monitor_collector([host])
         target = collector._targets[0]
@@ -28,11 +29,11 @@ class TestBuildMonitorCollector:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "snmp": {"address": "10.10.200.14", "port": 16101, "oids": ["1.3.6.1.2.1.1.3.0"]},
-            }
+            },
+            element=Element("zephyr37_fat"),
         )
         collector = build_monitor_collector([host])
         # the relay endpoint, not the host's telnet ip
@@ -43,12 +44,12 @@ class TestBuildMonitorCollector:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "interfaces": {"mgmt": "10.9.9.9", "data": "192.168.5.5"},
                 "snmp": {"address": "mgmt", "port": 16101, "oids": ["1.3.6.1.2.1.1.3.0"]},
-            }
+            },
+            element=Element("zephyr37_fat"),
         )
         collector = build_monitor_collector([host])
         assert collector._targets[0].snmp.client.address == "10.9.9.9"
@@ -58,12 +59,12 @@ class TestBuildMonitorCollector:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "interfaces": {"mgmt": "10.9.9.9"},
                 "snmp": {"address": "203.0.113.5", "port": 16101, "oids": ["1.3.6.1.2.1.1.3.0"]},
-            }
+            },
+            element=Element("zephyr37_fat"),
         )
         collector = build_monitor_collector([host])
         assert collector._targets[0].snmp.client.address == "203.0.113.5"
@@ -73,12 +74,12 @@ class TestBuildMonitorCollector:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "interfaces": {"mgmt": "10.9.9.9"},
                 "snmp": {"port": 16101, "oids": ["1.3.6.1.2.1.1.3.0"]},
-            }
+            },
+            element=Element("zephyr37_fat"),
         )
         collector = build_monitor_collector([host])
         assert collector._targets[0].snmp.client.address == "192.0.2.1"
@@ -87,9 +88,9 @@ class TestBuildMonitorCollector:
         host = create_host_from_dict(
             {
                 "ip": "10.10.200.11",
-                "element": "alt1",
                 "creds": [{"login": "v", "password": "v"}],
-            }
+            },
+            element=Element("alt1"),
         )
         collector = build_monitor_collector([host])
         target = collector._targets[0]
@@ -103,7 +104,6 @@ class TestBuildMonitorCollector:
         host = create_host_from_dict(
             {
                 "ip": "192.0.2.1",
-                "element": "zephyr37_fat",
                 "os_type": "embedded",
                 "command_frame": "zephyr",
                 "snmp": {
@@ -112,7 +112,8 @@ class TestBuildMonitorCollector:
                     "community": "public",
                     "version": "2c",
                 },
-            }
+            },
+            element=Element("zephyr37_fat"),
         )
         collector = build_monitor_collector([host])
         assert collector._targets[0].snmp.oids == list(CORE_OIDS)

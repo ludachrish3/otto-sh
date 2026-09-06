@@ -11,14 +11,19 @@ from tests._fixtures.labdata import lab_data_dir, lab_json_v2
 _LAB_DATA = lab_data_dir()
 _LAB_FILES = sorted(_LAB_DATA.glob("*/lab.json"))
 
-# A flat v1-style host dict: `lab_json_v2` hoists `element` onto the element
-# wrapper, so what reaches `elements[…].hosts[…]` is the v2 host entry.
-_VALID_HOST = {
+_VALID_HOST_ENTRY = {
     "ip": "10.10.200.11",
-    "element": "test1",
     "os_type": "unix",
     "creds": [{"login": "vagrant", "password": "vagrant"}],
 }
+"""One host entry, exactly as a lab file has it — the standalone host schema's shape."""
+
+_VALID_HOST = {**_VALID_HOST_ENTRY, "element": "test1"}
+"""The same entry in :func:`lab_json_v2`'s v1-style INPUT shape.
+
+The writer hoists ``element`` onto the element wrapper, so what reaches
+``elements[…].hosts[…]`` is ``_VALID_HOST_ENTRY`` again.
+"""
 
 _VALID_LINK = {
     "endpoints": [{"host": "test1"}, {"host": "test2"}],
@@ -126,7 +131,7 @@ def test_standalone_host_and_link_schemas_accept_comment_keys():
     from jsonschema import Draft202012Validator
 
     docs = build_schemas()
-    Draft202012Validator(docs["unix-host"]).validate({**_VALID_HOST, "_note": "x"})
+    Draft202012Validator(docs["unix-host"]).validate({**_VALID_HOST_ENTRY, "_note": "x"})
     Draft202012Validator(docs["link"]).validate({**_VALID_LINK, "_note": "x"})
 
 

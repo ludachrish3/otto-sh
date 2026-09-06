@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.coverage.collect import CollectResult, collect_coverage
+from otto.host.element import Element
 from tests._fixtures.gitrepo import git_env
 
 
@@ -306,7 +307,7 @@ class TestCollectEmbedded:
 
         zephyr37_llext = ZephyrHost(
             ip="192.0.2.33",
-            element="zephyr37_llext",
+            element=Element("zephyr37_llext"),
             transfer="console",
             toolchain=Toolchain(
                 sysroot=Path("/opt/sdk/arm-zephyr-eabi"),
@@ -344,7 +345,7 @@ class TestCollectEmbedded:
 
         host = ZephyrHost(
             ip="192.0.2.33",
-            element="zephyr37_llext",
+            element=Element("zephyr37_llext"),
             transfer="console",
             toolchain=Toolchain(
                 sysroot=Path("/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi"),
@@ -389,7 +390,7 @@ class TestCollectEmbedded:
         from otto.host.embedded_host import ZephyrHost
         from otto.host.toolchain import Toolchain
 
-        host = ZephyrHost(ip="192.0.2.33", element="zephyr37_llext", transfer="console")
+        host = ZephyrHost(ip="192.0.2.33", element=Element("zephyr37_llext"), transfer="console")
         # No toolchain configured -> default Toolchain() -> discovery fallback.
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
@@ -509,7 +510,7 @@ class TestCollectEmbedded:
 
         zephyr37_fat = ZephyrHost(
             ip="192.0.2.33",
-            element="zephyr37_fat",
+            element=Element("zephyr37_fat"),
             transfer="console",
             os_version="3.7",
             toolchain=Toolchain(
@@ -520,7 +521,7 @@ class TestCollectEmbedded:
         )
         zephyr44_fat = ZephyrHost(
             ip="192.0.2.34",
-            element="zephyr44_fat",
+            element=Element("zephyr44_fat"),
             transfer="console",
             os_version="4.4",
             toolchain=Toolchain(
@@ -577,6 +578,8 @@ class TestBuildDirPathAnchoring:
 
         kwargs.setdefault("ip", "192.0.2.33")
         kwargs.setdefault("transfer", "console")
+        if isinstance(kwargs.get("element"), str):
+            kwargs["element"] = Element(kwargs["element"])
         kwargs.setdefault(
             "toolchain",
             Toolchain(

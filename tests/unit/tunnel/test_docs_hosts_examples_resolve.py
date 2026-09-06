@@ -44,7 +44,7 @@ def _interface_counts() -> dict[str, int]:
         # Host ids are built from element/board by otto's own composer, so
         # derive through it rather than re-spelling the rule here (an element
         # carrying an underscore slugs it to a hyphen: zephyr37_lfs -> zephyr37-lfs).
-        host_id = make_host_id(h.get("element", ""), None, h.get("board"), None)
+        host_id = make_host_id(h.get("element", ""), h.get("board"), None)
         counts[host_id] = len(h.get("interfaces") or {})
     return counts
 

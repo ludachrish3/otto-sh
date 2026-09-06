@@ -514,8 +514,7 @@ def test_required_for_ignores_a_target_the_lab_does_not_hold(monkeypatch, tmp_pa
     ``required_resource_origins`` raises ``ValueError`` on an id the lab does
     not contain, and ``remote_path_completer``'s catch-all would turn that into
     an empty completion with no message anywhere. A typo must leave the fleet's
-    requirement standing. (A positional handle is a different case — it names a
-    real host, and the test below pins that it resolves.)
+    requirement standing.
 
     Mutation: drop the ``if host is not None`` filter on the resolved names and
     this goes red with ``AttributeError: 'NoneType' object has no attribute
@@ -557,65 +556,6 @@ def test_required_for_adds_the_hop_when_it_is_outside_the_fleet(monkeypatch, tmp
 
     chain = rc._ChainParams(host_id="slot1", hop="slot2", term=None, labs=["rig"], as_user="carol")
     assert rc._required_for(chain) == {"slot-1", "slot-2"}
-
-
-def _handle_lab():
-    """Two ``dut`` hosts whose ids (``dut47``/``dut48``) are NOT their handles.
-
-    ``resolve_handle`` tries the canonical id first, so a lab where the id and
-    the positional handle coincide cannot tell the two lookups apart. Element
-    ids 47/48 make the handles ``dut1``/``dut2`` and the ids ``dut47``/``dut48``
-    — the shape ``test_hop_handle_resolves_to_canonical_id`` in
-    ``tests/unit/cli/test_host.py`` describes.
-    """
-    from otto.config.lab import Lab
-    from otto.host.factory import create_host_from_dict
-
-    lab = Lab(name="rig", component_names=["rig"])
-    for element_id, octet in ((47, 1), (48, 2)):
-        lab.add_host(
-            create_host_from_dict(
-                {
-                    "element": "dut",
-                    "element_id": element_id,
-                    "os_type": "unix",
-                    "ip": f"10.0.0.{octet}",
-                    "creds": [{"login": "admin", "password": "admin"}],
-                },
-                lab_name="rig",
-            )
-        )
-    # The stamping `load_lab` does and a hand-built lab skips; without it no
-    # host has a logical_index and there are no positional handles to resolve.
-    lab._assign_logical_indices()
-    return lab
-
-
-def test_required_for_resolves_a_positional_handle_to_the_host_it_will_contact(
-    monkeypatch, tmp_path
-):
-    """``dut1`` is a real host the command WILL reach, not an unknown name to drop.
-
-    ``Lab.resolve_handle`` is a pure lookup over the mapping ``_required_for``
-    has already built — it opens nothing, so using it costs the gate none of
-    its "strictly first" property. Dropping the handle instead means the TAB
-    contacts ``dut47`` while having demanded nothing of it.
-
-    Red at HEAD: the handle was intersected against ``lab.hosts``, matched
-    nothing, and the requirement came back ``{'slot-1'}``.
-    """
-    from tests._fixtures.fleet import _repo
-
-    lab = _handle_lab()
-    assert lab.resolve_handle("dut1").id == "dut47"  # the premise, stated
-    lab.hosts["dut47"].resources = frozenset({"slot-2"})
-    lab.hosts["dut48"].resources = frozenset({"slot-1"})
-    repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["dut48"])
-    monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
-    monkeypatch.setattr("otto.config.get_ordered_repos", lambda: [repo])
-    monkeypatch.setattr("otto.cli.invoke.build_lab_from_repos", lambda repos, labnames: lab)
-
-    assert rc._required_for(_chain(labs=("rig",), host_id="dut1")) == {"slot-1", "slot-2"}
 
 
 def test_required_for_under_an_empty_declared_fleet_returns_the_lab_level_set(

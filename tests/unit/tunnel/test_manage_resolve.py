@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from otto.host.element import Element
 from otto.result import CommandResult
 from otto.tunnel.discovery import DiscoveredTunnel, TunnelDiscovery, TunnelNotMeasuredError
 from otto.tunnel.manage import (
@@ -109,11 +110,11 @@ class TestResolveChain:
 
         busybox = create_host_from_dict(
             {
-                "element": "bb1",
                 "os_type": "busybox",
                 "ip": "10.0.0.1",
                 "creds": [{"login": "v", "password": "v"}],
-            }
+            },
+            element=Element("bb1"),
         )
         lab = _lab(bb=busybox, b=FakeUnix("b", ip="10.0.0.2"))
         with pytest.raises(ValueError, match="has_bash"):
@@ -140,11 +141,11 @@ class TestResolveChain:
 
         busybox = create_host_from_dict(
             {
-                "element": "bb1",
                 "os_type": "busybox",
                 "ip": "10.0.0.1",
                 "creds": [{"login": "v", "password": "v"}],
-            }
+            },
+            element=Element("bb1"),
         )
         lab = _lab(bb=busybox)
 

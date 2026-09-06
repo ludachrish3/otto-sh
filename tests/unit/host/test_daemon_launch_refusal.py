@@ -31,6 +31,7 @@ import pytest
 
 from otto.host import userland
 from otto.host.daemon import launch_command, refuse_if_launch_wrapper_needs_bash
+from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.userland import MEASURED_BROKEN, UNTESTED, Gap, gap_for
 
@@ -224,11 +225,11 @@ class TestThroughAHostBuiltFromLabData:
 
         host = create_host_from_dict(
             {
-                "element": "bb1",
                 "os_type": "busybox",
                 "ip": "192.0.2.1",
                 "creds": [{"login": "v", "password": "v"}],
-            }
+            },
+            element=Element("bb1"),
         )
         assert host.has_bash is False
         with pytest.raises(UnsupportedOnUserlandError, match="bb1"):
@@ -240,11 +241,11 @@ class TestThroughAHostBuiltFromLabData:
 
         host = create_host_from_dict(
             {
-                "element": "gnu1",
                 "os_type": "unix",
                 "ip": "192.0.2.2",
                 "creds": [{"login": "v", "password": "v"}],
-            }
+            },
+            element=Element("gnu1"),
         )
         assert host.has_bash is True
         assert refuse_if_launch_wrapper_needs_bash(host) is None
@@ -260,12 +261,12 @@ class TestThroughAHostBuiltFromLabData:
 
         host = create_host_from_dict(
             {
-                "element": "dash1",
                 "os_type": "unix",
                 "ip": "192.0.2.3",
                 "has_bash": False,
                 "creds": [{"login": "v", "password": "v"}],
-            }
+            },
+            element=Element("dash1"),
         )
         with pytest.raises(UnsupportedOnUserlandError, match="dash1"):
             refuse_if_launch_wrapper_needs_bash(host)

@@ -202,11 +202,10 @@ def _expect_host_summaries_conform(
       the reason it matters is that nothing else notices: the completer just
       quietly stops offering that host.
     - Every FIELD must agree with the constructed host. A summary is not an
-      id lookup — ``labs`` drives ``--lab``-scoped completion, ``element``
-      and ``element_id`` drive the positional handles (``dut1``),
-      ``docker_capable`` gates ``otto docker --on``, and ``ip`` drives tunnel
-      narrowing. A backend that fills in only ``id`` passed every earlier
-      version of this check while silently breaking four surfaces.
+      id lookup — ``labs`` drives ``--lab``-scoped completion, ``docker_capable``
+      gates ``otto docker --on``, and ``ip`` drives tunnel narrowing. A backend
+      that fills in only ``id`` passed every earlier version of this check
+      while silently breaking the other surfaces.
 
     All three are scoped to labs that actually LOADED. A lab whose load
     raises (a host naming an ``os_profile`` this process never registered,
@@ -312,15 +311,6 @@ def _expect_host_summaries_conform(
             continue
         for field, summarized, built in (
             ("ip", summary.ip, getattr(host, "ip", "") or ""),
-            ("element", summary.element, getattr(host, "element", "") or ""),
-            # Compared by (type, value): `7 == 7.0` and `False == 0` in
-            # Python, and a float element_id is precisely the divergence
-            # `host_identity` exists to prevent (`dut3.0` vs `dut3`).
-            (
-                "element_id",
-                (type(summary.element_id), summary.element_id),
-                (type(getattr(host, "element_id", None)), getattr(host, "element_id", None)),
-            ),
             (
                 "docker_capable",
                 summary.docker_capable,

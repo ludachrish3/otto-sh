@@ -9,7 +9,18 @@ import json
 
 import pytest
 
-from tests._fixtures.labdata import flatten_lab_doc, lab_json_v2, write_lab_json
+from otto.host.element import Element
+from otto.host.factory import create_host_from_dict
+from tests._fixtures.labdata import (
+    element_for,
+    element_of,
+    entry_of,
+    flat_hosts,
+    flatten_lab_doc,
+    host_data,
+    lab_json_v2,
+    write_lab_json,
+)
 
 _CREDS = [{"login": "u", "password": "p"}]
 
@@ -119,3 +130,35 @@ def test_flatten_lab_doc_tolerates_a_document_with_no_elements() -> None:
     legal one — it must flatten to nothing, not raise.
     """
     assert flatten_lab_doc({"labs": {"unix": {"resources": []}}}) == []
+
+
+def test_host_data_returns_what_the_factory_takes_and_element_for_the_rest() -> None:
+    """The two halves of one fixture entry: the host dict and its ``Element``.
+
+    ``host_data`` strips the element keys the flat v1 shape carries — the
+    factory's specs are ``extra='forbid'``, so leaving either in would make
+    every caller's build fail — and ``element_for`` is where they went.
+    """
+    entry = host_data("test1")
+    assert "element" not in entry
+    assert "element_id" not in entry
+    element = element_for("test1")
+    assert isinstance(element, Element)
+    assert element.name == "test1"
+    # Together they build the host, and its id is composed from the element.
+    host = create_host_from_dict(entry, element=element)
+    assert host.element is element
+    assert host.id.startswith("test1")
+
+
+def test_element_for_and_host_data_read_the_same_flat_entry() -> None:
+    """``element_of``/``entry_of`` split one flat dict; the two lookups agree."""
+    flat = next(h for h in flat_hosts("tech1") if h["element"] == "test1")
+    assert entry_of(flat) == host_data("test1")
+    assert element_of(flat) == element_for("test1")
+
+
+@pytest.mark.parametrize("lookup", [host_data, element_for])
+def test_an_unknown_element_names_the_file(lookup) -> None:
+    with pytest.raises(KeyError, match=r"lab\.json"):
+        lookup("no-such-element")

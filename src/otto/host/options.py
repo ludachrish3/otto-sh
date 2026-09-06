@@ -15,7 +15,7 @@ Example::
     host = UnixHost(
         ip="10.0.0.1",
         creds=[Cred(login="admin", password="secret")],
-        element="lab",
+        element=Element("lab"),
         ssh_options=SshOptions(port=2222, connect_timeout=5),
         telnet_options=TelnetOptions(auto_window_resize=True),
     )

@@ -35,6 +35,7 @@ otto.host.connections
 otto.host.daemon
 otto.host.dev_tool
 otto.host.docker_host
+otto.host.element
 otto.host.embedded_filesystem
 otto.host.embedded_host
 otto.host.errors

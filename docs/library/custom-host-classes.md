@@ -59,9 +59,8 @@ defaults and is registered under `"zephyr"` at module load.
 
 Subclassing `EmbeddedHost` or `UnixHost` inherits every field otto's loader
 stamps.  A class that subclasses `RemoteHost` (or `BaseHost`) **directly** must
-declare them itself — among them `resources`, `element_resources`,
-`element_metadata`, `inventory_ref` and `lab_info`, each with a
-`field(default_factory=...)`.  Neither `RemoteHost` nor `BaseHost` is a
+declare them itself — among them `resources`, `element`, `inventory_ref` and
+`lab_info`, each with its own `field(...)` default.  Neither `RemoteHost` nor `BaseHost` is a
 dataclass, so their annotations are a contract the type checker credits to
 every subclass while creating no attribute and no dataclass field: the first
 read raises `AttributeError`.  The failure is loud and happens at load rather

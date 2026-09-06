@@ -97,7 +97,7 @@ def test_lab_template_parses_through_the_runtime_parsers() -> None:
     (element,) = parse_elements(sections["elements"], "lab.json")
     assert entries["example_lab"].resources == {"example-device"}
     assert element.matches("example_lab")  # the lab it declares has a member
-    UnixHostSpec.model_validate(element.flatten()[0])
+    UnixHostSpec.model_validate(element.hosts[0])
 
 
 def test_example_host_entry_carries_no_hoisted_key() -> None:

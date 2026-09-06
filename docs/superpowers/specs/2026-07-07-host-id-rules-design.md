@@ -1,5 +1,9 @@
 # Host ID & Naming Rules — Design
 
+**Superseded (2026-09-05):** id composition, display naming, and the flat
+element fields are replaced by `2026-09-05-element-object-design.md`; this
+document is history.
+
 **Status:** designed 2026-07-07, approved, awaiting implementation.
 **Lands as:** a **follow-on to sub-project #1** (now merged to `main`), built on
 branch `worktree-link-foundation` on top of the merged #1. It touches code that

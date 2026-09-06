@@ -29,32 +29,6 @@ def test_maps_ids_to_the_profile_base_class(tmp_path):
     assert collect_host_classes_by_id([repo]) == {"u1": "unix", "z1": "zephyr"}
 
 
-def test_logical_handles_map_to_their_hosts_class(tmp_path):
-    repo = _repo(
-        tmp_path,
-        [
-            {
-                "ip": "1.1.1.1",
-                "element": "server",
-                "element_id": 47,
-                "labs": ["e"],
-                "creds": _CREDS,
-            },
-            {
-                "ip": "1.1.1.2",
-                "element": "server",
-                "element_id": 103,
-                "labs": ["e"],
-                "creds": _CREDS,
-                "os_type": "zephyr",
-            },
-        ],
-    )
-    got = collect_host_classes_by_id([repo])
-    assert got["server1"] == "unix"
-    assert got["server2"] == "zephyr"
-
-
 def test_an_unregistered_profile_is_omitted_not_guessed(tmp_path):
     repo = _repo(
         tmp_path,

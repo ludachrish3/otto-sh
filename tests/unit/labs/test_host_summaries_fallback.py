@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from otto.config.lab import Lab
+from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
 from otto.labs import LabNotFoundError, SupportsHostSummaries, host_summaries, list_host_ids
 
@@ -34,7 +35,9 @@ class _MinimalRepo:
             raise LabNotFoundError(name)
         lab = Lab(name=name)
         for host_data in self._labs[name]:
-            lab.add_host(create_host_from_dict(host_data, preferences=preferences))
+            element = Element(host_data["element"])
+            entry = {k: v for k, v in host_data.items() if k != "element"}
+            lab.add_host(create_host_from_dict(entry, preferences=preferences, element=element))
         return lab
 
     def list_labs(self) -> list[str]:
@@ -46,7 +49,7 @@ def minimal_repo() -> _MinimalRepo:
     return _MinimalRepo(
         {
             "east": [
-                {"ip": "10.0.0.1", "element": "router", "element_id": 1, "creds": _CREDS},
+                {"ip": "10.0.0.1", "element": "router", "creds": _CREDS},
                 {"ip": "10.0.0.2", "element": "shared", "creds": _CREDS},
             ],
             "west": [
@@ -69,7 +72,7 @@ def test_fallback_summarizes_every_host(minimal_repo):
     so nothing is filtered on the way through.
     """
     summaries = host_summaries(minimal_repo)
-    assert [s.id for s in summaries] == ["router1", "shared"]
+    assert [s.id for s in summaries] == ["router", "shared"]
 
     shared = next(s for s in summaries if s.id == "shared")
     assert sorted(shared.labs) == ["east", "west"], "a host in two labs merges"
@@ -94,7 +97,7 @@ def test_a_backend_defining_its_own_local_keeps_it():
 
 def test_list_host_ids_is_the_id_only_view(minimal_repo):
     ids = list_host_ids(minimal_repo)
-    assert "router1" in ids
+    assert "router" in ids
     assert ids == sorted(ids), "ids come back sorted"
 
 

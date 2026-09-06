@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.host import UnixHost
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.models import MetricPoint
 from otto.monitor.collector import MetricCollector
@@ -38,7 +39,9 @@ def _make_host(host_id: str = "router1") -> UnixHost:
     ``otto.host.remote_host.make_host_id``), so ``element=host_id`` also
     pins ``host.id == host_id`` for tests that assert on it.
     """
-    return UnixHost(ip="10.0.0.1", element=host_id, creds=[Cred(login="admin", password="secret")])
+    return UnixHost(
+        ip="10.0.0.1", element=Element(host_id), creds=[Cred(login="admin", password="secret")]
+    )
 
 
 def test_no_sut_dirs_allows_any_path():
@@ -253,7 +256,7 @@ def test_selected_but_unmonitorable_hosts_blame_the_hosts_not_the_regex(pytester
     # answer the production predicate (``isinstance(h, UnixHost)``) however the
     # test wanted, and prove nothing about a real console host.
     board = create_host_from_dict(
-        {"element": "board", "os_type": "zephyr", "ip": "10.0.0.9", "board": "mps2"}
+        {"os_type": "zephyr", "ip": "10.0.0.9", "board": "mps2"}, element=Element("board")
     )
     result = _inner_run(pytester, OttoPlugin(monitor=True, monitor_hosts="board.*"), [board])
 

@@ -70,10 +70,10 @@ named the same way — the set follows the live registry, exactly as the schema
 export does.
 
 Hoisted keys never appear in a host-entry snippet: `element`, `element_id`,
-`labs` and `resources` belong to the element or the `labs` table. So the three
-snippets nest the way the file does — `otto-lab` in the `labs` table,
-`otto-element` in `elements`, `otto-unix-host` at the cursor the element
-snippet leaves inside its `hosts` array.
+`labs` belong to the element. So the three snippets nest the way the file
+does — `otto-lab` in the `labs` table, `otto-element` in `elements`,
+`otto-unix-host` at the cursor the element snippet leaves inside its `hosts`
+array.
 
 The snippets file is otto-owned and rewritten whenever the schemas area is —
 by `otto init --schemas`. It is deliberately *not* checked by the staleness

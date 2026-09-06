@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from otto.host.element import Element
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
@@ -28,7 +29,10 @@ from otto.utils import Status
 def host() -> UnixHost:
     """Bare UnixHost, no connections established."""
     return UnixHost(
-        ip="10.0.0.1", element="box", creds=[Cred(login="user", password="pass")], log=LogMode.QUIET
+        ip="10.0.0.1",
+        element=Element("box"),
+        creds=[Cred(login="user", password="pass")],
+        log=LogMode.QUIET,
     )
 
 

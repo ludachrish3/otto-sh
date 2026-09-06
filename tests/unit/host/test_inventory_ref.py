@@ -1,12 +1,15 @@
 """InventoryRef: provenance of a host built from an inventory record (spec §7)."""
 
+from functools import partial
+
 import pytest
 
+from otto.host.element import Element
 from otto.host.factory import create_host_from_dict, host_identity, validate_host_dict
 from otto.host.inventory_ref import InventoryRef
 from otto.host.product import register_product_provider
 
-_ENTRY = {"ip": "10.0.0.1", "element": "dut", "creds": [{"login": "u", "password": "p"}]}
+_ENTRY = {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]}
 
 
 @pytest.fixture(autouse=True)
@@ -44,13 +47,15 @@ def test_factory_stamps_the_ref_before_providers_run():
         seen.append(host.inventory_ref)
 
     register_product_provider(provider)
-    host = create_host_from_dict(dict(_ENTRY), inventory_ref=InventoryRef(key="k", backend="b"))
+    host = create_host_from_dict(
+        dict(_ENTRY), inventory_ref=InventoryRef(key="k", backend="b"), element=Element("dut")
+    )
     assert host.inventory_ref == InventoryRef(key="k", backend="b")
     assert seen[0].key == "k"
 
 
 def test_inline_host_carries_an_empty_ref():
-    host = create_host_from_dict(dict(_ENTRY))
+    host = create_host_from_dict(dict(_ENTRY), element=Element("dut"))
     assert host.inventory_ref == InventoryRef()
     assert host.inventory_ref.referenced is False
 
@@ -58,16 +63,28 @@ def test_inline_host_carries_an_empty_ref():
 def test_a_null_inventory_key_is_not_a_reference():
     """R7: ``"inventory": None`` (the field's own default) references nothing —
     schema-legal round-tripping must not trip the unresolved-reference guard."""
-    host = create_host_from_dict({**_ENTRY, "inventory": None})
+    host = create_host_from_dict({**_ENTRY, "inventory": None}, element=Element("dut"))
     assert host.inventory_ref == InventoryRef()
 
 
-@pytest.mark.parametrize("entry_point", [create_host_from_dict, host_identity, validate_host_dict])
+# The three entry points that read a raw host dict, each bound to the element
+# the two element-taking ones need, so the guard is asserted on all three
+# through one call shape.
+_ENTRY_POINTS = [
+    pytest.param(
+        partial(create_host_from_dict, element=Element("dut")), id="create_host_from_dict"
+    ),
+    pytest.param(lambda d: host_identity(d, Element("dut")), id="host_identity"),
+    pytest.param(validate_host_dict, id="validate_host_dict"),
+]
+
+
+@pytest.mark.parametrize("entry_point", _ENTRY_POINTS)
 def test_an_unresolved_reference_is_refused_loudly(entry_point):
     with pytest.raises(ValueError, match=r"references inventory key 'k'.*resolve_host_entry"):
         entry_point({**_ENTRY, "inventory": "k"})
 
 
-@pytest.mark.parametrize("entry_point", [create_host_from_dict, host_identity, validate_host_dict])
+@pytest.mark.parametrize("entry_point", _ENTRY_POINTS)
 def test_a_null_inventory_key_never_trips_the_guard(entry_point):
     entry_point({**_ENTRY, "inventory": None})  # must not raise

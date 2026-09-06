@@ -22,7 +22,7 @@ from errno import (
     ERANGE,
 )
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from typing_extensions import override
 
@@ -46,6 +46,9 @@ from .session import (
 from .toolchain import Toolchain
 from .transfer import BaseFileTransfer, ProgressGranularity, TransferProgressFactory
 from .transfer.base import mark_skipped
+
+if TYPE_CHECKING:
+    from .element import Element
 
 
 class LocalFileTransfer(BaseFileTransfer):
@@ -180,10 +183,9 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     it. Present so this class satisfies the :class:`~otto.host.host.Host`
     contract."""
 
-    element_resources: frozenset[str] = field(default_factory=frozenset, repr=False)
-    """Empty for the builtin ``local`` host — it belongs to no element, so the
-    loader never stamps it. Declared for the same contract reason as
-    :attr:`resources` above."""
+    element: "Element | None" = field(default=None, repr=False)
+    """Always ``None`` — belongs to no element. Declared to satisfy the
+    :class:`~otto.host.host.Host` contract."""
 
     inventory_ref: InventoryRef = field(default_factory=InventoryRef, repr=False)
     """Inventory provenance; empty unless this host was resolved from a record."""

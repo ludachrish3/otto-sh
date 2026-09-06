@@ -1,6 +1,7 @@
 import pytest
 
 from otto.host import os_profile
+from otto.host.element import Element
 from otto.host.embedded_host import EmbeddedHost, ZephyrHost
 from otto.host.os_profile import (
     OsProfile,
@@ -225,9 +226,9 @@ def test_custom_subclass_with_data_bundle_composes():
     host = create_host_from_dict(
         {
             "ip": "192.0.2.9",
-            "element": "widget",
             "os_type": "myrtos-v2",
-        }
+        },
+        element=Element("widget"),
     )
     assert isinstance(host, MyRtosHost)
     assert host.os_type == "myrtos-v2"  # selector recorded
@@ -374,7 +375,6 @@ class TestBusyBoxProfile:
 
         host = create_host_from_dict(
             {
-                "element": "bb1",
                 "os_type": "busybox",
                 "has_bash": True,
                 "ip": "10.0.0.1",
@@ -382,7 +382,8 @@ class TestBusyBoxProfile:
                 # `ValidationError: creds Field required`, which reads like a
                 # profile bug and is not one.
                 "creds": [{"login": "v", "password": "v"}],
-            }
+            },
+            element=Element("bb1"),
         )
 
         assert host.has_bash is True, (
@@ -402,11 +403,11 @@ class TestBusyBoxProfile:
 
         host = create_host_from_dict(
             {
-                "element": "bb1",
                 "os_type": "busybox",
                 "ip": "10.0.0.1",
                 "creds": [{"login": "v", "password": "v"}],
-            }
+            },
+            element=Element("bb1"),
         )
 
         assert isinstance(host, UnixHost)

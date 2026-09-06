@@ -125,7 +125,7 @@ def test_later_repo_overrides_earlier_with_warning(tmp_path: Path, caplog) -> No
     # assertion on the labels alone would be satisfied by that one, and
     # deleting the element warning outright would still pass.
     assert any(
-        "('alt1', None)" in r.getMessage()
+        "element 'alt1'" in r.getMessage()
         and "r2/override" in r.getMessage()
         and "r1/global" in r.getMessage()
         for r in caplog.records

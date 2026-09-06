@@ -1,6 +1,5 @@
 """Host-dict factory: build and validate ``RemoteHost`` instances from raw config dicts."""
 
-from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,6 +11,7 @@ from ..models.host import HostSpec
 from . import file_kind  # noqa: F401
 from .capability import select_option_defaults, select_preferences
 from .dev_tool import apply_declared_dev_tools, apply_dev_tool_providers
+from .element import Element
 from .inventory_ref import InventoryRef
 from .os_profile import (
     build_host_class,
@@ -96,12 +96,6 @@ class HostIdentity:
     ip: str
     """Validated management address (a profile may supply it, so read it here)."""
 
-    element: str
-    """Validated element name (feeds positional-handle synthesis)."""
-
-    element_id: int | None
-    """Validated element index, or None."""
-
     docker_capable: bool
     """Whether the host declares (or its profile defaults) docker capability."""
 
@@ -126,18 +120,20 @@ def reject_unresolved_reference(host_data: dict[str, Any]) -> None:
         )
 
 
-def host_identity(host_data: dict[str, Any]) -> HostIdentity:
+def host_identity(host_data: dict[str, Any], element: Element) -> HostIdentity:
     """Resolve a raw host dict's identity WITHOUT building the host.
 
     Applies the same ``os_profile`` merge and the same pydantic validation
     :func:`create_host_from_dict` applies, then composes the id through
     :func:`~otto.host.remote_host.make_host_id` — so the result is
     byte-identical to the constructed host's, which naive string-formatting
-    of the raw dict is NOT: a JSON ``3.0`` element_id formats as ``"3.0"``
-    where the host reports ``3``, and a profile that defaults ``board`` /
-    ``slot`` / ``element_id`` / ``element`` is invisible to the raw dict
-    entirely. Completion that offered a raw-derived id would offer ids that
-    do not dispatch.
+    of the raw dict is NOT: an ``os_profile`` that defaults ``board`` /
+    ``slot`` supplies id parts the raw dict never mentions, so a raw-derived
+    id would be missing them entirely. Completion that offered such an id
+    would offer ids that do not dispatch.
+
+    *element* is the host's element, the same object
+    :func:`create_host_from_dict` takes — its name is the id's first part.
 
     Raises the same errors as :func:`validate_host_dict` (``ValueError``,
     including ``pydantic.ValidationError``) — callers enumerating a whole
@@ -151,10 +147,8 @@ def host_identity(host_data: dict[str, Any]) -> HostIdentity:
     merged["os_type"] = selector
     spec = spec_cls.model_validate(merged)
     return HostIdentity(
-        id=make_host_id(spec.element, spec.element_id, spec.board, spec.slot),
+        id=make_host_id(element.name, spec.board, spec.slot),
         ip=spec.ip,
-        element=spec.element,
-        element_id=spec.element_id,
         docker_capable=bool(getattr(spec, "docker_capable", False)),
     )
 
@@ -164,8 +158,7 @@ def create_host_from_dict(
     preferences: dict[str, dict[str, Any]] | None = None,
     lab_name: str | None = None,
     *,
-    element_metadata: dict[str, Any] | None = None,
-    element_resources: Iterable[str] | None = None,
+    element: Element,
     inventory_ref: InventoryRef | None = None,
 ) -> RemoteHost:
     """Create the appropriate :class:`~otto.host.remote_host.RemoteHost` subclass from a host dict.
@@ -183,19 +176,16 @@ def create_host_from_dict(
     ``host_data``: the host specs forbid extras, so lab data cannot set it.
     Omitted, the host is left unattributed (``""``) rather than guessed at.
 
-    ``element_metadata`` is the element's opaque table — a LOADER argument like
-    ``lab_name`` (the file layer hoists it; the host spec forbids it on the
-    entry), copied per host and stamped before the providers run.
-
-    ``element_resources`` is the element's declared reservation set (spec
-    2026-08-28 three-level-reservations §3) — a LOADER argument like
-    ``element_metadata``: the host spec forbids it on the entry, and it is
-    stamped before the providers run so a provider gated on a reservation can
-    see it.
+    ``element`` is the host's element — name, id, metadata, resources as one
+    object (spec 2026-09-05 §2.6). A LOADER argument like ``lab_name``: the
+    host spec forbids element keys on the entry. It becomes the host's
+    :attr:`~otto.host.remote_host.RemoteHost.element` unchanged — the very
+    instance passed here, so every host of one element shares it — and reaches
+    ``to_host`` so the providers see it.
 
     ``inventory_ref`` is the provenance of an entry the loader resolved from an
-    inventory record — a LOADER argument like ``element_metadata``; the host
-    spec's own ``inventory`` field is the key and never reaches the factory.
+    inventory record — a LOADER argument like ``element``; the host spec's own
+    ``inventory`` field is the key and never reaches the factory.
     """
     reject_unresolved_reference(host_data)
     selector = host_data.get("os_type", "unix")
@@ -208,22 +198,20 @@ def create_host_from_dict(
     if preferences:
         # Match selectors against the id the host will actually REPORT, not a
         # raw-dict rendering of it — they diverge under profile-defaulted
-        # identity fields and non-int element_ids (see host_identity). Costs
-        # one extra validation pass, and only when preferences exist.
-        host_id = host_identity(host_data).id
+        # identity fields (see host_identity). Costs one extra validation
+        # pass, and only when preferences exist.
+        host_id = host_identity(host_data, element).id
         flat_prefs = select_preferences(preferences, host_id)
         option_defaults = select_option_defaults(preferences, host_id)
 
     merged = _merge_host_dict(host_data, option_defaults, profile, spec_cls)
     merged["os_type"] = selector
     spec = spec_cls.model_validate(merged)
-    host = spec.to_host(cls, preferences=flat_prefs)
+    host = spec.to_host(cls, element=element, preferences=flat_prefs)
     # Before the providers, not after: provider selection is allowed to depend
     # on which lab the host came from, and a stamp applied afterwards would be
     # invisible to exactly the code that needs it.
     host.source_lab = lab_name or ""
-    host.element_metadata = dict(element_metadata or {})
-    host.element_resources = frozenset(element_resources or ())
     host.inventory_ref = inventory_ref if inventory_ref is not None else InventoryRef()
     # Declared before providers, per seam: the provider loops' name-dedup then
     # skips any code instance whose name a settings entry already claimed —

@@ -19,6 +19,7 @@ import pytest
 
 from otto.host import HostSession, UnixHost
 from otto.host.connections import _UserConnections
+from otto.host.element import Element
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.login_proxy import Cred
 from otto.host.options import NcOptions, SshOptions, UserlandOptions
@@ -52,7 +53,10 @@ def _sm(result) -> tuple[Status, str]:
 def host() -> UnixHost:
     """Bare UnixHost, no connections established."""
     return UnixHost(
-        ip="10.0.0.1", element="box", creds=[Cred(login="user", password="pass")], log=LogMode.QUIET
+        ip="10.0.0.1",
+        element=Element("box"),
+        creds=[Cred(login="user", password="pass")],
+        log=LogMode.QUIET,
     )
 
 
@@ -64,7 +68,7 @@ def host() -> UnixHost:
 class TestInit:
     def test_default_values(self, host: UnixHost):
         assert host.ip == "10.0.0.1"
-        assert host.element == "box"
+        assert host.element.name == "box"
         assert host.creds == [Cred(login="user", password="pass")]
         assert host.term == "ssh"
         assert host.transfer == "scp"
@@ -88,7 +92,7 @@ class TestIdAndNameGeneration:
     async def test_id_no_board(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="Alt1",
+            element=Element("Alt1"),
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
@@ -99,7 +103,7 @@ class TestIdAndNameGeneration:
     async def test_id_with_board(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="Alt1",
+            element=Element("Alt1"),
             board="Qemu",
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
@@ -111,7 +115,7 @@ class TestIdAndNameGeneration:
     async def test_id_with_board_and_slot(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="Alt1",
+            element=Element("Alt1"),
             board="Qemu",
             slot=0,
             creds=[Cred(login="u", password="p")],
@@ -124,7 +128,7 @@ class TestIdAndNameGeneration:
     async def test_name_no_board(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="alt1",
+            element=Element("alt1"),
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
@@ -135,7 +139,7 @@ class TestIdAndNameGeneration:
     async def test_name_with_board(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="alt1",
+            element=Element("alt1"),
             board="qemu",
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
@@ -147,7 +151,7 @@ class TestIdAndNameGeneration:
     async def test_name_override(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="alt1",
+            element=Element("alt1"),
             creds=[Cred(login="u", password="p")],
             name="custom",
             log=LogMode.QUIET,
@@ -171,7 +175,7 @@ class TestCreds:
     async def test_returns_first_pair_from_multiple_creds(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[
                 Cred(login="vagrant", password="vagrant"),
                 Cred(login="test", password="Password1"),
@@ -215,7 +219,7 @@ class TestUserland:
         extra.setdefault("ssh_options", SshOptions(port=1))
         return UnixHost(
             ip="127.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="user", password="pass")],
             log=LogMode.QUIET,
             **extra,
@@ -365,14 +369,20 @@ class TestClose:
     @pytest.mark.asyncio
     async def test_close_when_not_connected_is_safe(self):
         h = UnixHost(
-            ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
+            ip="10.0.0.1",
+            element=Element("box"),
+            creds=[Cred(login="u", password="p")],
+            log=LogMode.QUIET,
         )
         await h.close()
 
     @pytest.mark.asyncio
     async def test_close_disconnects_ssh(self):
         h = UnixHost(
-            ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
+            ip="10.0.0.1",
+            element=Element("box"),
+            creds=[Cred(login="u", password="p")],
+            log=LogMode.QUIET,
         )
         mock_conn = MagicMock()
         mock_conn.wait_closed = AsyncMock()
@@ -400,7 +410,10 @@ class TestClose:
                 collected.append(True)
 
         h = UnixHost(
-            ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
+            ip="10.0.0.1",
+            element=Element("box"),
+            creds=[Cred(login="u", password="p")],
+            log=LogMode.QUIET,
         )
 
         # Disable automatic generational gc *before* building the cycle, so
@@ -427,7 +440,10 @@ class TestClose:
         failure propagates, but _connections.close() still runs (chaos spec:
         teardown chain robustness)."""
         h = UnixHost(
-            ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
+            ip="10.0.0.1",
+            element=Element("box"),
+            creds=[Cred(login="u", password="p")],
+            log=LogMode.QUIET,
         )
         h._session_mgr.close_all = AsyncMock(side_effect=RuntimeError("session wedged"))
         conn_close = AsyncMock()
@@ -445,7 +461,7 @@ class TestClose:
         async def scenario(points: ChaosPoints) -> None:
             h = UnixHost(
                 ip="10.0.0.1",
-                element="box",
+                element=Element("box"),
                 creds=[Cred(login="u", password="p")],
                 log=LogMode.QUIET,
             )
@@ -602,7 +618,7 @@ class TestCommandExecution:
     async def test_telnet_connection_failure_propagates(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -720,7 +736,7 @@ class TestExec:
         must not be able to short-circuit the branch under test."""
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="user", password="pass")],
             term="telnet",
             log=LogMode.QUIET,
@@ -749,7 +765,7 @@ class TestExec:
     async def test_exec_telnet_success(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -805,7 +821,7 @@ class TestExec:
         """
         h = UnixHost(
             ip="10.0.0.1",
-            element="test2",
+            element=Element("test2"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -889,7 +905,7 @@ class TestExec:
 
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="user", password="pass")],
             log=LogMode.QUIET,
         )
@@ -920,7 +936,7 @@ def ftp_host() -> UnixHost:
     ride a per-user SSH connection (it authenticates separately)."""
     return UnixHost(
         ip="10.0.0.1",
-        element="box",
+        element=Element("box"),
         creds=[Cred(login="user", password="pass")],
         transfer="ftp",
         log=LogMode.QUIET,
@@ -1111,7 +1127,7 @@ class TestPutGetUser:
         verbatim rather than flattening it into a generic transfer failure."""
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="user", password="pass")],
             term="telnet",
             transfer="nc",
@@ -1157,7 +1173,7 @@ class TestNotConnectedFileTransfer:
     async def test_sftp_get_raises(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             transfer="sftp",
             log=LogMode.QUIET,
@@ -1178,7 +1194,7 @@ class TestNotConnectedFileTransfer:
     async def test_sftp_put_raises(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             transfer="sftp",
             log=LogMode.QUIET,
@@ -1199,7 +1215,7 @@ class TestNotConnectedFileTransfer:
     async def test_ftp_get_raises(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             transfer="ftp",
             log=LogMode.QUIET,
@@ -1220,7 +1236,7 @@ class TestNotConnectedFileTransfer:
     async def test_ftp_put_raises(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             transfer="ftp",
             log=LogMode.QUIET,
@@ -1241,7 +1257,7 @@ class TestNotConnectedFileTransfer:
     async def test_nc_get_raises(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             transfer="nc",
             log=LogMode.QUIET,
@@ -1277,7 +1293,7 @@ class TestNotConnectedFileTransfer:
     async def test_nc_put_raises(self, tmp_path: Path):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             transfer="nc",
             log=LogMode.QUIET,
@@ -1334,7 +1350,7 @@ class TestSshFileTransfer:
     async def test_sftp_get_success(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             transfer="sftp",
             log=LogMode.QUIET,
@@ -1352,7 +1368,7 @@ class TestSshFileTransfer:
     async def test_sftp_put_success(self, tmp_path: Path):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             transfer="sftp",
             log=LogMode.QUIET,
@@ -1372,7 +1388,7 @@ class TestSshFileTransfer:
     async def test_ftp_get_success(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             transfer="ftp",
             log=LogMode.QUIET,
@@ -1393,7 +1409,7 @@ class TestSshFileTransfer:
     async def test_ftp_put_success(self, tmp_path: Path):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             transfer="ftp",
             log=LogMode.QUIET,
@@ -1421,7 +1437,7 @@ class TestNcFileTransfer:
     async def test_nc_get_success(self, tmp_path: Path):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             transfer="nc",
             log=LogMode.QUIET,
@@ -1487,7 +1503,7 @@ class TestNcFileTransfer:
     async def test_nc_put_success(self, tmp_path: Path):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             transfer="nc",
             log=LogMode.QUIET,
@@ -1545,7 +1561,7 @@ class TestNcFileTransfer:
         the transfer completes."""
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             transfer="nc",
             log=LogMode.NORMAL,
@@ -1602,7 +1618,7 @@ class TestNcFileTransfer:
         must both run with host.log == LogMode.QUIET."""
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             transfer="nc",
             log=LogMode.NORMAL,
@@ -1715,7 +1731,7 @@ class TestOpenSession:
     async def test_telnet_returns_remote_session(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -1734,7 +1750,7 @@ class TestOpenSession:
     async def test_telnet_connects_new_client(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -1752,7 +1768,7 @@ class TestOpenSession:
     async def test_telnet_session_owns_its_client(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -1812,7 +1828,7 @@ class TestOpenSession:
     async def test_multiple_telnet_sessions_each_create_own_client(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -1839,7 +1855,7 @@ class TestOpenSession:
     async def test_multiple_telnet_sessions_each_own_separate_client(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="box",
+            element=Element("box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -1870,14 +1886,14 @@ class TestOpenSession:
         """An SSH host and a Telnet host can hold independent named sessions simultaneously."""
         ssh_host = UnixHost(
             ip="10.0.0.1",
-            element="ssh-box",
+            element=Element("ssh-box"),
             creds=[Cred(login="u", password="p")],
             term="ssh",
             log=LogMode.QUIET,
         )
         telnet_host = UnixHost(
             ip="10.0.0.2",
-            element="tel-box",
+            element=Element("tel-box"),
             creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
@@ -1932,7 +1948,10 @@ class TestOpenSession:
     @pytest.mark.asyncio
     async def test_unknown_term_raises_value_error(self):
         h = UnixHost(
-            ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
+            ip="10.0.0.1",
+            element=Element("box"),
+            creds=[Cred(login="u", password="p")],
+            log=LogMode.QUIET,
         )
         h.term = "foobar"
         h._connections.term = "foobar"
@@ -2141,7 +2160,7 @@ async def test_host_current_user_reads_default_session():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element="box",
+        element=Element("box"),
         creds=[Cred(login="admin", password="secret")],
         user="admin",
         log=LogMode.QUIET,
@@ -2162,7 +2181,7 @@ async def test_unix_switch_user_updates_host_current_user():
 
     host = UnixHost(
         ip="10.0.0.1",
-        element="box",
+        element=Element("box"),
         creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
         user="admin",
         log=LogMode.QUIET,
@@ -2189,7 +2208,7 @@ def _unix_host():
 
     return UnixHost(
         ip="10.0.0.1",
-        element="box",
+        element=Element("box"),
         creds=[Cred(login="admin", password="secret")],
         user="admin",
         log=LogMode.QUIET,
@@ -2452,7 +2471,7 @@ class TestSshExecTimeout:
     async def test_ssh_exec_stalling_command_times_out(self):
         h = UnixHost(
             ip="10.0.0.1",
-            element="stalled",
+            element=Element("stalled"),
             creds=[Cred(login="u", password="p")],
             term="ssh",
             log=LogMode.QUIET,
@@ -2517,7 +2536,7 @@ class TestSshExecKillEscalation:
 
         h = UnixHost(
             ip="10.0.0.1",
-            element="stalled",
+            element=Element("stalled"),
             creds=[Cred(login="u", password="p")],
             term="ssh",
             log=LogMode.QUIET,
@@ -2615,7 +2634,7 @@ def telnet_host(monkeypatch) -> UnixHost:
     monkeypatch.setattr("otto.host.unix_host.run_telnet_login", AsyncMock())
     return UnixHost(
         ip="10.0.0.1",
-        element="box",
+        element=Element("box"),
         creds=[Cred(login="user", password="pass")],
         term="telnet",
         log=LogMode.QUIET,

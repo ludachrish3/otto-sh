@@ -74,9 +74,9 @@ loader's own parsers — the section shape, the `labs` table, the element
 entries, each host entry against its host spec, and the links.  There is no
 second validator to drift from the first.  It applies the in-source duplicate
 rules **per source** too, so a lab declared twice within one source, or one
-element `(name, id)` carried by two of that source's files, is reported here
-exactly as it would fail at load.  Anything it finds is a *problem*: it lands
-in the summary table and the run exits 1.
+element name repeated (compared by slug) across two of that source's files,
+is reported here exactly as it would fail at load.  Anything it finds is a
+*problem*: it lands in the summary table and the run exits 1.
 
 Two findings are advisory instead, printed in a yellow `Warnings` block that
 never changes the exit code:

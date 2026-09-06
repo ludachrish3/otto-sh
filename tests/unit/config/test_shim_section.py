@@ -52,7 +52,7 @@ def test_write_cache_stores_the_shim_section_when_given(tmp_path, monkeypatch):
     _, repos = _repos(tmp_path, monkeypatch)
     cc.write_cache(repos, [], [], [], shim=build_shim_payload(repos))
     data = json.loads(cc._cache_path().read_text())
-    assert data["schema"] == cc.SCHEMA_VERSION == 18
+    assert data["schema"] == cc.SCHEMA_VERSION == 19
     assert set(data["sections"]) == {"names", "tests", "shim"}
     assert data["sections"]["shim"]["tainted"] is False
     assert cc.cache_rebuild_is_worthwhile(repos) is False

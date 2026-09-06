@@ -25,6 +25,7 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.options import SshOptions
 from otto.host.unix_host import UnixHost
@@ -51,7 +52,7 @@ def bed_parent() -> UnixHost:
     """
     return UnixHost(
         ip="10.10.200.13",
-        element="test3",
+        element=Element("test3"),
         creds=[Cred(login="vagrant", password="vagrant")],
         is_virtual=True,
         term="ssh",
@@ -84,7 +85,7 @@ def loopback_parent(work_dir: Path) -> Iterator[UnixHost]:
     try:
         yield UnixHost(
             ip="127.0.0.1",
-            element="loopback",
+            element=Element("loopback"),
             creds=[Cred(login=getpass.getuser(), password="unused-pubkey-auth")],
             board="seed",
             is_virtual=True,

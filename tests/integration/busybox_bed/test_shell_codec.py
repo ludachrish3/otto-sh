@@ -85,7 +85,7 @@ _XFER_DIR = "/tmp/otto-xfer"
 async def _staged(host) -> Path:
     """Return an empty transfer directory on *host*, creating it if needed."""
     res = await host.exec(f"rm -rf {_XFER_DIR} && mkdir -p {_XFER_DIR}")
-    assert res.retcode == 0, f"could not stage {_XFER_DIR} on {host.element}: {res.value!r}"
+    assert res.retcode == 0, f"could not stage {_XFER_DIR} on {host.element.name}: {res.value!r}"
     return Path(_XFER_DIR)
 
 
@@ -104,12 +104,12 @@ async def test_the_binary_hostile_payload_round_trips(guest, tmp_path: Path):
 
     dest = await _staged(host)
     put = await host.put(src, dest)
-    assert put.status.is_ok, f"put failed on {host.element}: {put}"
+    assert put.status.is_ok, f"put failed on {host.element.name}: {put}"
     got = await host.get(dest / src.name, back)
-    assert got.status.is_ok, f"get failed on {host.element}: {got}"
+    assert got.status.is_ok, f"get failed on {host.element.name}: {got}"
 
     assert (back / src.name).read_bytes() == _HOSTILE_PAYLOAD, (
-        f"{host.element} (BusyBox {version}) corrupted the binary-hostile payload "
+        f"{host.element.name} (BusyBox {version}) corrupted the binary-hostile payload "
         f"on the way through its own codec"
     )
     await host.exec(f"rm -rf {_XFER_DIR}")
@@ -144,12 +144,12 @@ async def test_a_multi_chunk_payload_reassembles_in_order(guest, tmp_path: Path)
 
     dest = await _staged(host)
     put = await host.put(src, dest)
-    assert put.status.is_ok, f"put failed on {host.element}: {put}"
+    assert put.status.is_ok, f"put failed on {host.element.name}: {put}"
     got = await host.get(dest / src.name, back)
-    assert got.status.is_ok, f"get failed on {host.element}: {got}"
+    assert got.status.is_ok, f"get failed on {host.element.name}: {got}"
 
     assert (back / src.name).read_bytes() == _MULTI_CHUNK_PAYLOAD, (
-        f"{host.element} (BusyBox {version}) reassembled {len(_MULTI_CHUNK_PAYLOAD)} "
+        f"{host.element.name} (BusyBox {version}) reassembled {len(_MULTI_CHUNK_PAYLOAD)} "
         f"bytes into something else -- a chunk is missing, truncated, or landed "
         f"out of order"
     )
@@ -195,7 +195,7 @@ async def test_appending_uu_frames_and_decoding_once_truncates_at_rc_zero(guest,
 
     dest = await _staged(host)
     put = await host.put(src, dest)
-    assert put.status.is_ok, f"put failed on {host.element}: {put}"
+    assert put.status.is_ok, f"put failed on {host.element.name}: {put}"
 
     res = await host.exec(
         f'uudecode -o {_XFER_DIR}/decoded.bin < {_XFER_DIR}/all.uu; echo "RC=$?"; '
@@ -205,23 +205,23 @@ async def test_appending_uu_frames_and_decoding_once_truncates_at_rc_zero(guest,
     fields = dict(line.partition("=")[::2] for line in res.value.splitlines() if "=" in line)
     missing = [key for key in ("RC", "LEN", "FRAMES") if key not in fields]
     assert not missing, (
-        f"the probe on {host.element} did not print {missing} -- a missing field "
+        f"the probe on {host.element.name} did not print {missing} -- a missing field "
         f"must fail here rather than be read as a negative result by whichever "
         f"assertion reads it next: {res.value!r}"
     )
     assert fields["FRAMES"].strip() == str(len(chunks)), (
-        f"{host.element} (BusyBox {version}) received {fields['FRAMES'].strip()} uu frames, "
+        f"{host.element.name} (BusyBox {version}) received {fields['FRAMES'].strip()} uu frames, "
         f"not the {len(chunks)} this row appended -- the truncation below would then be "
         f"the file being short, not the decode stopping early ({res.value!r})"
     )
     assert fields["RC"].strip() == "0", (
-        f"{host.element} (BusyBox {version}): appending {len(chunks)} uu frames and "
+        f"{host.element.name} (BusyBox {version}): appending {len(chunks)} uu frames and "
         f"decoding once exited {fields['RC']!r} rather than 0 ({res.value!r}). A LOUD "
         f"failure here would be good news and would change this codec's rationale -- the "
         f"reason PUT decodes per chunk is that this shape is SILENT"
     )
     assert fields["LEN"].strip() == str(len(chunks[0])), (
-        f"{host.element} (BusyBox {version}): appending {len(chunks)} uu frames and "
+        f"{host.element.name} (BusyBox {version}): appending {len(chunks)} uu frames and "
         f"decoding once yielded {fields['LEN']!r} bytes, not the first chunk's "
         f"{len(chunks[0])} ({res.value!r}). The `shell` backend's uu path is shaped "
         f"around this returning exactly one chunk at rc=0; if that changed, re-read "
@@ -250,7 +250,7 @@ async def test_the_decode_spelling_matches_what_the_matrix_records(guest):
     if flag is None:
         res = await host.exec("command -v base64 >/dev/null 2>&1 && echo PRESENT || echo ABSENT")
         assert res.value.strip() == "ABSENT", (
-            f"{host.element} (BusyBox {version}) was recorded as having no base64 "
+            f"{host.element.name} (BusyBox {version}) was recorded as having no base64 "
             f"applet at all, but command -v found one ({res.value!r}) -- the "
             f"backend's declared codec gap for this row is stale"
         )
@@ -264,22 +264,22 @@ async def test_the_decode_spelling_matches_what_the_matrix_records(guest):
     fields = dict(line.partition("=")[::2] for line in res.value.splitlines() if "=" in line)
     missing = [key for key in ("SHORT_RC", "SHORT_OUT", "LONG_RC") if key not in fields]
     assert not missing, (
-        f"the probe on {host.element} did not print {missing} -- a missing field "
+        f"the probe on {host.element.name} did not print {missing} -- a missing field "
         f"must fail here rather than be read as a negative result by whichever "
         f"assertion reads it next: {res.value!r}"
     )
     assert fields["SHORT_RC"] == "0", (
-        f"{host.element} (BusyBox {version}): the recorded decode spelling "
+        f"{host.element.name} (BusyBox {version}): the recorded decode spelling "
         f"`base64 {flag}` exited {fields['SHORT_RC']!r} -- the shell transfer "
         f"backend would treat every decode on this row as a hard failure"
     )
     assert fields["SHORT_OUT"] == "hi", (
-        f"{host.element} (BusyBox {version}): `base64 {flag}` did not decode "
+        f"{host.element.name} (BusyBox {version}): `base64 {flag}` did not decode "
         f"`aGk=` to `hi` ({res.value!r}) -- the backend would corrupt every file "
         f"it decodes on this row"
     )
     assert fields["LONG_RC"] != "0", (
-        f"{host.element} (BusyBox {version}) accepted GNU's `base64 --decode` "
+        f"{host.element.name} (BusyBox {version}) accepted GNU's `base64 --decode` "
         f"({res.value!r}) -- this is the row where generalising the backend to "
         f"the long spelling would silently keep working while every other row "
         f"broke loud"
@@ -311,7 +311,7 @@ async def test_the_codec_the_backend_selects_matches_what_the_matrix_records(gue
     for direction, applet in (("put", "uudecode"), ("get", "uuencode")):
         codec = transfer._select_codec(direction, applet)
         assert isinstance(codec, expected), (
-            f"{host.element} (BusyBox {version}) would {direction} with "
+            f"{host.element.name} (BusyBox {version}) would {direction} with "
             f"{type(codec).__name__}, not {expected.__name__} -- the recorded matrix "
             f"says base64_flag={_EXPECTED_BASE64_FLAG[version]!r} for this row, so "
             f"either the guest's userland_options pin drifted or the selection rule did"

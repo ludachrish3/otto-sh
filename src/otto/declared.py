@@ -38,16 +38,20 @@ MatchValue = MatchLeaf | list[MatchLeaf]
 """One match-table value — a single leaf, or a list meaning any-of."""
 
 MATCH_KEYS = frozenset(
-    {"id", "element", "element_id", "os_type", "os_name", "os_version", "ip", "source_lab"}
+    {"id", "element.name", "element.id", "os_type", "os_name", "os_version", "ip", "source_lab"}
 )
-"""Host attributes a match table may name directly — the same tooling-agnostic
-surface the provider docstrings promise (see
-:func:`otto.host.product.register_product_provider`), plus the OS identity
-pair. Everything else is reached as a dotted ``metadata.``/``element_metadata.``
-path; an unlisted bare key is a settings error, never a silent no-match."""
+"""Host attribute paths a match table may name directly (spec 2026-09-05
+§8.1): a key IS the path on the host — ``element.id`` reads
+``host.element.id``. Everything else is reached as a dotted ``metadata.`` /
+``element.metadata.`` path; an unlisted key is a settings error, never a
+silent no-match."""
 
 _SPECIFIER_PREFIXES = (">=", "<=", "==", "~=", "!=", ">", "<")
-_METADATA_ROOTS = ("metadata", "element_metadata")
+_METADATA_ROOTS = ("metadata", "element.metadata")
+
+_RETIRED_KEYS = {"element": "element.name", "element_id": "element.id"}
+"""Pre-2026-09-05 spellings, refused with the path that replaced them. The
+retired ``element_metadata.<key>`` root is handled in :func:`_reject_key`."""
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,34 @@ class DeclaredEntry:
     """Every non-reserved TOML key, verbatim — the kind's to validate."""
 
 
+def _is_metadata_path(key: str) -> bool:
+    """Report whether *key* is a dotted ``metadata.``/``element.metadata.`` path."""
+    return any(key.startswith(root + ".") and len(key) > len(root) + 1 for root in _METADATA_ROOTS)
+
+
+def _reject_key(key: str) -> None:
+    """Raise the settings error for an unrecognized match key.
+
+    A retired spelling (``element``, ``element_id``, ``element_metadata.<k>``)
+    names its replacement; anything else lists :data:`MATCH_KEYS` and the
+    dotted escape hatch.
+    """
+    root, _, rest = key.partition(".")
+    replacement: str | None = None
+    if key in _RETIRED_KEYS:
+        replacement = _RETIRED_KEYS[key]
+    elif root == "element_metadata" and rest:
+        replacement = f"element.metadata.{rest}"
+    if replacement is not None:
+        raise ValueError(
+            f"match key {key!r} is now spelled {replacement!r} — a key is the host attribute path"
+        )
+    raise ValueError(
+        f"unknown match key {key!r}; valid keys: {sorted(MATCH_KEYS)}, "
+        f"or a dotted 'metadata.<key>' / 'element.metadata.<key>' path"
+    )
+
+
 def validate_match_table(match: dict[str, MatchValue]) -> None:
     """Reject a malformed match table (unknown key, bad regex, bad specifier).
 
@@ -90,15 +122,12 @@ def validate_match_table(match: dict[str, MatchValue]) -> None:
     Raises:
         ValueError: Naming the offending key or pattern; for an unknown key
             the message lists :data:`MATCH_KEYS` and the dotted
-            ``metadata.``/``element_metadata.`` escape hatch.
+            ``metadata.``/``element.metadata.`` escape hatch; a retired
+            spelling names its replacement instead.
     """
     for key, value in match.items():
-        root, _, rest = key.partition(".")
-        if key not in MATCH_KEYS and not (root in _METADATA_ROOTS and rest):
-            raise ValueError(
-                f"unknown match key {key!r}; valid keys: {sorted(MATCH_KEYS)}, "
-                f"or a dotted 'metadata.<key>' / 'element_metadata.<key>' path"
-            )
+        if key not in MATCH_KEYS and not _is_metadata_path(key):
+            _reject_key(key)
         leaves = value if isinstance(value, list) else [value]
         for leaf in leaves:
             if not isinstance(leaf, str):
@@ -127,21 +156,36 @@ Grows monotonically per process; this is accepted (triples are tiny)."""
 
 
 def _resolve_key(host: Any, key: str) -> Any:
-    """Return the host value *key* names, or None when the host lacks it."""
-    if key in MATCH_KEYS:
-        return getattr(host, key, None)
-    root, _, rest = key.partition(".")
-    if root in _METADATA_ROOTS and rest:
-        value: Any = getattr(host, root, None)
-        for part in rest.split("."):
-            if not isinstance(value, dict) or part not in value:
-                return None
-            value = value[part]
+    """Walk *key* as a path from *host*: attributes, then dict keys, None when absent.
+
+    A key IS the host attribute path (spec 2026-09-05 §8.1), so
+    ``element.metadata.rev`` and ``element.name`` share this one walk. An
+    unvalidated table (library use skipping the settings boundary) gets the
+    same loud complaint the boundary would have raised, before any attribute
+    is read.
+
+    Beneath a metadata root (``metadata.``/``element.metadata.``) every
+    remaining segment is a DICT KEY ONLY — never a further attribute lookup.
+    Metadata is opaque user data, not an object graph: without this, a
+    numeric leaf's ``.denominator`` or a string leaf's ``.__class__`` would
+    resolve through Python's own attributes instead of reporting "no value".
+    """
+    if key not in MATCH_KEYS and not _is_metadata_path(key):
+        _reject_key(key)
+    root = next((r for r in _METADATA_ROOTS if key.startswith(r + ".")), None)
+    prefix = root.split(".") if root else key.split(".")
+    value: Any = host
+    for part in prefix:
+        value = getattr(value, part, None)
+        if value is None:
+            return None
+    if root is None:
         return value
-    # host_matches on an unvalidated table (library use skipping the settings
-    # boundary) gets the same loud complaint the boundary would have raised.
-    validate_match_table({key: ""})
-    return None  # pragma: no cover — validate_match_table always raises above
+    for part in key[len(root) + 1 :].split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
 
 
 def _leaf_matches(leaf: MatchLeaf, value: Any, *, host: Any, key: str) -> bool:

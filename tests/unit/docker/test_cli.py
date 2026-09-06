@@ -14,6 +14,7 @@ from otto.config.lab import Lab
 from otto.config.repo import DockerUseCase, Repo
 from otto.docker.deployment import UseCaseStack
 from otto.docker.resolve import Displacement, SelectedFragment, Selection
+from otto.host.element import Element
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult
 from otto.utils import Status
@@ -762,7 +763,7 @@ async def test_up_surfaces_the_librarys_on_refusal_verbatim(capsys):
     sentence nobody emits any more (review M5).
     """
     lab = Lab(name="unix")
-    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element="test", element_id=3))
+    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3")))
 
     with (
         patch("otto.docker.deployment.get_lab", return_value=lab),
@@ -991,7 +992,7 @@ def test_use_cases_lists_fragments_hosts_env_keys_and_displacements(capsys):
     winner = _uc_repo("repo1", _uc(provides="edge", priority=10, env={"EDGE_ADDR": "SECRETVALUE"}))
     loser = _uc_repo("repo2", _uc(provides="edge", priority=5, pass_env=("TOKEN",)))
     lab = Lab(name="unix")
-    host = UnixHost(ip="10.0.0.1", creds=[], element="test", element_id=3, docker_capable=True)
+    host = UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True)
     lab.add_host(host)
 
     with (
@@ -1045,9 +1046,7 @@ def test_use_cases_prints_the_resolution_error_instead_of_a_host(capsys):
     """An unresolvable placement is REPORTED, not raised — this verb is a listing."""
     repo = _uc_repo("repo1", _uc(role="nosuchrole"))
     lab = Lab(name="unix")
-    lab.add_host(
-        UnixHost(ip="10.0.0.1", creds=[], element="test", element_id=3, docker_capable=True)
-    )
+    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[repo]),
@@ -1073,9 +1072,7 @@ def test_use_cases_prints_a_provider_tie_refusal_instead_of_a_table_row(capsys):
     b = _uc_repo("repo2", _uc(provides="edge", priority=5))
     healthy = _uc_repo("repo3", _uc("soak"))
     lab = Lab(name="unix")
-    lab.add_host(
-        UnixHost(ip="10.0.0.1", creds=[], element="test", element_id=3, docker_capable=True)
-    )
+    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[a, b, healthy]),
@@ -1094,9 +1091,7 @@ def test_use_cases_filters_to_the_named_use_case(capsys):
     """Spec §10: `otto docker use-cases [USE_CASE]`."""
     repos = [_uc_repo("repo1", _uc("integration")), _uc_repo("repo2", _uc("soak"))]
     lab = Lab(name="unix")
-    lab.add_host(
-        UnixHost(ip="10.0.0.1", creds=[], element="test", element_id=3, docker_capable=True)
-    )
+    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
 
     with (
         patch.object(docker_cli, "get_repos", return_value=repos),
@@ -1328,33 +1323,6 @@ async def test_ps_specific_capable_host():
         await docker_cli._ps(on="cap_host")
 
     mock_compose_ps.assert_called_once_with(capable)
-
-
-@pytest.mark.asyncio
-async def test_ps_accepts_positional_handle_for_on(tmp_path):
-    """_ps --on <handle> resolves a positional handle (e.g. "dut1") to the
-    matching docker-capable host, same as a canonical id — --on is a CLI
-    host-id input like `otto host`'s positional argument."""
-    dut_a = UnixHost(ip="10.0.0.1", creds=[], element="dut", element_id=47, docker_capable=True)
-    dut_b = UnixHost(ip="10.0.0.2", creds=[], element="dut", element_id=200, docker_capable=True)
-
-    lab = Lab(name="unix")
-    lab.add_host(dut_a)
-    lab.add_host(dut_b)
-    lab._assign_logical_indices()
-    assert dut_a.id == "dut47"
-    assert dut_a.logical_index == 1
-
-    mock_compose_ps = AsyncMock(return_value=[])
-
-    with (
-        patch.object(docker_cli, "get_lab", return_value=lab),
-        patch.object(docker_cli, "compose_ps", mock_compose_ps),
-        patch.object(docker_cli, "rprint", MagicMock()),
-    ):
-        await docker_cli._ps(on="dut1")
-
-    mock_compose_ps.assert_called_once_with(dut_a)
 
 
 # ---------------------------------------------------------------------------

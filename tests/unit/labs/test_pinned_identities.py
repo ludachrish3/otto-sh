@@ -6,11 +6,11 @@ cannot be loaded after the break, so equivalence is pinned, not computed.
 Re-deriving these from the migrated files would make the test circular: it
 would then assert only that the loader agrees with itself.
 
-Each tuple is ``(host.id, host.element, host.element_id, host.logical_index)``
-for every non-``local`` host of the lab, sorted. Those four values are the
-whole identity contract the v2 flattening had to preserve: ``make_host_id``,
-``slug`` and ``logical_indices`` were not touched by this change, so any drift
-here means the element→host flattening lost or invented a field.
+Each tuple is ``(host.id, host.element.name, host.element.id)`` for every
+non-``local`` host of the lab, sorted. Those three values are the whole
+identity contract the v2 flattening had to preserve: ``make_host_id`` and
+``slug`` were not touched by this change, so any drift here means the
+element→host flattening lost or invented a field.
 """
 
 import pytest
@@ -44,34 +44,34 @@ def _zephyr_inline_frame() -> None:
 
 
 # (tech, lab) -> the identity tuples recorded at the v1 baseline.
-_PINNED: dict[tuple[str, str], list[tuple[str, str, int | None, int | None]]] = {
+_PINNED: dict[tuple[str, str], list[tuple[str, str, int | None]]] = {
     ("tech1", "unix"): [
-        ("test1", "test1", None, None),
-        ("test2", "test2", None, None),
-        ("test3", "test3", None, None),
+        ("test1", "test1", None),
+        ("test2", "test2", None),
+        ("test3", "test3", None),
     ],
     ("tech1", "busybox"): [
-        ("bb1161_qemu", "bb1161", None, None),
-        ("bb1211_qemu", "bb1211", None, None),
-        ("bb1281_qemu", "bb1281", None, None),
-        ("bb1310_qemu", "bb1310", None, None),
-        ("bb1350_qemu", "bb1350", None, None),
-        ("test1", "test1", None, None),
+        ("bb1161_qemu", "bb1161", None),
+        ("bb1211_qemu", "bb1211", None),
+        ("bb1281_qemu", "bb1281", None),
+        ("bb1310_qemu", "bb1310", None),
+        ("bb1350_qemu", "bb1350", None),
+        ("test1", "test1", None),
     ],
     ("tech1", "embedded"): [
-        ("test4", "test4", None, None),
-        ("zephyr27-fat", "zephyr27_fat", None, None),
-        ("zephyr37-fat", "zephyr37_fat", None, None),
-        ("zephyr37-lfs", "zephyr37_lfs", None, None),
-        ("zephyr37-llext", "zephyr37_llext", None, None),
-        ("zephyr37-nofs", "zephyr37_nofs", None, None),
-        ("zephyr44-lfs", "zephyr44_lfs", None, None),
-        ("zephyr44-llext", "zephyr44_llext", None, None),
+        ("test4", "test4", None),
+        ("zephyr27-fat", "zephyr27_fat", None),
+        ("zephyr37-fat", "zephyr37_fat", None),
+        ("zephyr37-lfs", "zephyr37_lfs", None),
+        ("zephyr37-llext", "zephyr37_llext", None),
+        ("zephyr37-nofs", "zephyr37_nofs", None),
+        ("zephyr44-lfs", "zephyr44_lfs", None),
+        ("zephyr44-llext", "zephyr44_llext", None),
     ],
     ("tech2", "unix_alt"): [
-        ("alt1", "alt1", None, None),
-        ("alt2", "alt2", None, None),
-        ("alt3", "alt3", None, None),
+        ("alt1", "alt1", None),
+        ("alt2", "alt2", None),
+        ("alt3", "alt3", None),
     ],
 }
 
@@ -127,12 +127,10 @@ _PINNED_HOST_RESOURCES: dict[tuple[str, str], dict[str, set[str]]] = {
 
 @pytest.mark.parametrize(("tech", "lab"), sorted(_PINNED))
 def test_identities_unchanged(tech: str, lab: str) -> None:
-    """Every built host keeps the id, element, element id and logical index it had on v1."""
+    """Every built host keeps the id, element name, and element id it had on v1."""
     built = load_lab(lab, search_paths=[lab_data_dir() / tech])
     got = sorted(
-        (h.id, h.element, h.element_id, h.logical_index)
-        for h in built.hosts.values()
-        if h.id != "local"
+        (h.id, h.element.name, h.element.id) for h in built.hosts.values() if h.id != "local"
     )
     assert got == _PINNED[(tech, lab)]
 
@@ -165,7 +163,7 @@ def test_element_resources_pinned(tech: str, lab: str) -> None:
     mapping = _PINNED_ELEMENT_RESOURCES[(tech, lab)]
     _pinned_every_host(built, mapping)
     for host_id, expected in mapping.items():
-        assert built.hosts[host_id].element_resources == frozenset(expected), host_id
+        assert built.hosts[host_id].element.resources == frozenset(expected), host_id
 
 
 @pytest.mark.parametrize(("tech", "lab"), sorted(_PINNED_HOST_RESOURCES))

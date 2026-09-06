@@ -89,7 +89,7 @@ def make_bed_target(element: str) -> ChaosTarget:
     return ChaosTarget(
         sut_dir=_REPO_E2E,
         lab="unix",
-        host_id=make_host_id(element, None, host.get("board"), None),
+        host_id=make_host_id(element, host.get("board"), None),
         ssh_host=host["ip"],
         ssh_port=22,
         ssh_username=cred["login"],

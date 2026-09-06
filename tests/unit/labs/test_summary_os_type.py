@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from otto.config import completion_cache as cc
+from otto.host.element import Element
 from otto.labs import HostSummary
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
@@ -62,8 +63,11 @@ def test_the_example_backend_reports_each_records_os_type():
     repo = ExampleLabRepository(
         labs={
             "e": [
-                {"ip": "1.1.1.1", "element": "z", "creds": _CREDS, "os_type": "zephyr"},
-                {"ip": "1.1.1.2", "element": "u", "creds": _CREDS},
+                {
+                    "name": "z",
+                    "hosts": [{"ip": "1.1.1.1", "creds": _CREDS, "os_type": "zephyr"}],
+                },
+                {"name": "u", "hosts": [{"ip": "1.1.1.2", "creds": _CREDS}]},
             ]
         },
         resources={},
@@ -86,7 +90,9 @@ def test_load_lab_fallback_records_the_built_hosts_os_type():
 
         def load_lab(self, name, preferences=None, inventory=None):
             lab = Lab(name=name)
-            lab.add_host(create_host_from_dict({"ip": "1.1.1.1", "element": "u1", "creds": _CREDS}))
+            lab.add_host(
+                create_host_from_dict({"ip": "1.1.1.1", "creds": _CREDS}, element=Element("u1"))
+            )
             return lab
 
         def list_labs(self):

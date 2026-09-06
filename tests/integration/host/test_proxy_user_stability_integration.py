@@ -60,6 +60,7 @@ import pytest
 import pytest_asyncio
 
 from otto import register_login_proxy
+from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult
@@ -114,7 +115,6 @@ def _mysql_host_dict(ip: str, element: str, **overrides: object) -> dict[str, ob
     """
     data: dict[str, object] = {
         "ip": ip,
-        "element": element,
         "creds": [dict(c) for c in _MYSQL_CREDS],
     }
     data.update(overrides)
@@ -158,7 +158,9 @@ async def proxied_host(request, tmp_path_factory):
     lock_dir = tmp_path_factory.getbasetemp().parent
     with lease_unix_host(lock_dir, _UNIX_POOL) as element:
         ip = host_data(element)["ip"]
-        host = create_host_from_dict(_mysql_host_dict(ip, element, user="mysql", transfer=transfer))
+        host = create_host_from_dict(
+            _mysql_host_dict(ip, element, user="mysql", transfer=transfer), element=Element(element)
+        )
         try:
             yield host
         finally:
@@ -186,7 +188,9 @@ async def test_proxied_command_roundtrip(leased_host: tuple[str, str]) -> None:
     and a real command's output must survive intact.
     """
     element, ip = leased_host
-    host = create_host_from_dict(_mysql_host_dict(ip, element, user="mysql"))
+    host = create_host_from_dict(
+        _mysql_host_dict(ip, element, user="mysql"), element=Element(element)
+    )
     try:
         whoami = (await host.run("whoami")).only
         assert whoami.status == Status.Success, f"whoami failed: {whoami.value!r}"
@@ -214,7 +218,9 @@ async def test_proxied_as_user_roundtrip(leased_host: tuple[str, str]) -> None:
     NOTE documents as previously 100% reproducible before the engine fix.
     """
     element, ip = leased_host
-    host = create_host_from_dict(_mysql_host_dict(ip, element))  # default user: vagrant
+    host = create_host_from_dict(
+        _mysql_host_dict(ip, element), element=Element(element)
+    )  # default user: vagrant
     try:
         before = (await host.run("whoami")).only.value.strip()
         assert before == "vagrant"
@@ -318,7 +324,9 @@ async def test_proxied_exec_fanout(leased_host: tuple[str, str]) -> None:
     as one call's marker leaking into another's result.
     """
     element, ip = leased_host
-    host = create_host_from_dict(_mysql_host_dict(ip, element, user="mysql"))
+    host = create_host_from_dict(
+        _mysql_host_dict(ip, element, user="mysql"), element=Element(element)
+    )
     try:
         N = 8  # noqa: N806 — single-letter math dimension
         results = await asyncio.gather(
@@ -383,7 +391,7 @@ async def test_su_prompt_is_answered_when_it_appears(leased_host: tuple[str, str
     """
     element, ip = leased_host
     host = create_host_from_dict(
-        {"ip": ip, "element": element, "creds": [dict(c) for c in _PROMPTED_CREDS]}
+        {"ip": ip, "creds": [dict(c) for c in _PROMPTED_CREDS]}, element=Element(element)
     )
     try:
         started = time.monotonic()
@@ -413,7 +421,7 @@ async def test_su_password_does_not_stall_when_no_prompt_appears(
     """
     element, ip = leased_host
     host = create_host_from_dict(
-        {"ip": ip, "element": element, "creds": [dict(c) for c in _UNPROMPTED_CREDS]}
+        {"ip": ip, "creds": [dict(c) for c in _UNPROMPTED_CREDS]}, element=Element(element)
     )
     try:
         started = time.monotonic()

@@ -25,6 +25,7 @@ import pytest
 
 from otto.config.repo import Repo
 from otto.host.docker_host import DockerContainerHost
+from otto.host.element import Element
 from otto.host.embedded_host import EmbeddedHost, ZephyrHost
 from otto.host.host import BaseHost
 from otto.host.local_host import LocalHost
@@ -228,7 +229,7 @@ class TestTheExemptionCannotSpreadToOtherHostClasses:
 
     def test_a_remote_host_cannot_be_constructed_exempt(self) -> None:
         """The behavioural half: the keyword is not merely absent, it is refused."""
-        args: "dict[str, Any]" = {"ip": "192.0.2.1", "element": "pinned", "creds": []}
+        args: "dict[str, Any]" = {"ip": "192.0.2.1", "element": Element("pinned"), "creds": []}
 
         with pytest.raises(TypeError, match="dry_run_exempt"):
             UnixHost(**args, dry_run_exempt=True)

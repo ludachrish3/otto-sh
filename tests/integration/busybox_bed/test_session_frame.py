@@ -70,7 +70,7 @@ async def test_the_exit_code_that_crosses_the_frame_is_the_commands(guest, cmd, 
     host, version = guest
     res = await host.exec(cmd)
     assert res.retcode == code, (
-        f"{host.element} (BusyBox {version}) returned {res.retcode} for {cmd!r}, "
+        f"{host.element.name} (BusyBox {version}) returned {res.retcode} for {cmd!r}, "
         f"not {code} (status={res.status}, output={res.value!r})"
     )
 
@@ -115,12 +115,12 @@ async def test_the_recover_probes_baked_exit_code_is_the_preceding_commands(gues
 
     match = frame.recover_pattern(markers).search(res.value)
     assert match, (
-        f"no RECOVER marker with a status came back from {host.element} "
+        f"no RECOVER marker with a status came back from {host.element.name} "
         f"(BusyBox {version}) -- the shell did not expand a status into "
         f"recover()'s payload at all: {res.value!r}"
     )
     assert match.group(1) == str(_RECOVER_PROBE_CODE), (
-        f"{host.element} (BusyBox {version}) reported {match.group(1)} in the "
+        f"{host.element.name} (BusyBox {version}) reported {match.group(1)} in the "
         f"RECOVER marker where the preceding command exited "
         f"{_RECOVER_PROBE_CODE} -- recover()'s status does not survive here, "
         f"which is a real ash delta and belongs in AshFrame"
@@ -139,7 +139,7 @@ async def test_command_output_is_bracketed_in_order_with_no_marker_bleed(guest):
     host, version = guest
     res = await host.exec("echo alpha; echo beta")
     assert res.value.splitlines() == ["alpha", "beta"], (
-        f"{host.element} (BusyBox {version}) answered {res.value!r} -- either the "
+        f"{host.element.name} (BusyBox {version}) answered {res.value!r} -- either the "
         f"lines are out of order or a sentinel/prompt leaked into the parsed output"
     )
 
@@ -172,11 +172,11 @@ async def test_history_suppression_runs_and_sets_histfile(guest):
     payload = f'HISTFILE={_HISTFILE_SENTINEL}; {BashFrame().quiet_history()}echo "H=[$HISTFILE]"'
     res = await host.exec(payload)
     assert res.retcode == 0, (
-        f"the history payload failed on {host.element} (BusyBox {version}): "
+        f"the history payload failed on {host.element.name} (BusyBox {version}): "
         f"rc={res.retcode} {res.value!r}"
     )
     assert res.value == "H=[/dev/null]", (
-        f"{host.element} (BusyBox {version}) answered {res.value!r}. Either the "
+        f"{host.element.name} (BusyBox {version}) answered {res.value!r}. Either the "
         f"payload did not overwrite HISTFILE={_HISTFILE_SENTINEL}, or one of its "
         f"clauses printed a complaint into the stream otto parses"
     )
@@ -200,23 +200,24 @@ async def test_ash_rejects_set_plus_o_history_but_the_shell_survives(guest):
     host, version = guest
     res = await host.exec("command set +o history; echo AFTER=$?")
     assert "illegal option" in res.value, (
-        f"{host.element} (BusyBox {version}) was expected to reject `+o history` "
+        f"{host.element.name} (BusyBox {version}) was expected to reject `+o history` "
         f"outright: {res.value!r}"
     )
     assert "history" in res.value, (
-        f"{host.element}'s rejection did not name the option it rejected: {res.value!r}"
+        f"{host.element.name}'s rejection did not name the option it rejected: {res.value!r}"
     )
     after = [line for line in res.value.splitlines() if line.startswith("AFTER=")]
     assert after, (
-        f"nothing after the rejection reported a status on {host.element}, so the "
+        f"nothing after the rejection reported a status on {host.element.name}, so the "
         f"shell did not survive it: {res.value!r}"
     )
     assert after[0] != "AFTER=0", (
-        f"the rejection must be a real non-zero status -- {host.element} said {res.value!r}"
+        f"the rejection must be a real non-zero status -- {host.element.name} said {res.value!r}"
     )
     alive = await host.exec("echo alive")
     assert alive.value.strip() == "alive", (
-        f"the rejected `set +o history` took {host.element}'s shell down with it: {alive.value!r}"
+        f"the rejected `set +o history` took {host.element.name}'s shell down with it: "
+        f"{alive.value!r}"
     )
 
 
@@ -240,17 +241,17 @@ async def test_glob_expands_and_filters_under_live_ash(guest):
         f"rm -rf {_GLOB_DIR} && mkdir -p {_GLOB_DIR} && "
         f"touch {_GLOB_DIR}/messages1 {_GLOB_DIR}/messages2 {_GLOB_DIR}/other"
     )
-    assert prep.retcode == 0, f"could not stage {_GLOB_DIR} on {host.element}: {prep.value!r}"
+    assert prep.retcode == 0, f"could not stage {_GLOB_DIR} on {host.element.name}: {prep.value!r}"
     try:
         matched = await host.glob(f"{_GLOB_DIR}/messages*")
         assert sorted(matched) == [f"{_GLOB_DIR}/messages1", f"{_GLOB_DIR}/messages2"], (
-            f"{host.element} (BusyBox {version}) expanded `messages*` to {matched} -- "
+            f"{host.element.name} (BusyBox {version}) expanded `messages*` to {matched} -- "
             f"either the pattern came back unexpanded, or the expansion swept in "
             f"the non-matching file"
         )
         missed = await host.glob(f"{_GLOB_DIR}/nomatch*")
         assert missed == [], (
-            f"{host.element} answered {missed} for a pattern that matches nothing; "
+            f"{host.element.name} answered {missed} for a pattern that matches nothing; "
             f"a caller handed that literal believes a file exists that does not"
         )
     finally:
@@ -297,7 +298,7 @@ async def test_a_timed_out_command_leaves_no_orphan_process(guest):
         f"rm -f {_ORPHAN_MARKER}; [ -f {_ORPHAN_MARKER} ] && echo STALE || echo GONE"
     )
     assert cleared.value.strip() == "GONE", (
-        f"could not clear {_ORPHAN_MARKER} on {host.element} ({cleared.value!r}), so "
+        f"could not clear {_ORPHAN_MARKER} on {host.element.name} ({cleared.value!r}), so "
         f"the arrival control below would read a stale marker as this run's proof"
     )
 
@@ -307,27 +308,27 @@ async def test_a_timed_out_command_leaves_no_orphan_process(guest):
     )
     counts = control.value.split()
     assert len(counts) == 2, (
-        f"the instrument control on {host.element} answered {control.value!r}, not "
+        f"the instrument control on {host.element.name} answered {control.value!r}, not "
         f"two counts -- `ps` or `grep -c` is not behaving as this row assumes"
     )
     assert int(counts[0]) >= 1, (
         f"`ps | grep -c '{_ORPHAN_PATTERN}'` did not see a {_ORPHAN_COMMAND!r} this "
-        f"test had just started on {host.element} ({control.value!r}), so the count "
+        f"test had just started on {host.element.name} ({control.value!r}), so the count "
         f"below cannot mean the timeout reaped anything"
     )
     assert int(counts[1]) == 0, (
         f"the control's own {_ORPHAN_COMMAND!r} survived being killed on "
-        f"{host.element} ({control.value!r}) -- the count cannot come back down, so "
+        f"{host.element.name} ({control.value!r}) -- the count cannot come back down, so "
         f"a zero below would say nothing"
     )
 
     res = await host.exec(f"touch {_ORPHAN_MARKER}; {_ORPHAN_COMMAND}", timeout=5)
     assert res.timed_out, (
-        f"{_ORPHAN_COMMAND!r} did not time out on {host.element} (BusyBox {version}): "
+        f"{_ORPHAN_COMMAND!r} did not time out on {host.element.name} (BusyBox {version}): "
         f"status={res.status} timed_out={res.timed_out} value={res.value!r}"
     )
     assert res.status is Status.Error, (
-        f"a timed-out command must answer Status.Error on {host.element}, not "
+        f"a timed-out command must answer Status.Error on {host.element.name}, not "
         f"{res.status} ({res.value!r})"
     )
 
@@ -338,11 +339,11 @@ async def test_a_timed_out_command_leaves_no_orphan_process(guest):
     lines = after.value.splitlines()
     assert len(lines) == 2, f"the survivor probe answered {after.value!r}, not two lines"
     assert lines[0] == "RAN", (
-        f"the abandoned command never reached {host.element} -- the timeout fired "
+        f"the abandoned command never reached {host.element.name} -- the timeout fired "
         f"before it ran, so 'no survivors' below would prove nothing ({after.value!r})"
     )
     assert int(lines[1]) == 0, (
-        f"{host.element} (BusyBox {version}) is still running {int(lines[1])} "
+        f"{host.element.name} (BusyBox {version}) is still running {int(lines[1])} "
         f"{_ORPHAN_COMMAND!r} after otto abandoned it: the timeout recovered otto's "
         f"session and stranded the process on the device"
     )

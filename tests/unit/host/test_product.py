@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.product import FileProduct, Product
 from otto.logger.mode import LogMode
@@ -84,11 +85,17 @@ def test_every_host_has_empty_products_by_default():
     assert LocalHost().products == []
     assert (
         UnixHost(
-            ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
+            ip="10.0.0.1",
+            element=Element("box"),
+            creds=[Cred(login="u", password="p")],
+            log=LogMode.QUIET,
         ).products
         == []
     )
-    assert ZephyrHost(ip="192.0.2.1", element="zephyr37_fat", log=LogMode.QUIET).products == []
+    assert (
+        ZephyrHost(ip="192.0.2.1", element=Element("zephyr37_fat"), log=LogMode.QUIET).products
+        == []
+    )
 
 
 def test_products_can_be_injected_at_construction():

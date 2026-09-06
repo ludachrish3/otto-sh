@@ -1,4 +1,5 @@
 from otto.host.command_frame import ZephyrFrame
+from otto.host.element import Element
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.interface import Interface
 from otto.host.login_proxy import Cred
@@ -6,7 +7,9 @@ from otto.host.unix_host import UnixHost
 
 
 def _unix(**kw):
-    return UnixHost(ip="10.0.0.1", creds=[Cred(login="u", password="p")], element="e", **kw)
+    return UnixHost(
+        ip="10.0.0.1", creds=[Cred(login="u", password="p")], element=Element("e"), **kw
+    )
 
 
 def test_unix_interfaces_default_empty():
@@ -27,6 +30,6 @@ def test_address_for_resolves_named_interface():
 
 
 def test_embedded_interfaces_field_and_address_for():
-    h = EmbeddedHost(ip="192.0.2.1", element="dut", command_frame=ZephyrFrame())
+    h = EmbeddedHost(ip="192.0.2.1", element=Element("dut"), command_frame=ZephyrFrame())
     assert h.interfaces == {}
     assert h.address_for("192.0.2.1") == "192.0.2.1"

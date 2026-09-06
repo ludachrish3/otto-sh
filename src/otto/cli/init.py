@@ -13,6 +13,7 @@ import json
 import os
 import re
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     # modules (see ``otto/inventory/config.py``'s module docstring), and
     # ``init.py`` sits on a budgeted CLI surface (scripts/import_budget.py).
     # Every real use below is a function-local import.
+    from ..host.element import Element
     from ..inventory import Inventory
 
 
@@ -531,6 +533,7 @@ def _parse_lab_documents(root: Path) -> tuple[list[str], list[_ParsedLab]]:
     """
     from ..labs.errors import LabRepositoryError
     from ..labs.json_repository import (
+        SeenElement,
         check_in_source_duplicates,
         parse_elements,
         parse_lab_entries,
@@ -542,7 +545,7 @@ def _parse_lab_documents(root: Path) -> tuple[list[str], list[_ParsedLab]]:
     for group in _lab_file_groups(root):
         # Reset per source: the duplicate rules are in-source rules.
         seen_labs: dict[str, Path] = {}
-        seen_elements: dict[Any, Path] = {}
+        seen_elements: dict[str, SeenElement] = {}
         for lab_file in group:
             if not lab_file.is_file():
                 continue
@@ -596,10 +599,10 @@ def _validate_lab(
 
     The file shape is :func:`_parse_lab_documents`' job; what is left is the
     two payloads the wrapper models hold opaquely. Each element's host
-    entries are flattened the way the loader flattens them
-    (:meth:`otto.models.lab.ElementSpec.flatten` stamps the element identity
-    on), resolved against this repo's inventory the way the loader resolves
-    them (:func:`otto.inventory.resolve_host_entry`, spec §6), and handed to
+    entries are resolved against this repo's inventory the way the loader
+    resolves them (:func:`otto.inventory.resolve_host_entry`, spec §6, against
+    the element :meth:`otto.models.lab.ElementSpec.to_element` builds), and
+    handed to
     :func:`otto.host.factory.validate_host_dict`, so a bad ``os_type`` or
     field name, a dead inventory key, or an inventory-owned field declared
     inline all surface the same error the loader would raise. Each ``links``
@@ -631,16 +634,19 @@ def _validate_lab(
         problems.append(f"inventory: {e}")
         inventory_broken = True
 
-    def _validate_entry(host_data: dict[str, Any]) -> None:
-        validate_host_dict(resolve_host_entry(host_data, inventory).host_data)
+    def _validate_entry(host_data: dict[str, Any], *, element: "Element") -> None:
+        validate_host_dict(resolve_host_entry(host_data, inventory, element).host_data)
 
     for lab_file, _, elements, links in documents:
         for element in elements:
-            for idx, host_data in enumerate(element.flatten()):
+            # Bound rather than passed alongside: _item_problem calls its
+            # validator with the item and nothing else.
+            validate = partial(_validate_entry, element=element.to_element())
+            for idx, host_data in enumerate(element.hosts):
                 if inventory_broken and references_inventory(host_data):
                     continue  # reported once above; these resolve once it is fixed
                 prefix = f"{lab_file}: element {element.name!r} hosts[{idx}]"
-                problems.extend(_item_problem(_validate_entry, host_data, prefix))
+                problems.extend(_item_problem(validate, host_data, prefix))
         for idx, link_data in enumerate(links):
             problems.extend(
                 _item_problem(LinkSpec.model_validate, link_data, f"{lab_file}: links[{idx}]")

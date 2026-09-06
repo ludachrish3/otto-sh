@@ -49,6 +49,7 @@ _SNMP_PARAMS = pytest.mark.parametrize(
         for b in SNMP_BACKENDS
     ],
 )
+from tests._fixtures.labdata import element_for
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -72,7 +73,9 @@ class TestSnmpCollection:
         SnmpClient/SnmpSource -> live agent over the relay -> BER decode ->
         descriptor scaling -> chart series.
         """
-        host = create_host_from_dict(host_data(_BACKEND_NE[backend]))
+        host = create_host_from_dict(
+            host_data(_BACKEND_NE[backend]), element=element_for(_BACKEND_NE[backend])
+        )
         assert host.snmp is not None, "backend should be SNMP-wired"
 
         collector = build_monitor_collector([host])
@@ -114,7 +117,9 @@ class TestSnmpCollection:
         """Live sysUpTime advances: two reads a beat apart differ, not constant."""
         import asyncio
 
-        host = create_host_from_dict(host_data(_BACKEND_NE[backend]))
+        host = create_host_from_dict(
+            host_data(_BACKEND_NE[backend]), element=element_for(_BACKEND_NE[backend])
+        )
         client_src = build_monitor_collector([host])._targets[0].snmp
         assert client_src is not None
         try:

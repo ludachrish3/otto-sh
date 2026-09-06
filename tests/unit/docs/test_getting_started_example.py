@@ -28,7 +28,6 @@ _ATTRS = [
     "id",
     "ip",
     "element",
-    "element_id",
     "is_virtual",
     "site",
     "rack",
@@ -37,11 +36,9 @@ _ATTRS = [
     "valid_terms",
     "valid_transfers",
     "source_lab",
-    "element_metadata",
     "lab_info",
     "hop",
     "resources",
-    "element_resources",
 ]
 
 

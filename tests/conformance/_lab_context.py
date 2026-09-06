@@ -7,7 +7,7 @@ guests hop ``test4`` (measured, ``tests/_fixtures/lab_data/tech1/lab.json``).
 hop id against the host's own ``_lab`` back-reference and, when there is
 none, against the active :class:`~otto.context.OttoContext`. A host built by
 ``create_host_from_dict`` from a single lab entry has neither -- measured,
-``create_host_from_dict(host_data("bb1161")).._lab is None`` -- so every one
+``create_host_from_dict(host_data("bb1161"), element=...)._lab is None`` -- so every one
 of those 17 cells failed BEFORE any transport was created:
 
     RuntimeError: Host 'bb1161 qemu' cannot resolve hop 'test1': the host has
@@ -78,7 +78,7 @@ from contextlib import contextmanager
 from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.host.factory import create_host_from_dict
-from tests._fixtures.labdata import flatten_lab_doc, host_data, lab_data_path
+from tests._fixtures.labdata import element_for, flatten_lab_doc, host_data, lab_data_path
 
 # The name the venue's lab answers to. It reaches a reader in two places: the
 # ``hop 'x' not in lab 'conformance_bed'`` KeyError otto raises when a hop
@@ -156,7 +156,11 @@ def bed_lab(tech: str) -> Lab:
     lab = Lab(name=BED_LAB_NAME)
     targets = hop_targets(tech)
     for element in targets:
-        lab.add_host(create_host_from_dict(dict(host_data(element, tech))))
+        lab.add_host(
+            create_host_from_dict(
+                dict(host_data(element, tech)), element=element_for(element, tech)
+            )
+        )
     unresolvable = [element for element in targets if element not in lab.hosts]
     if unresolvable:
         raise RuntimeError(

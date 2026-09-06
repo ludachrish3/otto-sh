@@ -6,6 +6,7 @@ import pytest
 
 from otto.host import dev_tool as dev_tool_mod
 from otto.host.dev_tool import apply_dev_tool_providers, register_dev_tool_provider
+from otto.host.element import Element
 
 
 @pytest.fixture(autouse=True)
@@ -399,12 +400,12 @@ def test_source_lab_is_stamped_before_the_providers_run():
     register_dev_tool_provider(probe)
     create_host_from_dict(
         {
-            "element": "probe-box",
             "os_type": "unix",
             "ip": "10.0.0.9",
             "creds": [{"login": "admin", "password": "admin"}],
         },
         lab_name="somelab",
+        element=Element("probe-box"),
     )
 
     assert seen == ["somelab"], "the provider ran before the lab stamp landed"

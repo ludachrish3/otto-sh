@@ -46,11 +46,14 @@ behaves as a trap: the day somebody fills the field in, the lab file's value
 goes silent with no error anywhere.
 
 **Keys are the exception, and are cross-checked rather than filled.**
-`element_id` may be stated in the record as a fact and on the element as
-identity. When the inventory supplies it and both sides state it they must be
-equal, or the load fails naming both values; it is never copied. An element's
-identity is consumed before any host exists, and an identity that materialised
-from a record would make "which element is this" depend on a backend call.
+`element_id` is a **cross-checked fact**, not an identity key: it is opt-in,
+named in `supplies` like any other field.  Only when a deployment does that
+does a stated record value get checked — when the inventory supplies it and
+both the record and the element state it, they must agree, or the load fails
+naming both values.  A deployment that never names `element_id` in
+`supplies` (the common case) never fills it and never checks it, because a
+record is per host and an element is shared.  (An element's identity is its
+name's slug, not its `id` — see {ref}`host-identity`.)
 
 ## The key
 
@@ -63,8 +66,8 @@ treated by otto as an uninterpreted identifier:
 
 - **Never an IP or a hostname.** The inventory exists because those change; a
   key that changes with the data is not a key.
-- **Never an otto host id or `(element, element_id)`.** That is otto's naming,
-  per lab and per project — if the inventory knew it, the decoupling would be
+- **Never an otto host id or an element name.** That is otto's naming, per
+  lab and per project — if the inventory knew it, the decoupling would be
   fictional.
 - **Never a location.** Sites, racks and slots are facts that drift, and they
   are carried as data.
@@ -100,7 +103,7 @@ join is a plain key copy and there is no mapping table to drift.
 | `shelf` | integer | Shelf / rack position. |
 | `slot` | integer | Physical slot number. |
 | `is_virtual` | boolean | `true` for a VM or emulator. Default `false`. |
-| `element_id` | integer | A **key**, not data: cross-checked against the element's `id`, never filled. |
+| `element_id` | integer | A **cross-checked fact**, not data: named in `supplies` to opt in, then checked against the element's `id` — never filled either way. |
 | `extra` | object | Opaque table otto never reads. Reaches the host as `host.inventory_ref.extra`. |
 
 Unknown field names are refused naming the key — a record is a boundary
@@ -726,10 +729,11 @@ a reference plus otto-owned fields; nothing here is an address or a credential:
 }
 ```
 
-**How it correlates at load.** The `test2` element flattens to
-`{"element": "test2", "inventory": "test2", "os_type": "unix", …}`. The join
-looks up `test2`, finds no inventory-owned field stated inline — had the entry
-also said `"ip": …`, that is the error at the top of this page — copies `ip`,
+**How it correlates at load.** For the `test2` host entry — `{"inventory":
+"test2", "os_type": "unix", …}` — the loader builds `test2`'s `Element` and
+calls `resolve_host_entry(host_data, inventory, element)`: it looks up
+`test2`, finds no inventory-owned field stated inline — had the entry also
+said `"ip": …`, that is the error at the top of this page — copies `ip`,
 `interfaces`, `is_virtual`, `site`, `rack` and `shelf` onto the entry, and the
 creds file supplies `creds`. The host spec then validates the whole thing
 exactly as it would an inline entry, the host id is still `test2` from the

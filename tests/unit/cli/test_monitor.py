@@ -30,6 +30,7 @@ import typer
 from typer.testing import CliRunner
 
 from otto.cli.monitor import monitor, monitor_app
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
@@ -54,7 +55,7 @@ def _make_host(name: str = "box") -> UnixHost:
     """Return a real UnixHost (no connection is made on construction)."""
     return UnixHost(
         ip="10.0.0.1",
-        element=name,
+        element=Element(name),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.NORMAL,
     )
@@ -261,7 +262,7 @@ class TestNoMonitorableHosts:
         from otto.host.factory import create_host_from_dict
 
         return create_host_from_dict(
-            {"element": element, "os_type": "zephyr", "ip": "10.0.0.9", "board": "mps2"}
+            {"os_type": "zephyr", "ip": "10.0.0.9", "board": "mps2"}, element=Element(element)
         )
 
     def test_selected_but_unmonitorable_blames_the_host_not_the_regex(self, live_mode_mocks):

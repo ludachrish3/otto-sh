@@ -16,6 +16,8 @@ three-level-reservations §5 the gate computes its requirement over
 ``otto.config.get_lab`` alone would leave the fleet half of the read unwired.
 """
 
+import dataclasses
+
 import pytest
 
 from otto.config.lab import Lab
@@ -211,7 +213,8 @@ def _three_level_lab():
     """A lab declaring its own resource over hosts that declare element- and host-level ones."""
     lab = _slot_lab()
     lab.resources = {"rack-1"}
-    lab.hosts["slot1"].element_resources = frozenset({"chassis-a"})
+    slot1 = lab.hosts["slot1"]
+    slot1.element = dataclasses.replace(slot1.element, resources=frozenset({"chassis-a"}))
     return lab
 
 

@@ -243,17 +243,19 @@ def _docker_hygiene_bracket(docker_parent):
     yield
     after = _run(_snapshot_probe(docker_parent))
     leftovers = diff_snapshots(before, after)
-    assert not leftovers, format_hygiene_report(docker_parent.element, leftovers)
+    assert not leftovers, format_hygiene_report(docker_parent.element.name, leftovers)
 
 
 def test_harness_docker_ready(docker_parent):
     """Fail loud, naming the host, if the venue can't do chaos: docker
     reachable AND passwordless sudo (the daemon-restart scenario's needs)."""
     ver = _run(docker_parent.exec("docker version --format '{{.Server.Version}}'", timeout=30))
-    assert ver.status == Status.Success, f"{docker_parent.element}: docker unusable: {ver.value}"
+    assert ver.status == Status.Success, (
+        f"{docker_parent.element.name}: docker unusable: {ver.value}"
+    )
     sudo = _run(docker_parent.exec("sudo -n true", timeout=15))
     assert sudo.status == Status.Success, (
-        f"{docker_parent.element}: passwordless sudo required for daemon-restart chaos"
+        f"{docker_parent.element.name}: passwordless sudo required for daemon-restart chaos"
     )
 
 
@@ -419,7 +421,7 @@ def test_daemon_restart_under_open_session(api_host, docker_parent):
                 break
             await asyncio.sleep(1.0)
         else:
-            raise AssertionError(f"{docker_parent.element}: docker daemon never came back")
+            raise AssertionError(f"{docker_parent.element.name}: docker daemon never came back")
         mid = await api_host.run("echo during", timeout=15)
         assert mid.status == Status.Error, "a stopped container must not answer"
         start = await docker_parent.exec(f"docker start {cid}", timeout=60)

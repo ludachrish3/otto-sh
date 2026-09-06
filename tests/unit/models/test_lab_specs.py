@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from otto.models.lab import HOISTED_HOST_KEYS, ElementKey, ElementSpec, LabEntrySpec
+from otto.models.lab import HOISTED_HOST_KEYS, ElementSpec, LabEntrySpec
 
 _HOST = {"ip": "10.0.0.5", "creds": [{"login": "u", "password": "p"}]}
 
@@ -41,46 +41,42 @@ def test_lab_entry_resources_must_be_nonempty_strings() -> None:
     assert LabEntrySpec.model_validate({"resources": ["bed"]}).resources == {"bed"}
 
 
-def test_element_flattens_identity_onto_hosts() -> None:
+def test_hosts_reach_the_loader_exactly_as_the_file_has_them() -> None:
+    """Nothing is stamped onto a host entry: the element travels as one object.
+
+    ``flatten()`` is gone with spec 2026-09-05 §2.6 — the loader iterates
+    ``hosts`` and hands :meth:`~otto.models.lab.ElementSpec.to_element`'s
+    ``Element`` to the factory beside each entry.
+    """
     el = ElementSpec.model_validate(
         {"name": "dut", "id": 3, "labs": ["embedded"], "hosts": [_HOST, {**_HOST, "board": "mgmt"}]}
     )
-    flat = el.flatten()
-    assert [h["element"] for h in flat] == ["dut", "dut"]
-    assert [h["element_id"] for h in flat] == [3, 3]
-    assert flat[1]["board"] == "mgmt"
-    assert el.key == ElementKey("dut", 3)
+    assert not hasattr(el, "flatten")
+    assert el.hosts == [_HOST, {**_HOST, "board": "mgmt"}]
+    assert not any(k in h for h in el.hosts for k in ("element", "element_id"))
+    assert (el.to_element().name, el.to_element().id) == ("dut", 3)
+    assert el.key == "dut"
 
 
-def test_element_without_id_flattens_without_element_id() -> None:
-    el = ElementSpec.model_validate({"name": "test1", "labs": ["unix"], "hosts": [_HOST]})
-    assert "element_id" not in el.flatten()[0]
-    assert el.key == ElementKey("test1", None)
-
-
-def test_element_key_is_a_hashable_value_so_a_later_source_replaces_an_earlier_one() -> None:
-    """``key`` is a frozen dataclass, not a tuple — but still the merge's dict key (spec §6)."""
+def test_element_key_is_the_slug_so_a_later_source_replaces_an_earlier_one() -> None:
+    """``key`` is ``slug(name)`` — the merge's dict key, and the ``id`` is not in it
+    (spec 2026-09-05 §2.3): two entries an author spells differently but that slug
+    alike are ONE element, and a differing ``id`` does not split them.
+    """
     first = ElementSpec.model_validate({"name": "dut", "id": 3, "labs": ["a"], "hosts": [_HOST]})
-    second = ElementSpec.model_validate({"name": "dut", "id": 3, "labs": ["b"], "hosts": [_HOST]})
+    second = ElementSpec.model_validate({"name": "DUT", "id": 7, "labs": ["b"], "hosts": [_HOST]})
     merged = {first.key: first}
     merged[second.key] = second
-    assert merged == {ElementKey("dut", 3): second}
-    assert ElementKey("dut", 3) != ElementKey("dut", None)
+    assert merged == {"dut": second}
+    assert first.key == second.key == "dut"
 
 
-def test_element_key_str_is_bare_name_without_an_id_and_a_pair_with_one() -> None:
-    """A key without a repeat ``id`` (the common case) renders as its bare name, not
-    ``('bb1350', None)`` — the ``None`` reads as a bug in user-facing output (the
-    ``owner`` column, doctor warnings, composite-lab messages).
+def test_element_key_slugs_the_name_the_author_wrote() -> None:
+    """The key is a slug, so it is safe to print and to compare — a name carrying
+    spaces, case or punctuation keys under the same token its hosts' ids start with.
     """
-    assert str(ElementKey("bb1350")) == "bb1350"
-    assert str(ElementKey("dut", 1)) == "('dut', 1)"
-
-
-def test_flatten_does_not_alias_the_entry() -> None:
-    el = ElementSpec.model_validate({"name": "a", "labs": ["l"], "hosts": [_HOST]})
-    el.flatten()[0]["ip"] = "changed"
-    assert el.hosts[0]["ip"] == "10.0.0.5"
+    el = ElementSpec.model_validate({"name": "Lab X Server", "labs": ["l"], "hosts": [_HOST]})
+    assert el.key == "lab-x-server"
 
 
 @pytest.mark.parametrize("key", sorted(HOISTED_HOST_KEYS))
@@ -117,7 +113,7 @@ def test_element_and_host_resources_are_sets_of_nonempty_strings() -> None:
     assert el.resources == {"chassis-1"}
     # The host's own set is not hoisted anywhere: it rides inside the entry,
     # untouched, to the host spec that validates it.
-    assert el.flatten()[0]["resources"] == ["slot-1"]
+    assert el.hosts[0]["resources"] == ["slot-1"]
     with pytest.raises(ValidationError, match=r"resources must be non-empty strings"):
         ElementSpec.model_validate(
             {"name": "c", "labs": ["l"], "resources": [""], "hosts": [_HOST]}

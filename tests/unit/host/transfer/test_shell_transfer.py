@@ -153,6 +153,7 @@ import pytest
 
 from otto.host.command_frame import AshFrame, BashFrame
 from otto.host.connections import ConnectionManager
+from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.factory import create_host_from_dict
 from otto.host.options import UserlandOptions
@@ -1164,7 +1165,6 @@ class TestTheBudgetIsTheHostsExecRouteSpeaking:
     def _busybox_host(term: str):
         return create_host_from_dict(
             {
-                "element": "bb1",
                 "os_type": "busybox",
                 "ip": "192.0.2.1",
                 "term": term,
@@ -1172,6 +1172,7 @@ class TestTheBudgetIsTheHostsExecRouteSpeaking:
                 "creds": [{"login": "root", "password": "otto"}],
             },
             lab_name="unit",
+            element=Element("bb1"),
         )
 
     def test_a_telnet_host_hands_its_transfer_its_own_frames_budget(self) -> None:

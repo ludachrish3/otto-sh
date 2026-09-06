@@ -158,7 +158,7 @@ SURFACES: list[Surface] = [
     Surface("help", ["otto", "--help"], _ALL_HEAVY, cap=188),
     Surface("run", ["otto", "run", "--help"], _ALL_HEAVY, cap=154),
     Surface("host", ["otto", "host", "--help"], _ALL_HEAVY, cap=255),
-    Surface("reservation", ["otto", "reservation", "--help"], _ALL_HEAVY, cap=251),
+    Surface("reservation", ["otto", "reservation", "--help"], _ALL_HEAVY, cap=143),
     Surface("docker", ["otto", "docker", "--help"], _ALL_HEAVY, cap=258),
     Surface("schema", ["otto", "schema", "--help"], _ALL_HEAVY, cap=150),
     # monitor owns the dashboard, so fastapi/uvicorn/starlette are allowed here.

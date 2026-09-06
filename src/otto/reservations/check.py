@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, get_args
 
 from ..errors import OttoError
-from ..models.lab import ElementKey
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -163,7 +162,7 @@ class ResourceOrigin:
     """The declaring point — the lab, an element, or a host — that named this resource."""
 
     owner: str
-    """The lab name, the element rendered as ``('chassis', 1)``, or the host id."""
+    """The lab name, the element's slug, or the host id."""
 
 
 def required_resource_origins(
@@ -188,26 +187,15 @@ def required_resource_origins(
         selected = [lab.hosts[host_id] for host_id in wanted]
     origins = {ResourceOrigin(r, "lab", lab.name) for r in lab.resources}
     for host in selected:
-        # ``element``/``element_id`` live on RemoteHost, not the base Host
-        # protocol (otto.host.host.Host) — and otto.reservations may not
-        # import otto.host (tach.toml). element_resources is only ever
-        # non-empty on a RemoteHost (the loader stamps it from the host's
-        # element), so this duck-types rather than importing the class just
-        # to narrow the type.
-        if host.element_resources:
-            element = getattr(host, "element", None)
-            # ``not element``, not ``is None``: an empty name is no more of an
-            # identity than a missing one, and it would render the owner as
-            # ``''`` — invisible, not even the ``('', None)`` a reader might
-            # catch as broken — which is exactly the output this raise exists
-            # to prevent. A factory-built host cannot reach either (the spec
-            # validator refuses a name that slugs to nothing).
-            if not element:
-                raise RuntimeError(
-                    f"host {host.id!r} carries element resources but no element identity"
-                )
-            owner = str(ElementKey(element, getattr(host, "element_id", None)))
-            origins.update(ResourceOrigin(r, "element", owner) for r in host.element_resources)
+        # The ``element`` object is ``None`` on a container and on ``local``,
+        # and otto.reservations may not import otto.host (tach.toml) — so this
+        # duck-types rather than importing the class just to narrow the type.
+        # An ``Element`` always has a non-empty name (its own validator refuses
+        # one that slugs to nothing), so the owner label is never blank.
+        element = getattr(host, "element", None)
+        if element is not None and element.resources:
+            owner = element.slug
+            origins.update(ResourceOrigin(r, "element", owner) for r in element.resources)
         origins.update(ResourceOrigin(r, "host", host.id) for r in host.resources)
     return sorted(origins, key=lambda o: (o.resource, _LEVEL_ORDER[o.level], o.owner))
 

@@ -12,6 +12,7 @@ import typer
 
 from otto.cli.reservation import check, whoami
 from otto.config.lab import Lab
+from otto.host.element import Element
 from otto.reservations import (
     NullReservationBackend,
     ReservationBackendError,
@@ -167,15 +168,14 @@ def _slot_host(fixture_id: str, host_id: str, resource: str):
     valid host and the reservation-relevant fields are overridden afterwards —
     plain dataclass fields, the same shape
     ``tests/unit/reservations/test_check.py:_three_level_lab`` uses. The
-    element is left with ``element_id=None`` so the rendered owner is
-    ``chassis``, which is the origin the table has to show.
+    rendered owner is the element's slug, ``chassis``, which is the origin the
+    table has to show.
     """
     from tests.conftest import make_host
 
     host = make_host(fixture_id)
     host.id = host_id
-    host.element, host.element_id = "chassis", None
-    host.element_resources = frozenset({"chassis-1"})
+    host.element = Element("chassis", resources=frozenset({"chassis-1"}))
     host.resources = frozenset({resource})
     return host
 

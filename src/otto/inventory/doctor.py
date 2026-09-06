@@ -37,11 +37,11 @@ def references_inventory(host_data: "dict[str, Any]") -> bool:
 
 
 def referenced_keys(element_lists: "Iterable[list[ElementSpec]]") -> set[str]:
-    """Every ``inventory`` key any flattened host entry names, across all files."""
+    """Every ``inventory`` key any host entry names, across all files."""
     keys: set[str] = set()
     for elements in element_lists:
         for element in elements:
-            for host_data in element.flatten():
+            for host_data in element.hosts:
                 if references_inventory(host_data):
                     keys.add(host_data["inventory"])
     return keys

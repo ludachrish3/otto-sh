@@ -6,10 +6,11 @@ docs/superpowers/specs/2026-08-27-lab-definition-v2-design.md §6). Sources are
 consulted in declaration order; the LATER source wins wholesale at RECORD
 granularity, with a warning naming both sources — the sanctioned way to test a
 data change locally before it lands in a global database. Under v2 there are
-two such records: the **element** ``(name, id)`` (its hosts, membership and
-metadata replaced together) and the **``labs`` table entry** (its resources and
-metadata replaced together). Never a field-level blend: a hybrid record — this
-source's hosts with that source's metadata — is unrepresentable by design.
+two such records: the **element**, keyed by its slug (``host.element.slug``;
+its hosts, membership and metadata replaced together), and the **``labs``
+table entry** (its resources and metadata replaced together). Never a
+field-level blend: a hybrid record — this source's hosts with that source's
+metadata — is unrepresentable by design.
 
 This class is also the single owner of lab EXISTENCE: a lab exists once some
 source's ``list_labs()`` declares it, and only then (spec §2.1). Elements that
@@ -37,11 +38,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# An element's identity as this module keys it: ``(host.element, host.element_id)``.
+# An element's identity as this module keys it: ``host.element.slug``.
 # Built from the HOSTS a source returned, not from the file's ``elements``
 # entries — a backend need not have a file at all, and every backend's hosts
-# carry the pair. A local dict key, never a return value.
-_ElementKey = tuple[str, int | None]
+# carry the element. A local dict key, never a return value.
+_ElementKey = str
 
 
 @dataclass
@@ -75,8 +76,8 @@ class CompositeLabRepository:
 
         Existence first: *name* must be DECLARED by some source's
         ``list_labs()``. Then each source's contribution is merged in order —
-        elements replaced wholesale by ``(element, element_id)``, the ``labs``
-        entry replaced wholesale by the last declaring source.
+        elements replaced wholesale by slug, the ``labs`` entry replaced
+        wholesale by the last declaring source.
 
         *inventory* is forwarded to EVERY source: a process has exactly one
         inventory (spec §8), and two sources resolving the same key against
@@ -191,7 +192,6 @@ class CompositeLabRepository:
                 f"Lab {name!r} is declared by {', '.join(declared_by)} but no element in any "
                 f"source matches it — add a 'labs' pattern to an element or remove the declaration"
             )
-        merged._assign_logical_indices()  # noqa: SLF001 — every lab-producing path restamps
         return merged
 
     def list_labs(self) -> list[str]:
@@ -264,15 +264,16 @@ def _declared_names(source: LabSource) -> list[str]:
 
 
 def _element_key(host: Any) -> "_ElementKey":
-    """Return the ``(element, element_id)`` pair *host* belongs to (spec §6).
+    """Return the element slug *host* belongs to (spec §6).
 
     ``getattr`` rather than attribute access: only a
-    :class:`~otto.host.remote_host.RemoteHost` carries ``element`` at all
-    (:class:`~otto.host.local_host.LocalHost` has no such field), and a
+    :class:`~otto.host.remote_host.RemoteHost` carries an element at all
+    (:class:`~otto.host.local_host.LocalHost` carries ``None``), and a
     backend is free to put one in a lab — an element-less host still has to
-    key somewhere, and it keys under ``("", None)``.
+    key somewhere, and it keys under ``""``.
     """
-    return (getattr(host, "element", "") or "", getattr(host, "element_id", None))
+    element = getattr(host, "element", None)
+    return "" if element is None else element.slug
 
 
 def _merged_summary(s: HostSummary, existing: HostSummary | None, names: list[str]) -> HostSummary:
@@ -304,8 +305,6 @@ def _merged_summary(s: HostSummary, existing: HostSummary | None, names: list[st
         labs=labs,
         lab_patterns=patterns,
         ip=s.ip,
-        element=s.element,
-        element_id=s.element_id,
         docker_capable=s.docker_capable,
         os_type=s.os_type,
     )

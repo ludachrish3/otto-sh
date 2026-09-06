@@ -7,6 +7,7 @@ pattern, and the migration error a v1 top-level ``hosts`` array raises (spec
 
 import json
 import logging
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
@@ -590,16 +591,18 @@ class TestDeclaredLinks:
         assert "test1" in lab.hosts
 
     def test_duplicate_cross_lab_addressing_warns_and_keeps_first(self, tmp_path, caplog):
-        """Two lab files whose hosts derive the same id, with DIFFERING addressing
+        """Two host entries deriving the same id, with DIFFERING addressing
         (different ip), must not raise while building the cross-lab addressing
-        map: the FIRST file's addressing wins, a warning is logged, and the
+        map: the FIRST record's addressing wins, a warning is logged, and the
         requested lab still loads (cross-lab resilience — distinct from
         ``Lab.__add__``'s same-lab merge, which fails loud).
 
-        The colliding records belong to DISTINCT elements — ``dup`` id 1 and
-        ``dup1``, both on board ``seed`` — which is the only way to reach this
-        path under v2 (spec §9): the same element ``(name, id)`` in two files of
-        one source is now a duplicate-element error, not an addressing clash.
+        The colliding records are two hosts of ONE element whose boards slug
+        alike (``seed`` and ``SEED``), in a lab file OTHER than the loaded
+        lab's — which is what reaching this path costs under spec 2026-09-05
+        §2.2: an id's prefix is its element's slug, so two DIFFERENT elements
+        can no longer produce one id, and the same element in two files of one
+        source is a duplicate-element error before addressing is built at all.
         """
         path1 = tmp_path / "path1"
         path2 = tmp_path / "path2"
@@ -610,29 +613,28 @@ class TestDeclaredLinks:
         dup_first = {
             **HOST_ENTRY,
             "element": "dup",
-            "element_id": 1,
             "board": "seed",
             "ip": "192.0.2.50",
             "labs": ["other1"],
         }
         dup_second = {
             **HOST_ENTRY,
-            "element": "dup1",
-            "board": "seed",
+            "element": "dup",
+            "board": "SEED",
             "ip": "192.0.2.99",
-            "labs": ["other2"],
+            "labs": ["other1"],
         }
         _write_lab(
             path1,
-            hosts=[test1, dup_first],
+            hosts=[test1],
             links=[
                 {
-                    "endpoints": [{"host": "test1"}, {"host": "dup1_seed"}],
+                    "endpoints": [{"host": "test1"}, {"host": "dup_seed"}],
                     "protocol": "tcp",
                 }
             ],
         )
-        _write_lab(path2, hosts=[dup_second])
+        _write_lab(path2, hosts=[dup_first, dup_second])
 
         repo = JsonFileLabRepository([path1, path2])
 
@@ -642,8 +644,8 @@ class TestDeclaredLinks:
         assert any("Duplicate host id" in r.message for r in caplog.records)
         assert "test1" in lab.hosts
         (link,) = lab.links
-        dup_ip = link.a.ip if link.a.host == "dup1_seed" else link.b.ip
-        assert dup_ip == "192.0.2.50"  # first file's addressing kept
+        dup_ip = link.a.ip if link.a.host == "dup_seed" else link.b.ip
+        assert dup_ip == "192.0.2.50"  # first record's addressing kept
 
 
 class TestLoadLabWithPreferences:
@@ -720,14 +722,26 @@ def test_members_by_fullmatch_pattern_and_flattened_identity(tmp_path: Path) -> 
         ),
     )
     lab = JsonFileLabRepository([tmp_path]).load_lab("unix")
-    assert set(lab.hosts) == {"test1", "dut3"}
-    assert lab.hosts["dut3"].element == "dut"
-    assert lab.hosts["dut3"].element_id == 3
+    # The element's ``id`` is data: it reaches ``host.element.id`` and stays
+    # out of the host id (spec 2026-09-05 §2.1).
+    assert set(lab.hosts) == {"test1", "dut"}
+    assert lab.hosts["dut"].element.name == "dut"
+    assert lab.hosts["dut"].element.id == 3
     assert lab.resources == {"unix-bed"}
     assert lab.metadata == {"unix": {"d": 1}}
 
 
-def test_element_metadata_copied_per_host(tmp_path: Path) -> None:
+def test_hosts_of_one_element_share_the_one_frozen_element(tmp_path: Path) -> None:
+    """One ``Element`` per element entry, handed to every member host.
+
+    The loader builds it once (:meth:`~otto.models.lab.ElementSpec.to_element`)
+    and passes that instance to the factory for each of the element's hosts, so
+    ``host_a.element is host_b.element`` (spec 2026-09-05 §3). It is frozen and
+    copies ``metadata`` at construction, which is what makes ONE shared object
+    safe: the parsed file's table is not the host's, so mutating the source
+    after load cannot reach either host.
+    """
+    source = {"rack": "B4"}
     _write(
         tmp_path,
         _doc(
@@ -736,7 +750,7 @@ def test_element_metadata_copied_per_host(tmp_path: Path) -> None:
                 _el(
                     "dut",
                     ["l"],
-                    metadata={"rack": "B4"},
+                    metadata=source,
                     hosts=[
                         {"ip": "10.0.0.1", "board": "a", "creds": _CREDS},
                         {"ip": "10.0.0.2", "board": "b", "creds": _CREDS},
@@ -747,10 +761,12 @@ def test_element_metadata_copied_per_host(tmp_path: Path) -> None:
     )
     lab = JsonFileLabRepository([tmp_path]).load_lab("l")
     a, b = lab.hosts["dut_a"], lab.hosts["dut_b"]
-    assert a.element_metadata == {"rack": "B4"}
-    assert b.element_metadata == {"rack": "B4"}
-    a.element_metadata["rack"] = "Z"
-    assert b.element_metadata == {"rack": "B4"}
+    assert a.element is b.element
+    assert a.element.metadata == {"rack": "B4"}
+    with pytest.raises(FrozenInstanceError):
+        a.element.name = "other"  # type: ignore[misc]
+    source["rack"] = "Z"  # the caller's table, mutated after the load
+    assert a.element.metadata == {"rack": "B4"}
 
 
 def test_source_with_neither_members_nor_declaration_raises_not_found(tmp_path: Path) -> None:
@@ -775,11 +791,26 @@ def test_list_labs_is_the_declared_set_not_the_patterns(tmp_path: Path) -> None:
     assert JsonFileLabRepository([tmp_path]).list_labs() == ["b", "unix"]
 
 
-def test_duplicate_element_key_errors(tmp_path: Path) -> None:
+def test_duplicate_element_name_errors_even_with_distinct_ids(tmp_path: Path) -> None:
+    """Identity is the name's slug, so the ``id`` cannot split one element in two.
+
+    Under the old rules ``('dut', 1)`` and ``('dut', 2)`` were two elements and
+    this file loaded; the ``id`` is data now (spec 2026-09-05 §2.1), so the
+    same name twice is a typo whichever ids it carries.
+    """
     _write(
-        tmp_path, _doc(labs={"l": {}}, elements=[_el("dut", ["l"], id=1), _el("dut", ["l"], id=1)])
+        tmp_path, _doc(labs={"l": {}}, elements=[_el("dut", ["l"], id=1), _el("dut", ["l"], id=2)])
     )
-    with pytest.raises(LabRepositoryError, match=r"duplicate element \('dut', 1\)"):
+    match = r"duplicate element 'dut' at elements\[0\] and elements\[1\] — one element, one entry"
+    with pytest.raises(LabRepositoryError, match=match):
+        JsonFileLabRepository([tmp_path]).load_lab("l")
+
+
+def test_elements_that_slug_alike_error_naming_both_spellings(tmp_path: Path) -> None:
+    """Two spellings of one name are one element, and the message shows why."""
+    _write(tmp_path, _doc(labs={"l": {}}, elements=[_el("Server", ["l"]), _el("server", ["l"])]))
+    match = r"elements\[0\] 'Server' and elements\[1\] 'server' both slug to 'server'"
+    with pytest.raises(LabRepositoryError, match=match):
         JsonFileLabRepository([tmp_path]).load_lab("l")
 
 

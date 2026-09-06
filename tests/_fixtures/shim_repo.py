@@ -9,23 +9,21 @@ CREDS = [{"login": "u", "password": "p"}]
 HOSTS = [
     {
         "ip": "10.0.0.1",
-        "element": "dut",
-        "element_id": 1,
+        "element": "dut1",
         "labs": ["east"],
         "creds": CREDS,
         "docker_capable": True,
     },
     {
         "ip": "10.0.0.2",
-        "element": "dut",
-        "element_id": 2,
+        "element": "dut2",
         "labs": ["east", "west"],
         "creds": CREDS,
         "os_type": "shimos",
     },
     {"ip": "10.0.0.3", "element": "box", "labs": ["west"], "creds": CREDS, "os_type": "zephyr"},
 ]
-"""The json backend derives the ids ``dut1``, ``dut2`` (element + element_id) and ``box``."""
+"""The json backend derives the ids ``dut1``, ``dut2`` and ``box`` from the element names."""
 LINKS = [{"endpoints": [{"host": "dut1"}, {"host": "dut2"}]}]
 """Host-only endpoints — the shape tests/unit/config/test_completion_link_ids.py:60-75 loads."""
 

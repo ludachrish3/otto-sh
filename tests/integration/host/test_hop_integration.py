@@ -37,6 +37,7 @@ from otto.logger.mode import LogMode
 from otto.utils import Status
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.fd_watermark import open_fd_count
+from tests._fixtures.labdata import element_for
 from tests.conftest import host_data
 from tests.integration.host._transfer_retry import transfer_with_retry
 
@@ -98,7 +99,7 @@ def _build_host(ne: str, **overrides) -> UnixHost:
     data = host_data(ne)
     return UnixHost(
         ip=data["ip"],
-        element=data["element"],
+        element=element_for(ne),
         creds=[Cred(**c) for c in data["creds"]],
         board=data.get("board"),
         is_virtual=data.get("is_virtual", False),
@@ -138,7 +139,7 @@ async def single_hop_ssh():
     data = host_data("test2")
     h = UnixHost(
         ip=data["ip"],
-        element=data["element"],
+        element=element_for("test2"),
         creds=[Cred(**c) for c in data["creds"]],
         board=data.get("board"),
         is_virtual=True,
@@ -157,7 +158,7 @@ async def single_hop_telnet():
     data = host_data("test2")
     h = UnixHost(
         ip=data["ip"],
-        element=data["element"],
+        element=element_for("test2"),
         creds=[Cred(**c) for c in data["creds"]],
         board=data.get("board"),
         is_virtual=True,
@@ -183,7 +184,7 @@ async def two_hop_ssh():
     test2_data = host_data("test2")
     test2_with_hop = UnixHost(
         ip=test2_data["ip"],
-        element=test2_data["element"],
+        element=element_for("test2"),
         creds=[Cred(**c) for c in test2_data["creds"]],
         board=test2_data.get("board"),
         is_virtual=True,
@@ -199,7 +200,7 @@ async def two_hop_ssh():
     test3_data = host_data("test3")
     h = UnixHost(
         ip=test3_data["ip"],
-        element=test3_data["element"],
+        element=element_for("test3"),
         creds=[Cred(**c) for c in test3_data["creds"]],
         board=test3_data.get("board"),
         is_virtual=True,
@@ -326,7 +327,7 @@ class TestFileTransferThroughHop:
         data = host_data("test2")
         h = UnixHost(
             ip=data["ip"],
-            element=data["element"],
+            element=element_for("test2"),
             creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
             is_virtual=True,
@@ -352,7 +353,7 @@ class TestFileTransferThroughHop:
         data = host_data("test2")
         h = UnixHost(
             ip=data["ip"],
-            element=data["element"],
+            element=element_for("test2"),
             creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
             is_virtual=True,
@@ -383,7 +384,7 @@ class TestFileTransferThroughHop:
         data = host_data("test2")
         h = UnixHost(
             ip=data["ip"],
-            element=data["element"],
+            element=element_for("test2"),
             creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
             is_virtual=True,
@@ -411,7 +412,7 @@ class TestFileTransferThroughHop:
         data = host_data("test2")
         h = UnixHost(
             ip=data["ip"],
-            element=data["element"],
+            element=element_for("test2"),
             creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
             is_virtual=True,
@@ -445,7 +446,7 @@ class TestFileTransferThroughHop:
         data = host_data("test2")
         h = UnixHost(
             ip=data["ip"],
-            element=data["element"],
+            element=element_for("test2"),
             creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
             is_virtual=True,
@@ -528,7 +529,7 @@ def _nc_hop_host() -> UnixHost:
     data = host_data("test2")
     return UnixHost(
         ip=data["ip"],
-        element=data["element"],
+        element=element_for("test2"),
         creds=[Cred(**c) for c in data["creds"]],
         board=data.get("board"),
         is_virtual=True,

@@ -98,20 +98,21 @@ repo a "base" for shared conventions and others its overlays.
 
 ```{doctest}
 >>> from otto.host import UnixHost
+>>> from otto.host.element import Element
 >>> from otto.host.login_proxy import Cred
 >>> from otto.host.options import SshOptions
 >>> host = UnixHost(
 ...     ip='10.10.200.12',
 ...     creds=[Cred(login='admin', password='secret')],
-...     element='lab',
+...     element=Element('lab'),
 ...     ssh_options=SshOptions(port=2222),
 ... )
 >>> host.ssh_options.port
 2222
 ```
 
-Equivalent `lab.json` element — the constructor's `element` is the element's
-`name`, and the rest is its one host entry:
+Equivalent `lab.json` element — the constructor's `Element` carries the
+element's `name`, and the rest is its one host entry:
 
 ```json
 {

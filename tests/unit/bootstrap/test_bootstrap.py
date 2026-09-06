@@ -610,16 +610,17 @@ def test_a_host_built_mid_bootstrap_gets_its_declared_entries(tmp_path, monkeypa
     from inside the initialization window rather than around it.
     """
     body = """
+    from otto.host.element import Element
     from otto.host.factory import create_host_from_dict
 
     _host = create_host_from_dict(
         {
-            "element": "probe-box",
             "os_type": "unix",
             "ip": "10.0.0.9",
             "creds": [{"login": "admin", "password": "admin"}],
         },
         lab_name="bench",
+        element=Element("probe-box"),
     )
     PRODUCTS = [(p.name, p.owner) for p in _host.products]
     DEV_TOOLS = [(t.name, t.owner) for t in _host.dev_tools]

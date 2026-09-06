@@ -43,20 +43,20 @@ def lab_warnings(documents: Documents) -> list[str]:
             for name in names:
                 if element.matches(name):
                     members[name].append(element)
-    # Keyed by ElementKey, not by name: membership is an identity question, and
-    # two elements named ``chassis`` with ids 1 and 2 are two elements. The
-    # last-wins collapse is load-bearing — it is the same rule the multi-source
-    # merge applies (spec 2026-08-27 lab-definition-v2 §6), so a file that
-    # overrides an element by key is compared here as the one element it is,
-    # not as the original and its replacement. Built once per lab rather than
-    # per pair: with N labs the pair loop would otherwise rebuild each map N-1
-    # times over the same members.
+    # Keyed by ``ElementSpec.key`` (the name's slug): membership is an identity
+    # question, and two files may carry the same element. The last-wins collapse
+    # is load-bearing — it is the same rule the multi-source merge applies
+    # (spec 2026-08-27 lab-definition-v2 §6), so a file that overrides an
+    # element by key is compared here as the one element it is, not as the
+    # original and its replacement. Built once per lab rather than per pair:
+    # with N labs the pair loop would otherwise rebuild each map N-1 times over
+    # the same members.
     keyed = {name: {el.key: el for el in members[name]} for name in names}
     for i, first in enumerate(names):
         for second in names[i + 1 :]:
             second_keys = set(keyed[second])
             shared = [el for key, el in keyed[first].items() if key in second_keys]
-            unprotected = sorted(str(el.key) for el in shared if not protected(el))
+            unprotected = sorted(el.key for el in shared if not protected(el))
             if unprotected and _cannot_contend(declared[first], declared[second]):
                 out.append(_disjoint_resources(first, second, unprotected))
     return out
@@ -71,7 +71,7 @@ def protected(element: ElementSpec) -> bool:
     sets say.
 
     ``element.hosts`` are RAW dicts (:class:`~otto.models.lab.ElementSpec`
-    validates them only after :meth:`~otto.models.lab.ElementSpec.flatten`), so
+    leaves them to the host specs, which the loader runs), so
     a ``resources: [""]`` reads truthy here and this returns "protected" for an
     identifier that reserves nothing. That is not this function's to catch: the
     doctor's own verdict table already fails such a file through
@@ -124,12 +124,11 @@ def _disjoint_resources(first: str, second: str, unprotected: list[str]) -> str:
 
     *unprotected* names only the shared elements left unprotected — those with
     no element- or host-level resource of their own (:func:`protected`) —
-    rendered as ``('chassis', 1)`` keys, because two same-named elements with
-    different ids would otherwise print one name twice. On v1 two labs sharing
-    a host shared that host's resources automatically, so reserving either
-    contended correctly. Lab-level resources are declared, never derived
-    (spec §8.1), so that safety net is gone and this is the check that
-    replaces it.
+    rendered as :attr:`~otto.models.lab.ElementSpec.key` slugs, the same token
+    the intersection above keys on. On v1 two labs sharing a host shared that
+    host's resources automatically, so reserving either contended correctly.
+    Lab-level resources are declared, never derived (spec §8.1), so that safety
+    net is gone and this is the check that replaces it.
     """
     return (
         f"labs {first!r} and {second!r} share element(s) {unprotected} that no "

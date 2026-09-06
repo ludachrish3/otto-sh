@@ -107,12 +107,6 @@ class HostSummary:
     ip: str = ""
     """Management address, or ``""`` when the backend does not expose one."""
 
-    element: str = ""
-    """Element name, used to synthesize positional handles (``dut1``)."""
-
-    element_id: int | None = None
-    """Element index within its element group, or None."""
-
     docker_capable: bool = False
     """Whether the host can host containers (drives ``otto docker --on``)."""
 

@@ -13,6 +13,7 @@ import textwrap
 from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.context import OttoContext, set_context
+from otto.host.element import Element
 from tests._fixtures.sutrepo import make_sut_repo
 
 
@@ -44,12 +45,12 @@ def _host(element, lab_name, octet):
 
     return create_host_from_dict(
         {
-            "element": element,
             "os_type": "unix",
             "ip": f"10.0.0.{octet}",
             "creds": [{"login": "admin", "password": "admin"}],
         },
         lab_name=lab_name,
+        element=Element(element),
     )
 
 

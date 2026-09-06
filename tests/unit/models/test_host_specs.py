@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from otto.host.command_frame import ZephyrFrame
 from otto.host.docker_host import DockerContainerHost  # noqa: F401 — imported for the sweep below
+from otto.host.element import Element
 from otto.host.embedded_filesystem import NoFileSystem
 from otto.host.embedded_host import EmbeddedHost, ZephyrHost  # noqa: F401 — same
 from otto.host.factory import create_host_from_dict
@@ -30,7 +31,7 @@ from otto.models.host import (
 
 def _minimal_unix_kwargs() -> dict:
     """Smallest kwargs that build a valid ``UnixHostSpec``."""
-    return {"ip": "10.0.0.1", "element": "lab", "creds": [{"login": "u", "password": "p"}]}
+    return {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]}
 
 
 def test_toolchain_spec_defaults_match_runtime():
@@ -83,10 +84,10 @@ def test_toolchain_tool_spec_forbids_unknown():
         ToolchainSpec(tools=[{"name": "gdb", "source": "/a", "dst": "/b"}])
 
 
-def test_hostspec_requires_ip_and_element():
-    with pytest.raises(ValidationError, match=r"element\s+Field required") as exc:
-        HostSpec(ip="10.0.0.1")  # missing element
-    assert "element" in str(exc.value)
+def test_hostspec_requires_ip():
+    with pytest.raises(ValidationError, match=r"ip\s+Field required") as exc:
+        HostSpec()  # missing ip — the only required field a host entry has
+    assert "ip" in str(exc.value)
 
 
 def test_hostspec_forbids_unknown_field():
@@ -94,14 +95,13 @@ def test_hostspec_forbids_unknown_field():
     # is a substring of element="lab"'s input_value echo; only the ^lab$ line
     # pins the unknown key itself.
     with pytest.raises(ValidationError, match=r"(?m)^lab\n\s+Extra inputs are not permitted"):
-        HostSpec(ip="10.0.0.1", element="lab", lab=["x"])
+        HostSpec(ip="10.0.0.1", lab=["x"])
 
 
 @pytest.mark.parametrize(("raw", "expected"), [(3, 3), ("3", 3), ("R3", "R3")])
 def test_hostspec_site_and_rack_coerce_digit_strings(raw, expected):
     spec = UnixHostSpec(
         ip="10.0.0.1",
-        element="lab",
         creds=[{"login": "u", "password": "p"}],
         site=raw,
         rack=raw,
@@ -109,35 +109,36 @@ def test_hostspec_site_and_rack_coerce_digit_strings(raw, expected):
     )
     assert spec.site == expected
     assert spec.rack == expected
-    host = spec.to_host()
+    host = spec.to_host(element=Element("lab"))
     assert (host.site, host.rack, host.shelf) == (expected, expected, 2)
 
 
 def test_location_fields_default_none_and_stay_out_of_the_id():
     spec = UnixHostSpec(
         ip="10.0.0.1",
-        element="lab",
         creds=[{"login": "u", "password": "p"}],
         board="cx",
         slot=1,
     )
-    host = spec.to_host()
+    host = spec.to_host(element=Element("lab"))
     assert (host.site, host.rack, host.shelf) == (None, None, None)
     assert host.id == "lab_cx1"
 
 
 def test_hostspec_shelf_rejects_negative():
     with pytest.raises(ValidationError, match="shelf"):
-        UnixHostSpec(
-            ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}], shelf=-1
-        )
+        UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}], shelf=-1)
 
 
 def test_common_host_kwargs_omits_unset():
-    spec = HostSpec(ip="10.0.0.1", element="lab")
+    spec = HostSpec(
+        ip="10.0.0.1",
+    )
     kw = spec._common_host_kwargs()
     assert kw["ip"] == "10.0.0.1"
-    assert kw["element"] == "lab"
+    # ``element`` is not a plain pass-through field any more: the factory builds
+    # the ``Element`` and hands it to ``to_host(element=...)``.
+    assert "element" not in kw
     # unset common fields are omitted so the host class's own default applies
     for absent in ("os_name", "metadata", "telnet_options", "snmp", "toolchain"):
         assert absent not in kw
@@ -146,7 +147,6 @@ def test_common_host_kwargs_omits_unset():
 def test_common_host_kwargs_builds_nested_when_set():
     spec = HostSpec(
         ip="10.0.0.1",
-        element="lab",
         metadata={"owner": "infra"},
         telnet_options={"port": 99},
         toolchain={"sysroot": "/opt"},
@@ -162,13 +162,15 @@ def test_common_host_kwargs_builds_nested_when_set():
 
 def test_unix_spec_requires_creds():
     with pytest.raises(ValidationError, match=r"creds\s+Field required") as exc:
-        UnixHostSpec(ip="10.0.0.1", element="lab")  # creds required for unix
+        UnixHostSpec(
+            ip="10.0.0.1",
+        )  # creds required for unix
     assert "creds" in str(exc.value)
 
 
 def test_unix_spec_builds_unix_host_with_defaults():
-    spec = UnixHostSpec(ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}])
-    host = spec.to_host()
+    spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}])
+    host = spec.to_host(element=Element("lab"))
     assert isinstance(host, UnixHost)
     assert host.ip == "10.0.0.1"
     assert host.term == "ssh"
@@ -180,7 +182,7 @@ def test_unix_spec_builds_unix_host_with_defaults():
 def test_hostspec_log_default_is_normal_on_spec_and_runtime():
     spec = UnixHostSpec.model_validate(_minimal_unix_kwargs())
     assert spec.log is LogMode.NORMAL
-    assert spec.to_host().log is LogMode.NORMAL
+    assert spec.to_host(element=Element("lab")).log is LogMode.NORMAL
 
 
 def test_hostspec_log_rejects_bool_and_names_the_modes():
@@ -202,13 +204,12 @@ def test_hostspec_log_accepts_logmode_string():
 def test_unix_spec_builds_nested_options_and_snmp():
     spec = UnixHostSpec(
         ip="10.0.0.1",
-        element="lab",
         creds=[{"login": "u", "password": "p"}],
         ssh_options={"port": 2222, "extra": {"x": 1}},
         snmp={"oids": ["1.3.6.1.2.1.1.3.0"], "port": 16101},
         metadata={"owner": "infra"},
     )
-    host = spec.to_host()
+    host = spec.to_host(element=Element("lab"))
     assert host.ssh_options.port == 2222
     assert host.ssh_options.extra == {"x": 1}
     assert host.snmp is not None
@@ -220,30 +221,29 @@ def test_unix_spec_rejects_embedded_only_field():
     with pytest.raises(ValidationError, match=r"filesystem\s+Extra inputs are not permitted"):
         UnixHostSpec(
             ip="1.1.1.1",
-            element="lab",
             creds=[{"login": "u", "password": "p"}],
             filesystem="littlefs",
         )
 
 
 def test_embedded_spec_builds_with_command_frame():
-    spec = EmbeddedHostSpec(ip="192.0.2.1", element="dut", command_frame="zephyr")
-    host = spec.to_host()
+    spec = EmbeddedHostSpec(ip="192.0.2.1", command_frame="zephyr")
+    host = spec.to_host(element=Element("lab"))
     assert isinstance(host, EmbeddedHost)
     assert host.os_type == "embedded"
     assert isinstance(host.command_frame, ZephyrFrame)
 
 
 def test_embedded_spec_absent_filesystem_keeps_runtime_default():
-    spec = EmbeddedHostSpec(ip="192.0.2.1", element="dut", command_frame="zephyr")
-    host = spec.to_host()
+    spec = EmbeddedHostSpec(ip="192.0.2.1", command_frame="zephyr")
+    host = spec.to_host(element=Element("lab"))
     assert isinstance(host.filesystem, NoFileSystem)  # EmbeddedHost default
 
 
 def test_embedded_spec_rejects_unknown_filesystem():
     # Now caught at validate-time by the field_validator, not at to_host().
     with pytest.raises(ValidationError, match="is not a registered filesystem") as exc:
-        EmbeddedHostSpec(ip="192.0.2.1", element="dut", filesystem="bogusfs")
+        EmbeddedHostSpec(ip="192.0.2.1", filesystem="bogusfs")
     assert "bogusfs" in str(exc.value)
 
 
@@ -251,20 +251,18 @@ def test_embedded_spec_accepts_registered_filesystem():
     # A registered filesystem name validates (resolved to an instance at build).
     spec = EmbeddedHostSpec(
         ip="192.0.2.1",
-        element="dut",
         command_frame="zephyr",
         filesystem="none",
     )
     assert spec.filesystem == "none"
     # the validated name still resolves to its instance through build_filesystem
-    assert isinstance(spec.to_host().filesystem, NoFileSystem)
+    assert isinstance(spec.to_host(element=Element("lab")).filesystem, NoFileSystem)
 
 
 def test_hostspec_rejects_unregistered_command_frame():
     with pytest.raises(ValidationError, match="is not a registered frame") as exc:
         UnixHostSpec(
             ip="10.0.0.1",
-            element="lab",
             creds=[{"login": "u", "password": "p"}],
             command_frame="nonesuch",
         )
@@ -273,7 +271,7 @@ def test_hostspec_rejects_unregistered_command_frame():
 
 def test_embedded_spec_rejects_unix_only_field():
     with pytest.raises(ValidationError, match=r"docker_capable\s+Extra inputs are not permitted"):
-        EmbeddedHostSpec(ip="192.0.2.1", element="dut", docker_capable=True)
+        EmbeddedHostSpec(ip="192.0.2.1", docker_capable=True)
 
 
 def test_host_resources_reach_the_runtime_host_as_a_frozenset_copy():
@@ -284,11 +282,11 @@ def test_host_resources_reach_the_runtime_host_as_a_frozenset_copy():
     wide pattern is satisfiable by the test's own names.
     """
     spec = UnixHostSpec(**_minimal_unix_kwargs(), resources=["slot-1", "slot-1"])
-    host = spec.to_host()
+    host = spec.to_host(element=Element("lab"))
     assert host.resources == frozenset({"slot-1"})
     assert isinstance(host.resources, frozenset)
 
-    bare = UnixHostSpec(**_minimal_unix_kwargs()).to_host()
+    bare = UnixHostSpec(**_minimal_unix_kwargs()).to_host(element=Element("x"))
     assert bare.resources == frozenset()
 
     with pytest.raises(ValidationError, match=r"resources must be non-empty strings"):
@@ -341,7 +339,7 @@ def _basehost_contract_fields() -> list[str]:
 
 def test_every_host_class_declares_every_basehost_contract_field():
     """Spec 2026-08-28 three-level-reservations §3: every host answers ``.resources``
-    and ``.element_resources`` — generalised to the whole ``BaseHost`` contract.
+    and ``.element`` — generalised to the whole ``BaseHost`` contract.
 
     ``BaseHost`` is NOT a dataclass, so a bare ``resources: frozenset[str]``
     annotation is a contract the type checker credits to every subclass while
@@ -367,7 +365,7 @@ def test_every_host_class_declares_every_basehost_contract_field():
     }, sorted(c.__name__ for c in classes)
     contract = _basehost_contract_fields()
     # Nor let the CONTRACT collapse: an empty annotation set would sweep nothing.
-    assert {"resources", "element_resources", "lab_info"} <= set(contract), contract
+    assert {"resources", "element", "lab_info"} <= set(contract), contract
     # Collected, not asserted per class: a gap is usually the SAME missing
     # field on every host class, and one assertion per class would report the
     # alphabetically first and hide the other four.
@@ -378,16 +376,15 @@ def test_every_host_class_declares_every_basehost_contract_field():
         if name not in {f.name for f in dataclasses.fields(cls)}
     ]
     assert not missing, f"host classes missing a BaseHost contract field: {missing}"
-    # The default_factory, not just the field: both sets are read by iterating,
-    # and neither is normalised on assignment. NOTE (no code here): a plain
-    # ``str`` assigned to ``element_resources`` would satisfy every type check
-    # this sweep can make and then iterate as its CHARACTERS at the gate — a
-    # requirement of one-letter resources. The factory is the one place that
-    # could reject or normalise it.
+    # The default_factory, not just the field: the set is read by iterating and
+    # is not normalised on assignment. NOTE (no code here): a plain ``str``
+    # assigned to ``resources`` would satisfy every type check this sweep can
+    # make and then iterate as its CHARACTERS at the gate — a requirement of
+    # one-letter resources. The factory is the one place that could reject or
+    # normalise it. (The element's own set is normalised by ``Element`` itself.)
     for cls in classes:
         by_name = {f.name: f for f in dataclasses.fields(cls)}
-        for name in ("resources", "element_resources"):
-            assert by_name[name].default_factory is frozenset, f"{cls.__name__}.{name}"
+        assert by_name["resources"].default_factory is frozenset, cls.__name__
 
 
 # Runtime host init fields applied by overridable repo logic (NOT lab data) —
@@ -395,21 +392,20 @@ def test_every_host_class_declares_every_basehost_contract_field():
 # ``products`` is user product data, independent of lab data; it is attached to
 # hosts by repo logic, never declared in lab.json. ``dev_tools`` is the same
 # category for the same reason — repo-defined tooling attached by a registered
-# provider at ingest, deliberately not declarable in lab data. ``element_metadata``
-# and ``lab_info`` are stamped by the element/lab layers above the host entry,
-# never declared on it. ``inventory_ref`` is the loader-stamped provenance of a
-# referenced entry (spec §7) — never declared on the entry itself.
-# ``element_resources`` is the element's reservation set (spec 2026-08-28
-# three-level-reservations §3), stamped by the loader like ``element_metadata``;
-# the entry declares only its OWN ``resources``, which IS a spec field.
+# provider at ingest, deliberately not declarable in lab data. ``lab_info`` is
+# stamped by the lab layer above the host entry, never declared on it.
+# ``inventory_ref`` is the loader-stamped provenance of a referenced entry
+# (spec §7) — never declared on the entry itself.
+# ``element`` joins them since spec 2026-09-05 §2.6: it is the FACTORY's own
+# argument, built once per element by the loader and shared by every host of
+# it, so a host entry declares no part of it and the spec has no such field.
 _NON_SPEC_RUNTIME_FIELDS = frozenset(
     {
         "products",
         "dev_tools",
-        "element_metadata",
-        "element_resources",
         "lab_info",
         "inventory_ref",
+        "element",
     }
 )
 # Spec-only fields: on the lab-data entry but deliberately NOT a constructor
@@ -442,46 +438,42 @@ def test_spec_inventory_key_never_reaches_the_host():
     ``_SPEC_ONLY_FIELDS`` above removes it from the drift guard's coverage, so this
     pins the property that matters directly: it must never become a host attribute.
     """
-    spec = UnixHostSpec(
-        ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}], inventory="k"
-    )
-    host = spec.to_host()
+    spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}], inventory="k")
+    host = spec.to_host(element=Element("lab"))
     assert not hasattr(host, "inventory")
 
 
 def test_hostspec_interfaces_default_empty_and_passes_to_host():
-    spec = UnixHostSpec(ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}])
+    spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}])
     assert spec.interfaces == {}
-    assert spec.to_host().interfaces == {}
+    assert spec.to_host(element=Element("lab")).interfaces == {}
 
 
 def test_hostspec_interfaces_resolve_on_built_host():
     spec = UnixHostSpec(
         ip="10.0.0.1",
-        element="lab",
         creds=[{"login": "u", "password": "p"}],
         interfaces={"mgmt": "10.9.9.9"},
     )
-    host = spec.to_host()
+    host = spec.to_host(element=Element("lab"))
     assert host.interfaces == {"mgmt": Interface(ip="10.9.9.9")}
     assert host.address_for("mgmt") == "10.9.9.9"
 
 
 def test_hostspec_interfaces_accepts_ipv6():
-    spec = HostSpec(ip="10.0.0.1", element="lab", interfaces={"v6": "2001:db8::1"})
+    spec = HostSpec(ip="10.0.0.1", interfaces={"v6": "2001:db8::1"})
     assert spec.interfaces["v6"].ip == "2001:db8::1"
 
 
 def test_hostspec_interfaces_rejects_non_ip_value():
     with pytest.raises(ValidationError, match="is not a valid IP") as exc:
-        HostSpec(ip="10.0.0.1", element="lab", interfaces={"mgmt": "not-an-ip"})
+        HostSpec(ip="10.0.0.1", interfaces={"mgmt": "not-an-ip"})
     assert "mgmt" in str(exc.value)
 
 
 def test_unix_to_host_matches_factory():
     d = {
         "ip": "10.10.200.11",
-        "element": "test1",
         "os_type": "unix",
         "board": "qemu",
         "term": "ssh",
@@ -491,8 +483,8 @@ def test_unix_to_host_matches_factory():
         "metadata": {"owner": "infra"},
         "ssh_options": {"port": 2200},
     }
-    spec_host = UnixHostSpec.model_validate(d).to_host()
-    factory_host = create_host_from_dict(d)
+    spec_host = UnixHostSpec.model_validate(d).to_host(element=Element("test1"))
+    factory_host = create_host_from_dict(d, element=Element("test1"))
     for attr in (
         "ip",
         "element",
@@ -516,13 +508,12 @@ def test_unix_to_host_matches_factory():
 def test_embedded_to_host_matches_factory():
     d = {
         "ip": "192.0.2.1",
-        "element": "dut",
         "os_type": "embedded",
         "command_frame": "zephyr",
         "telnet_options": {"port": 9023},
     }
-    spec_host = EmbeddedHostSpec.model_validate(d).to_host()
-    factory_host = create_host_from_dict(d)
+    spec_host = EmbeddedHostSpec.model_validate(d).to_host(element=Element("dut"))
+    factory_host = create_host_from_dict(d, element=Element("dut"))
     assert type(spec_host) is type(factory_host)
     assert spec_host.telnet_options.port == factory_host.telnet_options.port == 9023
     assert type(spec_host.command_frame) is type(factory_host.command_frame)
@@ -533,19 +524,18 @@ def test_unix_spec_accepts_command_frame_string():
 
     spec = UnixHostSpec(
         ip="10.0.0.1",
-        element="lab",
         creds=[{"login": "u", "password": "p"}],
         command_frame="bash",
     )
-    host = spec.to_host()
+    host = spec.to_host(element=Element("lab"))
     assert isinstance(host.command_frame, BashFrame)
 
 
 def test_unix_spec_omits_command_frame_when_unset():
-    spec = UnixHostSpec(ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}])
+    spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}])
     # unset -> not passed -> UnixHost default (None -> SessionManager BashFrame)
     assert "command_frame" not in spec._common_host_kwargs()
-    assert spec.to_host().command_frame is None
+    assert spec.to_host(element=Element("lab")).command_frame is None
 
 
 def test_spec_power_control_coerces_through_to_host():
@@ -554,7 +544,6 @@ def test_spec_power_control_coerces_through_to_host():
 
     spec = UnixHostSpec(
         ip="10.0.0.1",
-        element="lab",
         creds=[{"login": "u", "password": "p"}],
         power_control={
             "type": "command",
@@ -563,7 +552,7 @@ def test_spec_power_control_coerces_through_to_host():
             "controller": "hyp",
         },
     )
-    host = spec.to_host()
+    host = spec.to_host(element=Element("lab"))
     assert isinstance(host.power_control, CommandPowerController)
     assert host.power_control.controller == "hyp"
 
@@ -572,9 +561,9 @@ def test_spec_unset_power_control_defaults_none():
     """Unset power_control falls through to the runtime host default; products is
     not a spec field, so the host keeps its own empty default.
     """
-    host = UnixHostSpec(
-        ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}]
-    ).to_host()
+    host = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}]).to_host(
+        element=Element("x")
+    )
     assert host.power_control is None
     assert host.products == []
 
@@ -584,9 +573,7 @@ def test_spec_rejects_products_as_lab_data():
     declare it (extra='forbid' rejects the key).
     """
     with pytest.raises(ValidationError, match=r"products\s+Extra inputs are not permitted"):
-        UnixHostSpec(
-            ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}], products=[]
-        )
+        UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}], products=[])
 
 
 def test_registered_pairs_drift_guard():
@@ -611,21 +598,22 @@ def test_registered_pairs_drift_guard():
 
 class TestMenuValidation:
     def test_unix_default_menus(self):
-        spec = UnixHostSpec(ip="10.0.0.1", element="x", creds=[{"login": "u", "password": "p"}])
+        spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}])
         assert spec.valid_terms == ["ssh", "telnet"]
         assert spec.valid_transfers == ["scp", "sftp", "ftp", "nc"]
         assert spec.term is None
         assert spec.transfer is None
 
     def test_embedded_default_menus(self):
-        spec = EmbeddedHostSpec(ip="10.0.0.1", element="x")
+        spec = EmbeddedHostSpec(
+            ip="10.0.0.1",
+        )
         assert spec.valid_terms == ["telnet"]
         assert spec.valid_transfers == ["console"]
 
     def test_scalar_coerces_to_one_element_menu(self):
         spec = UnixHostSpec(
             ip="10.0.0.1",
-            element="x",
             creds=[{"login": "u", "password": "p"}],
             valid_terms="ssh",
             valid_transfers="scp",
@@ -636,7 +624,6 @@ class TestMenuValidation:
     def test_list_menu_preserved_in_order(self):
         spec = UnixHostSpec(
             ip="10.0.0.1",
-            element="x",
             creds=[{"login": "u", "password": "p"}],
             valid_transfers=["nc", "scp"],
         )
@@ -646,7 +633,6 @@ class TestMenuValidation:
         with pytest.raises(ValueError, match="not a registered term backend"):
             UnixHostSpec(
                 ip="1.1.1.1",
-                element="x",
                 creds=[{"login": "u", "password": "p"}],
                 valid_terms=["bogus"],
             )
@@ -655,7 +641,6 @@ class TestMenuValidation:
         with pytest.raises(ValueError, match="not a registered transfer backend"):
             UnixHostSpec(
                 ip="1.1.1.1",
-                element="x",
                 creds=[{"login": "u", "password": "p"}],
                 valid_transfers=["bogus"],
             )
@@ -664,41 +649,36 @@ class TestMenuValidation:
         with pytest.raises(ValueError, match="not valid on a unix host"):
             UnixHostSpec(
                 ip="1.1.1.1",
-                element="x",
                 creds=[{"login": "u", "password": "p"}],
                 valid_transfers=["console"],
             )
 
     def test_embedded_rejects_unix_only_transfer_in_menu(self):
         with pytest.raises(ValueError, match="not valid on an embedded host"):
-            EmbeddedHostSpec(ip="1.1.1.1", element="x", valid_transfers=["scp"])
+            EmbeddedHostSpec(ip="1.1.1.1", valid_transfers=["scp"])
 
     def test_empty_menu_rejected(self):
         with pytest.raises(ValueError, match="must be a non-empty"):
             UnixHostSpec(
                 ip="1.1.1.1",
-                element="x",
                 creds=[{"login": "u", "password": "p"}],
                 valid_transfers=[],
             )
 
     def test_embedded_rejects_unix_only_term_in_menu(self):
         with pytest.raises(ValueError, match=r"term 'ssh' is not valid on an embedded host"):
-            EmbeddedHostSpec(ip="1.1.1.1", element="e", command_frame="zephyr", valid_terms=["ssh"])
+            EmbeddedHostSpec(ip="1.1.1.1", command_frame="zephyr", valid_terms=["ssh"])
 
     def test_unix_accepts_telnet_term(self):
         spec = UnixHostSpec(
             ip="1.1.1.1",
-            element="e",
             creds=[{"login": "root", "password": "x"}],
             valid_terms=["telnet"],
         )
         assert spec.valid_terms == ["telnet"]
 
     def test_embedded_accepts_telnet_term(self):
-        spec = EmbeddedHostSpec(
-            ip="1.1.1.1", element="e", command_frame="zephyr", valid_terms=["telnet"]
-        )
+        spec = EmbeddedHostSpec(ip="1.1.1.1", command_frame="zephyr", valid_terms=["telnet"])
         assert spec.valid_terms == ["telnet"]
 
 
@@ -706,21 +686,19 @@ class TestPreferenceResolution:
     def test_preference_in_menu_becomes_active(self):
         spec = UnixHostSpec(
             ip="1.1.1.1",
-            element="e",
             creds=[{"login": "root", "password": "x"}],
             valid_transfers=["scp", "sftp"],
         )
-        host = spec.to_host(preferences={"transfer": ["sftp"]})
+        host = spec.to_host(element=Element("lab"), preferences={"transfer": ["sftp"]})
         assert host.transfer == "sftp"
 
     def test_preference_out_of_menu_is_skipped(self):
         spec = UnixHostSpec(
             ip="1.1.1.1",
-            element="e",
             creds=[{"login": "root", "password": "x"}],
             valid_transfers=["scp", "nc"],
         )
-        host = spec.to_host(preferences={"transfer": ["sftp", "nc"]})
+        host = spec.to_host(element=Element("lab"), preferences={"transfer": ["sftp", "nc"]})
         # sftp not in menu -> skipped; nc is the first preference in the menu
         assert host.transfer == "nc"
 
@@ -728,19 +706,17 @@ class TestPreferenceResolution:
         # Product preference now wins over the lab pin when the preference is in menu.
         spec = UnixHostSpec(
             ip="1.1.1.1",
-            element="e",
             creds=[{"login": "root", "password": "x"}],
             valid_transfers=["scp", "sftp"],
             transfer="scp",
         )
-        host = spec.to_host(preferences={"transfer": ["sftp"]})
+        host = spec.to_host(element=Element("lab"), preferences={"transfer": ["sftp"]})
         assert host.transfer == "sftp"
 
     def test_pin_still_validated_when_preference_overrides(self):
         # A bad lab pin is still fail-loud even when a preference would override it.
         spec = UnixHostSpec(
             ip="1.1.1.1",
-            element="e",
             creds=[{"login": "root", "password": "x"}],
             valid_transfers=["scp", "sftp"],
             transfer="nc",
@@ -748,29 +724,27 @@ class TestPreferenceResolution:
         import pytest
 
         with pytest.raises(ValueError, match="transfer 'nc' is not in"):
-            spec.to_host(preferences={"transfer": ["sftp"]})
+            spec.to_host(element=Element("lab"), preferences={"transfer": ["sftp"]})
 
     def test_no_preference_uses_menu_first(self):
         spec = UnixHostSpec(
             ip="1.1.1.1",
-            element="e",
             creds=[{"login": "root", "password": "x"}],
             valid_terms=["telnet", "ssh"],
         )
-        host = spec.to_host()
+        host = spec.to_host(element=Element("lab"))
         assert host.term == "telnet"
 
 
 class TestImpairerValidation:
     def test_default_menu_is_netem(self) -> None:
-        spec = UnixHostSpec(ip="1.1.1.1", element="x", creds=[{"login": "u", "password": "p"}])
+        spec = UnixHostSpec(ip="1.1.1.1", creds=[{"login": "u", "password": "p"}])
         assert spec.valid_impairers == ["netem"]
         assert spec.impairer is None  # pin unset; resolved at to_host
 
     def test_scalar_impairer_coerces_to_one_element_menu(self) -> None:
         spec = UnixHostSpec(
             ip="1.1.1.1",
-            element="x",
             creds=[{"login": "u", "password": "p"}],
             valid_impairers="netem",
         )
@@ -780,7 +754,6 @@ class TestImpairerValidation:
         with pytest.raises(ValueError, match="not a registered impairer"):
             UnixHostSpec(
                 ip="1.1.1.1",
-                element="x",
                 creds=[{"login": "u", "password": "p"}],
                 valid_impairers=["bogus"],
             )
@@ -793,7 +766,6 @@ class TestImpairerValidation:
         with pytest.raises(ValueError, match="not valid on a unix host"):
             UnixHostSpec(
                 ip="1.1.1.1",
-                element="x",
                 creds=[{"login": "u", "password": "p"}],
                 valid_impairers=["embedded-only"],
             )
@@ -802,7 +774,6 @@ class TestImpairerValidation:
         with pytest.raises(ValueError, match="must be a non-empty"):
             UnixHostSpec(
                 ip="1.1.1.1",
-                element="x",
                 creds=[{"login": "u", "password": "p"}],
                 valid_impairers=[],
             )
@@ -810,16 +781,15 @@ class TestImpairerValidation:
     def test_pin_out_of_menu_rejected_at_to_host(self) -> None:
         spec = UnixHostSpec(
             ip="1.1.1.1",
-            element="x",
             creds=[{"login": "u", "password": "p"}],
             impairer="fake",
         )
         with pytest.raises(ValueError, match="impairer 'fake' is not in"):
-            spec.to_host()
+            spec.to_host(element=Element("lab"))
 
     def test_to_host_resolves_family_default(self) -> None:
-        spec = UnixHostSpec(ip="1.1.1.1", element="x", creds=[{"login": "u", "password": "p"}])
-        assert spec.to_host().impairer == "netem"
+        spec = UnixHostSpec(ip="1.1.1.1", creds=[{"login": "u", "password": "p"}])
+        assert spec.to_host(element=Element("lab")).impairer == "netem"
 
     def test_preference_beats_default(self) -> None:
         class _Fake(LinkImpairer):
@@ -828,15 +798,14 @@ class TestImpairerValidation:
         register_impairer("fake", _Fake)
         spec = UnixHostSpec(
             ip="1.1.1.1",
-            element="x",
             creds=[{"login": "u", "password": "p"}],
             valid_impairers=["netem", "fake"],
         )
-        host = spec.to_host(preferences={"impairer": ["fake"]})
+        host = spec.to_host(element=Element("lab"), preferences={"impairer": ["fake"]})
         assert host.impairer == "fake"
 
 
-CRED_BASE = {"ip": "10.0.0.1", "element": "e1"}
+CRED_BASE = {"ip": "10.0.0.1"}
 
 
 def _cred_spec(creds, **extra):
@@ -846,7 +815,7 @@ def _cred_spec(creds, **extra):
 class TestCredSpec:
     def test_creds_list_minimal(self):
         spec = _cred_spec([{"login": "admin", "password": "pw"}])
-        host = spec.to_host()
+        host = spec.to_host(element=Element("lab"))
         assert host.creds[0].login == "admin"
         assert host.creds[0].password == "pw"
 
@@ -857,7 +826,7 @@ class TestCredSpec:
                 {"login": "mysql", "proxy": "su", "via": "admin", "params": {"svc": "db"}},
             ]
         )
-        mysql = spec.to_host().creds[1]
+        mysql = spec.to_host(element=Element("lab")).creds[1]
         assert (mysql.proxy, mysql.via, mysql.params) == ("su", "admin", {"svc": "db"})
 
     def test_creds_legacy_dict_rejected_with_migration_hint(self):
@@ -914,7 +883,6 @@ class TestInterfaceSpec:
     def _host(self, interfaces: object) -> dict:
         return {
             "ip": "192.0.2.1",
-            "element": "iface-host",
             "creds": [{"login": "u", "password": "p"}],
             "interfaces": interfaces,
         }
@@ -938,7 +906,9 @@ class TestInterfaceSpec:
             UnixHostSpec.model_validate(self._host({"eth1": {"ip": "10.0.0.5", "mac": "x"}}))
 
     def test_runtime_host_gets_interface_objects(self):
-        host = UnixHostSpec.model_validate(self._host({"eth1": "10.0.0.5"})).to_host()
+        host = UnixHostSpec.model_validate(self._host({"eth1": "10.0.0.5"})).to_host(
+            element=Element("x")
+        )
         assert host.interfaces["eth1"] == Interface(ip="10.0.0.5")
 
     def test_subnet_optional_and_parsed(self):
@@ -973,5 +943,5 @@ class TestInterfaceSpec:
     def test_runtime_interface_carries_subnet(self):
         host = UnixHostSpec.model_validate(
             self._host({"eth1": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"}})
-        ).to_host()
+        ).to_host(element=Element("x"))
         assert host.interfaces["eth1"] == Interface(ip="192.168.1.11", subnet="192.168.1.0/24")

@@ -1,5 +1,9 @@
 # Lab definition v2 — labs, elements, metadata, and the strictness posture
 
+**Superseded (2026-09-05):** id composition, display naming, and the flat
+element fields are replaced by `2026-09-05-element-object-design.md`; this
+document is history.
+
 **Date:** 2026-08-27
 **Status:** Designed (this session); awaiting implementation plan
 **Depends on:** nothing

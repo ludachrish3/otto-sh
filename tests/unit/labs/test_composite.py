@@ -12,7 +12,9 @@ import pytest
 
 from otto.config.lab import Lab
 from otto.examples.lab_repository import ExampleLabRepository
+from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
+from otto.host.local_host import LocalHost
 from otto.labs import (
     CompositeLabRepository,
     HostSummary,
@@ -26,8 +28,9 @@ from otto.testing import assert_lab_repository_conforms
 _CREDS = [{"login": "u", "password": "p"}]
 
 
-def _host(element: str, ip: str) -> dict:
-    return {"ip": ip, "element": element, "creds": [{"login": "u", "password": "p"}]}
+def _element(name: str, ip: str) -> dict:
+    """One :class:`~otto.examples.lab_repository.ExampleLabRepository` element dict."""
+    return {"name": name, "hosts": [{"ip": ip, "creds": _CREDS}]}
 
 
 def _composite(*labeled: tuple) -> CompositeLabRepository:
@@ -50,12 +53,14 @@ def _composite(*labeled: tuple) -> CompositeLabRepository:
 
 
 def _h(element, ip, element_id=None, board=None):
-    d = {"ip": ip, "element": element, "creds": _CREDS}
-    if element_id is not None:
-        d["element_id"] = element_id
+    """An element dict carrying one host — the ``id``/``board`` variants of :func:`_element`."""
+    host = {"ip": ip, "creds": _CREDS}
     if board is not None:
-        d["board"] = board
-    return d
+        host["board"] = board
+    el = {"name": element, "hosts": [host]}
+    if element_id is not None:
+        el["id"] = element_id
+    return el
 
 
 def _comp(*sources):
@@ -69,8 +74,8 @@ def _comp(*sources):
 
 def test_union_of_disjoint_sources() -> None:
     comp = _composite(
-        ("r/global", {"site": [_host("alt1", "10.0.0.1")]}),
-        ("r/virtual", {"site": [_host("test2", "10.0.0.2")]}),
+        ("r/global", {"site": [_element("alt1", "10.0.0.1")]}),
+        ("r/virtual", {"site": [_element("test2", "10.0.0.2")]}),
     )
     lab = comp.load_lab("site")
     assert set(lab.hosts) == {"alt1", "test2"}
@@ -80,8 +85,8 @@ def test_union_of_disjoint_sources() -> None:
 
 def test_later_source_overrides_wholesale_and_warns(caplog) -> None:
     comp = _composite(
-        ("r/global", {"site": [_host("alt1", "10.0.0.1")]}),
-        ("r/virtual", {"site": [_host("alt1", "10.9.9.9")]}),
+        ("r/global", {"site": [_element("alt1", "10.0.0.1")]}),
+        ("r/virtual", {"site": [_element("alt1", "10.9.9.9")]}),
     )
     with caplog.at_level(logging.WARNING, logger="otto.labs.composite"):
         lab = comp.load_lab("site")
@@ -91,10 +96,36 @@ def test_later_source_overrides_wholesale_and_warns(caplog) -> None:
     # that was replaced (spec §6), and restating the id would hide that its
     # siblings went with it.
     assert any(
-        "('alt1', None)" in m and "'site'" in m and "r/virtual" in m and "r/global" in m
+        "element 'alt1'" in m and "'site'" in m and "r/virtual" in m and "r/global" in m
         for m in msgs
     )
     assert any("overrides" in m for m in msgs)
+
+
+def test_two_spellings_of_one_element_across_sources_replace_rather_than_collide(
+    caplog,
+) -> None:
+    """The merge key is the element SLUG, so ``Alt1`` and ``alt1`` are one element.
+
+    Every other cross-source pair in this file spells its element identically,
+    where a key of ``element.name`` reads the same as one of ``element.slug``.
+    Here the two diverge, and keying by the raw name does not merely miss the
+    replacement: both entries derive the host id ``alt1`` (an id's prefix IS
+    its element's slug), so the second one lands on an occupied id and the
+    merge raises a cross-element collision instead of overriding.
+    """
+    comp = _composite(
+        ("r/global", {"site": [_element("Alt1", "10.0.0.1")]}),
+        ("r/virtual", {"site": [_element("alt1", "10.9.9.9")]}),
+    )
+    with caplog.at_level(logging.WARNING, logger="otto.labs.composite"):
+        lab = comp.load_lab("site")
+    assert set(lab.hosts) == {"alt1"}
+    assert lab.hosts["alt1"].ip == "10.9.9.9", "the later source replaced the element wholesale"
+    msgs = [r.getMessage() for r in caplog.records]
+    # The warning names the shared slug — the token that made them one element —
+    # not either source's spelling of it.
+    assert any("element 'alt1'" in m and "r/virtual" in m and "r/global" in m for m in msgs), msgs
 
 
 def test_no_element_warning_without_collision(caplog) -> None:
@@ -107,8 +138,8 @@ def test_no_element_warning_without_collision(caplog) -> None:
     really did land in one lab rather than one source being skipped.
     """
     comp = _composite(
-        ("r/global", {"site": [_host("alt1", "10.0.0.1")]}),
-        ("r/virtual", {"site": [_host("test2", "10.0.0.2")]}),
+        ("r/global", {"site": [_element("alt1", "10.0.0.1")]}),
+        ("r/virtual", {"site": [_element("test2", "10.0.0.2")]}),
     )
     with caplog.at_level(logging.WARNING, logger="otto.labs.composite"):
         lab = comp.load_lab("site")
@@ -125,16 +156,16 @@ def test_declared_resources_come_from_the_declaring_source() -> None:
     a resource nobody declares.
     """
     comp = _composite(
-        ("r/global", {"site": [_host("alt1", "10.0.0.1")]}, {"site": {"r-old"}}),
-        ("r/virtual", {"site": [_host("test4", "10.0.0.3")]}, {"site": {"r-new"}}),
+        ("r/global", {"site": [_element("alt1", "10.0.0.1")]}, {"site": {"r-old"}}),
+        ("r/virtual", {"site": [_element("test4", "10.0.0.3")]}, {"site": {"r-new"}}),
     )
     assert comp.load_lab("site").resources == {"r-new"}
 
 
 def test_lab_backlink_repaired_on_override() -> None:
     comp = _composite(
-        ("r/global", {"site": [_host("alt1", "10.0.0.1")]}),
-        ("r/virtual", {"site": [_host("alt1", "10.9.9.9")]}),
+        ("r/global", {"site": [_element("alt1", "10.0.0.1")]}),
+        ("r/virtual", {"site": [_element("alt1", "10.9.9.9")]}),
     )
     lab = comp.load_lab("site")
     assert lab.hosts["alt1"]._lab is lab
@@ -155,7 +186,13 @@ def test_links_merge_keyed_by_id_later_wins() -> None:
             lab = Lab(name=name)
             # A member, because a declared lab that no element matches is an
             # error (spec §9): even a link-only source must carry a host.
-            lab.add_host(create_host_from_dict(_host(self._element, "10.0.0.1"), lab_name=name))
+            lab.add_host(
+                create_host_from_dict(
+                    {"ip": "10.0.0.1", "creds": _CREDS},
+                    lab_name=name,
+                    element=Element(self._element),
+                )
+            )
             lab.links = list(self._links)
             return lab
 
@@ -185,7 +222,13 @@ def test_preferences_forwarded_verbatim_to_every_source() -> None:
             seen.append(preferences)
             lab = Lab(name=name)
             # A member, for the same reason as the link source above.
-            lab.add_host(create_host_from_dict(_host(self._element, "10.0.0.1"), lab_name=name))
+            lab.add_host(
+                create_host_from_dict(
+                    {"ip": "10.0.0.1", "creds": _CREDS},
+                    lab_name=name,
+                    element=Element(self._element),
+                )
+            )
             return lab
 
         def list_labs(self):
@@ -202,16 +245,16 @@ def test_preferences_forwarded_verbatim_to_every_source() -> None:
 
 def test_not_found_absorbed_when_any_source_knows() -> None:
     comp = _composite(
-        ("r/global", {"other": [_host("test4", "10.0.0.3")]}),
-        ("r/virtual", {"site": [_host("alt1", "10.0.0.1")]}),
+        ("r/global", {"other": [_element("test4", "10.0.0.3")]}),
+        ("r/virtual", {"site": [_element("alt1", "10.0.0.1")]}),
     )
     assert set(comp.load_lab("site").hosts) == {"alt1"}
 
 
 def test_all_miss_raises_naming_every_label() -> None:
     comp = _composite(
-        ("r/global", {"other": [_host("test4", "10.0.0.3")]}),
-        ("r/virtual", {"more": [_host("alt1", "10.0.0.1")]}),
+        ("r/global", {"other": [_element("test4", "10.0.0.3")]}),
+        ("r/virtual", {"more": [_element("alt1", "10.0.0.1")]}),
     )
     with pytest.raises(LabNotFoundError, match=r"r/global.*r/virtual"):
         comp.load_lab("site")
@@ -229,7 +272,7 @@ def test_backend_error_propagates_not_absorbed() -> None:
 
     comp = CompositeLabRepository(
         [
-            LabSource("r/ok", ExampleLabRepository(labs={"site": [_host("alt1", "10.0.0.1")]})),
+            LabSource("r/ok", ExampleLabRepository(labs={"site": [_element("alt1", "10.0.0.1")]})),
             LabSource("r/db", Broken()),
         ]
     )
@@ -248,8 +291,8 @@ def test_empty_composite() -> None:
 
 
 def test_summaries_union_later_wins_labs_unioned() -> None:
-    a = ExampleLabRepository(labs={"east": [_host("alt1", "10.0.0.1")]})
-    b = ExampleLabRepository(labs={"west": [_host("alt1", "10.9.9.9")]})
+    a = ExampleLabRepository(labs={"east": [_element("alt1", "10.0.0.1")]})
+    b = ExampleLabRepository(labs={"west": [_element("alt1", "10.9.9.9")]})
     comp = CompositeLabRepository([LabSource("r/a", a), LabSource("r/b", b)])
     (s,) = comp.list_host_summaries()
     assert s.ip == "10.9.9.9"  # later source wins the fields
@@ -272,8 +315,8 @@ def test_summaries_stay_silent_on_a_colliding_host_id(caplog) -> None:
     could not leave this passing vacuously.
     """
     comp = _composite(
-        ("r/global", {"site": [_host("alt1", "10.0.0.1")]}),
-        ("r/virtual", {"site": [_host("alt1", "10.9.9.9")]}),
+        ("r/global", {"site": [_element("alt1", "10.0.0.1")]}),
+        ("r/virtual", {"site": [_element("alt1", "10.9.9.9")]}),
     )
     with caplog.at_level(logging.WARNING, logger="otto.labs.composite"):
         summaries = comp.list_host_summaries()
@@ -292,7 +335,7 @@ def test_summaries_skip_broken_source() -> None:
     comp = CompositeLabRepository(
         [
             LabSource("r/db", Broken()),
-            LabSource("r/ok", ExampleLabRepository(labs={"site": [_host("alt1", "10.0.0.1")]})),
+            LabSource("r/ok", ExampleLabRepository(labs={"site": [_element("alt1", "10.0.0.1")]})),
         ]
     )
     assert [s.id for s in comp.list_host_summaries()] == ["alt1"]
@@ -300,18 +343,18 @@ def test_summaries_skip_broken_source() -> None:
 
 def test_list_labs_sorted_union() -> None:
     comp = _composite(
-        ("r/a", {"zeta": [_host("alt1", "10.0.0.1")], "alpha": [_host("test4", "10.0.0.3")]}),
-        ("r/b", {"alpha": [_host("test2", "10.0.0.2")]}),
+        ("r/a", {"zeta": [_element("alt1", "10.0.0.1")], "alpha": [_element("test4", "10.0.0.3")]}),
+        ("r/b", {"alpha": [_element("test2", "10.0.0.2")]}),
     )
     assert comp.list_labs() == ["alpha", "zeta"]
 
 
 def test_composite_satisfies_full_conformance_contract() -> None:
     comp = _composite(
-        ("r/a", {"east": [_host("alt1", "10.0.0.1")]}),
+        ("r/a", {"east": [_element("alt1", "10.0.0.1")]}),
         (
             "r/b",
-            {"west": [_host("test2", "10.0.0.2")], "east": [_host("alt1", "10.9.9.9")]},
+            {"west": [_element("test2", "10.0.0.2")], "east": [_element("alt1", "10.9.9.9")]},
         ),
     )
     assert_lab_repository_conforms(comp, expected_labs=["east", "west"])
@@ -328,11 +371,12 @@ def test_element_replaced_wholesale_and_warns(caplog) -> None:
     )
     with caplog.at_level(logging.WARNING, logger="otto.labs.composite"):
         lab = comp.load_lab("site")
-    # The global element's mgmt board is gone with its element.
-    assert set(lab.hosts) == {"dut3_cpu"}
-    assert lab.hosts["dut3_cpu"].ip == "10.9.9.9"
+    # The global element's mgmt board is gone with its element. The element's
+    # ``id`` (3) is data and reaches neither the ids nor the merge key.
+    assert set(lab.hosts) == {"dut_cpu"}
+    assert lab.hosts["dut_cpu"].ip == "10.9.9.9"
     msgs = [r.getMessage() for r in caplog.records]
-    assert any("('dut', 3)" in m and "r/local" in m and "r/global" in m for m in msgs)
+    assert any("'dut'" in m and "r/local" in m and "r/global" in m for m in msgs)
 
 
 def test_finer_host_level_merge_is_not_what_happens() -> None:
@@ -341,7 +385,7 @@ def test_finer_host_level_merge_is_not_what_happens() -> None:
         ("a", {"site": [_h("dut", "10.0.0.1", 3, "cpu"), _h("dut", "10.0.0.2", 3, "mgmt")]}, None),
         ("b", {"site": [_h("dut", "10.9.9.9", 3, "cpu")]}, None),
     )
-    assert "dut3_mgmt" not in comp.load_lab("site").hosts
+    assert "dut_mgmt" not in comp.load_lab("site").hosts
 
 
 def test_labs_entry_replaced_wholesale_by_declaring_source(caplog) -> None:
@@ -385,7 +429,11 @@ class _MembersOnly:
         from otto.host.factory import create_host_from_dict
 
         lab = Lab(name=name)
-        lab.add_host(create_host_from_dict(_h("x", "10.0.0.1"), lab_name=name))
+        lab.add_host(
+            create_host_from_dict(
+                {"ip": "10.0.0.1", "creds": _CREDS}, lab_name=name, element=Element("x")
+            )
+        )
         return lab
 
 
@@ -425,11 +473,37 @@ def test_declared_but_memberless_errors_naming_the_source() -> None:
 
 
 def test_host_id_clash_across_distinct_elements_after_merge_errors() -> None:
-    comp = _comp(
-        ("a", {"site": [_h("dut", "10.0.0.1", 3)]}, None),  # id dut3 from element ('dut', 3)
-        ("b", {"site": [_h("dut3", "10.0.0.2")]}, None),  # id dut3 from element ('dut3', None)
+    """Two elements landing on one host id is an error, not a silent drop.
+
+    No pair of FACTORY-built elements can reach this any more: an id is
+    ``slug(element)`` plus, when a board is set, ``_`` + ``slug(board)`` +
+    slot, and neither slug can contain ``_``, so an id names exactly one
+    element (spec 2026-09-05 §2.2). What still can is a host with NO element —
+    a backend's own ``local`` keys under ``""`` — meeting an element the
+    author actually named ``local``.
+    """
+
+    class LocalOnly:
+        def list_labs(self):
+            return ["site"]
+
+        def load_lab(self, name, preferences=None, inventory=None):
+            lab = Lab(name=name)
+            lab.add_host(LocalHost())
+            return lab
+
+    comp = CompositeLabRepository(
+        [
+            LabSource(label="a", repository=LocalOnly()),
+            LabSource(
+                label="b",
+                repository=ExampleLabRepository(labs={"site": [_element("local", "1.2.3.4")]}),
+            ),
+        ]
     )
-    with pytest.raises(LabRepositoryError, match=r"dut3.*\('dut', 3\).*\('dut3', None\)"):
+    with pytest.raises(
+        LabRepositoryError, match=r"host id 'local'.*element '' from a.*element 'local' from b"
+    ):
         comp.load_lab("site")
 
 
@@ -540,8 +614,8 @@ def test_element_resources_survive_replacement_and_vanish_when_the_later_source_
         ],
     }
     lab = _composite_over(tmp_path, [base]).load_lab("rig")
-    assert lab.hosts["chassis"].element_resources == frozenset({"chassis-1"})
+    assert lab.hosts["chassis"].element.resources == frozenset({"chassis-1"})
 
     lab = _composite_over(tmp_path, [base, later]).load_lab("rig")
-    assert lab.hosts["chassis"].element_resources == frozenset()
+    assert lab.hosts["chassis"].element.resources == frozenset()
     assert lab.hosts["chassis"].ip == "10.0.0.2"

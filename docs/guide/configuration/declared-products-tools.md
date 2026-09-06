@@ -33,11 +33,12 @@ parameter of the kind.
 
 ## Matching
 
-`match` is a table ANDed across keys; a host must satisfy every clause.
-Keys name a host attribute — `id`, `element`, `element_id`, `os_type`,
-`os_name`, `os_version`, `ip`, `source_lab` — or a dotted
-`metadata.<key>` / `element_metadata.<key>` path. Anything else is a
-settings error at bootstrap. Values are typed:
+`match` is a table ANDed across keys; a key IS the path on the host. Name
+`id`, `element.name`, `element.id`, `os_type`, `os_name`, `os_version`, `ip`,
+`source_lab` — or a dotted `metadata.<key>` / `element.metadata.<key>` path.
+Anything else is a settings error at bootstrap; a retired spelling
+(`element`, `element_id`, `element_metadata.<key>`) is refused with the
+key that replaced it. Values are typed:
 
 | Value | Meaning |
 |---|---|

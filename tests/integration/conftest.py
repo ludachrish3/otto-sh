@@ -18,9 +18,10 @@ import pytest
 import pytest_asyncio
 
 from otto.config.env import SUT_DIRS_ENV_VAR
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
-from tests._fixtures.labdata import flatten_lab_doc, lab_data_path
+from tests._fixtures.labdata import element_for, flatten_lab_doc, lab_data_path
 from tests._fixtures.paths import default_sut_dir
 from tests.conftest import BUSYBOX_BED_GROUP, BUSYBOX_PARAM_TOKENS
 
@@ -126,7 +127,7 @@ async def _reap_orphan_docker_stacks() -> None:
     """
     host = UnixHost(
         ip=_DOCKER_HOST_IP,
-        element="test3",
+        element=Element("test3"),
         creds=[Cred(login="vagrant", password="vagrant")],
         is_virtual=True,
         term="ssh",
@@ -234,7 +235,7 @@ async def test1():
     data = _host_data("test1")
     h = UnixHost(
         ip=data["ip"],
-        element=data["element"],
+        element=element_for("test1"),
         creds=[Cred(**c) for c in data["creds"]],
         board=data.get("board"),
         is_virtual=True,
@@ -251,7 +252,7 @@ async def test2():
     data = _host_data("test2")
     h = UnixHost(
         ip=data["ip"],
-        element=data["element"],
+        element=element_for("test2"),
         creds=[Cred(**c) for c in data["creds"]],
         board=data.get("board"),
         is_virtual=True,

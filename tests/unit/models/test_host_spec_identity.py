@@ -1,4 +1,9 @@
-"""HostSpec identity-field validation: element/board must slug non-empty; ids >= 0."""
+"""HostSpec identity-field validation: ``board`` must slug non-empty; ids >= 0.
+
+The element's own rules (a name that slugs non-empty, a non-negative ``id``)
+live on :class:`~otto.host.element.Element` since spec 2026-09-05 §2.6 — see
+``tests/unit/host/test_element.py``; a host entry carries no element field.
+"""
 
 import pytest
 from pydantic import ValidationError
@@ -9,31 +14,19 @@ from otto.models.host import UnixHostSpec
 def _spec(**over):
     base = {
         "ip": "10.0.0.1",
-        "element": "server",
         "creds": [{"login": "admin"}],
     }
     base.update(over)
     return UnixHostSpec.model_validate(base)
 
 
-def test_valid_multiword_element_accepted():
-    spec = _spec(element="Lab X Server")
-    assert spec.element == "Lab X Server"  # raw string preserved on the spec
-
-
-def test_element_that_slugs_empty_is_rejected():
-    with pytest.raises(ValidationError, match="slug"):
-        _spec(element="___")
-
-
 def test_board_that_slugs_empty_is_rejected():
     with pytest.raises(ValidationError, match="slug"):
-        _spec(element="server", board="!!!")
+        _spec(board="!!!")
 
 
-def test_negative_element_id_rejected():
-    with pytest.raises(ValidationError, match=r"element_id\s+Value error, must be >= 0"):
-        _spec(element_id=-1)
+def test_valid_multiword_board_accepted():
+    assert _spec(board="Line Card").board == "Line Card"  # raw string preserved on the spec
 
 
 def test_negative_slot_rejected():

@@ -36,6 +36,7 @@ from tests.conftest import (
 )
 from tests.conftest import (
     EMBEDDED_BACKENDS,
+    element_for,
     embedded_param_id,
     host_data,
     make_host,
@@ -264,8 +265,9 @@ async def test_concurrent_clients_to_one_console_contend_and_recover():
     backend.
     """
     data = host_data(_BACKEND_NE["zephyr_fat"])
-    host_a = create_host_from_dict(data)
-    host_b = create_host_from_dict(data)
+    element = element_for(_BACKEND_NE["zephyr_fat"])
+    host_a = create_host_from_dict(data, element=element)
+    host_b = create_host_from_dict(data, element=element)
     try:
         results = await asyncio.gather(
             host_a.exec("kernel uptime"),
@@ -291,7 +293,7 @@ async def test_concurrent_clients_to_one_console_contend_and_recover():
 
     # (3) The console is usable again once the contention clears — the slot was
     #     released, not left wedged.
-    host_c = create_host_from_dict(data)
+    host_c = create_host_from_dict(data, element=element)
     try:
         recovered = await host_c.exec("kernel uptime")
     finally:
@@ -363,8 +365,9 @@ def _zephyr_dest_map() -> dict[str, str | None]:
     for backend in EMBEDDED_BACKENDS:
         if backend in _FANOUT_EXCLUDED:
             continue
-        data = host_data(_BACKEND_NE[backend])
-        dest[data["element"]] = build_filesystem(data.get("filesystem", "none")).mount
+        ne = _BACKEND_NE[backend]
+        data = host_data(ne)
+        dest[ne] = build_filesystem(data.get("filesystem", "none")).mount
     return dest
 
 
@@ -422,7 +425,9 @@ class TestConcurrentEmbeddedTransfer:
         production factory does (``create_host_from_dict``). Each test gets
         its own instances so a previous test's session state cannot leak.
         """
-        return [create_host_from_dict(host_data(ne)) for ne in _ZEPHYR_DEST]
+        return [
+            create_host_from_dict(host_data(ne), element=element_for(ne)) for ne in _ZEPHYR_DEST
+        ]
 
     @staticmethod
     def _check_put_result(host_id: str, result) -> None:
@@ -464,11 +469,11 @@ class TestConcurrentEmbeddedTransfer:
         hosts = self._build_zephyr_hosts()
         try:
             results = await asyncio.gather(
-                *(h.put([src], Path(_ZEPHYR_DEST[h.element] or "/")) for h in hosts),
+                *(h.put([src], Path(_ZEPHYR_DEST[h.element.name] or "/")) for h in hosts),
                 return_exceptions=True,
             )
             for h, result in zip(hosts, results, strict=True):
-                self._check_put_result(h.element, result)
+                self._check_put_result(h.element.name, result)
         finally:
             await asyncio.gather(
                 *(h.close() for h in hosts),
@@ -495,7 +500,7 @@ class TestConcurrentEmbeddedTransfer:
         try:
             results = await asyncio.gather(
                 test4.put([src], Path("/tmp")),
-                *(h.put([src], Path(_ZEPHYR_DEST[h.element] or "/")) for h in zephyrs),
+                *(h.put([src], Path(_ZEPHYR_DEST[h.element.name] or "/")) for h in zephyrs),
                 return_exceptions=True,
             )
             test4_result, *zephyr_results = results
@@ -508,7 +513,7 @@ class TestConcurrentEmbeddedTransfer:
             )
 
             for h, result in zip(zephyrs, zephyr_results, strict=True):
-                self._check_put_result(h.element, result)
+                self._check_put_result(h.element.name, result)
         finally:
             await asyncio.gather(
                 test4.close(),
@@ -534,24 +539,24 @@ class TestConcurrentEmbeddedTransfer:
         try:
             # Sequential pre-stage on the two fs-capable backends.
             for h in hosts:
-                dest = _ZEPHYR_DEST[h.element]
+                dest = _ZEPHYR_DEST[h.element.name]
                 if dest is None:
                     continue
                 put_result = await h.put([src], Path(dest))
                 assert put_result.status == Status.Success, (
-                    f"{h.element}: pre-stage put failed: {put_result.msg!r}"
+                    f"{h.element.name}: pre-stage put failed: {put_result.msg!r}"
                 )
 
             # Per-host local landing dir so concurrent gets don't collide
             # on the same destination file.
-            fs_hosts = [h for h in hosts if _ZEPHYR_DEST[h.element] is not None]
+            fs_hosts = [h for h in hosts if _ZEPHYR_DEST[h.element.name] is not None]
             for h in fs_hosts:
-                (tmp_path / f"got_{h.element}").mkdir()
+                (tmp_path / f"got_{h.element.name}").mkdir()
             results = await asyncio.gather(
                 *(
                     h.get(
-                        [Path(_ZEPHYR_DEST[h.element]) / "fanout.bin"],
-                        tmp_path / f"got_{h.element}",
+                        [Path(_ZEPHYR_DEST[h.element.name]) / "fanout.bin"],
+                        tmp_path / f"got_{h.element.name}",
                     )
                     for h in fs_hosts
                 ),
@@ -559,9 +564,13 @@ class TestConcurrentEmbeddedTransfer:
             )
 
             for h, result in zip(fs_hosts, results, strict=True):
-                landing = tmp_path / f"got_{h.element}"
-                assert not isinstance(result, BaseException), f"{h.element}: get raised: {result!r}"
-                assert result.status == Status.Success, f"{h.element}: get failed: {result.msg!r}"
+                landing = tmp_path / f"got_{h.element.name}"
+                assert not isinstance(result, BaseException), (
+                    f"{h.element.name}: get raised: {result!r}"
+                )
+                assert result.status == Status.Success, (
+                    f"{h.element.name}: get failed: {result.msg!r}"
+                )
                 assert (landing / "fanout.bin").read_bytes() == self._PAYLOAD
         finally:
             await asyncio.gather(

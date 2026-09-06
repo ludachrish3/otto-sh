@@ -223,7 +223,14 @@ CACHE_FILENAME = "completion_cache.json"
 #      alongside the repo-scanned ones, which the repo-file digest cannot see
 #      (a future addition there needs a bump of its own); and the three
 #      ``names`` keys ``host_classes_by_id``, ``projects`` and ``links``.
-SCHEMA_VERSION = 18
+# v19: layout unchanged — CONTENT. Host identity changed under spec
+#      2026-09-05 element-object: positional handles (``dut1`` for the first
+#      host of element ``dut``) are gone from the ``host_ids`` payload, and an
+#      element's ``id`` no longer appears in a host id. The digest keys on the
+#      repo's lab files, which did not change, so without the bump a warm v18
+#      entry would keep offering handles that no longer dispatch and ids that
+#      no host reports, for up to the full TTL after the fix ships.
+SCHEMA_VERSION = 19
 
 # One home, two readers: `collect_test_names` decides which files to PARSE for
 # names, and `compute_fingerprint` decides which files to STAT for
@@ -1878,13 +1885,6 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     The built-in hosts are always seeded regardless of the filter, mirroring
     ``load_lab`` injecting ``local`` into every lab.
 
-    Also emits positional logical handles (``<element-slug><N>``, e.g.
-    ``server1``) for every host in a repeated-element group, computed via
-    :func:`otto.config.lab.logical_indices` — the same single source
-    ``Lab._assign_logical_indices`` stamps from — so a completed handle always
-    matches what ``Lab.resolve_handle`` resolves at runtime. Added alongside
-    canonical ids, never in place of them.
-
     Runs without :func:`otto.bootstrap.bootstrap` having been called, so it's
     safe to call from the completion fast path as well as the cache writer
     on the slow path.
@@ -1893,20 +1893,12 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     silently skipped — completion must never crash on bad user data.
     """
     from ..host.builtin_hosts import builtin_host_ids
-    from ..host.remote_host import slug
-    from .lab import logical_indices
 
     wanted = set(lab_names) if lab_names is not None else None
 
     # Seed with the built-in hosts otto injects into every lab (e.g. `local`) so
     # they are tab-completable in every repo, mirroring load_lab's injection.
     ids: set[str] = set(builtin_host_ids())
-    # Every summarized host across all repos, keyed by id (dedup). Logical
-    # positions are derived from this combined set (once, below) so a group
-    # split across repos' host sources is still numbered as one group —
-    # matching how a real Lab merges hosts from multiple sources before
-    # stamping.
-    summarized: dict[str, "HostSummary"] = {}
     resolution = resolve_process_inventory(repos)
     for repo in repos:
         # Docker-capable ids scoped to THIS repo, so the container ids
@@ -1917,7 +1909,6 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
             if wanted is not None and wanted.isdisjoint(summary.labs):
                 continue
             ids.add(summary.id)
-            summarized[summary.id] = summary
             if summary.docker_capable:
                 docker_capable_ids.append(summary.id)
 
@@ -1967,15 +1958,6 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
             for service, middles in middles_for.items():
                 for middle in middles:
                     ids.add(f"{parent}.{middle}.{service}".lower())
-
-    # Logical handles (<slug(element)><position>) alongside canonical ids, so
-    # `otto host <TAB>` offers exactly what Lab.resolve_handle would resolve at
-    # runtime — logical_indices is the single shared source (see lab.py).
-    positions = logical_indices(summarized.values())
-    for summary in summarized.values():
-        pos = positions.get(summary.id)
-        if pos is not None:
-            ids.add(f"{slug(summary.element)}{pos}")
 
     return sorted(ids)
 
@@ -2128,8 +2110,6 @@ def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
     have made a recurring cost rather than a once-a-day one.
     """
     from ..host.builtin_hosts import builtin_host_ids
-    from ..host.remote_host import slug
-    from .lab import logical_indices
 
     builtins = set(builtin_host_ids())
     # Seed every known lab so one whose hosts all fail to enumerate still gets
@@ -2143,23 +2123,11 @@ def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
             for lab in summary.labs:
                 by_lab.setdefault(lab, {})[summary.id] = summary
 
-    buckets: dict[str, list[str]] = {}
-    for lab, summaries in by_lab.items():
-        ids = set(summaries)
-        # Logical handles are scoped to the lab, exactly as the per-lab
-        # collect_host_ids(lab_names=[lab]) call computed them: a group is
-        # "repeated" relative to the hosts in THIS lab, not the whole fleet.
-        positions = logical_indices(summaries.values())
-        for summary in summaries.values():
-            pos = positions.get(summary.id)
-            if pos is not None:
-                ids.add(f"{slug(summary.element)}{pos}")
-        buckets[lab] = sorted(ids)
-    return buckets
+    return {lab: sorted(summaries) for lab, summaries in by_lab.items()}
 
 
 def collect_host_classes_by_id(repos: list["Repo"]) -> dict[str, str]:
-    """Map every enumerable host id (and logical handle) to its registered host-class name.
+    """Map every enumerable host id to its registered host-class name.
 
     ``otto host <id> <TAB>`` scopes the verb menu to the host's class. On the
     dispatch path that class comes from building the host; completion must
@@ -2169,28 +2137,18 @@ def collect_host_classes_by_id(repos: list["Repo"]) -> dict[str, str]:
     not report an ``os_type``, or whose profile is not registered in THIS
     process, is omitted rather than guessed — the completer then offers the
     union menu, exactly as it did before the map existed.
-
-    Logical handles (``server1``) map to the class of the host they resolve
-    to, computed over the whole fleet as :func:`collect_host_ids` computes them.
     """
     from ..host.os_profile import get_os_profile
-    from ..host.remote_host import slug
-    from .lab import logical_indices
 
     classes: dict[str, str] = {}
-    summarized: dict[str, "HostSummary"] = {}
     resolution = resolve_process_inventory(repos)
     for repo in repos:
         for summary in repo_host_summaries(repo, resolution):
-            summarized[summary.id] = summary
             if summary.os_type is None:
                 continue
             profile = get_os_profile(summary.os_type)
             if profile is not None:
                 classes[summary.id] = profile.base  # the registered class NAME
-    for host_id, pos in logical_indices(summarized.values()).items():
-        if host_id in classes:
-            classes[f"{slug(summarized[host_id].element)}{pos}"] = classes[host_id]
     return dict(sorted(classes.items()))
 
 

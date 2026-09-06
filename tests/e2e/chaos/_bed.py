@@ -34,7 +34,14 @@ from otto.logger.mode import LogMode
 from otto.result import Result
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.bed_hygiene import _PROBE_TIMEOUT, check_probe_result
-from tests._fixtures.labdata import flatten_lab_doc, host_data, lab_data_path
+from tests._fixtures.labdata import (
+    element_for,
+    element_of,
+    entry_of,
+    flatten_lab_doc,
+    host_data,
+    lab_data_path,
+)
 from tests._fixtures.tunnel_bed import assert_reachable, build_bed_host
 from tests.e2e._otto_subprocess import REPO_E2E
 from tests.integration.chaos._target import ChaosTarget, make_bed_target
@@ -132,7 +139,7 @@ def declared_link_id(host_a: str, host_b: str) -> str:
     hosts = {}
     for h in flatten_lab_doc(data):
         try:
-            host_id, addressing = addressing_from_dict(h)
+            host_id, addressing = addressing_from_dict(entry_of(h), element_of(h))
         except ValueError:
             # ValueError (incl. pydantic.ValidationError) is host_identity's
             # documented "profile/frame not registered here" contract; anything
@@ -314,7 +321,7 @@ def busybox_hop_context() -> Iterator[None]:
     lab.add_host(
         UnixHost(
             ip=data["ip"],
-            element=data["element"],
+            element=element_for(BUSYBOX_HOP_ELEMENT),
             creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
             is_virtual=True,
@@ -345,7 +352,11 @@ def busybox_probe(coro_factory):
     """
 
     async def _go():
-        host = create_host_from_dict(host_data(BUSYBOX_CHAOS_ELEMENT), lab_name="busybox")
+        host = create_host_from_dict(
+            host_data(BUSYBOX_CHAOS_ELEMENT),
+            lab_name="busybox",
+            element=element_for(BUSYBOX_CHAOS_ELEMENT),
+        )
         try:
             out = await coro_factory(host)
         finally:

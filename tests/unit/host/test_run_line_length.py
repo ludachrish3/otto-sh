@@ -37,6 +37,7 @@ import pytest
 
 from otto.host import userland
 from otto.host.command_frame import AshFrame, BashFrame, SessionMarkers, ZephyrFrame
+from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.session import (
     _SESSION_ID_LEN,
@@ -579,11 +580,11 @@ class TestThroughAHostBuiltFromLabData:
 
         host = create_host_from_dict(
             {
-                "element": "bb1",
                 "os_type": "busybox",
                 "ip": "192.0.2.1",
                 "creds": [{"login": "v", "password": "v"}],
-            }
+            },
+            element=Element("bb1"),
         )
         assert isinstance(host.command_frame, AshFrame)
 

@@ -15,6 +15,7 @@ from otto.config.scope import (
     repo_targets,
     switched_off,
 )
+from otto.host.element import Element
 from tests._fixtures.scoping import verdict
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -195,12 +196,12 @@ def _fleet(*pairs):
     for index, (element, lab_name) in enumerate(pairs, start=1):
         host = create_host_from_dict(
             {
-                "element": element,
                 "os_type": "unix",
                 "ip": f"10.0.0.{index}",
                 "creds": [{"login": "admin", "password": "admin"}],
             },
             lab_name=lab_name,
+            element=Element(element),
         )
         hosts[host.id] = host
     return hosts

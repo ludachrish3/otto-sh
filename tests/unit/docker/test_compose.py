@@ -39,6 +39,7 @@ from otto.docker.compose import (
     use_case_project,
 )
 from otto.host.docker_host import DockerContainerHost
+from otto.host.element import Element
 from otto.host.lab_info import LabInfo
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
@@ -120,7 +121,7 @@ def _make_repo(
 def _capable_host(host_id: str = "test3", ne: str = "test3") -> UnixHost:
     return UnixHost(
         ip="10.10.200.13",
-        element=ne,
+        element=Element(ne),
         creds=[Cred(login="vagrant", password="vagrant")],
         docker_capable=True,
     )
@@ -384,7 +385,7 @@ def test_resolve_parent_rejects_non_capable(tmp_path):
     other = _wire_parent_mock(
         UnixHost(
             ip="1.2.3.4",
-            element="other",
+            element=Element("other"),
             creds=[Cred(login="u", password="p")],
             board="seed",
             docker_capable=False,
@@ -407,7 +408,7 @@ def test_resolve_parent_falls_back_to_a_non_capable_pin_still_refuses(tmp_path):
     other = _wire_parent_mock(
         UnixHost(
             ip="1.2.3.4",
-            element="other",
+            element=Element("other"),
             creds=[Cred(login="u", password="p")],
             board="seed",
             docker_capable=False,

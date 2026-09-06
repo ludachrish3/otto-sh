@@ -27,6 +27,7 @@ local and remote machines.
    os_profile
    factory
    lab_info
+   element
    inventory_ref
    command_frame
    daemon

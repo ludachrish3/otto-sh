@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Any
 
+from ..host.element import Element
 from ..host.inventory_ref import InventoryRef
 from ..models.inventory import INVENTORY_KEY_FIELDS
 from .errors import InventoryError
@@ -22,14 +23,18 @@ class ResolvedEntry:
     ref: InventoryRef
 
 
-def resolve_host_entry(host_data: dict[str, Any], inventory: "Inventory | None") -> ResolvedEntry:
+def resolve_host_entry(
+    host_data: dict[str, Any], inventory: "Inventory | None", element: Element
+) -> ResolvedEntry:
     """Return *host_data* with its ``inventory`` reference resolved, or a copy unchanged.
 
     The partition rule (spec §2) as code: for a referenced entry every field in
     ``inventory.supplies`` must be ABSENT inline (checked on the raw entry,
     before the fill, so the fill cannot fool it) and is copied from the record
-    when the record STATES it. Key fields (``element_id``) are never copied:
-    when the inventory supplies one and both sides state it, they must agree.
+    when the record STATES it. Key fields (``element_id``) are never copied: a
+    record is per host and an element is shared, so the record's value is
+    cross-checked against ``element.id`` and never fills it (spec 2026-09-05
+    §8.6).
 
     "States it" means the record SET the field — ``exclude_unset``, keyed on
     ``model_fields_set``, not ``exclude_defaults``, which compares values and
@@ -74,13 +79,12 @@ def resolve_host_entry(host_data: dict[str, Any], inventory: "Inventory | None")
             "remove it here, or drop 'inventory' and declare the host inline"
         )
     record = inventory.lookup(key)
-    for name in sorted(INVENTORY_KEY_FIELDS & inventory.supplies):
-        theirs = getattr(record, name)
-        mine = host_data.get(name)
-        if theirs is not None and mine is not None and theirs != mine:
+    if "element_id" in inventory.supplies:
+        theirs = record.element_id
+        if theirs is not None and element.id is not None and theirs != element.id:
             raise InventoryError(
-                f"{name} disagrees: the lab file says {mine!r}, "
-                f"inventory key {key!r} says {theirs!r}"
+                f"element_id disagrees: the lab file says {element.id!r} for element "
+                f"{element.name!r}, inventory key {key!r} says {theirs!r}"
             )
     resolved = {k: v for k, v in host_data.items() if k != "inventory"}
     stated = record.model_dump(mode="json", exclude_none=True, exclude_unset=True)

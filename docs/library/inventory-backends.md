@@ -35,9 +35,11 @@ Two rules that are easy to miss:
   unreachable inventory from breaking a run that did not need it.
 - **A record may not carry a field outside `supplies`.** Otto's join copies
   exactly `supplies`, so a record stating more than the deployment declared is
-  a partition violation, not a bonus. The two identity/opaque fields —
-  `element_id` and `extra` — are exempt: one is asserted rather than filled,
-  the other has no host field to collide with.
+  a partition violation, not a bonus. Two fields are exempt: `element_id`, a
+  cross-checked fact rather than a filled one — opt-in, named in `supplies`
+  like any other field, and checked against `element.id` (never copied) only
+  when a deployment does that; otherwise a stated value is simply inert — and
+  `extra`, opaque and with no host field to collide with.
 
 Validate the `supplies` declaration with
 {func}`~otto.inventory.protocol.check_supplies`, which is what both built-ins

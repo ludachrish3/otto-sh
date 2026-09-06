@@ -88,8 +88,6 @@ def host_summaries(
                 id=host.id,
                 labs=[name],
                 ip=getattr(host, "ip", "") or "",
-                element=getattr(host, "element", "") or "",
-                element_id=getattr(host, "element_id", None),
                 docker_capable=bool(getattr(host, "docker_capable", False)),
                 os_type=getattr(host, "os_type", None),
             )

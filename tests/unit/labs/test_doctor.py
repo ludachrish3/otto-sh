@@ -194,14 +194,14 @@ def test_warning_names_only_the_unprotected_shared_elements() -> None:
     assert "safe" not in w
 
 
-def test_two_same_named_elements_with_different_ids_are_not_a_shared_element() -> None:
-    """Membership is keyed on ``ElementKey``, so ``chassis`` #1 and #2 do not pair up.
+def test_two_same_named_elements_are_one_element_whatever_their_ids_say() -> None:
+    """Membership is keyed on ``ElementSpec.key`` — the name's slug (spec 2026-09-05
+    §2.3) — so two ``chassis`` entries are ONE element the two labs share, and the
+    differing ``id`` (data, not identity) does not split them.
 
-    Not a red-at-HEAD guard — this passes today. It is a REGRESSION pin: the
-    shared-element intersection is the one place a name-keyed shortcut looks
-    equivalent and is not, and a repo where each lab owns its own chassis would
-    otherwise start getting an overlap warning for two elements that share
-    nothing but a spelling.
+    The old rule keyed on ``(name, id)`` and read these as two elements owned
+    one per lab, so the overlap went unreported. The intersection is the one
+    place the keying choice is invisible until it is wrong in production.
     """
     docs = [
         (
@@ -209,11 +209,12 @@ def test_two_same_named_elements_with_different_ids_are_not_a_shared_element() -
             _DISJOINT,
             [
                 ElementSpec(name="chassis", id=1, labs=["unix"], hosts=_H),
-                ElementSpec(name="chassis", id=2, labs=["busybox"], hosts=_H),
+                ElementSpec(name="Chassis", id=2, labs=["busybox"], hosts=_H),
             ],
         )
     ]
-    assert lab_warnings(docs) == []
+    (w,) = lab_warnings(docs)
+    assert "['chassis']" in w
 
 
 def test_r18_both_labs_must_reserve_something_even_with_unprotected_elements() -> None:

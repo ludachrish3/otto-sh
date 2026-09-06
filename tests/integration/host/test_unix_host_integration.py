@@ -27,6 +27,7 @@ from otto.host.login_proxy import Cred
 from otto.host.session import ShellSession
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
+from tests._fixtures.labdata import element_for
 from tests.conftest import BUSYBOX_GUEST_NES, host_data, make_host
 from tests.integration.host._transfer_retry import transfer_with_retry
 
@@ -365,7 +366,7 @@ class TestCredentials:
         host = UnixHost(
             ip=data["ip"],
             user=second_user,
-            element=data["element"],
+            element=element_for("test2"),
             creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
         )
@@ -394,7 +395,7 @@ class TestCredentials:
         host = UnixHost(
             ip=data["ip"],
             user=user,
-            element=data["element"],
+            element=element_for("test1"),
             creds=[Cred(login=user, password="definitely-the-wrong-password")],
             board=data.get("board"),
             term="telnet",

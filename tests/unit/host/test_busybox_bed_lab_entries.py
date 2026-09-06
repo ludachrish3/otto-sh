@@ -14,7 +14,13 @@ from otto.host.factory import create_host_from_dict
 from otto.host.options import NcOptions, TelnetOptions
 from otto.host.unix_host import UnixHost
 from scripts.build_busybox_guest_images import GUEST_TABLE
-from tests._fixtures.labdata import flat_hosts, flatten_lab_doc, lab_data_path
+from tests._fixtures.labdata import (
+    element_of,
+    entry_of,
+    flat_hosts,
+    flatten_lab_doc,
+    lab_data_path,
+)
 from tests.conftest import BUSYBOX_GUEST_NES
 
 BUSYBOX_LINK_ELEMENT = "bb1350"
@@ -59,7 +65,7 @@ def test_every_busybox_guest_entry_builds_a_telnet_shell_unix_host():
         "bb1350",
     ]
     for data in guests:
-        host = create_host_from_dict(data, lab_name="busybox")
+        host = create_host_from_dict(entry_of(data), lab_name="busybox", element=element_of(data))
         assert isinstance(host, UnixHost)
         assert host.term == "telnet"
         assert host.transfer == "shell"
@@ -113,7 +119,7 @@ def test_guest_entries_override_neither_the_telnet_port_nor_the_nc_window():
             f"{data['element']} re-declares nc_options; there is no forwarded "
             "port window on a real NIC, so the backend picks its own ports"
         )
-        host = create_host_from_dict(data, lab_name="busybox")
+        host = create_host_from_dict(entry_of(data), lab_name="busybox", element=element_of(data))
         # Both halves spelled with the LITERAL in the chain, not just
         # "resolved == default": `x == Default().x` is true of any default,
         # including one that moved onto a port test1 already uses, which is

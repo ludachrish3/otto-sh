@@ -19,6 +19,7 @@ from otto.host.factory import create_host_from_dict
 from otto.host.options import SshOptions, TelnetOptions, UserlandOptions
 from otto.result import CommandResult, Results
 from otto.utils import Status
+from tests._fixtures.labdata import element_for
 from tests.conftest import host_data, make_host
 
 
@@ -194,7 +195,7 @@ class TestSelectionHiddenByMembershipFlags:
 def mixed_lab():
     """OttoContext containing one UnixHost (test1) and one EmbeddedHost (zephyr37_fat)."""
     unix = make_host("test1")
-    embedded = create_host_from_dict(host_data("zephyr37_fat"))
+    embedded = create_host_from_dict(host_data("zephyr37_fat"), element=element_for("zephyr37_fat"))
     hosts = {unix.id: unix, embedded.id: embedded}
     lab = Lab(name="mixed_lab")
     lab.hosts = hosts

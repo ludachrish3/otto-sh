@@ -412,18 +412,17 @@ def _resolve_parent_for_repo(repo: Repo, lab: Lab, on: str | None) -> UnixHost:
 
 
 def _canonicalize_on(lab: Lab, on: str | None) -> str | None:
-    """Resolve a ``--on`` CLI value to its canonical host id.
+    """Validate a ``--on`` CLI value against the active lab, returning the host id.
 
     ``--on`` is a CLI host-id INPUT — like the ``otto host`` positional and
-    ``--hop`` — so per the host-id rules it accepts both canonical ids and
-    positional element-slug handles (``dut1``). Everything downstream
+    ``--hop`` — checked here, once, at the CLI boundary so downstream
     (``_select_repos``'s ``lab.hosts`` membership check, ``_resolve_parent``'s
-    ``lab.hosts[...]`` lookup) is canonical-id-only, so resolve the handle
-    here, once, at the CLI boundary — never pass a raw handle further in.
+    ``lab.hosts[...]`` lookup) can trust the id is real instead of failing
+    later with a less specific message.
     """
     if on is None:
         return None
-    host = lab.resolve_handle(on)
+    host = lab.hosts.get(on)
     if host is None:
         fail(
             f"--on {on!r} is not a host in the active lab {lab.name!r}. "
@@ -580,7 +579,7 @@ async def _up(
     --no-build says otherwise. With no USE_CASE, the only declared one is
     deployed; naming SERVICEs narrows the deployment to them.
     """
-    # --on is deliberately NOT canonicalized here. `deploy` resolves the handle
+    # --on is deliberately NOT canonicalized here. `deploy` resolves it
     # itself (it shares one pure prefix with `teardown`, so the two verbs
     # cannot disagree about where a deployment lives), and it owns the refusal
     # — so a host this lab does not have is named once, in one sentence,
@@ -783,9 +782,8 @@ async def _ps(
     lab = get_lab()
     parents: list[UnixHost] = []
     if on:
-        # --on is a CLI host-id input: accept a canonical id or a positional
-        # handle (e.g. dut1), same as `otto host`.
-        host = lab.resolve_handle(on)
+        # --on is a CLI host-id input, same as `otto host`.
+        host = lab.hosts.get(on)
         if not isinstance(host, UnixHost) or not host.docker_capable:
             fail(f"{on!r} is not a docker-capable lab host.")
         parents = [host]

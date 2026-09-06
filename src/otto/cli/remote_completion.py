@@ -395,10 +395,9 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     must demand that host's own slot. The hop is not a lesser target: reaching
     a fleet host through an unreserved jump box is still using the jump box.
 
-    Through :meth:`~otto.config.lab.Lab.resolve_handle`, so a positional handle
-    (``dut1`` for the first ``dut``) resolves to the id the command will
-    actually contact rather than being dropped as an unknown host. That is a
-    pure lookup over the mapping this function already built — it opens
+    Looked up through ``lab.hosts``, so an id the command will actually
+    contact resolves to its host rather than being dropped as unknown. That
+    is a pure lookup over the mapping this function already built — it opens
     nothing, which is what keeps the gate strictly first. An unresolvable name
     answers ``None`` and is skipped: passing it on would be a ``ValueError``
     out of the walk, and :func:`remote_path_completer`'s catch-all would leave
@@ -415,7 +414,7 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     ctx = OttoContext(lab=lab)
     token = set_context(ctx)
     try:
-        named = [lab.resolve_handle(h) for h in (chain.host_id, chain.hop) if h]
+        named = [lab.hosts.get(h) for h in (chain.host_id, chain.hop) if h]
         host_ids = get_hosts_in_play() | {
             host.id for host in named if host is not None and not is_builtin_host(host)
         }

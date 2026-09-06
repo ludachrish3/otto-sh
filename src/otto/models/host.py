@@ -19,6 +19,7 @@ from ..host.binary_loader import build_binary_loader
 from ..host.capability import IMPAIRER_RESOLVER, TERM_RESOLVER, TRANSFER_RESOLVER
 from ..host.command_frame import FRAME_CLASSES, build_command_frame
 from ..host.connections import TERM_BACKENDS
+from ..host.element import Element
 from ..host.embedded_filesystem import FILESYSTEM_CLASSES, build_filesystem
 from ..host.embedded_host import EmbeddedHost
 from ..host.interface import Interface
@@ -175,7 +176,6 @@ class InterfaceSpec(OttoModel):
 # applied separately in _common_host_kwargs.
 _COMMON_PLAIN_FIELDS = (
     "ip",
-    "element",
     "name",
     "os_type",
     "os_name",
@@ -183,7 +183,6 @@ _COMMON_PLAIN_FIELDS = (
     "hw_version",
     "sw_version",
     "user",
-    "element_id",
     "board",
     "slot",
     "site",
@@ -289,16 +288,18 @@ class CredSpec(OttoModel):
 class HostSpec(OttoModel):
     """Abstract boundary spec for a ``lab.json`` host entry.
 
-    Holds the fields common to both host families (identity, credentials, telnet/SNMP
-    options, toolchain, power control) and builds the constructor kwargs via
-    ``_common_host_kwargs()``. Concrete subclasses (``UnixHostSpec``,
+    Holds the fields common to both host families (addressing, credentials,
+    telnet/SNMP options, toolchain, power control) and builds the constructor
+    kwargs via ``_common_host_kwargs()``. Concrete subclasses (``UnixHostSpec``,
     ``EmbeddedHostSpec``) override ``to_host()`` to produce the appropriate runtime
     class.
+
+    The element is not a host field: it reaches the host as the factory's
+    ``element=`` argument (spec 2026-09-05 §2.6).
     """
 
-    # --- required identity (both families) ---
+    # --- required addressing (both families) ---
     ip: str
-    element: str
 
     # --- common optional fields ---
     creds: list[CredSpec] = Field(default_factory=list)
@@ -322,7 +323,6 @@ class HostSpec(OttoModel):
     by default (``otto.inventory.netbox.NATIVE_SUPPLIES``)."""
 
     user: str | None = None
-    element_id: int | None = None
     board: str | None = None
     slot: int | None = None
     site: IntOrStr | None = None
@@ -351,7 +351,7 @@ class HostSpec(OttoModel):
 
     A host field again, after the v2 break made the lab the only reservable
     unit. The element's and the lab's are carried separately (the runtime's
-    ``element_resources`` and ``lab_info.resources``), so an entry never
+    ``element.resources`` and ``lab_info.resources``), so an entry never
     restates them."""
 
     interfaces: dict[str, InterfaceSpec] = Field(default_factory=dict)
@@ -404,13 +404,14 @@ class HostSpec(OttoModel):
             return {k: ({"ip": e} if isinstance(e, str) else e) for k, e in v.items()}
         return v
 
-    @field_validator("element", "board")
+    @field_validator("board")
     @classmethod
     def _validate_slugs_nonempty(cls, v: str | None) -> str | None:
-        """Reject an ``element``/``board`` that slugs to an empty id.
+        """Reject a ``board`` that slugs to an empty id.
 
-        They are free human strings but must slug to a non-empty ``[a-z0-9-]``
-        token (else they cannot form a valid id).
+        It is a free human string but must slug to a non-empty ``[a-z0-9-]``
+        token (else it cannot form a valid id). The element name is held to the
+        same rule by :class:`~otto.host.element.Element`.
         """
         if v is None:
             return v
@@ -420,7 +421,7 @@ class HostSpec(OttoModel):
             raise ValueError(f"{v!r} slugs to an empty id (needs at least one letter or digit)")
         return v
 
-    @field_validator("element_id", "slot", "shelf")
+    @field_validator("slot", "shelf")
     @classmethod
     def _validate_nonnegative(cls, v: int | None) -> int | None:
         if v is not None and v < 0:
@@ -509,7 +510,11 @@ class HostSpec(OttoModel):
         return kw
 
     def to_host(
-        self, cls: Any = None, *, preferences: dict[str, list[str]] | None = None
+        self,
+        cls: Any = None,
+        *,
+        element: Element,
+        preferences: dict[str, list[str]] | None = None,
     ) -> RemoteHost:
         """Build the runtime host this spec describes.
 
@@ -583,9 +588,14 @@ class UnixHostSpec(HostSpec):
 
     @override
     def to_host(
-        self, cls: type[UnixHost] = UnixHost, *, preferences: dict[str, list[str]] | None = None
+        self,
+        cls: type[UnixHost] = UnixHost,
+        *,
+        element: Element,
+        preferences: dict[str, list[str]] | None = None,
     ) -> UnixHost:
         kw = self._common_host_kwargs()
+        kw["element"] = element
         s = self.model_fields_set
         prefs = preferences or {}
         kw["valid_terms"] = list(self.valid_terms)
@@ -668,9 +678,11 @@ class EmbeddedHostSpec(HostSpec):
         self,
         cls: type[EmbeddedHost] = EmbeddedHost,
         *,
+        element: Element,
         preferences: dict[str, list[str]] | None = None,
     ) -> EmbeddedHost:
         kw = self._common_host_kwargs()
+        kw["element"] = element
         s = self.model_fields_set
         prefs = preferences or {}
         kw["valid_terms"] = list(self.valid_terms)

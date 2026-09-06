@@ -6,6 +6,7 @@ from otto.config.lab import (
     Lab,
     load_lab,
 )
+from otto.host.element import Element
 
 
 def _host(element: str, ip: str, lab_name: str | None = None) -> Any:
@@ -13,12 +14,12 @@ def _host(element: str, ip: str, lab_name: str | None = None) -> Any:
 
     return create_host_from_dict(
         {
-            "element": element,
             "os_type": "unix",
             "ip": ip,
             "creds": [{"login": "admin", "password": "admin"}],
         },
         lab_name=lab_name,
+        element=Element(element),
     )
 
 

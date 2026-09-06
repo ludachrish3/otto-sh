@@ -253,16 +253,16 @@ exists and reserves nothing.
 - **`name`** — the element's name, and the base of the id otto derives for
   each host it holds. This is the name you pass to `--lab`-scoped commands
   and `get_host()`.
-- **`id`** — an optional integer, needed only when two elements share a
-  `name` (a rack of identical boards): `name` plus `id` is the element's
+- **`id`** — an optional non-negative integer the author assigns to the
+  element — data otto carries as `host.element.id` and never uses for
   identity.
 - **`labs`** — the labs this element joins, written as regular expressions
   FULL-matched against declared lab names: `"bench"` does not match
   `"bench-2"`; write `"bench.*"` for that, or `".*"` to join every declared
   lab. At least one pattern is required — an element that joins nothing is a
   mistake, not an empty element.
-- **`metadata`** — an opaque object copied onto each of this element's hosts
-  as `element_metadata`; otto never reads it.
+- **`metadata`** — an opaque object shared by this element's hosts, reached
+  as `host.element.metadata`; otto never reads it.
 - **`hosts`** — one or more host entries. Each is validated against a
   pydantic spec before otto will use it (`UnixHostSpec` /
   `EmbeddedHostSpec`, see `docs/guide/configuration/lab-config.md`).
@@ -289,8 +289,9 @@ exists and reserves nothing.
   reads it.
 
 `element`, `element_id` and `labs` are NOT host fields any more: identity
-lives on the element (`name` / `id`), membership on the element's `labs`
-patterns. otto rejects a host entry carrying any of them, naming the key.
+lives on the element (`name`), its data on `id` and `metadata`, membership on
+the element's `labs` patterns. otto rejects a host entry carrying any of
+them, naming the key.
 `resources` may be declared on the lab (`labs` table), the element, or the
 host — see the reservation docs.
 

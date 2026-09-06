@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from otto.host import product as product_mod
+from otto.host.element import Element
 from otto.host.product import apply_product_providers, register_product_provider
 
 
@@ -379,12 +380,12 @@ def test_source_lab_is_stamped_before_the_providers_run():
     register_product_provider(probe)
     create_host_from_dict(
         {
-            "element": "probe-box",
             "os_type": "unix",
             "ip": "10.0.0.9",
             "creds": [{"login": "admin", "password": "admin"}],
         },
         lab_name="somelab",
+        element=Element("probe-box"),
     )
 
     assert seen == ["somelab"], "the provider ran before the lab stamp landed"

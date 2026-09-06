@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from otto.config.repo import Repo
+from otto.host.element import Element
 from otto.models.settings import DockerUseCaseSpec
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -136,11 +137,10 @@ def test_unix_host_spec_carries_roles():
 
     spec = UnixHostSpec(
         ip="10.0.0.1",
-        element="server",
         creds=[{"login": "u", "password": "p"}],
         roles=["edge", "builder"],
     )
-    host = spec.to_host()
+    host = spec.to_host(element=Element("server"))
     assert host.roles == ["edge", "builder"]
     assert host.roles is not spec.roles  # copied, not aliased (see valid_terms et al.)
 
@@ -148,5 +148,5 @@ def test_unix_host_spec_carries_roles():
 def test_unix_host_roles_default_empty():
     from otto.models.host import UnixHostSpec
 
-    spec = UnixHostSpec(ip="10.0.0.1", element="server", creds=[{"login": "u"}])
-    assert spec.to_host().roles == []
+    spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u"}])
+    assert spec.to_host(element=Element("server")).roles == []

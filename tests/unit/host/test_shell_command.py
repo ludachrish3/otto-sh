@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from otto.host import Results, ShellCommand
+from otto.host.element import Element
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
@@ -22,7 +23,10 @@ from otto.utils import Status
 @pytest.fixture
 def host() -> UnixHost:
     return UnixHost(
-        ip="10.0.0.1", element="box", creds=[Cred(login="user", password="pass")], log=LogMode.QUIET
+        ip="10.0.0.1",
+        element=Element("box"),
+        creds=[Cred(login="user", password="pass")],
+        log=LogMode.QUIET,
     )
 
 

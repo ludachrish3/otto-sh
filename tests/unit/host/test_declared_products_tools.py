@@ -12,6 +12,7 @@ import pytest
 from otto.declared import DeclaredEntry
 from otto.host import dev_tool as dev_tool_mod
 from otto.host import product as product_mod
+from otto.host.element import Element
 
 
 @pytest.fixture(autouse=True)
@@ -330,12 +331,12 @@ def test_factory_applies_declared_before_providers_after_the_lab_stamp(monkeypat
 
     host = create_host_from_dict(
         {
-            "element": "probe-box",
             "os_type": "unix",
             "ip": "10.0.0.9",
             "creds": [{"login": "admin", "password": "admin"}],
         },
         lab_name="somelab",
+        element=Element("probe-box"),
     )
 
     (fw,) = host.products

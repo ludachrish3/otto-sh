@@ -80,11 +80,11 @@ def test_lab_scaffold_passes_hostspec_ingest(tmp_path: Path) -> None:
     element = ElementSpec.model_validate(entry)
     assert element.name == "example-device"
     assert element.labs == ["example_lab"]
-    # A v2 host entry is only a host dict once its element stamps identity on
-    # it: `element` is a hoisted key, so the raw entry alone is deliberately
-    # NOT a valid host, and `flatten()` is the ingest path the loader uses.
-    spec = UnixHostSpec.model_validate(element.flatten()[0])
-    assert spec.element == "example-device"
+    # The host entry validates exactly as the file has it: the element is the
+    # factory's own argument, so nothing is stamped onto the entry first.
+    spec = UnixHostSpec.model_validate(element.hosts[0])
+    assert spec.ip
+    assert element.to_element().name == "example-device"
     assert (tmp_path / "lab_data" / "README.md").exists()
     assert data["$schema"] == "../.otto/schemas/lab.schema.json"
 

@@ -28,7 +28,7 @@ class LabInfo:
     """The LAB's declared reservation identifiers (spec §8.1) — lab level only.
 
     Element and host resources live on the host itself
-    (:attr:`~otto.host.remote_host.RemoteHost.element_resources`,
+    (:attr:`~otto.host.remote_host.RemoteHost.element`'s ``resources``,
     :attr:`~otto.host.remote_host.RemoteHost.resources`; spec 2026-08-28
     three-level-reservations §3)."""
 

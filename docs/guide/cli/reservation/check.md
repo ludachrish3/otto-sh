@@ -23,7 +23,7 @@ First the requirement, as a table with one row per (resource, origin) pair:
 |--------|---------------|
 | `resource` | The identifier, exactly as declared.  Opaque to otto. |
 | `level` | `lab`, `element` or `host` — the level that required it. |
-| `owner` | The lab name, the element as `('chassis', 1)`, or the host id. |
+| `owner` | The lab name, the element slug (e.g. `chassis`), or the host id. |
 | `held` | `yes` or `no` for the effective user.  `n/a` under `backend = "none"`, which is never queried. |
 
 Rows are sorted by resource, then level, then owner, so the same lab always
@@ -49,16 +49,16 @@ holds everything but the second slot:
 ```text
 reservations required by lab rig for chris (3 host(s)
                        in play)
-╭──────────────────┬─────────┬────────────────┬──────╮
-│ resource         │ level   │ owner          │ held │
-├──────────────────┼─────────┼────────────────┼──────┤
-│ chassis-1        │ element │ ('chassis', 1) │ yes  │
-│ chassis-1-slot-1 │ host    │ chassis1_slot1 │ yes  │
-│ chassis-1-slot-2 │ host    │ chassis1_slot2 │ no   │
-│ rig-pdu          │ lab     │ rig            │ yes  │
-╰──────────────────┴─────────┴────────────────┴──────╯
+╭──────────────────┬─────────┬───────────────┬──────╮
+│ resource         │ level   │ owner         │ held │
+├──────────────────┼─────────┼───────────────┼──────┤
+│ chassis-1        │ element │ chassis       │ yes  │
+│ chassis-1-slot-1 │ host    │ chassis_slot1 │ yes  │
+│ chassis-1-slot-2 │ host    │ chassis_slot2 │ no   │
+│ rig-pdu          │ lab     │ rig           │ yes  │
+╰──────────────────┴─────────┴───────────────┴──────╯
 User 'chris' does not hold all resources required by lab 'rig'. Missing:
-  chassis-1-slot-2  host chassis1_slot2  (held by: dana)
+  chassis-1-slot-2  host chassis_slot2  (held by: dana)
 ```
 
 ```{note}

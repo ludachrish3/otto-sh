@@ -83,11 +83,8 @@ element whose `labs` patterns match `unix`.  The lab has to be declared
 first — elements alone never conjure one.
 
 The host **id** used by `get_host()`, `--list-hosts`, and the rest of the CLI
-is `slug(<element name>)`, plus the element's `id` when set, plus (only when
-a `board` is set) `_` + `slug(board)` and then `slot` when set — so `slot`
-never appears in the id without a `board`.  See {ref}`host-identity` below
-for the exact rules, a worked example, and how the display name and CLI
-handles are derived alongside it.
+is composed from the element's name and the host's `board` and `slot` —
+{ref}`host-identity` below gives the rules and a worked example.
 
 ### Splitting a lab across files
 
@@ -125,9 +122,10 @@ lab_data/
 ```
 
 Within **one** source a duplicate is a typo, never an override: the same lab
-declared by two of a source's files, or the same element `(name, id)` carried
-by two of them, fails the load naming both files.  Overriding is the opt-in
-of a second `[[lab.sources]]` entry — see {doc}`host-sources`.
+declared by two of a source's files, or an element name repeated (compared
+by slug — see {ref}`host-identity` below) across two of them, fails the load
+naming both files.  Overriding is the opt-in of a second `[[lab.sources]]`
+entry — see {doc}`host-sources`.
 
 ## The labs table
 
@@ -184,9 +182,9 @@ option tables stay on the host entries.
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | string | Element name — the human-readable name of the equipment, and the source of every child host's id (`slug(name)`; see {ref}`host-identity`).  Must slug to a non-empty token.  Required. |
-| `id` | integer | Disambiguates repeats of the same `name`; must be `>= 0`.  Appended to each child host's id.  Omit when the name alone is unique. |
+| `id` | integer | Data the author assigns to the element; reached as `host.element.id`, never part of any id.  Must be `>= 0`. |
 | `labs` | array of strings | Membership patterns, `re.fullmatch`-ed against a lab name (below).  Required and non-empty: an element that joins nothing is a mistake, and "every lab" is spelled `[".*"]`. |
-| `metadata` | object | Opaque element-level user data; otto never reads it.  Surfaces as `host.element_metadata` on every host of the element — a copy per host, so two hosts of one element never share a mutable dict.  The element's `resources` below travel the same road, surfacing as `host.element_resources` (a frozenset, so it is shared safely). |
+| `metadata` | object | Opaque element-level user data; otto never reads it.  Surfaces as `host.element.metadata` on every host of the element — the `Element` copies it on construction, so one element's table can never be reached through another's.  The element's `resources` below travel the same road, surfacing as `host.element.resources` (a frozenset, so it is shared safely). |
 | `resources` | array of strings | Reservation identifiers for the element as one unit — the chassis, where the lab is too coarse and a slot too fine.  Combined with the lab's and each host's; see {doc}`../cli/reservation/index`.  Defaults to empty. |
 | `hosts` | array of objects | The element's host entries — the [per-host fields](#per-host-fields) below.  Required and non-empty. |
 
@@ -213,13 +211,14 @@ distinct names.  `os_type` stays per host either way, so a Zephyr board and
 its Unix management host can share one element when they share membership.
 
 **The element is also the unit of multi-source override.**  When two
-`[[lab.sources]]` entries carry the same element `(name, id)`, the later
-source's element replaces the earlier one **wholesale** — hosts, metadata,
-and the membership the later element states — with a warning naming both
-sources.  Overriding one board of a four-board chassis means restating the
-whole element entry; in exchange, a hybrid element (this source's hosts with
-that source's metadata) cannot exist.  `labs` entries replace the same way,
-resources and metadata together.  See {doc}`host-sources`.
+`[[lab.sources]]` entries carry an element with the same name (compared by
+slug), the later source's element replaces the earlier one **wholesale** —
+hosts, metadata, and the membership the later element states — with a
+warning naming both sources.  Overriding one board of a four-board chassis
+means restating the whole element entry; in exchange, a hybrid element
+(this source's hosts with that source's metadata) cannot exist.  `labs`
+entries replace the same way, resources and metadata together.  See
+{doc}`host-sources`.
 
 Replacement happens per lab load, so it covers exactly the labs *both*
 elements match.  An override that **drops** a membership pattern therefore
@@ -230,9 +229,9 @@ from a lab, change it at the source that declares it.
 ## Per-host fields
 
 A host entry is one addressable endpoint of its element.  `element`,
-`element_id`, and `labs` are **not** host fields: the first two are the
-element's `name` and `id`, and `labs` is the element's membership.  A host
-entry carrying any of them fails the load naming the key.  `resources` *is* a
+`element_id`, and `labs` are not host fields: the first is the element's
+`name`, the second its `id`, and `labs` its membership.  A host entry
+carrying any of them fails the load naming the key.  `resources` *is* a
 host field — the third reservation level, beside the
 [labs table](#the-labs-table)'s and the [element](#elements)'s.
 
@@ -247,8 +246,8 @@ host field — the third reservation level, beside the
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string | Display-name override.  Otto derives a human-friendly label from the element name, its logical number, `board`, and `slot`; setting `name` replaces that label entirely.  It does **not** change the host id. |
-| `metadata` | object | Opaque user data — the sanctioned home for custom fields, so `extra="forbid"` never has to give way.  Otto never reads it.  Surfaces as `host.metadata`; the element's as `host.element_metadata`; the lab's as `host.lab_info`. |
+| `name` | string | Display-name override.  Otto derives a label from the element name, `board`, and `slot`, exactly as written; setting `name` replaces that label entirely.  It does **not** change the host id. |
+| `metadata` | object | Opaque user data — the sanctioned home for custom fields, so `extra="forbid"` never has to give way.  Otto never reads it.  Surfaces as `host.metadata`; the element's as `host.element.metadata`; the lab's as `host.lab_info.metadata`. |
 | `resources` | array of strings | This host's own reservation identifiers — a slot.  Combined with the element's and the lab's; see {doc}`../cli/reservation/index`.  Defaults to empty. |
 | `board` | string | Board type, included in the host id when set. |
 | `user` | string | Pin a specific user from `creds`.  Defaults to the first entry. |
@@ -302,69 +301,70 @@ table, the backends, and what happens at load.
 
 ### Host identity & naming
 
-There is no `id` field on a host entry.  The **element's `name`** is both the
-human-readable name *and* the id source: it is **slugged** — lower-cased,
-with every run of characters outside `[a-z0-9]` (spaces, punctuation, `_`)
-collapsed to a single `-`, leading/trailing `-` stripped — to form the
-canonical id.  The id is then `slug(name)`, plus the element's `id` when set,
-plus (only when a `board` is set) `_` + `slug(board)` and then `slot` when
-set: the element's `id` can follow the name with no board, but `slot` never
-appears without a board.  `"Lab X Server"` slugs to `lab-x-server`.
+There is no `id` field on a host entry.  The **element's `name`** is the id
+source: it is **slugged** — lower-cased, with every run of characters
+outside `[a-z0-9]` (spaces, punctuation, `_`) collapsed to a single `-`,
+leading/trailing `-` stripped — and then, only when the host sets a
+`board`, `_` + `slug(board)` and the `slot` are appended.  `slot` never
+appears without a board.  The element's `id` is **data** — it is carried as
+`host.element.id` and never enters a host id, a display name, or an ordering.
 **Renaming an element changes its hosts' ids** — and, transitively, the id of
 any declared {ref}`link <lab-links>` whose `endpoints[].host` names one.
 
-An `os_profile` can supply `board`, `slot`, or — for an element that declares
-no `id` — `element_id` as a default, so a host record that names no `board`
-may still get one, and a different id than the record alone suggests.  (An
-element that *does* declare an `id` always wins — the host record beats the
-profile defaults it is merged with.)  Values are also coerced before the id
-is built, so a JSON
-`3.0` becomes `3`.  When authoring a link endpoint, take the id from `otto
-host <TAB>` (or `otto --show-lab`) rather than composing it by eye: an
-endpoint naming an id no host answers to fails the lab load.
+An `os_profile` can supply `board` or `slot` as a default, so a host record
+that names no `board` may still get one, and a different id than the record
+alone suggests.  When authoring a link endpoint, take the id from `otto host
+<TAB>` (or `otto --show-lab`) rather than composing it by eye: an endpoint
+naming an id no host answers to fails the lab load.
 
-When the same element `name` appears on more than one element in a lab,
-disambiguate with distinct names, an element `id`, or `board`/`slot` — any of
-these changes the resulting id.  Two hosts that still resolve to the same id
-fail the lab load with a clear error instead of one silently overwriting the
-other.
+Element names are unique per source, compared **by slug**: `Server` and
+`server` are the same element and the load fails naming both entries.  Several
+elements of one type are named distinctly — `server1` / `server2`, or whatever
+your site's scheme is; the number is yours, written once, and the same in every
+lab combination.  Two hosts of one element that resolve to the same id (two
+board-less hosts, say) fail the load with a clear error instead of one silently
+overwriting the other.
 
-The **display name** (`host.name`) is a separate, human-friendly label: the
-original-case element `name`, a small logical number, `board`, and `slot`,
-space-joined (parts omitted when absent).  The logical number is only added
-when the element `name` repeats in the lab — it counts instances in ascending
-element `id` order, starting at `1` — so a unique name gets no number.
-Setting an explicit `name` on the *host entry* overrides this generated label
-entirely.
+The **display name** (`host.name`) is the element `name`, then `board`, then
+`slot`, space-joined with parts omitted when absent — **exactly as written**
+in the lab entry, with no case change and no number added.  Setting an
+explicit `name` on the host entry replaces this label entirely.
 
 On the CLI, wherever a *host* is named — the `otto host <id>` positional,
-`--hop`, and docker's `--on` — you can type either the canonical id or the
-shorter positional handle `<element-slug><logical number>` (e.g. `dut1` for
-the first `dut`); tab completion offers both forms.
+`--hop`, and docker's `--on` — you type the id; tab completion offers it.
 
 ```json
 {
   "elements": [
     { "name": "Lab X Server", "labs": ["unix"],
       "hosts": [{ "ip": "10.0.0.2", "creds": [{"login": "root", "password": "pw"}] }] },
-    { "name": "dut", "id": 47, "labs": ["unix"],
+    { "name": "server1", "id": 47, "labs": ["unix"],
       "hosts": [{ "ip": "10.0.0.3", "creds": [{"login": "root", "password": "pw"}] }] },
-    { "name": "dut", "id": 103, "labs": ["unix"],
-      "hosts": [{ "ip": "10.0.0.4", "creds": [{"login": "root", "password": "pw"}] }] }
+    { "name": "Edge Router", "labs": ["unix"],
+      "hosts": [{ "ip": "10.0.0.4", "board": "LineCard", "slot": 3,
+                  "creds": [{"login": "root", "password": "pw"}] }] },
+    { "name": "chassis", "labs": ["unix"],
+      "hosts": [
+        { "ip": "10.0.0.5", "board": "cpu", "slot": 1, "creds": [{"login": "root", "password": "pw"}] },
+        { "ip": "10.0.0.6", "board": "cpu", "slot": 2, "creds": [{"login": "root", "password": "pw"}] },
+        { "ip": "10.0.0.7", "board": "io", "slot": 7, "creds": [{"login": "root", "password": "pw"}] }
+      ] }
   ]
 }
 ```
 
-| Element `name` / `id` | Id | Display name | CLI handle(s) |
-|---|---|---|---|
-| `"Lab X Server"` | `lab-x-server` | `Lab X Server` | `lab-x-server` |
-| `"dut"` / `47` | `dut47` | `dut 1` | `dut47`, `dut1` |
-| `"dut"` / `103` | `dut103` | `dut 2` | `dut103`, `dut2` |
+| Element `name` / `id` | Host id | Display name | `host.element.id` |
+| --- | --- | --- | --- |
+| `"Lab X Server"` | `lab-x-server` | `Lab X Server` | `None` |
+| `"server1"` / `47` | `server1` | `server1` | `47` |
+| `"Edge Router"`, board `LineCard`, slot `3` | `edge-router_linecard3` | `Edge Router LineCard 3` | `None` |
+| `"chassis"`, board `cpu`, slot `1` | `chassis_cpu1` | `chassis cpu 1` | `None` |
+| `"chassis"`, board `cpu`, slot `2` | `chassis_cpu2` | `chassis cpu 2` | `None` |
+| `"chassis"`, board `io`, slot `7` | `chassis_io7` | `chassis io 7` | `None` |
 
-`Lab X Server` is the only element with that name, so its host has no logical
-number and no positional handle — just its id.  The two `dut` elements share
-a name, so each is numbered by ascending element `id` (`47` before `103`) in
-both its display name and its positional handle.
+A single element with several hosts — a chassis's boards — is the common
+case a repeated *name* is not: one element, several host entries, one id and
+one display name per host, all sharing the element's `metadata` and `id`.
 
 ### Host type / OS
 
@@ -750,11 +750,12 @@ After:
 
 Three steps, in order:
 
-1. **Group the `hosts` array by `element` + `element_id`.**  Each group
-   becomes one `elements` entry: `element` becomes the element's `name`,
-   `element_id` becomes its `id`, and the group's host entries become its
-   `hosts`.  Delete both keys from the host entries — they are errors there
-   now.
+1. **Group the `hosts` array by `element`.**  Each group becomes one
+   `elements` entry: `element` becomes its `name`, and an `element_id` the
+   group carried becomes its `id` — data (see {ref}`host-identity` above), so
+   it no longer disambiguates.  Two groups that shared an `element` and
+   differed only in `element_id` need distinct names now.  Delete both keys
+   from the host entries — they are errors there now.
 2. **Move each group's `labs` up to the element.**  The hosts of one element
    must have carried the same `labs`; where they did not, they were never one
    element — split them into elements with distinct names.
@@ -767,10 +768,20 @@ Three steps, in order:
    `labs` table — a lab exists only once it is declared, and a lab that
    reserves nothing is written `{}`.
 
-Two things do *not* change.  Host ids compose exactly as before — `slug(name)`
-plus the element `id` plus `board`/`slot` — so declared-link endpoints,
-`[project] host_patterns`, and every scripted `get_host("dut3_cpu")` keep
-working.  And every operational host field stays exactly where it was.
+Every operational host field stays exactly where it was.  Host ids do
+change, though, wherever the v1 id embedded an `element_id`: it drops out of
+the composition entirely (see {ref}`host-identity` above), so `dut3_cpu`
+becomes `dut_cpu` once `element_id: 3` moves to the element's `id`.  Update
+every place that named the old id: declared-link endpoints, `[project]
+host_patterns`, `[host_preferences]` selectors (which match by host id),
+reservation identifiers that embed a host id, live tunnel markers, and any
+scripted `get_host(...)` call.
+
+Check your {doc}`os_profile <os-profiles>` defaults for `element_id` as well.
+A profile's `defaults` merge into every host entry it applies to, so one still
+setting `element_id` now fails that entry's validation with `extra_forbidden`
+on `element_id` — the key is gone from the host entry, not merely relocated.
+Remove it from the profile.
 
 One host field does change alongside them: `log` no longer accepts `true` or
 `false`.  Write the mode name — `"normal"`, `"quiet"`, or `"never"`.

@@ -27,6 +27,7 @@ import pytest
 
 from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.models import MonitorExport
@@ -741,7 +742,9 @@ def _make_unconnected_host(host_id: str = "router1") -> UnixHost:
     attributes are auto-vivified ``Mock`` objects, not strings (see
     ``tests/unit/suite/test_plugin.py``'s identical helper).
     """
-    return UnixHost(ip="10.0.0.1", element=host_id, creds=[Cred(login="admin", password="secret")])
+    return UnixHost(
+        ip="10.0.0.1", element=Element(host_id), creds=[Cred(login="admin", password="secret")]
+    )
 
 
 async def _fake_collector_run(collector: MetricCollector, interval, duration=None) -> None:

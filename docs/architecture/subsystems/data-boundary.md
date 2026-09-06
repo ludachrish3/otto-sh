@@ -13,7 +13,7 @@ Each kind of input has a `*Spec` model whose job ends at construction:
 
 ```text
 lab.json labs entry   → LabEntrySpec.model_validate(…) → Lab.resources / .metadata
-lab.json element      → ElementSpec.model_validate(…)  → .flatten() → flat host dicts
+lab.json element      → ElementSpec.model_validate(…)  → .to_element() + .hosts → factory(entry, element=…)
   its host entry      → HostSpec.model_validate(…)     → spec.to_host(cls, …)  → UnixHost
 settings.toml tables  → settings spec models           → spec.to_runtime()     → backend objects
 OTTO_* environment    → OttoEnvSettings                → typed fields (paths, …)
@@ -23,11 +23,13 @@ OTTO_* environment    → OttoEnvSettings                → typed fields (paths
 {mod}`otto.models.lab`: `LabEntrySpec` for a declared lab's `resources` and
 `metadata`, `ElementSpec` for one piece of equipment — identity, its
 fullmatch `labs` patterns, `metadata`, and the raw host entries it groups.
-`ElementSpec.flatten()` stamps the element's `name`/`id` onto copies of those
-entries as `element`/`element_id`, so the flat host-dict API downstream (the
-factory, `host_identity`, custom backends) is untouched by the file shape —
-and the same spec refuses those four hoisted keys (`element`, `element_id`,
-`labs`, `resources`) *inside* a host entry, naming the one it found.
+`ElementSpec.to_element()` builds one runtime {class}`~otto.host.element.Element`
+per `ElementSpec`, shared by every host of it, and the loader passes that
+instance beside each of the spec's host entries — untouched — to the factory
+(`element=`), so the flat host-dict API downstream (the factory,
+`host_identity`, custom backends) never carries element fields at all. The
+same spec refuses the three hoisted keys (`element`, `element_id`, `labs`)
+*inside* a host entry, naming the one it found.
 
 The split keeps validation errors where the *data* is (a bad `lab.json`
 field fails with a pydantic error naming the file and field, not a traceback
@@ -141,7 +143,7 @@ startup ({doc}`../utilities/logging`).
 
 ## Where the code lives
 
-- {mod}`otto.models.lab` — `LabEntrySpec`, `ElementSpec`, `ElementKey`: the
+- {mod}`otto.models.lab` — `LabEntrySpec`, `ElementSpec`: the
   `lab.json` wrapper layers above the host entry
 - {mod}`otto.models.host` — `HostSpec`, `UnixHostSpec`, `EmbeddedHostSpec`:
   the spec half of the spec → runtime pattern

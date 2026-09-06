@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.host.docker_host import DockerContainerHost
+from otto.host.element import Element
 from otto.host.errors import HostCommandError
 from otto.host.inventory_ref import InventoryRef
 from otto.host.login_proxy import Cred
@@ -86,7 +87,7 @@ def _build_fake_ssh_remote_host():
     return UnixHost(
         ip="10.0.0.1",
         creds=[Cred(login="root", password="x")],
-        element="fake_ne",
+        element=Element("fake_ne"),
         term="ssh",
         _connection_factory=FakeConnections,
     )
@@ -1637,7 +1638,7 @@ async def test_login_rejects_non_ssh_parent():
     telnet_parent = UnixHost(
         ip="10.0.0.1",
         creds=[Cred(login="root", password="x")],
-        element="fake_ne",
+        element=Element("fake_ne"),
         term="telnet",
         _connection_factory=FakeTelnetConnections,
     )

@@ -14,6 +14,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.labs.sources import CompiledLabSource
@@ -40,21 +41,50 @@ def lab_data_path(tech: str = "tech1") -> Path:
     return _LAB_DATA_DIR / tech / "lab.json"
 
 
-def host_data(ne: str, tech: str = "tech1") -> dict[str, Any]:
-    """Return the flat host dict for element ``ne`` (see :func:`flat_hosts`).
+_ELEMENT_KEYS = ("element", "element_id")
 
-    Factory-ready: ``element``/``element_id`` are stamped from the element, and
-    there is no ``labs`` (``HostSpec`` forbids it). ``resources`` comes through
-    when the host entry declares one — since spec 2026-08-28
-    three-level-reservations a v2 entry may, and ``tech1``'s ``test2`` does; a
-    v1-shaped round-trip through :func:`lab_json_v2` instead hoists it to the
-    lab level, which is v1's own semantics. Callers that need membership want
-    :func:`flat_hosts` with ``with_labs=True``.
+
+def element_of(flat: dict[str, Any]) -> Element:
+    """The element a flat v1-style host dict names (see :func:`flat_hosts`)."""
+    return Element(flat["element"], id=flat.get("element_id"))
+
+
+def entry_of(flat: dict[str, Any]) -> dict[str, Any]:
+    """*flat* without its element keys — the host entry the factory takes."""
+    return {k: v for k, v in flat.items() if k not in _ELEMENT_KEYS}
+
+
+def _flat_record(ne: str, tech: str) -> dict[str, Any]:
+    """The one flat record of fixture element ``ne`` — a single parse of the file.
+
+    The shared lookup behind :func:`element_for`, :func:`host_data` and
+    :func:`make_host`, so a caller that wants both halves of an entry reads the
+    file once instead of once per half.
     """
-    for host in flat_hosts(tech):
-        if host["element"] == ne:
-            return host
+    for flat in flat_hosts(tech):
+        if flat["element"] == ne:
+            return flat
     raise KeyError(f"NE {ne!r} not found in {lab_data_path(tech)}")
+
+
+def element_for(ne: str, tech: str = "tech1") -> Element:
+    """The :class:`~otto.host.element.Element` of fixture element ``ne``."""
+    return element_of(_flat_record(ne, tech))
+
+
+def host_data(ne: str, tech: str = "tech1") -> dict[str, Any]:
+    """The host entry of fixture element ``ne`` as the factory takes it — no element keys.
+
+    ``element``/``element_id`` are stripped: they are the element's, and the
+    factory takes it as :func:`element_for`'s ``Element``. There is no ``labs``
+    either (``HostSpec`` forbids it). ``resources`` comes through when the host
+    entry declares one — since spec 2026-08-28 three-level-reservations a v2
+    entry may, and ``tech1``'s ``test2`` does; a v1-shaped round-trip through
+    :func:`lab_json_v2` instead hoists it to the lab level, which is v1's own
+    semantics. Callers that need membership want :func:`flat_hosts` with
+    ``with_labs=True``.
+    """
+    return entry_of(_flat_record(ne, tech))
 
 
 def lab_json_v2(
@@ -64,6 +94,10 @@ def lab_json_v2(
     declare_labs: bool = True,
 ) -> dict[str, Any]:
     """Wrap flat v1-style host dicts into a v2 lab.json document.
+
+    The flat dict is this writer's INPUT shape, not what the factory takes —
+    the factory takes a host entry plus an :class:`~otto.host.element.Element`
+    (:func:`host_data` and :func:`element_for`).
 
     Hoists ``labs`` onto the element and ``resources`` into the ``labs`` table
     (union per lab), grouping hosts that share ``(element, element_id)``. A host
@@ -144,8 +178,10 @@ def flatten_lab_doc(doc: dict[str, Any], *, with_labs: bool = False) -> list[dic
 
     The reader half of :func:`lab_json_v2`, for the sites that hold a document
     rather than a tech name — a file the test itself wrote, or one found by
-    walking a tree. :func:`flat_hosts` is this over a fixture's ``lab.json``;
-    see it for what the flat dict does and does not carry.
+    walking a tree. The flat dict is that writer's input shape; a caller that
+    wants what the FACTORY takes wants :func:`host_data` plus
+    :func:`element_for`. :func:`flat_hosts` is this over a fixture's
+    ``lab.json``; see it for what the flat dict does and does not carry.
     """
     declared = sorted(doc.get("labs", {}))
     out: list[dict[str, Any]] = []
@@ -164,24 +200,27 @@ def flatten_lab_doc(doc: dict[str, Any], *, with_labs: bool = False) -> list[dic
 def flat_hosts(tech: str = "tech1", *, with_labs: bool = False) -> list[dict[str, Any]]:
     """Every host of a tech's v2 lab.json as a flat v1-style dict.
 
-    ``element``/``element_id`` come from the element, so the result is what
-    :func:`otto.host.factory.create_host_from_dict` takes. No ``labs``
-    (``HostSpec`` forbids it); a host entry's own ``resources`` DOES come
-    through, because a v2 entry may carry one and ``tech1``'s ``test2`` does
-    (the element's and the lab's are not folded in — this is the entry, not the
-    built host). Pass ``with_labs=True`` for the membership readers, which adds
-    the list of DECLARED lab names the element's patterns match, so membership
-    reads as it did on v1 entries.
+    ``element``/``element_id`` are stamped back on from the element, so the
+    result round-trips through :func:`lab_json_v2` — it is the v1 SHAPE, not
+    what :func:`otto.host.factory.create_host_from_dict` takes (that is
+    :func:`host_data` plus :func:`element_for`). No ``labs`` (``HostSpec``
+    forbids it); a host entry's own ``resources`` DOES come through, because a
+    v2 entry may carry one and ``tech1``'s ``test2`` does (the element's and
+    the lab's are not folded in — this is the entry, not the built host). Pass
+    ``with_labs=True`` for the membership readers, which adds the list of
+    DECLARED lab names the element's patterns match, so membership reads as it
+    did on v1 entries.
     """
     return flatten_lab_doc(json.loads(lab_data_path(tech).read_text()), with_labs=with_labs)
 
 
 def make_host(ne: str, **kwargs: Any) -> UnixHost:
     """Build a UnixHost from lab data with optional field overrides."""
-    data = host_data(ne)
+    flat = _flat_record(ne, "tech1")  # one parse, both halves
+    data = entry_of(flat)
     return UnixHost(
         ip=data["ip"],
-        element=data["element"],
+        element=element_of(flat),
         creds=[Cred(**c) for c in data["creds"]],
         board=data.get("board"),
         is_virtual=data.get("is_virtual", False),

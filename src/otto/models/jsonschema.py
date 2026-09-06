@@ -8,8 +8,8 @@ is trivially testable and importable.
 Emitted documents (default):
 
 - one self-contained file per *distinct* registered host spec
-  (``unix-host``, ``embedded-host``, …) — the FLAT host dict, element identity
-  and all, as ``ElementSpec.flatten()`` produces it for the host factory,
+  (``unix-host``, ``embedded-host``, …) — one host entry, exactly as the host
+  factory takes it,
 - ``lab`` — the object schema for the whole v2 ``lab.json`` file: the ``labs``
   table (one :class:`~otto.models.lab.LabEntrySpec` per declared lab), the
   ``elements`` array (each :class:`~otto.models.lab.ElementSpec` wrapping its
@@ -55,7 +55,7 @@ from ..link import IMPAIRERS
 from ..version import get_version
 from .host import HostSpec
 from .inventory import FILLABLE_INVENTORY_FIELDS, InventoryRecord
-from .lab import HOISTED_HOST_KEYS, ElementSpec, LabEntrySpec
+from .lab import ElementSpec, LabEntrySpec
 from .link import LinkSpec
 from .monitor import (
     EventCreateBody,
@@ -188,37 +188,6 @@ def _inject_interface_shorthand(schema: dict[str, Any]) -> None:
     props["interfaces"]["additionalProperties"] = {"anyOf": [{"type": "string"}, ref]}
 
 
-def _drop_hoisted_keys(schema: dict[str, Any]) -> None:
-    """Strip the element-level keys from a nested host-entry schema, in place.
-
-    :class:`~otto.models.lab.ElementSpec` rejects every
-    :data:`~otto.models.lab.HOISTED_HOST_KEYS` member found inside one of its
-    ``hosts`` entries — ``element``/``element_id`` belong to the element and
-    ``labs`` is the element's membership — so the nested host sub-schemas must
-    neither require nor permit them. With the specs' ``additionalProperties:
-    false`` that makes an unmigrated host entry squiggle in the editor rather
-    than validate.
-
-    The standalone per-spec documents keep these fields, deliberately: they
-    describe the FLAT host dict ``ElementSpec.flatten()`` builds, which the
-    host factory and ``host_identity`` still take.
-
-    Driven off ``HOISTED_HOST_KEYS`` rather than a local list, so the schema
-    cannot drift from the runtime rule: ``labs`` is gone from
-    :class:`~otto.models.host.HostSpec` (that pop is a no-op today) and
-    ``resources`` came BACK to it with spec 2026-08-28
-    three-level-reservations — which is why the set, not a local list, drives
-    this: the nested entry now offers ``resources`` without a schema edit.
-    """
-    props = schema.get("properties")
-    if isinstance(props, dict):
-        for key in HOISTED_HOST_KEYS:
-            props.pop(key, None)
-    required = schema.get("required")
-    if isinstance(required, list):
-        schema["required"] = [k for k in required if k not in HOISTED_HOST_KEYS]
-
-
 def _allow_inventory_reference(doc: dict[str, Any]) -> None:
     """Let a referenced entry state ``inventory`` INSTEAD of the fields a record fills (spec §5).
 
@@ -286,7 +255,6 @@ def _host_entries_schema(
         if key in top["$defs"]:
             _inject_selector_enums(top["$defs"][key], s)
             _inject_interface_shorthand(top["$defs"][key])
-            _drop_hoisted_keys(top["$defs"][key])
             _allow_inventory_reference(top["$defs"][key])
             _allow_comment_keys(top["$defs"][key])
     return {

@@ -32,6 +32,7 @@ import pytest
 import tomli
 
 from otto.logger.mode import LogMode
+from tests._fixtures.labdata import element_for
 from tests.e2e._otto_subprocess import PROJECT_ROOT, assert_output_dir, run_otto
 
 REPO3 = PROJECT_ROOT / "tests" / "repo3"
@@ -84,7 +85,7 @@ def clean_zephyr37_llext():
     lab.add_host(
         UnixHost(
             ip=test4["ip"],
-            element=test4["element"],
+            element=element_for("test4"),
             creds=[Cred(**c) for c in test4["creds"]],
             board=test4.get("board"),
             is_virtual=True,
@@ -95,7 +96,7 @@ def clean_zephyr37_llext():
     )
     set_context(OttoContext(lab=lab))
 
-    host = create_host_from_dict(host_data("zephyr37_llext"))
+    host = create_host_from_dict(host_data("zephyr37_llext"), element=element_for("zephyr37_llext"))
 
     async def _prep() -> bool:
         try:

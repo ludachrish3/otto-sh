@@ -13,7 +13,7 @@ from ..host.factory import (
     host_identity,
     validate_host_dict,
 )
-from ..models.lab import ElementKey, ElementSpec, LabEntrySpec
+from ..models.lab import ElementSpec, LabEntrySpec
 from .errors import (
     LabNotFoundError,
     LabRepositoryError,
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     # the first thing imported. load_lab() below imports Lab locally at call
     # time instead, by which point both modules are fully initialized.
     from ..config.lab import Lab
+    from ..host.element import Element
     from ..inventory import Inventory
 
 logger = logging.getLogger(__name__)
@@ -200,17 +201,24 @@ def parse_lab_entries(raw: dict[str, Any], source: str) -> dict[str, LabEntrySpe
 
 
 def parse_elements(raw: list[Any], source: str) -> list[ElementSpec]:
-    """Validate every ``elements`` entry; duplicate ``(name, id)`` is an error."""
-    seen: dict[ElementKey, int] = {}
+    """Validate every ``elements`` entry; two entries whose names slug alike are an error."""
+    seen_at: dict[str, int] = {}
+    seen_name: dict[str, str] = {}
     out: list[ElementSpec] = []
     for idx, entry in enumerate(raw):
         spec = _parse_element(entry, idx, source)
-        if spec.key in seen:
-            raise LabRepositoryError(
-                f"Lab file '{source}': duplicate element {spec.key} at elements[{seen[spec.key]}] "
-                f"and elements[{idx}] — one element, one entry"
-            )
-        seen[spec.key] = idx
+        if spec.key in seen_at:
+            first, first_name = seen_at[spec.key], seen_name[spec.key]
+            if first_name == spec.name:
+                detail = f"duplicate element {spec.name!r} at elements[{first}] and elements[{idx}]"
+            else:
+                detail = (
+                    f"elements[{first}] {first_name!r} and elements[{idx}] {spec.name!r} "
+                    f"both slug to {spec.key!r}"
+                )
+            raise LabRepositoryError(f"Lab file '{source}': {detail} — one element, one entry")
+        seen_at[spec.key] = idx
+        seen_name[spec.key] = spec.name
         out.append(spec)
     return out
 
@@ -230,6 +238,24 @@ def _parse_element(entry: object, idx: int, source: str) -> ElementSpec:
         return ElementSpec.model_validate(entry)
     except ValidationError as e:
         raise LabRepositoryError(f"Lab file '{source}': elements[{idx}] {e}") from e
+
+
+@dataclass(frozen=True, slots=True)
+class SeenElement:
+    """Where a source first carried an element slug, and how that file spelled it.
+
+    The path alone is not enough. Identity is the slug, so ``ALT1`` in one file
+    and ``Alt1`` in another are one element — and an error quoting only the
+    second spelling sends the author hunting a string the first file never
+    contains. Public because it is half of :func:`check_in_source_duplicates`'s
+    signature, which the ``otto init`` doctor also calls.
+    """
+
+    path: Path
+    """The lab file that first carried the element."""
+
+    name: str
+    """The element's name exactly as that file spelled it."""
 
 
 @dataclass(frozen=True)
@@ -269,8 +295,8 @@ class JsonFileLabRepository:
 
     The files of ONE source compose by union (spec §2.4): an element in one
     file may join a lab declared in another, and a duplicate within the source
-    — the same element ``(name, id)``, or the same lab declared twice — is a
-    typo, not an override, and fails naming both files. The search paths are
+    — the same element slug, or the same lab declared twice — is a typo, not an
+    override, and fails naming both files. The search paths are
     supplied once at construction — this is the built-in ``"json"`` backend,
     and :func:`otto.labs.build_lab_sources` feeds it the ``paths`` of the
     ``[[lab.sources]]`` entry that selected it.
@@ -357,8 +383,9 @@ class JsonFileLabRepository:
             lab.metadata[name] = dict(declared.metadata)
 
         for element, path in members:
-            for idx, host_data in enumerate(element.flatten()):
-                _add_host(lab, host_data, element, idx, path, preferences, inventory)
+            runtime = element.to_element()
+            for idx, host_data in enumerate(element.hosts):
+                _add_host(lab, host_data, runtime, idx, path, preferences, inventory)
 
         from ..link.derive import addressing_from_dict, resolve_declared_links
 
@@ -368,17 +395,20 @@ class JsonFileLabRepository:
         # common case) skips the walk entirely rather than paying for a map
         # nothing reads.
         #
-        # Guard: the flattened records span ALL lab files, including entries
-        # never validated (they belong to other labs) — skip shapes that can't
+        # Guard: these records span ALL lab files, including entries never
+        # validated (they belong to other labs) — skip shapes that can't
         # produce an id rather than crash link resolution on someone else's typo.
         # The requested lab's own hosts were already validated above, so any
-        # exception here belongs to an unrelated lab's malformed record. No
-        # `element` guard: a record whose element comes from its os_profile DOES
-        # load, so skipping it would fail a link naming a host that plainly
-        # exists — the except below covers the genuinely element-less record.
+        # exception here belongs to an unrelated lab's malformed record.
         addressing: dict[str, Any] = {}
-        all_flat = [f for el in all_elements for f in el.flatten()] if all_links else []
-        for h in all_flat:
+        # ``to_element()`` once per ELEMENT, not once per host: one runtime
+        # element is shared by its hosts everywhere else, and rebuilding it per
+        # entry here would be the only place that is not true.
+        all_entries: list[tuple[Element, dict[str, Any]]] = []
+        for el in all_elements if all_links else []:
+            runtime = el.to_element()
+            all_entries.extend((runtime, h) for h in el.hosts)
+        for runtime, h in all_entries:
             try:
                 # Resolved inside the per-item try: a referenced entry has no
                 # address of its own, so a link naming one is only derivable
@@ -387,7 +417,7 @@ class JsonFileLabRepository:
                 # hold) is skipped here exactly like any other unresolvable
                 # record, rather than failing this lab's load.
                 host_id, host_addressing = addressing_from_dict(
-                    resolve_host_entry(h, inventory).host_data
+                    resolve_host_entry(h, inventory, runtime).host_data, runtime
                 )
             except Exception as e:  # noqa: BLE001 — per-item resilience, see guard above
                 # Log the reason: this now also fires for a WELL-FORMED record
@@ -399,7 +429,7 @@ class JsonFileLabRepository:
             if host_id in addressing and addressing[host_id] != host_addressing:
                 logger.warning(
                     "Duplicate host id %r across lab files with differing addressing; "
-                    "keeping the first. Differentiate the element, element_id, or board/slot.",
+                    "keeping the first. Differentiate the element name, or set board/slot.",
                     host_id,
                 )
                 continue
@@ -435,8 +465,8 @@ class JsonFileLabRepository:
         applies the same profile merge and validation
         :func:`~otto.host.factory.create_host_from_dict` applies — so an id
         offered by completion is one that dispatches. Deriving ids by
-        formatting the raw JSON instead would silently diverge (a float
-        ``element_id``, or a profile that defaults ``board``/``slot``).
+        formatting the raw JSON instead would silently diverge (a profile that
+        defaults ``board``/``slot`` supplies id parts the JSON never mentions).
 
         ``labs`` is each element's patterns resolved against the labs THIS
         source declares; ``lab_patterns`` carries the patterns themselves, so
@@ -448,8 +478,10 @@ class JsonFileLabRepository:
 
         Best-effort, like :meth:`list_labs`: a malformed file or host entry
         is skipped rather than raised — these feed completion, which must
-        never crash the shell. Hosts listed in several lab files merge by
-        id, unioning their ``labs``.
+        never crash the shell. Two records deriving one id keep the FIRST:
+        an id's prefix is its element's slug, so both records belong to one
+        element and carry one membership (:meth:`load_lab` refuses the same
+        pair as a host-id collision).
         """
         from ..inventory import InventoryError, resolve_host_entry  # lazy: see the note above
         from .drops import record_drop
@@ -465,30 +497,38 @@ class JsonFileLabRepository:
         for doc in docs:
             for element in doc.elements:
                 labs = [n for n in declared if element.matches(n)]
-                for index, flat in enumerate(element.flatten()):
+                try:
+                    runtime = element.to_element()
+                except ValueError as e:
+                    # The runtime Element re-checks what ElementSpec already
+                    # refused; if the two ever drift apart, the element is
+                    # skipped and SAID, never raised into the shell.
+                    record_drop(f"{doc.path}: element {element.name!r}", str(e))
+                    continue
+                for index, entry in enumerate(element.hosts):
                     try:
-                        host_data = resolve_host_entry(flat, inventory).host_data
-                        identity = host_identity(host_data)
+                        host_data = resolve_host_entry(entry, inventory, runtime).host_data
+                        identity = host_identity(host_data, runtime)
                     except (ValueError, TypeError, InventoryError) as e:
                         # Skipped, never raised — but SAID: this is the one
                         # place a referenced entry silently fell out of
                         # completion (see otto.labs.drops).
                         record_drop(f"{doc.path}: element {element.name!r} hosts[{index}]", str(e))
                         continue
-                    existing = by_id.get(identity.id)
-                    if existing is not None:
-                        existing.labs.extend(n for n in labs if n not in existing.labs)
-                        existing.lab_patterns.extend(
-                            p for p in element.labs if p not in existing.lab_patterns
-                        )
+                    if identity.id in by_id:
+                        # Keep-first, with nothing to fold in: an id's prefix
+                        # IS its element's slug (spec 2026-09-05 §2.2, and
+                        # ``slug`` never emits ``_``), and one source carries
+                        # a slug once — a second file restating it is a
+                        # duplicate-element error, skipped above by
+                        # ``best_effort``. So both records come from the ONE
+                        # element, and share its membership exactly.
                         continue
                     by_id[identity.id] = HostSummary(
                         id=identity.id,
                         labs=list(labs),
                         lab_patterns=list(element.labs),
                         ip=identity.ip,
-                        element=identity.element,
-                        element_id=identity.element_id,
                         docker_capable=identity.docker_capable,
                         os_type=str(host_data.get("os_type", "unix")),
                     )
@@ -514,12 +554,12 @@ class JsonFileLabRepository:
         """Parse every lab file: its path, labs table, elements and raw links.
 
         Within ONE source a duplicate is a typo, never an override: the same
-        element ``(name, id)`` or the same lab declaration in two files fails
-        naming both. *best_effort* (completion paths) skips a malformed or
-        duplicating file with a debug log instead of raising.
+        element slug or the same lab declaration in two files fails naming both.
+        *best_effort* (completion paths) skips a malformed or duplicating file
+        with a debug log instead of raising.
         """
         docs: list[_Document] = []
-        seen_elements: dict[ElementKey, Path] = {}
+        seen_elements: dict[str, SeenElement] = {}
         seen_labs: dict[str, Path] = {}
         for lab_file in self._find_lab_files():
             try:
@@ -598,13 +638,13 @@ class JsonFileLabRepository:
 def _add_host(
     lab: "Lab",
     host_data: dict[str, Any],
-    element: ElementSpec,
+    element: "Element",
     idx: int,
     path: Path,
     preferences: dict[str, dict[str, Any]] | None,
     inventory: "Inventory | None",
 ) -> None:
-    """Build one flattened host entry and add it to *lab*.
+    """Build one host entry of *element* and add it to *lab*.
 
     A free function rather than the loop body it is called from: the
     ``try``/``except`` belongs outside the loop (``PERF203``), and the error
@@ -627,14 +667,13 @@ def _add_host(
     from ..inventory import resolve_host_entry  # lazy: see the note at the top of this module
 
     try:
-        entry = resolve_host_entry(host_data, inventory)
+        entry = resolve_host_entry(host_data, inventory, element)
         validate_host_dict(entry.host_data)
         host = create_host_from_dict(
             entry.host_data,
             preferences=preferences,
             lab_name=lab.name,
-            element_metadata=element.metadata,
-            element_resources=element.resources,
+            element=element,
             inventory_ref=entry.ref,
         )
         lab.add_host(host)
@@ -657,13 +696,13 @@ def check_in_source_duplicates(
     lab_file: Path,
     *,
     seen_labs: dict[str, Path],
-    seen_elements: dict[ElementKey, Path],
+    seen_elements: dict[str, SeenElement],
 ) -> None:
     """Reject, then record, one file's declarations against its SOURCE's running state.
 
     Within one source a duplicate is a typo, never an override (spec §2.4): the
-    same lab declared, or the same element ``(name, id)`` carried, by two of a
-    source's files fails naming both. Across sources the same re-declaration is
+    same lab declared, or the same element slug carried, by two of a source's
+    files fails naming both. Across sources the same re-declaration is
     legal — that is the ``[[lab.sources]]`` override seam — so *seen_labs* and
     *seen_elements* must be reset per source and threaded across only that
     source's files.
@@ -687,7 +726,7 @@ def check_in_source_duplicates(
     _reject_duplicate_labs(entries, seen_labs, lab_file)
     _reject_duplicate_elements(elements, seen_elements, lab_file)
     seen_labs.update(dict.fromkeys(entries, lab_file))
-    seen_elements.update({el.key: lab_file for el in elements})
+    seen_elements.update({el.key: SeenElement(lab_file, el.name) for el in elements})
 
 
 def _reject_duplicate_labs(
@@ -704,12 +743,24 @@ def _reject_duplicate_labs(
 
 
 def _reject_duplicate_elements(
-    elements: list[ElementSpec], seen: dict[ElementKey, Path], lab_file: Path
+    elements: list[ElementSpec], seen: dict[str, SeenElement], lab_file: Path
 ) -> None:
-    """Raise when an element of *elements* was already carried by another file."""
+    """Raise when an element of *elements* was already carried by another file.
+
+    The two forms mirror :func:`parse_elements` exactly (spec 2026-09-05 §6),
+    with the two file paths standing where the two entry indices stand there:
+    identical names read as a duplicate, and spellings that differ say what
+    each file wrote and the slug they share.
+    """
     for element in elements:
-        if element.key in seen:
-            raise LabRepositoryError(
-                f"duplicate element {element.key} in {seen[element.key]} and "
-                f"{lab_file} — one element, one entry"
+        first = seen.get(element.key)
+        if first is None:
+            continue
+        if first.name == element.name:
+            detail = f"duplicate element {element.name!r} in {first.path} and {lab_file}"
+        else:
+            detail = (
+                f"{first.path} {first.name!r} and {lab_file} {element.name!r} "
+                f"both slug to {element.key!r}"
             )
+        raise LabRepositoryError(f"{detail} — one element, one entry")
