@@ -569,6 +569,7 @@ def main(  # noqa: PLR0913 — CLI command params
         bool,
         typer.Option(
             "--show-time",
+            "-t",
             help="Show per-line timestamps on the live console (log files are always timestamped).",
         ),
     ] = False,

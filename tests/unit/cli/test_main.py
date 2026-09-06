@@ -363,6 +363,24 @@ class TestLoggerArguments:
         assert "--show-time" in result.output
         assert "--verbose" not in result.output
 
+    def test_show_time_short_flag(self, real_main_mocks):
+        _invoke(["-t"])
+        rich = real_main_mocks["RichHandler"]
+        rich.assert_called_with(
+            level=ANY,
+            console=ANY,
+            show_time=True,
+            tracebacks_max_frames=ANY,
+            tracebacks_show_locals=ANY,
+            markup=ANY,
+            highlighter=ANY,
+            show_path=ANY,
+            enable_link_path=ANY,
+            log_time_format=ANY,
+            omit_repeated_times=ANY,
+        )
+        assert {c.kwargs["show_time"] for c in rich.call_args_list} == {True}
+
     def test_lab_depth_flag_present(self):
         result = runner.invoke(app, ["--help"])
         assert "--lab-depth" in result.output

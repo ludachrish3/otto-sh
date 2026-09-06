@@ -30,7 +30,7 @@ These options are available on every `otto` command:
 | `--log-days` | `OTTO_LOG_DAYS` | `30` | Number of days to retain logs |
 | `--log-level` | `OTTO_LOG_LEVEL` | `INFO` | Logging level |
 | `--rich-log-file / --no-rich-log-file` | `OTTO_LOG_RICH` | `--no-rich-log-file` | Rich formatting in log files |
-| `--show-time` | | `False` | Show per-line timestamps on the live console (log files are always timestamped) |
+| `--show-time, -t` | | `False` | Show per-line timestamps on the live console (log files are always timestamped) |
 | `--dry-run, -n` | | `False` | Validate, print what would run, and exit 0 **before the command body runs**. Never runs a command on any device — see {doc}`dry-run` |
 | `--probe` | | `False` | With `--dry-run`: open a connection to each host the command names and report reachability. A connection only — never a command |
 | `--as-user USERNAME` | | current user | Check reservations as USERNAME instead of the current user |
