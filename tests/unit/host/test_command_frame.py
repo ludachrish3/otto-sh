@@ -2,7 +2,9 @@
 Unit tests for the :class:`~otto.host.command_frame.CommandFrame` value
 objects — bash and Zephyr dialects — and the registry.
 
-These test the frames *standalone* (no session), with a fixed
+These test the frames *standalone* (no session) — except
+``TestReadyPatternShape``, which is the seam where a frame's readiness payload
+meets the session's matcher — with a fixed
 :class:`SessionMarkers` so expected strings are concrete. End-to-end coverage
 (frame driven by a real session's read loop) lives in test_session.py (bash)
 and test_zephyr.py (Zephyr).
@@ -18,6 +20,7 @@ from otto.host.command_frame import (
     AshFrame,
     BashFrame,
     CommandFrame,
+    RawFrame,
     SessionMarkers,
     ZephyrFrame,
     ZephyrSerialFrame,
@@ -25,6 +28,8 @@ from otto.host.command_frame import (
     history_prefix,
     register_command_frame,
 )
+from otto.host.errors import RawLandingError
+from otto.host.session import ready_pattern
 
 M = SessionMarkers.for_session("cafef00d")
 
@@ -49,7 +54,7 @@ class TestBashFrame:
         assert BashFrame.type_name == "bash"
 
     def test_handshake_silences_echo_and_prints_ready(self):
-        assert self.frame.handshake(M) == f"stty -echo 2>/dev/null; echo {M.ready}\n"
+        assert self.frame.handshake(M) == f"stty -echo 2>/dev/null; echo; echo {M.ready}\n"
 
     def test_frame_brackets_command_and_bakes_retcode_into_end(self):
         assert self.frame.frame("ls /tmp", M) == (
@@ -92,6 +97,29 @@ class TestBashFrame:
     def test_streams_output_live_is_true(self):
         # Bash with echo off emits a clean line-by-line stream, so it streams live.
         assert BashFrame.streams_output_live is True
+
+
+class TestReadyPatternShape:
+    """The one place a frame's payload is checked against the session's matcher.
+
+    The rest of this module tests the frames standalone, but the bare ``echo``
+    in bash's handshake exists solely because of this pattern, and the two are
+    only correct together: the anchor is what makes the marker unfakeable, and
+    a payload that does not put the marker at a line start cannot satisfy it.
+    A live-bed run found exactly that pairing broken.
+    """
+
+    def test_ready_pattern_rejects_a_prompt_prefixed_marker_and_the_echo(self):
+        pat = ready_pattern(M)
+        # Echo off, no blank line first: the shell's pending prompt runs into
+        # the marker on one line — what the second handshake on a session used
+        # to produce, and what could never confirm.
+        assert pat.search("vagrant@h:~$ " + M.ready) is None
+        # The bare `echo` closes that prompt's line, and the marker starts one.
+        assert pat.search("vagrant@h:~$ \r\n" + M.ready) is not None
+        # The anchor's original job: a failed login that merely echoes the
+        # probe back must not confirm a shell that never ran it.
+        assert pat.search("echo " + M.ready + "\r\n") is None
 
 
 class TestAshFrame:
@@ -441,3 +469,61 @@ def test_builtins_registered_via_public_path():
     # through register_command_frame — the same path third parties use.
     assert set(cf.FRAME_CLASSES.names()) >= {"bash", "zephyr", "zephyr-serial"}
     assert cf.build_command_frame("bash").type_name == "bash"
+
+
+class TestRestoreInteractive:
+    def test_default_is_none_for_a_minimal_project_frame(self):
+        class Minimal(ZephyrFrame):
+            type_name = "minimal-project"
+
+        assert Minimal().restore_interactive() is None
+
+    def test_bash_restores_echo(self):
+        assert BashFrame().restore_interactive() == "stty echo 2>/dev/null"
+
+    def test_ash_inherits_bash(self):
+        assert AshFrame().restore_interactive() == "stty echo 2>/dev/null"
+
+    def test_zephyr_has_nothing_to_undo(self):
+        assert ZephyrFrame().restore_interactive() is None
+
+    def test_zephyr_serial_turns_echo_back_on(self):
+        assert ZephyrSerialFrame().restore_interactive() == "shell echo on"
+
+
+class TestRawFrame:
+    frame = RawFrame()
+
+    def test_registered_under_raw(self):
+        assert isinstance(build_command_frame("raw"), RawFrame)
+        assert RawFrame.type_name == "raw"
+
+    def test_handshake_is_empty(self):
+        assert self.frame.handshake(M) == ""
+
+    def test_quiet_history_is_empty_and_restore_is_none(self):
+        assert self.frame.quiet_history() == ""
+        assert self.frame.restore_interactive() is None
+        assert history_prefix(self.frame, shell_history=False) == ""
+
+    def test_frame_and_recover_refuse(self):
+        with pytest.raises(RawLandingError, match="enter_frame"):
+            self.frame.frame("ls", M)
+        with pytest.raises(RawLandingError, match="enter_frame"):
+            self.frame.recover(M)
+
+    def test_parse_half_is_inert(self):
+        assert self.frame.end_pattern(M).search("anything at all") is None
+        # The hostile case: even a buffer carrying a real end-marker-shaped
+        # sentinel must not match — a copy-pasted BashFrame end_pattern would
+        # pass the line above (bash's pattern also fails on plain text) but
+        # fail this one.
+        assert self.frame.end_pattern(M).search(f"{M.end_prefix}0__") is None
+        assert self.frame.marks_begin(M.begin, M) is False
+        assert self.frame.parse_output("x", "ls", M) == ""
+        assert self.frame.extract_retcode("x", M) == -1
+        # Same hostile case for the retcode side: a buffer that DOES carry a
+        # well-formed end marker still yields -1, because RawFrame's
+        # end_pattern never matches anything for it to find.
+        assert self.frame.extract_retcode(f"{M.end_prefix}7__", M) == -1
+        assert self.frame.streams_output_live is False

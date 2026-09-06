@@ -22,6 +22,7 @@ local and remote machines.
    connections
    errors
    login_proxy
+   session_setup
    transport
    telnet
    os_profile

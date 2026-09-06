@@ -108,6 +108,15 @@ Two pieces of per-session state matter architecturally:
   shells, `ZephyrFrame` for the Zephyr shell). Per-session sentinels are
   passed in as values, keeping frames pure and unit-testable without a live
   session.
+- **Establishment.** A session is opened in a fixed order: the transport
+  (through every `hop`), the readiness handshake in the *landing* frame,
+  every login-proxy hop, an optional lab-declared session-setup hook
+  ({mod}`otto.host.session_setup`), and **frame entry** — the
+  `command_frame`'s own handshake, run after every hook unconditionally, so
+  a hook that manoeuvred the console into an application hands over a shell
+  that has been confirmed in that application's dialect.
+  `ShellSession._open()` and `ShellSession._handshake()` are the two halves;
+  frame entry re-runs only the second.
 
 ## Connections, terms, and hops
 

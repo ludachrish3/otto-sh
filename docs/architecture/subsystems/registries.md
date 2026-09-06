@@ -29,10 +29,11 @@ functions; the class is the shared engine behind them.
 | `OS_PROFILES` | `os_type` profile | `otto.host.os_profile.register_os_profile` | `unix`, `embedded`, `zephyr` |
 | `TERM_BACKENDS` | term (connection) backend | `otto.host.connections.register_term_backend` | `ssh`, `telnet` |
 | `TRANSFER_BACKENDS` | transfer backend | `otto.host.transfer.register_transfer_backend` | `sftp`, `scp`, `ftp`, `nc`, `console`, `tftp` |
-| `FRAME_CLASSES` | command frame | `otto.host.command_frame.register_command_frame` | `bash`, `zephyr` |
+| `FRAME_CLASSES` | command frame | `otto.host.command_frame.register_command_frame` | `bash`, `ash`, `zephyr`, `zephyr-serial`, `raw` |
 | `LOADER_CLASSES` | binary loader | `otto.host.binary_loader.register_binary_loader` | `llext-hex` |
 | `FILESYSTEM_CLASSES` | embedded filesystem type | `otto.host.embedded_filesystem.register_filesystem` | FAT-on-RAM, LittleFS, none |
 | `POWER_CONTROLLERS` | power controller | `otto.host.power.register_power_controller` | — |
+| `SESSION_SETUPS` | session setup hook | `otto.host.session_setup.register_session_setup` | — |
 | `LAB_REPOSITORIES` | lab repository (host source) | {func}`otto.labs.register_lab_repository` | `json` |
 | `RESERVATION_BACKENDS` | reservation backend | `otto.reservations.registry.register_reservation_backend` | `json`, `none` |
 | `HOST_PARSERS` | monitor parser set | `otto.monitor.parsers.register_host_parsers` | default `/proc` parsers |

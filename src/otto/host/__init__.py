@@ -12,6 +12,7 @@ from ..result import CommandResult as CommandResult
 from ..result import Results as Results
 from .command_frame import BashFrame as BashFrame
 from .command_frame import CommandFrame as CommandFrame
+from .command_frame import RawFrame as RawFrame
 from .command_frame import SessionMarkers as SessionMarkers
 from .command_frame import ZephyrFrame as ZephyrFrame
 from .command_frame import build_command_frame as build_command_frame

@@ -58,6 +58,8 @@ from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, Parse
 from otto.host.errors import (
     HostCommandError,
     HostUnreachableError,
+    RawLandingError,
+    SessionSetupError,
     UnsupportedOnUserlandError,
 )
 from otto.host.login_proxy import LoginProxyError
@@ -115,11 +117,13 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (HostUnreachableError, RuntimeError),
     (HostCommandError, RuntimeError),
     (UnsupportedOnUserlandError, RuntimeError),
+    (RawLandingError, RuntimeError),
     (HopTransportTornDownError, RuntimeError),
     (AppShellActiveError, RuntimeError),
     (AppShellTimeoutError, TimeoutError),
     (WaitTimeoutError, TimeoutError),
     (LoginProxyError, ConnectionError),
+    (SessionSetupError, ConnectionError),
     (LabRepositoryError, Exception),
     (LabNotFoundError, Exception),
     (InventoryError, Exception),

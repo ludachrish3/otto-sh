@@ -60,6 +60,7 @@ from typing_extensions import override
 
 if TYPE_CHECKING:
     from ..config.lab import Lab
+    from .session_setup import SessionSetup
 
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
@@ -406,6 +407,18 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     instance. Promoted to a common field in Phase A so any host can declare its
     dialect — see :attr:`~otto.host.embedded_host.EmbeddedHost.command_frame`."""
 
+    landing_frame: CommandFrame | None = None
+    """Dialect of the shell otto lands in when it differs from ``command_frame``;
+    ``None`` means the same dialect. Lab data names a registered frame by
+    string (resolved in ``__post_init__``); only meaningful with
+    ``session_setup``, which manoeuvres from the landing shell to the target."""
+
+    session_setup: "SessionSetup | None" = None
+    """Session-setup hook run once per shell session, after the handshake and
+    every login-proxy hop, with a real :class:`~otto.host.session.HostSession`.
+    Lab data declares it by name or as a ``{"type": name, ...params}`` table
+    (resolved in ``__post_init__``). See :mod:`otto.host.session_setup`."""
+
     shell_history: bool = False
     """Whether otto's commands are recorded in this host's shell history.
 
@@ -583,6 +596,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         if isinstance(self.command_frame, str):
             self.command_frame = build_command_frame(self.command_frame)
 
+        if isinstance(self.landing_frame, str):
+            self.landing_frame = build_command_frame(self.landing_frame)
+        if self.session_setup is not None:
+            from .session_setup import session_setup_from_spec  # off the startup graph on purpose
+
+            self.session_setup = session_setup_from_spec(self.session_setup)
+
         self.power_control = power_control_from_spec(self.power_control)
 
         TERM_RESOLVER.validate_choice(self.valid_terms, self.term)
@@ -599,6 +619,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             creds=self.creds,
             host_id=self.id,
             shell_history=self.shell_history,
+            landing_frame=self.landing_frame,
+            session_setup=self.session_setup,
         )
         self._file_transfer = self._build_file_transfer()
 
@@ -628,6 +650,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             creds=self.creds,
             host_id=self.id,
             shell_history=self.shell_history,
+            landing_frame=self.landing_frame,
+            session_setup=self.session_setup,
         )
         self._file_transfer = self._build_file_transfer()
         self._user_transfers = {}
@@ -793,6 +817,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 proxy_hops=hops,
                 via_login=via_login,
                 host_id=self.id,
+                session_setup=self.session_setup,
+                landing_frame=self.landing_frame,
+                target_frame=self.command_frame,
+                creds=self.creds,
             )
             return
 
@@ -831,6 +859,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 proxy_hops=hops,
                 via_login=login_user,
                 host_id=self.id,
+                session_setup=self.session_setup,
+                landing_frame=self.landing_frame,
+                target_frame=self.command_frame,
+                creds=self.creds,
             )
         finally:
             with teardown_step(host_name, "interactive telnet client close"):

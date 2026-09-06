@@ -54,7 +54,11 @@ def test_refresh_writes_the_command_line_then_output(tmp_path):
         tmp_path, '[[capture]]\nid = "hello"\nargv = ["{python}", "-c", "print(\'hi\')"]\n'
     )
     rdc.refresh(rdc.load_manifest(m), ctx)
-    assert (ctx.captures_dir / "hello.txt").read_text() == "$ python -c print('hi')\nhi\n"
+    # `print('hi')` carries shell-active characters (parens, a quote), so the
+    # rendered command line quotes it -- see render_command.
+    assert (
+        ctx.captures_dir / "hello.txt"
+    ).read_text() == "$ python -c 'print('\"'\"'hi'\"'\"')'\nhi\n"
 
 
 def test_unexpected_exit_code_is_an_error_not_a_capture(tmp_path):
@@ -85,7 +89,9 @@ def test_check_reports_drift_and_missing(tmp_path, capsys):
     assert rdc.check(caps, ctx) == 1  # missing artifact
     rdc.refresh(caps, ctx)
     assert rdc.check(caps, ctx) == 0
-    (ctx.captures_dir / "d.txt").write_text("$ python -c print(2)\n3\n")
+    # Same quoted command line as the fresh render (`print(2)` has parens, so
+    # it is shell-active) -- only the body line drifts here.
+    (ctx.captures_dir / "d.txt").write_text("$ python -c 'print(2)'\n3\n")
     assert rdc.check(caps, ctx) == 1
     assert "-3\n+2" in capsys.readouterr().out.replace("\r", "")
 
@@ -95,6 +101,22 @@ def test_placeholders_render_as_a_reader_would_type_them():
         ["{python}", "{repo}/scripts/x.py", "{tmp}/out.json", "--path", "{project}/lab"]
     )
     assert line == "$ python ./scripts/x.py /tmp/otto-gs/out.json --path ./lab"
+
+
+def test_shell_active_arguments_are_quoted_so_a_reader_can_copy_them():
+    # `Host.run` treats a sequence of commands as separate commands, so an
+    # unquoted rendering of `run echo $APP_ENV` tells a copier to run `echo`
+    # and then expand `$APP_ENV` in their own shell -- and `run 1 + 1` reads
+    # as three commands. Only the argument that actually needs it gets quoted.
+    line = rdc.render_command(["{otto}", "--lab", "unix", "host", "test1", "run", "echo $APP_ENV"])
+    assert line == "$ otto --lab unix host test1 run 'echo $APP_ENV'"
+
+    line = rdc.render_command(["{otto}", "run", "1 + 1"])
+    assert line == "$ otto run '1 + 1'"
+
+    # An argv with no shell-active characters at all stays entirely bare.
+    line = rdc.render_command(["{otto}", "--lab", "unix", "host", "test1", "probe"])
+    assert line == "$ otto --lab unix host test1 probe"
 
 
 def test_labless_filter_and_only(tmp_path):

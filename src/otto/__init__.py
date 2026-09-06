@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from otto.cli.registry import cli_command, register_cli_command
     from otto.host.app_shell import AppShell, Parsed
     from otto.host.login_proxy import Cred, register_login_proxy
+    from otto.host.session_setup import SetupContext, register_session_setup
     from otto.project.actions import ProjectActions, register_project_actions
     from otto.project.state import InstallState
     from otto.result import CommandResult, Result, Results, ShellResult
@@ -50,6 +51,7 @@ __all__ = [
     "Result",
     "Results",
     "RunOptions",
+    "SetupContext",
     "ShellResult",
     "all_hosts",
     "app",
@@ -63,6 +65,7 @@ __all__ = [
     "register_cli_command",
     "register_login_proxy",
     "register_project_actions",
+    "register_session_setup",
     "run_on_all_hosts",
     "run_suite",
     "try_get_context",
@@ -88,6 +91,8 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "cli_command": ("otto.cli.registry", "cli_command"),
     "Cred": ("otto.host.login_proxy", "Cred"),
     "register_login_proxy": ("otto.host.login_proxy", "register_login_proxy"),
+    "SetupContext": ("otto.host.session_setup", "SetupContext"),
+    "register_session_setup": ("otto.host.session_setup", "register_session_setup"),
     "AppShell": ("otto.host.app_shell", "AppShell"),
     "Parsed": ("otto.host.app_shell", "Parsed"),
     "ProjectActions": ("otto.project.actions", "ProjectActions"),

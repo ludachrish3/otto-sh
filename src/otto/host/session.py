@@ -23,7 +23,15 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import Never, Self, override
 
-from .command_frame import AshFrame, BashFrame, CommandFrame, SessionMarkers, history_prefix
+from .command_frame import (
+    AshFrame,
+    BashFrame,
+    CommandFrame,
+    RawFrame,
+    SessionMarkers,
+    history_prefix,
+)
+from .errors import RawLandingError, SessionSetupError
 from .login_proxy import Cred, LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
 from .shell_liveness import confirm_live
 from .telnet import TelnetClient
@@ -33,6 +41,12 @@ if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
 
     from .connections import ConnectionManager
+
+    # Annotations only. `otto.host.session_setup` must stay OFF the CLI
+    # startup import graph and this module is on it, so the runtime import
+    # lives inside `SessionManager._apply_session_setup`, after the no-hook
+    # early return — see that method and tests/unit/import_budget.
+    from .session_setup import SessionSetup, SetupKind
 
 import logging
 
@@ -75,10 +89,11 @@ _RECOVERY_TIMEOUT = 5.0
 # Per-probe wait inside the recovery resend loop (confirm_live).
 _RECOVERY_PROBE_TIMEOUT = 0.5
 
-# Ceiling on the post-open marker handshake (_ensure_initialized). Generous
-# enough for slow MOTD generation on real hardware, but bounded so a failed
-# telnet login — where the READY marker can never appear — surfaces as a clear
-# error instead of hanging indefinitely.
+# Ceiling on the post-open marker handshake (ShellSession._handshake, whose
+# ``timeout`` argument defaults to it and can override it per call — see
+# ShellSession.enter_frame). Generous enough for slow MOTD generation on real
+# hardware, but bounded so a failed telnet login — where the READY marker can
+# never appear — surfaces as a clear error instead of hanging indefinitely.
 _INIT_TIMEOUT = 3.0
 
 # Default pause between a failed first readiness handshake and the single retry
@@ -87,6 +102,21 @@ _INIT_TIMEOUT = 3.0
 # slot the instant the FIN lands. Injectable via ``SessionManager(retry_backoff=)``
 # so fakes-only unit tests can zero it instead of paying the real wall-clock wait.
 _HANDSHAKE_RETRY_BACKOFF = 2.0
+
+
+def ready_pattern(m: SessionMarkers) -> re.Pattern[str]:
+    r"""Compile the pattern a readiness handshake's reply has to satisfy.
+
+    Line-anchored (or buffer-start) + ANSI-absorbing, so the marker can't
+    match inside the echoed probe command — fatal on a failed telnet login
+    that loops back to "login:" echoing our probe — and producing that
+    leading newline in every echo state is the frame's job (see
+    :meth:`~otto.host.command_frame.CommandFrame.handshake`).
+
+    Module level rather than a closure in ``ShellSession._handshake`` so
+    the shape can be pinned directly against what the dialects render.
+    """
+    return re.compile(r"(?:^|\r|\n)(?:\x1b\[[0-9;]*m)*" + re.escape(m.ready))
 
 
 def _drop_output(_line: str) -> None:
@@ -280,11 +310,12 @@ class ShellSession(ABC):
     handling, and timeout recovery, all delegating the dialect to the frame.
     """
 
-    # Ceiling on the marker handshake in _ensure_initialized. Class-level so
+    # Default ceiling on the marker handshake in _handshake. Class-level so
     # tests can shrink it without patching the module constant. A session built
     # against a slow-to-start shell (e.g. a Zephyr QEMU telnet console) gets a
     # more generous value via the ``init_timeout`` constructor argument, which
-    # shadows this with an instance attribute.
+    # shadows this with an instance attribute; one handshake can override both
+    # for itself via ``_handshake(timeout=)`` / ``enter_frame(timeout=)``.
     _init_timeout: float = _INIT_TIMEOUT
 
     # How long to wait for one readiness probe before resending it. Bounds the
@@ -413,13 +444,42 @@ class ShellSession(ABC):
         return history_prefix(self._frame, self._shell_history) + self._frame.handshake(m)
 
     async def _ensure_initialized(self) -> None:
-        """Open the transport and initialize the session. Idempotent.
+        """Open the transport, then run the dialect handshake. Idempotent.
 
-        After the transport opens, a marker handshake confirms the shell is
-        live: write ``stty -echo; echo <READY marker>`` and read until that
-        marker comes back, via :func:`~otto.host.shell_liveness.confirm_live`.
-        This is the deterministic readiness check that replaced telnet
-        login's silence-drain — prompt-independent and content-independent.
+        Two halves, split so the second can be run again on its own: :meth:`_open`
+        brings the transport up, and :meth:`_handshake` confirms the shell that
+        answers on it is at a prompt (the marker handshake, and what bounds it,
+        are documented there).
+        """
+        if self._initialized:
+            return
+        await self._open()
+        await self._handshake()
+
+    @property
+    def markers(self) -> SessionMarkers:
+        """The sentinel set the session is currently framing with.
+
+        Re-minted by :meth:`enter_frame`; a caller that captured the old set
+        (tests, mostly) must re-read it after frame entry.
+        """
+        return self._markers
+
+    async def _handshake(self, timeout: float | None = None) -> None:
+        """Confirm the current frame's shell is at a prompt; the dialect half of open.
+
+        Renders the frame's readiness payload (history suppression prefixed)
+        and resends it via :func:`~otto.host.shell_liveness.confirm_live`
+        until the READY marker comes back or *timeout* (default
+        ``_init_timeout``) passes; a failure tears the session down through
+        :meth:`_fail_init`. An EMPTY payload means "nothing to confirm" — the
+        contract :class:`~otto.host.command_frame.RawFrame` relies on — and
+        marks the session ready without writing a byte.
+
+        On bash that payload is ``stty -echo; echo; echo <READY marker>``, read back
+        until the marker returns: the deterministic readiness check that
+        replaced telnet login's silence-drain — prompt-independent and
+        content-independent.
 
         The probe is *resent* on a fixed interval rather than written once
         (``confirm_live``'s resend loop). This matters for telnet:
@@ -430,24 +490,24 @@ class ShellSession(ABC):
         immediately and answer the first probe, so they never actually
         retry.
 
-        Bounded by ``_init_timeout``: a failed login (no shell ever spawns,
-        so no probe can echo back) surfaces as a clear ``ConnectionError``
-        instead of hanging until some far-outer timeout.
+        Bounded by the deadline: a failed login (no shell ever spawns, so no
+        probe can echo back) surfaces as a clear ``ConnectionError`` instead
+        of hanging until some far-outer timeout.
+
+        Split from :meth:`_ensure_initialized` so :meth:`enter_frame` can run
+        a SECOND handshake, in a different dialect, on the same transport.
         """
-        if self._initialized:
-            return
-        await self._open()
-
-        def _ready_pattern(m: SessionMarkers) -> re.Pattern[str]:
-            # Line-anchored (or buffer-start) + ANSI-absorbing, so the marker
-            # can't match inside the echoed probe command (fatal on a failed
-            # telnet login that loops back to "login:" echoing our probe).
-            return re.compile(r"(?:^|\r|\n)(?:\x1b\[[0-9;]*m)*" + re.escape(m.ready))
-
+        deadline = self._init_timeout if timeout is None else timeout
         handshake_cmd = self._handshake_payload(self._markers)
+        if handshake_cmd == "":
+            logger.debug(f"{self._log_tag}: raw landing — no handshake to send")
+            self._initialized = True
+            self._alive = True
+            return
+
         logger.debug(
             f"{self._log_tag}: handshake start cmd={handshake_cmd!r} "
-            f"marker={self._ready_marker!r} timeout={self._init_timeout}s"
+            f"marker={self._ready_marker!r} timeout={deadline}s"
         )
         confirmed = False
         with suppress(asyncio.IncompleteReadError):
@@ -455,11 +515,11 @@ class ShellSession(ABC):
                 self._write,
                 lambda pat, t: asyncio.wait_for(self._read_until_pattern(pat), t),
                 self._handshake_payload,
-                _ready_pattern,
+                ready_pattern,
                 lambda: self._markers,
                 settle=0.0,
                 probe_timeout=self._init_probe_interval,
-                deadline=self._init_timeout,
+                deadline=deadline,
             )
         if not confirmed:
             await self._fail_init()
@@ -472,6 +532,50 @@ class ShellSession(ABC):
 
         self._initialized = True
         self._alive = True
+
+    async def enter_frame(self, frame: CommandFrame, *, timeout: float | None = None) -> None:
+        """Switch this session to *frame* and run that frame's handshake.
+
+        The whole of "invoking the CommandFrame" after a session-setup hook
+        has manoeuvred the console into the target shell: fresh markers (the
+        landing set may have an unread READY reply still in the stream, which
+        must not confirm anything), the new frame and its end pattern, any
+        pending recovery cleared (the handshake supersedes it), then
+        ``_handshake()`` — never ``_open()``, so the transport and the
+        shell the hook reached are kept. Every call runs the handshake; the
+        manager calls it once more after the hook unconditionally, and that
+        repeat IS the post-hook confirmation.
+
+        Raises :class:`~otto.host.app_shell.AppShellActiveError` while an
+        AppShell is attached (the handshake would be typed into the REPL) and
+        :class:`~otto.host.errors.SessionSetupError` on a session
+        already marked dead. A handshake that never confirms surfaces as the
+        ``ConnectionError`` ``_fail_init()`` raises, with the session closed.
+        """
+        if self._app_shell is not None:
+            from .app_shell import AppShellActiveError
+
+            raise AppShellActiveError(
+                f"{type(self._app_shell).__name__} is attached to this session; "
+                f"enter_frame() would type the handshake into it"
+            )
+        if not self._alive:
+            raise SessionSetupError(
+                f"{self._log_tag}: enter_frame() on a dead session — the landing "
+                f"or the hook already lost the shell"
+            )
+        self._session_id = uuid.uuid4().hex[:_SESSION_ID_LEN]
+        self._markers = SessionMarkers.for_session(self._session_id)
+        self._begin_marker = self._markers.begin
+        self._end_marker_prefix = self._markers.end_prefix
+        self._ready_marker = self._markers.ready
+        self._recover_marker = self._markers.recover
+        self._frame = frame
+        self._end_pattern = frame.end_pattern(self._markers)
+        self._needs_recovery = False
+        self._initialized = False
+        logger.debug(f"{self._log_tag}: entering frame {type(frame).__name__}")
+        await self._handshake(timeout=timeout)
 
     async def _fail_init(self, attempt: int = 0) -> None:
         """Tear down a session whose readiness handshake never completed."""
@@ -592,6 +696,11 @@ class ShellSession(ABC):
             raise AppShellActiveError(
                 f"{type(self._app_shell).__name__} is attached to this session; "
                 f"run() is unavailable until the app shell exits"
+            )
+        if isinstance(self._frame, RawFrame):
+            raise RawLandingError(
+                f"{self._log_tag}: run() in a raw landing — use send()/expect() to reach "
+                f"the target shell, then enter_frame() before run()"
             )
         await self._ensure_ready()
         sink = on_output if on_output is not None else self._on_output
@@ -796,7 +905,12 @@ class ShellSession(ABC):
         """Interrupt the hung command, then confirm the shell is back (echo-proof).
 
         Sends Ctrl+C, then drives :func:`~otto.host.shell_liveness.confirm_live`
-        with the dialect's recover probe. On bash the probe is exit-code framed,
+        with the dialect's recover probe. In a
+        :class:`~otto.host.command_frame.RawFrame` landing it writes nothing at
+        all and marks the session dead: there is no probe to render, so the
+        interrupt could confirm nothing, and otto has no dialect knowledge of
+        what that byte means to the console it would land on.
+        On bash the probe is exit-code framed,
         so a session parked inside a REPL (which can only echo the literal ``$?``)
         correctly fails to confirm and is marked dead rather than falsely
         "recovered". Returns any partial output captured before the probe reply.
@@ -809,6 +923,17 @@ class ShellSession(ABC):
         :meth:`otto.host.app_shell.AppShell._exit`) pass a larger budget so a
         load-slowed shell hand-back still confirms.
         """
+        if isinstance(self._frame, RawFrame):
+            # Same verdict as _confirm_recovered's guard, taken one step
+            # earlier so the interrupt is never written: a raw landing has no
+            # dialect, so otto does not know what 0x03 means to that console
+            # (on a boot loader it interrupts autoboot) and nothing could
+            # confirm the state it left behind. The confirm-side guard stays
+            # for AppShell._exit's graceful path, which enters there directly.
+            logger.debug(f"{self._log_tag}: recovery in a raw landing; session marked dead")
+            self._alive = False
+            return ""
+
         import asyncssh
 
         logger.debug(f"{self._log_tag}: recover_session entry marker={self._recover_marker!r}")
@@ -850,6 +975,14 @@ class ShellSession(ABC):
         Returns any partial output captured before the probe reply, or ``""``
         if the shell never confirmed (``self._alive`` is set to False then).
         """
+        if isinstance(self._frame, RawFrame):
+            # A raw landing has no probe to render. A recovery here means an
+            # expect() was cancelled mid-landing; nothing can confirm the
+            # console's state, so the session is dead rather than crashed.
+            logger.debug(f"{self._log_tag}: recovery in a raw landing; session marked dead")
+            self._alive = False
+            return ""
+
         import asyncssh
 
         if deadline is None:
@@ -1270,6 +1403,11 @@ class HostSession:
     and it runs in ``finally`` blocks (including this class's ``__aexit__``)
     where raising would mask the exception that got there first.
 
+    :meth:`enter_frame` is exempt too, for a narrower reason: it exists only
+    on the handle a session-setup hook receives, and that handle exists only
+    while a session is being established — which a dry run never does, since
+    no session opens under one.
+
     Example::
 
         async with await host.open_session("monitor") as mon:
@@ -1294,6 +1432,8 @@ class HostSession:
         creds: "list[Cred] | None" = None,
         host_id: str = "",
         history_prefix: str = "",
+        target_frame: "CommandFrame | None" = None,
+        establishing: bool = False,
     ) -> None:
         self._name = name
         self._session = session
@@ -1309,6 +1449,11 @@ class HostSession:
         # History-suppression payload replayed into each shell this session's
         # switch_user/as_user enters, resolved once by the SessionManager.
         self._history_prefix = history_prefix
+        # Set only on the handle a session-setup hook receives: the frame
+        # enter_frame() switches to, and the guard that keeps the hook from
+        # closing a session the manager is mid-way through establishing.
+        self._target_frame = target_frame
+        self._establishing = establishing
 
     @property
     def alive(self) -> bool:
@@ -1590,11 +1735,33 @@ class HostSession:
         self._log_output(result, LogMode.NORMAL)
         return result
 
+    async def enter_frame(self, timeout: float | None = None) -> None:
+        """Enter the host's ``command_frame`` now, from inside a session-setup hook.
+
+        Optional: a hook that returns without calling it has frame entry
+        performed for it, and one that does still gets the unconditional
+        post-hook confirmation. *timeout* overrides the handshake ceiling for
+        this call (a slow-starting application can need more than a Unix
+        host's default). See :meth:`ShellSession.enter_frame`.
+        """
+        if self._target_frame is None:
+            raise RuntimeError(
+                "enter_frame() is only available on the session handle a "
+                "session_setup hook receives"
+            )
+        await self._session.enter_frame(self._target_frame, timeout=timeout)
+
     async def close(self) -> None:
         """Close this session and remove it from the host's session registry.
 
         Deliberately has NO dry-run arm; see the class docstring.
         """
+        if self._establishing:
+            raise SessionSetupError(
+                f"{self._host_id}: close() is not available inside a session_setup "
+                f"hook — the session is being established and the manager owns its "
+                f"teardown"
+            )
         await self._session.close()
         self._deregister(self._name)
 
@@ -1805,29 +1972,36 @@ class DeclinedSession(HostSession):
 class _SessionProxyIO:
     """Adapts a raw :class:`ShellSession` to the :class:`~otto.host.login_proxy.ProxyIO` protocol.
 
-    Used only at session establishment, before a :class:`HostSession` wrapper
-    exists — the raw session has no logging of its own (that lives at the
-    manager layer, mirroring ``HostSession.send``/``expect``), so this adapter
-    routes through the manager's ``_log_command``/``_log_output`` sinks. A
-    hop's password send arrives with ``log=LogMode.NEVER`` (see
-    ``login_proxy._su_proxy``) and is never logged — the same redaction
+    Used wherever hops are replayed over a raw session, before a
+    :class:`HostSession` wrapper exists — the raw session has no logging of its
+    own (that lives one layer up, mirroring ``HostSession.send``/``expect``), so
+    this adapter routes through whichever ``log_command``/``log_output`` sinks it
+    is given — the manager's at session establishment, the session log file's on
+    the login bridge. A hop's password send arrives with ``log=LogMode.NEVER``
+    (see ``login_proxy._su_proxy``) and is never logged — the same redaction
     real command traffic gets.
     """
 
-    def __init__(self, session: "ShellSession", mgr: "SessionManager") -> None:
+    def __init__(
+        self,
+        session: "ShellSession",
+        log_command: Callable[[str, LogMode], None],
+        log_output: Callable[[str, LogMode], None],
+    ) -> None:
         self._session = session
-        self._mgr = mgr
+        self._log_command = log_command
+        self._log_output = log_output
 
     async def send(self, text: str, *, log: LogMode = LogMode.NORMAL) -> None:
         if log is not LogMode.NEVER:
-            self._mgr._log_command(text.rstrip(), log)  # noqa: SLF001 — intra-package access to SessionManager's log sink
+            self._log_command(text.rstrip(), log)
         await self._session.send(text)
 
     async def expect(
         self, pattern: str | re.Pattern[str], timeout: float = DEFAULT_COMMAND_TIMEOUT
     ) -> str:
         out = await self._session.expect(pattern, timeout)
-        self._mgr._log_output(out, LogMode.NORMAL)  # noqa: SLF001 — intra-package access to SessionManager's log sink
+        self._log_output(out, LogMode.NORMAL)
         return out
 
 
@@ -1874,8 +2048,12 @@ class SessionManager:
     Similarly, ``exec_factory`` controls stateless command execution. The
     shell *dialect* is selected by ``command_frame`` (default bash; an embedded
     host passes a :class:`~otto.host.command_frame.ZephyrFrame`) — it is handed
-    to every session this manager builds, independent of the transport. A slow
-    target's readiness ceiling is raised via ``init_timeout``.
+    to every session this manager builds, independent of the transport — unless
+    the host also declares a ``landing_frame``, in which case THAT is what
+    sessions are built with and the ``command_frame`` is what the post-hook
+    ``enter_frame()`` switches to. A slow target's readiness ceiling is raised
+    via ``init_timeout``; a ``session_setup`` hook runs once per session open,
+    after the handshake and every login-proxy hop.
     """
 
     def __init__(  # noqa: PLR0913 — wide session-construction API (transport/dialect/elevation seams)
@@ -1894,6 +2072,8 @@ class SessionManager:
         creds: "list[Cred] | None" = None,
         host_id: str = "",
         shell_history: bool = True,
+        session_setup: "SessionSetup | None" = None,
+        landing_frame: CommandFrame | None = None,
     ) -> None:
         self._connections = connections
         self._name = name
@@ -1927,6 +2107,13 @@ class SessionManager:
         # caller passing a session_factory — on their existing behavior;
         # UnixHost passes its own field, which defaults False.
         self._shell_history = shell_history
+        # Session setup hook and landing dialect. The hook runs once per
+        # session open, after the handshake and every proxy hop; the landing
+        # frame (default: the command frame) is what every session is BUILT
+        # with, and the command frame is what enter_frame() switches to after
+        # the hook. With no hook, nothing here changes a single byte.
+        self._session_setup = session_setup
+        self._landing_frame = landing_frame
         # Optional readiness-handshake ceiling for slow shells (e.g. a Zephyr
         # QEMU telnet console); ``None`` keeps the session's class default.
         self._init_timeout = init_timeout
@@ -1995,14 +2182,44 @@ class SessionManager:
             return ""
         return creds[0]
 
+    @property
+    def _session_frame(self) -> CommandFrame | None:
+        """The dialect every session is built with: the landing frame, else the command frame."""
+        return self._landing_frame if self._landing_frame is not None else self._command_frame
+
+    def _target_frame(self) -> CommandFrame:
+        """Return the dialect enter_frame() switches to after the hook.
+
+        The host's command frame, or bash when it declares none.
+        """
+        return self._command_frame if self._command_frame is not None else BashFrame()
+
     def _history_prefix(self) -> str:
         """Return this host's history-suppression payload ("" when history is kept).
 
         Resolved from the same frame + flag every session here is built with,
         so a shell entered through a login proxy is quieted exactly like the
-        one the handshake opened.
+        one the handshake opened — and on a host with a landing dialect that
+        is the LANDING frame, because the landing shell is where the hops run.
+
+        WHO GETS IT, and why the landing frame is right for all of them today.
+        Two consumers run IN the landing shell and want exactly this:
+        ``_apply_login_proxy``'s hops, and the establishing handle a
+        session-setup hook receives. The third does not — the named
+        :class:`HostSession` handed to a caller keeps this payload, and its
+        ``switch_user``/``as_user`` run after the hook has entered the TARGET
+        frame. That costs nothing on two counts: the resync those verbs drive
+        renders a bash-shaped probe (``login_proxy._identity_probe``) whatever
+        frame the session is in, so a bash payload is the matching one, and
+        :class:`~otto.host.command_frame.BashFrame` (with ``AshFrame``
+        inheriting it) is the only dialect that overrides ``quiet_history`` at
+        all — every other frame renders ``""`` here either way. A future
+        dialect with its own suppression payload is what would make the split
+        matter. The post-hook confirmation is NOT a consumer:
+        :meth:`ShellSession._handshake` renders suppression from the session's
+        OWN current frame.
         """
-        return history_prefix(self._command_frame, self._shell_history)
+        return history_prefix(self._session_frame, self._shell_history)
 
     def _seed_user(self, session: "ShellSession") -> None:
         """Stamp a freshly built session with the login user."""
@@ -2039,7 +2256,7 @@ class SessionManager:
         creds = getattr(self._connections, "credentials", None)
         via_login = creds[0] if creds else ""
         switch_creds = self._creds or []
-        io = _SessionProxyIO(session, self)
+        io = _SessionProxyIO(session, self._log_command, self._log_output)
         for hop in hops:
             via = cred_for(switch_creds, via_login) or Cred(login=via_login)
             await run_proxy(
@@ -2047,6 +2264,54 @@ class SessionManager:
             )
             via_login = hop.login
         session.current_user = target
+
+    async def _apply_session_setup(self, session: "ShellSession", kind: "SetupKind") -> None:
+        """Run the host's session-setup hook over *session*, then enter the command frame.
+
+        A no-op for a host without a hook — which is what keeps every such
+        host byte-identical. Otherwise the hook gets a HostSession handle in
+        establishing mode (close() refused, enter_frame() available), a
+        SetupContext naming which session this is, and afterwards
+        ``enter_frame(command_frame)`` runs UNCONDITIONALLY: that repeat is
+        the post-hook confirmation, the same probe on every family. Errors
+        are wrapped by :func:`~otto.host.session_setup.apply_session_setup`;
+        the caller tears the session down.
+
+        The import is local and BELOW the early return, deliberately:
+        ``otto.host.session_setup`` is off the CLI startup import graph and
+        this module is on it, so a host without a hook must not pull it in
+        (tests/unit/import_budget fences eleven surfaces on exactly that).
+        """
+        if self._session_setup is None:
+            return
+        from .session_setup import SetupContext, apply_session_setup
+
+        # ONE frame object for both uses. On a host that declares no
+        # command_frame `_target_frame()` mints a fresh BashFrame per call, and
+        # the handle's enter_frame() and the confirmation below would then be
+        # switching to two different objects — equivalent today (frames are
+        # stateless value objects) and a trap the moment one is not.
+        target = self._target_frame()
+        handle = HostSession(
+            name=f"__setup_{kind}__",
+            session=session,
+            log_command=self._log_command,
+            log_output=self._log_output,
+            deregister=lambda _n: None,
+            creds=self._creds,
+            host_id=self._host_id,
+            history_prefix=self._history_prefix(),
+            target_frame=target,
+            establishing=True,
+        )
+        ctx = SetupContext(
+            host_id=self._host_id,
+            host_name=self._name,
+            user=session.current_user,
+            params=dict(self._session_setup.params),
+            kind=kind,
+        )
+        await apply_session_setup(session, handle, ctx, self._session_setup, target)
 
     @property
     def current_user(self) -> str:
@@ -2127,12 +2392,14 @@ class SessionManager:
                 try:
                     await new_session._ensure_initialized()  # noqa: SLF001 — intra-package access to ShellSession._ensure_initialized for handshake
                     await self._apply_login_proxy(new_session)
-                except LoginProxyError:
-                    # A proxy failure is not a handshake race — the transport
+                    await self._apply_session_setup(new_session, "default")
+                except (LoginProxyError, SessionSetupError, RawLandingError):
+                    # A proxy or setup failure is not a handshake race — the transport
                     # came up fine, so retrying it would just repeat the same
-                    # failed hop. Tear down and propagate on the first try,
+                    # failed hop (or re-run the same hook against the same
+                    # console). Tear down and propagate on the first try,
                     # without falling into the ConnectionError retry below
-                    # (LoginProxyError subclasses it).
+                    # (LoginProxyError and SessionSetupError both subclass it).
                     with suppress(Exception):  # pragma: no cover - best-effort cleanup
                         await new_session.close()
                     raise
@@ -2180,7 +2447,7 @@ class SessionManager:
                 ssh_conn = await self._connections.ssh()
                 return SshSession(
                     ssh_conn,
-                    command_frame=self._command_frame,
+                    command_frame=self._session_frame,
                     init_timeout=self._init_timeout,
                     shell_history=self._shell_history,
                 )
@@ -2188,12 +2455,12 @@ class SessionManager:
                 telnet_conn = await self._connections.telnet()
                 logger.debug(
                     rf"SessionManager\[{self._name}]: building telnet session "
-                    f"with frame={type(self._command_frame).__name__}"
+                    f"with frame={type(self._session_frame).__name__}"
                 )
                 return TelnetSession(
                     telnet_conn.reader,
                     telnet_conn.writer,
-                    command_frame=self._command_frame,
+                    command_frame=self._session_frame,
                     init_timeout=self._init_timeout,
                     write_chunk_size=telnet_conn.options.write_chunk_size,
                     write_chunk_delay=telnet_conn.options.write_chunk_delay,
@@ -2262,16 +2529,19 @@ class SessionManager:
         overhead of a fresh TCP + auth round-trip per call.
 
         When the login is proxied (:attr:`~otto.host.connections.ConnectionManager.proxy_hops`
-        non-empty), both raw-exec fast paths below — the ``_exec_factory``
-        callable and the :meth:`exec_on` SSH exec channel — are skipped in
-        favor of the pooled named-session path (the same one Telnet always
-        uses). Neither raw exec channel can replay proxy hops: they
-        authenticate as the resolved DIRECT cred, so a proxied exec on
+        non-empty) or the host declares a ``session_setup`` hook (the raw
+        channel cannot run setup), both raw-exec fast paths below — the
+        ``_exec_factory`` callable and the :meth:`exec_on` SSH exec channel —
+        are skipped in favor of the pooled named-session path (the same one
+        Telnet always uses). Neither raw exec channel can replay proxy hops:
+        they authenticate as the resolved DIRECT cred, so a proxied exec on
         either fast path would silently run as the via-user rather than the
-        target. Only a full shell session (built via ``open_session``, which
-        replays hops through ``_apply_login_proxy``) ends up as the effective
-        user — which is what makes nc transfers (whose ``exec_cmd`` is
-        ``UnixHost.exec``) land files owned by the proxied target.
+        target. Nor is either one a shell a hook could manoeuvre into an
+        application. Only a full shell session (built via ``open_session``,
+        which replays hops through ``_apply_login_proxy`` and runs the hook
+        through ``_apply_session_setup``) ends up as the effective user — which
+        is what makes nc transfers (whose ``exec_cmd`` is ``UnixHost.exec``)
+        land files owned by the proxied target.
 
         WHICH of the three it is comes from ``_exec_route`` rather than
         from conditions spelled out here, because a second caller needs the
@@ -2396,8 +2666,10 @@ class SessionManager:
         would be a prediction of this method rather than a reading of it.
 
         Order matters and is :meth:`exec`'s own: a raw exec primitive wins
-        unless the login is PROXIED, in which case nothing raw can be used at
-        all (neither the factory nor ssh's channel can replay the hops -- see
+        unless the login is PROXIED or the host declares a ``session_setup``
+        hook (the raw channel cannot run setup), in which case nothing raw can
+        be used at all (neither the factory nor ssh's channel can replay the
+        hops, and neither is a shell a hook could manoeuvre -- see
         :meth:`exec`), and everything else falls to the term. Read fresh on
         every call rather than cached at construction: ``term`` has a setter,
         and ``proxy_hops`` is derived from creds that a ``login_target`` change
@@ -2408,9 +2680,10 @@ class SessionManager:
         always did, at the point where it has a term to name.
         """
         hops = getattr(self._connections, "proxy_hops", []) if self._connections is not None else []
-        if self._exec_factory is not None and not hops:
+        hooked = self._session_setup is not None
+        if self._exec_factory is not None and not hops and not hooked:
             return _ExecRoute.FACTORY
-        if hops:
+        if hops or hooked:
             return _ExecRoute.POOLED_SHELL
         match getattr(self._connections, "term", None):
             case "ssh":
@@ -2506,7 +2779,7 @@ class SessionManager:
                         ssh_conn = await self._connections.ssh()
                         shell_session = SshSession(
                             ssh_conn,
-                            command_frame=self._command_frame,
+                            command_frame=self._session_frame,
                             init_timeout=self._init_timeout,
                             shell_history=self._shell_history,
                         )
@@ -2541,7 +2814,7 @@ class SessionManager:
                             client.reader,
                             client.writer,
                             _owned_client=client,
-                            command_frame=self._command_frame,
+                            command_frame=self._session_frame,
                             init_timeout=self._init_timeout,
                             write_chunk_size=client.options.write_chunk_size,
                             write_chunk_delay=client.options.write_chunk_delay,
@@ -2574,6 +2847,17 @@ class SessionManager:
             # handshake-failure cleanup just above).
             try:
                 await self._apply_login_proxy(shell_session)
+            except BaseException:
+                with suppress(Exception):  # pragma: no cover - best-effort cleanup
+                    await shell_session.close()
+                raise
+
+            # Then the session-setup hook, on the same terms: it runs once per
+            # OPEN, so the exec pool's sessions get it too (that is why the
+            # pool is the only exec route a hooked host has).
+            kind: SetupKind = "exec_pool" if name.startswith("__exec_pool_") else "named"
+            try:
+                await self._apply_session_setup(shell_session, kind)
             except BaseException:
                 with suppress(Exception):  # pragma: no cover - best-effort cleanup
                     await shell_session.close()

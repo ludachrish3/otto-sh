@@ -1,5 +1,6 @@
 $ otto --lab unix host test1 probe
-INFO     fleet of interest: 0 of 4 lab hosts (1 repos, 1 excluded)                                  
+INFO     fleet of interest: 0 of 4 lab hosts (1 repo(s), 1 excluded)                                
+INFO     @test1   | export APP_ENV=lab                                                              
 capability       value      source
 applet_base64    present    probed
 applet_nc        present    probed

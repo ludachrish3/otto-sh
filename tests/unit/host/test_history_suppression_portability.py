@@ -25,14 +25,16 @@ shells gets more coverage and a runner with fewer never silently loses the
 baseline.
 
 THE OTHER STATEMENT ON THAT LINE IS HERE TOO — see the stty section at the
-bottom. ``handshake()`` renders ``stty -echo 2>/dev/null; echo <READY>``, and
-suppression rides in front of it, so the two share one line and one failure
-mode: anything that aborts the line strands READY and takes a working host
-offline. The stty half was measured inside a chrooted BusyBox root while that
-harness existed (it could delete ``/bin/stty`` because the root was its own);
-the live BusyBox bed that replaced the harness cannot host it, because
-removing an applet from a shared guest is a bed mutation. Injecting the same
-condition into a real shell here is what keeps the arm measured.
+bottom. ``handshake()`` renders ``stty -echo 2>/dev/null; echo; echo <READY>``
+(the bare ``echo`` puts READY at the start of a line whatever the terminal's
+echo state), and suppression rides in front of it, so the three share one line
+and one failure mode: anything that aborts the line strands READY and takes a
+working host offline. The stty half was measured inside a chrooted BusyBox
+root while that harness existed (it could delete ``/bin/stty`` because the
+root was its own); the live BusyBox bed that replaced the harness cannot host
+it, because removing an applet from a shared guest is a bed mutation.
+Injecting the same condition into a real shell here is what keeps the arm
+measured.
 """
 
 import os
@@ -293,11 +295,11 @@ def test_payload_carries_a_zsh_specific_clause():
 # ---------------------------------------------------------------------------
 # The handshake's other statement: a device with no `stty`
 #
-# `handshake()` renders `stty -echo 2>/dev/null; echo <READY>`. `stty` is an
-# ORDINARY EXTERNAL COMMAND on the devices otto lands on, not a builtin, so a
-# stripped userland can simply not have it — and then the shell, not stty,
+# `handshake()` renders `stty -echo 2>/dev/null; echo; echo <READY>`. `stty` is
+# an ORDINARY EXTERNAL COMMAND on the devices otto lands on, not a builtin, so
+# a stripped userland can simply not have it — and then the shell, not stty,
 # produces the diagnostic ("not found"). That message has to be swallowed by
-# the same `2>/dev/null`, and the line has to carry on to `echo <READY>`:
+# the same `2>/dev/null`, and the line has to carry on to `echo; echo <READY>`:
 # stdout and stderr are one merged stream on a PTY, so a leaked complaint is
 # parsed as command output, and a stranded READY hangs session startup until
 # it times out as "shell never became ready" — a working host reported

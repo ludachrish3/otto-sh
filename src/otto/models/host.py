@@ -17,7 +17,7 @@ from typing_extensions import override
 
 from ..host.binary_loader import build_binary_loader
 from ..host.capability import IMPAIRER_RESOLVER, TERM_RESOLVER, TRANSFER_RESOLVER
-from ..host.command_frame import FRAME_CLASSES, build_command_frame
+from ..host.command_frame import FRAME_CLASSES, BashFrame, build_command_frame
 from ..host.connections import TERM_BACKENDS
 from ..host.element import Element
 from ..host.embedded_filesystem import FILESYSTEM_CLASSES, build_filesystem
@@ -195,6 +195,8 @@ _COMMON_PLAIN_FIELDS = (
     "log",
     "log_stdout",
     "power_control",
+    "session_setup",
+    "landing_frame",
 )
 
 
@@ -362,6 +364,18 @@ class HostSpec(OttoModel):
     toolchain: ToolchainSpec = ToolchainSpec()
     command_frame: str | None = None
 
+    session_setup: dict[str, Any] | str | None = None
+    """A registered session-setup hook, by name or as a table whose ``type``
+    key is the name and whose other keys are the hook's params (the
+    ``power_control`` idiom). Runs once on every shell session, after the
+    handshake and every login-proxy hop. See ``otto.host.session_setup``."""
+
+    landing_frame: str | None = None
+    """Dialect of the shell otto LANDS in, when it is not the shell
+    ``command_frame`` describes; only valid alongside ``session_setup``,
+    which is what manoeuvres from the one to the other. ``"raw"`` for a
+    landing that answers no frame at all."""
+
     # ``power_control`` is lab-infrastructure data (which controller host runs
     # the on/off/status commands, and the commands themselves), so it is a spec
     # field: it takes the lab-data ``[power]`` form — a controller type-name
@@ -446,6 +460,40 @@ class HostSpec(OttoModel):
         if v is not None and v not in FRAME_CLASSES:
             known = ", ".join(sorted(FRAME_CLASSES.names()))
             raise ValueError(f"command_frame {v!r} is not a registered frame. Known: {known}")
+        if v == "raw":
+            raise ValueError(
+                "command_frame 'raw' is refused: raw is a landing dialect, never a destination "
+                "— declare it as landing_frame with a session_setup hook"
+            )
+        return v
+
+    @field_validator("landing_frame")
+    @classmethod
+    def _validate_landing_frame_name(cls, v: str | None) -> str | None:
+        if v is not None and v not in FRAME_CLASSES:
+            known = ", ".join(sorted(FRAME_CLASSES.names()))
+            raise ValueError(f"landing_frame {v!r} is not a registered frame. Known: {known}")
+        return v
+
+    @field_validator("session_setup")
+    @classmethod
+    def _validate_session_setup_name(
+        cls, v: dict[str, Any] | str | None
+    ) -> dict[str, Any] | str | None:
+        if v is None:
+            return v
+        from ..host.session_setup import SESSION_SETUPS  # off the startup graph on purpose
+
+        name = v if isinstance(v, str) else v.get("type")
+        if not isinstance(name, str):
+            raise ValueError(  # noqa: TRY004 — existing API contract; test suite expects ValueError
+                "session_setup table must carry a string 'type' naming a registered session setup"
+            )
+        if name not in SESSION_SETUPS:
+            known = ", ".join(sorted(SESSION_SETUPS.names())) or "<none>"
+            raise ValueError(
+                f"session_setup {name!r} is not a registered session setup. Known: {known}"
+            )
         return v
 
     @model_validator(mode="after")
@@ -472,6 +520,24 @@ class HostSpec(OttoModel):
                     raise ValueError(f"cred {c.login!r}: unresolvable via-chain: {e}") from None
         if self.user is not None and self.creds and self.user not in by:
             raise ValueError(f"user {self.user!r} is not a cred login: {sorted(by)}")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_landing_rules(self) -> "HostSpec":
+        if self.landing_frame is None:
+            return self
+        if self.session_setup is None:
+            raise ValueError(
+                f"landing_frame {self.landing_frame!r} requires session_setup: a landing "
+                f"dialect with nothing to transition out of it is a contradiction"
+            )
+        landing_cls = FRAME_CLASSES.get(self.landing_frame)
+        if any(c.proxy is not None for c in self.creds) and not issubclass(landing_cls, BashFrame):
+            raise ValueError(
+                f"landing_frame {self.landing_frame!r} with a proxied cred: login-proxy hops "
+                f"run in the landing shell and their identity probe is bash, so the landing "
+                f"dialect must be bash-family"
+            )
         return self
 
     def _common_host_kwargs(self) -> dict[str, Any]:

@@ -1,0 +1,17 @@
+$ otto --lab unix host test1 run 'echo $APP_ENV'
+INFO     fleet of interest: 0 of 4 lab hosts (1 repo(s), 1 excluded)                                
+INFO     @test1   | export APP_ENV=lab                                                              
+INFO     @test1   | python3 -u -i                                                                   
+INFO     @test1 > |                                                                                 
+         @test1 > | vagrant@test1:~$ Python 3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0] on    
+         linux                                                                                      
+         @test1 > | Type "help", "copyright", "credits" or "license" for more information.          
+         @test1 > | >>>                                                                             
+INFO     @test1   | open('/tmp/otto-gs-provisioned', 'w').write('ok')                               
+INFO     @test1 > | 2                                                                               
+         @test1 > | >>>                                                                             
+INFO     @test1   | exit()                                                                          
+INFO     @test1   | echo $APP_ENV                                                                   
+INFO     @test1 > | lab                                                                             
+
+Output directory: /tmp/otto-gs/xdir/host/<run>_run

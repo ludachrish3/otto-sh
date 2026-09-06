@@ -29,6 +29,9 @@ Built-in frames
   sessions.
 - :class:`ZephyrFrame` (``"zephyr"``) — the stock Zephyr ``fs``/``retval``
   shell (3.7 / 4.4 LTS).
+- :class:`RawFrame` (``"raw"``) — a landing-only dialect with no handshake and
+  no framing, for a console whose landing state answers no frame; used with a
+  ``session_setup`` hook that manoeuvres to the real shell.
 
 A project can register additional dialects via :func:`register_command_frame`
 from a ``.otto`` init module — the same extension hook
@@ -43,6 +46,7 @@ from typing import ClassVar
 from typing_extensions import override
 
 from ..registry import Registry, caller_module
+from .errors import RawLandingError
 
 
 @dataclass(frozen=True)
@@ -104,7 +108,16 @@ class CommandFrame(ABC):
 
     @abstractmethod
     def handshake(self, m: SessionMarkers) -> str:
-        """Readiness-probe payload, echoing :attr:`SessionMarkers.ready`."""
+        """Readiness-probe payload, echoing :attr:`SessionMarkers.ready`.
+
+        The READY marker must begin a line of the shell's OUTPUT in every echo
+        state the dialect can be in when the handshake runs — the first open
+        (echo on) and frame entry after a session-setup hook (echo off, prompt
+        pending). The session matches it line-anchored so a login prompt that
+        merely echoes the probe cannot pass. A dialect with no probe to render
+        returns ``""`` instead — what :class:`RawFrame` does, and what
+        ``ShellSession._handshake`` reads as "nothing to confirm".
+        """
         ...
 
     @abstractmethod
@@ -133,6 +146,23 @@ class CommandFrame(ABC):
         loop until one lands.
         """
         return ""
+
+    def restore_interactive(self) -> str | None:
+        """Line that undoes what :meth:`handshake` did to the terminal, for a human.
+
+        The interactive ``login`` bridge runs a session-setup hook over a
+        framed session and then hands the pty to a person; whatever the
+        handshake changed (bash turns echo off) has to be put back first.
+        ``None`` (the default) means the handshake changed nothing a human
+        would notice. Dialect-owned for the same reason the handshake is.
+
+        The returned string is a bare line with no terminator of its own —
+        the caller writes it *through* the frame, whose own framing supplies
+        the newline, never raw. There is no history suppression to undo: the
+        ``login`` bridge never applies any, whatever the host's
+        ``shell_history`` field says, so the human keeps their own recall.
+        """
+        return None
 
     # --- parse half: bytes read -> structured result ---
 
@@ -186,8 +216,16 @@ class BashFrame(CommandFrame):
     @override
     def handshake(self, m: SessionMarkers) -> str:
         # Silence echo so the probe command text doesn't come back, then print
-        # the READY marker.
-        return f"stty -echo 2>/dev/null; echo {m.ready}\n"
+        # the READY marker on a line of its own. The bare `echo` is
+        # load-bearing: the session matches READY line-anchored (a failed
+        # telnet login echoes the probe, and the anchor rejects that echo), and
+        # once `stty -echo` is in effect an interactive shell prints PS1
+        # immediately before the next command's output on the SAME line — so a
+        # second handshake on this session (frame entry after a session-setup
+        # hook) would print `user@host:~$ __OTTO_..._READY__` and never match.
+        # With echo still on (the first handshake) the echoed line already ends
+        # in a newline, so the extra blank line is harmless.
+        return f"stty -echo 2>/dev/null; echo; echo {m.ready}\n"
 
     @override
     def frame(self, cmd: str, m: SessionMarkers) -> str:
@@ -285,6 +323,12 @@ class BashFrame(CommandFrame):
             "case ${ZSH_VERSION:-} in ?*) "
             "eval 'export HISTFILE=/dev/null' 2>/dev/null || :;; esac; "
         )
+
+    @override
+    def restore_interactive(self) -> str | None:
+        # Mirrors the handshake's `stty -echo 2>/dev/null`; silent on a pty-less
+        # channel, where there is nothing to restore either.
+        return "stty echo 2>/dev/null"
 
     @override
     def recover_pattern(self, m: SessionMarkers) -> re.Pattern[str]:
@@ -551,6 +595,72 @@ class ZephyrSerialFrame(ZephyrFrame):
     def handshake(self, m: SessionMarkers) -> str:
         return f"shell echo off\r{m.ready}\n"
 
+    @override
+    def restore_interactive(self) -> str | None:
+        # The handshake ran `shell echo off`; a human wants their keystrokes back.
+        return "shell echo on"
+
+
+class RawFrame(CommandFrame):
+    """The ``raw`` landing dialect: no handshake, no framing, nothing to parse.
+
+    For a console whose landing state answers no frame at all — a boot menu
+    that reads a digit, an autoboot countdown, a serial-recovery prompt. A
+    host declares ``landing_frame: "raw"`` together with a ``session_setup``
+    hook; the session is marked ready without a byte being written, the hook
+    manoeuvres with ``send``/``expect`` alone, and frame entry into the
+    host's real ``command_frame`` confirms the shell. Landing-only:
+    ``command_frame: "raw"`` is refused at lab load.
+
+    The empty :meth:`handshake` is the contract ``ShellSession._handshake``
+    reads: an empty payload means "nothing to confirm". :meth:`frame` and
+    :meth:`recover` raise :class:`~otto.host.errors.RawLandingError` so a
+    ``run()`` before ``enter_frame()`` is named for what it is.
+
+    Subclass this only to keep those semantics (a project may want its own
+    name for "no dialect"): ``ShellSession`` treats every ``RawFrame`` as
+    raw. A landing that answers commands — a bootloader with a prompt and an
+    ``echo`` — is a :class:`CommandFrame` subclass with a real handshake and
+    frame, registered like any other, so a hook can ``run()`` in it.
+    """
+
+    type_name = "raw"
+    streams_output_live = False
+
+    @override
+    def handshake(self, m: SessionMarkers) -> str:  # no probe to render
+        return ""
+
+    @override
+    def frame(self, cmd: str, m: SessionMarkers) -> str:  # refuses, see class docstring
+        raise RawLandingError(
+            "a raw landing has no command dialect: use send()/expect() to reach the "
+            "target shell, then enter_frame() before run()"
+        )
+
+    @override
+    def recover(self, m: SessionMarkers) -> str:  # refuses, see class docstring
+        raise RawLandingError(
+            "a raw landing cannot be recovered by probe: enter_frame() first, or reopen the session"
+        )
+
+    @override
+    def end_pattern(self, m: SessionMarkers) -> re.Pattern[str]:  # never matches
+        # Compiled once per session at construction; must exist, must never match.
+        return re.compile(r"(?!x)x")
+
+    @override
+    def marks_begin(self, data: str, m: SessionMarkers) -> bool:  # nothing frames
+        return False
+
+    @override
+    def parse_output(self, buffer: str, cmd: str, m: SessionMarkers) -> str:  # nothing frames
+        return ""
+
+    @override
+    def extract_retcode(self, buffer: str, m: SessionMarkers) -> int:  # nothing frames
+        return -1
+
 
 def history_prefix(frame: CommandFrame | None, shell_history: bool) -> str:
     """Prefix that suppresses history recording, or ``""`` when history is kept.
@@ -628,6 +738,7 @@ def _register_builtin_frames() -> None:
     register_command_frame(AshFrame.type_name, AshFrame)
     register_command_frame(ZephyrFrame.type_name, ZephyrFrame)
     register_command_frame(ZephyrSerialFrame.type_name, ZephyrSerialFrame)
+    register_command_frame(RawFrame.type_name, RawFrame)
 
 
 _register_builtin_frames()

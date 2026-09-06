@@ -1,6 +1,8 @@
-$ otto --lab embedded host zephyr27-fat run kernel uptime
-INFO     fleet of interest: 0 of 9 lab hosts (1 repos, 1 excluded)                                  
+$ otto --lab embedded host zephyr27-fat run 'kernel uptime'
+INFO     fleet of interest: 0 of 9 lab hosts (1 repo(s), 1 excluded)                                
+INFO     Connected to <Peer 127.0.0.1 <port>>                                                        
 INFO     @zephyr27_fat   | kernel uptime                                                            
 INFO     @zephyr27_fat > | Uptime: <n> ms                                                     
+INFO     Connection closed to <Peer 127.0.0.1 <port>>                                                
 
 Output directory: /tmp/otto-gs/xdir/host/<run>_run

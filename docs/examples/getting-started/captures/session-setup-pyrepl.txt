@@ -1,0 +1,14 @@
+$ otto --lab pyrepl host test1-py run '1 + 1'
+INFO     fleet of interest: 0 of 2 lab hosts (1 repo(s), 1 excluded)                                
+INFO     @test1-py   | command -v python3                                                           
+INFO     @test1-py > | /usr/bin/python3                                                             
+INFO     @test1-py   | python3 -u -i                                                                
+INFO     @test1-py > |                                                                              
+         @test1-py > | vagrant@test1:~$ Python 3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0] on 
+         linux                                                                                      
+         @test1-py > | Type "help", "copyright", "credits" or "license" for more information.       
+         @test1-py > | >>>                                                                          
+INFO     @test1-py   | 1 + 1                                                                        
+INFO     @test1-py > | 2                                                                            
+
+Output directory: /tmp/otto-gs/xdir/host/<run>_run

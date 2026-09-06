@@ -41,12 +41,23 @@ import threading
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from typing_extensions import override
 
 from ..context import try_get_context
 from ..logger.mode import LogMode
+from .command_frame import BashFrame, CommandFrame
 from .host import DEFAULT_COMMAND_TIMEOUT
 from .login_proxy import Cred, run_proxy
+from .session import HostSession, ShellSession, _SessionProxyIO
+
+if TYPE_CHECKING:
+    # `otto.host.session_setup` is off the CLI startup import graph and this
+    # module is on it (`unix_host` imports it at module level), so the name is
+    # available for annotations only; the runtime names it needs are imported
+    # inside `_run_session_setup_on_bridge`.
+    from .session_setup import SessionSetup
 
 logger = logging.getLogger(__name__)
 
@@ -433,6 +444,166 @@ class _BridgeProxyIO:
         return await asyncio.wait_for(_until_match(), timeout)
 
 
+class _BridgeShellSession(ShellSession):
+    r"""A framed ShellSession over the bridge's own ``write_remote``/``read_remote``.
+
+    Built only for a host with a session-setup hook: the hook needs
+    ``run()``, and ``run()`` needs a frame. The bridge owns the PTY, so
+    :meth:`_open` and :meth:`close` touch nothing. On the telnet bridge every
+    newline becomes ``\r`` (mirroring :class:`~otto.host.session.TelnetSession`),
+    not only a trailing one, so a multi-line payload is right. Whatever the
+    last framed read left unconsumed is the *residual* — a prompt, a banner —
+    and is handed to the human before the pumps start.
+
+    History suppression is never applied here, whatever the host's
+    ``shell_history`` field says: this session's payloads are typed into the
+    shell a PERSON is about to be handed, and ``set +o history`` would cost
+    them the recall of everything they type for the rest of the session. The
+    hook's commands land in the human's history, the same trade the shell
+    history docs already accept for a ``--user`` login's resync probe.
+    """
+
+    def __init__(
+        self,
+        write_remote: Callable[[bytes], Awaitable[None]],
+        read_remote: Callable[[], Awaitable[bytes]],
+        *,
+        newline: bytes,
+        command_frame: "CommandFrame | None",
+    ) -> None:
+        super().__init__(command_frame=command_frame, shell_history=True)
+        self._write_remote = write_remote
+        self._read_remote = read_remote
+        self._newline = newline
+        self._buffer = ""
+
+    @override
+    async def _open(self) -> None:
+        return None
+
+    @override
+    async def _write(self, data: str) -> None:
+        if self._newline == b"\r":
+            data = re.sub(r"\r?\n", "\r", data)
+        await self._write_remote(data.encode("utf-8"))
+
+    @override
+    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+        while True:
+            match = pattern.search(self._buffer)
+            if match is not None:
+                matched = self._buffer[: match.end()]
+                self._buffer = self._buffer[match.end() :]
+                return matched
+            chunk = await self._read_remote()
+            if not chunk:
+                raise asyncio.IncompleteReadError(self._buffer.encode(), None)
+            self._buffer += chunk.decode("utf-8", errors="replace")
+
+    @override
+    async def close(self) -> None:
+        self._alive = False
+        self._initialized = False
+
+    def take_residual(self) -> str:
+        """Return and clear whatever was read past the last match."""
+        residual, self._buffer = self._buffer, ""
+        return residual
+
+
+async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry point: the byte closures plus every field the hook's session needs
+    *,
+    write_remote: Callable[[bytes], Awaitable[None]],
+    read_remote: Callable[[], Awaitable[bytes]],
+    newline: bytes,
+    host_name: str,
+    host_id: str,
+    setup: "SessionSetup",
+    landing_frame: "CommandFrame | None",
+    target_frame: "CommandFrame",
+    creds: "list[Cred] | None",
+    proxy_hops: Sequence[Cred],
+    via_login: str,
+    log_line: Callable[[str], None],
+) -> bytes:
+    """Land, hop, run the hook, enter the frame, restore the terminal; return the residual.
+
+    The spec's bridge order for a hook host: landing handshake (bash: echo
+    off); proxy hops over the framed session; the LANDING frame's
+    ``restore_interactive()`` so a hook that leaves the landing shell does
+    not strand the pty echo-off for the human; the hook; frame entry; the
+    TARGET frame's ``restore_interactive()``; and whatever the last read
+    left unconsumed, returned so the bridge can show the human the prompt
+    they are at. A raw landing sends nothing before the hook.
+
+    The host's ``shell_history`` field is deliberately not read here. It
+    governs the sessions otto drives; this one ends in a human's hands, and
+    ``otto login`` keeps its promise to leave their history — and their
+    up-arrow recall — alone, on a hooked host exactly as on an unhooked one.
+    """
+    # Local, like SessionManager._apply_session_setup's: `otto.host.session_setup`
+    # is off the CLI startup import graph and this module is on it, so a host
+    # without a hook must not pull it in (tests/unit/import_budget fences that).
+    from .session_setup import SetupContext, apply_session_setup
+
+    landing_dialect = landing_frame or target_frame
+    session = _BridgeShellSession(
+        write_remote,
+        read_remote,
+        newline=newline,
+        command_frame=landing_dialect,
+    )
+    await session._ensure_initialized()  # noqa: SLF001 — the bridge is this session's manager
+    # Empty, always: nothing this function writes may suppress the history of
+    # the shell it is about to hand over. The hops' resync probes and the
+    # hook's handle both take their prefix from here.
+    prefix = ""
+    # Seed the identity before the hops and stamp it after them, mirroring
+    # SessionManager._seed_user / _apply_login_proxy. Without it a hook calling
+    # as_user() reads `current_user == ""`, and perform_switch inserts a
+    # spurious hop to the via account that the unwind then over-pops.
+    session.current_user = via_login
+    via = via_login
+    io = _SessionProxyIO(
+        session, lambda text, _mode: log_line(text), lambda text, _mode: log_line(text)
+    )
+    if proxy_hops:
+        _print_stderr(f"[otto] proxying to {proxy_hops[-1].login}...")
+    for hop in proxy_hops:
+        await run_proxy(io, hop, via=Cred(login=via), host_id=host_id, history_prefix=prefix)
+        via = hop.login
+    session.current_user = via
+    landing = session._frame  # noqa: SLF001 — the bridge is this session's manager
+    restore = landing.restore_interactive()
+    if restore is not None:
+        await session.run_cmd(restore)
+    handle = HostSession(
+        name="login",
+        session=session,
+        log_command=lambda text, _mode: log_line(text),
+        log_output=lambda text, _mode: log_line(text),
+        deregister=lambda _n: None,
+        creds=creds,
+        host_id=host_id,
+        history_prefix=prefix,
+        target_frame=target_frame,
+        establishing=True,
+    )
+    ctx = SetupContext(
+        host_id=host_id,
+        host_name=host_name,
+        user=via,
+        params=dict(setup.params),
+        kind="bridge",
+    )
+    _print_stderr(f"[otto] running session setup {setup.name!r}...")
+    await apply_session_setup(session, handle, ctx, setup, target_frame)
+    restore = target_frame.restore_interactive()
+    if restore is not None:
+        await session.run_cmd(restore)
+    return session.take_residual().encode("utf-8")
+
+
 async def _replay_proxy_hops(
     *,
     write_remote: Callable[[bytes], Awaitable[None]],
@@ -466,6 +637,7 @@ async def _run_bridge(
     install_sigwinch: Callable[[], Callable[[], None]],
     on_output_line: Callable[[str], None],
     banner: str | None = None,
+    prelude: bytes | None = None,
 ) -> None:
     """Shared interactive bridge loop used by SSH and telnet login paths.
 
@@ -481,6 +653,12 @@ async def _run_bridge(
     chance to read them, confusing ``expect``-style drivers and leaving
     the remote shell with no chance to round-trip the command into the
     session log before ``Ctrl+]`` races ahead.
+
+    *prelude* is bytes already read off the remote before the pumps existed —
+    the residual a session-setup hook's last framed read left behind, which is
+    typically the prompt the human is about to type at. It is written to fd 1
+    and to the session log after the banner, because the pumps never saw it
+    and nothing else will ever re-send it.
     """
     loop = asyncio.get_running_loop()
     stdin_is_tty = sys.stdin.isatty() and sys.platform != "win32"
@@ -491,6 +669,13 @@ async def _run_bridge(
     with _force_restore_guard(stdin_fd, saved_attrs):
         if banner is not None:
             _print_stderr(banner)
+
+        if prelude:
+            line_buffer_prelude = _LineBuffer(on_output_line)
+            line_buffer_prelude.feed(prelude)
+            line_buffer_prelude.flush()
+            with contextlib.suppress(BrokenPipeError):
+                os.write(1, prelude)
 
         def _noop_uninstall() -> None:
             return None
@@ -556,6 +741,10 @@ async def run_ssh_login(
     proxy_hops: Sequence[Cred] = (),
     via_login: str = "",
     host_id: str = "",
+    session_setup: "SessionSetup | None" = None,
+    landing_frame: "CommandFrame | None" = None,
+    target_frame: "CommandFrame | None" = None,
+    creds: "list[Cred] | None" = None,
 ) -> None:
     """Open a PTY-backed SSH shell on ``conn`` and bridge it to the terminal.
 
@@ -577,6 +766,13 @@ async def run_ssh_login(
     ``conn`` actually authenticated as (the first hop's ``via``); *host_id*
     is passed through to :func:`~otto.host.login_proxy.run_proxy` for error
     context.
+
+    With *session_setup* the hops are replayed over a framed bridge session
+    and the hook runs before the pumps (see
+    ``_run_session_setup_on_bridge()``); without it, today's path is taken
+    byte for byte. *landing_frame*/*target_frame*/*creds* are the host's own
+    fields, and are read only on that path. The host's ``shell_history`` is
+    NOT among them: ``login`` never suppresses a human's shell history.
     """
     import asyncssh
 
@@ -629,20 +825,38 @@ async def run_ssh_login(
     log_file_effective.write_marker("Entering interactive session")
 
     try:
-        await _replay_proxy_hops(
-            write_remote=write_remote,
-            read_remote=read_remote,
-            newline=b"\n",
-            proxy_hops=proxy_hops,
-            via_login=via_login,
-            host_id=host_id,
-        )
+        prelude: bytes | None = None
+        if session_setup is None:
+            await _replay_proxy_hops(
+                write_remote=write_remote,
+                read_remote=read_remote,
+                newline=b"\n",
+                proxy_hops=proxy_hops,
+                via_login=via_login,
+                host_id=host_id,
+            )
+        else:
+            prelude = await _run_session_setup_on_bridge(
+                write_remote=write_remote,
+                read_remote=read_remote,
+                newline=b"\n",
+                host_name=host_name,
+                host_id=host_id,
+                setup=session_setup,
+                landing_frame=landing_frame,
+                target_frame=target_frame or BashFrame(),
+                creds=creds,
+                proxy_hops=proxy_hops,
+                via_login=via_login,
+                log_line=log_file_effective.write_line,
+            )
         await _run_bridge(
             write_remote=write_remote,
             read_remote=read_remote,
             install_sigwinch=install_sigwinch,
             on_output_line=log_file_effective.write_line,
             banner=f"[otto] interactive session with {host_name} (ssh). Press Ctrl+] to disconnect.",  # noqa: E501 — long banner string
+            prelude=prelude,
         )
     finally:
         with contextlib.suppress(Exception):
@@ -659,6 +873,10 @@ async def run_telnet_login(
     proxy_hops: Sequence[Cred] = (),
     via_login: str = "",
     host_id: str = "",
+    session_setup: "SessionSetup | None" = None,
+    landing_frame: "CommandFrame | None" = None,
+    target_frame: "CommandFrame | None" = None,
+    creds: "list[Cred] | None" = None,
 ) -> None:
     r"""Bridge an already-connected interactive ``TelnetClient`` to the terminal.
 
@@ -672,6 +890,13 @@ async def run_telnet_login(
     ``--user`` path): non-empty hops are replayed over the bridge after login
     but before ``_run_bridge`` starts the pumps, using ``b"\\r"`` as the
     line terminator (telnet's convention, vs. SSH PTY's ``b"\\n"``).
+
+    With *session_setup* the hops are replayed over a framed bridge session
+    and the hook runs before the pumps (see
+    ``_run_session_setup_on_bridge()``); without it, today's path is taken
+    byte for byte. *landing_frame*/*target_frame*/*creds* are the host's own
+    fields, and are read only on that path. The host's ``shell_history`` is
+    NOT among them: ``login`` never suppresses a human's shell history.
     """
     reader = client.reader
     writer = client.writer
@@ -717,20 +942,38 @@ async def run_telnet_login(
     log_file.write_marker("Entering interactive session")
 
     try:
-        await _replay_proxy_hops(
-            write_remote=write_remote,
-            read_remote=read_remote,
-            newline=b"\r",
-            proxy_hops=proxy_hops,
-            via_login=via_login,
-            host_id=host_id,
-        )
+        prelude: bytes | None = None
+        if session_setup is None:
+            await _replay_proxy_hops(
+                write_remote=write_remote,
+                read_remote=read_remote,
+                newline=b"\r",
+                proxy_hops=proxy_hops,
+                via_login=via_login,
+                host_id=host_id,
+            )
+        else:
+            prelude = await _run_session_setup_on_bridge(
+                write_remote=write_remote,
+                read_remote=read_remote,
+                newline=b"\r",
+                host_name=host_name,
+                host_id=host_id,
+                setup=session_setup,
+                landing_frame=landing_frame,
+                target_frame=target_frame or BashFrame(),
+                creds=creds,
+                proxy_hops=proxy_hops,
+                via_login=via_login,
+                log_line=log_file.write_line,
+            )
         await _run_bridge(
             write_remote=write_remote,
             read_remote=read_remote,
             install_sigwinch=install_sigwinch,
             on_output_line=log_file.write_line,
             banner=f"[otto] interactive session with {host_name} (telnet). Press Ctrl+] to disconnect.",  # noqa: E501 — long banner string
+            prelude=prelude,
         )
     finally:
         log_file.write_marker("Interactive session ended")

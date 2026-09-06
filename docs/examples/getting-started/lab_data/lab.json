@@ -10,6 +10,9 @@
         },
         "embedded": {
             "resources": ["embedded-bench"]
+        },
+        "pyrepl": {
+            "resources": ["unix-bench"]
         }
     },
     "_doc_end": "labs",
@@ -31,6 +34,7 @@
                     "rack": 1,
                     "shelf": 3,
                     "docker_capable": true,
+                    "session_setup": {"type": "provision-app", "env": "lab"},
                     "creds": [
                         {"login": "vagrant", "password": "vagrant"},
                         {"login": "test", "password": "Password1"},
@@ -43,6 +47,27 @@
                 }
             ],
             "_doc_end": "test1"
+        },
+        {
+            "_doc_begin": "test1-py",
+            "name": "test1-py",
+            "labs": ["pyrepl"],
+            "hosts": [
+                {
+                    "ip": "10.10.200.11",
+                    "os_type": "unix",
+                    "valid_terms": ["ssh"],
+                    "valid_transfers": ["scp", "sftp"],
+                    "is_virtual": true,
+                    "creds": [
+                        {"login": "vagrant", "password": "vagrant"}
+                    ],
+                    "landing_frame": "bash",
+                    "command_frame": "pyrepl",
+                    "session_setup": "enter-python"
+                }
+            ],
+            "_doc_end": "test1-py"
         },
         {
             "_doc_begin": "test2",
@@ -163,6 +188,8 @@
                     "max_filename_len": 32,
                     "is_virtual": true,
                     "hop": "test4",
+                    "landing_frame": "raw",
+                    "session_setup": "land-on-zephyr",
                     "snmp": {
                         "address": "10.10.200.14",
                         "port": 16102,

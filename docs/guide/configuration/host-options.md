@@ -240,8 +240,9 @@ What suppression covers, and what it deliberately doesn't:
 losing up-arrow recall would be worse than the noise. The trade-off is not
 free: if that login goes through a login proxy (`--user`), otto's own
 `__OTTO_…_RECOVER__` resync probe is written into the elevated shell and so
-appears in *its* history. The two cannot both be had — suppressing the probe
-means suppressing your history for the whole session.
+appears in *its* history; on a host with a `session_setup`, the hook's own
+commands land in yours the same way. The two cannot both be had — suppressing
+the probe means suppressing your history for the whole session.
 ```
 
 Suppression is best-effort and silent by design: every part of it is guarded,
@@ -254,6 +255,88 @@ offline. Do not simplify them away.
 Notably otto neutralizes ``HISTFILE`` rather than clearing ``HISTSIZE`` —
 setting ``HISTSIZE=0`` would make bash write its emptied history list *over*
 the history file at exit, destroying the user's real history.
+
+(per-host-session-setup)=
+
+## Session setup
+
+otto runs two commands of its own on every shell it opens — the readiness
+handshake (`stty -echo; echo; echo <marker>` on bash) and, on Unix hosts,
+history suppression — and then, by default, nothing else. A host that needs
+more before its shell is fit to use names a **session setup**: a registered
+async callable that runs once per shell session, after the handshake and
+after every login-proxy hop, with a real session handle.
+
+```json
+{
+    "ip": "10.10.200.11",
+    "creds": [{ "login": "vagrant", "password": "vagrant" }],
+    "session_setup": { "type": "provision-app", "env": "lab" }
+}
+```
+
+A string selects the hook by name; an object names it in `type` and hands
+every other key to the hook as `ctx.params`. The hook itself is project
+code, registered from an `init` module — {doc}`../../library/extending-backends`
+has the contract and a copyable registration, and the Getting Started
+{doc}`../../getting-started/customizations` page walks through three.
+
+### What runs, in order
+
+1. Transport hops (`hop`), then the connection lands.
+2. The readiness handshake, in the **landing** dialect.
+3. Every login-proxy hop (`creds` with `proxy`), identity-proved.
+4. The hook, over a session framed in the landing dialect.
+5. **Frame entry**: the `command_frame`'s own handshake, in whatever shell
+   the hook left. This runs after every hook, unconditionally, and is the
+   confirmation that the shell is fit to use.
+
+The hook runs on the persistent default session, on every named session,
+on the pooled sessions `exec` uses on a hooked Unix host, and on the
+interactive `otto host <id> login` bridge before you get the prompt. It
+does not run on `as_user`/`switch_user` (identity changes inside a session
+that is already set up), on `exec(user=...)`, or under a dry run (no
+session opens).
+
+### Two dialects: `landing_frame`
+
+When the shell otto lands in is not the shell `command_frame` describes —
+a Linux login shell in front of a vendor CLI, a `python3` REPL, a boot
+menu in front of a Zephyr shell — declare the landing dialect too:
+
+```json
+{
+    "ip": "10.10.200.11",
+    "creds": [{ "login": "vagrant", "password": "vagrant" }],
+    "landing_frame": "bash",
+    "command_frame": "pyrepl",
+    "session_setup": "enter-python"
+}
+```
+
+The handshake and the hops run in the landing dialect; the hook's `run()`
+is framed in it too, until the hook calls `enter_frame()` or returns; then
+frame entry runs the `command_frame`'s handshake. `landing_frame` is only
+valid with `session_setup`, and a host whose `creds` include a proxied
+entry must land in a bash-family dialect (the hop identity probe is bash).
+
+`"raw"` is the landing for a console that answers no frame at all: no
+handshake is sent, the hook works with `send`/`expect` alone (`run()`
+refuses until `enter_frame()`), and frame entry still confirms the target.
+`command_frame: "raw"` is refused — raw is a landing, never a destination.
+
+### What a two-dialect host can do
+
+| Verb | On a two-dialect host |
+|------|-----------------------|
+| `run`, `send`/`expect`, named sessions, `app_shell`, `login` | work; every session ends in the application and speaks its dialect |
+| `exec` | works — each pooled session runs the hook and enters the application on its own |
+| `put`/`get` over `sftp`/`scp` | work — transport-level, they land on the host the application runs on — whether the application sees the files is the project's business |
+| `run(sudo=True)`, `read_file`/`write_file`, `lsmod`, `shutdown`, `reboot(wait=True)`, the `shell` and `nc` transfer backends | unavailable — they assume a POSIX shell at the far end of `exec`, which is how otto resolves the host's userland |
+
+`SshOptions.post_connect` ({doc}`../../library/connection-options`) is a
+different thing: it runs against the SSH *connection* (port forwards, X11)
+and never touches a shell.
 
 (per-host-snmp)=
 

@@ -2,7 +2,26 @@
 
 Each section registers one extension the worked example uses; the pages
 include them between the ``# doc: begin`` / ``# doc: end`` markers.
+
+Most sections keep their imports beside their code. The rule that decides
+whether they can is ruff's "imports at the top of the file" (E402): its
+preamble tolerates ``if`` / ``try`` blocks between imports — which is why the
+three sections below still carry their own — but the first *plain* statement
+ends it for good, and the taint never resets. The parser section runs plain
+assignments and calls, so every section after it hoists its imports up here
+instead; a tutorial block should not have to teach a ``noqa``.
 """
+
+from otto import register_session_setup
+
+from .enter_python import enter_python
+from .land_on_zephyr import land_on_zephyr
+from .pyrepl_frame import PyReplFrame
+from .setup import provision_app
+
+# Sort the sections below independently of the hoist above, so every
+# doc-included block keeps the imports it teaches and gains none of these.
+# isort: split
 
 # doc: begin register-frame
 from otto.host.command_frame import FRAME_CLASSES, register_command_frame
@@ -47,3 +66,18 @@ _busybox[BusyBoxSocketsParser().command] = BusyBoxSocketsParser()
 _busybox[EntropyParser().command] = EntropyParser()
 register_host_parsers(re.compile(r"bb.*_qemu"), _busybox)
 # doc: end register-parsers
+
+# doc: begin register-setup
+# Guarded like the frame above: a second registration under one name is refused.
+if PyReplFrame.type_name not in FRAME_CLASSES.names():
+    register_command_frame(PyReplFrame.type_name, PyReplFrame)
+# `overwrite=True` rather than a guard: importing this module a second time —
+# a reloaded project, or a `--doctest-modules` pass — must replace the hooks
+# rather than fail on the names it registered the first time.
+for _name, _fn in (
+    ("provision-app", provision_app),
+    ("enter-python", enter_python),
+    ("land-on-zephyr", land_on_zephyr),
+):
+    register_session_setup(_name, _fn, overwrite=True)
+# doc: end register-setup

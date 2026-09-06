@@ -40,20 +40,14 @@ True
 
 The REPL half of :class:`~otto.host.app_shell.AppShell` wraps an application
 already running inside a shell session — mysql, a vendor CLI, ``python3``.
-Driving one for real needs a live host, so it is illustrated rather than
-exercised here:
+:class:`PyRepl` below is that last one as real, importable code (the Getting
+Started example project's ``provision-app`` session setup provisions through
+it). Driving one for real needs a live host, so the usage is illustrated
+rather than exercised here:
 
 .. code-block:: python
 
-    import re
-    from otto import AppShell
-
-
-    class PyRepl(AppShell):
-        launch = "python3 -u -i"
-        prompt = re.compile(r">>> \Z")
-        quit_cmd = "exit()"
-
+    from otto.examples.app_shell import PyRepl
 
     async with host.app_shell(PyRepl) as py:
         result = await py.cmd(
@@ -85,7 +79,7 @@ proxied effective uid.
 
 import re
 
-from otto.host.app_shell import Parsed
+from otto.host.app_shell import AppShell, Parsed
 
 
 class Version(Parsed):
@@ -126,3 +120,18 @@ class Listing(Parsed):
     )
     table: list[Row]
     stats: Stats
+
+
+class PyRepl(AppShell):
+    """``python3 -u -i`` as an :class:`~otto.AppShell` — the app-shell page's example.
+
+    ``-u`` keeps the REPL's output unbuffered so each answer reaches otto as
+    it is printed, and ``-i`` forces the interactive prompt even when stdin
+    is not a tty. Import it rather than re-declaring it: the Getting Started
+    example project's ``provision-app`` session setup attaches this exact
+    class to provision through a REPL.
+    """
+
+    launch = "python3 -u -i"
+    prompt = re.compile(r">>> \Z")
+    quit_cmd = "exit()"

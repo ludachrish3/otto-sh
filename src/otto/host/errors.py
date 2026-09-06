@@ -60,10 +60,32 @@ class HostCommandError(OttoError, RuntimeError):
     """
 
 
+class RawLandingError(OttoError, RuntimeError):
+    """A framed operation was attempted in a ``raw`` landing.
+
+    The ``raw`` landing dialect has no command framing at all: it exists so a
+    session-setup hook can drive a console whose landing state answers no
+    frame (a boot menu, an autoboot countdown) with ``send``/``expect``
+    alone, and then enter the target frame. ``run()`` before ``enter_frame()``
+    is the hook author's bug, and this names it rather than timing out.
+    """
+
+
+class SessionSetupError(OttoError, ConnectionError):
+    """A session setup hook failed, or left no shell that answers the frame.
+
+    A ``ConnectionError`` so callers that already treat "the session never
+    came up" as unreachable keep doing so; ``SessionManager`` catches it by
+    name ahead of its transport-race retry, because a hook failure is not a
+    race and must not consume the retry.
+    """
+
+
 class UnsupportedOnUserlandError(OttoError, RuntimeError):
     """The host's userland provides no way to do what otto was asked to do.
 
-    A THIRD outcome, and the reason it is not one of the two above: nothing was
+    A THIRD outcome, and the reason it is neither
+    :class:`HostUnreachableError` nor :class:`HostCommandError`: nothing was
     attempted, so there is neither a transport problem nor a verdict about the
     system under test. otto knows in advance that the command it would emit
     cannot work — a host that resolved ``elevation`` to ``"none"`` has no sudo

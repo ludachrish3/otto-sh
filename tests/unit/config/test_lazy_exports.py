@@ -308,3 +308,28 @@ def test_import_star_still_binds_every_public_name():
     )
     assert out.returncode == 0, out.stderr[-2000:]
     assert "IMPORT STAR OK" in out.stdout
+
+
+def test_otto_lazy_exports_table_is_paired_with_all():
+    """``otto.__all__`` and ``otto._LAZY_EXPORTS`` are two hand-maintained lists.
+
+    A name added to one and forgotten in the other fails only when someone
+    happens to touch that specific attribute: a `_LAZY_EXPORTS` key missing
+    from `__all__` is invisible to `dir()`/import-star, and an `__all__` entry
+    missing from `_LAZY_EXPORTS` (with no ordinary module-dict binding either)
+    raises `AttributeError` on first access -- both silent until then.
+
+    In-process, not a subprocess: unlike the laziness guards above, this test
+    resolves every public name, which imports every lazy module on purpose.
+    It owns the table's internal consistency, not staying off any import
+    surface -- the import-budget snapshots and the laziness guards above own
+    that.
+    """
+    import otto
+
+    missing_from_all = set(otto._LAZY_EXPORTS) - set(otto.__all__)
+    assert not missing_from_all, (
+        f"_LAZY_EXPORTS has keys missing from __all__: {sorted(missing_from_all)}"
+    )
+    for name in otto.__all__:
+        getattr(otto, name)

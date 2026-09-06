@@ -24,6 +24,7 @@ registries, same CLI listing and completion, same error messages
 | an embedded binary loader | `register_binary_loader` | {doc}`../../library/extending-embedded` |
 | an embedded filesystem type | `register_filesystem` | {doc}`../../library/extending-embedded` |
 | a power controller | `register_power_controller` | {doc}`../../library/extending-backends` |
+| a session setup hook | `register_session_setup` | {doc}`../../library/extending-backends` |
 | products on hosts | `register_product_provider` | {doc}`../../library/cli-exposed-verbs` |
 | a host source (lab repository) | {func}`otto.labs.register_lab_repository` | {doc}`../../library/lab-source-backends` |
 | fast completion for a host source | optional {class}`~otto.labs.protocol.SupportsHostSummaries` on the repository | {doc}`../../library/lab-source-backends` |

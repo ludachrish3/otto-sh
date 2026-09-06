@@ -33,7 +33,7 @@ cross-talk) are passed to the frame as a
 {class}`~otto.host.command_frame.SessionMarkers` value, keeping the frame pure
 and unit-testable without a live session.
 
-### The seven methods
+### The seven methods (and one optional)
 
 Subclass `CommandFrame` and implement seven methods — a *render half* (command
 → bytes to write) and a *parse half* (bytes read → structured result). They
@@ -49,6 +49,7 @@ them would let mismatched halves combine.
 | `marks_begin(data, m)` | parse | `True` if `data` is the chunk carrying the BEGIN sentinel. |
 | `parse_output(buffer, cmd, m)` | parse | Extract the command's output from the accumulated `buffer`. |
 | `extract_retcode(buffer, m)` | parse | Recover the exit code; return `-1` when none can be read. |
+| `restore_interactive()` | render | *Optional.* Line that undoes what `handshake` did to a terminal for a human (`None` by default); the `login` bridge sends it after a session-setup hook. |
 
 Set a unique `type_name` class attribute — the string lab data uses to select
 the frame.

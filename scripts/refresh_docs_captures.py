@@ -37,6 +37,7 @@ import dataclasses
 import difflib
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -242,7 +243,13 @@ def render_command(argv: list[str]) -> str:
         line = arg
         for key, value in shown.items():
             line = line.replace(key, value)
-        rendered.append(line)
+        # `Host.run` treats a sequence of commands as separate commands, so
+        # an argument carrying a space or another shell-active character
+        # (e.g. `echo $APP_ENV`, `1 + 1`) must be quoted the way a reader
+        # would need to type it -- otherwise the rendered line reads as more
+        # than one command, or hands a copier's own shell a variable to
+        # expand. shlex.quote leaves a plain argument bare.
+        rendered.append(shlex.quote(line))
     return "$ " + " ".join(rendered)
 
 

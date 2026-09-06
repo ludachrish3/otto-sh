@@ -273,6 +273,9 @@ host field — the third reservation level, beside the
 | `roles` | array of strings | Lab-intent tags for this host (e.g. `["edge", "db"]`, Unix hosts only). Consumed by docker use-case placement resolution to pick the host a use-case's role names. Defaults to `[]`. |
 | `has_bash` | boolean | `true` when the host has a working `bash` to `exec -a`-tag processes through. Gates which hosts can host or be scanned for `otto tunnel` tunnels — see {doc}`../cli/tunnel/index`. Defaults to `true` for Unix hosts (including `local` and Docker containers), `false` for embedded hosts. |
 | `shell_history` | boolean | Whether otto's own commands are recorded in this host's shell history (Unix hosts only). Defaults to `false` — otto neutralizes `HISTFILE` on each shell it opens so automation traffic doesn't bury a human's history. Set `true` where otto's commands should stay visible in the history file. See {ref}`per-host-shell-history`. |
+| `command_frame` | string | Shell-framing dialect (e.g. `"bash"`, `"zephyr"`, `"zephyr-serial"`). `"raw"` is refused here — it is a landing-only dialect, valid only as `landing_frame`. See {ref}`per-host-session-setup`. |
+| `session_setup` | string or object | A registered session-setup hook that runs once on every shell session, after the readiness handshake and every login-proxy hop, with a real session handle: export variables, provision through an app shell, or manoeuvre into the application the `command_frame` describes. A string names the hook; an object names it in `type` and passes every other key as the hook's params. See {ref}`per-host-session-setup`. |
+| `landing_frame` | string | Dialect of the shell otto *lands* in when it is not the shell `command_frame` describes — `"bash"` for a Linux login shell in front of a vendor CLI, `"raw"` for a landing that answers no frame at all (a boot menu). Only valid with `session_setup`, which does the manoeuvring; with a proxied cred the landing must be bash-family. See {ref}`per-host-session-setup`. |
 
 ### Referencing the inventory
 
@@ -384,7 +387,6 @@ details.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `command_frame` | string | Shell-framing dialect (e.g. `"zephyr"`, `"zephyr-serial"`). |
 | `filesystem` | string | On-device filesystem variant (`"none"`, `"fat-ram"`, `"littlefs"`). |
 | `loader` | string | Binary-load strategy for this target's runtime, by registry name (e.g. `"llext-hex"`).  Optional — omit it on a target that never loads binaries, and `host.load()`/`unload()` then fail loud.  Projects register their own via `register_binary_loader`. |
 

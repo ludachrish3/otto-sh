@@ -55,6 +55,7 @@ from typing_extensions import override
 
 if TYPE_CHECKING:
     from ..config.lab import Lab
+    from .session_setup import SessionSetup
 
 import logging
 
@@ -223,6 +224,18 @@ class EmbeddedHost(RemoteHost):
     independent of the transport, so it is handed straight to the
     :class:`~otto.host.session.SessionManager`."""
 
+    landing_frame: CommandFrame | None = None
+    """Dialect of the shell otto lands in when it differs from ``command_frame``;
+    ``None`` means the same dialect. Lab data names a registered frame by
+    string (resolved in ``__post_init__``); only meaningful with
+    ``session_setup``, which manoeuvres from the landing shell to the target."""
+
+    session_setup: "SessionSetup | None" = None
+    """Session-setup hook run once per shell session, after the handshake and
+    every login-proxy hop, with a real :class:`~otto.host.session.HostSession`.
+    Lab data declares it by name or as a ``{"type": name, ...params}`` table
+    (resolved in ``__post_init__``). See :mod:`otto.host.session_setup`."""
+
     loader: BinaryLoader | None = None
     """Binary-load strategy for this target's runtime (e.g. Zephyr LLEXT).
     Unlike ``command_frame`` it is *optional* — many embedded hosts never load
@@ -347,11 +360,20 @@ class EmbeddedHost(RemoteHost):
 
             self.filesystem = build_filesystem(self.filesystem)
 
-        # Same for ``command_frame`` — lab JSON declares the dialect by name.
-        if isinstance(self.command_frame, str):
+        # Same for ``command_frame`` and ``landing_frame`` — lab JSON declares
+        # both dialects by name, one shared import serving both coercions.
+        if isinstance(self.command_frame, str) or isinstance(self.landing_frame, str):
             from .command_frame import build_command_frame
 
-            self.command_frame = build_command_frame(self.command_frame)
+            if isinstance(self.command_frame, str):
+                self.command_frame = build_command_frame(self.command_frame)
+            if isinstance(self.landing_frame, str):
+                self.landing_frame = build_command_frame(self.landing_frame)
+
+        if self.session_setup is not None:
+            from .session_setup import session_setup_from_spec  # off the startup graph on purpose
+
+            self.session_setup = session_setup_from_spec(self.session_setup)
 
         # Same for ``loader`` — lab JSON declares the binary-load strategy by
         # name. Optional, so no fail-loud here (load()/unload() check at call).
@@ -414,6 +436,8 @@ class EmbeddedHost(RemoteHost):
             # (unix, local, docker) and the field's own name; `__post_init__`
             # assigns it above, so it is populated by this line.
             host_id=self.id,
+            landing_frame=self.landing_frame,
+            session_setup=self.session_setup,
         )
         self._file_transfer = cast(
             "EmbeddedFileTransfer",

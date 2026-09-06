@@ -343,3 +343,7 @@ The hook runs on a freshly opened connection, right after the
 structured forwards have been applied, before the session is handed to
 any caller.  It can't be expressed in JSON, so hosts that need it must
 be constructed in Python rather than loaded from `lab.json`.
+
+`post_connect` runs against the SSH *connection* and never touches a shell.
+Setup that belongs in the shell — an export, an application to enter — is a
+{ref}`session setup <per-host-session-setup>`.

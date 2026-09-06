@@ -1,5 +1,5 @@
 $ otto --lab busybox host bb1350_qemu probe
-INFO     fleet of interest: 5 of 7 lab hosts (1 repos, 0 excluded)                                  
+INFO     fleet of interest: 5 of 7 lab hosts (1 repo(s), 0 excluded)                                
 capability       value      source
 applet_base64    present    declared
 applet_nc        present    declared

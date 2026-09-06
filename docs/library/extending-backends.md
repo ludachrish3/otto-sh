@@ -380,6 +380,136 @@ mid-connection. See {doc}`../guide/configuration/host-sources` for the full `cre
 including the ownership consequences of proxying (which transfer paths land
 files owned by the via-user vs. the proxied target user).
 
+## Session setup hooks
+
+A **session setup** is arbitrary async code otto runs once on every shell
+session it opens, after the readiness handshake and after every login-proxy
+hop, with a real {class}`~otto.host.session.HostSession` in hand. It is the
+seam for everything a host needs before its shell is fit to use: exporting
+variables, provisioning through an {class}`~otto.host.app_shell.AppShell`, or manoeuvring
+from the shell otto lands in into the application the host's
+`command_frame` describes. Registration is the same named-registry seam as
+the backends above.
+
+### The callable contract
+
+```python
+async def setup(session: HostSession, ctx: SetupContext) -> None: ...
+```
+
+`session` is a real session: `run()` returns results with exit codes through
+the session's *current* frame, `send`/`expect` are raw, and
+{meth}`~otto.host.app_shell.AppShell.attach` works on it. {class}`~otto.host.session_setup.SetupContext`
+carries `host_id`, `host_name`, `user` (the identity the session is in —
+leave it alone; becoming someone is a login proxy's job), `params` (the
+table's other keys) and `kind`: `"default"`, `"named"`, `"exec_pool"` or
+`"bridge"`, so work that must happen once is done on the default session
+only. The hook does **not** receive the host: `host.run()` re-enters the
+session lock held while the hook runs and would deadlock.
+
+```python
+# .otto/init.py — registered via [init] in .otto/settings.toml
+import shlex
+
+from otto import SetupContext, register_session_setup
+from otto.host.session import HostSession
+
+
+async def provision_app(session: HostSession, ctx: SetupContext) -> None:
+    await session.run(f"export APP_ENV={shlex.quote(ctx.params.get('env', 'lab'))}")
+    if ctx.kind == "default":
+        await session.run("app-admin create-db otto_test")
+
+
+register_session_setup("provision-app", provision_app)
+```
+
+The param is quoted because it is lab data going into a shell command: an
+`env` with a space in it would otherwise export the first word and run the
+rest.
+
+A runnable version — registration, the name-or-table coercion, and the
+did-you-mean error — lives in `otto.examples.session_setup`.
+
+### Landing and target dialects, and `enter_frame()`
+
+Until the hook returns, the session's frame is the **landing** frame
+(`landing_frame`, defaulting to `command_frame`). A hook that has moved the
+console into a different application uses `send`/`expect` for that stretch,
+then either calls `await session.enter_frame()` to switch to the
+`command_frame` now — useful to verify the application in its own dialect
+before returning, and it takes a `timeout=` for a slow start — or simply
+returns. Either way otto runs frame entry once more after the hook,
+unconditionally: that repeat is the confirmation, the target frame's own
+handshake with fresh markers, and it is what turns "the hook returned" into
+"the shell answers". A hook that returns parked somewhere that cannot
+answer the frame fails there with the host and hook named.
+
+In a `"raw"` landing there is no landing dialect: `run()` raises
+{class}`~otto.host.errors.RawLandingError` until `enter_frame()`, and the
+hook works with `send`/`expect` alone. A cancelled `expect()` is fatal
+there — a raw frame has no recovery probe to render, so the session is
+marked dead and the open fails — so give the hook's `expect` timeouts
+generous budgets rather than tight ones.
+
+In a **framed** landing, calling `run()` after navigating away without
+entering the frame is a bug the docs cannot make cheap: the framed
+command waits out its timeout, recovery fails, and the open fails as
+{class}`~otto.host.errors.SessionSetupError`.
+
+### Consequences
+
+- `exec` on a hooked Unix host takes the pooled-session route (as it does
+  for a proxied login): the raw exec channel cannot run setup.
+- `close()` on the handle refuses while the session is being established.
+- On the `login` bridge, the hook runs before the pumps start; the landing
+  frame's echo is restored before the hook (so a hook that leaves the landing
+  shell does not strand the pty echo-off), and the target frame's
+  `restore_interactive()` runs after frame entry. Login-proxy hops are
+  replayed over that framed session, so each hop line is written into the
+  session log — where the plain `--user` replay on a host without a hook
+  logs nothing.
+- For frame authors: `CommandFrame.restore_interactive()` returns the line
+  that undoes what your handshake did to a terminal (`None` if nothing).
+
+### Selecting a hook from lab data
+
+`"session_setup": "provision-app"` or
+`"session_setup": {"type": "provision-app", "env": "lab"}` on the host entry;
+`"landing_frame"` beside it when the landing shell differs. Both are
+validated at lab load. See {ref}`per-host-session-setup`.
+
+### A landing dialect of your own, shared by a fleet
+
+`landing_frame` names any registered frame, so a landing otto does not
+ship — a bootloader, a vendor's maintenance shell — is a
+{class}`~otto.host.command_frame.CommandFrame` subclass registered with
+{func}`~otto.host.command_frame.register_command_frame`, exactly like a target frame
+({doc}`extending-embedded` walks through the methods). Give it a real
+handshake when the landing answers one (U-Boot has a prompt and an `echo`),
+and a hook can `run()` bootloader commands framed before it `send`s `boot`
+and waits for the kernel's login. Subclass {class}`~otto.host.command_frame.RawFrame`
+only to keep raw semantics under a name of your own: every `RawFrame` is
+raw to the session, `run()` included.
+
+When many hosts share the same landing and the same manoeuvre, bundle both
+in an {func}`~otto.host.os_profile.register_os_profile` and let each host select the
+bundle with one key:
+
+```python
+register_os_profile(
+    "uboot-linux",
+    base="unix",
+    defaults={
+        "landing_frame": "uboot",
+        "session_setup": {"type": "uboot-to-linux", "kernel": "zImage"},
+    },
+)
+```
+
+A host entry then says `"os_type": "uboot-linux"` and inherits both fields;
+a host that sets either key itself wins over the profile, field by field.
+
 ## See also
 
 - {doc}`extending-embedded` — custom command frames and embedded filesystems

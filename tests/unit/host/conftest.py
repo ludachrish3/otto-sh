@@ -39,6 +39,7 @@ measurable (16.1s, unchanged) and finds the same tests, so there is no
 allowlist here and nothing for a future author to remember to update.
 """
 
+import asyncio
 import multiprocessing as mp
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
@@ -46,6 +47,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 from otto.host.file_ops import PosixFileOps
 from otto.host.host import BaseHost, is_dry_run, refuse_declined_elevation
@@ -61,6 +63,7 @@ from otto.utils import Status
 # tolerance of 4 and eager gc policy with it. The generator body is the shared
 # part, and that is what gets imported.
 from tests._fixtures.fd_watermark import fd_watermark_bracket
+from tests.unit.host.test_session import MockSession
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -270,3 +273,15 @@ def recording_host() -> PosixRecordingHost:
 def embedded_recording_host() -> RecordingHost:
     """A fresh glob-less double, for the verbs that must name that gap."""
     return RecordingHost()
+
+
+@pytest_asyncio.fixture
+async def landed() -> MockSession:
+    """A MockSession that has completed its bash landing handshake."""
+    s = MockSession()
+    await s._open()
+    feed = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
+    await s._ensure_initialized()
+    await feed
+    s.written.clear()
+    return s

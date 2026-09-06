@@ -7,7 +7,6 @@ can fail for a reader.
 """
 
 import ast
-import sys
 from pathlib import Path
 
 import pytest
@@ -17,12 +16,14 @@ from otto.config.repo import Repo
 from otto.inventory import compile_inventory, construct_inventory
 from otto.models.settings import InventoryConfigSpec
 from otto.testing import assert_reservation_backend_conforms
+from tests._fixtures.gs_example import EXAMPLE, load_example_lab
+from tests._fixtures.gs_example import LIBS as _LIBS
+from tests._fixtures.gs_example import import_gs_example as _import_gs_example
 from tests._fixtures.paths import PROJECT_ROOT
 
-EXAMPLE = PROJECT_ROOT / "docs" / "examples" / "getting-started"
 TWIN = PROJECT_ROOT / "docs" / "examples" / "getting-started-inventory"
-_LIBS = EXAMPLE / "libs"
 _MIRROR_SOURCE = PROJECT_ROOT / "tests" / "custom_hosts" / "custom_hosts" / "zephyr_inline.py"
+_API_SAMPLE = PROJECT_ROOT / "src" / "otto" / "examples" / "session_setup.py"
 _UNIX = ["test1", "test2", "test3"]
 _ATTRS = [
     "id",
@@ -42,26 +43,13 @@ _ATTRS = [
 ]
 
 
-def _import_gs_example() -> None:
-    # The example's init module registers the ``zephyr-inline`` frame the
-    # embedded lab needs; idempotent, so it coexists with ``custom_hosts``.
-    if str(_LIBS) not in sys.path:
-        sys.path.insert(0, str(_LIBS))
-    __import__("gs_example")
-
-
-def load_example_lab(labs: str):
-    _import_gs_example()
-    return load_lab(labs, search_paths=[EXAMPLE / "lab_data"])
-
-
 def test_settings_parse_as_a_real_repo() -> None:
     repo = Repo(sut_dir=EXAMPLE)
     assert repo.name == "gs"
     assert [s.backend for s in repo.lab_sources] == ["json"]
 
 
-@pytest.mark.parametrize("lab", ["unix", "busybox", "embedded"])
+@pytest.mark.parametrize("lab", ["unix", "busybox", "embedded", "pyrepl"])
 def test_every_lab_loads(lab: str) -> None:
     built = load_example_lab(lab)
     assert built.hosts, lab
@@ -138,6 +126,27 @@ def test_the_zephyr_27_frame_mirrors_the_bed_module() -> None:
     docstrings stripped, so prose may differ; behaviour may not.
     """
     assert _frame_nodes(_LIBS / "gs_example" / "zephyr_inline.py") == _frame_nodes(_MIRROR_SOURCE)
+
+
+def _enter_python_node(path: Path) -> str:
+    """Return *path*'s ``enter_python`` definition as an AST dump, docstring dropped.
+
+    Same contract as ``_frame_nodes`` above and for the same reason: the two
+    copies are a copyable example and the API sample it was copied from, so
+    prose may differ between them and behaviour may not.
+    """
+    for node in ast.parse(path.read_text()).body:
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "enter_python":
+            node.body = _drop_leading_docstring(node.body)
+            return ast.dump(node, include_attributes=False)
+    raise AssertionError(f"{path}: no `enter_python` definition to compare")
+
+
+def test_the_example_enter_python_mirrors_the_api_sample() -> None:
+    """The example project's two-dialect hook IS ``otto.examples.session_setup``'s."""
+    assert _enter_python_node(_LIBS / "gs_example" / "enter_python.py") == _enter_python_node(
+        _API_SAMPLE
+    )
 
 
 @pytest.fixture
