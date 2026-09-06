@@ -71,6 +71,7 @@ def _run_inner_pytest(
     tmp_path: Path,
     options: object | None = None,
     extra_plugins: tuple[object, ...] = (),
+    iterations: int = 0,
 ) -> int:
     """Run an inner pytest session with OttoPlugin + OttoOptionsPlugin.
 
@@ -124,7 +125,11 @@ def _run_inner_pytest(
                 "no:playwright",
                 "-x",
             ],
-            plugins=[OttoPlugin(), OttoOptionsPlugin(options), *extra_plugins],
+            plugins=[
+                OttoPlugin(iterations=iterations),
+                OttoOptionsPlugin(options),
+                *extra_plugins,
+            ],
         )
     finally:
         sys.modules.pop(test_file.stem, None)
@@ -210,6 +215,73 @@ class TestSilent(OttoSuite):
         exit_code = _run_inner_pytest(test_file, tmp_path)
         assert exit_code == pytest.ExitCode.OK
         assert not (tmp_path / "TestSilent").exists()
+
+    def test_each_stability_iteration_gets_its_own_test_dir(self, tmp_path: Path) -> None:
+        """Under ``--iterations N``, ``test_dir`` is ``<node>/iteration_<n>``, 1-based.
+
+        The repeat loop runs setup once and repeats only the call phase, so the
+        fixture cannot re-fire per iteration — red until the protocol hook
+        re-points ``test_dir`` between calls.
+        """
+        capture_file = tmp_path / "iter_dirs.txt"
+        test_file = tmp_path / "test_iter_dirs.py"
+        test_file.write_text(f"""\
+import pathlib
+from otto.suite.suite import OttoSuite
+
+CAPTURE = pathlib.Path({str(capture_file)!r})
+
+class TestIterDirs(OttoSuite):
+    async def test_repeated(self, test_dir) -> None:
+        with CAPTURE.open("a") as f:
+            f.write(f"{{test_dir}} {{test_dir.is_dir()}}\\n")
+""")
+        exit_code = _run_inner_pytest(test_file, tmp_path, iterations=3)
+        assert exit_code == pytest.ExitCode.OK
+        rows = [line.split() for line in capture_file.read_text().strip().split("\n") if line]
+        node_dir = tmp_path / "TestIterDirs" / "test_repeated"
+        assert [row[0] for row in rows] == [
+            str(node_dir / "iteration_1"),
+            str(node_dir / "iteration_2"),
+            str(node_dir / "iteration_3"),
+        ]
+        assert all(row[1] == "True" for row in rows), rows
+
+    def test_a_single_iteration_is_still_iteration_1(self, tmp_path: Path) -> None:
+        """``--iterations 1`` is stability mode too: the artifacts are numbered."""
+        capture_file = tmp_path / "one_iter.txt"
+        test_file = tmp_path / "test_one_iter.py"
+        test_file.write_text(f"""\
+import pathlib
+from otto.suite.suite import OttoSuite
+
+CAPTURE = pathlib.Path({str(capture_file)!r})
+
+class TestOneIter(OttoSuite):
+    async def test_once(self, test_dir) -> None:
+        CAPTURE.write_text(str(test_dir))
+""")
+        exit_code = _run_inner_pytest(test_file, tmp_path, iterations=1)
+        assert exit_code == pytest.ExitCode.OK
+        assert capture_file.read_text() == str(
+            tmp_path / "TestOneIter" / "test_once" / "iteration_1"
+        )
+
+    def test_iterations_create_no_dirs_when_test_dir_is_never_requested(
+        self, tmp_path: Path
+    ) -> None:
+        """Stability mode keeps the create-on-request rule — red if the hook mkdirs eagerly."""
+        test_file = tmp_path / "test_iter_silent.py"
+        test_file.write_text("""\
+from otto.suite.suite import OttoSuite
+
+class TestIterSilent(OttoSuite):
+    async def test_quiet(self) -> None:
+        assert True
+""")
+        exit_code = _run_inner_pytest(test_file, tmp_path, iterations=3)
+        assert exit_code == pytest.ExitCode.OK
+        assert not (tmp_path / "TestIterSilent").exists()
 
     def test_plain_function_gets_the_module_stem_as_its_suite_dir(self, tmp_path: Path) -> None:
         capture_file = tmp_path / "plain.txt"

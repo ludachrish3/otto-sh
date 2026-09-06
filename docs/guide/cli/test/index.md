@@ -123,6 +123,29 @@ pass rate the repeated run must clear:
 otto --lab my_lab test TestDevice --iterations 50 --threshold 95
 ```
 
+Each iteration gets its own artifact directory, so one repeat's logs and
+files cannot overwrite the previous one's. The `test_dir` a test writes into
+becomes `<output dir>/<Suite>/<test name>/iteration_1/`, then `iteration_2/`,
+and so on — numbered to match the `--- <test name> iteration 1 ---` banners in
+the log:
+
+```text
+<xdir>/test/20260906_143205_412_TestDevice/
+└── TestDevice/
+    └── test_capture_logs/
+        ├── iteration_1/
+        │   └── device.log
+        ├── iteration_2/
+        │   └── device.log
+        └── iteration_3/
+            └── device.log
+```
+
+Without `--iterations` or `--duration` the path stays the flat
+`<output dir>/<Suite>/<test name>/` it has always been, so only stability runs
+see the extra level. `suite_dir` is suite-wide and does not move either way —
+see [per-test artifact directories](../../../library/suite-recipes.md#per-test-artifact-directories).
+
 ### Monitoring a run
 
 `--monitor` samples every host — or those `--monitor-hosts` matches — on a

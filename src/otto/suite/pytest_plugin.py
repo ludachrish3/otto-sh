@@ -28,6 +28,24 @@ _logger = logging.getLogger(__name__)
 otto_expect_key: pytest.StashKey[ExpectCollector] = pytest.StashKey()
 """Where the ``expect`` fixture parks a test's collector for the call-phase wrapper."""
 
+otto_iteration_key: pytest.StashKey[int] = pytest.StashKey()
+"""The 1-based stability iteration a test's call phase is currently in.
+
+Set by :meth:`~otto.suite.plugin.OttoPlugin.pytest_runtest_protocol` and only
+in stability mode (``--iterations`` / ``--duration``); its ABSENCE is what
+tells ``test_dir`` a run is not repeating, so a plain run keeps the flat
+``<suite>/<node>`` path it has always had.
+"""
+
+otto_test_dir_base_key: pytest.StashKey[Path] = pytest.StashKey()
+"""The un-suffixed ``<suite_dir>/<node name>`` the ``test_dir`` fixture resolved.
+
+Parked so the repeat loop can re-point ``test_dir`` at the next iteration
+without a second copy of the sanitize-and-join rule. Present only once a test
+has actually REQUESTED ``test_dir`` — that is what keeps the loop from creating
+directories for a test that never asked for one.
+"""
+
 otto_options_plugin_key: pytest.StashKey["OttoOptionsPlugin"] = pytest.StashKey()
 """Where ``pytest_configure`` parks the plugin instance for its static fixtures.
 
@@ -37,6 +55,23 @@ of a plugin object as much as of a test class (the check is only "is
 fixtures here are therefore staticmethods; the one that needs plugin state
 (``suite_options``) finds it through ``request.config``.
 """
+
+
+def iteration_dir(base: Path, iteration: int | None) -> Path:
+    """Where one stability *iteration*'s artifacts go under a test's *base* dir.
+
+    ``None`` — the run is not repeating — is the base itself, unchanged. The
+    numbering is 1-based to match the ``--- <test> iteration 1 ---`` banner the
+    repeat loop logs, so a reader pairs a directory with a log line by eye.
+
+    Args:
+        base: The test's un-suffixed ``<suite_dir>/<node name>`` directory.
+        iteration: The 1-based iteration number, or ``None`` outside stability mode.
+
+    Returns:
+        The directory the current iteration should write into. Not created here.
+    """
+    return base if iteration is None else base / f"iteration_{iteration}"
 
 
 def _raise_unless_converged(result: "Result", step: str) -> None:
@@ -154,8 +189,16 @@ class OttoOptionsPlugin:
         """This test's artifact directory: ``suite_dir/<sanitized node name>``.
 
         Parametrized tests keep unique names (``test_foo[a]`` → ``test_foo_a_``).
+
+        In stability mode (``--iterations`` / ``--duration``) one more level
+        follows — ``.../iteration_1``, ``iteration_2``, … — so each repeat of
+        the call phase keeps its own logs and artifacts instead of overwriting
+        the previous one's. The fixture resolves once, at setup; the repeat
+        loop re-points it per iteration from the base path stashed here.
         """
-        path = suite_dir / _sanitize_node_name(request.node.name)
+        base = suite_dir / _sanitize_node_name(request.node.name)
+        request.node.stash[otto_test_dir_base_key] = base
+        path = iteration_dir(base, request.node.stash.get(otto_iteration_key, None))
         path.mkdir(parents=True, exist_ok=True)
         return path
 

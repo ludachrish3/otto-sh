@@ -41,6 +41,11 @@ import pytest_asyncio
 from _pytest.runner import call_and_report, show_test_item
 
 from otto.suite._retry import report_retries, retry_hookwrapper
+from otto.suite.pytest_plugin import (
+    iteration_dir,
+    otto_iteration_key,
+    otto_test_dir_base_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +268,27 @@ class OttoPlugin:
                 return None
         return True
 
+    @staticmethod
+    def _advance_test_dir(item: pytest.Item, iteration: int) -> None:
+        """Re-point a repeating item's ``test_dir`` at ``iteration_<iteration>``.
+
+        A no-op for an item that never requested ``test_dir``: no base path was
+        stashed, so there is nothing to move and nothing to create. The stash
+        is updated either way, so anything else reading the iteration number
+        sees it whether or not this test keeps artifacts.
+
+        Args:
+            item: The item whose call phase is about to repeat.
+            iteration: The 1-based number of the iteration about to run.
+        """
+        item.stash[otto_iteration_key] = iteration
+        base = item.stash.get(otto_test_dir_base_key, None)
+        if base is None:
+            return
+        path = iteration_dir(base, iteration)
+        path.mkdir(parents=True, exist_ok=True)
+        cast("Any", item).funcargs["test_dir"] = path
+
     @pytest.hookimpl(tryfirst=True)
     def pytest_runtest_protocol(
         self, item: pytest.Item, nextitem: pytest.Item | None
@@ -271,15 +297,23 @@ class OttoPlugin:
 
         When ``--iterations`` or ``--duration`` (or both) are specified,
         each collected test is executed multiple times within a single
-        pytest session.  Class-scoped fixtures remain cached by pytest for
-        the lifetime of the class and fire only once.  Function-scoped
-        fixtures fire on every iteration.
+        pytest session.
 
         Unlike calling ``runtestprotocol`` in a loop (which tears down
         *all* fixtures including class-scoped ones after each call), this
         hook runs setup once, repeats the call phase N times, then runs
         teardown once.  This keeps class-scoped resources (SSH
         connections, deployed artifacts, etc.) alive across iterations.
+
+        The cost of that is that NO fixture re-fires per iteration —
+        function-scoped ones included, since they resolve during the single
+        setup.  ``test_dir`` still has to move, or every iteration's logs and
+        artifacts would overwrite the previous one's, so the loop re-points it
+        itself: the iteration number goes in the item's stash (which is what
+        the fixture reads for iteration 1) and each later iteration rewrites
+        ``funcargs["test_dir"]`` from the base path the fixture parked there.
+        A test that never requested ``test_dir`` parks no base, and no
+        directory is created for it.
 
         Returns ``True`` to signal that this hook handled the item,
         or ``None`` to fall through to default behaviour.
@@ -297,6 +331,8 @@ class OttoPlugin:
         hasrequest = hasattr(item, "_request")
         if hasrequest and not item_any._request:  # noqa: SLF001 — deliberate access to pytest.Function._request (private pytest API, cast to Any)
             item_any._initrequest()  # noqa: SLF001 — deliberate access to pytest.Function._initrequest (private pytest API, cast to Any)
+
+        item.stash[otto_iteration_key] = 1
 
         # ── Setup (once) ──────────────────────────────────────────────
         setup_report = call_and_report(item, "setup", log=True)
@@ -317,6 +353,8 @@ class OttoPlugin:
         while iteration < max_iters and time.monotonic() < deadline:
             if is_stability:
                 logger.info(f"[bold cyan]--- {item.name} iteration {iteration + 1} ---[/bold cyan]")
+            if iteration > 0:  # iteration 1's dir came from the fixture at setup
+                self._advance_test_dir(item, iteration + 1)
             call_and_report(item, "call", log=True)
             iteration += 1
 

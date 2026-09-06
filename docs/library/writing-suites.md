@@ -138,7 +138,8 @@ delivers everything — as fixtures — and nothing otto-specific lives on
   requested; suite-wide fixtures write here; a test function outside a class
   gets `<run output dir>/<module stem>`. `test_dir` — `suite_dir/<test
   name>` (parametrized names sanitized), created when requested, like
-  `tmp_path` — see the [artifact recipe](suite-recipes.md#per-test-artifact-directories).
+  `tmp_path`, and one level deeper under a repeating run — see the
+  [artifact recipe](suite-recipes.md#per-test-artifact-directories).
 - `expect` — non-fatal assertions: `expect(cond, "why")` records a failure
   and keeps the test running; the test fails at the end with every failure
   listed, in the call phase like any other failure. A hard `assert` in the

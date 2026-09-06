@@ -82,7 +82,10 @@ layers on otto's concerns:
   `test_dir` fixture (`suite_dir` for the suite-wide one).
 - **Stability modes** — `--iterations` / `--duration` re-run tests via the
   runtest protocol and aggregate per-test pass rates, reporting `Unstable`
-  rather than failing on the first flake.
+  rather than failing on the first flake. Setup and teardown run once around
+  the repeated call phase, so no fixture re-fires per iteration; the protocol
+  hook re-points `test_dir` at an `iteration_N` subdirectory itself, giving
+  each repeat its own artifacts.
 - **Retry** — `@pytest.mark.retry(n)` re-runs a failing test in place.
 - **Monitoring and coverage** — test start/end events are stamped onto the
   monitor timeline, and coverage runs fetch embedded counters after the

@@ -184,6 +184,14 @@ async def test_capture_logs(self, test_dir) -> None:
 Both are created when first requested, like `tmp_path`; a test that never
 names them leaves nothing behind.
 
+Under `--iterations` or `--duration` ({doc}`../guide/cli/test/index`), one
+more level follows and `test_dir` becomes
+`<run output dir>/TestDevice/test_capture_logs/iteration_1/`, then
+`iteration_2/`, and so on — the numbering matches the `--- test_capture_logs
+iteration 1 ---` banners in the log, so each repeat's logs and artifacts stay
+separate instead of overwriting the one before. `suite_dir` is suite-wide and
+does not move. Without those flags the path is the flat one shown above.
+
 ## Docker from instructions and suites
 
 The CLI is a thin wrapper around `otto.docker`. Project instructions and
