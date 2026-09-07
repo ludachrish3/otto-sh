@@ -19,8 +19,8 @@ three methods, all read-only. Otto never writes to a store.
 | ------ | -------- |
 | `label` | Non-empty string naming this store in provenance and errors, e.g. `json:/home/me/lab_data/creds.json`. An individual lookup failure is instead prefixed by the *file or source path* itself, so a reader can find the file without decoding the label — the built-in `json` store's errors all read `<path>: <reason>`. |
 | `lookup(key)` | A `list` of {class}`~otto.models.host.CredSpec` for the inventory key — **`[]` when the store holds none for it**, never `None`, never a raise. Raise {class}`~otto.creds.errors.CredsError` only when the store cannot answer at all. Logins must be unique within one key; the list must be equal on a second call. |
-| `list_keys()` | Every key this store holds, sorted — or **`None`** if the store cannot enumerate (a vault that hands out a secret by name but lists nothing). Never an empty list standing in for "cannot say": the doctor's orphan check reads `[]` as "no orphans". |
-| `fingerprint()` | A value that changes whenever the entries may have; `None` means "not cacheable". Folded into the inventory's own fingerprint, so a rotated password invalidates shell completion the way an edited inventory does. |
+| `list_keys()` | Every key this store holds, sorted — or **`None`** if the store cannot enumerate (a vault that hands out a secret by name but lists nothing). Never an empty list standing in for "cannot say": the doctor's orphan check reads `[]` as "no orphans". Never raises: "cannot say" is `None`, not a `CredsError` — the conformance helper counts a raise here as a violation. |
+| `fingerprint()` | A value that changes whenever the entries may have; `None` means "not cacheable". Folded into the inventory's own fingerprint, so a rotated password invalidates shell completion the way an edited inventory does. Never raises: an unreachable backend reports `None`, the same as "not cacheable" — the conformance helper counts a raise here as a violation too. |
 
 Optionally implement {class}`~otto.inventory.protocol.SupportsStatPaths` —
 `stat_paths()` returning the files your fingerprint is derived from — and the

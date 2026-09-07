@@ -62,6 +62,38 @@ def orphan_warning(inventory: Inventory, *, referenced: set[str]) -> "str | None
     )
 
 
+def orphan_creds_warning(inventory: Inventory) -> "str | None":
+    """Return the warning for creds-store keys the inventory does not hold (spec 2026-09-06 §7.1).
+
+    ``None`` without a store, and when the store cannot enumerate
+    (``list_keys()`` is ``None`` — a vault): an empty list must never be read
+    as "no orphans". An unreadable store (a missing file) also cannot
+    enumerate — :func:`creds_mode_warnings` is what names that file, so this
+    stays silent rather than raising. Reads the store through the
+    ``CredsOverlay`` type check, like :func:`creds_mode_warnings`.
+    """
+    if not isinstance(inventory, CredsOverlay):
+        return None
+    from ..creds.errors import CredsError  # function-local: otto.inventory is on the bootstrap path
+
+    try:
+        listed = inventory.store.list_keys()
+    except CredsError:
+        return None
+    if listed is None:
+        return None
+    orphans = sorted(set(listed) - set(inventory.list_keys()))
+    if not orphans:
+        return None
+    shown = ", ".join(orphans[:_ORPHAN_LIST_CAP])
+    extra = len(orphans) - _ORPHAN_LIST_CAP
+    more = f" … and {extra} more" if extra > 0 else ""
+    return (
+        f"creds store '{inventory.store.label}': {len(orphans)} key(s) the inventory does not "
+        f"hold: {shown}{more} (a renamed or retired inventory key leaves its creds behind)"
+    )
+
+
 def creds_mode_warnings(inventory: Inventory) -> list[str]:
     """Warnings for creds-store files readable by group/others, or missing (spec 2026-09-06 §7.1).
 
@@ -82,7 +114,8 @@ def creds_mode_warnings(inventory: Inventory) -> list[str]:
         except FileNotFoundError:
             out.append(f"creds store file {path} does not exist")
             continue
-        except OSError:
+        except OSError as e:
+            out.append(f"creds store file {path} could not be checked: {e}")
             continue
         if mode & 0o077:
             out.append(

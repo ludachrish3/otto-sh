@@ -176,6 +176,11 @@ def twin_inventory():
 
 def test_the_referenced_twin_builds_the_same_unix_lab(twin_inventory) -> None:
     """Spec §3: two states of one lab, allowed only because this proves them equal."""
+    # Explicit, not leaned on as a side effect of the `load_example_lab` call
+    # below: the REFERENCED load needs the example project's init module
+    # registered too, and spelling that out here means this test's own
+    # dependency does not hide behind another line's incidental import.
+    _import_gs_example()
     inline = load_example_lab("unix")
     referenced = load_lab("unix", search_paths=[TWIN / "lab_data"], inventory=twin_inventory)
     assert set(inline.hosts) == set(referenced.hosts)

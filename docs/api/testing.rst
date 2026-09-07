@@ -5,6 +5,8 @@ Reusable conformance helpers for otto's pluggable backend interfaces. Call one
 per interface from a pytest test; each raises a single ``AssertionError``
 listing every contract violation.
 
+.. autofunction:: otto.testing.assert_creds_store_conforms
+
 .. autofunction:: otto.testing.assert_inventory_conforms
 
 .. autofunction:: otto.testing.assert_lab_repository_conforms

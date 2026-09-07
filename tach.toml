@@ -489,7 +489,8 @@ path = "otto.testing"
 # otto.inventory / otto.models: assert_inventory_conforms (spec §14, added
 # alongside the json backend) checks a candidate against the Inventory
 # protocol and its InventoryRecord fields.
-depends_on = ["otto.config", "otto.inventory", "otto.labs", "otto.models", "otto.reservations", "otto.host", "otto.suite"]
+# otto.creds: assert_creds_store_conforms (spec 2026-09-06 §5.3).
+depends_on = ["otto.config", "otto.creds", "otto.inventory", "otto.labs", "otto.models", "otto.reservations", "otto.host", "otto.suite"]
 
 [[modules]]
 path = "otto.tunnel"

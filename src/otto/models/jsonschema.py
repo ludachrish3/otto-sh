@@ -22,6 +22,8 @@ Emitted documents (default):
 - ``reservations`` — for the reservations JSON file,
 - ``inventory`` — for the json inventory backend's file
   (:class:`~otto.models.inventory.InventoryRecord` per key),
+- ``creds`` — for the json creds store's file
+  (:class:`~otto.models.host.CredSpec` list per key, spec 2026-09-06 §5.2),
 - ``monitor-meta`` — the monitor dashboard's internal chart/tab-layout model
   (:class:`~otto.models.monitor.MonitorMeta`); not user-edited and not served
   at any endpoint (it is reshaped into each session's ``SessionMeta`` for the
@@ -53,7 +55,7 @@ from ..host.os_profile import registered_host_specs
 from ..host.transfer import TRANSFER_BACKENDS
 from ..link import IMPAIRERS
 from ..version import get_version
-from .host import HostSpec
+from .host import CredSpec, HostSpec
 from .inventory import FILLABLE_INVENTORY_FIELDS, InventoryRecord
 from .lab import ElementSpec, LabEntrySpec
 from .link import LinkSpec
@@ -367,6 +369,26 @@ def _inventory_schema() -> dict[str, Any]:
     }
 
 
+def _creds_schema() -> dict[str, Any]:
+    """Build the json creds store's file schema: ``{key: [CredSpec, ...]}`` (spec 2026-09-06 §5.2).
+
+    ``$schema`` and ``_``-prefixed top-level keys are comment space, mirroring
+    ``parse_creds_document``. Entries are the lab file's own ``CredSpec`` —
+    the same shape in every creds layer — and take no comment keys, because
+    ``CredSpec`` strips none at load.
+    """
+    entry = CredSpec.model_json_schema(ref_template="#/$defs/{model}")
+    defs = entry.pop("$defs", {})
+    defs["CredSpec"] = entry
+    return {
+        "type": "object",
+        "properties": {"$schema": {"type": "string"}},
+        "patternProperties": {"^_": {}},
+        "additionalProperties": {"type": "array", "items": {"$ref": "#/$defs/CredSpec"}},
+        "$defs": defs,
+    }
+
+
 def _lab_schema(distinct: list[type[HostSpec]], names: dict[str, type[HostSpec]]) -> dict[str, Any]:
     """Build the v2 ``lab.json`` object schema.
 
@@ -446,6 +468,7 @@ def build_schemas(*, builtins_only: bool = False) -> dict[str, dict[str, Any]]:
         ReservationFile.model_json_schema(), "reservations", "otto reservations"
     )
     docs["inventory"] = _decorate(_inventory_schema(), "inventory", "otto inventory.json")
+    docs["creds"] = _decorate(_creds_schema(), "creds", "otto creds.json")
     docs["monitor-meta"] = _decorate(
         MonitorMeta.model_json_schema(),
         "monitor-meta",

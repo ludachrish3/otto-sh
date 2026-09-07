@@ -110,7 +110,13 @@ class RunContext:
                     f"capture {cap.id!r}: project {cap.project!r} "
                     f"not found under {self.examples_root}"
                 )
-            shutil.copytree(self.examples_root, self.tmp, dirs_exist_ok=True)
+            # Once per RUN, not once per newly-seen project: the copy always
+            # brings every project across (the whole-tree copy above), so a
+            # second distinct project needs only the validation above -- a
+            # second copytree would just re-copy what the first already
+            # placed under self.tmp.
+            if not self._project_dirs:
+                shutil.copytree(self.examples_root, self.tmp, dirs_exist_ok=True)
             self._project_dirs[cap.project] = self.tmp / cap.project
         return self._project_dirs[cap.project]
 

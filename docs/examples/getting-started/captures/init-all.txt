@@ -8,12 +8,15 @@ created .otto/schemas/link.schema.json
 created .otto/schemas/settings.schema.json
 created .otto/schemas/reservations.schema.json
 created .otto/schemas/inventory.schema.json
+created .otto/schemas/creds.schema.json
 created .otto/schemas/monitor-meta.schema.json
 created .otto/schemas/monitor-export.schema.json
 created .vscode/settings.json
 created .vscode/extensions.json
 created .vscode/otto.code-snippets
 created lab_data/lab.json
+created lab_data/inventory.json
+created lab_data/creds.json
 created lab_data/README.md
 created pylib/acme_options.py
 created tests/test_example.py
@@ -39,3 +42,5 @@ Next steps
 │ tests        │ scaffolded │        │
 │ instructions │ scaffolded │        │
 └──────────────┴────────────┴────────┘
+inventory: json:/tmp/otto-gs/acme/lab_data/inventory.json
+creds:     json:/tmp/otto-gs/acme/lab_data/creds.json

@@ -100,25 +100,33 @@ paths = ["lab_data"]
 #backend = "none"
 #url = ""
 
-# --- [inventory] — per-project inventory OVERRIDE; the usual home is ----------
-# ~/.otto/settings.toml (declared once per user; see docs/guide/configuration/inventory.md).
-# Backend kwargs sit in the same table: json takes `path` (+ optional
-# `supplies`); netbox takes `url`, `token_env`, `filter`, `custom_fields`.
+# --- [inventory] + [creds] — where a referenced host's facts come from ------
+# A lab.json host that says "inventory": "<key>" gets the fields listed in
+# `supplies` from the inventory record under that key, and its creds from the
+# creds store under the same key. Creds layer by login: lab.json over the
+# inventory record over the creds store, field by field, and lab.json's order
+# is the login order. The usual home for both tables is ~/.otto/settings.toml
+# (declared once per user); a table here overrides it for this repo. Grow
+# `supplies` as inventory.json takes over more fields.
+# See docs/guide/configuration/inventory.md.
+[inventory]
+backend = "json"
+path = "lab_data/inventory.json"
+supplies = ["ip"]
+
+# [creds] is optional: without it, creds come from inventory records and
+# lab.json alone. Other backends: netbox for [inventory] (below), and any
+# registered name for either table.
+[creds]
+backend = "json"
+path = "lab_data/creds.json"
+
+# A NetBox inventory instead of the json file — the token never sits in a file:
 #   backend = "netbox"
 #   url = "https://netbox.example"
+#   token_env = "NETBOX_TOKEN"
 #   filter = {{ site = "lab-a", status = "active" }}
-#[inventory]
-#backend = "json"
-#cache_ttl = "24h"
-# path = "~/lab/inventory.json"
-
-# --- [creds] — the creds store, keyed by inventory key (optional) -----------
-# Same two homes and the same per-project override rule as [inventory]; a
-# store is only consulted for hosts that name an inventory key. The json store
-# takes `path`. See docs/guide/configuration/inventory.md.
-#[creds]
-#backend = "json"
-# path = "~/.otto/creds.json"
+#   cache_ttl = "24h"
 
 # --- [coverage] — coverage tiers + remote gcov collection --------------------
 # Embedded build settings live in [coverage.embedded] (see the coverage docs).
@@ -186,12 +194,17 @@ paths = ["lab_data"]
 EXAMPLE_LAB_NAME = "example_lab"
 """The lab the scaffold declares — the one name every printed next step passes to ``--lab``."""
 
+EXAMPLE_INVENTORY_KEY = "device-01.lab.example"
+"""The inventory key the scaffold's three files share — the machine's own name, never an otto id.
+
+``.example`` is the reserved documentation TLD, as ``192.0.2.1`` is TEST-NET.
+"""
+
 EXAMPLE_HOST_ENTRY = {
-    "ip": "192.0.2.1",
+    "inventory": EXAMPLE_INVENTORY_KEY,
     "os_type": "unix",
     "valid_terms": ["ssh"],
     "valid_transfers": ["scp", "sftp"],
-    "creds": [{"login": "admin", "password": "CHANGE_ME"}],
 }
 
 EXAMPLE_ELEMENT_ENTRY = {
@@ -199,7 +212,10 @@ EXAMPLE_ELEMENT_ENTRY = {
         "Example element — replace these values. An element is the smallest unit that "
         "joins a lab: 'labs' lists regex patterns full-matched against lab names, and "
         "'hosts' are the machines/boards it holds. Full schema: "
-        "docs/guide/configuration/lab-config.md or `otto schema export`."
+        "docs/guide/configuration/lab-config.md or `otto schema export`. The host below "
+        "is REFERENCED: its 'inventory' value is the machine's own name (typically its "
+        "DNS hostname), never an otto id; its address lives in inventory.json and its "
+        "creds in creds.json under that key."
     ),
     "name": "example-device",
     "labs": [EXAMPLE_LAB_NAME],
@@ -212,18 +228,69 @@ LAB_JSON_TEMPLATE: dict[str, Any] = {
         "otto lab database: 'labs' declares each lab (its reservable resources and "
         "metadata); 'elements' groups hosts and says which labs they join; 'links' "
         "declares data-plane routes (see docs/guide/configuration/lab-config.md). "
-        "Keys starting with _ are comments; $schema wires editor autocomplete."
+        "Keys starting with _ are comments; $schema wires editor autocomplete. A host "
+        'that says "inventory" gets its machine facts from inventory.json and its '
+        "creds from creds.json under that key; everything otto-specific stays here, "
+        "and a creds entry here overrides the same login below it."
     ),
     "labs": {EXAMPLE_LAB_NAME: {"resources": ["example-device"]}},
     "elements": [EXAMPLE_ELEMENT_ENTRY],
     "links": [],
 }
 
+INVENTORY_JSON_TEMPLATE: dict[str, Any] = {
+    "$schema": "../.otto/schemas/inventory.schema.json",
+    "_comment": (
+        "Machine facts by inventory key — true whatever tool asks. Only the fields "
+        "[inventory] supplies may appear; the rest stay in lab.json. Never rename a key: "
+        "every lab.json entry naming it breaks."
+    ),
+    EXAMPLE_INVENTORY_KEY: {"ip": "192.0.2.1"},
+}
+
+CREDS_JSON_TEMPLATE: dict[str, Any] = {
+    "$schema": "../.otto/schemas/creds.schema.json",
+    "_comment": (
+        "Credentials by inventory key: the lowest layer. An entry with the same login in "
+        "inventory.json or lab.json overrides these field by field. Replace CHANGE_ME; keep "
+        "this file out of version control or at mode 0600."
+    ),
+    EXAMPLE_INVENTORY_KEY: [{"login": "admin", "password": "CHANGE_ME"}],
+}
+
 LAB_README_TEMPLATE = """\
 # lab_data/
 
-This directory holds `lab.json` — otto's lab database for this repo. It is a
-JSON object with three sections, each optional:
+Three files, one key. `otto init` wrote them together and they describe one
+example host between them:
+
+- **`lab.json`** — otto's lab database: the `labs` table, the `elements` that
+  hold host entries, and `links`. Everything otto-specific about a host lives
+  here (`os_type`, the term/transfer menus, `hop`, …). The example host does
+  not carry an address or a password: it says `"inventory": "<key>"` instead.
+- **`inventory.json`** — machine facts by inventory key, true whatever tool
+  asks: the address today, interfaces and location once you widen `supplies`
+  in `.otto/settings.toml`. Only the fields `supplies` lists may appear here.
+- **`creds.json`** — credentials by the same inventory key. Written at mode
+  `0600`; keep it that way, or out of version control. Optional: without the
+  `[creds]` table, creds come from `inventory.json` records or `lab.json`.
+
+The **inventory key** is the only thing the files share. It is the machine's
+own name — typically its DNS hostname — and never an otto id or element name;
+renaming one breaks every `lab.json` entry that names it.
+
+**Creds compose by login: lab.json over inventory.json over creds.json,
+field by field.** An entry in a higher file overrides the fields it states
+for the same login and cannot remove one (`null` states nothing); lab.json's
+order is the login order (the first entry is the default login). A cred
+change you want to try before the team's files change goes in `lab.json`.
+The full rules, the other backends (NetBox, your own store) and the
+`~/.otto/settings.toml` home for a shared inventory are in
+`docs/guide/configuration/inventory.md`.
+
+## `lab.json`
+
+It is a JSON object with three sections, each optional:
 
 - **`labs`** — the table of labs this file declares, keyed by lab name. A lab
   exists only once some file declares it; `--lab`/`OTTO_LAB` selects one by
@@ -276,8 +343,8 @@ exists and reserves nothing.
 
 ## Fields in the example host entry
 
-- **`ip`** — the host's IP address (or hostname), used to open term/transfer
-  sessions.
+- **`inventory`** — the inventory key (see above). An inline host carries
+  **`ip`** here instead.
 - **`os_type`** — `"unix"` for a UnixHost-backed entry (SSH/telnet-capable
   Linux/BSD-like systems) or `"embedded"` for an EmbeddedHost-backed entry
   (Zephyr and similar). Determines which spec class validates the rest of
@@ -288,10 +355,9 @@ exists and reserves nothing.
 - **`valid_transfers`** — the ordered menu of file-transfer backends this
   host supports (e.g. `"scp"`, `"sftp"`, `"ftp"`, `"nc"`). Same
   first-entry-is-default rule as `valid_terms`.
-- **`creds`** — an ordered list of `{"login": ..., "password": ...}` objects;
-  the first entry is the default login unless `user` pins another one.
-  Replace `"CHANGE_ME"` with a real credential (or point it at your secrets
-  manager per your repo's convention) before connecting to a real host.
+- **`creds`** — optional on a referenced host: entries here layer over the
+  same login in `inventory.json` and `creds.json`; an inline host lists every
+  `{"login": ..., "password": ...}` here, the first being the default login.
 - **`metadata`** — an opaque object for your own per-host data; otto never
   reads it.
 
@@ -501,7 +567,8 @@ VSCODE_SETTINGS_TEMPLATE = r"""{
   "json.schemas": [
     { "fileMatch": ["**/lab.json"], "url": "./.otto/schemas/lab.schema.json" },
     { "fileMatch": ["**/reservations.json"], "url": "./.otto/schemas/reservations.schema.json" },
-    { "fileMatch": ["**/inventory*.json"], "url": "./.otto/schemas/inventory.schema.json" }
+    { "fileMatch": ["**/inventory*.json"], "url": "./.otto/schemas/inventory.schema.json" },
+    { "fileMatch": ["**/creds*.json"], "url": "./.otto/schemas/creds.schema.json" }
   ],
   "evenBetterToml.schema.associations": {
     ".*/settings\\.toml$": "./.otto/schemas/settings.schema.json"

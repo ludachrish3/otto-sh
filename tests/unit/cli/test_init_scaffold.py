@@ -64,29 +64,65 @@ def test_settings_scaffold_has_commented_dependencies_block(tmp_path: Path) -> N
     assert '#optional = ["nice-to-have-project"]' in text
 
 
-def test_lab_scaffold_passes_hostspec_ingest(tmp_path: Path) -> None:
-    BY_NAME["lab"].scaffold(tmp_path, CFG)
-    lab_file = tmp_path / "lab_data" / "lab.json"
-    data = json.loads(lab_file.read_text())
+def test_lab_scaffold_writes_three_files_that_resolve_to_one_host(tmp_path: Path) -> None:
+    """Spec 2026-09-06 §8.1: lab.json references; inventory.json/creds.json answer under one key."""
+    from otto.cli.init import _inventory_for
+    from otto.host.factory import validate_host_dict
+    from otto.inventory import resolve_host_entry
     from otto.models.host import UnixHostSpec
     from otto.models.lab import ElementSpec
 
-    assert data["links"] == []  # links section present, empty by default
-    # The lab is DECLARED, with the reservable resource on the lab and not on
-    # any host — v2's whole point (spec §8.1).
+    BY_NAME["settings"].scaffold(tmp_path, CFG)
+    created = BY_NAME["lab"].scaffold(tmp_path, CFG)
+    lab_dir = tmp_path / "lab_data"
+    assert set(created) == {
+        lab_dir / "lab.json",
+        lab_dir / "inventory.json",
+        lab_dir / "creds.json",
+        lab_dir / "README.md",
+    }
+    data = json.loads((lab_dir / "lab.json").read_text())
+    assert data["links"] == []
     assert data["labs"] == {"example_lab": {"resources": ["example-device"]}}
-    entry = data["elements"][0]
-    assert "_comment" in entry  # the docs pointer rides on the element now
-    element = ElementSpec.model_validate(entry)
+    element = ElementSpec.model_validate(data["elements"][0])
     assert element.name == "example-device"
-    assert element.labs == ["example_lab"]
-    # The host entry validates exactly as the file has it: the element is the
-    # factory's own argument, so nothing is stamped onto the entry first.
-    spec = UnixHostSpec.model_validate(element.hosts[0])
-    assert spec.ip
-    assert element.to_element().name == "example-device"
-    assert (tmp_path / "lab_data" / "README.md").exists()
+    host = element.hosts[0]
+    assert host["inventory"] == "device-01.lab.example"
+    assert "ip" not in host  # comes from inventory.json
+    assert "creds" not in host  # comes from creds.json
+    inventory = _inventory_for(tmp_path)
+    assert inventory is not None
+    resolved = resolve_host_entry(host, inventory, element.to_element()).host_data
+    validate_host_dict(resolved)
+    spec = UnixHostSpec.model_validate(resolved)
+    assert spec.ip == "192.0.2.1"
+    assert [(c.login, c.password) for c in spec.creds] == [("admin", "CHANGE_ME")]
     assert data["$schema"] == "../.otto/schemas/lab.schema.json"
+    assert json.loads((lab_dir / "inventory.json").read_text())["$schema"] == (
+        "../.otto/schemas/inventory.schema.json"
+    )
+    assert json.loads((lab_dir / "creds.json").read_text())["$schema"] == (
+        "../.otto/schemas/creds.schema.json"
+    )
+
+
+def test_creds_json_is_written_owner_only_and_nothing_is_overwritten(tmp_path: Path) -> None:
+    import stat
+
+    BY_NAME["settings"].scaffold(tmp_path, CFG)
+    BY_NAME["lab"].scaffold(tmp_path, CFG)
+    creds = tmp_path / "lab_data" / "creds.json"
+    assert stat.S_IMODE(creds.stat().st_mode) == 0o600
+    creds.write_text('{"mine": []}')
+    inventory = tmp_path / "lab_data" / "inventory.json"
+    inventory.write_text("{}")
+    (tmp_path / "lab_data" / "lab.json").unlink()  # area missing again → scaffold runs
+    created = BY_NAME["lab"].scaffold(tmp_path, CFG)
+    assert tmp_path / "lab_data" / "lab.json" in created
+    assert creds not in created
+    assert inventory not in created
+    assert creds.read_text() == '{"mine": []}'
+    assert inventory.read_text() == "{}"
 
 
 def test_tests_scaffold_suite_is_pytest_native(tmp_path: Path) -> None:
@@ -185,7 +221,7 @@ def test_module_names_are_sanitized_identifiers(tmp_path: Path) -> None:
 def test_schemas_scaffold_writes_schema_files(tmp_path: Path) -> None:
     created = BY_NAME["schemas"].scaffold(tmp_path, CFG)
     out = tmp_path / ".otto" / "schemas"
-    for stem in ("settings", "lab", "link", "reservations", "inventory"):
+    for stem in ("settings", "lab", "link", "reservations", "inventory", "creds"):
         assert out / f"{stem}.schema.json" in created
     data = json.loads((out / "lab.schema.json").read_text())
     assert data["title"] == "otto lab.json"
@@ -202,8 +238,10 @@ def test_schemas_scaffold_writes_vscode_wiring_when_absent(tmp_path: Path) -> No
     assert "./.otto/schemas/lab.schema.json" in urls
     assert "./.otto/schemas/reservations.schema.json" in urls
     assert "./.otto/schemas/inventory.schema.json" in urls
+    assert "./.otto/schemas/creds.schema.json" in urls
     matches = {entry["url"]: entry["fileMatch"] for entry in wiring["json.schemas"]}
     assert matches["./.otto/schemas/inventory.schema.json"] == ["**/inventory*.json"]
+    assert matches["./.otto/schemas/creds.schema.json"] == ["**/creds*.json"]
     assert "evenBetterToml.schema.associations" in wiring
     toml_associations = wiring["evenBetterToml.schema.associations"]
     assert toml_associations[r".*/settings\.toml$"] == "./.otto/schemas/settings.schema.json"

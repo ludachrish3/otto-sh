@@ -28,6 +28,7 @@ def test_default_set_of_documents():
         "settings",
         "reservations",
         "inventory",
+        "creds",
         "monitor-meta",
         "monitor-export",
     }
@@ -359,3 +360,15 @@ def test_inventory_schema_is_the_record_keyed_by_inventory_key():
     assert "ip" in record["required"]
     # the interface shorthand ("eth0": "10.0.0.5") is accepted, as on host entries
     assert {"type": "string"} in record["properties"]["interfaces"]["additionalProperties"]["anyOf"]
+
+
+def test_creds_schema_is_a_cred_list_keyed_by_inventory_key():
+    doc = build_schemas()["creds"]
+    assert doc["$id"].endswith("/creds.schema.json")
+    assert doc["title"] == "otto creds.json"
+    assert doc["additionalProperties"] == {"type": "array", "items": {"$ref": "#/$defs/CredSpec"}}
+    assert doc["properties"]["$schema"] == {"type": "string"}
+    assert doc["patternProperties"]["^_"] == {}
+    entry = doc["$defs"]["CredSpec"]
+    assert entry["required"] == ["login"]
+    assert entry.get("additionalProperties") is False  # an unknown field is refused, as at load

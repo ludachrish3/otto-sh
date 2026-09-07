@@ -37,6 +37,8 @@ def test_all_flag_scaffolds_everything_without_prompts(tmp_path: Path) -> None:
         ".otto/schemas/settings.schema.json",
         ".otto/schemas/lab.schema.json",
         "lab_data/lab.json",
+        "lab_data/inventory.json",
+        "lab_data/creds.json",
         "lab_data/README.md",
         "tests/test_example.py",
         "tests/conftest.py",

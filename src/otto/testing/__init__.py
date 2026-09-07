@@ -6,12 +6,16 @@ pytest test (it raises a single ``AssertionError`` listing every contract
 violation):
 
     from otto.testing import (
+        assert_creds_store_conforms,
         assert_inventory_conforms,
         assert_lab_repository_conforms,
         assert_reservation_backend_conforms,
     )
 """
 
+from .conformance import (
+    assert_creds_store_conforms as assert_creds_store_conforms,
+)
 from .conformance import (
     assert_inventory_conforms as assert_inventory_conforms,
 )

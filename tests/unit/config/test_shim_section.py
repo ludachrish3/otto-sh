@@ -151,3 +151,29 @@ def test_inventory_block_kinds(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ct, "_build_inventory", lambda repos: Stat())
     assert inventory_block([]) == {"kind": "stat", "files": [stat_triple(f)]}
+
+
+def test_inventory_block_includes_the_creds_files_stat_triple(tmp_path, monkeypatch):
+    """spec 2026-09-06 creds-store §7.2: a rotated password invalidates the shim by stat alone.
+
+    ``test_creds_overlay_adds_its_creds_file`` (tests/unit/inventory/
+    test_stat_paths.py) stops at the overlay's own ``stat_paths()``; this
+    goes one layer further, through ``inventory_block`` itself — the shim's
+    real read path — with a REAL ``CredsOverlay`` over a REAL json inventory
+    and a REAL json creds store, not a stand-in.
+    """
+    import otto.config.completion_tree as ct
+    from otto.creds import JsonCredsStore
+    from otto.inventory import CredsOverlay, JsonInventory
+
+    inv_path = tmp_path / "inv.json"
+    inv_path.write_text(json.dumps({"k": {"ip": "10.0.0.1"}}))
+    creds_path = tmp_path / "creds.json"
+    creds_path.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
+    overlay = CredsOverlay(
+        JsonInventory(inv_path, supplies=["ip"]), store=JsonCredsStore(creds_path)
+    )
+    monkeypatch.setattr(ct, "_build_inventory", lambda repos: overlay)
+    block = inventory_block([])
+    assert block["kind"] == "stat"
+    assert block["files"] == [stat_triple(inv_path), stat_triple(creds_path)]

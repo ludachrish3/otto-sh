@@ -29,6 +29,13 @@ def test_json_requires_path_and_refuses_unknown_keys(tmp_path):
         )
 
 
+@pytest.mark.parametrize("path", ["", 3], ids=["empty", "non-str"])
+def test_json_refuses_an_empty_or_non_string_path(tmp_path, path):
+    """Only ABSENCE was covered before; ``path=""`` and a non-string both fail the same guard."""
+    with pytest.raises(CredsError, match=r"o: \[creds\] backend 'json' requires a 'path' string"):
+        compile_creds(CredsConfigSpec(backend="json", path=path), anchor_dir=tmp_path, origin="o")
+
+
 def test_relative_path_anchors_to_the_declaring_dir_and_tilde_expands(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     out = compile_creds(

@@ -49,14 +49,18 @@ _EXTRA_HOST = {"ip": "192.0.2.2", "creds": [{"login": "admin", "password": "CHAN
 
 
 def _glob_one_source(tmp_path: Path) -> Path:
-    """Point the scaffolded repo's ONE json source at every .json in lab_data/.
+    """Point the scaffolded repo's ONE json source at every lab file in lab_data/.
 
     A multi-file source is what the ``paths`` globs make ordinary, and it is
-    the only shape in which an in-source duplicate can exist at all.
+    the only shape in which an in-source duplicate can exist at all. A split
+    lab globs its LAB files, never every JSON beside them: inventory.json and
+    creds.json live in the same directory, and a bare ``*.json`` would feed
+    them to the lab parser as "unknown section(s)" — a real problem, but not
+    the one these tests are pinning.
     """
     settings = tmp_path / ".otto" / "settings.toml"
     settings.write_text(  # sutrepo-exempt: retargeting a product-scaffolded source
-        settings.read_text().replace('paths = ["lab_data"]', 'paths = ["lab_data/*.json"]')
+        settings.read_text().replace('paths = ["lab_data"]', 'paths = ["lab_data/lab*.json"]')
     )
     return tmp_path / "lab_data"
 
@@ -70,17 +74,21 @@ def test_duplicate_lab_declaration_across_files_of_one_source_fails(tmp_path: Pa
     """
     _scaffold_all(tmp_path)
     lab_dir = _glob_one_source(tmp_path)
-    (lab_dir / "more.json").write_text(json.dumps({"labs": {"example_lab": {}}}))
+    (lab_dir / "lab_more.json").write_text(json.dumps({"labs": {"example_lab": {}}}))
     result = _invoke(["--all", "--path", str(tmp_path)])
     assert result.exit_code == 1
     assert "declared in both" in result.output
-    assert "more.json" in result.output
+    assert "lab_more.json" in result.output
+    # A regression that globs inventory.json/creds.json into the lab parser
+    # (they live in the same directory) would surface as this exact problem,
+    # named for one of the two siblings — not as the "declared in both" above.
+    assert "unknown section" not in result.output
 
 
 def test_duplicate_element_across_files_of_one_source_fails(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
     lab_dir = _glob_one_source(tmp_path)
-    (lab_dir / "more.json").write_text(
+    (lab_dir / "lab_more.json").write_text(
         json.dumps(
             {
                 "elements": [
@@ -92,6 +100,9 @@ def test_duplicate_element_across_files_of_one_source_fails(tmp_path: Path) -> N
     result = _invoke(["--all", "--path", str(tmp_path)])
     assert result.exit_code == 1
     assert "duplicate element" in result.output
+    # See test_duplicate_lab_declaration_across_files_of_one_source_fails: a
+    # sweep of inventory.json/creds.json into the lab parser is this problem.
+    assert "unknown section" not in result.output
 
 
 def test_two_sources_may_each_declare_the_same_lab(tmp_path: Path) -> None:
@@ -129,10 +140,35 @@ def test_a_problem_renders_a_swallowed_markup_tail_verbatim(tmp_path: Path) -> N
     """
     _scaffold_all(tmp_path)
     lab_file = tmp_path / "lab_data" / "lab.json"
-    lab_file.write_text(lab_file.read_text().replace('"ip"', '"ipp"'))
+    lab_file.write_text(lab_file.read_text().replace('"os_type"', '"os_typo"'))
     result = _invoke(["--all", "--path", str(tmp_path)])
     assert result.exit_code == 1
     assert "type=extra_forbidden" in result.output
+
+
+def test_a_referenced_hosts_store_password_never_reaches_the_report(tmp_path: Path) -> None:
+    """spec 2026-09-06 creds-store §6.1/§7.1: a report is a doctor finding, not a leak.
+
+    ``resolve_host_entry`` appends a referenced host's ``creds`` LAST when
+    the entry has none inline (the scaffold's own shape), so pydantic's
+    ``str(ValidationError)`` for a model-level failure on the resolved dict
+    ends with ``input_value={..., 'password': '<the store's password>'}``.
+    A distinctive password proves it never printed, rather than merely
+    proving the *report* changed shape.
+    """
+    _scaffold_all(tmp_path)
+    creds_file = tmp_path / "lab_data" / "creds.json"
+    creds_file.write_text(creds_file.read_text().replace("CHANGE_ME", "SECRET_XYZ"))
+    lab_file = tmp_path / "lab_data" / "lab.json"
+    # The referenced host stays referenced (no inline "creds") and gains one
+    # field no host spec registers — a model-level failure, not a merge one.
+    lab_file.write_text(
+        lab_file.read_text().replace('"os_type": "unix"', '"os_type": "unix", "user": "ghost"')
+    )
+    result = _invoke(["--all", "--path", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "SECRET_XYZ" not in result.output
+    assert "user" in result.output  # the finding still names the offending field
 
 
 def test_valid_repo_reports_all_ok_and_exits_zero(tmp_path: Path) -> None:
@@ -140,6 +176,9 @@ def test_valid_repo_reports_all_ok_and_exits_zero(tmp_path: Path) -> None:
     result = _invoke(["--all", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert result.output.count("✓") >= 4
+    assert (
+        "Warnings" not in result.output
+    )  # spec 2026-09-06 §8.1: a fresh scaffold warns of nothing
 
 
 def test_broken_settings_key_fails_with_pydantic_error(tmp_path: Path) -> None:
@@ -161,10 +200,10 @@ def test_invalid_host_field_fails_named(tmp_path: Path) -> None:
     """
     _scaffold_all(tmp_path)
     lab_file = tmp_path / "lab_data" / "lab.json"
-    lab_file.write_text(lab_file.read_text().replace('"ip"', '"ipp"'))
+    lab_file.write_text(lab_file.read_text().replace('"os_type"', '"os_typo"'))
     result = _invoke(["--all", "--path", str(tmp_path)])
     assert result.exit_code == 1
-    assert "ipp" in result.output
+    assert "os_typo" in result.output
     assert "element 'example-device' hosts[0]" in result.output
 
 
@@ -399,42 +438,58 @@ def test_schemas_validate_flags_unparsable(tmp_path: Path) -> None:
     assert "otto schema export" in problems  # remedy named
 
 
-def _reference_first_host(root: Path, key: str, *, drop: tuple[str, ...] = ("ip",)) -> None:
-    """Point the scaffold's first host at *key*, dropping whatever the record will supply.
-
-    *drop* defaults to just ``"ip"`` — the ordinary case, where the
-    inventory's ``supplies`` is ``["ip"]`` and every other field
-    (``creds`` included) stays inline. A test that also configures
-    ``[creds]`` must pass ``drop=("ip", "creds")``: a ``[creds]`` store
-    makes the (effective, ``CredsOverlay``-widened) supplies include
-    ``"creds"`` too, and an inline ``creds`` left behind collides with it
-    (``'creds' is inventory-owned``), failing the "lab" area for a reason
-    unrelated to whatever the test is actually checking.
-    """
-    # lab_data/lab.json is the scaffold's lab path (see _lab_files(root)).
+def _point_first_host_at(root: Path, key: str) -> None:
+    """Point the scaffold's referenced host at *key* (its facts come from the two sibling files)."""
     lab_file = root / "lab_data" / "lab.json"
     doc = json.loads(lab_file.read_text())
-    host = doc["elements"][0]["hosts"][0]
-    for field in drop:
-        host.pop(field, None)
-    host["inventory"] = key
+    doc["elements"][0]["hosts"][0]["inventory"] = key
     lab_file.write_text(json.dumps(doc))
 
 
-def _declare_inventory(root: Path, records: dict) -> Path:
-    inv = root / "inventory.json"
+def _make_first_host_inline(root: Path) -> None:
+    """Replace the scaffold's referenced host with an inline one (no inventory reference).
+
+    For tests whose concern is the inventory/creds files themselves (a broken
+    backend, a missing store) rather than host resolution: an inline host
+    keeps the "lab" area green regardless of what those files hold.
+    """
+    lab_file = root / "lab_data" / "lab.json"
+    doc = json.loads(lab_file.read_text())
+    doc["elements"][0]["hosts"][0] = dict(_EXTRA_HOST)
+    lab_file.write_text(json.dumps(doc))
+
+
+def _set_inventory_records(root: Path, records: dict) -> Path:
+    inv = root / "lab_data" / "inventory.json"
     inv.write_text(json.dumps(records))
-    settings = root / ".otto" / "settings.toml"
-    with settings.open("a") as f:  # sutrepo-exempt: appending [inventory] post-scaffold
-        f.write(f'\n[inventory]\nbackend = "json"\npath = "{inv}"\nsupplies = ["ip"]\n')
     return inv
+
+
+def _set_creds(root: Path, entries: dict) -> Path:
+    creds = root / "lab_data" / "creds.json"
+    creds.write_text(json.dumps(entries))
+    return creds
+
+
+def _drop_table(root: Path, name: str) -> None:
+    """Remove the live ``[name]`` table the scaffold wrote (up to the next header or comment)."""
+    settings = root / ".otto" / "settings.toml"
+    out, skipping = [], False
+    for line in settings.read_text().splitlines(keepends=True):
+        if line.startswith(f"[{name}]"):
+            skipping = True
+            continue
+        if skipping and line.startswith(("[", "#")):
+            skipping = False
+        if not skipping:
+            out.append(line)
+    settings.write_text("".join(out))  # sutrepo-exempt: editing a product-scaffolded settings file
 
 
 def test_dead_reference_is_a_problem_naming_key_and_label(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)
-    _reference_first_host(tmp_path, "ghost")
-    _declare_inventory(tmp_path, {"real": {"ip": "10.0.0.1"}})
+    _point_first_host_at(tmp_path, "ghost")
     result = _invoke(["--path", str(tmp_path)])
     assert result.exit_code == 1
     assert "hosts[0]" in result.output
@@ -444,7 +499,8 @@ def test_dead_reference_is_a_problem_naming_key_and_label(tmp_path, monkeypatch)
 def test_referenced_entry_with_no_inventory_is_a_problem_naming_both_files(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)
-    _reference_first_host(tmp_path, "k")
+    _drop_table(tmp_path, "inventory")
+    _drop_table(tmp_path, "creds")  # a lone [creds] would be the other error
     result = _invoke(["--path", str(tmp_path)])
     assert result.exit_code == 1
     assert "no inventory is configured" in result.output
@@ -454,8 +510,9 @@ def test_referenced_entry_with_no_inventory_is_a_problem_naming_both_files(tmp_p
 def test_orphan_records_warn_and_the_label_is_printed(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)
-    _reference_first_host(tmp_path, "k")
-    inv = _declare_inventory(tmp_path, {"k": {"ip": "10.0.0.1"}, "spare": {"ip": "10.0.0.2"}})
+    inv = _set_inventory_records(
+        tmp_path, {"device-01.lab.example": {"ip": "10.0.0.1"}, "spare": {"ip": "10.0.0.2"}}
+    )
     result = _invoke(["--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert f"inventory: json:{inv}" in result.output
@@ -466,17 +523,7 @@ def test_orphan_records_warn_and_the_label_is_printed(tmp_path, monkeypatch):
 def test_world_readable_creds_file_warns(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)
-    # drop=("ip", "creds"): once [creds] is configured below, the
-    # inventory's effective supplies include "creds" too — the scaffold's
-    # inline creds would otherwise collide with it (see _reference_first_host).
-    _reference_first_host(tmp_path, "k", drop=("ip", "creds"))
-    _declare_inventory(tmp_path, {"k": {"ip": "10.0.0.1"}})
-    creds = tmp_path / "creds.json"
-    creds.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
-    creds.chmod(0o644)
-    settings = tmp_path / ".otto" / "settings.toml"
-    with settings.open("a") as f:  # sutrepo-exempt: appending [creds] post-scaffold
-        f.write(f'\n[creds]\nbackend = "json"\npath = "{creds}"\n')
+    (tmp_path / "lab_data" / "creds.json").chmod(0o644)
     result = _invoke(["--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert "creds store file" in result.output
@@ -487,11 +534,12 @@ def test_world_readable_creds_file_warns(tmp_path, monkeypatch):
 def test_broken_user_inventory_settings_is_a_problem_not_a_traceback(tmp_path, monkeypatch):
     """A broken ``~/.otto/settings.toml`` is a named problem row — the doctor never tracebacks.
 
-    Nothing in this repo's own lab files references an inventory key; the
-    user file is broken regardless (bad TOML), which is exactly the case
-    :func:`otto.config.user_settings.load_user_settings` documents as "a
-    configuration error, not 'no inventory'" — it must surface here the same
-    way, not crash the whole command.
+    The repo already declares its OWN ``[inventory]``/``[creds]`` (the
+    scaffold's live tables), but ``load_user_settings`` is asked regardless —
+    a broken user file is a configuration error, not "no inventory", which is
+    exactly the case :func:`otto.config.user_settings.load_user_settings`
+    documents — it must surface here the same way, not crash the whole
+    command.
     """
     home = tmp_path / "home"
     monkeypatch.setenv("OTTO_HOME", str(home))
@@ -555,10 +603,10 @@ def test_a_referencing_host_is_not_double_reported_when_the_declaration_itself_i
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)
-    _reference_first_host(tmp_path, "k")
     settings = tmp_path / ".otto" / "settings.toml"
-    with settings.open("a") as f:  # sutrepo-exempt: declaring a broken [inventory] post-scaffold
-        f.write('\n[inventory]\nbackend = "json"\n')  # missing the required 'path'
+    settings.write_text(  # sutrepo-exempt: breaking the scaffolded [inventory] on purpose
+        settings.read_text().replace('path = "lab_data/inventory.json"\n', "")
+    )
     result = _invoke(["--path", str(tmp_path)])
     assert result.exit_code == 1
     assert "requires a 'path' string" in result.output
@@ -607,6 +655,12 @@ def test_the_doctor_reports_a_snapshot_it_served_because_the_backend_was_down(
     monkeypatch.setenv("OTTO_HOME", str(home))
     monkeypatch.setenv("NETBOX_TOKEN", TOKEN)
     _scaffold_all(tmp_path)
+    # The scaffolded host is inline here (no inventory reference): this test
+    # is about the netbox backend's OWN staleness reporting, unrelated to
+    # whether any host resolves against it.
+    _make_first_host_inline(tmp_path)
+    _drop_table(tmp_path, "inventory")
+    _drop_table(tmp_path, "creds")
     settings = tmp_path / ".otto" / "settings.toml"
     with NetBoxStub([device(1, "nb1")]) as stub:
         with settings.open("a") as f:  # sutrepo-exempt: declaring [inventory] post-scaffold
@@ -626,17 +680,15 @@ def test_the_doctor_reports_a_snapshot_it_served_because_the_backend_was_down(
 def test_a_file_that_fails_to_list_records_warns_rather_than_crashing(tmp_path, monkeypatch):
     """``orphan_warning`` needs ``list_keys()``, which does I/O the first time — it can fail too.
 
-    Nothing here references the inventory, so the "lab" area itself stays
-    green; the broken file only bites the warnings pass that tries to list
-    its records for the orphan check, and that must degrade to a warning.
+    The host is inline (no inventory reference), so the "lab" area itself
+    stays green; the broken file only bites the warnings pass that tries to
+    list its records for the orphan check, and that must degrade to a
+    warning.
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)
-    inv = tmp_path / "inventory.json"
-    inv.write_text("{not valid json")
-    settings = tmp_path / ".otto" / "settings.toml"
-    with settings.open("a") as f:  # sutrepo-exempt: declaring [inventory] post-scaffold
-        f.write(f'\n[inventory]\nbackend = "json"\npath = "{inv}"\n')
+    _make_first_host_inline(tmp_path)
+    (tmp_path / "lab_data" / "inventory.json").write_text("{not valid json")
     result = _invoke(["--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert "Warnings" in result.output
@@ -656,7 +708,6 @@ def test_inventory_for_memoises_a_resolved_inventory_per_root(tmp_path, monkeypa
 
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)
-    _declare_inventory(tmp_path, {"k": {"ip": "10.0.0.1"}})
     cache: dict = {}
     first = _inventory_for(tmp_path, cache)
     second = _inventory_for(tmp_path, cache)
@@ -701,8 +752,6 @@ def test_a_full_otto_init_run_constructs_the_inventory_only_once(tmp_path, monke
 
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)
-    _reference_first_host(tmp_path, "k")
-    _declare_inventory(tmp_path, {"k": {"ip": "10.0.0.1"}})
 
     real = otto_inventory.build_inventory_from_declarations
     calls: list[int] = []
@@ -715,3 +764,47 @@ def test_a_full_otto_init_run_constructs_the_inventory_only_once(tmp_path, monke
     result = _invoke(["--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
+
+
+def test_orphan_creds_warn_and_the_store_label_is_printed(tmp_path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    _scaffold_all(tmp_path)
+    _set_creds(tmp_path, {"device-01.lab.example": [{"login": "u", "password": "p"}], "stale": []})
+    result = _invoke(["--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert f"inventory: json:{tmp_path / 'lab_data' / 'inventory.json'}" in result.output
+    assert f"creds:     json:{tmp_path / 'lab_data' / 'creds.json'}" in result.output
+    assert "1 key(s) the inventory does not hold: stale" in result.output
+
+
+def test_creds_without_an_inventory_is_a_problem_naming_the_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    _scaffold_all(tmp_path)
+    _drop_table(tmp_path, "inventory")
+    result = _invoke(["--path", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "[creds] is keyed by inventory key and no [inventory] is declared" in result.output
+    assert str(tmp_path / ".otto" / "settings.toml") in result.output
+
+
+def test_a_missing_creds_store_file_warns_rather_than_aborting_init(tmp_path, monkeypatch):
+    """A creds store that cannot even be read degrades to a warning, never an abort.
+
+    The host is inline (mirrors
+    ``test_a_file_that_fails_to_list_records_warns_rather_than_crashing``), so
+    the "lab" area itself stays green; the missing creds file only bites
+    ``_lab_warnings``'s own doctor pass (``orphan_creds_warning``,
+    ``creds_mode_warnings``), and that must degrade to the same warning
+    ``creds_mode_warnings`` already names rather than surface the raw
+    ``CredsError``.
+    """
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    _scaffold_all(tmp_path)
+    _make_first_host_inline(tmp_path)
+    creds = tmp_path / "lab_data" / "creds.json"
+    creds.unlink()  # the live [creds] table now points at a missing file
+    result = _invoke(["--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert f"{creds} does not exist" in result.output
+    assert "CredsError" not in result.output
+    assert "Traceback" not in result.output

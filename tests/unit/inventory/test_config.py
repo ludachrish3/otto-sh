@@ -585,6 +585,37 @@ def test_creds_resolve_independently_of_the_inventory(tmp_path):
     assert isinstance(both, CredsOverlay)
 
 
+def test_creds_resolve_independently_across_two_repos(tmp_path):
+    """Spec §4.2, repo vs. REPO: repo A's [inventory] and repo B's [creds] both resolve.
+
+    ``test_creds_resolve_independently_of_the_inventory`` covers repo-vs-user
+    -file only; each table's walk (``build_inventory_from_declarations`` /
+    ``_resolve_creds``) considers a declaration only when it carries THAT
+    table, so two repos splitting the tables between them is the same
+    independence one level up — no user file involved at all.
+    """
+    inv_path = _inventory_file(tmp_path)
+    creds = tmp_path / "creds.json"
+    creds.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
+    inv = build_inventory_from_declarations(
+        [
+            InventoryDeclaration(
+                origin="r1",
+                anchor_dir=tmp_path,
+                table={"backend": "json", "path": str(inv_path), "supplies": ["ip"]},
+            ),
+            InventoryDeclaration(
+                origin="r2",
+                anchor_dir=tmp_path,
+                creds_table={"backend": "json", "path": str(creds)},
+            ),
+        ],
+        user_settings=None,
+    )
+    assert isinstance(inv, CredsOverlay)
+    assert inv.lookup("k").creds[0].login == "u"
+
+
 def test_two_repos_must_agree_on_creds(tmp_path):
     inv_path = _inventory_file(tmp_path)
     table = {"backend": "json", "path": str(inv_path)}

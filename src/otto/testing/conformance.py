@@ -1,6 +1,6 @@
 """Reusable conformance suites for otto's pluggable backend interfaces.
 
-Two helpers — one per interface — assert that a backend satisfies otto's
+Four helpers — one per interface — assert that a backend satisfies otto's
 contract. Each runs every rule as a non-fatal ``expect()`` on a single
 :class:`~otto.suite.expect.ExpectCollector`, then raises once with *all*
 violations, so a backend author sees every problem at once instead of fixing
@@ -13,6 +13,8 @@ fixtures).
 Usage::
 
     from otto.testing import (
+        assert_creds_store_conforms,
+        assert_inventory_conforms,
         assert_lab_repository_conforms,
         assert_reservation_backend_conforms,
     )
@@ -27,9 +29,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..config.lab import Lab
+from ..creds import CredsStore
 from ..host.remote_host import RemoteHost
 from ..inventory import Inventory, InventoryKeyError
 from ..labs import HostSummary, LabNotFoundError, LabRepository, SupportsHostSummaries
+from ..models.host import CredSpec
 from ..models.inventory import (
     FILLABLE_INVENTORY_FIELDS,
     INVENTORY_KEY_FIELDS,
@@ -48,6 +52,7 @@ from ..suite.expect import ExpectCollector
 _NO_SUCH_LAB = "__otto_conformance_no_such_lab__"
 _PROBE_USER = "__otto_conformance_probe_user__"
 _PROBE_RESOURCE = "__otto_conformance_probe_resource__"
+_PROBE_CREDS_KEY = "__otto_conformance_no_such_key__"
 
 
 def assert_lab_repository_conforms(
@@ -611,7 +616,7 @@ def assert_inventory_conforms(
                 key in listed,
                 f"Inventory: expected key {key!r} to appear in list_keys()",
             )
-    probe = "__otto_conformance_no_such_key__"
+    probe = _PROBE_CREDS_KEY
     try:
         inventory.lookup(probe)
         c.expect(
@@ -683,4 +688,85 @@ def assert_inventory_conforms(
                 f"Inventory: lab {lab!r} failed to load WITH the inventory: "
                 f"{type(e).__name__}: {e}",
             )
+    c.raise_if_failures()
+
+
+def assert_creds_store_conforms(
+    store: CredsStore,
+    *,
+    known_key: str | None = None,
+) -> None:
+    """Assert *store* satisfies the :class:`~otto.creds.protocol.CredsStore` contract.
+
+    (spec 2026-09-06 creds-store §5.3.) Structural rules always run: protocol
+    satisfied, ``label`` a non-empty str, ``lookup`` of an unknown key ``[]``
+    (never ``None``, never a raise), ``list_keys()`` a sorted ``list[str]`` or
+    ``None``, ``fingerprint()`` ``str | None``. Every listed key must resolve
+    to a non-empty ``list[CredSpec]`` with unique logins, idempotently. With
+    *known_key*, that key must resolve non-empty and — when the store
+    enumerates — appear in ``list_keys()``.
+    """
+    c = ExpectCollector()
+    c.expect(
+        isinstance(store, CredsStore),
+        "CredsStore: must satisfy the runtime_checkable CredsStore protocol",
+    )
+    label = getattr(store, "label", None)
+    c.expect(
+        isinstance(label, str) and bool(label),
+        f"CredsStore: label must be a non-empty str, got {label!r}",
+    )
+    try:
+        fp = store.fingerprint() if callable(getattr(store, "fingerprint", None)) else None
+        c.expect(
+            fp is None or isinstance(fp, str),
+            f"CredsStore: fingerprint() must be str or None, got {fp!r}",
+        )
+    except Exception as e:  # noqa: BLE001 — conformance check
+        c.expect(False, f"CredsStore: fingerprint() raised {type(e).__name__}: {e}")
+    try:
+        probe = store.lookup(_PROBE_CREDS_KEY)
+        c.expect(probe == [], f"CredsStore: lookup(unknown key) must return [], got {probe!r}")
+    except Exception as e:  # noqa: BLE001 — conformance check, report the wrong behaviour
+        c.expect(
+            False, f"CredsStore: lookup(unknown key) must return [], raised {type(e).__name__}"
+        )
+    keys: list[str] | None = None
+    try:
+        keys = store.list_keys() if callable(getattr(store, "list_keys", None)) else None
+    except Exception as e:  # noqa: BLE001 — conformance check
+        c.expect(False, f"CredsStore: list_keys() raised {type(e).__name__}: {e}")
+    if keys is not None:
+        keys_ok = isinstance(keys, list) and all(isinstance(k, str) for k in keys)
+        c.expect(keys_ok, f"CredsStore: list_keys() must return list[str] or None, got {keys!r}")
+        if keys_ok:
+            c.expect(keys == sorted(keys), "CredsStore: list_keys() must be sorted")
+            if known_key is not None:
+                c.expect(
+                    known_key in keys,
+                    f"CredsStore: known_key {known_key!r} must appear in list_keys()",
+                )
+    to_resolve = [
+        *(keys if isinstance(keys, list) else []),
+        *([known_key] if known_key is not None else []),
+    ]
+    for key in dict.fromkeys(to_resolve):
+        try:
+            first = store.lookup(key)
+            second = store.lookup(key)
+        except Exception as e:  # noqa: BLE001 — conformance check
+            c.expect(False, f"CredsStore: lookup({key!r}) raised {type(e).__name__}: {e}")
+            continue
+        entries_ok = isinstance(first, list) and all(isinstance(e, CredSpec) for e in first)
+        c.expect(entries_ok, f"CredsStore: lookup({key!r}) must return list[CredSpec]")
+        if not entries_ok:
+            continue
+        if key == known_key:
+            c.expect(bool(first), f"CredsStore: known_key {known_key!r} resolved to no entries")
+        elif not first:
+            c.expect(False, f"CredsStore: list_keys() names {key!r} but lookup({key!r}) is empty")
+        c.expect(first == second, f"CredsStore: lookup({key!r}) must be idempotent")
+        logins = [e.login for e in first]
+        for login in sorted({x for x in logins if logins.count(x) > 1}):
+            c.expect(False, f"CredsStore: lookup({key!r}) repeats login {login!r}")
     c.raise_if_failures()

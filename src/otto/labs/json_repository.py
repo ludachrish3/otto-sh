@@ -71,11 +71,15 @@ def expand_lab_paths(paths: "Iterable[Path]", *, visited: "set[Path] | None" = N
     the composite's existence rule reports the consequence.
 
     Each FILE appears once, at its first-seen position, however many entries
-    name it: ``paths = [d, d/"*.json"]`` — the main file by directory plus the
-    split files by glob — is the documented layout written the natural way, and
-    listing ``d/lab.json`` twice would trip the in-source duplicate rule
-    (:func:`check_in_source_duplicates`) against the file itself. Identity is
-    the RESOLVED path, so two spellings of one file collapse.
+    name it: ``paths = [d, d/"elements/*.json"]`` — the main file by directory
+    plus the split files by glob, one directory level down — is the documented
+    layout written the natural way, and listing ``d/lab.json`` twice would
+    trip the in-source duplicate rule (:func:`check_in_source_duplicates`)
+    against the file itself. Identity is the RESOLVED path, so two spellings
+    of one file collapse. A bare ``d/"*.json"`` glob straight over the lab
+    directory is a hazard rather than a shortcut: ``inventory.json`` and
+    ``creds.json`` (spec 2026-09-06 creds-store §8.1) live in that same
+    directory and would be swept in as lab files too.
 
     When *visited* is given, every directory this walk enters is added to it
     (the glob's non-glob root, each match's parent, a bare directory entry, a
@@ -677,6 +681,19 @@ def _add_host(
             inventory_ref=entry.ref,
         )
         lab.add_host(host)
+    except ValidationError as e:
+        # A resolved host dict can carry a referenced host's STORE creds
+        # (spec 2026-09-06 creds-store §6.2), appended last when the entry
+        # has none inline — the scaffold's own shape. ``str(ValidationError)``
+        # would end in pydantic's ``input_value=`` repr of that dict, so a
+        # model-level failure on an otherwise-fine entry prints the store's
+        # password. ``compact_validation_error`` never reads ``input``.
+        from ..models.base import compact_validation_error
+
+        raise LabRepositoryError(
+            f"Lab file '{path}': element {element.name!r} hosts[{idx}] in lab {lab.name!r}: "
+            f"{compact_validation_error(e)}"
+        ) from e
     except Exception as e:
         # ``Exception``, not the validation errors alone: past the specs, the
         # factory runs SUT-REPO code — ``to_host`` plus the product and

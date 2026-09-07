@@ -6,7 +6,12 @@ import pytest
 from pydantic import ValidationError
 
 from otto.models.inventory import parse_cache_ttl
-from otto.models.settings import InventoryConfigSpec, SettingsModel, UserSettingsModel
+from otto.models.settings import (
+    CredsConfigSpec,
+    InventoryConfigSpec,
+    SettingsModel,
+    UserSettingsModel,
+)
 
 
 def test_settings_model_accepts_inventory():
@@ -92,8 +97,6 @@ def test_user_settings_model_forbids_repo_only_tables():
 
 def test_creds_table_parses_in_both_models():
     """Spec 2026-09-06 creds-store §4.1: [creds] beside [inventory], same two homes."""
-    from otto.models.settings import CredsConfigSpec
-
     settings = SettingsModel.model_validate(
         {"name": "x", "version": "0.1.0", "creds": {"backend": "json", "path": "c.json"}}
     )

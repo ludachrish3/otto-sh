@@ -18,8 +18,8 @@ files first with {doc}`export`.
 
 ## VS Code
 
-`lab.json`, the reservations JSON and a `json` inventory file are covered by
-the built-in JSON language server. Add to your workspace
+`lab.json`, the reservations JSON, a `json` inventory file and a `json` creds
+file are covered by the built-in JSON language server. Add to your workspace
 `.vscode/settings.json`:
 
 ```json
@@ -27,7 +27,8 @@ the built-in JSON language server. Add to your workspace
   "json.schemas": [
     { "fileMatch": ["**/lab.json"], "url": "./.otto/schemas/lab.schema.json" },
     { "fileMatch": ["**/reservations.json"], "url": "./.otto/schemas/reservations.schema.json" },
-    { "fileMatch": ["**/inventory*.json"], "url": "./.otto/schemas/inventory.schema.json" }
+    { "fileMatch": ["**/inventory*.json"], "url": "./.otto/schemas/inventory.schema.json" },
+    { "fileMatch": ["**/creds*.json"], "url": "./.otto/schemas/creds.schema.json" }
   ]
 }
 ```

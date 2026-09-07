@@ -1,11 +1,13 @@
 """Inventory doctor findings (spec §11, §13): pure functions over an inventory + referenced keys."""
 
 import json
+from pathlib import Path
 
 from otto.creds import JsonCredsStore
 from otto.inventory import CredsOverlay, JsonInventory
 from otto.inventory.doctor import (
     creds_mode_warnings,
+    orphan_creds_warning,
     orphan_warning,
     referenced_keys,
     references_inventory,
@@ -70,6 +72,29 @@ def test_creds_mode_warning_names_a_missing_creds_file(tmp_path):
     assert "does not exist" in w
 
 
+def test_creds_mode_warning_names_a_path_that_cannot_be_stat_ed(tmp_path, monkeypatch):
+    """spec 2026-09-06 creds-store §7.1: an OSError other than "missing" still warns.
+
+    A ``PermissionError`` on the store file's stat (an unreadable directory,
+    say) used to fall into a silent ``except OSError: continue`` — the doctor
+    would report nothing at all for a store it could not check.
+    """
+    creds = tmp_path / "creds.json"
+    creds.write_text("{}")
+    inv = CredsOverlay(_inv(tmp_path, ["k"]), store=JsonCredsStore(creds))
+    real_stat = Path.stat
+
+    def _denied(self, *args, **kwargs):
+        if self == creds:
+            raise PermissionError(13, "Permission denied")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _denied)
+    (w,) = creds_mode_warnings(inv)
+    assert str(creds) in w
+    assert "Permission denied" in w
+
+
 def test_creds_mode_warnings_is_silent_over_a_vault_store(tmp_path):
     """A store with no stat paths (a vault) is opaque; nothing here to check by mode (§7.1)."""
 
@@ -92,3 +117,62 @@ def test_creds_mode_warnings_is_silent_over_a_vault_store(tmp_path):
             return None
 
     assert creds_mode_warnings(CredsOverlay(_inv(tmp_path, ["k"]), store=OpaqueStatPaths())) == []
+
+
+class _Unenumerable:
+    label = "vault:x"
+
+    def lookup(self, key):
+        return []
+
+    def list_keys(self):
+        return None
+
+    def fingerprint(self):
+        return None
+
+
+def test_orphan_creds_are_named_bounded_and_labelled(tmp_path):
+    creds = tmp_path / "creds.json"
+    creds.write_text(json.dumps({f"k{i}": [] for i in range(12)}))
+    inv = CredsOverlay(_inv(tmp_path, ["k0"]), store=JsonCredsStore(creds))
+    w = orphan_creds_warning(inv)
+    assert w is not None
+    assert w.startswith(f"creds store '{inv.store.label}': 11 key(s) the inventory does not hold:")
+    assert "k1, k10, k11, k2, k3, k4, k5, k6, k7, k8" in w
+    assert "… and 1 more" in w
+    assert "k8 … and 1 more (a renamed" in w
+    assert "leaves its creds behind" in w
+
+
+def test_orphan_creds_is_silent_without_orphans_a_store_or_an_enumerable_store(tmp_path):
+    creds = tmp_path / "creds.json"
+    creds.write_text(json.dumps({"k": []}))
+    assert (
+        orphan_creds_warning(
+            CredsOverlay(_inv(tmp_path, ["k", "other"]), store=JsonCredsStore(creds))
+        )
+        is None
+    )
+    assert orphan_creds_warning(_inv(tmp_path, ["k"])) is None
+    assert orphan_creds_warning(CredsOverlay(_inv(tmp_path, ["k"]), store=_Unenumerable())) is None
+
+
+def test_orphan_creds_is_silent_over_an_unreadable_store(tmp_path):
+    """A store that cannot even enumerate (missing file, bad JSON) never raises here.
+
+    :func:`otto.inventory.doctor.creds_mode_warnings` is what names the
+    file — this finding just has nothing to report.
+    """
+    missing = tmp_path / "absent.json"
+    assert (
+        orphan_creds_warning(CredsOverlay(_inv(tmp_path, ["k"]), store=JsonCredsStore(missing)))
+        is None
+    )
+
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text("not json")
+    assert (
+        orphan_creds_warning(CredsOverlay(_inv(tmp_path, ["k"]), store=JsonCredsStore(malformed)))
+        is None
+    )

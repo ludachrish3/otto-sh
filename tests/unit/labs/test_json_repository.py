@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 
 from otto.config.lab import Lab
+from otto.creds import JsonCredsStore
+from otto.inventory import CredsOverlay, JsonInventory
 from otto.labs import LabNotFoundError, LabRepositoryError
 from otto.labs.json_repository import JsonFileLabRepository, parse_lab_sections
 from tests._fixtures.labdata import write_lab_json
@@ -823,6 +825,43 @@ def test_host_entry_error_names_element_and_index(tmp_path: Path) -> None:
     # line than the "element 'dut' hosts[0]" prefix this test is really pinning.
     with pytest.raises(LabRepositoryError, match=r"(?s)element 'dut' hosts\[0\].*ipp"):
         JsonFileLabRepository([tmp_path]).load_lab("l")
+
+
+def test_a_referenced_hosts_store_password_never_reaches_the_error_text(tmp_path: Path) -> None:
+    """spec 2026-09-06 creds-store §6.1/§9: LabRepositoryError text is not a leak either.
+
+    Mirrors ``test_a_referenced_hosts_store_password_never_reaches_the_report``
+    in ``tests/unit/cli/test_init_validate.py``, at the loader instead of the
+    doctor: ``resolve_host_entry`` appends a referenced host's STORE creds
+    LAST when the entry has none inline, so the resolved dict's
+    ``str(ValidationError)`` — the ``LabRepositoryError`` text this wraps —
+    would otherwise end in the store's password.
+    """
+    _write(
+        tmp_path,
+        _doc(
+            labs={"l": {}},
+            elements=[
+                _el(
+                    "dut",
+                    ["l"],
+                    hosts=[{"inventory": "dut-1", "os_type": "unix", "user": "ghost"}],
+                )
+            ],
+        ),
+    )
+    inv_path = tmp_path / "inventory.json"
+    inv_path.write_text(json.dumps({"dut-1": {"ip": "10.0.0.1"}}))
+    creds_path = tmp_path / "creds.json"
+    creds_path.write_text(json.dumps({"dut-1": [{"login": "root", "password": "SECRET_XYZ"}]}))
+    overlay = CredsOverlay(
+        JsonInventory(inv_path, supplies=["ip", "creds"]), store=JsonCredsStore(creds_path)
+    )
+    with pytest.raises(LabRepositoryError) as exc_info:
+        JsonFileLabRepository([tmp_path]).load_lab("l", inventory=overlay)
+    message = str(exc_info.value)
+    assert "SECRET_XYZ" not in message
+    assert "user" in message  # the finding still names the offending field
 
 
 def test_provider_failure_is_wrapped_with_the_entry_that_caused_it(

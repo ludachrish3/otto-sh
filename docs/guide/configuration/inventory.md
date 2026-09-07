@@ -274,6 +274,11 @@ checked out. See [Path resolution](settings.md#path-resolution).
 three-file shape and grows `supplies` as the inventory takes over more
 fields. The user-level file is still where a shared inventory lives: delete
 the project tables once one exists, or keep them as this repo's override.
+Two active repos that both keep their scaffolded tables fail bootstrap,
+naming both files: tables compare by kwargs **after anchoring**, and each
+repo's own `lab_data/inventory.json` anchors to its own root, so the paths
+never match. Move the tables to `~/.otto/settings.toml`, or delete one
+repo's.
 
 ## The json backend
 

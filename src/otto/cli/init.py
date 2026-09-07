@@ -22,8 +22,10 @@ import typer
 
 from .init_templates import (
     CONFTEST_TEMPLATE,
+    CREDS_JSON_TEMPLATE,
     EXAMPLE_LAB_NAME,
     INSTRUCTIONS_TEMPLATE,
+    INVENTORY_JSON_TEMPLATE,
     LAB_JSON_TEMPLATE,
     LAB_README_TEMPLATE,
     OPTIONS_TEMPLATE,
@@ -328,14 +330,31 @@ def _scaffold_settings(root: Path, cfg: InitConfig) -> list[Path]:
     return [target]
 
 
+def _write_if_absent(target: Path, text: str, *, mode: int | None = None) -> bool:
+    """Write *text* to *target* unless it exists; ``mode`` (e.g. ``0o600``) is set at creation."""
+    if target.exists():
+        return False
+    if mode is None:
+        target.write_text(text)
+    else:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        target.chmod(mode)  # umask cannot widen 0o600, but be explicit
+    return True
+
+
 def _scaffold_lab(root: Path, cfg: InitConfig) -> list[Path]:  # noqa: ARG001 — cfg unused, uniform Area signature
+    """Write the three-file lab area (spec 2026-09-06 creds-store §8.1); never overwrite."""
     lab_dir = root / "lab_data"
     lab_dir.mkdir(parents=True, exist_ok=True)
-    lab_file = lab_dir / "lab.json"
-    lab_file.write_text(json.dumps(LAB_JSON_TEMPLATE, indent=4) + "\n")
-    readme = lab_dir / "README.md"
-    readme.write_text(LAB_README_TEMPLATE)
-    return [lab_file, readme]
+    planned = [
+        (lab_dir / "lab.json", json.dumps(LAB_JSON_TEMPLATE, indent=4) + "\n", None),
+        (lab_dir / "inventory.json", json.dumps(INVENTORY_JSON_TEMPLATE, indent=4) + "\n", None),
+        (lab_dir / "creds.json", json.dumps(CREDS_JSON_TEMPLATE, indent=4) + "\n", 0o600),
+        (lab_dir / "README.md", LAB_README_TEMPLATE, None),
+    ]
+    return [target for target, text, mode in planned if _write_if_absent(target, text, mode=mode)]
 
 
 def _scaffold_tests(root: Path, cfg: InitConfig) -> list[Path]:
@@ -496,11 +515,13 @@ def _print_inventory_label(
     try/except does not count against that function's own cyclomatic budget.
     A broken declaration prints nothing here — it is already a problem in the
     verdict table via :func:`_validate_lab`, and repeating it would be noise.
+    Prints a second ``creds:`` row naming the store when one resolves (spec
+    2026-09-06 §7.1).
     """
     from rich import print as rprint
     from rich.markup import escape
 
-    from ..inventory import InventoryError
+    from ..inventory import CredsOverlay, InventoryError
 
     try:
         inventory = _inventory_for(root, cache)
@@ -508,6 +529,8 @@ def _print_inventory_label(
         return
     if inventory is not None:
         rprint(f"inventory: {escape(inventory.label)}")
+        if isinstance(inventory, CredsOverlay):
+            rprint(f"creds:     {escape(inventory.store.label)}")
 
 
 _ParsedLab = tuple[str, dict[str, Any], list[Any], list[Any]]
@@ -586,11 +609,24 @@ def _item_problem(validate: Callable[[Any], object], item: Any, prefix: str) -> 
     arms — pydantic's ``ValidationError`` is one; ``InventoryError`` covers a
     third — a host entry's :func:`~otto.inventory.resolve_host_entry` call
     hitting a dead key or an inventory-owned field declared inline.
+
+    A ``ValidationError`` is rendered through :func:`compact_validation_error`
+    rather than ``str(e)``: *item* here is the RESOLVED host dict, and a
+    referenced host with no inline creds carries its store creds LAST (spec
+    2026-09-06 creds-store §6.2), so ``str(ValidationError)``'s
+    ``input_value=`` repr of the whole dict ends in a store password on the
+    common "one bad field" mistake. ``compact_validation_error`` never reads
+    ``input``.
     """
+    from pydantic import ValidationError
+
     from ..inventory import InventoryError
+    from ..models.base import compact_validation_error
 
     try:
         validate(item)
+    except ValidationError as e:
+        return [f"{prefix} {compact_validation_error(e)}"]
     except (ValueError, InventoryError) as e:
         return [f"{prefix} {e}"]
     return []
@@ -676,11 +712,12 @@ def _lab_warnings(
 
     When an inventory resolves, its own advisory findings — a snapshot served
     because the backend was unreachable, orphan records
-    (:func:`~otto.inventory.doctor.orphan_warning`) and world-readable
-    creds-store files (:func:`~otto.inventory.doctor.creds_mode_warnings`) —
-    are appended. A broken inventory declaration contributes nothing here: it is
-    already a problem in the verdict table via :func:`_validate_lab`, and
-    repeating it as a warning would be noise.
+    (:func:`~otto.inventory.doctor.orphan_warning`), creds-store keys the
+    inventory does not hold, and world-readable creds-store files
+    (:func:`~otto.inventory.doctor.creds_mode_warnings`) — are appended. A
+    broken inventory declaration contributes nothing here: it is already a
+    problem in the verdict table via :func:`_validate_lab`, and repeating it
+    as a warning would be noise.
 
     The stale-snapshot notice is REPORTED rather than left to the cache's own
     ``logger.warning``, which fires once per snapshot per process and may
@@ -691,7 +728,12 @@ def _lab_warnings(
     what that gate must not print.
     """
     from ..inventory import InventoryError, snapshot_cache_of
-    from ..inventory.doctor import creds_mode_warnings, orphan_warning, referenced_keys
+    from ..inventory.doctor import (
+        creds_mode_warnings,
+        orphan_creds_warning,
+        orphan_warning,
+        referenced_keys,
+    )
     from ..labs.doctor import lab_warnings
 
     _, documents = _parse_lab_documents(root)
@@ -705,15 +747,19 @@ def _lab_warnings(
             orphan = orphan_warning(
                 inventory, referenced=referenced_keys(elements for _, _, elements, _ in documents)
             )
+            orphan_creds = orphan_creds_warning(inventory)
         except InventoryError as e:
             orphan = f"inventory '{inventory.label}': could not list records: {e}"
+            orphan_creds = None
         # Read AFTER the orphan check, never before: the notice is set by the
         # resolution that check performs, and construction touches nothing.
         snapshot = snapshot_cache_of(inventory)
         stale = snapshot.stale_notice if snapshot is not None else None
         # Staleness first — it is the fact that qualifies every finding under
         # it, orphan list included.
-        warnings.extend(w for w in (stale, orphan, *creds_mode_warnings(inventory)) if w)
+        warnings.extend(
+            w for w in (stale, orphan, orphan_creds, *creds_mode_warnings(inventory)) if w
+        )
     return warnings
 
 
@@ -803,7 +849,10 @@ async def init_command(
         ),
     ] = False,
     lab: Annotated[
-        bool, typer.Option("--lab", help="Scaffold the lab area (lab_data/lab.json).")
+        bool,
+        typer.Option(
+            "--lab", help="Scaffold the lab area (lab_data/lab.json + inventory.json + creds.json)."
+        ),
     ] = False,
     tests: Annotated[
         bool, typer.Option("--tests", help="Scaffold the tests area (example suite + conftest).")

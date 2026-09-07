@@ -25,14 +25,22 @@ class OttoModel(BaseModel):
 
 
 def compact_validation_error(error: "ValidationError") -> str:
-    """One-line rendering of *error*: ``field: message`` per problem, ``;``-joined.
+    """One-line rendering of *error*: ``field: message [type=…]`` per problem, ``;``-joined.
 
-    ``str(ValidationError)`` spans several lines, and an error a human reads in
-    a log line — or a test matches with a single regex — must not. Shared by
-    every boundary reader that re-raises a pydantic failure as its own error:
-    the inventory's stage-1 parser, the NetBox backend, the creds store.
+    ``str(ValidationError)`` spans several lines and carries pydantic's
+    ``input_value=`` repr of the rejected value — for a boundary reader
+    validating a whole dict (a host entry, a merged cred), that repr can be
+    the tail of a password. This calls ``errors(include_input=False)`` and
+    reads only ``loc``/``msg``/``type`` — never ``input`` — so the input
+    itself cannot reach the message, while ``type=…`` (pydantic's stable
+    error code, e.g. ``extra_forbidden``) still names *why* precisely enough
+    to search a fix by. Shared by every boundary reader that re-raises a
+    pydantic failure as its own error: the inventory's stage-1 parser, the
+    NetBox backend, the creds store, ``otto init``'s item validator, and the
+    lab repository's host-entry wrap.
     """
     return "; ".join(
-        f"{'.'.join(str(part) for part in item['loc']) or '<entry>'}: {item['msg']}"
-        for item in error.errors()
+        f"{'.'.join(str(part) for part in item['loc']) or '<entry>'}: "
+        f"{item['msg']} [type={item['type']}]"
+        for item in error.errors(include_input=False)
     )
