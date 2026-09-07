@@ -67,6 +67,29 @@ def merge_creds(
     return merged
 
 
+def _revalidate_merged_cred(c: dict[str, Any], *, key: "str | None", label: str) -> CredSpec:
+    """Re-validate one store-and-record-merged entry, naming the key and login on failure.
+
+    A one-item helper rather than the loop body its caller would otherwise
+    write: a ``try``/``except`` inside a per-entry loop is ``PERF203`` (the
+    repo's answer, e.g. ``otto.cli.init._item_problem``, is to move the
+    ``try`` into a function the loop calls). Per-entry, not one
+    ``model_validate`` over the whole merged list: a field-level failure
+    (``password: 123``) has no ``CredSpec``-authored message to carry the
+    login (unlike the model validator's own ``cred {self.login!r}: …``, spec
+    §6.1), so the login must come from the merged dict itself, at the point
+    of catching.
+    """
+    try:
+        return CredSpec.model_validate(c)
+    except ValidationError as e:
+        login = c.get("login") if isinstance(c, dict) else None
+        raise InventoryError(
+            f"inventory key {key!r}: creds from {label} and the record do not compose "
+            f"for login {login!r}: {compact_validation_error(e)}"
+        ) from e
+
+
 class CredsOverlay:
     """Wrap an inventory so ``creds`` compose from the creds store and the record.
 
@@ -116,13 +139,7 @@ class CredsOverlay:
         merged = merge_creds(
             lower, higher, key=key, lower_name="creds store", higher_name="inventory record"
         )
-        try:
-            creds = [CredSpec.model_validate(c) for c in merged]
-        except ValidationError as e:
-            raise InventoryError(
-                f"inventory key {key!r}: creds from {self.store.label} and the record do not "
-                f"compose: {compact_validation_error(e)}"
-            ) from e
+        creds = [_revalidate_merged_cred(c, key=key, label=self.store.label) for c in merged]
         return record.model_copy(update={"creds": creds})
 
     def list_keys(self) -> list[str]:

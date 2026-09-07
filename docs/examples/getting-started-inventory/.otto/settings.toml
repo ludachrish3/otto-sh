@@ -1,8 +1,15 @@
 # The same lab as ../getting-started, with the unix hosts' machine facts moved
-# into an inventory. The project-level [inventory] table overrides any
-# ~/.otto/settings.toml; relative paths anchor to this project's root.
+# into an inventory and their passwords into a creds store. The project-level
+# tables override any ~/.otto/settings.toml; relative paths anchor to this
+# project's root.
 name = "gs"
 version = "0.1.0"
+
+# The route on test1 (`sudo-root`) is project code — a login proxy the
+# original example's init module registers — so this twin shares that module.
+# Routes are otto's business and travel with the project, not with the store.
+libs = ["../getting-started/libs"]
+init = ["gs_example"]
 
 [[lab.sources]]
 backend = "json"
@@ -13,8 +20,8 @@ paths = ["lab_data"]
 backend = "json"
 path = "inventory.json"
 supplies = ["ip", "interfaces", "is_virtual", "site", "rack", "shelf", "board", "os_name"]
-# doc: end inventory-config
 
 [creds]
 backend = "json"
 path = "creds.json"
+# doc: end inventory-config

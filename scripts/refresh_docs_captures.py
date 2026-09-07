@@ -94,6 +94,14 @@ class RunContext:
         means every printed path is anchored to ``SCRATCH_DIR`` instead, which
         is fixed and identical on every checkout. Cached by project name on
         ``self`` so two captures sharing a project copy it only once per run.
+
+        Copies every project under ``examples_root`` together, not just
+        ``cap.project`` alone: a project may declare ``libs``/``init`` (or any
+        other relative path) reaching into a sibling with ``../<project>/...``
+        (spec 2026-09-06 creds-store §6.4 -- the inventory twin shares the
+        original example's init module this way), and that relative path must
+        still resolve once both projects sit under the scratch dir, exactly as
+        it does in the checkout.
         """
         if cap.project not in self._project_dirs:
             src = self.examples_root / cap.project
@@ -102,9 +110,8 @@ class RunContext:
                     f"capture {cap.id!r}: project {cap.project!r} "
                     f"not found under {self.examples_root}"
                 )
-            dst = self.tmp / cap.project
-            shutil.copytree(src, dst, dirs_exist_ok=True)
-            self._project_dirs[cap.project] = dst
+            shutil.copytree(self.examples_root, self.tmp, dirs_exist_ok=True)
+            self._project_dirs[cap.project] = self.tmp / cap.project
         return self._project_dirs[cap.project]
 
     def default_rules(self) -> list[tuple[str, str]]:

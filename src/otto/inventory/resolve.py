@@ -5,7 +5,8 @@ from typing import Any
 
 from ..host.element import Element
 from ..host.inventory_ref import InventoryRef
-from ..models.inventory import INVENTORY_KEY_FIELDS
+from ..models.inventory import INVENTORY_KEY_FIELDS, MERGED_INVENTORY_FIELDS
+from .creds import merge_creds
 from .errors import InventoryError
 from .protocol import Inventory
 
@@ -34,7 +35,9 @@ def resolve_host_entry(
     when the record STATES it. Key fields (``element_id``) are never copied: a
     record is per host and an element is shared, so the record's value is
     cross-checked against ``element.id`` and never fills it (spec 2026-09-05
-    §8.6).
+    §8.6). ``creds`` is the exception (``MERGED_INVENTORY_FIELDS``, spec
+    2026-09-06 §6.2): stated inline beside a reference it COMPOSES over the
+    record's by login rather than colliding.
 
     "States it" means the record SET the field — ``exclude_unset``, keyed on
     ``model_fields_set``, not ``exclude_defaults``, which compares values and
@@ -71,7 +74,10 @@ def resolve_host_entry(
     inline = sorted(
         k
         for k, v in host_data.items()
-        if v is not None and k in inventory.supplies and k not in INVENTORY_KEY_FIELDS
+        if v is not None
+        and k in inventory.supplies
+        and k not in INVENTORY_KEY_FIELDS
+        and k not in MERGED_INVENTORY_FIELDS
     )
     if inline:
         raise InventoryError(
@@ -88,9 +94,24 @@ def resolve_host_entry(
             )
     resolved = {k: v for k, v in host_data.items() if k != "inventory"}
     stated = record.model_dump(mode="json", exclude_none=True, exclude_unset=True)
-    for name in sorted(inventory.supplies - INVENTORY_KEY_FIELDS):
+    for name in sorted(inventory.supplies - INVENTORY_KEY_FIELDS - MERGED_INVENTORY_FIELDS):
         if name in stated:
             resolved[name] = stated[name]
+    if "creds" in inventory.supplies:
+        # The set has one member; a second one needs its own compose step here.
+        inline_creds = host_data.get("creds")
+        if isinstance(inline_creds, list):
+            # Spec 2026-09-06 §6.2: the lab file is the highest layer and leads.
+            resolved["creds"] = merge_creds(
+                stated.get("creds", []),
+                inline_creds,
+                key=key,
+                lower_name="inventory record",
+                higher_name="lab file",
+            )
+        elif inline_creds is None and "creds" in stated:
+            resolved["creds"] = stated["creds"]
+        # any other inline shape (the legacy dict) stays for the host spec's own error
     return ResolvedEntry(
         host_data=resolved,
         ref=InventoryRef(key=key, backend=inventory.label, extra=dict(record.extra)),

@@ -77,6 +77,15 @@ class InventoryRecord(OttoModel):
 INVENTORY_KEY_FIELDS: frozenset[str] = frozenset({"element_id"})
 """Record fields that are identity keys — cross-checked against the lab file, never copied."""
 
+MERGED_INVENTORY_FIELDS: frozenset[str] = frozenset({"creds"})
+"""Supplied fields the join COMPOSES by login instead of refusing inline (spec 2026-09-06 §6.2).
+
+The one exception to "data lives in exactly one layer": a referenced entry
+may state ``creds`` beside a reference, and the lab file's entries layer over
+the record's (which already layer over the creds store's). ONE definition,
+so every consumer that reasons about the partition names the same set.
+"""
+
 SUPPLIES_EXEMPT_FIELDS: frozenset[str] = INVENTORY_KEY_FIELDS | {"extra"}
 """Record fields the ``supplies`` partition does not govern (spec §2, §4).
 

@@ -667,3 +667,37 @@ def test_refresh_reaches_the_cache_through_the_creds_overlay(tmp_path, monkeypat
     assert looked_up.exit_code == 0, looked_up.output
     assert "operator" in looked_up.output
     assert "s3cret" not in looked_up.output
+
+
+# ── the creds store is named beside the backend ───────────────────────────────
+
+
+def test_lookup_and_list_name_the_creds_store_when_one_is_configured(tmp_path, monkeypatch):
+    inventory_file = tmp_path / "inventory.json"
+    inventory_file.write_text(json.dumps(_RECORDS))
+    creds = tmp_path / "creds.json"
+    creds.write_text(json.dumps({"test2": [{"login": "operator", "password": "s3cret"}]}))
+    toml = (
+        f'[inventory]\nbackend = "json"\npath = "{inventory_file}"\n'
+        f'\n[creds]\nbackend = "json"\npath = "{creds}"\n'
+    )
+    _scaffold(tmp_path, monkeypatch, inventory_toml=toml)
+    looked_up = _run(["lookup", "test2"])
+    assert looked_up.exit_code == 0, looked_up.output
+    assert f"backend:  json:{inventory_file}" in looked_up.output
+    assert f"creds:    json:{creds}" in looked_up.output
+    assert "operator" in looked_up.output
+    assert "s3cret" not in looked_up.output
+    listed = _run(["list"])
+    assert listed.exit_code == 0, listed.output
+    assert f"creds:    json:{creds}" in listed.output
+
+
+def test_without_a_creds_store_there_is_no_creds_row(repo):
+    looked_up = _run(["lookup", "test1"])
+    assert looked_up.exit_code == 0, looked_up.output
+    assert "creds:    " not in looked_up.output  # the table's `creds` CELL still lists logins
+    assert "root" in looked_up.output
+    listed = _run(["list"])
+    assert listed.exit_code == 0, listed.output
+    assert "creds:    " not in listed.output

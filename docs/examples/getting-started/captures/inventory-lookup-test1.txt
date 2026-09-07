@@ -1,6 +1,7 @@
 $ otto inventory lookup test1
 key:      test1
 backend:  json:/tmp/otto-gs/getting-started-inventory/inventory.json
+creds:    json:/tmp/otto-gs/getting-started-inventory/creds.json
 ╭────────────┬─────────────────────────────────────────────────────────────────────────────────────╮
 │ field      │ value                                                                               │
 ├────────────┼─────────────────────────────────────────────────────────────────────────────────────┤

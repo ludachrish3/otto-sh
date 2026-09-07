@@ -176,6 +176,17 @@ def _unwrapped(inventory: "Inventory") -> "Inventory":
     return inventory
 
 
+def _creds_row(inventory: "Inventory") -> None:
+    """Print the ``creds:`` row naming the store when the overlay is configured.
+
+    Spec 2026-09-06 creds-store §7.3.
+    """
+    from ..inventory import CredsOverlay
+
+    if isinstance(inventory, CredsOverlay):
+        _row(f"creds:    {inventory.store.label}")
+
+
 def _backend_of(inventory: "Inventory") -> "Inventory":
     """Return the innermost object — the backend itself, past both core wrappers."""
     from ..inventory import SnapshotCache
@@ -232,6 +243,7 @@ def lookup(
     # key, the backend's label, and the record's opaque `extra` table.
     _row(f"key:      {key}")
     _row(f"backend:  {inventory.label}")
+    _creds_row(inventory)
 
     table = Table(box=box.ROUNDED)
     table.add_column("field")
@@ -300,6 +312,7 @@ def list_records() -> None:
         table.add_row(escape(key), escape(records[key].ip))
     rprint(table)
     _row(f"{len(records)} record(s) in {inventory.label}")
+    _creds_row(inventory)
     for row in _skip_rows(inventory):
         _row(row)
 

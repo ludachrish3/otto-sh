@@ -12,7 +12,11 @@ from otto.inventory import (
     check_supplies,
     resolve_host_entry,
 )
-from otto.models.inventory import FILLABLE_INVENTORY_FIELDS, InventoryRecord
+from otto.models.inventory import (
+    FILLABLE_INVENTORY_FIELDS,
+    MERGED_INVENTORY_FIELDS,
+    InventoryRecord,
+)
 
 
 class FakeInventory:
@@ -117,7 +121,7 @@ def test_a_field_stated_at_its_default_value_is_still_stated():
     assert "creds" not in bare.host_data
 
 
-@pytest.mark.parametrize("field", sorted(FILLABLE_INVENTORY_FIELDS))
+@pytest.mark.parametrize("field", sorted(FILLABLE_INVENTORY_FIELDS - MERGED_INVENTORY_FIELDS))
 def test_every_supplied_field_inline_beside_a_reference_is_an_error(field):
     inv = FakeInventory({"k": _REC})  # default supplies = every fillable field
     with pytest.raises(InventoryError, match=f"'{field}' is inventory-owned.*key 'k'"):
@@ -204,3 +208,74 @@ def test_check_supplies_rules():
     # a key IS allowed: listing it means "this deployment asserts element_id
     # and wants it cross-checked"
     assert check_supplies(["ip", "element_id"]) == frozenset({"ip", "element_id"})
+
+
+def test_inline_creds_beside_a_reference_compose_over_the_record():
+    """Spec 2026-09-06 §6.2: creds is the one supplied field the join composes, lab file first."""
+    inv = FakeInventory({"k": _REC})  # record creds: [{"login": "u", "password": "p"}]
+    entry = {
+        "inventory": "k",
+        "os_type": "unix",
+        "creds": [{"login": "root", "proxy": "su", "via": "u"}, {"login": "u", "password": None}],
+    }
+    out = resolve_host_entry(entry, inv, _DUT)
+    assert out.host_data["creds"] == [
+        {"login": "root", "proxy": "su", "via": "u"},
+        {"login": "u", "password": "p"},  # null inline states nothing; the record's password stands
+    ]
+    assert out.host_data["ip"] == "10.0.0.7"  # every other supplied field still fills
+
+
+def test_merged_fields_are_not_collisions_but_everything_else_still_is():
+    assert frozenset({"creds"}) == MERGED_INVENTORY_FIELDS
+    inv = FakeInventory({"k": _REC})
+    with pytest.raises(InventoryError, match="'ip' is inventory-owned"):
+        resolve_host_entry({"inventory": "k", "ip": "x", "creds": [{"login": "u"}]}, inv, _DUT)
+
+
+def test_inline_creds_pass_through_when_the_inventory_supplies_none():
+    """Spec §6.3: the NetBox-with-no-store deployment — inline creds are just inline.
+
+    Both shapes below are ones ``merge_creds`` would NOT leave alone — an
+    explicit ``None`` states nothing to a merge and a repeated login within
+    one layer is an error to a merge — so a missing ``"creds" in
+    inventory.supplies`` guard is caught rather than passing by coincidence.
+    """
+    inv = FakeInventory({"k": {"ip": "10.0.0.7"}}, supplies=["ip"])
+    entry = {"inventory": "k", "creds": [{"login": "r", "password": None}]}
+    out = resolve_host_entry(entry, inv, _DUT)
+    assert out.host_data["creds"] == [{"login": "r", "password": None}]  # None survives untouched
+    dupe_entry = {"inventory": "k", "creds": [{"login": "r"}, {"login": "r"}]}
+    dupe_out = resolve_host_entry(dupe_entry, inv, _DUT)
+    assert dupe_out.host_data["creds"] == [{"login": "r"}, {"login": "r"}]  # no dedup, no error
+
+
+def test_a_legacy_creds_dict_inline_is_left_for_the_host_spec_to_refuse():
+    inv = FakeInventory({"k": _REC})
+    out = resolve_host_entry({"inventory": "k", "creds": {"u": "p"}}, inv, _DUT)
+    assert out.host_data["creds"] == {"u": "p"}  # untouched; UnixHostSpec names the legacy shape
+
+
+def test_a_merge_error_names_the_lab_file_layer_and_the_key():
+    inv = FakeInventory({"k": _REC})
+    with pytest.raises(
+        InventoryError,
+        match=r"duplicate cred login 'u' in the lab file layer \(inventory key 'k'\)",
+    ):
+        resolve_host_entry({"inventory": "k", "creds": [{"login": "u"}, {"login": "u"}]}, inv, _DUT)
+
+
+def test_the_composed_list_validates_as_a_unix_host():
+    """End to end: a lab-file route over a record password is one cred the host spec accepts."""
+    from otto.host.factory import validate_host_dict
+
+    inv = FakeInventory({"k": _REC})
+    entry = {
+        "inventory": "k",
+        "os_type": "unix",
+        "valid_terms": ["ssh"],
+        "creds": [{"login": "u"}, {"login": "root", "proxy": "su", "via": "u"}],
+    }
+    resolved = resolve_host_entry(entry, inv, _DUT).host_data
+    validate_host_dict(resolved)  # no raise: via names a login the record supplied
+    assert [c["login"] for c in resolved["creds"]] == ["u", "root"]

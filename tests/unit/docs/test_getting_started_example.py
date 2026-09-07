@@ -156,9 +156,11 @@ def twin_inventory():
     # `otto.inventory.config.build_inventory` reads any active repo's
     # declaration, not `load_user_settings` (that model is `extra="forbid"`
     # for a standalone `~/.otto/settings.toml` and would reject this file's
-    # other top-level keys).
+    # other top-level keys). The `[creds]` table rides along -- the twin's
+    # `test1` carries the same proxied cred the inline lab does, layered over
+    # the store (spec 2026-09-06 §6.4).
     repo = Repo(sut_dir=TWIN)
-    assert repo.inventory_settings
+    assert repo.inventory_settings and repo.creds_settings  # noqa: PT018
     return build_inventory_from_declarations(
         [
             InventoryDeclaration(
@@ -180,16 +182,12 @@ def test_the_referenced_twin_builds_the_same_unix_lab(twin_inventory) -> None:
     for name in _UNIX:
         a, b = inline.hosts[name], referenced.hosts[name]
         assert {k: getattr(a, k) for k in _ATTRS} == {k: getattr(b, k) for k in _ATTRS}, name
-        # test1's third cred names a login proxy (the customizations page) --
-        # project *code*, registered by this project's init module, not a
-        # machine fact an inventory supplies. The twin declares no init module
-        # on purpose (it is the inventory example, and a copy of it has to load
-        # standalone), so its creds file cannot name a proxy that nothing there
-        # registers. What the two states must still agree on to the letter is
-        # every directly-loginable cred, which is what the inventory supplies.
-        assert [(c.login, c.password) for c in a.creds if c.proxy is None] == [
-            (c.login, c.password) for c in b.creds
-        ]
+        # Every cred, proxied ones included: the twin's lab.json carries the
+        # route (and two login-only placeholders that pin the order), the creds
+        # store the passwords, and the merge composes them (spec 2026-09-06 §6.4).
+        assert [(c.login, c.password, c.proxy, c.via, c.params) for c in a.creds] == [
+            (c.login, c.password, c.proxy, c.via, c.params) for c in b.creds
+        ], name
         assert {k: (i.ip, i.subnet) for k, i in a.interfaces.items()} == {
             k: (i.ip, i.subnet) for k, i in b.interfaces.items()
         }, name
@@ -206,3 +204,11 @@ def test_the_example_reservation_backend_conforms() -> None:
         known_user="chris",
         known_resources=["bb-bench", "bb1350-chassis", "bb1350-slot"],
     )
+
+
+def test_the_twin_is_a_real_repo_that_shares_the_examples_project_code() -> None:
+    repo = Repo(sut_dir=TWIN)
+    assert repo.init == ["gs_example"]
+    assert [p.name for p in repo.libs] == ["libs"]  # ../getting-started/libs, anchored
+    assert repo.libs[0].resolve() == (TWIN / "../getting-started/libs").resolve()
+    assert repo.creds_settings["backend"] == "json"

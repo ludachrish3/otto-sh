@@ -90,6 +90,52 @@ def test_a_store_error_is_re_raised_as_an_inventory_error_with_its_text(tmp_path
         inv.lookup("k")
 
 
+class _ConstructedEntry:
+    """A ``CredSpec.model_construct``-style entry: a bad field type, no validation run.
+
+    A real ``CredSpec.model_construct(login="root", password=123)`` reaches
+    the same broken dict, but its OWN ``model_dump`` warns on the type
+    mismatch mid-serialization — a warning this repo's suite promotes to an
+    error (``filterwarnings = ["error"]``), which would fail the test before
+    it ever reached the overlay's compose step. A plain stand-in with a
+    hand-written ``model_dump`` reaches the identical merged dict without
+    going through pydantic's serializer at all.
+    """
+
+    def model_dump(self, **kwargs):
+        return {"login": "root", "password": 123}
+
+
+class _ConstructedEntries:
+    """A store that hands out entries ``merge_creds`` cannot validate (reviewer's probe)."""
+
+    label = "bad:store"
+
+    def lookup(self, key):
+        return [_ConstructedEntry()]
+
+    def list_keys(self):
+        return None
+
+    def fingerprint(self):
+        return None
+
+
+def test_a_merged_entry_that_fails_validation_names_the_login(tmp_path):
+    """spec 2026-09-06 creds-store §6.1: the compose error names the key AND the login.
+
+    Field-level failures (``password: 123``) have no ``CredSpec``-authored
+    message to carry the login incidentally — only the entry-level try/except
+    around the revalidation can name it.
+    """
+    inner = FakeInventory({"k": {"ip": "10.0.0.1"}}, supplies=["ip"])
+    with pytest.raises(InventoryError) as excinfo:
+        CredsOverlay(inner, store=_ConstructedEntries()).lookup("k")
+    message = str(excinfo.value)
+    assert "'k'" in message
+    assert "'root'" in message
+
+
 def test_a_duplicate_login_in_the_record_layer_names_the_key(tmp_path):
     inner = FakeInventory({"k": {"ip": "10.0.0.1", "creds": [{"login": "u"}, {"login": "u"}]}})
     with pytest.raises(

@@ -22,8 +22,11 @@ per project as the example does:
 :end-before: "# doc: end inventory-config"
 ```
 
-`supplies` is the partition. The same `test1` element now carries only otto's
-vocabulary and a key:
+`supplies` is the partition for machine facts. The same `test1` element now
+carries otto's vocabulary, a key — and a `creds` list that names no password:
+two login-only entries that pin the login order, and the `sudo-root` route
+from {doc}`../customizations`. Creds are the one field that **composes**
+across the files rather than living in exactly one of them:
 
 ```{literalinclude} ../../examples/getting-started-inventory/lab_data/lab.json
 :language: json
@@ -39,16 +42,18 @@ in the entry above:
 :language: json
 ```
 
-Credentials are a `creds_file` beside it, so the inventory file itself can be
-world-readable:
+Passwords live in the creds store `[creds]` names — `creds.json` beside it,
+mode `0600` — so the inventory file itself can be world-readable:
 
 ```{literalinclude} ../../examples/getting-started-inventory/creds.json
 :language: json
 ```
 
-The same keys, each holding the logins that key's host accepts.
-{ref}`credentials-creds-file` is the home for the rest — where to keep the
-file, what mode it wants, and what a record may not carry once it exists.
+The same keys, each holding the logins that key's host accepts. Within a
+login, `lab.json` overrides `inventory.json`, which overrides `creds.json`,
+field by field, and `lab.json`'s order is the login order.
+{ref}`credentials-layered` is the home for the rest — the store backends, the
+merge rules, and what the doctor checks.
 
 ## Asking the inventory
 
@@ -62,9 +67,9 @@ file, what mode it wants, and what a record may not carry once it exists.
 
 `otto init --lab` doubles as the doctor: it re-reads the lab area against the
 loader every command uses, so a dead reference, a field stated on both sides,
-a missing `creds_file` or one readable by more than its owner are all named
-before any host is contacted ({doc}`../../guide/configuration/inventory` lists
-each check).
+a creds-store file readable by more than its owner, or a creds key the
+inventory no longer holds are all named before any host is contacted
+({doc}`../../guide/configuration/inventory` lists each check).
 
 ## Growing out of the file
 
@@ -76,9 +81,8 @@ path*; this page does not repeat it. When the answer is neither JSON nor
 NetBox, {doc}`../../library/inventory-backends` is the contract a backend
 implements and the conformance test it must pass.
 
-Both forms of this lab load to the same hosts — every machine fact,
-interface and directly-loginable credential. The one thing the twin cannot
-carry is the proxied credential {doc}`../customizations` adds, because a
-proxy is registered by an `init` module and the twin has none. That is not a
-claim, it is a test: a guard in otto's own test suite builds both and compares
-them.
+Both forms of this lab load to the same hosts — every machine fact, every
+interface, and every credential, the proxied `root` included: the twin's
+`lab.json` carries the route, `creds.json` the passwords, and the merge
+composes them. That is not a claim, it is a test: a guard in otto's own test
+suite builds both and compares them cred for cred.
