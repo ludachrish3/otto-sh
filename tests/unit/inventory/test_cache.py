@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from otto.creds.config import compile_creds_table
 from otto.inventory import (
     CredsOverlay,
     Inventory,
@@ -514,7 +515,7 @@ def _compiled(backend, kwargs, ttl, tmp_path):
     return CompiledInventory(
         backend=backend,
         kwargs=kwargs,
-        creds_file=None,
+        creds=None,
         cache_ttl=ttl,
         anchor_dir=tmp_path,
         origin="o",
@@ -546,7 +547,9 @@ def test_construct_wraps_netbox_but_never_json_and_ttl_zero_disables(tmp_path, m
         CompiledInventory(
             backend="netbox",
             kwargs={"url": "http://127.0.0.1:9"},
-            creds_file=creds,
+            creds=compile_creds_table(
+                {"backend": "json", "path": str(creds)}, anchor_dir=tmp_path, origin="o"
+            ),
             cache_ttl=timedelta(hours=1),
             anchor_dir=tmp_path,
             origin="o",

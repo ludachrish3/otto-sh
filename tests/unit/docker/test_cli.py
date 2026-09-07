@@ -1421,6 +1421,7 @@ def test_completer_cache_miss_filters_by_selected_lab(tmp_path):
         # `build_inventory` reads it on the enumeration path; a stand-in that
         # omits it enumerates no hosts at all.
         inventory_settings={},
+        creds_settings={},
     )
     with (
         patch("otto.config.get_completion_names", return_value=None),

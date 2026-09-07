@@ -61,13 +61,14 @@ def test_json_blocks_equal_the_fixture_files() -> None:
 def test_toml_block_declares_the_fixture_partition() -> None:
     lang, body = _blocks()["user-settings.toml"]
     assert lang == "toml", lang
-    page = tomli.loads(body)["inventory"]
+    page = tomli.loads(body)
     fixture_text = (lab_data_dir() / _FIXTURE / "user-settings.toml").read_text()
-    fixture = tomli.loads(fixture_text)["inventory"]
-    assert page["backend"] == fixture["backend"]
-    assert page["supplies"] == fixture["supplies"]
+    fixture = tomli.loads(fixture_text)
+    assert page["inventory"]["backend"] == fixture["inventory"]["backend"]
+    assert page["inventory"]["supplies"] == fixture["inventory"]["supplies"]
     # The paths differ ON PURPOSE — the page shows where a reader's own files
     # would live — so pin that they are stated at all, or a page that dropped
     # them would still pass the two assertions above.
-    assert page["path"]
-    assert page["creds_file"]
+    assert page["inventory"]["path"]
+    assert page["creds"]["backend"] == fixture["creds"]["backend"] == "json"
+    assert page["creds"]["path"]

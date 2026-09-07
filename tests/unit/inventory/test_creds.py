@@ -1,107 +1,119 @@
-"""creds_file: one home for credentials, both backends (spec §9.4)."""
+"""CredsOverlay: the store→record merge, outermost on the inventory (spec 2026-09-06 §5.4)."""
 
 import json
 
 import pytest
 
-from otto.inventory import CredsOverlay, Inventory, InventoryError, load_creds_file
+from otto.creds import CredsError, JsonCredsStore
+from otto.inventory import CredsOverlay, Inventory, InventoryError
 
 from .test_resolve import FakeInventory
 
 
-def _creds_file(tmp_path, data):
+def _store(tmp_path, data):
     p = tmp_path / "creds.json"
     p.write_text(json.dumps(data))
-    return p
+    return JsonCredsStore(p)
+
+
+class _Raising:
+    label = "boom:store"
+
+    def lookup(self, key):
+        raise CredsError("boom:store: service unreachable")
+
+    def list_keys(self):
+        return None
+
+    def fingerprint(self):
+        return None
 
 
 def test_the_overlay_satisfies_the_protocol(tmp_path):
-    """A wrapper is only a drop-in if it is still an Inventory."""
-    inv = CredsOverlay(FakeInventory({}), path=tmp_path / "creds.json")
-    assert isinstance(inv, Inventory)
+    assert isinstance(CredsOverlay(FakeInventory({}), store=_store(tmp_path, {})), Inventory)
 
 
-def test_overlay_supplies_creds_from_the_file(tmp_path):
-    path = _creds_file(tmp_path, {"k": [{"login": "root", "password": "x"}]})
-    inv = CredsOverlay(FakeInventory({"k": {"ip": "10.0.0.1"}}, supplies=["ip"]), path=path)
+def test_overlay_supplies_creds_from_the_store(tmp_path):
+    store = _store(tmp_path, {"k": [{"login": "root", "password": "x"}]})
+    inv = CredsOverlay(FakeInventory({"k": {"ip": "10.0.0.1"}}, supplies=["ip"]), store=store)
     assert "creds" in inv.supplies
     assert inv.label == "fake:mem"
-    assert inv.creds_path == path
+    assert inv.store is store
     rec = inv.lookup("k")
-    assert [c.login for c in rec.creds] == ["root"]
+    assert [(c.login, c.password) for c in rec.creds] == [("root", "x")]
+    assert "creds" in rec.model_fields_set  # the join reads STATED fields; this one is
     assert inv.list_keys() == ["k"]
 
 
-def test_construction_does_no_io_and_a_broken_file_names_itself_at_first_use(tmp_path):
-    inner = FakeInventory({"k": {"ip": "10.0.0.1"}}, supplies=["ip"])
-    inv = CredsOverlay(inner, path=tmp_path / "absent.json")
-    with pytest.raises(InventoryError, match=r"creds_file .*absent.json"):
-        inv.lookup("k")
+def test_record_creds_layer_over_store_creds_by_login(tmp_path):
+    """Spec §3 statement 3 at the first merge: the record is the higher layer, and leads."""
+    store = _store(
+        tmp_path, {"k": [{"login": "vagrant", "password": "v"}, {"login": "test", "password": "t"}]}
+    )
+    inner = FakeInventory(
+        {
+            "k": {
+                "ip": "10.0.0.1",
+                "creds": [
+                    {"login": "test", "password": "override"},
+                    {"login": "svc", "proxy": "su", "via": "vagrant"},
+                ],
+            }
+        }
+    )
+    rec = CredsOverlay(inner, store=store).lookup("k")
+    assert [(c.login, c.password, c.proxy) for c in rec.creds] == [
+        ("test", "override", None),
+        ("svc", None, "su"),
+        ("vagrant", "v", None),
+    ]
 
 
-def test_a_record_carrying_creds_beside_a_creds_file_is_an_error(tmp_path):
-    path = _creds_file(tmp_path, {})
+def test_a_key_absent_from_the_store_keeps_the_records_own_creds(tmp_path):
+    store = _store(tmp_path, {})
     inner = FakeInventory({"k": {"ip": "10.0.0.1", "creds": [{"login": "r", "password": "p"}]}})
-    inv = CredsOverlay(inner, path=path)
-    with pytest.raises(InventoryError, match="inventory key 'k': 'creds' come from creds_file"):
+    assert [c.login for c in CredsOverlay(inner, store=store).lookup("k").creds] == ["r"]
+    bare = FakeInventory({"k": {"ip": "10.0.0.1"}}, supplies=["ip"])
+    assert CredsOverlay(bare, store=store).lookup("k").creds == []
+
+
+def test_construction_does_no_io_and_a_broken_store_names_itself_at_first_use(tmp_path):
+    inner = FakeInventory({"k": {"ip": "10.0.0.1"}}, supplies=["ip"])
+    inv = CredsOverlay(inner, store=JsonCredsStore(tmp_path / "absent.json"))
+    with pytest.raises(InventoryError, match=r"absent\.json: "):
         inv.lookup("k")
 
 
-def test_a_key_absent_from_the_creds_file_gets_no_creds(tmp_path):
-    path = _creds_file(tmp_path, {})
-    inv = CredsOverlay(FakeInventory({"k": {"ip": "10.0.0.1"}}, supplies=["ip"]), path=path)
-    assert inv.lookup("k").creds == []
+def test_a_store_error_is_re_raised_as_an_inventory_error_with_its_text(tmp_path):
+    inv = CredsOverlay(FakeInventory({"k": {"ip": "10.0.0.1"}}, supplies=["ip"]), store=_Raising())
+    with pytest.raises(InventoryError, match="boom:store: service unreachable"):
+        inv.lookup("k")
 
 
-def test_a_record_level_error_names_the_file_the_key_and_the_index(tmp_path):
-    """``via`` without ``proxy`` fails CredSpec's model validator, whose loc is empty."""
-    path = _creds_file(tmp_path, {"k": [{"login": "r", "via": "x"}]})
-    with pytest.raises(InventoryError, match=r"creds.json.*key 'k'.*\[0\].*via"):
-        load_creds_file(path)
+def test_a_duplicate_login_in_the_record_layer_names_the_key(tmp_path):
+    inner = FakeInventory({"k": {"ip": "10.0.0.1", "creds": [{"login": "u"}, {"login": "u"}]}})
+    with pytest.raises(
+        InventoryError,
+        match=r"duplicate cred login 'u' in the inventory record layer \(inventory key 'k'\)",
+    ):
+        CredsOverlay(inner, store=_store(tmp_path, {})).lookup("k")
 
 
-def test_a_field_level_error_names_the_offending_field(tmp_path):
-    """The other half of ``compact_validation_error``: a per-field error puts the FIELD
-    left of the colon.
-
-    Every other creds test raises through CredSpec's model validator, whose
-    ``loc`` is ``()`` — so without this case the whole ``'.'.join(loc)`` half
-    of the renderer is unpinned and could join to anything.
-    """
-    path = _creds_file(tmp_path, {"k": [{"login": 3}]})
-    with pytest.raises(InventoryError, match=r"login: Input should be a valid string"):
-        load_creds_file(path)
-
-
-def test_the_creds_file_must_be_a_json_object(tmp_path):
-    path = _creds_file(tmp_path, [])
-    with pytest.raises(InventoryError, match="must be a JSON object"):
-        load_creds_file(path)
-
-
-def test_a_comment_key_is_skipped(tmp_path):
-    path = _creds_file(tmp_path, {"_comment": "not a key", "k": []})
-    assert load_creds_file(path) == {"k": []}
-
-
-def test_a_non_list_creds_value_names_its_key(tmp_path):
-    path = _creds_file(tmp_path, {"k": {"login": "r"}})
-    with pytest.raises(InventoryError, match="key 'k': expected a list of creds"):
-        load_creds_file(path)
-
-
-def test_fingerprint_combines_inner_and_file(tmp_path):
-    path = _creds_file(tmp_path, {})
-    inv = CredsOverlay(FakeInventory({}), path=path)
+def test_fingerprint_combines_inner_and_store(tmp_path):
+    store = _store(tmp_path, {})
+    inv = CredsOverlay(FakeInventory({}), store=store)
     before = inv.fingerprint()
-    path.write_text(json.dumps({"k": []}))
+    assert before is not None
+    assert before.startswith("fake|creds:")
+    (tmp_path / "creds.json").write_text(json.dumps({"k": []}))
     assert inv.fingerprint() != before
-    assert CredsOverlay(_NoFingerprint(), path=path).fingerprint() is None
+    assert CredsOverlay(_NoFingerprint(), store=store).fingerprint() is None
+    assert CredsOverlay(FakeInventory({}), store=_Raising()).fingerprint() is None  # opaque store
 
 
-def test_fingerprint_survives_a_missing_creds_file(tmp_path):
-    inv = CredsOverlay(FakeInventory({}), path=tmp_path / "absent.json")
-    assert inv.fingerprint() == "fake|creds:missing"
+def test_fingerprint_survives_a_missing_store_file(tmp_path):
+    inv = CredsOverlay(FakeInventory({}), store=JsonCredsStore(tmp_path / "absent.json"))
+    assert inv.fingerprint() == f"fake|creds:{tmp_path / 'absent.json'}|missing"
 
 
 class _NoFingerprint(FakeInventory):

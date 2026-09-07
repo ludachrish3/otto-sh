@@ -1,8 +1,7 @@
-"""``creds_file``: one home for credentials, whatever the backend (spec §9.4)."""
+"""The creds overlay and the by-login merge (spec 2026-09-06 creds-store §5.4, §6.1)."""
 
-import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
@@ -12,57 +11,83 @@ from ..models.inventory import InventoryRecord
 from .errors import InventoryError
 from .protocol import Inventory
 
-
-def _validated(path: Path, key: str, idx: int, entry: Any) -> dict[str, Any]:
-    """Check one creds entry against ``CredSpec`` and return it as a plain dict."""
-    try:
-        CredSpec.model_validate(entry)
-    except ValidationError as e:
-        raise InventoryError(
-            f"creds_file {path}: key {key!r}: creds[{idx}]: {compact_validation_error(e)}"
-        ) from e
-    return dict(entry)
+if TYPE_CHECKING:
+    from ..creds.protocol import CredsStore
 
 
-def load_creds_file(path: Path) -> dict[str, list[dict[str, Any]]]:
-    """Parse ``{key: [CredSpec, ...]}``; errors name the file, the key, the index and the field."""
-    try:
-        data = json.loads(Path(path).read_text())
-    except (OSError, json.JSONDecodeError) as e:
-        raise InventoryError(f"creds_file {path}: {e}") from e
-    if not isinstance(data, dict):
-        raise InventoryError(
-            f"creds_file {path}: must be a JSON object mapping inventory key -> creds list"
-        )
-    out: dict[str, list[dict[str, Any]]] = {}
-    for key, entries in data.items():
-        if isinstance(key, str) and key.startswith("_"):
-            continue
-        if not isinstance(entries, list):
-            raise InventoryError(f"creds_file {path}: key {key!r}: expected a list of creds")
-        out[key] = [_validated(path, key, idx, entry) for idx, entry in enumerate(entries)]
-    return out
+def _stated(entry: dict[str, Any]) -> dict[str, Any]:
+    """Return the fields *entry* states: present and not ``None`` (R7, one level down)."""
+    return {k: v for k, v in entry.items() if v is not None}
+
+
+def merge_creds(
+    lower: list[dict[str, Any]],
+    higher: list[dict[str, Any]],
+    *,
+    key: "str | None" = None,
+    lower_name: str = "lower",
+    higher_name: str = "higher",
+) -> list[dict[str, Any]]:
+    """Compose two cred layers by login (spec 2026-09-06 creds-store §6.1).
+
+    Matching is by ``login`` only. A login in both layers gets
+    ``{**lower_stated, **higher_stated}`` — the higher layer overrides a
+    field it states and cannot remove one (``None`` states nothing). The
+    result is sequenced HIGHER FIRST: every *higher* login in its own order,
+    then every *lower*-only login in its own order — the lab file, the one
+    layer written with otto's default-login rule in mind, decides the order
+    (spec §3 statement 3).
+
+    Plain dicts in, plain dicts out — the join's currency. Raises
+    :class:`~otto.inventory.errors.InventoryError` for an entry with no
+    non-empty string ``login`` and for a login repeated within ONE layer; the
+    message names the layer and *key*, and lists an entry's field NAMES only,
+    because a value here may be a password.
+    """
+    where = f" (inventory key {key!r})" if key is not None else ""
+
+    def _by_login(layer: list[dict[str, Any]], name: str) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        for entry in layer:
+            login = entry.get("login") if isinstance(entry, dict) else None
+            if not isinstance(login, str) or not login:
+                fields = sorted(entry) if isinstance(entry, dict) else type(entry).__name__
+                raise InventoryError(
+                    f"cred entry without a 'login' string in the {name} layer{where}: {fields}"
+                )
+            if login in out:
+                raise InventoryError(f"duplicate cred login {login!r} in the {name} layer{where}")
+            out[login] = _stated(entry)
+        return out
+
+    low = _by_login(lower, lower_name)
+    high = _by_login(higher, higher_name)
+    merged = [{**low.get(login, {}), **fields} for login, fields in high.items()]
+    merged.extend(fields for login, fields in low.items() if login not in high)
+    return merged
 
 
 class CredsOverlay:
-    """Wrap an inventory so ``creds`` come from the creds file and nowhere else.
+    """Wrap an inventory so ``creds`` compose from the creds store and the record.
 
-    Construction does no I/O (the rule for every inventory object): the file
-    is read on the first ``lookup``, so a lab with no referenced entry never
-    touches it. ``inner`` and ``creds_path`` are public — the doctor reads
-    the file's mode, ``otto inventory refresh`` walks down to the cache.
+    The store is the LOWEST creds layer and the record the middle one (spec
+    §3): ``lookup`` returns the record with ``creds = merge_creds(store,
+    record)``, so a record may carry creds beside a configured store and
+    override the store's by login. Construction does no I/O (the rule for every
+    inventory object): the store is first consulted on ``lookup``, so a lab
+    with no referenced entry never opens it. ``inner`` and ``store`` are
+    public — the doctor reads the store's stat paths, ``otto inventory
+    refresh`` walks down to the cache.
 
     ``label``/``supplies`` are properties over ``inner``, not attributes
     copied at construction: an ``inner`` that answers only ``fingerprint``/
-    ``stat_paths`` (the shim's opaque-inventory probe, :func:`stat_paths`)
-    can still be wrapped and asked ``stat_paths()`` without ever needing a
-    ``label`` or ``supplies`` it does not have.
+    ``stat_paths`` (the shim's opaque-inventory probe) can still be wrapped
+    and asked ``stat_paths()`` without a ``label`` or ``supplies``.
     """
 
-    def __init__(self, inner: Inventory, *, path: Path) -> None:
+    def __init__(self, inner: Inventory, *, store: "CredsStore") -> None:
         self.inner = inner
-        self.creds_path = Path(path)
-        self._creds: "dict[str, list[dict[str, Any]]] | None" = None
+        self.store = store
 
     @property
     def label(self) -> str:
@@ -74,20 +99,30 @@ class CredsOverlay:
         """Return the inner backend's supplied fields plus ``creds``."""
         return frozenset(self.inner.supplies) | {"creds"}
 
-    def _load(self) -> dict[str, list[dict[str, Any]]]:
-        if self._creds is None:
-            self._creds = load_creds_file(self.creds_path)
-        return self._creds
-
     def lookup(self, key: str) -> InventoryRecord:
-        """Return the inner record with its ``creds`` replaced by the creds file's."""
+        """Return the inner record with the store's creds merged UNDER its own (spec §6.1)."""
+        # Function-local: otto.inventory is on the bootstrap path.
+        from ..creds.errors import CredsError
+
         record = self.inner.lookup(key)
-        if record.creds:
+        try:
+            supplied = self.store.lookup(key)
+        except CredsError as e:
+            raise InventoryError(str(e)) from e
+        lower = [c.model_dump(mode="json", exclude_unset=True, exclude_none=True) for c in supplied]
+        higher = [
+            c.model_dump(mode="json", exclude_unset=True, exclude_none=True) for c in record.creds
+        ]
+        merged = merge_creds(
+            lower, higher, key=key, lower_name="creds store", higher_name="inventory record"
+        )
+        try:
+            creds = [CredSpec.model_validate(c) for c in merged]
+        except ValidationError as e:
             raise InventoryError(
-                f"inventory key {key!r}: 'creds' come from creds_file {self.creds_path}; "
-                "remove them from the record"
-            )
-        creds = [CredSpec.model_validate(c) for c in self._load().get(key, [])]
+                f"inventory key {key!r}: creds from {self.store.label} and the record do not "
+                f"compose: {compact_validation_error(e)}"
+            ) from e
         return record.model_copy(update={"creds": creds})
 
     def list_keys(self) -> list[str]:
@@ -95,23 +130,19 @@ class CredsOverlay:
         return self.inner.list_keys()
 
     def fingerprint(self) -> "str | None":
-        """Return the inner fingerprint combined with the creds file's mtime and size."""
+        """Return the inner fingerprint combined with the store's; ``None`` if either is opaque."""
         inner = self.inner.fingerprint()
         if inner is None:
             return None
-        try:
-            st = self.creds_path.stat()
-        except OSError:
-            return f"{inner}|creds:missing"
-        return f"{inner}|creds:{st.st_mtime_ns}:{st.st_size}"
+        store = self.store.fingerprint()
+        return None if store is None else f"{inner}|creds:{store}"
 
     def stat_paths(self) -> "list[Path] | None":
-        """Return the inner backend's stat paths plus the creds file, or ``None`` when opaque.
-
-        ``None`` when the inner has no ``stat_paths`` at all, or when it has
-        one but returns ``None`` (its own fingerprint is not stat-derived) —
-        an overlay can never be more stat-checkable than what it wraps.
-        """
+        """Return the inner's stat paths plus the store's, or ``None`` when either is opaque."""
         inner = getattr(self.inner, "stat_paths", None)
         paths = inner() if callable(inner) else None
-        return None if paths is None else [*paths, self.creds_path]
+        if paths is None:
+            return None
+        store_stat = getattr(self.store, "stat_paths", None)
+        store_paths = store_stat() if callable(store_stat) else None
+        return None if store_paths is None else [*paths, *store_paths]

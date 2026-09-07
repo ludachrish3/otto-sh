@@ -10,7 +10,7 @@ import pytest
 
 from otto.config.lab import load_lab
 from otto.config.user_settings import load_user_settings
-from otto.inventory import compile_inventory, construct_inventory, resolve_host_entry
+from otto.inventory import build_inventory_from_declarations, resolve_host_entry
 from otto.labs.json_repository import JsonFileLabRepository
 from tests._fixtures.labdata import lab_data_dir
 
@@ -35,10 +35,16 @@ _ATTRS = [
 @pytest.fixture
 def inventory():
     root = lab_data_dir() / "tech1-inventory"
-    user = load_user_settings(root / "user-settings.toml")
+    settings_file = root / "user-settings.toml"
+    user = load_user_settings(settings_file)
     assert user is not None
     assert user.inventory is not None
-    return construct_inventory(compile_inventory(user.inventory, anchor_dir=root, origin="fixture"))
+    # [] repo declarations: nothing overrides the user file, so both
+    # [inventory] and [creds] resolve from it, exactly as build_inventory
+    # resolves a real process with no repo of its own declaring either.
+    return build_inventory_from_declarations(
+        [], user_settings=user, user_settings_file=settings_file
+    )
 
 
 def _entries(tech):

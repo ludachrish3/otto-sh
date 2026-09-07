@@ -19,6 +19,7 @@ would land on every CLI surface and break the same import-budget caps the
 in ``tach.toml``; only the *timing* is deferred.
 """
 
+import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -36,18 +37,21 @@ from .registry import get_inventory_backend_class
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
+    from ..creds.config import CompiledCreds
     from ..models.settings import InventoryConfigSpec, UserSettingsModel
 
 
 @dataclass(frozen=True)
 class InventoryDeclaration:
-    """One ``[inventory]`` table and where it came from."""
+    """One settings file's ``[inventory]`` and ``[creds]`` tables and where they came from."""
 
     origin: str
     """The settings file that declared it — for error text."""
     anchor_dir: Path
     """Directory relative paths anchor to (the repo root; ``~/.otto`` for the user file)."""
     table: dict[str, Any] = field(default_factory=dict)
+    creds_table: dict[str, Any] = field(default_factory=dict)
+    """The same file's ``[creds]`` table, ``{}`` when absent (spec 2026-09-06 creds-store §4.2)."""
 
 
 @dataclass(frozen=True)
@@ -56,27 +60,29 @@ class CompiledInventory:
 
     backend: str
     kwargs: dict[str, Any]
-    creds_file: "Path | None"
     cache_ttl: timedelta
     anchor_dir: Path
     origin: str
+    creds: "CompiledCreds | None" = None
 
     def same_as(self, other: "CompiledInventory") -> bool:
         """Return whether this is the same inventory as *other*.
 
-        Backend, anchored kwargs, creds file AND ``cache_ttl`` must agree —
-        every field the table configures. ``cache_ttl`` is in here because it
-        is behaviour, not decoration: two repos declaring ``"0"`` and ``"7d"``
+        Backend, anchored kwargs AND ``cache_ttl`` must agree — every field
+        the table configures. ``cache_ttl`` is in here because it is
+        behaviour, not decoration: two repos declaring ``"0"`` and ``"7d"``
         would otherwise be "the same", and declaration order would silently
         decide whether the process caches at all (spec §8 requires identical
         tables). ``origin`` and ``anchor_dir`` are excluded, which is the whole
         point — two repos naming the same inventory from their own settings
-        files, each anchoring it to its own root, are not a conflict.
+        files, each anchoring it to its own root, are not a conflict. ``creds``
+        is excluded too: it is compared per table by
+        :meth:`~otto.creds.config.CompiledCreds.same_as` in ``_resolve_creds``,
+        which resolves independently of the inventory.
         """
-        return (self.backend, self.kwargs, self.creds_file, self.cache_ttl) == (
+        return (self.backend, self.kwargs, self.cache_ttl) == (
             other.backend,
             other.kwargs,
-            other.creds_file,
             other.cache_ttl,
         )
 
@@ -115,11 +121,9 @@ def compile_inventory(
         kwargs: dict[str, Any] = {"path": anchor_path(Path(path), anchor_dir), "supplies": supplies}
     else:
         kwargs = extras
-    creds = anchor_path(Path(cfg.creds_file), anchor_dir) if cfg.creds_file else None
     return CompiledInventory(
         backend=cfg.backend,
         kwargs=kwargs,
-        creds_file=creds,
         cache_ttl=parse_cache_ttl(cfg.cache_ttl),
         anchor_dir=anchor_dir,
         origin=origin,
@@ -165,7 +169,7 @@ def _maybe_cached(inventory: Inventory, compiled: CompiledInventory) -> Inventor
         raise InventoryError(
             f"{compiled.origin}: backend {compiled.backend!r} supplies 'creds', which a "
             'snapshot cannot carry; set cache_ttl = "0" for this backend, or have the '
-            "backend leave creds to creds_file"
+            "backend leave creds to a [creds] store"
         )
     # Function-local, both of them: `otto.inventory` sits on the bootstrap path
     # and must not pull `otto.config` in at module scope — see this module's
@@ -190,16 +194,15 @@ def construct_inventory(compiled: CompiledInventory) -> Inventory:
     rather than inside :class:`~otto.inventory.json_backend.JsonInventory`
     keeps the backend a plain reader of the path it was handed.
 
-    ``creds_file`` configured means the inventory supplies ``creds`` (§9.4):
-    the overlay is added only when the file is declared, and when it is, the
-    backend's own records may not carry ``creds`` at all. Without it, records
-    carry their own. Construction still does no I/O — the overlay reads the
-    file on first lookup, and the cache reads nothing until then either.
+    A compiled ``[creds]`` table means the inventory supplies ``creds`` (spec
+    2026-09-06 §5.4): the overlay merges the store's entries UNDER the
+    record's, by login. Construction still does no I/O — the overlay reads
+    the store on first lookup, and the cache reads nothing until then either.
 
     ORDER MATTERS: the cache goes on first, the creds overlay OUTERMOST. The
     snapshot must never contain credentials (§9.4/§9.5), and a cache wrapped
     around the overlay would be caching exactly that; the doctor also reads
-    ``isinstance(inventory, CredsOverlay)`` to report the creds file's mode.
+    ``isinstance(inventory, CredsOverlay)`` to report the creds store's mode.
 
     A non-json backend validates its own kwargs in its constructor, so a
     typo'd key surfaces as its ``TypeError``/``ValueError``. That is wrapped
@@ -225,8 +228,17 @@ def construct_inventory(compiled: CompiledInventory) -> Inventory:
                 f"{compiled.origin}: [inventory] backend {compiled.backend!r}: {e}"
             ) from e
     inventory = _maybe_cached(inventory, compiled)
-    if compiled.creds_file is not None:
-        inventory = CredsOverlay(inventory, path=compiled.creds_file.resolve())
+    if compiled.creds is not None:
+        # Function-local, both: otto.inventory is on the bootstrap path and
+        # otto.creds is only needed once a store is actually declared.
+        from ..creds.config import construct_creds_store
+        from ..creds.errors import CredsError
+
+        try:
+            store = construct_creds_store(compiled.creds)
+        except CredsError as e:
+            raise InventoryError(str(e)) from e
+        inventory = CredsOverlay(inventory, store=store)
     return inventory
 
 
@@ -238,6 +250,54 @@ def _compile_declaration(decl: InventoryDeclaration) -> CompiledInventory:
     except ValidationError as e:
         raise InventoryError(f"{decl.origin}: [inventory] {e}") from e
     return compile_inventory(cfg, anchor_dir=decl.anchor_dir, origin=decl.origin)
+
+
+def _resolve_creds(
+    declarations: list[InventoryDeclaration],
+    *,
+    user_settings: "UserSettingsModel | None",
+    user_settings_file: "Path | None",
+) -> "CompiledCreds | None":
+    """Run the §4.2 walk for ``[creds]``: repos that declare it must agree, else the user file.
+
+    Independent of the ``[inventory]`` walk — each table finds its own first
+    declaration. Every ``CredsError`` becomes an ``InventoryError`` here so
+    the callers of ``build_inventory`` keep catching one type.
+
+    Checks emptiness BEFORE importing ``otto.creds``: this runs on every
+    ``build_inventory`` call, declared or not, and the import-budget guard
+    caps ``otto.creds`` off the bootstrap path — a lab with no ``[creds]``
+    anywhere must not pay for the package at all.
+    """
+    if not any(d.creds_table for d in declarations) and (
+        user_settings is None or user_settings.creds is None
+    ):
+        return None
+    from ..creds.config import compile_creds, compile_creds_table  # deferred: bootstrap path
+    from ..creds.errors import CredsError
+
+    try:
+        compiled = [
+            compile_creds_table(dict(d.creds_table), anchor_dir=d.anchor_dir, origin=d.origin)
+            for d in declarations
+            if d.creds_table
+        ]
+        for other in compiled[1:]:
+            if not other.same_as(compiled[0]):
+                raise InventoryError(
+                    f"two active repos declare different [creds] tables: {compiled[0].origin} "
+                    f"and {other.origin}; a process has exactly one creds store"
+                )
+        if compiled:
+            return compiled[0]
+        if user_settings is not None and user_settings.creds is not None:
+            from ..config.user_settings import user_settings_path  # deferred: see module docstring
+
+            path = user_settings_file if user_settings_file is not None else user_settings_path()
+            return compile_creds(user_settings.creds, anchor_dir=path.parent, origin=str(path))
+    except CredsError as e:
+        raise InventoryError(str(e)) from e
+    return None
 
 
 def build_inventory_from_declarations(
@@ -254,21 +314,34 @@ def build_inventory_from_declarations(
     *user_settings* came from (for error text); it defaults to
     :func:`~otto.config.user_settings.user_settings_path`.
     """
-    compiled = [_compile_declaration(d) for d in declarations]
+    compiled = [_compile_declaration(d) for d in declarations if d.table]
     for other in compiled[1:]:
         if not other.same_as(compiled[0]):
             raise InventoryError(
                 f"two active repos declare different [inventory] tables: {compiled[0].origin} "
                 f"and {other.origin}; a process has exactly one inventory"
             )
+    creds = _resolve_creds(
+        declarations, user_settings=user_settings, user_settings_file=user_settings_file
+    )
     if compiled:
-        return construct_inventory(compiled[0])
+        return construct_inventory(dataclasses.replace(compiled[0], creds=creds))
     if user_settings is not None and user_settings.inventory is not None:
         from ..config.user_settings import user_settings_path  # deferred: see module docstring
 
         path = user_settings_file if user_settings_file is not None else user_settings_path()
         return construct_inventory(
-            compile_inventory(user_settings.inventory, anchor_dir=path.parent, origin=str(path))
+            dataclasses.replace(
+                compile_inventory(
+                    user_settings.inventory, anchor_dir=path.parent, origin=str(path)
+                ),
+                creds=creds,
+            )
+        )
+    if creds is not None:
+        raise InventoryError(
+            f"{creds.origin}: [creds] is keyed by inventory key and no [inventory] is declared "
+            "in either settings file; declare one, or remove [creds]"
         )
     return None
 
@@ -297,9 +370,10 @@ def build_inventory(
             origin=str(repo.sut_dir / TOML_SETTINGS_PATH),
             anchor_dir=repo.sut_dir,
             table=dict(repo.inventory_settings),
+            creds_table=dict(repo.creds_settings),
         )
         for repo in repos
-        if repo.inventory_settings
+        if repo.inventory_settings or repo.creds_settings
     ]
     try:
         user = load_user_settings(user_settings_path)

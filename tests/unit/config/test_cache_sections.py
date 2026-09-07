@@ -217,6 +217,7 @@ def test_lab_file_edits_move_the_names_digest_only(tmp_path, monkeypatch):
         tests=[],
         lab_sources=json_lab_sources(sut, [lab]),
         inventory_settings={},
+        creds_settings={},
     )
     names, tests = section_by_name("names"), section_by_name("tests")
     names_before = section_digest(names, [repo])

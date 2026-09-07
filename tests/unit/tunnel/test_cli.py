@@ -98,6 +98,7 @@ def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
         # `build_inventory` reads it on the enumeration path; a stand-in that
         # omits it enumerates no hosts at all.
         inventory_settings={},
+        creds_settings={},
     )
 
 

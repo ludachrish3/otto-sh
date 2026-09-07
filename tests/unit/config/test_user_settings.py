@@ -34,14 +34,11 @@ def test_absent_file_is_none(tmp_path):
 
 
 def test_parses_inventory_table(tmp_path):
-    p = _user_file(
-        tmp_path, '[inventory]\nbackend = "json"\npath = "i.json"\ncreds_file = "c.json"\n'
-    )
+    p = _user_file(tmp_path, '[inventory]\nbackend = "json"\npath = "i.json"\n')
     model = load_user_settings(p)
     assert model is not None
     assert model.inventory is not None
     assert model.inventory.backend == "json"
-    assert model.inventory.creds_file == "c.json"
     assert model.inventory.model_extra == {"path": "i.json"}
 
 

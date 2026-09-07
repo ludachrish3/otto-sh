@@ -20,6 +20,7 @@ def test_usernames_round_trip(tmp_path, monkeypatch):
             tests=[],
             lab_sources=[],
             inventory_settings={},
+            creds_settings={},
         )
     ]
 

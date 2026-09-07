@@ -661,8 +661,11 @@ lab-file fields here:
 [inventory]
 backend = "json"
 path = "~/lab/inventory.json"
-creds_file = "~/.otto/creds.json"
 supplies = ["ip", "interfaces", "is_virtual", "site", "rack", "shelf", "board", "os_name"]
+
+[creds]
+backend = "json"
+path = "~/.otto/creds.json"
 ```
 
 `lab_data/lab.json` in the project — otto's business only. Every host entry is

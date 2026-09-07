@@ -415,9 +415,9 @@ async def test_open_context_loads_the_lab_with_the_process_inventory(tmp_path, m
     settings.write_text(  # sutrepo-exempt: the user-level ~/.otto file, not a SUT repo
         '[inventory]\nbackend = "json"\n'
         f'path = "{fixture / "inventory.json"}"\n'
-        f'creds_file = "{fixture / "creds.json"}"\n'
         'supplies = ["ip", "interfaces", "is_virtual", "site", "rack", '
         '"shelf", "board", "os_name"]\n'
+        f'\n[creds]\nbackend = "json"\npath = "{fixture / "creds.json"}"\n'
     )
     monkeypatch.setenv("OTTO_HOME", str(home))
     async with otto.open_context(lab="unix", search_paths=[fixture]) as ctx:

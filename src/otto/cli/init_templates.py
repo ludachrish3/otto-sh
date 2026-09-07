@@ -109,7 +109,6 @@ paths = ["lab_data"]
 #   filter = {{ site = "lab-a", status = "active" }}
 #[inventory]
 #backend = "json"
-#creds_file = "~/.otto/creds.json"
 #cache_ttl = "24h"
 # path = "~/lab/inventory.json"
 

@@ -17,6 +17,7 @@ def _repos(tmp_path):
             labs=[],
             lab_sources=[],
             inventory_settings={},
+            creds_settings={},
         )
     ]
 

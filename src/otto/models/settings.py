@@ -326,16 +326,16 @@ class ReservationConfigSpec(OttoModel):
 class InventoryConfigSpec(OttoModel):
     """The otto-owned ``[inventory]`` envelope (spec 2026-08-28 host-inventory §8).
 
-    ``backend`` selects a registered inventory backend; ``creds_file`` and
-    ``cache_ttl`` are core, backend-independent (§9.4, §9.5). ``extra='allow'``
-    keeps the backend's own kwargs (``path``, ``url``, ``filter``…) open here —
+    ``backend`` selects a registered inventory backend; ``cache_ttl`` is core,
+    backend-independent (§9.5); credentials moved to the ``[creds]`` table
+    (spec 2026-09-06 creds-store §4.4). ``extra='allow'`` keeps the backend's
+    own kwargs (``path``, ``url``, ``filter``…) open here —
     :func:`otto.inventory.compile_inventory` validates them knowing the backend.
     """
 
     model_config = ConfigDict(extra="allow")
 
     backend: str
-    creds_file: str | None = None
     cache_ttl: str = "24h"
 
     @field_validator("cache_ttl")
@@ -343,6 +343,19 @@ class InventoryConfigSpec(OttoModel):
     def _cache_ttl_grammar(cls, v: str) -> str:
         parse_cache_ttl(v)  # raises ValueError with the grammar
         return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def _creds_file_has_moved(cls, data: object) -> object:
+        # extra="allow" would otherwise swallow the dead key as a backend kwarg
+        # and surface it as the json backend's "unknown key" — or hand it to a
+        # third-party constructor that never asked for it.
+        if isinstance(data, dict) and "creds_file" in data:
+            raise ValueError(
+                'creds_file has moved: declare [creds] backend = "json" / path = "<the same '
+                'path>" beside [inventory] (see docs/guide/configuration/inventory.md)'
+            )
+        return data
 
 
 class CredsConfigSpec(OttoModel):

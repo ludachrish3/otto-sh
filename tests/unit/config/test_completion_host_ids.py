@@ -24,6 +24,7 @@ def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
         # that omits it models a Repo that no longer exists, and the
         # enumeration silently returns no hosts at all.
         inventory_settings={},
+        creds_settings={},
     )
 
 

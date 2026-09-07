@@ -192,10 +192,11 @@ def _allow_inventory_reference(doc: dict[str, Any]) -> None:
     """Let a referenced entry state ``inventory`` INSTEAD of the fields a record fills (spec §5).
 
     ``lab.json`` is a SUPERSET of what a host spec validates: an entry with
-    ``"inventory": "<key>"`` carries no ``ip`` — nor, under a ``creds_file``,
-    any ``creds`` — because those arrive from the inventory record, and the
-    loader joins the two (:func:`otto.inventory.resolve_host_entry`) before
-    the spec ever sees the dict. Without this, the schema an editor validates
+    ``"inventory": "<key>"`` carries no ``ip`` — nor, when the inventory
+    supplies them, any ``creds`` — because those arrive from the inventory
+    record, and the loader joins the two
+    (:func:`otto.inventory.resolve_host_entry`) before the spec ever sees the
+    dict. Without this, the schema an editor validates
     ``lab.json`` against would red-underline every referenced entry in a file
     otto loads perfectly.
 

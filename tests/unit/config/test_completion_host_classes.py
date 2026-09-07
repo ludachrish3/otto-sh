@@ -14,7 +14,10 @@ def _repo(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
     lab.mkdir()
     write_lab_json(lab / "lab.json", hosts)
     return SimpleNamespace(
-        lab_sources=json_lab_sources(tmp_path, [lab]), sut_dir=tmp_path, inventory_settings={}
+        lab_sources=json_lab_sources(tmp_path, [lab]),
+        sut_dir=tmp_path,
+        inventory_settings={},
+        creds_settings={},
     )
 
 

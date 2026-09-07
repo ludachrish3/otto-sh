@@ -269,8 +269,16 @@ path = "otto.inventory"
 # otto.utils: compile_inventory anchors [inventory] paths through the same
 # `anchor_path` every other settings path goes through — one authority for the
 # rule, not a copy.
+# otto.creds (spec 2026-09-06 creds-store §4/§5): `[creds]` resolves
+# independently of `[inventory]` in config.py's `_resolve_creds`, and
+# construct_inventory/CredsOverlay.lookup build the store and re-raise its
+# CredsError as an InventoryError. Every use is function-local — otto.creds
+# is only imported once a `[creds]` table is actually declared — so a lab
+# with no store configured never pays for the package at all. One-way:
+# otto.creds never imports otto.inventory (see its own module note).
 depends_on = [
     "otto.config",
+    "otto.creds",
     "otto.errors",
     "otto.host",
     "otto.models",

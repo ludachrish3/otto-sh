@@ -62,29 +62,31 @@ def orphan_warning(inventory: Inventory, *, referenced: set[str]) -> "str | None
     )
 
 
-def creds_mode_warning(inventory: Inventory) -> "str | None":
-    """Return the warning for a ``creds_file`` readable by group/others (spec §9.4), or ``None``.
+def creds_mode_warnings(inventory: Inventory) -> list[str]:
+    """Warnings for creds-store files readable by group/others, or missing (spec 2026-09-06 §7.1).
 
-    Reads ``creds_path`` only through the ``CredsOverlay`` type check — the
-    ``isinstance`` stays even though ``CredsOverlay.__init__`` always sets
-    the attribute, because a third-party backend that happens to expose an
-    unrelated, possibly non-``Path`` ``creds_path`` of its own must not
-    traceback the doctor. This also means the warning only fires when
-    ``CredsOverlay`` is the OUTERMOST wrapper — which is how
-    :func:`~otto.inventory.config.construct_inventory` builds one today; a
-    future wrapper placed outside it would silently hide this warning.
+    Asks the store which files its freshness is derived from (``stat_paths``)
+    and checks each; a store with no stat paths — a vault — yields nothing.
+    Reads the store only through the ``CredsOverlay`` type check, and only
+    when the overlay is OUTERMOST, which is how ``construct_inventory`` builds
+    one; a future wrapper placed outside it would silently hide this warning.
     """
     if not isinstance(inventory, CredsOverlay):
-        return None
-    path: Path = inventory.creds_path
-    try:
-        mode = stat.S_IMODE(path.stat().st_mode)
-    except FileNotFoundError:
-        return f"creds_file {path} does not exist"
-    except OSError:
-        return None
-    if mode & 0o077:
-        return (
-            f"creds_file {path} is mode {mode:04o}; it holds passwords — make it 0600 (chmod 600)"
-        )
-    return None
+        return []
+    stat_paths = getattr(inventory.store, "stat_paths", None)
+    paths = stat_paths() if callable(stat_paths) else None
+    out: list[str] = []
+    for path in paths or []:
+        try:
+            mode = stat.S_IMODE(Path(path).stat().st_mode)
+        except FileNotFoundError:
+            out.append(f"creds store file {path} does not exist")
+            continue
+        except OSError:
+            continue
+        if mode & 0o077:
+            out.append(
+                f"creds store file {path} is mode {mode:04o}; it holds passwords — "
+                "make it 0600 (chmod 600)"
+            )
+    return out

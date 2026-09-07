@@ -284,7 +284,7 @@ def test_a_refused_timeout_names_the_settings_file_and_the_backend(tmp_path):
     compiled = CompiledInventory(
         backend="netbox",
         kwargs={"url": DEAD, "timeout": 0},
-        creds_file=None,
+        creds=None,
         cache_ttl=timedelta(0),
         anchor_dir=tmp_path,
         origin=str(tmp_path / ".otto" / "settings.toml"),
@@ -316,7 +316,7 @@ def test_a_bad_kwarg_names_the_settings_file_and_the_backend(tmp_path):
     compiled = CompiledInventory(
         backend="netbox",
         kwargs={"url": DEAD, "ip_source": "bogus"},
-        creds_file=None,
+        creds=None,
         cache_ttl=timedelta(0),
         anchor_dir=tmp_path,
         origin=str(tmp_path / ".otto" / "settings.toml"),
@@ -329,7 +329,7 @@ def test_an_unknown_kwarg_names_the_settings_file_and_the_backend(tmp_path):
     compiled = CompiledInventory(
         backend="netbox",
         kwargs={"url": DEAD, "urll": "typo"},
-        creds_file=None,
+        creds=None,
         cache_ttl=timedelta(0),
         anchor_dir=tmp_path,
         origin=str(tmp_path / ".otto" / "settings.toml"),

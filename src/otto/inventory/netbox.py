@@ -47,8 +47,9 @@ _CUSTOM_FIELD_EXCLUDED: frozenset[str] = frozenset({"ip", "creds", "interfaces"}
 """Record fields a custom field may never fill (spec §9.2, controller ruling R21).
 
 ``ip`` has ``ip_source`` — two ways to say the same thing is a way for them to
-disagree; ``creds`` come from ``creds_file`` and nowhere else (§9.4); and
-``interfaces`` is a structure, not a scalar a NetBox custom field can hold.
+disagree; ``creds`` come from the ``[creds]`` store or the lab file and
+nowhere else (§9.4); and ``interfaces`` is a structure, not a scalar a NetBox
+custom field can hold.
 """
 
 _RESERVED_EXTRA_KEYS: frozenset[str] = frozenset({"id", "serial", "asset_tag", "status", "tags"})
@@ -204,8 +205,8 @@ class NetBoxInventory:
             raise ValueError(
                 f"custom_fields may not map {excluded[0]!r} "
                 f"(excluded: {sorted(_CUSTOM_FIELD_EXCLUDED)}): 'ip' comes from ip_source, "
-                "'creds' only ever from creds_file, and 'interfaces' is a structure no NetBox "
-                "custom field holds"
+                "'creds' come from the [creds] store or the lab file, and 'interfaces' is a "
+                "structure no NetBox custom field holds"
             )
         # A bare string here is the accident this catches: `list("owner")` is
         # ['o','w','n','e','r'], five custom fields NetBox has never heard of,

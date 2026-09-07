@@ -4,5 +4,8 @@
 [inventory]
 backend = "json"
 path = "inventory.json"
-creds_file = "creds.json"
 supplies = ["ip", "interfaces", "is_virtual", "site", "rack", "shelf", "board", "os_name"]
+
+[creds]
+backend = "json"
+path = "creds.json"

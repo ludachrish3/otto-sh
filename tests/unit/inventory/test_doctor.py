@@ -2,9 +2,10 @@
 
 import json
 
+from otto.creds import JsonCredsStore
 from otto.inventory import CredsOverlay, JsonInventory
 from otto.inventory.doctor import (
-    creds_mode_warning,
+    creds_mode_warnings,
     orphan_warning,
     referenced_keys,
     references_inventory,
@@ -50,22 +51,44 @@ def test_creds_mode_warning_names_the_mode(tmp_path):
     creds = tmp_path / "creds.json"
     creds.write_text("{}")
     creds.chmod(0o644)
-    inv = CredsOverlay(_inv(tmp_path, ["k"]), path=creds)
-    w = creds_mode_warning(inv)
-    assert w is not None
+    inv = CredsOverlay(_inv(tmp_path, ["k"]), store=JsonCredsStore(creds))
+    (w,) = creds_mode_warnings(inv)
     assert "0644" in w
     assert str(creds) in w
     assert "0600" in w
     creds.chmod(0o600)
-    assert creds_mode_warning(inv) is None
-    assert creds_mode_warning(_inv(tmp_path, ["k"])) is None  # no creds file configured
+    assert creds_mode_warnings(inv) == []
+    assert creds_mode_warnings(_inv(tmp_path, ["k"])) == []  # no creds store configured
 
 
 def test_creds_mode_warning_names_a_missing_creds_file(tmp_path):
-    """A declared but absent ``creds_file`` warns by name — it does not silently vanish."""
+    """A declared but absent creds store file warns by name — it does not silently vanish."""
     missing = tmp_path / "nope" / "creds.json"
-    inv = CredsOverlay(_inv(tmp_path, ["k"]), path=missing)
-    w = creds_mode_warning(inv)
-    assert w is not None
+    inv = CredsOverlay(_inv(tmp_path, ["k"]), store=JsonCredsStore(missing))
+    (w,) = creds_mode_warnings(inv)
     assert str(missing) in w
     assert "does not exist" in w
+
+
+def test_creds_mode_warnings_is_silent_over_a_vault_store(tmp_path):
+    """A store with no stat paths (a vault) is opaque; nothing here to check by mode (§7.1)."""
+
+    class NoStatPaths:
+        label = "vault:x"
+
+        def lookup(self, key):
+            return []
+
+        def list_keys(self):
+            return None
+
+        def fingerprint(self):
+            return None
+
+    assert creds_mode_warnings(CredsOverlay(_inv(tmp_path, ["k"]), store=NoStatPaths())) == []
+
+    class OpaqueStatPaths(NoStatPaths):
+        def stat_paths(self):
+            return None
+
+    assert creds_mode_warnings(CredsOverlay(_inv(tmp_path, ["k"]), store=OpaqueStatPaths())) == []

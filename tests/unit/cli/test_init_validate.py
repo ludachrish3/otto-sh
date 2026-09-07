@@ -405,7 +405,7 @@ def _reference_first_host(root: Path, key: str, *, drop: tuple[str, ...] = ("ip"
     *drop* defaults to just ``"ip"`` — the ordinary case, where the
     inventory's ``supplies`` is ``["ip"]`` and every other field
     (``creds`` included) stays inline. A test that also configures
-    ``creds_file`` must pass ``drop=("ip", "creds")``: a ``creds_file``
+    ``[creds]`` must pass ``drop=("ip", "creds")``: a ``[creds]`` store
     makes the (effective, ``CredsOverlay``-widened) supplies include
     ``"creds"`` too, and an inline ``creds`` left behind collides with it
     (``'creds' is inventory-owned``), failing the "lab" area for a reason
@@ -466,7 +466,7 @@ def test_orphan_records_warn_and_the_label_is_printed(tmp_path, monkeypatch):
 def test_world_readable_creds_file_warns(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)
-    # drop=("ip", "creds"): once creds_file is configured below, the
+    # drop=("ip", "creds"): once [creds] is configured below, the
     # inventory's effective supplies include "creds" too — the scaffold's
     # inline creds would otherwise collide with it (see _reference_first_host).
     _reference_first_host(tmp_path, "k", drop=("ip", "creds"))
@@ -475,11 +475,11 @@ def test_world_readable_creds_file_warns(tmp_path, monkeypatch):
     creds.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
     creds.chmod(0o644)
     settings = tmp_path / ".otto" / "settings.toml"
-    with settings.open("a") as f:  # sutrepo-exempt: appending creds_file post-scaffold
-        f.write(f'creds_file = "{creds}"\n')
+    with settings.open("a") as f:  # sutrepo-exempt: appending [creds] post-scaffold
+        f.write(f'\n[creds]\nbackend = "json"\npath = "{creds}"\n')
     result = _invoke(["--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
-    assert "creds_file" in result.output
+    assert "creds store file" in result.output
     assert "0644" in result.output
     assert "make it 0600" in result.output
 

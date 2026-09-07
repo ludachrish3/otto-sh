@@ -6,8 +6,9 @@ remote backend's snapshot, and ``otto inventory export``/``diff`` write and
 compare it. That is deliberate — a snapshot IS a stage-1 file, so an operator
 can copy one out of ``~/.otto`` and point a ``json`` inventory at it.
 
-No credentials, ever: they live in ``creds_file`` (spec §9.4), so a document
-is shareable, diffable and committable without leaking one.
+No credentials, ever: they live in the ``[creds]`` store or the record
+(spec §9.4), so a document is shareable, diffable and committable without
+leaking one.
 """
 
 import contextlib
@@ -35,8 +36,8 @@ def _stated(record: InventoryRecord) -> dict[str, Any]:
     inventory supplied. ``exclude_none`` because an explicit ``None`` is how a
     schema round-trip spells "unset", the same rule the join applies.
 
-    ``creds`` are dropped whatever the record says: they come from
-    ``creds_file`` and nowhere else (§9.4), and a document that carried them
+    ``creds`` are dropped whatever the record says: they live in the
+    ``[creds]`` store or the record (§9.4), and a document that carried them
     would be a secret in a file the whole point of which is that it can be
     shared.
     """

@@ -1719,8 +1719,8 @@ def _cache_repo(tmp_path: Path, name: str = "sut") -> MagicMock:
     ``inventory_settings = {}`` is not decoration: a MagicMock auto-attribute
     is TRUTHY and ``dict()``s to ``{}``, which reads as a present-but-empty
     ``[inventory]`` — a shape no real ``Repo`` produces and one
-    ``build_inventory`` rejects, taking the cache write down with it and
-    leaving a round-trip test green against a writer that wrote nothing.
+    ``build_inventory_from_declarations`` SKIPS (no inventory is built), same
+    as if ``[inventory]`` were never declared at all.
     """
     repo = MagicMock()
     repo.sut_dir = tmp_path / name

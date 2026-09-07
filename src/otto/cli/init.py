@@ -463,13 +463,17 @@ def _inventory_for(
 
     data = _settings_data(root) or {}
     table = data.get("inventory") or {}
+    creds_table = data.get("creds") or {}
     declarations = (
         [
             InventoryDeclaration(
-                origin=str(root / ".otto" / "settings.toml"), anchor_dir=root, table=dict(table)
+                origin=str(root / ".otto" / "settings.toml"),
+                anchor_dir=root,
+                table=dict(table) if isinstance(table, dict) else {},
+                creds_table=dict(creds_table) if isinstance(creds_table, dict) else {},
             )
         ]
-        if isinstance(table, dict) and table
+        if (isinstance(table, dict) and table) or (isinstance(creds_table, dict) and creds_table)
         else []
     )
     try:
@@ -672,9 +676,9 @@ def _lab_warnings(
 
     When an inventory resolves, its own advisory findings — a snapshot served
     because the backend was unreachable, orphan records
-    (:func:`~otto.inventory.doctor.orphan_warning`) and a world-readable
-    ``creds_file`` (:func:`~otto.inventory.doctor.creds_mode_warning`) — are
-    appended. A broken inventory declaration contributes nothing here: it is
+    (:func:`~otto.inventory.doctor.orphan_warning`) and world-readable
+    creds-store files (:func:`~otto.inventory.doctor.creds_mode_warnings`) —
+    are appended. A broken inventory declaration contributes nothing here: it is
     already a problem in the verdict table via :func:`_validate_lab`, and
     repeating it as a warning would be noise.
 
@@ -687,7 +691,7 @@ def _lab_warnings(
     what that gate must not print.
     """
     from ..inventory import InventoryError, snapshot_cache_of
-    from ..inventory.doctor import creds_mode_warning, orphan_warning, referenced_keys
+    from ..inventory.doctor import creds_mode_warnings, orphan_warning, referenced_keys
     from ..labs.doctor import lab_warnings
 
     _, documents = _parse_lab_documents(root)
@@ -709,7 +713,7 @@ def _lab_warnings(
         stale = snapshot.stale_notice if snapshot is not None else None
         # Staleness first — it is the fact that qualifies every finding under
         # it, orphan list included.
-        warnings.extend(w for w in (stale, orphan, creds_mode_warning(inventory)) if w)
+        warnings.extend(w for w in (stale, orphan, *creds_mode_warnings(inventory)) if w)
     return warnings
 
 

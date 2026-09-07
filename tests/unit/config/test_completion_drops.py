@@ -44,6 +44,7 @@ def _repo(tmp_path: Path, inventory_settings: dict, *, hosts: list[dict], name: 
         tests=[],
         lab_sources=json_lab_sources(sut, [lab]),
         inventory_settings=dict(inventory_settings),
+        creds_settings={},
     )
 
 

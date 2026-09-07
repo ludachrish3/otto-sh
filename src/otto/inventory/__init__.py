@@ -17,7 +17,7 @@ from .config import build_inventory_from_declarations as build_inventory_from_de
 from .config import compile_inventory as compile_inventory
 from .config import construct_inventory as construct_inventory
 from .creds import CredsOverlay as CredsOverlay
-from .creds import load_creds_file as load_creds_file
+from .creds import merge_creds as merge_creds
 from .errors import InventoryError as InventoryError
 from .errors import InventoryKeyError as InventoryKeyError
 from .json_backend import JsonInventory as JsonInventory

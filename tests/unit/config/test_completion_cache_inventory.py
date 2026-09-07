@@ -44,6 +44,7 @@ def _repo(
         tests=[],
         lab_sources=json_lab_sources(sut, [lab]),
         inventory_settings=dict(inventory_settings),
+        creds_settings={},
     )
 
 

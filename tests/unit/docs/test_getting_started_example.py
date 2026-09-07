@@ -13,8 +13,7 @@ import pytest
 
 from otto.config.lab import load_lab
 from otto.config.repo import Repo
-from otto.inventory import compile_inventory, construct_inventory
-from otto.models.settings import InventoryConfigSpec
+from otto.inventory import InventoryDeclaration, build_inventory_from_declarations
 from otto.testing import assert_reservation_backend_conforms
 from tests._fixtures.gs_example import EXAMPLE, load_example_lab
 from tests._fixtures.gs_example import LIBS as _LIBS
@@ -151,16 +150,26 @@ def test_the_example_enter_python_mirrors_the_api_sample() -> None:
 
 @pytest.fixture
 def twin_inventory():
-    # The twin's `[inventory]` table is a per-project override (spec §8, the
-    # same TOML the `.otto/settings.toml` file's own `name`/`version`/
-    # `[[lab.sources]]` live in) -- read the way `otto.inventory.config.build_inventory`
-    # reads any active repo's declaration, not `load_user_settings` (that model is
-    # `extra="forbid"` for a standalone `~/.otto/settings.toml` and would reject
-    # this file's other top-level keys).
+    # The twin's `[inventory]`/`[creds]` tables are a per-project override
+    # (spec §8, the same TOML the `.otto/settings.toml` file's own
+    # `name`/`version`/`[[lab.sources]]` live in) -- read the way
+    # `otto.inventory.config.build_inventory` reads any active repo's
+    # declaration, not `load_user_settings` (that model is `extra="forbid"`
+    # for a standalone `~/.otto/settings.toml` and would reject this file's
+    # other top-level keys).
     repo = Repo(sut_dir=TWIN)
     assert repo.inventory_settings
-    cfg = InventoryConfigSpec.model_validate(repo.inventory_settings)
-    return construct_inventory(compile_inventory(cfg, anchor_dir=TWIN, origin="example"))
+    return build_inventory_from_declarations(
+        [
+            InventoryDeclaration(
+                origin="example",
+                anchor_dir=TWIN,
+                table=dict(repo.inventory_settings),
+                creds_table=dict(repo.creds_settings),
+            )
+        ],
+        user_settings=None,
+    )
 
 
 def test_the_referenced_twin_builds_the_same_unix_lab(twin_inventory) -> None:

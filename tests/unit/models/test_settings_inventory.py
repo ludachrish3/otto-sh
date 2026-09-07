@@ -106,3 +106,8 @@ def test_creds_table_parses_in_both_models():
     assert user.creds.backend == "json"
     with pytest.raises(ValidationError, match="backend"):
         CredsConfigSpec()
+
+
+def test_creds_file_on_the_inventory_table_is_refused_with_a_pointer():
+    with pytest.raises(ValidationError, match=r"creds_file has moved: declare \[creds\]"):
+        InventoryConfigSpec(backend="json", path="i.json", creds_file="c.json")

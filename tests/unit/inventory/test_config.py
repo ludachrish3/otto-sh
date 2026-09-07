@@ -17,13 +17,13 @@ from otto.inventory import (
     compile_inventory,
     construct_inventory,
 )
-from otto.models.settings import InventoryConfigSpec, UserSettingsModel
+from otto.models.settings import CredsConfigSpec, InventoryConfigSpec, UserSettingsModel
 
 
-def _repo(tmp_path, name, table):
+def _repo(tmp_path, name, table, creds=None):
     root = tmp_path / name
     root.mkdir()
-    return SimpleNamespace(sut_dir=root, inventory_settings=table)
+    return SimpleNamespace(sut_dir=root, inventory_settings=table, creds_settings=creds or {})
 
 
 def _inventory_file(dir_: Path, name="inventory.json"):
@@ -80,10 +80,10 @@ def test_json_supplies_must_be_a_list_of_field_names(tmp_path):
 
 def test_relative_paths_anchor_to_the_declaring_dir_and_tilde_expands(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    cfg = InventoryConfigSpec(backend="json", path="lab/i.json", creds_file="~/creds.json")
+    cfg = InventoryConfigSpec(backend="json", path="lab/i.json")
     out = compile_inventory(cfg, anchor_dir=tmp_path / "repo", origin="o")
     assert out.kwargs["path"] == tmp_path / "repo" / "lab" / "i.json"
-    assert out.creds_file == tmp_path / "creds.json"
+    assert out.creds is None
     assert out.cache_ttl.total_seconds() == 24 * 3600
 
 
@@ -208,9 +208,9 @@ def registered_backend():
             INVENTORY_BACKENDS.unregister(name)
 
 
-def _third_party(tmp_path, ttl, *, creds_file=None):
+def _third_party(tmp_path, ttl):
     return compile_inventory(
-        InventoryConfigSpec(backend="cmdb", cache_ttl=ttl, creds_file=creds_file),
+        InventoryConfigSpec(backend="cmdb", cache_ttl=ttl),
         anchor_dir=tmp_path,
         origin="o",
     )
@@ -232,7 +232,7 @@ def test_a_backend_that_supplies_creds_is_never_snapshot_cached(
         InventoryError,
         match=r"o: backend 'cmdb' supplies 'creds', which a snapshot cannot carry; "
         r"set cache_ttl = \"0\" for this backend, or have the backend leave creds "
-        r"to creds_file",
+        r"to a \[creds\] store",
     ):
         construct_inventory(_third_party(tmp_path, "24h"))
 
@@ -247,14 +247,14 @@ def test_the_same_backend_constructs_with_caching_turned_off(
     assert isinstance(inv, _SuppliesCreds)  # not wrapped: nothing to lose across a snapshot
 
 
-def test_a_creds_file_over_a_cached_backend_is_not_the_refused_case(
+def test_a_creds_store_over_a_cached_backend_is_not_the_refused_case(
     tmp_path, monkeypatch, registered_backend
 ):
     """ORDER: the check reads the INNER backend, before the overlay unions ``creds`` in.
 
     ``CredsOverlay`` is outermost and always claims ``creds``. Checking the
     constructed object rather than the backend would refuse the one
-    configuration §9.4 recommends — creds in ``creds_file``, records in a
+    configuration §9.4 recommends — creds in a ``[creds]`` store, records in a
     cached remote backend — and this is the test that would go red.
     """
     from otto.inventory import SnapshotCache
@@ -263,7 +263,17 @@ def test_a_creds_file_over_a_cached_backend_is_not_the_refused_case(
     registered_backend("cmdb", _CachedThirdParty)
     creds = tmp_path / "creds.json"
     creds.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
-    inv = construct_inventory(_third_party(tmp_path, "24h", creds_file=str(creds)))
+    inv = build_inventory_from_declarations(
+        [
+            InventoryDeclaration(
+                origin="o",
+                anchor_dir=tmp_path,
+                table={"backend": "cmdb", "cache_ttl": "24h"},
+                creds_table={"backend": "json", "path": str(creds)},
+            )
+        ],
+        user_settings=None,
+    )
     assert isinstance(inv, CredsOverlay)
     assert "creds" in inv.supplies  # the overlay claims it — and is still cached beneath
     assert isinstance(inv.inner, SnapshotCache)
@@ -321,26 +331,30 @@ def test_two_repos_differing_only_in_cache_ttl_are_a_conflict(tmp_path):
     )
 
 
-def test_construct_wraps_creds_file_and_json_is_lazy(tmp_path):
+def test_construct_wraps_a_creds_store_and_json_is_lazy(tmp_path):
     inv_path = _inventory_file(tmp_path)
     creds = tmp_path / "creds.json"
     creds.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
-    table = {
-        "backend": "json",
-        "path": str(inv_path),
-        "creds_file": str(creds),
-        "supplies": ["ip"],
-    }
+    table = {"backend": "json", "path": str(inv_path), "supplies": ["ip"]}
     inv = build_inventory_from_declarations(
-        [InventoryDeclaration(origin="o", anchor_dir=tmp_path, table=table)], user_settings=None
+        [
+            InventoryDeclaration(
+                origin="o",
+                anchor_dir=tmp_path,
+                table=table,
+                creds_table={"backend": "json", "path": str(creds)},
+            )
+        ],
+        user_settings=None,
     )
     assert isinstance(inv, CredsOverlay)
     assert inv.supplies == frozenset({"ip", "creds"})
     assert inv.lookup("k").creds[0].login == "u"
+    assert inv.store.label == f"json:{creds.resolve()}"
 
 
-def test_no_creds_file_means_no_overlay(tmp_path):
-    """§9.4: without ``creds_file`` the backend's own records carry the creds."""
+def test_no_creds_table_means_no_overlay(tmp_path):
+    """§3 statement 2: without ``[creds]`` the backend's own records carry the creds."""
     inv_path = _inventory_file(tmp_path)
     inv = build_inventory_from_declarations(
         [
@@ -354,8 +368,8 @@ def test_no_creds_file_means_no_overlay(tmp_path):
     assert "creds" in inv.supplies  # the record's own, straight from the file
 
 
-def test_a_missing_creds_file_is_not_touched_until_lookup(tmp_path):
-    """Construction does no I/O; the error, when it comes, names the creds file.
+def test_a_missing_store_file_is_not_touched_until_lookup(tmp_path):
+    """Construction does no I/O; the error, when it comes, names the store file.
 
     The filename deliberately carries regex metacharacters, so ``re.escape``
     below is load-bearing rather than decorative — an unescaped pattern reads
@@ -363,16 +377,21 @@ def test_a_missing_creds_file_is_not_touched_until_lookup(tmp_path):
     """
     inv_path = _inventory_file(tmp_path)
     absent = tmp_path / "absent+creds(1).json"
-    compiled = compile_inventory(
-        InventoryConfigSpec(backend="json", path=str(inv_path), creds_file=str(absent)),
-        anchor_dir=tmp_path,
-        origin="o",
-    )
-    inv = construct_inventory(compiled)  # no raise — nothing has been read yet
+    inv = build_inventory_from_declarations(
+        [
+            InventoryDeclaration(
+                origin="o",
+                anchor_dir=tmp_path,
+                table={"backend": "json", "path": str(inv_path)},
+                creds_table={"backend": "json", "path": str(absent)},
+            )
+        ],
+        user_settings=None,
+    )  # no raise — nothing has been read yet
     assert isinstance(inv, CredsOverlay)
-    # The path is regex-escaped AND resolved: construct_inventory resolves it,
-    # and an unescaped tmp path would make the pattern's meaning accidental.
-    with pytest.raises(InventoryError, match=rf"creds_file {re.escape(str(absent.resolve()))}: "):
+    # The path is regex-escaped AND resolved: construction resolves it, and an
+    # unescaped tmp path would make the pattern's meaning accidental.
+    with pytest.raises(InventoryError, match=rf"{re.escape(str(absent.resolve()))}: "):
         inv.lookup("k")
 
 
@@ -454,9 +473,154 @@ def test_unknown_backend_and_bad_table_are_inventory_errors(tmp_path):
         )
     with pytest.raises(InventoryError, match=r"o: \[inventory\] [\s\S]*backend\n\s+Field required"):
         build_inventory_from_declarations(
-            [InventoryDeclaration(origin="o", anchor_dir=tmp_path, table={"creds_file": "x"})],
+            [InventoryDeclaration(origin="o", anchor_dir=tmp_path, table={"path": "x"})],
             user_settings=None,
         )
+
+
+def test_creds_file_in_the_inventory_table_points_at_the_creds_table(tmp_path):
+    """Spec §4.4: extra='allow' would otherwise swallow the dead key as a backend kwarg."""
+    with pytest.raises(
+        InventoryError,
+        match=r'creds_file has moved: declare \[creds\] backend = "json" / path = "<the same '
+        r'path>" beside \[inventory\]',
+    ):
+        build_inventory_from_declarations(
+            [
+                InventoryDeclaration(
+                    origin="o",
+                    anchor_dir=tmp_path,
+                    table={"backend": "json", "path": "i.json", "creds_file": "c.json"},
+                )
+            ],
+            user_settings=None,
+        )
+
+
+def test_creds_without_an_inventory_is_an_error_naming_the_declaring_file(tmp_path):
+    """Spec §4.3: a store nothing can look up must not silently do nothing."""
+    with pytest.raises(
+        InventoryError,
+        match=r"r1/settings\.toml: \[creds\] is keyed by inventory key and no \[inventory\] is "
+        r"declared in either settings file; declare one, or remove \[creds\]",
+    ):
+        build_inventory_from_declarations(
+            [
+                InventoryDeclaration(
+                    origin="r1/settings.toml",
+                    anchor_dir=tmp_path,
+                    creds_table={"backend": "json", "path": "c.json"},
+                )
+            ],
+            user_settings=None,
+        )
+
+
+def test_an_unknown_creds_backend_is_an_inventory_error(tmp_path):
+    """A ``CredsError`` off the creds side must reach the caller as an ``InventoryError``."""
+    inv_path = _inventory_file(tmp_path)
+    with pytest.raises(InventoryError, match=r"o: Unknown creds backend 'nope'"):
+        build_inventory_from_declarations(
+            [
+                InventoryDeclaration(
+                    origin="o",
+                    anchor_dir=tmp_path,
+                    table={"backend": "json", "path": str(inv_path)},
+                    creds_table={"backend": "nope"},
+                )
+            ],
+            user_settings=None,
+        )
+
+
+def test_a_creds_table_missing_backend_is_an_inventory_error(tmp_path):
+    inv_path = _inventory_file(tmp_path)
+    with pytest.raises(InventoryError, match=r"o: \[creds\] "):
+        build_inventory_from_declarations(
+            [
+                InventoryDeclaration(
+                    origin="o",
+                    anchor_dir=tmp_path,
+                    table={"backend": "json", "path": str(inv_path)},
+                    creds_table={"path": "c.json"},
+                )
+            ],
+            user_settings=None,
+        )
+
+
+def test_creds_resolve_independently_of_the_inventory(tmp_path):
+    """Spec §4.2: a repo overriding only [inventory] still gets the user file's [creds]."""
+    inv_path = _inventory_file(tmp_path)
+    creds = tmp_path / "creds.json"
+    creds.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
+    user = UserSettingsModel(creds=CredsConfigSpec(backend="json", path=str(creds)))
+    inv = build_inventory_from_declarations(
+        [
+            InventoryDeclaration(
+                origin="r1",
+                anchor_dir=tmp_path,
+                table={"backend": "json", "path": str(inv_path), "supplies": ["ip"]},
+            )
+        ],
+        user_settings=user,
+        user_settings_file=tmp_path / "settings.toml",
+    )
+    assert isinstance(inv, CredsOverlay)
+    assert inv.lookup("k").creds[0].login == "u"
+    # ...and the other way round: the repo declares only [creds], the user file the inventory.
+    both = build_inventory_from_declarations(
+        [
+            InventoryDeclaration(
+                origin="r1",
+                anchor_dir=tmp_path,
+                creds_table={"backend": "json", "path": str(creds)},
+            )
+        ],
+        user_settings=UserSettingsModel(
+            inventory=InventoryConfigSpec(backend="json", path=str(inv_path))
+        ),
+        user_settings_file=tmp_path / "settings.toml",
+    )
+    assert isinstance(both, CredsOverlay)
+
+
+def test_two_repos_must_agree_on_creds(tmp_path):
+    inv_path = _inventory_file(tmp_path)
+    table = {"backend": "json", "path": str(inv_path)}
+    with pytest.raises(
+        InventoryError,
+        match=r"two active repos declare different \[creds\] tables: r1/settings\.toml and "
+        r"r2/settings\.toml",
+    ):
+        build_inventory_from_declarations(
+            [
+                InventoryDeclaration(
+                    origin="r1/settings.toml",
+                    anchor_dir=tmp_path,
+                    table=table,
+                    creds_table={"backend": "json", "path": "a.json"},
+                ),
+                InventoryDeclaration(
+                    origin="r2/settings.toml",
+                    anchor_dir=tmp_path,
+                    table=table,
+                    creds_table={"backend": "json", "path": "b.json"},
+                ),
+            ],
+            user_settings=None,
+        )
+
+
+def test_build_inventory_reads_a_repo_that_declares_only_creds(tmp_path):
+    inv_path = _inventory_file(tmp_path)
+    creds = tmp_path / "creds.json"
+    creds.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
+    user_file = _user_file(tmp_path, f'[inventory]\nbackend = "json"\npath = "{inv_path}"\n')
+    repos = [_repo(tmp_path, "r1", {}, creds={"backend": "json", "path": str(creds)})]
+    inv = build_inventory(repos, user_settings_path=user_file)
+    assert isinstance(inv, CredsOverlay)
+    assert inv.store.label == f"json:{creds.resolve()}"
 
 
 def test_build_inventory_reads_repos_and_the_user_file(tmp_path):

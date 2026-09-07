@@ -43,6 +43,7 @@ def _repo(tmp_path: Path, *, name: str, docker: DockerSettings) -> SimpleNamespa
         # `build_inventory` reads it on the enumeration path; without it the
         # enumeration is contained and offers no hosts at all.
         inventory_settings={},
+        creds_settings={},
         docker_settings=docker,
     )
 

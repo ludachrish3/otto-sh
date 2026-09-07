@@ -63,10 +63,10 @@ def _scaffold(tmp_path, monkeypatch, *, inventory_toml=""):
     return root
 
 
-def _netbox_toml(stub, ttl, *, creds_file=None):
+def _netbox_toml(stub, ttl, *, creds=None):
     toml = f'[inventory]\nbackend = "netbox"\nurl = "{stub.base}"\ncache_ttl = "{ttl}"\n'
-    if creds_file is not None:
-        toml += f'creds_file = "{creds_file}"\n'
+    if creds is not None:
+        toml += f'\n[creds]\nbackend = "json"\npath = "{creds}"\n'
     return toml
 
 
@@ -645,7 +645,7 @@ def test_refresh_clears_the_stale_notice(tmp_path, monkeypatch):
 
 
 def test_refresh_reaches_the_cache_through_the_creds_overlay(tmp_path, monkeypatch):
-    """``creds_file`` wraps the cache in a CredsOverlay; refresh must see past it.
+    """``[creds]`` wraps the cache in a CredsOverlay; refresh must see past it.
 
     Without the unwrap the outermost object is not a SnapshotCache and the
     verb would report a cached NetBox inventory as "not cached".
@@ -654,7 +654,7 @@ def test_refresh_reaches_the_cache_through_the_creds_overlay(tmp_path, monkeypat
     creds.write_text(json.dumps({"nb1": [{"login": "operator", "password": "s3cret"}]}))
     with NetBoxStub(_NETBOX_DEVICES, page_size=2) as stub:
         monkeypatch.setenv("NETBOX_TOKEN", TOKEN)
-        toml = _netbox_toml(stub, "24h", creds_file=creds)
+        toml = _netbox_toml(stub, "24h", creds=creds)
         _scaffold(tmp_path, monkeypatch, inventory_toml=toml)
         result = _run(["refresh"])
         assert result.exit_code == 0, result.output

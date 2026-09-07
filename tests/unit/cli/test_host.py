@@ -728,6 +728,7 @@ def _fake_repo(*lab_paths: Path) -> SimpleNamespace:
         lab_sources=json_lab_sources(sut_dir, list(lab_paths)),
         sut_dir=sut_dir,
         inventory_settings={},
+        creds_settings={},
     )
 
 
