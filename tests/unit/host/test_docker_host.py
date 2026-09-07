@@ -17,9 +17,10 @@ import pytest
 
 from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
-from otto.host.errors import HostCommandError
+from otto.host.errors import HostCommandError, MountNotFoundError
 from otto.host.inventory_ref import InventoryRef
 from otto.host.login_proxy import Cred
+from otto.host.mount import Mount
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
 from tests.conftest import active_context
@@ -1768,3 +1769,86 @@ async def test_get_cleanup_failure_is_warned_not_raised(tmp_path, caplog):
 
     assert status == Status.Success
     assert any("staging-dir removal teardown failed" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Mount translation
+# ---------------------------------------------------------------------------
+
+
+def test_mounts_defaults_to_empty():
+    assert _make_container().mounts == []
+
+
+def test_parent_path_translates_through_a_bind():
+    ctr = DockerContainerHost(
+        parent=_mock_parent(),
+        container_id="abc123def456",
+        project="repo1",
+        service="api",
+        compose_project="otto-repo1-vagrant",
+        mounts=[Mount(Path("/var/lib/app"), Path("/srv/data"), "bind")],
+    )
+    assert ctr.parent_path("/var/lib/app/logs/x.txt") == Path("/srv/data/logs/x.txt")
+    assert ctr.container_path("/srv/data/logs/x.txt") == Path("/var/lib/app/logs/x.txt")
+    assert ctr.mount_for("/var/lib/app/logs/x.txt").kind == "bind"
+    assert ctr.mount_for("/etc/hosts") is None
+
+
+def test_parent_path_names_the_checked_mounts_when_there_is_no_match():
+    ctr = DockerContainerHost(
+        parent=_mock_parent(),
+        container_id="abc123def456",
+        project="repo1",
+        service="api",
+        compose_project="otto-repo1-vagrant",
+        mounts=[Mount(Path("/var/lib/app"), Path("/srv/data"), "bind")],
+    )
+    with pytest.raises(MountNotFoundError, match="/var/lib/app"):
+        ctr.parent_path("/etc/hosts")
+
+
+def test_container_path_names_the_checked_parent_mounts_when_there_is_no_match():
+    """``container_path`` searches the PARENT-side paths, so its refusal must
+    name those -- not the container-side paths ``parent_path`` searches."""
+    ctr = DockerContainerHost(
+        parent=_mock_parent(),
+        container_id="abc123def456",
+        project="repo1",
+        service="api",
+        compose_project="otto-repo1-vagrant",
+        mounts=[Mount(Path("/var/lib/app"), Path("/srv/data"), "bind")],
+    )
+    with pytest.raises(MountNotFoundError, match="/srv/data"):
+        ctr.container_path("/opt/elsewhere")
+
+
+def test_parent_path_on_a_placeholder_says_the_container_is_not_up():
+    """And that a bring-up in ANOTHER process leaves this table empty too.
+
+    An empty ``container_id`` is not proof the stack is down -- every new
+    ``otto`` invocation re-registers declared container hosts as placeholders,
+    so a reader hitting this message may well have run ``otto docker up``
+    already. Naming only the not-up cause would send them to repeat it.
+    """
+    ctr = _make_container(container_id="")
+    with pytest.raises(MountNotFoundError, match="not up") as excinfo:
+        ctr.parent_path("/var/lib/app")
+    assert "a different otto invocation" in str(excinfo.value)
+
+
+def test_parent_path_with_no_mounts_on_a_live_container_points_at_bring_up():
+    ctr = _make_container()  # real id, empty mounts
+    with pytest.raises(MountNotFoundError, match="no shared directories"):
+        ctr.parent_path("/var/lib/app")
+
+
+def test_no_shared_directories_message_names_the_lazily_resolved_placeholder_cause():
+    """Branch 3's two named causes both go false the moment `_ensure_running`
+    writes a lazily-resolved id back onto a placeholder -- the message must
+    name that third cause too, or a reader is sent to check a compose file
+    and hunt for a bring-up warning that was never going to exist."""
+    ctr = _make_container()  # real id, empty mounts: indistinguishable from a
+    # placeholder whose container_id was resolved lazily in THIS process.
+    with pytest.raises(MountNotFoundError, match="resolved lazily"):
+        ctr.parent_path("/var/lib/app")

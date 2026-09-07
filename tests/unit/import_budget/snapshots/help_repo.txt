@@ -84,6 +84,7 @@ otto.host.inventory_ref
 otto.host.lab_info
 otto.host.local_host
 otto.host.login_proxy
+otto.host.mount
 otto.host.options
 otto.host.os_profile
 otto.host.power

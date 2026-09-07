@@ -81,6 +81,16 @@ class SessionSetupError(OttoError, ConnectionError):
     """
 
 
+class MountNotFoundError(OttoError, ValueError):
+    """A container path could not be translated to a parent-side path.
+
+    ``ValueError`` rather than ``LookupError``: :func:`otto.host.mount.translate`
+    already raises a plain ``ValueError`` for a path outside the mount it was
+    given, and rooting this the same way lets a caller's single ``except
+    ValueError`` catch both failure modes of the same translation.
+    """
+
+
 class UnsupportedOnUserlandError(OttoError, RuntimeError):
     """The host's userland provides no way to do what otto was asked to do.
 

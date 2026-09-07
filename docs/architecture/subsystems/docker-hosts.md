@@ -145,6 +145,26 @@ This avoids writing back to `lab.json` at runtime — that file stays
 read-only — while still keeping `--list-hosts` and tab completion
 populated immediately.
 
+## Mounts are derived, not declared
+
+`DockerContainerHost.mounts` is populated by one batched `docker inspect`
+call in `register_stack_hosts`, right after the same call resolves each
+service's container id. {doc}`../../guide/cli/docker/index`'s "Shared
+directories" section is the home for *why* the table is derived rather
+than declared and for how to use it — this note covers only the WHERE and
+WHEN: reading it fresh from the daemon at the same point ids are already
+being resolved keeps the mapping correct without a second source of truth
+to keep in sync, and it falls out of a registration path that was already
+making one docker round trip per service.
+
+The table's lifetime follows from that placement: it lives in the process
+that ran the bring-up, and — like the resolved container id above — is never
+written back to `lab.json`. Unlike the id, it has no lazy re-resolution
+path, so a placeholder registered by a later invocation keeps an empty
+table (guide: "The table is per-process"). Giving it one would mean an
+`await`-ing translator or a blocking inspect inside a property; both were
+rejected in design in favour of the honest refusal.
+
 ## Build skipping
 
 Each image is tagged `<project>-<image>:<context_hash[:16]>`. The

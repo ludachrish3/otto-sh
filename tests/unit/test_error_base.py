@@ -58,6 +58,7 @@ from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, Parse
 from otto.host.errors import (
     HostCommandError,
     HostUnreachableError,
+    MountNotFoundError,
     RawLandingError,
     SessionSetupError,
     UnsupportedOnUserlandError,
@@ -116,6 +117,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (ParseMismatch, ValueError),
     (HostUnreachableError, RuntimeError),
     (HostCommandError, RuntimeError),
+    (MountNotFoundError, ValueError),
     (UnsupportedOnUserlandError, RuntimeError),
     (RawLandingError, RuntimeError),
     (HopTransportTornDownError, RuntimeError),

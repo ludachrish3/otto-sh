@@ -38,10 +38,12 @@ from ..result import CommandNotRunError, CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .connections import teardown_step
 from .dev_tool import DevTool
+from .errors import MountNotFoundError
 from .file_ops import PosixFileOps
 from .host import BaseHost, Host, _validate_user, is_dry_run, refuse_declined_fact
 from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
+from .mount import Mount, mount_for, mount_for_parent, translate
 from .privilege import PosixPrivilege
 from .product import Product
 
@@ -116,6 +118,22 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     act as when the call doesn't name one. ``None`` defers to the image's
     ``USER``. Values go to docker verbatim (``root``, ``1000``, ``1000:1000``,
     ``name:group``)."""
+
+    mounts: "list[Mount]" = field(default_factory=list, repr=False)
+    """Directories this container shares with :attr:`parent`, derived from
+    ``docker inspect`` when the stack came up (:mod:`otto.docker.mounts`).
+
+    In-process state: the bring-up that filled this table filled it in ITS
+    process. A placeholder registered by a later invocation has an empty one
+    even while the stack is up, and nothing re-resolves it the way
+    ``_ensure_running`` re-resolves a container id.
+
+    Empty on a placeholder, and empty on a container that genuinely mounts
+    nothing -- deliberately not a tri-state. No ordinary caller behaves
+    differently between the two, so distinguishing them in the TYPE would
+    tax every call site to serve one error path; :meth:`parent_path`'s
+    refusal makes the distinction there instead, where it is wanted.
+    """
 
     log: LogMode = field(default=LogMode.NORMAL, repr=False)
     """Standing per-host logging disposition. ``QUIET`` keeps this host's command
@@ -492,6 +510,85 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     def _effective_user(self, user: "str | None") -> "str | None":
         """Per-call beats declared; neither → ``None`` (the image's ``USER`` prevails)."""
         return user if user is not None else self.user
+
+    def mount_for(self, container_path: "str | Path") -> "Mount | None":
+        """Return the mount covering *container_path*, or ``None`` if it is not shared.
+
+        The predicate form -- use it to ASK. :meth:`parent_path` is for
+        callers that have already established the path is shared.
+        """
+        return mount_for(self.mounts, container_path)
+
+    def parent_path(self, container_path: "str | Path") -> Path:
+        """Return where *container_path* lives on :attr:`parent`.
+
+        Raises:
+            ~otto.host.errors.MountNotFoundError: the path is not under any
+                mount this container is known to have.
+        """
+        found = mount_for(self.mounts, container_path)
+        if found is None:
+            raise MountNotFoundError(self._no_mount_message(container_path, on_parent=False))
+        return translate(found, container_path, to_parent=True)
+
+    def container_path(self, parent_path: "str | Path") -> Path:
+        """Return where a parent-side *parent_path* appears inside this container.
+
+        Raises:
+            ~otto.host.errors.MountNotFoundError: the path is not under any
+                mount this container is known to have.
+        """
+        found = mount_for_parent(self.mounts, parent_path)
+        if found is None:
+            raise MountNotFoundError(self._no_mount_message(parent_path, on_parent=True))
+        return translate(found, parent_path, to_parent=False)
+
+    def _no_mount_message(self, path: "str | Path", *, on_parent: bool = False) -> str:
+        """Say which of the three "no match" situations this actually is.
+
+        An empty table reads identically whether otto never looked or the
+        container really shares nothing, and the two send a reader to
+        completely different places -- so the message, which is the only
+        consumer that cares, branches on the one fact that separates them.
+
+        *on_parent* selects which side of each :class:`~otto.host.mount.Mount`
+        the non-empty branch names. :meth:`container_path` searches the
+        PARENT-side paths (it is translating a parent path INTO the
+        container), so it must list those, not the container-side paths
+        :meth:`parent_path` searched -- naming the wrong side points a reader
+        at directories that were never checked against *path* at all.
+
+        The placeholder branch names TWO causes, not one. An empty
+        ``container_id`` says only that no bring-up has run *in this process*:
+        the table is in-memory state built by whichever invocation ran the
+        compose-up, and a later ``otto`` invocation re-registers the container
+        as a placeholder with an empty table even while the stack is up. A
+        remedy line reading "run `otto docker up` first" would then instruct a
+        reader to do the thing they had already done.
+        """
+        if self.mounts:
+            key = (lambda m: m.parent_path) if on_parent else (lambda m: m.container_path)
+            named = ", ".join(str(key(m)) for m in self.mounts)
+            return (
+                f"{self.id}: {path} is not under any of this container's shared "
+                f"directories ({named})"
+            )
+        if not self.container_id:
+            return (
+                f"{self.id}: {path} cannot be translated -- no mount table has been read "
+                f"for this container. Mounts are read from the daemon at bring-up and are "
+                f"held in memory by the process that brought the stack up, so either the "
+                f"stack is not up, or it was brought up by a different otto invocation. "
+                f"Bring it up from this process (`otto docker up`, or deploy its use-case) "
+                f"to populate the table."
+            )
+        return (
+            f"{self.id}: {path} cannot be translated -- this container reports no shared "
+            f"directories. Either its compose service declares no bind or volume mounts, "
+            f"or the mount inspection at bring-up failed (a warning would have been "
+            f"logged then), or this host was registered as a placeholder and had its "
+            f"container id resolved lazily, so no mount inspection ran in this process."
+        )
 
     def _user_for_an_imminent_open(self) -> "str | None":
         """Return the user a channel opening RIGHT NOW must run as.

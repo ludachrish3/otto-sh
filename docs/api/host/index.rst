@@ -29,6 +29,7 @@ local and remote machines.
    factory
    lab_info
    element
+   mount
    inventory_ref
    command_frame
    daemon

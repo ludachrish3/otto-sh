@@ -26,6 +26,7 @@ from ..config.repo import DockerCompose, Repo
 from ..host.docker_host import DockerContainerHost
 from ..host.errors import HostCommandError
 from ..host.host import Host, is_dry_run, refuse_declined_fact
+from ..host.mount import Mount
 from ..host.unix_host import UnixHost
 from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
@@ -424,7 +425,15 @@ async def register_stack_hosts(
     with no declared user, deferring to the image's ``USER`` — the mapping is
     per service, never a stack-wide default.
     """
-    hosts: dict[str, DockerContainerHost] = {}
+    # Function-scope: this coroutine is only ever entered after a compose up
+    # has already run, so a bare `otto docker --help` must not pay
+    # otto.docker.mounts's import cost (import budget). No cycle at call
+    # time: `mounts.py` imports only stdlib plus `..host.host` and
+    # `..host.mount`, both of which this module already pulls at module
+    # scope.
+    from .mounts import inspect_mounts
+
+    resolved: "list[tuple[str, str]]" = []
     for service in services:
         cid = await _resolve_container_id(parent, compose_project, service)
         if not cid:
@@ -433,6 +442,20 @@ async def register_stack_hosts(
                 f"skipping registration"
             )
             continue
+        resolved.append((service, cid))
+
+    # One inspect for the whole stack, after every id is known -- per
+    # container would double the round trips this function already spends.
+    # Guarded rather than relying solely on `inspect_mounts`'s own empty-list
+    # short-circuit: the every-service-failed path (every `continue` above
+    # fired) has nothing to inspect, and skipping the call here is what lets
+    # it reach the `if not hosts:` refusal below without a round trip.
+    mounts_by_id: "dict[str, list[Mount]]" = {}
+    if resolved:
+        mounts_by_id = await inspect_mounts(parent, [cid for _, cid in resolved])
+
+    hosts: dict[str, DockerContainerHost] = {}
+    for service, cid in resolved:
         host = DockerContainerHost(
             parent=parent,
             container_id=cid,
@@ -440,6 +463,7 @@ async def register_stack_hosts(
             service=service,
             compose_project=compose_project,
             user=(users or {}).get(service),
+            mounts=mounts_by_id.get(cid, []),
         )
         # A container's lab is its PARENT's lab, never the lab it is registered
         # INTO: in a multi-lab session that lab is the composite ("a+b"), a name
@@ -643,7 +667,11 @@ async def compose_down(
     # the body's real exception with teardown noise — the thing compensate()
     # exists to prevent.
     try:
-        remote_files = await stage_compose_files(parent, proj, list(settings.composes))
+        # warn=False: this re-stages purely to recover the `-f` paths for
+        # teardown. Staging's own `rm -rf` has already wiped the directory the
+        # advisory would name by the time it could fire, so on this path it
+        # reports a loss that has happened, about a stack being torn down.
+        remote_files = await stage_compose_files(parent, proj, list(settings.composes), warn=False)
     except RuntimeError as e:
         # .error, not .exception: this is returned as a failed CommandResult,
         # so the caller decides how loud to be about it.

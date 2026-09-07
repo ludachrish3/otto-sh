@@ -40,8 +40,10 @@ from otto.docker.compose import (
 )
 from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
+from otto.host.errors import HostCommandError
 from otto.host.lab_info import LabInfo
 from otto.host.login_proxy import Cred
+from otto.host.mount import Mount
 from otto.host.unix_host import UnixHost
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
@@ -859,6 +861,30 @@ async def test_compose_down_removes_registered_hosts(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_compose_down_does_not_emit_the_relative_bind_advisory(tmp_path, caplog):
+    """The teardown re-stage passes `warn=False`.
+
+    `compose_down` re-runs `stage_compose_files` only to recover the `-f`
+    paths, and staging's own `rm -rf` has already wiped the directory the
+    advisory names by the time it could fire -- so on this path it reports a
+    loss that has happened, about a stack being torn down. Pinned HERE rather
+    than at staging: the `warn` parameter's own test cannot see whether this
+    caller passes it.
+    """
+    repo = _make_repo(tmp_path)
+    (tmp_path / "repo1" / "docker" / "compose.yml").write_text(
+        "services:\n  api:\n    volumes:\n      - ./data:/var/lib/app\n"
+    )
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    parent.exec.return_value = _ok()  # type: ignore[union-attr]
+
+    await compose_down(repo, lab)
+
+    assert "binds the relative source" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_composed_does_not_teardown_when_already_running(tmp_path):
     """The default own=False contract — nested users don't yank the stack."""
     repo = _make_repo(tmp_path)
@@ -1011,6 +1037,62 @@ async def test_register_stack_hosts_without_users_leaves_every_container_unset()
     )
 
     assert hosts["api"].user is None
+
+
+# ---------------------------------------------------------------------------
+# register_stack_hosts — mounts (spec: docker-mount-awareness)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_register_stack_hosts_populates_mounts(monkeypatch):
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    cid = "c" * 64
+    monkeypatch.setattr(
+        "otto.docker.compose._resolve_container_id",
+        AsyncMock(return_value=cid),
+    )
+    monkeypatch.setattr(
+        "otto.docker.mounts.inspect_mounts",
+        AsyncMock(return_value={cid: [Mount(Path("/var/lib/app"), Path("/srv/data"), "bind")]}),
+    )
+    hosts = await register_stack_hosts(
+        lab, parent, compose_project="p", id_project="repo1", services=["api"]
+    )
+    assert hosts["api"].parent_path("/var/lib/app/x") == Path("/srv/data/x")
+
+
+@pytest.mark.asyncio
+async def test_register_stack_hosts_inspects_once_for_the_whole_stack(monkeypatch):
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    ids = iter(["d" * 64, "e" * 64])
+    monkeypatch.setattr(
+        "otto.docker.compose._resolve_container_id",
+        AsyncMock(side_effect=lambda *a, **k: next(ids)),
+    )
+    spy = AsyncMock(return_value={})
+    monkeypatch.setattr("otto.docker.mounts.inspect_mounts", spy)
+    await register_stack_hosts(
+        lab, parent, compose_project="p", id_project="repo1", services=["api", "db"]
+    )
+    spy.assert_awaited_once()
+    assert len(spy.await_args.args[1]) == 2
+
+
+@pytest.mark.asyncio
+async def test_register_stack_hosts_skips_inspect_when_nothing_resolved(monkeypatch):
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    monkeypatch.setattr("otto.docker.compose._resolve_container_id", AsyncMock(return_value=""))
+    spy = AsyncMock(return_value={})
+    monkeypatch.setattr("otto.docker.mounts.inspect_mounts", spy)
+    with pytest.raises(HostCommandError, match="none of compose stack"):
+        await register_stack_hosts(
+            lab, parent, compose_project="p", id_project="repo1", services=["api"]
+        )
+    spy.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

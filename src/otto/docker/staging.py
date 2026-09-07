@@ -19,6 +19,7 @@ crash is recovered from on the next stage). The directory layout is
 stable across runs so nothing leaks into per-invocation subdirs.
 """
 
+import logging
 import os
 import shlex
 import tarfile
@@ -30,6 +31,8 @@ from ..config.repo import DockerCompose, DockerImage
 from ..host.errors import HostCommandError, HostUnreachableError
 from ..host.host import Host, is_dry_run
 from ..result import CommandNotRunError, CommandResult
+
+logger = logging.getLogger(__name__)
 
 PARENT_ROOT = Path("/tmp/otto-docker")  # noqa: S108 — deliberate staging path
 
@@ -152,12 +155,21 @@ async def stage_compose_files(
     parent: Host,
     project: str,
     composes: list[DockerCompose],
+    *,
+    warn: bool = True,
 ) -> list[Path]:
     """Copy compose files to numbered directories on the parent.
 
     Numbered directories preserve the order the project listed them
     (which determines override precedence in ``docker compose -f a -f b``).
     Returns the absolute paths on the parent in the same order.
+
+    *warn* gates the relative-bind-source advisory. ``compose_down`` re-runs
+    this function purely to recover the ``-f`` paths for teardown, by which
+    point this call's own ``rm -rf`` at the top has ALREADY wiped the
+    directory the advisory would name -- so there it is a warning about a
+    loss that has happened, on a path that is tearing the stack down anyway.
+    The callers that actually stand a stack up keep the default.
 
     Raises:
         ~otto.result.CommandNotRunError: this is a dry run -- same reasoning
@@ -190,6 +202,22 @@ async def stage_compose_files(
         made = await parent.exec(f"mkdir -p {shlex.quote(str(sub))}")
         if not made.status.is_ok:
             raise _staging_failure(made, f"failed to create {sub} on the parent: {made.value}")
+        try:
+            authored = compose.path.read_text()
+        except (OSError, ValueError):
+            # OSError: missing/unreadable file. ValueError: `read_text` raises
+            # UnicodeDecodeError (a ValueError subclass) on non-UTF-8 bytes --
+            # `compose_down` wraps this call in `except RuntimeError` so a
+            # staging failure cannot interrupt a teardown sweep; a ValueError
+            # would sail straight through that guard. Either way, the put()
+            # below reports an unreadable/unstageable compose file.
+            authored = ""
+        if warn:
+            # Index 0's directory, not `sub`: `_compose_cmd` passes only `-f`
+            # and no `--project-directory`, so compose resolves EVERY
+            # relative bind source (whichever file declares it) against the
+            # directory of the first `-f` file, not each file's own.
+            warn_relative_bind_sources(compose.path.name, authored, base / "0")
         put_result = await parent.put([compose.path], sub)
         if not put_result.is_ok:
             raise HostCommandError(f"failed to stage compose file {compose.path}: {put_result.msg}")
@@ -354,6 +382,86 @@ def _collect_env_file_refs(handle: str, text: str) -> list[str]:
     return refs
 
 
+def _relative_bind_sources(handle: str, text: str) -> "list[str]":
+    """Return the relative bind-mount sources declared in a rendered compose text.
+
+    Only sources that are RELATIVE to the compose file's directory --
+    absolute ones are the author's own business (§ the design's silent
+    case), and a bare name is a named volume, not a bind.
+    """
+    import yaml  # function-scope: keep staging import-light
+
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        raise _resolution_error(
+            f"compose file {handle!r}: rendered text is not valid YAML — the "
+            f"adapter must return a fully rendered file: {e}"
+        ) from e
+    if doc is not None and not isinstance(doc, dict):
+        raise _resolution_error(
+            f"compose file {handle!r}: rendered text's top level is a "
+            f"{type(doc).__name__}, not a mapping — the adapter must return "
+            "a fully rendered compose document"
+        )
+    out: "list[str]" = []
+    services = (doc or {}).get("services") or {}
+    for svc in services.values() if isinstance(services, dict) else []:
+        if not isinstance(svc, dict):
+            continue
+        volumes = svc.get("volumes")
+        if not isinstance(volumes, list):
+            continue  # a mapping or bare string here is not valid Compose; nothing to walk
+        for entry in volumes:
+            source = _volume_source(entry)
+            # "$" means compose will interpolate this at `up` time from the
+            # env file; a static walk genuinely cannot resolve it, and otto
+            # must not warn about a path it has not evaluated.
+            if source and "$" not in source and source.startswith(("./", "../")):
+                out.append(source)
+    return out
+
+
+def _volume_source(entry: object) -> "str | None":
+    """Return the host-side source of one ``volumes:`` entry, if it is a bind."""
+    if isinstance(entry, str):
+        return entry.split(":", 1)[0] or None
+    if isinstance(entry, dict):
+        if (entry.get("type") or "volume") != "bind":
+            return None
+        source = entry.get("source")
+        return source if isinstance(source, str) and source else None
+    return None
+
+
+def warn_relative_bind_sources(handle: str, text: str, staged_dir: Path) -> None:
+    """Warn that a relative bind source follows the compose file into staging.
+
+    Not a refusal: the mount works, and a product may even want it. What it
+    cannot survive is the NEXT deploy, and nothing in the author's own file
+    says so.
+
+    Advisory all the way down -- a text this cannot parse produces no
+    warning and no error. ``stage_compose_files`` ships repo-authored files
+    verbatim and has never parsed them, so letting an advisory walk turn an
+    unreadable compose file into a staging refusal would be a behaviour
+    change smuggled in behind a warning. The use-case path keeps its own
+    refusal in ``_collect_env_file_refs``, where it belongs.
+    """
+    try:
+        sources = _relative_bind_sources(handle, text)
+    except Exception:  # noqa: BLE001 -- advisory only; docker reports a bad compose file
+        return
+    for source in sources:
+        resolved = Path(os.path.normpath(str(staged_dir / source)))
+        logger.warning(
+            rf"\[docker] compose file {handle!r} binds the relative source {source!r}, "
+            rf"which resolves to {resolved} on the parent — otto re-creates that staging "
+            rf"directory on every deploy, so anything written there is lost. Use an "
+            rf"absolute path on the parent, or a named volume."
+        )
+
+
 def _dest_for_relative_name(root: Path, rel: str) -> Path:
     """Where a relative name lands under *root*, preserving its own subdirectory.
 
@@ -406,6 +514,12 @@ async def stage_use_case(
     extra_files_map = dict(extra_files or {})
     claimed_extra_keys: set[str] = set()
 
+    # Named here (not where it was previously computed, further down) so the
+    # validation loop below can pass compose_paths[0] to the bind-source
+    # warning -- pure function of its arguments, so computing it earlier
+    # changes nothing about what it returns.
+    compose_paths = use_case_compose_paths(compose_project, files)
+
     # Validate everything local BEFORE the first device touch.
     local_sidecars: list[tuple[int, Path, str]] = []  # (file index, local path, rel name)
     adapter_sidecar_refs: list[
@@ -413,6 +527,13 @@ async def stage_use_case(
     ] = []  # (file index, rel name); text in extra_files_map
     seen_refs: set[tuple[int, str]] = set()
     for idx, f in enumerate(files):
+        # compose_paths[0].parent, not compose_paths[idx].parent: this
+        # function's stack is brought up by `_up_command`, which -- like
+        # `_compose_cmd` on the legacy path -- passes only `-f` and no
+        # `--project-directory`. So compose resolves every relative bind
+        # source (whichever file declares it) against the directory of the
+        # FIRST `-f` file, not each file's own.
+        warn_relative_bind_sources(f.handle, f.text, compose_paths[0].parent)
         for rel in _collect_env_file_refs(f.handle, f.text):
             if (idx, rel) in seen_refs:
                 continue  # the same file referencing one env_file from two services stages it once
@@ -446,7 +567,6 @@ async def stage_use_case(
             f"failed to prepare the compose staging dir {base} on the parent: {prepared.value}",
         )
 
-    compose_paths = use_case_compose_paths(compose_project, files)
     with tempfile.TemporaryDirectory(prefix="otto-usecase-") as tmp:
         tmpdir = Path(tmp)
         for idx, f in enumerate(files):

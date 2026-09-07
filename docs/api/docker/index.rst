@@ -17,5 +17,6 @@ competition, placement and the env channels -- is documented in
    build
    compose
    deployment
+   mounts
    resolve
    staging

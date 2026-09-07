@@ -433,3 +433,42 @@ async def test_a_failed_put_for_a_compose_file_is_a_command_failure(tmp_path):
         await stage_use_case(
             parent, "p", [ComposeFileToStage("core", "services: {}\n", tmp_path)], ""
         )
+
+
+@pytest.mark.asyncio
+async def test_stage_use_case_warns_about_a_relative_bind_source(tmp_path, caplog):
+    """The call site warns from the RENDERED text, before the first device touch."""
+    parent = _parent(tmp_path)
+    text = "services:\n  api:\n    volumes:\n      - ./data:/var/lib/app\n"
+    files = [ComposeFileToStage("core", text, tmp_path)]
+
+    await stage_use_case(parent, "p", files, "")
+
+    assert "./data" in caplog.text
+    assert "compose/0/data" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stage_use_case_warns_with_index_0s_directory_for_the_second_file(tmp_path, caplog):
+    """A relative source in the SECOND file still resolves against the FIRST.
+
+    ``_up_command`` passes only ``-f`` and no ``--project-directory``, so
+    compose's project directory is the first ``-f`` file's directory and every
+    relative bind source resolves there, whichever file declares it. Naming
+    each file's own staged directory would point a reader at a path docker
+    never binds.
+    """
+    parent = _parent(tmp_path)
+    files = [
+        ComposeFileToStage("core", "services: {api: {image: x}}\n", tmp_path),
+        ComposeFileToStage(
+            "edge",
+            "services:\n  edge:\n    volumes:\n      - ./data:/var/lib/app\n",
+            tmp_path,
+        ),
+    ]
+
+    await stage_use_case(parent, "p", files, "")
+
+    assert "compose/0/data" in caplog.text
+    assert "compose/1/data" not in caplog.text

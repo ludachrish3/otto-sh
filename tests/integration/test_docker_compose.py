@@ -9,12 +9,17 @@ Requires:
 
 from __future__ import annotations
 
+import shlex
+from dataclasses import replace
+from pathlib import Path
+
 import pytest
 import pytest_asyncio
 
 from otto.config.lab import Lab
-from otto.config.repo import Repo
+from otto.config.repo import DockerCompose, Repo
 from otto.docker import build_images, compose_down, compose_up, composed
+from otto.docker.compose import get_user_compose_project
 from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
@@ -124,3 +129,88 @@ async def test_compose_up_idempotent(parent, lab_with_parent, repo1, built_image
         assert cid_first == cid_second, "second compose_up must reuse the running container"
     finally:
         await compose_down(repo1, lab_with_parent, on=parent.id)
+
+
+@pytest.mark.asyncio
+async def test_bind_mount_reachable_through_parent(
+    parent, lab_with_parent, repo1, built_image, tmp_path
+):
+    """Prove the mount table docker inspect built is REAL, not merely mocked.
+
+    Every unit test for this feature (Mount, parent_path/container_path,
+    inspect_mounts, register_stack_hosts) drove the translation against a
+    hand-built table or a mocked parent -- nothing yet proved that a real
+    `docker inspect` on a real daemon, reached through a real SSH parent,
+    produces a mount table that actually locates a real file. This test's
+    only job is that proof:
+
+    1. a real absolute-path bind mount, its source directory created on the
+       parent explicitly (never relying on docker's own auto-create);
+    2. the registered host's `mounts` names it with the right
+       container_path/parent_path/kind;
+    3. a file is written INSIDE the container;
+    4. it is read back THROUGH THE PARENT at the translated path, and its
+       CONTENTS (not just a success status) are what gets asserted --
+       the content is what shows the translation landed on the right file.
+
+    Brings up its own single-service stack (a fresh compose file + a
+    dedicated compose project) rather than adding the mount to the shared
+    `docker/compose.yml` the other tests in this module use, so this proof
+    cannot perturb their assertions or their shared stack's lifecycle.
+    """
+    # Per-user (so concurrent users on the shared test3 never collide) and
+    # carrying the `-e2e-` infix `_ORPHAN_PROJECT_FRAGMENTS` matches, so an
+    # interrupted run's NETWORK is reapable too -- `<project>_default` keeps
+    # the infix only if the project name itself has it.
+    project = get_user_compose_project("mount-e2e-probe")
+    host_dir = Path(f"/tmp/{project}")  # same string: one name to reason about
+
+    compose_yaml = tmp_path / "mounts.yml"
+    compose_yaml.write_text(
+        "services:\n"
+        "  mountcheck:\n"
+        "    image: repo1-api:latest\n"
+        '    command: ["sh", "-c", "while sleep 3600; do :; done"]\n'
+        "    volumes:\n"
+        f"      - {host_dir}:/var/lib/app\n"
+    )
+    # In-memory only, on this test's own `repo1` instance (function-scoped —
+    # a fresh Repo per test) -- the committed settings.toml and its shared
+    # docker/compose.yml are never touched.
+    repo1.docker_settings = replace(
+        repo1.docker_settings,
+        composes=(DockerCompose(path=compose_yaml, services=("mountcheck",), name="mounts_e2e"),),
+    )
+
+    try:
+        mkdir = await parent.exec(
+            f"rm -rf {shlex.quote(str(host_dir))} && mkdir -p {shlex.quote(str(host_dir))}"
+        )
+        assert mkdir.status.is_ok, mkdir.value
+
+        hosts = await compose_up(
+            repo1, lab_with_parent, on=parent.id, project_name=project, build=False
+        )
+        ctr = hosts["mountcheck"]
+
+        found = ctr.mount_for("/var/lib/app")
+        assert found is not None, ctr.mounts
+        assert found.container_path == Path("/var/lib/app")
+        assert found.parent_path == host_dir
+        assert found.kind == "bind"
+
+        written = await ctr.exec("echo hi > /var/lib/app/probe.txt")
+        assert written.status.is_ok, written.value
+
+        parent_probe = ctr.parent_path("/var/lib/app/probe.txt")
+        assert parent_probe == host_dir / "probe.txt"
+
+        fetched = await parent.get([parent_probe], tmp_path)
+        assert fetched.status == Status.Success, fetched.msg
+        landed = (tmp_path / "probe.txt").read_text()
+        assert landed.strip() == "hi", (
+            f"expected 'hi' through the parent-side mount, got {landed!r}"
+        )
+    finally:
+        await compose_down(repo1, lab_with_parent, on=parent.id, project_name=project)
+        await parent.exec(f"rm -rf {shlex.quote(str(host_dir))}")
