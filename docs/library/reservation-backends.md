@@ -316,33 +316,37 @@ Two things to know about that rule before you lean on it:
   filter works. Point it at a fixture containing an expired booking if you want
   that evidence.
 
-### The helper cannot check a capability you dropped
+### Assert the capability you mean to keep
 
-`holders` is optional, and the helper honours that: when the backend does not
-implement it, **the holder rules are skipped, not failed**. That is correct for
-a per-user-only scheduler and a trap for everyone else. Implement `holders`,
-ship, then refactor it away during a cleanup, and
+`holders` is optional, and by default the helper honours that: when the backend
+does not implement it, **the holder rules are skipped, not failed**. That is
+correct for a per-user-only scheduler and a trap for everyone else. Implement
+`holders`, ship, then refactor it away during a cleanup, and
 `assert_reservation_backend_conforms` keeps passing while your users start
 seeing `held by: unknown` in every refusal.
 
-So if your backend *is* meant to answer the inverted query, assert the
-capability yourself, next to the conformance call:
+So if your backend *is* meant to answer the inverted query, say so with
+`expect_holders=True`. Absence of the capability then stops being a skipped rule
+and becomes a named conformance failure:
 
 ```python
-from otto.reservations import SupportsResourceHolders
-
-
-def test_my_backend_answers_the_inverted_query():
-    backend = MyTeamBackend(url="https://jira.example.com", username="alice")
-    assert isinstance(backend, SupportsResourceHolders)
-    assert sorted(h.user for h in backend.holders("rack3-psu")) == ["alice", "dana"]
+def test_my_backend_conforms():
+    assert_reservation_backend_conforms(
+        MyTeamBackend(url="https://jira.example.com", username="alice"),
+        known_user="alice",
+        known_resources=["rack3-psu"],
+        expect_holders=True,
+    )
 ```
 
-Otto does exactly this for its own documentation example — see
-`test_the_example_reservation_backend_conforms` and
-`test_the_example_reservation_backend_answers_the_inverted_query` in
-`tests/unit/docs/test_getting_started_example.py`: the first proves the
-contract, the second proves the capability the first is allowed to skip.
+The default is `False` and must stay that way: a backend without `holders` is
+fully conforming, so the kwarg asserts *your* capability set rather than
+tightening the contract. Otto passes it for its own documentation example — see
+`test_the_example_reservation_backend_conforms` in
+`tests/unit/docs/test_getting_started_example.py`.
+
+{doc}`Lab source backends <lab-source-backends>` carry the same knob,
+`expect_host_summaries=`, for their own optional capability.
 
 ## Contract rules for implementers
 

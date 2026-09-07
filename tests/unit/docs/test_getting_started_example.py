@@ -213,12 +213,15 @@ def test_the_example_reservation_backend_conforms() -> None:
         _team_file_backend(),
         known_user="chris",
         known_resources=["bb-bench", "bb1350-chassis", "bb1350-slot"],
+        # The example IS meant to answer the inverted query, so assert the
+        # capability set rather than letting its absence skip the holder rules.
+        expect_holders=True,
     )
 
 
 def test_the_example_reservation_backend_answers_the_inverted_query() -> None:
-    """Conformance *skips* the holder rules when the capability is absent, so the
-    example's ``holders`` needs an assertion of its own or dropping it stays green.
+    """``expect_holders=True`` above pins that the capability EXISTS; this pins
+    what it answers -- the multi-holder shape the refusal message renders.
     """
     backend = _team_file_backend()
     assert isinstance(backend, SupportsResourceHolders)

@@ -9,7 +9,12 @@ from uuid import uuid4
 
 import pytest
 
-from otto.labs import JsonFileLabRepository, LabNotFoundError
+from otto.labs import (
+    HostSummary,
+    JsonFileLabRepository,
+    LabNotFoundError,
+    SupportsHostSummaries,
+)
 from otto.reservations import (
     JsonReservationBackend,
     NullReservationBackend,
@@ -625,3 +630,108 @@ class TestReservationErrorContract:
             backend.holders("anything")
         with pytest.raises(ReservationBackendError):
             _ = backend.reservations
+
+
+def _per_user_only():
+    """A conforming reservation backend that deliberately omits ``holders``."""
+
+    class PerUserOnly(ReservationBackendBase):
+        def fetch_reservations(self, username, start=None, end=None):
+            return [Reservation(user=username, resource="rack3")]
+
+        def backend_name(self):
+            return "per-user-only"
+
+    return PerUserOnly(username="alice")
+
+
+def _lab_repo(*, summaries=True, ghost_id=False):
+    """A conforming repository, optionally without ``list_host_summaries``.
+
+    *ghost_id* makes the capability itself violate the "every id you offer must
+    be one ``load_lab`` produces" rule, so the "present but not expected"
+    direction is proved by a double that FAILS rather than one that passes.
+    """
+    from otto.config.lab import Lab
+
+    class Repo:
+        def load_lab(self, name, preferences=None, inventory=None):
+            if name != "mylab":
+                raise LabNotFoundError(name)
+            return Lab(name=name)
+
+        def list_labs(self):
+            return ["mylab"]
+
+    if summaries:
+
+        def list_host_summaries(self, *, inventory=None):
+            return [HostSummary(id="ghost")] if ghost_id else []
+
+        Repo.list_host_summaries = list_host_summaries
+
+    return Repo()
+
+
+class TestExpectedCapabilities:
+    """``expect_holders`` / ``expect_host_summaries``: assert a capability SET.
+
+    Absence of either optional capability is legal (reservation spec §7 rule 6
+    for ``holders``; the same shape for ``SupportsHostSummaries``), so the
+    helpers skip those rules by default. That default is a trap for an author
+    whose backend IS meant to have the capability: implement it, ship, refactor
+    it away, and conformance stays green while users lose the surface it feeds.
+    The kwargs let such an author opt into strictness. Both directions are
+    proved with a VIOLATING double, and each ``match=`` is anchored on the
+    kwarg's own phrase — ``ExpectCollector`` dumps caller locals into its
+    failure text, so a loose match would pass for the wrong reason.
+    """
+
+    def test_holders_present_and_expected_passes(self):
+        assert_reservation_backend_conforms(
+            _base(), known_user="alice", known_resources=["rack3"], expect_holders=True
+        )
+
+    def test_holders_absent_and_expected_is_a_conformance_failure(self):
+        backend = _per_user_only()
+        assert not isinstance(backend, SupportsResourceHolders)
+        with pytest.raises(
+            AssertionError,
+            match=r"expect_holders=True, but the backend does not implement holders\(\)",
+        ):
+            assert_reservation_backend_conforms(backend, expect_holders=True)
+
+    def test_holders_absent_and_not_expected_still_skips(self):
+        """The default must be byte-for-byte today's behaviour."""
+        assert_reservation_backend_conforms(_per_user_only())  # must not raise
+
+    def test_holders_present_and_not_expected_still_runs_the_rules(self):
+        """The kwarg gates only the ABSENCE branch; a present-but-broken
+        ``holders`` fails under the default exactly as it always did."""
+        with pytest.raises(AssertionError, match=r"holders\('rack3'\) must return a list"):
+            assert_reservation_backend_conforms(_base(holders=lambda self, resource: None))
+
+    def test_host_summaries_present_and_expected_passes(self):
+        assert_lab_repository_conforms(
+            _lab_repo(), expected_labs=["mylab"], expect_host_summaries=True
+        )
+
+    def test_host_summaries_absent_and_expected_is_a_conformance_failure(self):
+        repo = _lab_repo(summaries=False)
+        assert not isinstance(repo, SupportsHostSummaries)
+        with pytest.raises(
+            AssertionError,
+            match=(
+                r"expect_host_summaries=True, but the repository does not implement "
+                r"list_host_summaries\(\)"
+            ),
+        ):
+            assert_lab_repository_conforms(repo, expect_host_summaries=True)
+
+    def test_host_summaries_absent_and_not_expected_still_skips(self):
+        """The default must be byte-for-byte today's behaviour."""
+        assert_lab_repository_conforms(_lab_repo(summaries=False))  # must not raise
+
+    def test_host_summaries_present_and_not_expected_still_runs_the_rules(self):
+        with pytest.raises(AssertionError, match=r"but no load_lab\(\) produces them"):
+            assert_lab_repository_conforms(_lab_repo(ghost_id=True))

@@ -181,3 +181,11 @@ from my_lab_source import CmdbLabRepository
 def test_cmdb_conforms():
     assert_lab_repository_conforms(CmdbLabRepository(repo_dir="."))
 ```
+
+If your repository implements the optional `list_host_summaries`, pass
+`expect_host_summaries=True` as well. The capability is legitimately absent from
+many backends, so the helper skips its rules by default — which means dropping
+the method during a later cleanup leaves conformance green while completion
+quietly falls back to loading every lab. The kwarg turns that absence into a
+named failure, so the fast path you meant to keep is one you are told about
+losing.

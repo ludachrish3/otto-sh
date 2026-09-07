@@ -81,6 +81,7 @@ def assert_lab_repository_conforms(
     repo: LabRepository,
     *,
     expected_labs: list[str] | None = None,
+    expect_host_summaries: bool = False,
 ) -> None:
     """Assert *repo* satisfies the :class:`~otto.labs.protocol.LabRepository` contract.
 
@@ -101,6 +102,16 @@ def assert_lab_repository_conforms(
         The backend instance under test.
     expected_labs : list[str] | None
         Optional lab names the caller knows the backend should provide.
+    expect_host_summaries : bool
+        When ``True``, the optional
+        :class:`~otto.labs.protocol.SupportsHostSummaries` capability is
+        required rather than merely honoured: a repository that does not
+        implement ``list_host_summaries`` FAILS instead of being skipped for
+        those rules. Defaults to ``False``, which keeps the skip-on-absent
+        behaviour the contract mandates — absence of the capability is legal.
+        Pass ``True`` from your own suite when your repository is meant to
+        have it, so a later refactor that drops the method reddens conformance
+        instead of silently costing your users the fast completion path.
     """
     c = ExpectCollector()
 
@@ -207,6 +218,15 @@ def assert_lab_repository_conforms(
 
     # Optional capability: only checked when the backend advertises it (the
     # same shape as SupportsUsernameCompletion for reservation backends).
+    # `expect_host_summaries=True` turns that skip into a failure, because
+    # absence is legal for the contract but not necessarily for THIS caller.
+    if expect_host_summaries and not isinstance(repo, SupportsHostSummaries):
+        c.expect(
+            False,
+            "SupportsHostSummaries: expect_host_summaries=True, but the repository does not "
+            "implement list_host_summaries() — completion would fall back to loading every "
+            "lab instead of the fast path this caller asserts it has",
+        )
     if isinstance(repo, SupportsHostSummaries) and names_ok:
         _expect_host_summaries_conform(c, repo, names)
 
@@ -624,6 +644,7 @@ def assert_reservation_backend_conforms(
     *,
     known_user: str | None = None,
     known_resources: list[str] | None = None,
+    expect_holders: bool = False,
 ) -> None:
     """Assert *backend* satisfies the ReservationBackend contract.
 
@@ -637,7 +658,8 @@ def assert_reservation_backend_conforms(
     :class:`~otto.reservations.SupportsResourceHolders` capabilities are
     checked only when the backend implements them — a backend whose scheduler
     answers only per-user queries omits ``holders`` and is *skipped* for the
-    holder rules, not failed.  Raises a single :class:`AssertionError`
+    holder rules, not failed — unless the caller passes *expect_holders*, which
+    turns that skip into a failure.  Raises a single :class:`AssertionError`
     aggregating every violated rule.
 
     There is deliberately **no** construction-time rule here.  The helper
@@ -663,6 +685,17 @@ def assert_reservation_backend_conforms(
         A username known to hold ``known_resources`` (enables round-trip rules).
     known_resources : list[str] | None
         Resources ``known_user`` is known to currently hold.
+    expect_holders : bool
+        When ``True``, the optional
+        :class:`~otto.reservations.SupportsResourceHolders` capability is
+        required rather than merely honoured: a backend that does not implement
+        ``holders`` FAILS instead of being skipped for those rules. Defaults to
+        ``False``, which keeps the skip-on-absent behaviour the contract
+        mandates — a per-user-only scheduler legitimately has no ``holders``.
+        Pass ``True`` from your own suite when your backend is meant to answer
+        the inverted query, so a later refactor that drops the method reddens
+        conformance instead of silently degrading every refusal message to
+        ``held by: unknown``.
     """
     c = ExpectCollector()
 
@@ -745,6 +778,16 @@ def assert_reservation_backend_conforms(
                 f"{resource!r}, got {sorted(held)!r}",
             )
 
+    # Absence of the capability is legal (spec §7 rule 6), so it skips by
+    # default; `expect_holders=True` is the caller asserting a capability SET
+    # rather than relying on that skip.
+    if expect_holders and not isinstance(backend, SupportsResourceHolders):
+        c.expect(
+            False,
+            "SupportsResourceHolders: expect_holders=True, but the backend does not implement "
+            "holders() — otto would print 'held by: unknown' in every refusal naming a "
+            "resource this backend guards",
+        )
     if isinstance(backend, SupportsResourceHolders):
         probes = sorted(held | set(known_resources or []))
         _expect_holder_agreement(
