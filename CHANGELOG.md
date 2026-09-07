@@ -5,6 +5,88 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-09-07
+
+### Added
+
+- **BREAKING** **reservations**: fail a backend that hands back a lapsed booking
+- **BREAKING** **reservations**: one query, one object, every backend reports time
+- **BREAKING** **init**: otto init --lab scaffolds lab.json + inventory.json + creds.json (0600) with live [inventory]/[creds] tables
+- **inventory**: creds compose across lab.json, inventory record and creds store by login — lab file wins, field by field, and its order is the login order
+- **BREAKING** **inventory**: creds_file under [inventory] is refused with a pointer to [creds]; CredsOverlay(inner, store=…) replaces path=
+- **creds**: [creds] table + register_creds_backend() — credentials by inventory key from a pluggable store; json ships
+- **docker**: container hosts know their parent-side mount paths
+- **cli**: add -t short option for --show-time
+- **suite**: per-iteration test_dir for stability runs
+- **host**: session-setup hooks and landing frames, raw landing included
+- **BREAKING** **host**: Element object; host ids and names from the element name, board, and slot
+- **test**: --random/--no-random and --seed make test order a declared, reproducible choice
+- **reservations**: ReservationBackendBase, the official base class for backends
+- **cli**: bash TAB is answered by a stdlib shim from a self-describing cache entry
+- **BREAKING** **host**: `su -` by default, and offer the password only when asked
+- **cache**: `otto cache info` says what completion dropped, and why
+
+
+### Changed
+
+- **reservations**: one home for the "held right now?" predicate
+- **gate**: pre-push finishes inside the SSH connection it depends on
+- **types**: fix 23 of 29 unsound-assignment sites ahead of the ty 0.0.75 bump
+
+
+### Dependencies
+
+- **deps-dev**: bump @testing-library/user-event in /web
+- **deps-dev**: bump @types/node from 26.3.0 to 26.4.1 in /web
+- **deps-dev**: bump @testing-library/react in /web
+- **deps-dev**: bump knip from 6.32.2 to 6.34.0 in /web
+- **deps-dev**: bump ty from 0.0.75 to 0.0.77
+- **deps**: bump the react-aria group in /web with 3 updates
+- **deps-dev**: bump hypothesis from 6.165.10 to 6.167.1
+- **deps-dev**: bump @biomejs/biome from 2.5.10 to 2.5.11 in /web
+- **deps**: bump typer from 0.27.1 to 0.27.2
+- **deps-dev**: bump @vitejs/plugin-react from 6.1.0 to 6.1.1 in /web
+- **deps-dev**: bump ruff from 0.16.4 to 0.16.5
+- **deps**: bump @xyflow/react from 12.11.5 to 12.11.6 in /web
+- **deps-dev**: bump pytest-randomly from 4.1.0 to 5.0.0
+- **deps**: bump pydantic from 2.13.4 to 2.13.5
+- **deps-dev**: bump @jridgewell/sourcemap-codec in /web
+- **deps**: bump requests from 2.32.5 to 2.34.2
+- **deps-dev**: bump json-schema-to-typescript in /web
+- **deps-dev**: bump ast-grep-cli from 0.45.2 to 0.45.3
+- **deps-dev**: bump ty 0.0.73 -> 0.0.75, inline-ignore the 6 residual unsound-assignment sites
+
+
+### Documentation
+
+- **reservations**: date the format example in the future, not the past
+- three files, one key, one order — the [creds] store and the layered creds merge
+- **spec**: creds store, layered creds, three-file otto init scaffold
+- **spec**: container hosts know their parent-side mount paths
+- periodic repo health report
+- stale-prose sweep from the 2026-09-02 periodic review
+
+
+### Fixed
+
+- **conformance**: read the clock before the fetch, not after the answer
+- **docs**: let the page grid flex with wide displays
+- **test**: the seed-announcement tests evict their inner suite module
+- **reservations**: a present [reservations] table must name its backend
+- **import-budget**: full-path surface caps carry headroom again
+- **cli**: `otto host --list-hosts` loads the lab inline instead of tracebacking
+- **completion**: resolve the host inventory once per process, as dispatch does
+- **gate-fresh**: wait for everything the lanes spawned before removing the worktree
+- **testing**: lab-repository asserter calls list_host_summaries the way production does
+- **host**: show_progress joins the Host protocol — containers forward it to their staging leg
+
+
+### Maintenance
+
+- **matrix**: re-measure the bed support matrix
+- **web**: re-vendor Untitled UI range-calendar — the two-month divider spans full height
+
+
 ## [0.10.0] - 2026-09-03
 
 ### Added
@@ -1551,7 +1633,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/ludachrish3/otto-sh/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/ludachrish3/otto-sh/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/ludachrish3/otto-sh/compare/v0.8.8...v0.9.0
 [0.8.8]: https://github.com/ludachrish3/otto-sh/compare/v0.8.7...v0.8.8
