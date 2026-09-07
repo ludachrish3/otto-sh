@@ -75,7 +75,7 @@ it is not a fair trade for a command recalled from history.
 
 [`assert_reservation_backend_conforms`](../../../library/reservation-backends.md#verify-your-backend)
 enforces those contract rules for every backend, not just the ones that opt in
-— including a differential check of the window predicate, and what that check
-can and cannot see. That is implementer's ground, and it is written up where
+— including two checks of the window predicate, and what they can and cannot
+see. That is implementer's ground, and it is written up where
 implementers are:
 [How the window predicate is checked](../../../library/reservation-backends.md#how-the-window-predicate-is-checked).

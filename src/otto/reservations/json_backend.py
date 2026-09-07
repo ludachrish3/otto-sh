@@ -13,7 +13,7 @@ File format (``version: 1``)::
     {
         "version": 1,
         "reservations": [
-            {"user": "alice", "resources": ["rack3-psu"], "expires": "2026-05-01T00:00:00Z"},
+            {"user": "alice", "resources": ["rack3-psu"], "expires": "2035-01-01T00:00:00Z"},
             {"user": "bob", "resources": ["rack4-psu"]},
         ],
     }

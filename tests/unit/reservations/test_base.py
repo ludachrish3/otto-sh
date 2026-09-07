@@ -25,6 +25,15 @@ from otto.reservations import (
 from otto.testing import assert_reservation_backend_conforms
 
 AWARE = datetime(2026, 9, 7, 15, 0, tzinfo=timezone.utc)
+"""A fixed aware instant, for doubles that are NEVER conformance-checked.
+
+It is already in the past, and it must stay away from any double handed to
+``assert_reservation_backend_conforms``: the helper's lapsed-row rule reads an
+unbounded ``fetch_reservations`` as "active at this instant", so a row expiring
+here is an over-return and fails. ``_Complete`` used to carry it and did fail;
+it now expires relative to the real clock. ``RecordingBackend`` below only ever
+counts fetches, so the value is inert there.
+"""
 
 
 class _Complete(ReservationBackendBase):

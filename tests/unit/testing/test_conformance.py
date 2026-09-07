@@ -404,7 +404,12 @@ class TestOneHostileDoublePerRule:
             )
 
     def test_rejects_start_after_end(self):
-        now = datetime(2026, 9, 7, 15, 0, tzinfo=timezone.utc)
+        # Relative to the real clock, not a literal: a fixed past instant makes
+        # this row lapsed as well as inverted, so the double would trip the
+        # lapsed-row rule too and break this file's one-hostile-double-per-rule
+        # protocol. It would still pass on the substring match=, for the wrong
+        # reason.
+        now = datetime.now(tz=timezone.utc) + timedelta(hours=2)
         with pytest.raises(AssertionError, match="start <= end required"):
             assert_reservation_backend_conforms(
                 _base(
