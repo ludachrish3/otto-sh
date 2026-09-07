@@ -10,12 +10,13 @@ Two sections:
 
 * ``listings`` — per ``(host_id, directory)`` results of a remote ``ls``,
   trusted for :data:`LISTING_TTL_SECONDS`.
-* ``reservations`` — per username, either reservation *windows* (from a
-  :class:`~otto.reservations.protocol.SupportsReservationWindows` backend) or
-  a flat resource set.  An entry is trusted until ``valid_until =
-  min(fetched_at + RESERVATION_TTL_SECONDS, earliest window edge after
-  fetched_at)`` — bookings churn quickly and get extended mid-session, so a
-  crossed start/end boundary must force a live refresh immediately.
+* ``reservations`` — per username, one row per booking the backend reported,
+  each with its ``start``/``end`` bounds (``null`` meaning unbounded).  An
+  entry is trusted until ``valid_until = min(fetched_at +
+  RESERVATION_TTL_SECONDS, earliest booking edge after fetched_at)`` —
+  bookings churn quickly and get extended mid-session, so a crossed
+  start/end boundary must force a live refresh immediately.  A booking with
+  no edges ahead simply contributes none, leaving the flat TTL.
 
 **Completion-only.** Owner ruling (2026-08-06): the ``reservations`` section
 exists purely for TAB latency and only :mod:`otto.cli.remote_completion` may
@@ -47,12 +48,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ..reservations.protocol import ReservationWindow
+    from ..reservations.protocol import Reservation
 
 LISTING_TTL_SECONDS = 45
 RESERVATION_TTL_SECONDS = 120
 MAX_DIRS_PER_HOST = 50
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 REMOTE_CACHE_FILENAME = "remote_completion_cache.json"
 
 
@@ -180,8 +181,8 @@ def _parse(raw: object) -> "datetime | None":
     """Parse a stored ISO-8601 timestamp; None for anything that isn't an AWARE one.
 
     Naive is rejected rather than assumed-UTC because every comparison in this
-    module is against the caller's ``now``. ``ReservationWindow`` requires
-    aware bounds, but a third-party backend that hands back a bare
+    module is against the caller's ``now``. ``Reservation`` requires aware
+    bounds when it has them, but a third-party backend that hands back a bare
     ``datetime.now()`` would otherwise raise ``TypeError`` from a subtraction
     two frames down — a traceback in the user's terminal mid-TAB, for a cache
     that is supposed to be pure optimization. Reading it as "no usable
@@ -238,8 +239,13 @@ def store_listing(
     _save(data, now)
 
 
-def _valid_until(fetched_at: datetime, edges: "list[datetime]") -> datetime:
+def _valid_until(fetched_at: datetime, edges: "list[datetime | None]") -> datetime:
     """Clamp the flat reservation TTL to the earliest booking edge still ahead.
+
+    ``None`` edges are dropped first, before anything reads ``tzinfo``: a
+    :class:`~otto.reservations.protocol.Reservation` bound may legitimately be
+    absent (unknown start, open-ended end), and an absent edge is one that
+    never arrives, so it can never clamp the TTL.
 
     Naive edges are dropped for the reason given on :func:`_parse`: comparing
     one against an aware *fetched_at* raises, and a backend that reports them
@@ -249,44 +255,44 @@ def _valid_until(fetched_at: datetime, edges: "list[datetime]") -> datetime:
     at the door.
     """
     block = fetched_at + timedelta(seconds=RESERVATION_TTL_SECONDS)
-    future = [e for e in edges if e.tzinfo is not None and e > fetched_at]
+    future = [e for e in edges if e is not None and e.tzinfo is not None and e > fetched_at]
     return min([block, *future])
 
 
-def store_reservation_windows(
-    username: str, windows: "list[ReservationWindow]", now: datetime
-) -> None:
-    """Record *username*'s reservation windows, valid until the first edge or the TTL.
+def store_reservations(username: str, reservations: "list[Reservation]", now: datetime) -> None:
+    """Record *username*'s reservations, valid until the first edge or the TTL.
+
+    ``None`` bounds are stored as JSON ``null`` and mean unbounded: a booking
+    with no ``end`` never expires, and so contributes no edge to clamp the TTL
+    against.  Serializing such a bound as a sentinel date instead would put a
+    fabricated instant on disk that the reader could not tell from a real one.
 
     A naive *now* stores nothing — see :func:`_usable_clock`.
+
+    Parameters
+    ----------
+    username : str
+        The identity the backend was queried for.
+    reservations : list[Reservation]
+        The rows that backend reported, active right now.
+    now : datetime
+        The timezone-aware instant the query was made at.
     """
     if not _usable_clock(now):
         return
-    edges = [t for w in windows for t in (w.start, w.end)]
+    edges: list[datetime | None] = [t for r in reservations for t in (r.start, r.end)]
     data = _load()
     data["reservations"][username] = {
         "fetched_at": now.isoformat(),
         "valid_until": _valid_until(now, edges).isoformat(),
         "windows": [
-            {"resource": w.resource, "start": w.start.isoformat(), "end": w.end.isoformat()}
-            for w in windows
+            {
+                "resource": r.resource,
+                "start": r.start.isoformat() if r.start is not None else None,
+                "end": r.end.isoformat() if r.end is not None else None,
+            }
+            for r in reservations
         ],
-    }
-    _save(data, now)
-
-
-def store_reservation_set(username: str, resources: "set[str]", now: datetime) -> None:
-    """Record the flat set *username* holds — the fallback for edge-less backends.
-
-    A naive *now* stores nothing — see :func:`_usable_clock`.
-    """
-    if not _usable_clock(now):
-        return
-    data = _load()
-    data["reservations"][username] = {
-        "fetched_at": now.isoformat(),
-        "valid_until": _valid_until(now, []).isoformat(),
-        "resource_set": sorted(resources),
     }
     _save(data, now)
 
@@ -296,6 +302,11 @@ def cached_reservation_ok(username: str, required: "set[str]", now: datetime) ->
 
     ``None`` (not ``False``) past ``valid_until`` is load-bearing: a crossed
     window edge must trigger a live refresh, never a cached refusal.
+
+    A stored bound of ``null`` means unbounded and the row is active on that
+    side.  A bound that is present but unparseable means the opposite — we
+    cannot tell — and that row is skipped rather than counted, so corrupt
+    cache data narrows the answer instead of widening it.
 
     A naive *now* reports a miss — see :func:`_usable_clock`.
     """
@@ -307,18 +318,25 @@ def cached_reservation_ok(username: str, required: "set[str]", now: datetime) ->
     until = _parse(entry.get("valid_until"))
     if until is None or now >= until:
         return None
-    if isinstance(entry.get("windows"), list):
-        active: set[str] = set()
-        for w in entry["windows"]:
-            if not isinstance(w, dict):
-                continue
-            start, end = _parse(w.get("start")), _parse(w.get("end"))
-            if start is not None and end is not None and start <= now <= end:
-                active.add(str(w.get("resource")))
-        return required <= active
-    if isinstance(entry.get("resource_set"), list):
-        return required <= set(entry["resource_set"])
-    return None
+    if not isinstance(entry.get("windows"), list):
+        return None
+    active: set[str] = set()
+    for w in entry["windows"]:
+        if not isinstance(w, dict):
+            continue
+        raw_start, raw_end = w.get("start"), w.get("end")
+        start = _parse(raw_start) if raw_start is not None else None
+        end = _parse(raw_end) if raw_end is not None else None
+        # A stored bound that fails to parse is not the same as an absent one:
+        # absent means unbounded, unparseable means we cannot tell, so the row
+        # is skipped rather than read as always-active.
+        if raw_start is not None and start is None:
+            continue
+        if raw_end is not None and end is None:
+            continue
+        if (start is None or start <= now) and (end is None or now <= end):
+            active.add(str(w.get("resource")))
+    return required <= active
 
 
 def clear_remote_cache() -> bool:

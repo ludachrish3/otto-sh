@@ -238,17 +238,36 @@ def _check_named_host_reservations(ctx: typer.Context, named: "list[RemoteHost]"
         return
 
     from ..config import get_lab
-    from ..reservations.check import MissingReservationError, check_reservations
+    from ..reservations.check import (
+        MissingReservationError,
+        active_reservations,
+        check_reservations,
+        required_resources,
+        warn_expiring_reservations,
+    )
+    from ..reservations.null_backend import is_null_backend
 
+    lab = get_lab()
+    host_ids = {host.id for host in outside}
     try:
         check_reservations(
-            get_lab(),
+            lab,
             gate.identity.username,
             gate.backend,
-            host_ids={host.id for host in outside},
+            host_ids=host_ids,
         )
     except MissingReservationError as e:
         fail(e)
+
+    # The expiry nudge for the slots this command is about to use, which the
+    # preamble never saw: its requirement covered the fleet, and these hosts
+    # are precisely the ones the fleet left out. Behind the same two guards
+    # ``check_reservations`` uses, so the warning is never what queries the
+    # backend. A lab-level identifier reaches both sites and is announced once
+    # — the suppression set is what makes that true.
+    needed = required_resources(lab, host_ids=host_ids)
+    if needed and not is_null_backend(gate.backend):
+        warn_expiring_reservations(active_reservations(gate.backend), needed)
 
 
 def resolve_cli_host(ctx: typer.Context) -> RemoteHost:

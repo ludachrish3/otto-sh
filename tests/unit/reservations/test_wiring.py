@@ -53,8 +53,23 @@ def test_factory_builds_on_demand(tmp_path):
     assert isinstance(gate.backend_factory(), NullReservationBackend)
 
 
+def test_factory_passes_resolved_username(tmp_path):
+    """`backend_factory` is what `otto reservation whoami`/`check` build
+    through; it must capture the resolved identity, not just build *a*
+    backend. Dropping ``username=identity.username`` from `_factory` would
+    leave every other test in this file green.
+    """
+    gate = build_reservation_gate(
+        [_repo({"backend": "none"}, tmp_path)],
+        as_user="bob",
+        skip_reservation_check=True,
+        cwd_fallback=tmp_path,
+    )
+    assert gate.backend_factory().username == "bob"
+
+
 def test_build_failure_propagates(tmp_path, monkeypatch):
-    def _boom(settings, repo_dir):
+    def _boom(settings, repo_dir, username=None):
         raise ReservationBackendError("unreachable")
 
     monkeypatch.setattr(r, "build_backend", _boom)

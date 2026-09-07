@@ -20,10 +20,7 @@ def test_builtins_registered():
 
 def test_register_and_lookup():
     class MyBackend:
-        def get_reserved_resources(self, username):
-            return set()
-
-        def who_reserved(self, resource):
+        def fetch_reservations(self, username, start=None, end=None):
             return []
 
         def backend_name(self):

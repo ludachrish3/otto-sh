@@ -2117,3 +2117,39 @@ def _restore_registries(
 
     for origin in evict_origins:
         sys.modules.pop(origin, None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_reservation_expiry_warnings():
+    """Clear the expiry-warning suppression set between tests.
+
+    ``otto.reservations.check`` remembers every ``(resource, end)`` pair it
+    has already announced so that a lab-level booking seen by two call sites
+    in one run is warned about once. That set is module-global, so a test
+    that triggers a warning would otherwise silence the next test asserting
+    on the same pair — the failure order-dependent and invisible in
+    isolation. Lives in the ROOT conftest per the process-global-state rule:
+    the set belongs to the module, not to any one test directory.
+    """
+    from otto.reservations.check import reset_expiry_warnings
+
+    reset_expiry_warnings()
+    yield
+    reset_expiry_warnings()
+
+
+@pytest.fixture(autouse=True)
+def _reset_half_ported_warnings():
+    """Clear the half-ported-backend warning suppression set between tests.
+
+    ``otto.reservations`` announces an unfinished 0.10 port once per PROCESS,
+    keyed on the backend class name. Two tests that register a class of the
+    same name would otherwise silence each other, order-dependently. Lives in
+    the ROOT conftest per the process-global-state rule: the set belongs to
+    the module, not to any one test directory.
+    """
+    from otto.reservations import reset_half_ported_warnings
+
+    reset_half_ported_warnings()
+    yield
+    reset_half_ported_warnings()

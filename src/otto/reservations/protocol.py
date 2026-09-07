@@ -37,7 +37,7 @@ translate them into a fail-closed startup error with a clear hint about the
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import (
     Protocol,
     runtime_checkable,
@@ -48,11 +48,28 @@ from typing import (
 class ReservationBackend(Protocol):
     """Read-only view over a reservation scheduler."""
 
-    def get_reserved_resources(
+    # `reservations` is deliberately absent: isinstance() against a
+    # runtime_checkable Protocol EVALUATES non-method members, so declaring
+    # the cached_property here would make the factory's and is_null_backend's
+    # type checks silently query the scheduler. It is guaranteed by
+    # ReservationBackendBase and enforced by the conformance helper instead.
+
+    def fetch_reservations(
         self,
         username: str,
-    ) -> set[str]:
-        """Return the set of resource identifiers currently reserved by ``username``.
+        start: "datetime | None" = None,
+        end: "datetime | None" = None,
+    ) -> "list[Reservation]":
+        """Return *username*'s reservations overlapping ``[start, end]``.
+
+        Both bounds default to **this instant**, so the unbounded call returns
+        what the user holds right now — the tightest query, not the widest.
+
+        The window predicate is **overlap**, not containment: a booking that
+        began before *start* and ends after *end* is active during the window
+        and MUST be returned.  Reading it as "contained in" or "beginning
+        within" makes otto's gate fail open, admitting a second user onto held
+        hardware.
 
         Parameters
         ----------
@@ -60,12 +77,18 @@ class ReservationBackend(Protocol):
             The reservation-system identity to query.  Case sensitivity and
             any other normalization rules are the backend's responsibility;
             otto passes the username through unchanged.
+        start : datetime | None
+            Start of the window of interest; ``None`` means this instant.
+        end : datetime | None
+            End of the window of interest; ``None`` means this instant.
 
         Returns
         -------
-        set[str]
-            Resource identifiers the user currently holds.  Empty set if the
-            user has no active reservations.  Resource strings must match
+        list[Reservation]
+            One row per ``(user, resource)`` window — a booking covering three
+            racks yields three :class:`Reservation` objects.  Windows that
+            ended at or before now are omitted.  Order is not significant;
+            otto sorts where it displays.  Resource strings must match
             byte-for-byte the identifiers ``required_resources`` computes —
             lab, element and host levels alike (spec 2026-08-28
             three-level-reservations §9) — any necessary normalization is the
@@ -76,36 +99,9 @@ class ReservationBackend(Protocol):
         otto.reservations.check.ReservationBackendError
             On any failure that prevents a definitive answer (network error,
             file I/O error, DB error, credential rejection, malformed data).
-        """
-        ...
-
-    def who_reserved(
-        self,
-        resource: str,
-    ) -> list[str]:
-        """Return the usernames currently holding ``resource``.
-
-        Used for error messages when a reservation check fails
-        (e.g. ``"shared-lab is held by alice, bob"``) so the caller knows who
-        to talk to.
-
-        Parameters
-        ----------
-        resource : str
-            Resource identifier to look up.
-
-        Returns
-        -------
-        list[str]
-            The usernames holding the resource, in a deterministic order with
-            duplicates removed.  An **empty list** means no one currently holds
-            it (there is no ``None`` sentinel — a resource can have any number
-            of concurrent holders).
-
-        Raises
-        ------
-        otto.reservations.check.ReservationBackendError
-            On any failure that prevents a definitive answer.
+            Never swallow and return an empty list: the CLI turns this
+            exception into a fail-closed startup error, while an empty list is
+            a refusal that blames the user.
         """
         ...
 
@@ -135,34 +131,75 @@ class SupportsUsernameCompletion(Protocol):
 
 
 @dataclass(frozen=True)
-class ReservationWindow:
-    """One reservation a backend knows about: *resource* held over ``[start, end]``.
+class Reservation:
+    """One booking: *user* holds *resource* over ``[start, end]``.
 
-    ``start`` and ``end`` must be timezone-aware.  A backend that does not
-    know when a booking began uses the epoch for ``start``; an open-ended
-    booking uses a far-future ``end``.
+    ``start`` and ``end`` are timezone-aware when present. ``start is None``
+    means the backend does not know when the booking began; ``end is None``
+    means it is open-ended and never expires. There are no sentinel dates —
+    a backend that does not know a bound reports ``None`` rather than the
+    epoch or a far-future year.
+
+    Parameters
+    ----------
+    user : str
+        The holder's reservation-system identity.
+    resource : str
+        The resource identifier, byte-for-byte as the lab file declares it.
+    start : datetime | None
+        When the booking began, or ``None`` if unknown.
+    end : datetime | None
+        When the booking ends, or ``None`` if open-ended.
     """
 
+    user: str
     resource: str
-    start: datetime
-    end: datetime
+    start: "datetime | None" = None
+    end: "datetime | None" = None
+
+    def expires_within(self, delta: "timedelta", *, now: "datetime | None" = None) -> bool:
+        """Whether this booking ends within *delta* from *now*.
+
+        Always ``False`` for an open-ended booking (``end is None``). A booking
+        whose ``end`` has already passed reports ``True`` — it is the most
+        urgent case there is, not an expired one to ignore.
+
+        Parameters
+        ----------
+        delta : timedelta
+            The look-ahead window.
+        now : datetime | None
+            The instant to measure from; defaults to ``datetime.now(timezone.utc)``.
+            Present so callers' tests can freeze the clock without patching
+            module globals.
+        """
+        if self.end is None:
+            return False
+        reference = now if now is not None else datetime.now(timezone.utc)
+        return self.end - reference <= delta
 
 
 @runtime_checkable
-class SupportsReservationWindows(Protocol):
-    """Optional capability: report reservation windows (start/end per resource).
+class SupportsResourceHolders(Protocol):
+    """Optional capability: answer the inverted query about a resource.
 
-    Implemented by backends that can say *when* a booking starts and ends,
-    not just whether it is currently held.  Otto detects it structurally
-    (``isinstance(backend, SupportsReservationWindows)``) and uses the window
-    edges to invalidate the remote-path completion cache the moment a booking
-    boundary passes (see ``otto.config.remote_completion_cache``).  Backends
-    that cannot report windows simply omit it and fall back to a flat-TTL
-    cache of
-    :meth:`ReservationBackend.get_reserved_resources
-    <otto.reservations.protocol.ReservationBackend.get_reserved_resources>`.
+    A backend that can report who holds a given resource — by enumerating its
+    schedule or by a targeted lookup, whichever it supports — implements
+    ``holders``. Otto detects it structurally
+    (``isinstance(backend, SupportsResourceHolders)``) and uses it to name the
+    current holders, and when each booking frees up, in the refusal message
+    raised by :func:`~otto.reservations.check.check_reservations`.
+
+    A backend whose scheduler answers only per-user queries simply omits the
+    method; the refusal then says the holders are unknown rather than naming
+    them. Nothing else degrades.
     """
 
-    def get_reservation_windows(self, username: str) -> "list[ReservationWindow]":
-        """Return every active window ``username`` holds (expired entries omitted)."""
+    def holders(self, resource: str) -> "list[Reservation]":
+        """Return every reservation currently covering *resource*, any user.
+
+        An **empty list** means nobody holds it. Rows obey the same rules as
+        :meth:`~otto.reservations.protocol.ReservationBackend.fetch_reservations`
+        results.
+        """
         ...

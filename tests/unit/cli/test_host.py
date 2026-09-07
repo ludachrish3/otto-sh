@@ -25,6 +25,7 @@ from otto.host.login_proxy import Cred
 from otto.host.session import SessionManager, ShellSession
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
+from otto.reservations import Reservation, ReservationBackendBase
 from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.dispatch import DispatchRunner
@@ -284,20 +285,31 @@ class TestResolveCliHostHop:
 #  touches hardware nobody reserved.
 
 
-class _SlotBackend:
-    """Reservation backend holding a fixed set; every other resource is dana's."""
+class _SlotBackend(ReservationBackendBase):
+    """Reservation backend holding a fixed set; every other resource is dana's.
 
-    def __init__(self, held: set[str]) -> None:
+    ``ends`` optionally gives a resource an end time, which is what the
+    expiry warning reads. Rows are built per call rather than stored, because
+    ``ReservationBackendBase.reservations`` is a ``cached_property``: a fake
+    reused across two constructions would freeze the first answer.
+    """
+
+    def __init__(self, held: "set[str]", *, ends: "dict[str, object] | None" = None) -> None:
+        super().__init__(username="chris")
         self._held = set(held)
+        self._ends = dict(ends or {})
 
     def backend_name(self) -> str:
         return "fake"
 
-    def get_reserved_resources(self, username: str) -> set[str]:
-        return set(self._held)
+    def fetch_reservations(self, username, start=None, end=None):
+        return [
+            Reservation(user=username, resource=r, end=self._ends.get(r))
+            for r in sorted(self._held)
+        ]
 
-    def who_reserved(self, resource: str) -> list[str]:
-        return ["dana"]
+    def holders(self, resource: str) -> "list[Reservation]":
+        return [Reservation(user="dana", resource=resource)]
 
 
 def _slot_fleet(monkeypatch, tmp_path):
@@ -327,12 +339,12 @@ def _host_ctx(gate, host_id, hop=""):
     )
 
 
-def _gate(held, *, skip_check=False):
+def _gate(held, *, skip_check=False, ends=None):
     from otto.reservations.check import ReservationGate
     from otto.reservations.identity import ResolvedIdentity
 
     return ReservationGate(
-        backend=_SlotBackend(held),
+        backend=_SlotBackend(held, ends=ends),
         identity=ResolvedIdentity(username="chris", source="$USER"),
         skip_check=skip_check,
     )
@@ -1037,3 +1049,139 @@ class TestHostIdCompleterLabFilter:
         with patch("otto.config.get_completion_names", return_value=fake_cache):
             result = _host_id_completer(ctx=_ctx_with_labs(["unix"]), incomplete="test")
         assert result == ["test1"]
+
+
+# ── The expiry warning on the out-of-fleet path ───────────────────────────────
+#  The preamble's gate warned about the resources the FLEET needs. An
+#  explicitly named out-of-fleet host brings its own element- and host-level
+#  slots, which were never in that set and are exactly the ones this command
+#  is about to use — so this site warns too. The lab-level requirement is
+#  common to both sites, and a suppression set keyed on ``(resource, end)`` is
+#  what keeps it from being announced twice in one run.
+
+
+def _soon_utc(minutes):
+    from datetime import datetime, timedelta, timezone
+
+    return datetime.now(timezone.utc) + timedelta(minutes=minutes)
+
+
+def test_naming_an_out_of_fleet_host_warns_that_its_own_slot_is_lapsing(
+    monkeypatch, tmp_path, caplog
+):
+    """``slot-2`` is held, so no refusal — but it ends in a minute, so say so.
+
+    The preamble's gate never saw ``slot-2``: the declared fleet is ``slot1``
+    alone. Without a warning at this site the user gets no notice at all for
+    the host they explicitly targeted.
+    """
+    import logging
+
+    _slot_fleet(monkeypatch, tmp_path)
+    ctx = _host_ctx(_gate({"slot-1", "slot-2"}, ends={"slot-2": _soon_utc(1)}), "slot2")
+
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        assert host_module.resolve_cli_host(ctx).id == "slot2"
+
+    assert "slot-2" in caplog.text
+    assert "expires" in caplog.text.lower()
+
+
+def test_a_healthy_out_of_fleet_slot_says_nothing(monkeypatch, tmp_path, caplog):
+    """The negative half: a booking well outside the window is not news."""
+    import logging
+
+    _slot_fleet(monkeypatch, tmp_path)
+    ctx = _host_ctx(_gate({"slot-1", "slot-2"}, ends={"slot-2": _soon_utc(240)}), "slot2")
+
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        assert host_module.resolve_cli_host(ctx).id == "slot2"
+
+    assert "expires" not in caplog.text.lower()
+
+
+def test_warning_fires_only_once_for_an_out_of_fleet_host(monkeypatch, tmp_path, caplog):
+    """A lab-level booking is required by BOTH sites and announced by one.
+
+    The gate requires the lab's own ``rig-pdu`` plus the fleet's ``slot-1``;
+    the out-of-fleet check for ``slot2`` requires ``rig-pdu`` again — it is
+    seeded unconditionally — plus ``slot-2``. Put the warning inside
+    ``check_reservations`` instead and this goes red with a count of 2.
+    """
+    import logging
+
+    lab = _slot_fleet(monkeypatch, tmp_path)
+    lab.resources = {"rig-pdu"}
+    gate = _gate({"rig-pdu", "slot-1", "slot-2"}, ends={"rig-pdu": _soon_utc(2)})
+    ctx = _host_ctx(gate, "slot2")
+
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        gate.evaluate()  # the preamble
+        assert host_module.resolve_cli_host(ctx).id == "slot2"
+
+    assert caplog.text.count("rig-pdu") == 1
+
+
+def test_dash_r_suppresses_the_out_of_fleet_expiry_warning(monkeypatch, tmp_path, caplog):
+    """``-R`` returns above the check at this site, so above the warning too.
+
+    Mutation: move the helper above the ``gate.skip_check`` guard and this
+    goes red. The asymmetry with ``otto reservation check`` — which still
+    warns under ``-R`` — is deliberate and pinned in
+    ``tests/unit/cli/test_reservation.py``.
+    """
+    import logging
+
+    _slot_fleet(monkeypatch, tmp_path)
+    ctx = _host_ctx(
+        _gate({"slot-1", "slot-2"}, skip_check=True, ends={"slot-2": _soon_utc(1)}), "slot2"
+    )
+
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        assert host_module.resolve_cli_host(ctx).id == "slot2"
+
+    assert "expires" not in caplog.text.lower()
+
+
+def test_a_null_backend_never_reaches_the_out_of_fleet_expiry_helper(monkeypatch, tmp_path, caplog):
+    """The guard that keeps the warning from becoming the thing that queries.
+
+    ``check_reservations`` short-circuits on the null backend before it asks
+    anything; the warning sits behind the same predicate, so a lab configured
+    with no scheduler stays a no-op.
+
+    Mutation: drop ``not is_null_backend(gate.backend)`` from
+    ``_check_named_host_reservations`` and the fetch below raises. A plain
+    ``NullReservationBackend`` could not show that — it answers ``[]``, so an
+    unguarded call would stay silently green.
+    """
+    import logging
+
+    from otto.reservations import NullReservationBackend
+    from otto.reservations.check import ReservationGate
+    from otto.reservations.identity import ResolvedIdentity
+
+    class _ExplodingNullBackend(NullReservationBackend):
+        """Null-shaped to ``is_null_backend``'s ``isinstance``, fatal to query."""
+
+        def fetch_reservations(self, username, start=None, end=None):
+            raise AssertionError(
+                "the null backend was queried; the is_null_backend guard is missing"
+            )
+
+    _slot_fleet(monkeypatch, tmp_path)
+    gate = ReservationGate(
+        # WITH the username the check is for: without it the fetch this test
+        # is trying to prove unreachable would fail on the base class's "no
+        # username was resolved" error instead of the AssertionError the
+        # exploding double exists to raise, and the mutation would go red for
+        # the wrong reason. `is_null_backend` short-circuits before the
+        # username is ever read, so the guard stays green either way.
+        backend=_ExplodingNullBackend(username="chris"),
+        identity=ResolvedIdentity(username="chris", source="$USER"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        assert host_module.resolve_cli_host(_host_ctx(gate, "slot2")).id == "slot2"
+
+    assert "expires" not in caplog.text.lower()

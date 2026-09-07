@@ -73,10 +73,14 @@ backend that cannot answer fails the run rather than letting it through.
 ## A backend of your own
 
 The JSON file is a stand-in for the scheduler your team already has. A
-backend subclasses `ReservationBackendBase`, implements its three read-only
-methods, and forwards the two constructor arguments otto passes (`url`,
-`repo_dir`) to the base; this one reads a text file, and everything but the
-file read and its `path` setting is what every backend looks like:
+backend subclasses `ReservationBackendBase`, implements its two read-only
+methods, and forwards the three constructor arguments otto passes (`url`,
+`repo_dir`, `username`) to the base; this one reads a text file, and
+everything but the file read and its `path` setting is what every backend
+looks like. It also implements the optional `holders` — the inverted "who
+holds this?" query — which is why `@override` sits on the two required methods
+and not on that one
+([why, exactly](../library/reservation-backends.md#a-note-on-override-in-the-samples)):
 
 ```{literalinclude} ../examples/getting-started/libs/gs_example/reservations.py
 :language: python
@@ -111,7 +115,7 @@ line are as on {doc}`boards-of-interest`):
 >>> from otto.testing import assert_reservation_backend_conforms
 >>> from gs_example.reservations import TeamFileBackend
 >>> assert_reservation_backend_conforms(
-...     TeamFileBackend(repo_dir=GS_EXAMPLE, path="team-reservations.txt"),
+...     TeamFileBackend(repo_dir=GS_EXAMPLE, username="chris", path="team-reservations.txt"),
 ...     known_user="chris",
 ...     known_resources=["bb-bench", "bb1350-chassis", "bb1350-slot"],
 ... )
@@ -119,5 +123,9 @@ line are as on {doc}`boards-of-interest`):
 
 The rules it checks — never mutate, return the full set, raise for every
 failure, match identifiers byte for byte — and the optional capabilities
-(reservation windows, username completion: implement the method and otto
-detects it) are in {doc}`../library/reservation-backends`.
+(`holders`, username completion: implement the method and otto detects it) are
+in {doc}`../library/reservation-backends`. One thing conformance deliberately
+cannot check: because `holders` is optional, dropping it leaves the helper
+green while refusals start saying `held by: unknown`, so a backend that means
+to answer the inverted query asserts that separately — as otto's own suite
+does for the backend above.

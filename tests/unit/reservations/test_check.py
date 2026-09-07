@@ -4,7 +4,9 @@ The library-facing gate (:class:`~otto.reservations.ReservationGate` and its
 ``evaluate()`` outcome matrix) is tested separately in ``test_gate.py``.
 """
 
-from dataclasses import dataclass
+import os
+import time
+from datetime import datetime, timezone
 
 import pytest
 
@@ -13,7 +15,11 @@ from otto.host.element import Element
 from otto.reservations import (
     MissingReservationError,
     NullReservationBackend,
+    Reservation,
+    ReservationBackendBase,
+    ReservationBackendError,
     ResourceOrigin,
+    active_reservations,
     check_reservations,
     required_resource_origins,
     required_resources,
@@ -21,18 +27,60 @@ from otto.reservations import (
 from tests.conftest import make_host
 
 
-@dataclass
-class _FakeBackend:
-    """Minimal in-memory ReservationBackend for testing the check function."""
+@pytest.fixture
+def pin_timezone():
+    """Pin the process's local zone for the duration of one test.
 
-    owners: dict[str, str]  # resource -> username
+    Every rendered ``until HH:MM`` is a LOCAL clock time
+    (``_describe_holders`` calls ``.astimezone()``), so an assertion on one is
+    machine-dependent unless the zone is pinned — this VM runs CDT and CI runs
+    UTC. Pinning is also what keeps the local-rendering guard from being
+    VACUOUS: at UTC ``.astimezone()`` is a no-op and deleting it changes
+    nothing, so that guard pins ``Pacific/Kiritimati`` (UTC+14, the largest
+    offset there is, and no DST).
 
-    def get_reserved_resources(self, username: str) -> set[str]:
-        return {r for r, u in self.owners.items() if u == username}
+    ``TZ`` carries no ``OTTO_`` prefix, so the suite's ambient-env strip leaves
+    it alone; ``tzset()`` is what makes ``time``/``datetime`` re-read it, and
+    it has to run again on the way out or the new zone leaks into every later
+    test in this process.
+    """
+    previous = os.environ.get("TZ")
 
-    def who_reserved(self, resource: str) -> list[str]:
+    def pin(name):
+        os.environ["TZ"] = name
+        time.tzset()
+
+    try:
+        yield pin
+    finally:
+        if previous is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = previous
+        time.tzset()
+
+
+class _FakeBackend(ReservationBackendBase):
+    """Minimal in-memory ReservationBackend for testing the check function.
+
+    ``owners`` maps resource -> the single username holding it (or absent,
+    meaning unheld). Holders are reported with no ``end`` — a bare name.
+    """
+
+    def __init__(self, owners: dict[str, str], *, username: "str | None" = None) -> None:
+        super().__init__(username=username)
+        self.owners = owners
+
+    def fetch_reservations(
+        self, username: str, start: "datetime | None" = None, end: "datetime | None" = None
+    ) -> list[Reservation]:
+        return [
+            Reservation(user=username, resource=r) for r, u in self.owners.items() if u == username
+        ]
+
+    def holders(self, resource: str) -> list[Reservation]:
         u = self.owners.get(resource)
-        return [u] if u is not None else []
+        return [Reservation(user=u, resource=resource)] if u is not None else []
 
     def backend_name(self) -> str:
         return "fake"
@@ -81,7 +129,8 @@ class TestCheckReservations:
                 "rack1": "alice",
                 "test1": "alice",
                 "test2": "alice",
-            }
+            },
+            username="alice",
         )
         check_reservations(lab, "alice", backend)  # must not raise
 
@@ -92,7 +141,8 @@ class TestCheckReservations:
                 "rack1": "alice",
                 "test1": "bob",  # held by someone else
                 # test2 is absent from the dict: unreserved
-            }
+            },
+            username="alice",
         )
         with pytest.raises(MissingReservationError) as exc_info:
             check_reservations(lab, "alice", backend)
@@ -107,7 +157,7 @@ class TestCheckReservations:
     def test_error_does_not_mention_skip_flag(self):
         """Regression guard — MissingReservationError must not advertise --skip-reservation-check."""  # noqa: E501 — descriptive docstring
         lab = _lab_with_resources()
-        backend = _FakeBackend(owners={})
+        backend = _FakeBackend(owners={}, username="alice")
         with pytest.raises(MissingReservationError) as exc_info:
             check_reservations(lab, "alice", backend)
         assert "--skip-reservation-check" not in str(exc_info.value)
@@ -124,24 +174,168 @@ class TestCheckReservations:
         check_reservations(lab, "alice", backend)
 
     def test_lists_multiple_holders_in_message(self):
-        class _MultiHolderBackend:
-            def __init__(self, holders):
+        class _MultiHolderBackend(ReservationBackendBase):
+            def __init__(self, holders: dict[str, list[str]], *, username: "str | None" = None):
+                super().__init__(username=username)
                 self._h = holders
 
-            def get_reserved_resources(self, username):
-                return {r for r, us in self._h.items() if username in us}
+            def fetch_reservations(self, username, start=None, end=None):
+                return [
+                    Reservation(user=username, resource=r)
+                    for r, us in self._h.items()
+                    if username in us
+                ]
 
-            def who_reserved(self, resource):
-                return list(self._h.get(resource, []))
+            def holders(self, resource):
+                return [Reservation(user=u, resource=resource) for u in self._h.get(resource, [])]
 
             def backend_name(self):
                 return "multi"
 
         lab = Lab(name="shared_lab", resources={"rack1"})
-        backend = _MultiHolderBackend(holders={"rack1": ["alice", "bob"]})
+        # Fed out of order: this must exercise the sort, not merely reproduce
+        # dict insertion order.
+        backend = _MultiHolderBackend(holders={"rack1": ["bob", "alice"]}, username="carol")
         with pytest.raises(MissingReservationError) as exc_info:
             check_reservations(lab, "carol", backend)
         assert "held by: alice, bob" in str(exc_info.value)
+
+    def test_refusal_names_holders_and_when_they_free_up(self, pin_timezone):
+        """A capable backend gives the blocked user both facts.
+
+        Pinned to UTC so the rendered clock time is the one written below. The
+        conversion into the reader's zone is guarded separately, by
+        ``test_refusal_renders_the_holder_end_in_the_viewers_local_zone``.
+        """
+        pin_timezone("UTC")
+        lab = _lab_declaring("rack3")
+        end = datetime(2026, 9, 7, 15, 30, tzinfo=timezone.utc)
+
+        class Capable(ReservationBackendBase):
+            def fetch_reservations(self, username, start=None, end=None):
+                return []
+
+            def holders(self, resource):
+                return [Reservation(user="alice", resource=resource, end=end)]
+
+            def backend_name(self):
+                return "capable"
+
+        with pytest.raises(MissingReservationError, match="held by: alice until 15:30"):
+            check_reservations(lab, "bob", Capable(username="bob"))
+
+    def test_refusal_renders_the_holder_end_in_the_viewers_local_zone(self, pin_timezone):
+        """The "until" a locked-out engineer reads is a clock they own.
+
+        The backend answers in UTC — the JSON backend normalises every
+        ``expires`` to it, and a remote scheduler answers in whatever zone it
+        was configured with — while ``%H:%M`` carries no offset to disambiguate
+        the rendering. Unconverted, it sends a reader outside UTC back at the
+        wrong hour. The UTC+14 pin is what keeps this from being vacuous on a
+        UTC machine.
+
+        Mutation: drop ``.astimezone()`` from ``_describe_holders`` and this
+        reads 15:30.
+        """
+        pin_timezone("Pacific/Kiritimati")
+        lab = _lab_declaring("rack3")
+        end = datetime(2026, 9, 7, 15, 30, tzinfo=timezone.utc)
+
+        class Capable(ReservationBackendBase):
+            def fetch_reservations(self, username, start=None, end=None):
+                return []
+
+            def holders(self, resource):
+                return [Reservation(user="alice", resource=resource, end=end)]
+
+            def backend_name(self):
+                return "capable"
+
+        # 15:30 UTC is 05:30 the next morning at UTC+14.
+        with pytest.raises(MissingReservationError, match="held by: alice until 05:30"):
+            check_reservations(lab, "bob", Capable(username="bob"))
+
+    def test_refusal_says_unknown_without_the_capability(self):
+        """A per-user-only backend must never let the message say 'nobody'."""
+        lab = _lab_declaring("rack3")
+
+        class PerUserOnly(ReservationBackendBase):
+            def fetch_reservations(self, username, start=None, end=None):
+                return []
+
+            def backend_name(self):
+                return "per-user-only"
+
+        with pytest.raises(MissingReservationError, match="held by: unknown"):
+            check_reservations(lab, "bob", PerUserOnly(username="bob"))
+
+    def test_refusal_says_nobody_when_capability_reports_none(self):
+        """'nobody' is reserved for a backend that actually looked and found none."""
+        lab = _lab_declaring("rack3")
+
+        class Capable(ReservationBackendBase):
+            def fetch_reservations(self, username, start=None, end=None):
+                return []
+
+            def holders(self, resource):
+                return []
+
+            def backend_name(self):
+                return "capable"
+
+        with pytest.raises(MissingReservationError, match="held by: nobody"):
+            check_reservations(lab, "bob", Capable(username="bob"))
+
+    def test_backend_username_disagreement_is_a_runtime_error(self):
+        """The username argument and the backend's constructed identity must agree.
+
+        A backend caches rows for the user it was built with; if the caller's
+        ``username`` ever disagreed, the held-set comprehension would silently
+        come back empty — a refusal blaming a user whose reservations were
+        never fetched. That must fail loudly instead.
+        """
+        lab = _lab_declaring("rack3")
+        backend = _FakeBackend(owners={}, username="alice")
+        with pytest.raises(RuntimeError, match="backend was built for 'alice'"):
+            check_reservations(lab, "bob", backend)
+
+    def test_guard_does_not_fire_when_backend_username_is_none(self):
+        """A backend with no constructed identity must not trip the agreement guard.
+
+        Only a genuine *conflict* (backend built for one user, checked for
+        another) is a bug. A hand-built backend that never set ``username``
+        has nothing to disagree with, so the guard must let it through —
+        raising here would swap the (informative) ``ReservationBackendError``
+        for a misleading ``RuntimeError``.
+        """
+        lab = _lab_declaring("rack3")
+
+        class ManualBackend(ReservationBackendBase):
+            def fetch_reservations(self, username, start=None, end=None):
+                return []
+
+            def backend_name(self):
+                return "manual"
+
+        backend = ManualBackend(username=None)
+        # Pre-seed the cache directly, as ReservationBackendBase.reservations
+        # documents a hand-built backend may, rather than going through
+        # fetch_reservations().
+        backend.reservations = [Reservation(user="bob", resource="rack3")]
+
+        check_reservations(lab, "bob", backend)  # must not raise
+
+    def test_active_reservations_names_the_class_when_the_member_is_missing(self):
+        """A backend with no ``reservations`` member gets a named error, not AttributeError."""
+
+        class NoReservations:
+            def backend_name(self):
+                return "bare"
+
+        with pytest.raises(
+            ReservationBackendError, match="Reservation backend 'NoReservations' has no"
+        ):
+            active_reservations(NoReservations())
 
 
 def _three_level_lab() -> Lab:
@@ -204,21 +398,25 @@ def test_an_unknown_host_id_is_a_value_error_naming_it():
 
 def test_missing_error_names_each_origin_and_holder():
     lab = _three_level_lab()
-    backend = _FakeBackend(
-        owners={"rig-pdu": "chris", "chassis-1": "chris", "slot-1": "chris", "slot-2": "dana"}
-    )
-    check_reservations(lab, "chris", backend, host_ids=["chassis1"])  # slot-2 is not in play
+    # Each check_reservations call gets its own backend instance: `reservations`
+    # is a cached_property, and the third act below rebinds `owners` to a new
+    # dict with 'rig-pdu' dropped — a shared instance would keep serving its
+    # first-access cache and never see the change.
+    owners = {"rig-pdu": "chris", "chassis-1": "chris", "slot-1": "chris", "slot-2": "dana"}
+    check_reservations(
+        lab, "chris", _FakeBackend(owners, username="chris"), host_ids=["chassis1"]
+    )  # slot-2 is not in play
     with pytest.raises(MissingReservationError) as info:
-        check_reservations(lab, "chris", backend)
+        check_reservations(lab, "chris", _FakeBackend(owners, username="chris"))
     text = str(info.value)
     assert "does not hold all resources required by lab 'rig'" in text
     assert "slot-2" in text
     assert "host chassis2" in text
     assert "held by: dana" in text
     assert "slot-1" not in text
-    backend.owners.pop("rig-pdu")
+    owners = {k: v for k, v in owners.items() if k != "rig-pdu"}
     with pytest.raises(MissingReservationError, match=r"rig-pdu\s+lab rig\s+\(held by: nobody\)"):
-        check_reservations(lab, "chris", backend, host_ids=["gw"])
+        check_reservations(lab, "chris", _FakeBackend(owners, username="chris"), host_ids=["gw"])
 
 
 def test_the_null_backend_does_not_suppress_the_unknown_host_id_bug():
@@ -241,7 +439,7 @@ def test_message_padding_aligns_the_level_column_for_different_length_resources(
     """``width`` is computed once over ALL missing resources, not per line —
     a short and a long resource name must still line up at the level column."""
     lab = _lab_declaring("a", "much-longer-name")
-    backend = _FakeBackend(owners={})
+    backend = _FakeBackend(owners={}, username="alice")
     with pytest.raises(MissingReservationError) as exc_info:
         check_reservations(lab, "alice", backend)
     lines = str(exc_info.value).splitlines()

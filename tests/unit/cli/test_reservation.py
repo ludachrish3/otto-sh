@@ -15,6 +15,8 @@ from otto.config.lab import Lab
 from otto.host.element import Element
 from otto.reservations import (
     NullReservationBackend,
+    Reservation,
+    ReservationBackendBase,
     ReservationBackendError,
     ReservationGate,
     ResolvedIdentity,
@@ -48,11 +50,9 @@ class _FakeBackend:
     def backend_name(self) -> str:
         return "fake"
 
-    def get_reserved_resources(self, username: str) -> set[str]:
-        return {"r1"}
-
-    def who_reserved(self, resource: str) -> list[str]:
-        return ["alice"]
+    @property
+    def reservations(self) -> list[Reservation]:
+        return [Reservation(user="alice", resource="r1")]
 
 
 # ── whoami ─────────────────────────────────────────────────────────────────────
@@ -196,8 +196,12 @@ class _HoldsSlot1(_FakeBackend):
     would find ``slot-2`` unheld and exit 1.
     """
 
-    def get_reserved_resources(self, username: str) -> set[str]:
-        return {"chassis-1", "slot-1"}
+    @property
+    def reservations(self) -> list[Reservation]:
+        return [
+            Reservation(user="alice", resource="chassis-1"),
+            Reservation(user="alice", resource="slot-1"),
+        ]
 
 
 def test_check_exits_1_when_not_configured(capsys):
@@ -226,10 +230,8 @@ def test_check_exits_1_on_missing_reservation(capsys, monkeypatch):
     monkeypatch.setenv("COLUMNS", "300")
 
     class _EmptyBackend(_FakeBackend):
-        def get_reserved_resources(self, username: str) -> set[str]:
-            return set()
-
-        def who_reserved(self, resource: str) -> list[str]:
+        @property
+        def reservations(self) -> list[Reservation]:
             return []
 
     identity = ResolvedIdentity(username="alice", source="$USER")
@@ -244,8 +246,10 @@ def test_check_exits_1_on_missing_reservation(capsys, monkeypatch):
     # The table still renders, and the unheld row is flagged — the requirement
     # is shown BEFORE the verdict, so a failing check explains itself. The cell
     # border is part of the anchor on purpose: MissingReservationError's own
-    # "(held by: nobody)" line names the same resource, the same level and
-    # contains "no", so a borderless anchor would be satisfied by the error.
+    # "(held by: unknown — this backend cannot report other users)" line (no
+    # ``holders``, only the retired ``who_reserved``) names the same resource,
+    # the same level and contains "no", so a borderless anchor would be
+    # satisfied by the error.
     assert _table_row(capsys.readouterr().out, _CELL, "r1", "lab", "no")
 
 
@@ -370,7 +374,8 @@ def test_check_does_not_query_the_backend_when_nothing_is_required(capsys, monke
     monkeypatch.setenv("COLUMNS", "300")
 
     class _UnreachableBackend(_FakeBackend):
-        def get_reserved_resources(self, username: str) -> set[str]:
+        @property
+        def reservations(self) -> list[Reservation]:
             raise ReservationBackendError("unreachable")
 
     identity = ResolvedIdentity(username="alice", source="$USER")
@@ -396,7 +401,12 @@ def test_check_table_renders_n_a_under_the_null_backend(capsys, monkeypatch):
     monkeypatch.setenv("COLUMNS", "300")
 
     identity = ResolvedIdentity(username="alice", source="$USER")
-    res = ReservationGate(backend=NullReservationBackend(), identity=identity, skip_check=False)
+    # username="alice": with it unset, ReservationBackendBase.reservations
+    # raises on the missing username before fetch_reservations is ever
+    # reached, and that accidental failure would mask the guard under test.
+    res = ReservationGate(
+        backend=NullReservationBackend(username="alice"), identity=identity, skip_check=False
+    )
     ctx = _make_ctx({"otto_reservation": res})
 
     lab = _rig_lab(_slot_host("test1", "chassis1", "slot-1"))
@@ -427,8 +437,9 @@ def test_check_renders_a_resource_that_looks_like_markup_verbatim(capsys, monkey
     monkeypatch.setenv("COLUMNS", "300")
 
     class _HoldsBracketed(_FakeBackend):
-        def get_reserved_resources(self, username: str) -> set[str]:
-            return {"rack[a]"}
+        @property
+        def reservations(self) -> list[Reservation]:
+            return [Reservation(user="alice", resource="rack[a]")]
 
     identity = ResolvedIdentity(username="alice", source="$USER")
     res = ReservationGate(backend=_HoldsBracketed(), identity=identity, skip_check=False)
@@ -440,6 +451,39 @@ def test_check_renders_a_resource_that_looks_like_markup_verbatim(capsys, monkey
 
     out = capsys.readouterr().out
     assert _table_row(out, _CELL, "rack[a]", "lab", "rig", "yes")
+
+
+def test_check_table_does_not_credit_a_foreign_users_row(capsys, monkeypatch):
+    """A row for someone else must not render ``yes`` for the invoking user.
+
+    ``check_reservations`` filters ``active_reservations`` down to
+    ``r.user == username``; the table's held set must apply the same filter
+    or it can render ``yes`` directly above a refusal naming the same
+    resource as missing — the two predicates would then disagree about what
+    "held" means for one otto run.
+
+    Mutation: drop the ``if r.user == username`` filter from the held-set
+    comprehension in ``otto.cli.reservation.check`` and this goes red.
+    """
+    monkeypatch.setenv("COLUMNS", "300")
+
+    class _HoldsForBob(_FakeBackend):
+        @property
+        def reservations(self) -> list[Reservation]:
+            return [Reservation(user="bob", resource="r1")]
+
+    identity = ResolvedIdentity(username="alice", source="$USER")
+    res = ReservationGate(backend=_HoldsForBob(), identity=identity, skip_check=False)
+    ctx = _make_ctx({"otto_reservation": res})
+
+    lab = Lab(name="test_lab", resources={"r1"})
+    install_scoped_context(monkeypatch, lab, [])
+    with pytest.raises(typer.Exit) as exc:
+        check(ctx)
+    assert exc.value.exit_code == 1
+
+    out = capsys.readouterr().out
+    assert _table_row(out, _CELL, "r1", "lab", "no")
 
 
 def test_whoami_builds_backend_on_demand(capsys):
@@ -512,3 +556,157 @@ def test_check_builds_backend_on_demand(capsys, monkeypatch):
     check(ctx)  # _FakeBackend reserves {"r1"} for everyone → passes
 
     assert "OK" in capsys.readouterr().out
+
+
+# ── The expiry warning, and why -R does not silence it here ──────────────────
+#  The gate and the out-of-fleet named-host check both return early under
+#  ``-R``, so neither warns. This command does not: its group is registered
+#  ``lab_free=True, gate=False`` and it builds its backend through
+#  ``backend_factory`` even under ``-R``. That asymmetry is the design. ``-R``
+#  means "do not block me", and the one command whose entire job is reporting
+#  reservation status should still say the booking is lapsing.
+
+
+class _ExpiringBackend(ReservationBackendBase):
+    """Holds ``r1``, ending ``minutes`` from now.
+
+    Built fresh per test rather than shared: ``reservations`` is a
+    ``cached_property``, so one instance reused across two expectations would
+    keep answering with the rows of the first.
+    """
+
+    def __init__(self, minutes: float) -> None:
+        super().__init__(username="alice")
+        from datetime import datetime, timedelta, timezone
+
+        self._end = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+
+    def backend_name(self) -> str:
+        return "fake"
+
+    def fetch_reservations(self, username, start=None, end=None):
+        return [Reservation(user=username, resource="r1", end=self._end)]
+
+    def holders(self, resource: str) -> "list[Reservation]":
+        return [Reservation(user="alice", resource=resource)]
+
+
+def test_check_warns_when_a_required_reservation_is_expiring(capsys, monkeypatch, caplog):
+    import logging
+
+    identity = ResolvedIdentity(username="alice", source="$USER")
+    res = ReservationGate(backend=_ExpiringBackend(1), identity=identity, skip_check=False)
+    ctx = _make_ctx({"otto_reservation": res})
+
+    install_scoped_context(monkeypatch, Lab(name="test_lab", resources={"r1"}), [])
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        check(ctx)
+
+    assert "OK" in capsys.readouterr().out
+    assert "r1" in caplog.text
+    assert "expires" in caplog.text.lower()
+
+
+def test_check_is_silent_for_a_reservation_outside_the_window(capsys, monkeypatch, caplog):
+    """The negative half of the pair, so the warning is not simply unconditional."""
+    import logging
+
+    identity = ResolvedIdentity(username="alice", source="$USER")
+    res = ReservationGate(backend=_ExpiringBackend(600), identity=identity, skip_check=False)
+    ctx = _make_ctx({"otto_reservation": res})
+
+    install_scoped_context(monkeypatch, Lab(name="test_lab", resources={"r1"}), [])
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        check(ctx)
+
+    assert "expires" not in caplog.text.lower()
+
+
+def test_check_still_warns_under_skip_reservation_check(capsys, monkeypatch, caplog):
+    """``-R`` does NOT silence this command. Consequence to preserve, not to fix.
+
+    Mutation: gate the call on ``not res.skip_check`` and this goes red — and
+    the user who typed ``-R`` precisely because they know the booking is tight
+    is the one told nothing.
+    """
+    import logging
+
+    identity = ResolvedIdentity(username="alice", source="--as-user")
+    res = ReservationGate(
+        backend=None,
+        identity=identity,
+        skip_check=True,
+        backend_factory=lambda: _ExpiringBackend(1),
+    )
+    ctx = _make_ctx({"otto_reservation": res})
+
+    install_scoped_context(monkeypatch, Lab(name="test_lab", resources={"r1"}), [])
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        check(ctx)
+
+    assert "OK" in capsys.readouterr().out
+    assert "r1" in caplog.text
+    assert "expires" in caplog.text.lower()
+
+
+def test_check_does_not_warn_when_the_lab_requires_nothing(capsys, monkeypatch, caplog):
+    """The empty-requirement short-circuit sits above the warning.
+
+    The backend raises on any fetch: reaching it at all would fail a run that
+    needs no reservation whenever the scheduler is down, which is the whole
+    property this ordering protects.
+    """
+    import logging
+
+    class _UnreachableBackend(ReservationBackendBase):
+        def backend_name(self):
+            return "fake"
+
+        def fetch_reservations(self, username, start=None, end=None):
+            raise ReservationBackendError("scheduler is down")
+
+    identity = ResolvedIdentity(username="alice", source="$USER")
+    res = ReservationGate(
+        backend=_UnreachableBackend(username="alice"), identity=identity, skip_check=False
+    )
+    ctx = _make_ctx({"otto_reservation": res})
+
+    install_scoped_context(monkeypatch, Lab(name="empty_lab"), [])
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        check(ctx)
+
+    assert "requires no reservation" in capsys.readouterr().out
+    assert "expires" not in caplog.text.lower()
+
+
+def test_check_does_not_warn_under_the_null_backend(capsys, monkeypatch, caplog):
+    """``n/a`` in the held column and nothing in the log: there is nothing to lapse.
+
+    Mutation: drop the ``if not null:`` guard from the warning in
+    ``otto.cli.reservation.check`` and the fetch below raises. A plain
+    ``NullReservationBackend`` could not show that — it answers ``[]``, so an
+    unguarded call would stay silently green.
+    """
+    import logging
+
+    class _ExplodingNullBackend(NullReservationBackend):
+        """Null-shaped to ``is_null_backend``'s ``isinstance``, fatal to query."""
+
+        def fetch_reservations(self, username, start=None, end=None):
+            raise AssertionError(
+                "the null backend was queried; the is_null_backend guard is missing"
+            )
+
+    identity = ResolvedIdentity(username="alice", source="$USER")
+    # username="alice": unset, the base class's missing-username guard would
+    # fire first and the exploding fetch below would never run.
+    res = ReservationGate(
+        backend=_ExplodingNullBackend(username="alice"), identity=identity, skip_check=False
+    )
+    ctx = _make_ctx({"otto_reservation": res})
+
+    install_scoped_context(monkeypatch, Lab(name="test_lab", resources={"r1"}), [])
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        check(ctx)
+
+    assert "expires" not in caplog.text.lower()

@@ -33,23 +33,23 @@ from typing_extensions import override
 
 from .base import ReservationBackendBase
 from .check import ReservationBackendError
-from .protocol import ReservationWindow
+from .protocol import Reservation
 
 # Deferred: these models live in otto.models.settings, which subclasses
 # pydantic_settings.BaseSettings and so drags pydantic_settings + dotenv (26
 # modules) onto `otto reservation --help`, where no reservation file is ever
 # read (import budget). _load() imports them when it actually parses one.
 if TYPE_CHECKING:
-    from ..models.settings import ReservationEntry, ReservationFile
-
-# The JSON format records only expiry, never start; the epoch stands in for
-# "held since forever", and an entry with no `expires` is open-ended.
-_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
-_FAR_FUTURE = datetime(9999, 1, 1, tzinfo=timezone.utc)
+    from ..models.settings import ReservationFile
 
 
 class JsonReservationBackend(ReservationBackendBase):
     """Read reservations from a JSON file on disk.
+
+    Implements the optional
+    :class:`~otto.reservations.protocol.SupportsResourceHolders` capability
+    (``holders``) as well as the required contract: the whole file is on
+    disk, so the inverted "who holds this resource?" query is a scan away.
 
     Parameters
     ----------
@@ -59,15 +59,20 @@ class JsonReservationBackend(ReservationBackendBase):
         uniformly to any backend.
     path : Path
         Location of the reservation file on disk.  Required.
+    username : str | None
+        The identity otto resolved for this invocation, forwarded to the base
+        class so :attr:`~otto.reservations.ReservationBackendBase.reservations`
+        has someone to query for.
     """
 
     def __init__(
         self,
-        url: str | None = None,
+        url: "str | None" = None,
         *,
         path: Path,
+        username: "str | None" = None,
     ) -> None:
-        super().__init__(url=url)
+        super().__init__(url=url, username=username)
         self._path = Path(path)
 
     @override
@@ -76,76 +81,64 @@ class JsonReservationBackend(ReservationBackendBase):
         return "json"
 
     @override
-    def get_reserved_resources(
+    def fetch_reservations(
         self,
         username: str,
-    ) -> set[str]:
-        """Return the set of resources currently held by ``username`` in the JSON file.
+        start: "datetime | None" = None,
+        end: "datetime | None" = None,
+    ) -> "list[Reservation]":
+        """Return *username*'s reservations overlapping the window.
 
-        Skips entries whose ``expires`` timestamp is in the past.
-
-        Raises
-        ------
-        ReservationBackendError
-            If the file cannot be read or contains malformed data.
-        """
-        resources: set[str] = set()
-        for entry in self._active_entries():
-            if entry.user == username:
-                resources.update(entry.resources)
-        return resources
-
-    @override
-    def who_reserved(
-        self,
-        resource: str,
-    ) -> list[str]:
-        """Return users who currently hold ``resource``, in file order, deduplicated.
-
-        Skips entries whose ``expires`` timestamp is in the past.
+        The JSON format records only ``expires``, so ``start`` is always
+        ``None`` and an entry without ``expires`` yields ``end=None``.
 
         Raises
         ------
         ReservationBackendError
             If the file cannot be read or contains malformed data.
         """
-        holders: list[str] = []
-        for entry in self._active_entries():
-            if resource in entry.resources and entry.user not in holders:
-                holders.append(str(entry.user))
-        return holders
+        return [r for r in self._all_reservations(start, end) if r.user == username]
 
-    def get_reservation_windows(self, username: str) -> "list[ReservationWindow]":
-        """Return windows for *username*'s active entries (expired ones are skipped).
+    def holders(self, resource: str) -> "list[Reservation]":
+        """Return every reservation currently covering *resource*, any user.
 
         Raises
         ------
         ReservationBackendError
-            If the file cannot be read or parsed.
+            If the file cannot be read or contains malformed data.
         """
-        windows: list[ReservationWindow] = []
-        for entry in self._active_entries():
-            if str(entry.user) != username:
-                continue
-            end = entry.expires if entry.expires is not None else _FAR_FUTURE
-            windows.extend(
-                ReservationWindow(resource=str(resource), start=_EPOCH, end=end)
-                for resource in entry.resources
-            )
-        return windows
+        return [r for r in self._all_reservations(None, None) if r.resource == resource]
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    def _active_entries(self) -> "list[ReservationEntry]":
-        """Load the file and return entries that are not past their expiry."""
-        data = self._load()
-        now = datetime.now(tz=timezone.utc)
-        active: list[ReservationEntry] = [
-            entry for entry in data.reservations if entry.expires is None or entry.expires > now
-        ]
-        return active
+    def _all_reservations(
+        self,
+        start: "datetime | None",
+        end: "datetime | None",  # noqa: ARG002 — see below: a file entry has no start, so only the window's LOWER bound can exclude it
+    ) -> "list[Reservation]":
+        """Every entry in the file overlapping ``[start, end]``, flattened per resource."""
+        window_start = start if start is not None else datetime.now(tz=timezone.utc)
+        rows: list[Reservation] = []
+        for entry in self._load().reservations:
+            # A file entry has no start, so it overlaps unless it ended before
+            # the window opened. `expires is None` is open-ended and always
+            # overlaps. This is the OVERLAP predicate, not containment: an
+            # entry expiring after window_start is active during the window
+            # however early it began.
+            if entry.expires is not None and entry.expires <= window_start:
+                continue
+            rows.extend(
+                Reservation(
+                    user=str(entry.user),
+                    resource=str(resource),
+                    start=None,
+                    end=entry.expires,
+                )
+                for resource in entry.resources
+            )
+        return rows
 
     def _load(self) -> "ReservationFile":
         from ..models.settings import ReservationFile

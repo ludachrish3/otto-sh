@@ -14,6 +14,7 @@ import pytest
 from otto.config.lab import load_lab
 from otto.config.repo import Repo
 from otto.inventory import InventoryDeclaration, build_inventory_from_declarations
+from otto.reservations import SupportsResourceHolders
 from otto.testing import assert_reservation_backend_conforms
 from tests._fixtures.gs_example import EXAMPLE, load_example_lab
 from tests._fixtures.gs_example import LIBS as _LIBS
@@ -200,15 +201,37 @@ def test_the_referenced_twin_builds_the_same_unix_lab(twin_inventory) -> None:
         assert a.inventory_ref.referenced is False
 
 
-def test_the_example_reservation_backend_conforms() -> None:
+def _team_file_backend(username: str = "chris"):
     _import_gs_example()
     from gs_example.reservations import TeamFileBackend
 
+    return TeamFileBackend(repo_dir=EXAMPLE, username=username, path="team-reservations.txt")
+
+
+def test_the_example_reservation_backend_conforms() -> None:
     assert_reservation_backend_conforms(
-        TeamFileBackend(repo_dir=EXAMPLE, path="team-reservations.txt"),
+        _team_file_backend(),
         known_user="chris",
         known_resources=["bb-bench", "bb1350-chassis", "bb1350-slot"],
     )
+
+
+def test_the_example_reservation_backend_answers_the_inverted_query() -> None:
+    """Conformance *skips* the holder rules when the capability is absent, so the
+    example's ``holders`` needs an assertion of its own or dropping it stays green.
+    """
+    backend = _team_file_backend()
+    assert isinstance(backend, SupportsResourceHolders)
+    # bb-bench is held by two people -- the multi-holder case the refusal renders.
+    assert sorted(h.user for h in backend.holders("bb-bench")) == ["chris", "dana"]
+    assert backend.holders("not-a-resource") == []
+
+
+def test_the_example_reservation_backend_reports_open_ended_rows() -> None:
+    """The file records no times, so every row says so with None -- not a sentinel."""
+    rows = _team_file_backend().reservations
+    assert [r.resource for r in rows] == ["bb-bench", "bb1350-chassis", "bb1350-slot"]
+    assert all(r.start is None and r.end is None for r in rows)
 
 
 def test_the_twin_is_a_real_repo_that_shares_the_examples_project_code() -> None:

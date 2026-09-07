@@ -185,6 +185,16 @@ intersphinx_mapping = {
 # docstrings (Task 5). Only external (intersphinx-served) names belong in
 # this map. If a mapped name is renamed or removed upstream, intersphinx will
 # fail to resolve it and nitpicky will correctly flag genuine doc rot.
+#
+# WHICH path to qualify an internal name with: the one the .rst directive that
+# documents it typed, because autodoc registers an object under the directive's
+# path, not under the object's real __module__. Both spellings are in use and
+# neither is wrong: `otto.reservations.ReservationBackendBase` is right because
+# an `autoclass` names the re-export, while `otto.reservations.protocol.Reservation`
+# is right because that page's `autoclass` for the re-export carries `:no-index:`
+# (two indexed targets would make every bare `Reservation` annotation ambiguous)
+# and the `automodule` for the defining module holds the only entry. Grep the
+# api/ page for the symbol before writing the reference.
 _SHORT_TYPE_ALIASES = {
     # stdlib
     "Path": "pathlib.Path",

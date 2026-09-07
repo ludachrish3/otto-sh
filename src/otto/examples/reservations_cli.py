@@ -29,10 +29,12 @@ no CLI invocation and no real scheduler involved:
 >>> from otto.reservations import resolve_username
 >>> from otto.examples.reservations_cli import run_check
 >>> demo = Lab(name="demo", resources={"lab-a"})
->>> run_check(demo, backend=ExampleReservationBackend(), identity=resolve_username("alice"))
+>>> alice = resolve_username("alice")
+>>> run_check(demo, backend=ExampleReservationBackend(username="alice"), identity=alice)
 alice: OK
 0
->>> run_check(demo, backend=ExampleReservationBackend(), identity=resolve_username("carol"))
+>>> carol = resolve_username("carol")
+>>> run_check(demo, backend=ExampleReservationBackend(username="carol"), identity=carol)
 carol: User 'carol' does not hold all resources required by lab 'demo'. Missing:
   lab-a  lab demo  (held by: alice)
 1
@@ -101,12 +103,17 @@ def main(
     ] = None,
 ) -> None:
     """Build a backend + identity from CLI flags, then delegate to `run_check`."""
+    # Resolve identity before building the backend: the backend is constructed
+    # with the username it will query for, so there is nothing to build until
+    # we know who is asking.
+    identity = resolve_username(as_user)
     try:
-        backend = build_backend({"backend": backend_name}, repo_dir=Path.cwd())
+        backend = build_backend(
+            {"backend": backend_name}, repo_dir=Path.cwd(), username=identity.username
+        )
     except ReservationBackendError as e:
         typer.echo(f"reservation backend unavailable: {e}")
         raise typer.Exit(2) from e
-    identity = resolve_username(as_user)
     lab = Lab(name="example", resources=set(resource or []))
     raise typer.Exit(run_check(lab, backend=backend, identity=identity))
 

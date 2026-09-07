@@ -1,46 +1,69 @@
 """A reservation backend for a scheduler that is a text file.
 
-The shape every backend has: the base class, three read-only methods, a
-constructor that forwards what otto passes, and one exception for every
-failure. Replace the file read with your scheduler's API and the rest stands.
+The shape every backend has: the base class, two required read-only methods,
+one optional capability, a constructor that forwards what otto passes, and one
+exception for every failure. Replace the file read with your scheduler's API
+and the rest stands.
 """
 
 # doc: begin team-backend
+from datetime import datetime
 from pathlib import Path
 
-from otto.reservations import ReservationBackendBase, ReservationBackendError
+from typing_extensions import override
+
+from otto.reservations import Reservation, ReservationBackendBase, ReservationBackendError
 
 
 class TeamFileBackend(ReservationBackendBase):
     """Read ``<user> <resource>`` lines; one line per holding."""
 
-    def __init__(self, *, url: str | None = None, repo_dir: Path | None = None, path: str) -> None:
-        # url and repo_dir are otto's; path is this backend's own setting.
-        super().__init__(url=url, repo_dir=repo_dir)
+    def __init__(
+        self,
+        *,
+        url: str | None = None,
+        repo_dir: Path | None = None,
+        username: str | None = None,
+        path: str,
+    ) -> None:
+        # url, repo_dir and username are otto's; path is this backend's own setting.
+        super().__init__(url=url, repo_dir=repo_dir, username=username)
         # otto always passes repo_dir; relative paths anchor to it.
         self._path = (self.repo_dir or Path()) / path
 
-    def _holdings(self) -> list[tuple[str, str]]:
+    def _reservations(self) -> list[Reservation]:
+        """Every line as a Reservation. The file records no times, so both are None."""
         try:
             lines = self._path.read_text().splitlines()
         except OSError as exc:
             # Fail closed: an unreadable schedule is not an empty one.
             raise ReservationBackendError(f"cannot read {self._path}: {exc}") from exc
-        pairs = []
+        rows = []
         for line in lines:
             if line.strip():
                 user, resource = line.split()
-                pairs.append((user, resource))
-        return pairs
+                rows.append(Reservation(user=user, resource=resource))
+        return rows
 
-    def get_reserved_resources(self, username: str) -> set[str]:
-        """Every identifier *username* holds right now."""
-        return {r for u, r in self._holdings() if u == username}
+    @override
+    def fetch_reservations(
+        self,
+        username: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[Reservation]:
+        """Every reservation *username* holds right now.
 
-    def who_reserved(self, resource: str) -> list[str]:
-        """Everyone holding *resource*, sorted."""
-        return sorted({u for u, r in self._holdings() if r == resource})
+        The window is ignored: with no times recorded, every row is open-ended
+        and so overlaps any window otto can ask for.
+        """
+        return [r for r in self._reservations() if r.user == username]
 
+    def holders(self, resource: str) -> list[Reservation]:
+        """Everyone holding *resource* -- the optional inverted query."""
+        return [r for r in self._reservations() if r.resource == resource]
+
+    @override
     def backend_name(self) -> str:
         """Return the name ``otto reservation whoami`` shows."""
         return "team-file"

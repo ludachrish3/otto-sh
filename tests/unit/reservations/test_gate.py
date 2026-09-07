@@ -23,6 +23,9 @@ import pytest
 from otto.config.lab import Lab
 from otto.reservations import (
     MissingReservationError,
+    NullReservationBackend,
+    Reservation,
+    ReservationBackendBase,
     ReservationGate,
     ReservationGateResult,
     ResolvedIdentity,
@@ -32,18 +35,30 @@ from tests._fixtures.fleet import _repo, add_builtin_local, install_scoped_conte
 from tests.conftest import make_host
 
 
-class _FakeBackend:
+class _FakeBackend(ReservationBackendBase):
     """Minimal in-memory ReservationBackend for testing the gate."""
 
-    def __init__(self, owners: dict[str, str]) -> None:
+    def __init__(
+        self,
+        owners: dict[str, str],
+        *,
+        username: "str | None" = None,
+        ends: "dict | None" = None,
+    ) -> None:
+        super().__init__(username=username)
         self.owners = owners  # resource -> username
+        self.ends = dict(ends or {})  # resource -> datetime, for the expiry warning
 
-    def get_reserved_resources(self, username: str) -> set[str]:
-        return {r for r, u in self.owners.items() if u == username}
+    def fetch_reservations(self, username, start=None, end=None):
+        return [
+            Reservation(user=username, resource=r, end=self.ends.get(r))
+            for r, u in self.owners.items()
+            if u == username
+        ]
 
-    def who_reserved(self, resource: str) -> list[str]:
+    def holders(self, resource):
         u = self.owners.get(resource)
-        return [u] if u is not None else []
+        return [Reservation(user=u, resource=resource)] if u is not None else []
 
     def backend_name(self) -> str:
         return "fake"
@@ -122,7 +137,7 @@ class TestReservationGateResultMatrix:
     def test_backend_missing_resource_raises(self, monkeypatch):
         lab = _lab_with_resources()
         install_scoped_context(monkeypatch, lab, [])
-        backend = _FakeBackend(owners={})  # no one has anything
+        backend = _FakeBackend(owners={}, username="alice")  # no one has anything
         identity = ResolvedIdentity(username="alice", source="$USER")
         gate = ReservationGate(backend=backend, identity=identity, skip_check=False)
 
@@ -136,7 +151,8 @@ class TestReservationGateResultMatrix:
                 "rack1": "alice",
                 "test1": "alice",
                 "test2": "alice",
-            }
+            },
+            username="alice",
         )
         identity = ResolvedIdentity(username="alice", source="$USER")
         install_scoped_context(monkeypatch, lab, [])
@@ -175,7 +191,7 @@ def test_gate_requires_only_the_fleet_in_play(tmp_path, monkeypatch):
     lab = _slot_lab()
     install_scoped_context(monkeypatch, lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
     gate = ReservationGate(
-        backend=_FakeBackend({"slot-1": "chris"}),
+        backend=_FakeBackend({"slot-1": "chris"}, username="chris"),
         identity=ResolvedIdentity(username="chris", source="$USER"),
     )
 
@@ -187,7 +203,7 @@ def test_gate_demands_every_host_when_no_repo_declares_a_fleet(tmp_path, monkeyp
     lab = _slot_lab()
     install_scoped_context(monkeypatch, lab, [_repo(tmp_path, "r1")])
     gate = ReservationGate(
-        backend=_FakeBackend({"slot-1": "chris"}),
+        backend=_FakeBackend({"slot-1": "chris"}, username="chris"),
         identity=ResolvedIdentity(username="chris", source="$USER"),
     )
 
@@ -253,7 +269,7 @@ def test_empty_declared_fleet_checks_the_lab_level_only(tmp_path, monkeypatch):
     lab = _three_level_lab()
     install_scoped_context(monkeypatch, lab, [_empty_fleet_repo(tmp_path)])
     gate = ReservationGate(
-        backend=_FakeBackend({"rack-1": "chris"}),
+        backend=_FakeBackend({"rack-1": "chris"}, username="chris"),
         identity=ResolvedIdentity(username="chris", source="$USER"),
     )
 
@@ -271,7 +287,7 @@ def test_the_gate_ignores_resources_declared_on_the_builtin_local_host(monkeypat
     lab = add_builtin_local(fleet_lab(("h1", "a")), resources={"runner-slot"})
     install_scoped_context(monkeypatch, lab, [])
     gate = ReservationGate(
-        backend=_FakeBackend(owners={}),
+        backend=_FakeBackend(owners={}, username="alice"),
         identity=ResolvedIdentity(username="alice", source="$USER"),
     )
 
@@ -289,7 +305,7 @@ def test_the_gate_still_enforces_a_lab_declared_local_host(monkeypatch):
     lab.hosts["local"].resources = frozenset({"runner-slot"})
     install_scoped_context(monkeypatch, lab, [])
     gate = ReservationGate(
-        backend=_FakeBackend(owners={"runner-slot": "dana"}),
+        backend=_FakeBackend(owners={"runner-slot": "dana"}, username="alice"),
         identity=ResolvedIdentity(username="alice", source="$USER"),
     )
 
@@ -303,3 +319,187 @@ def test_reservations_import_is_typer_free():
 
     code = "import sys, otto.reservations; sys.exit(1 if 'typer' in sys.modules else 0)"
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
+
+
+####################
+#  The expiry warning
+#  The gate warns about a booking it required and found held but which is
+#  about to lapse. It is not the gate's job to refuse — the reservation IS
+#  held right now — only to say so before a long run walks into the gap.
+####################
+
+
+def _soon(minutes):
+    from datetime import datetime, timedelta, timezone
+
+    return datetime.now(timezone.utc) + timedelta(minutes=minutes)
+
+
+def test_gate_warns_when_a_required_reservation_is_expiring(caplog, monkeypatch):
+    """Held, so no refusal — but ending inside the window, so a warning."""
+    import logging
+
+    lab = _lab_declaring("rack1")
+    install_scoped_context(monkeypatch, lab, [])
+    gate = ReservationGate(
+        backend=_FakeBackend(owners={"rack1": "alice"}, username="alice", ends={"rack1": _soon(1)}),
+        identity=ResolvedIdentity(username="alice", source="$USER"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        outcome = gate.evaluate()
+
+    assert outcome == ReservationGateResult(checked=True, skipped=False, warning=None)
+    assert "rack1" in caplog.text
+    assert "expires" in caplog.text.lower()
+
+
+def test_gate_is_silent_when_the_reservation_runs_well_past_the_window(caplog, monkeypatch):
+    """The negative half of the pair: a healthy booking says nothing at all."""
+    import logging
+
+    lab = _lab_declaring("rack1")
+    install_scoped_context(monkeypatch, lab, [])
+    gate = ReservationGate(
+        backend=_FakeBackend(
+            owners={"rack1": "alice"}, username="alice", ends={"rack1": _soon(90)}
+        ),
+        identity=ResolvedIdentity(username="alice", source="$USER"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        gate.evaluate()
+
+    assert "expires" not in caplog.text.lower()
+
+
+def test_skip_check_suppresses_the_warning(caplog, monkeypatch):
+    """``-R`` short-circuits evaluate() above the helper.
+
+    The skip path returns before the check, so the expiry line is never
+    reached. The resource name still appears — the skip warning lists the
+    requirement — so the assertion is on the expiry wording, not the id.
+    Mutation: move the helper above the ``skip_check`` branch and this goes
+    red.
+    """
+    import logging
+
+    lab = _lab_declaring("rack1")
+    install_scoped_context(monkeypatch, lab, [])
+    gate = ReservationGate(
+        backend=_FakeBackend(owners={"rack1": "alice"}, username="alice", ends={"rack1": _soon(1)}),
+        identity=ResolvedIdentity(username="alice", source="$USER"),
+        skip_check=True,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        outcome = gate.evaluate()
+
+    assert outcome.skipped is True
+    assert "expires" not in caplog.text.lower()
+
+
+def test_gate_does_not_warn_about_a_resource_outside_the_fleet_requirement(
+    caplog, monkeypatch, tmp_path
+):
+    """Scope is what the gate demanded, not everything the user holds.
+
+    ``slot2`` is outside the declared fleet, so ``slot-2`` was never required
+    here — warning about it would be noise on a run that never touches it,
+    and it is ``otto.cli.host``'s job to warn if the user names that host.
+    """
+    import logging
+
+    lab = _slot_lab()
+    install_scoped_context(monkeypatch, lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
+    gate = ReservationGate(
+        backend=_FakeBackend(
+            {"slot-1": "chris", "slot-2": "chris"},
+            username="chris",
+            ends={"slot-1": _soon(120), "slot-2": _soon(1)},
+        ),
+        identity=ResolvedIdentity(username="chris", source="$USER"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        gate.evaluate()
+
+    assert "slot-2" not in caplog.text
+
+
+class _ExplodingNullBackend(NullReservationBackend):
+    """Null-SHAPED, but fatal to query.
+
+    A plain ``NullReservationBackend`` cannot prove the guard: its
+    ``fetch_reservations`` returns ``[]``, so deleting ``is_null_backend``
+    from a call site leaves every assertion green — the helper is handed an
+    empty list and says nothing, exactly as it would have anyway. Subclassing
+    keeps ``is_null_backend`` (an ``isinstance`` check) answering True, so the
+    guard still suppresses this backend, while removing the guard turns the
+    now-reachable fetch into a loud failure instead of a quiet no-op.
+    """
+
+    def fetch_reservations(self, username, start=None, end=None):
+        raise AssertionError("the null backend was queried; the is_null_backend guard is missing")
+
+
+def test_the_null_backend_gate_never_reaches_the_expiry_helper(caplog, monkeypatch):
+    """A lab with a scheduler configured to ``none`` warns about nothing.
+
+    The guard matters because the helper's argument is a live fetch: reaching
+    it past the null short-circuit would query a backend the whole point of
+    which is that there is nothing to query.
+
+    Mutation: drop ``not is_null_backend(self.backend)`` from ``evaluate``
+    and this raises out of the fetch.
+    """
+    import logging
+
+    lab = _lab_declaring("rack1")
+    install_scoped_context(monkeypatch, lab, [])
+    gate = ReservationGate(
+        # WITH the username the check is for: without it the fetch this test
+        # is trying to prove unreachable would fail on the base class's "no
+        # username was resolved" error instead of the AssertionError the
+        # exploding double exists to raise, and the mutation would go red for
+        # the wrong reason. `is_null_backend` short-circuits before the
+        # username is ever read, so the guard stays green either way.
+        backend=_ExplodingNullBackend(username="alice"),
+        identity=ResolvedIdentity(username="alice", source="$USER"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        assert gate.evaluate().checked is True
+
+    assert "expires" not in caplog.text.lower()
+
+
+def test_an_empty_requirement_never_reaches_the_expiry_helper(caplog, monkeypatch):
+    """Same guard from the other side: a lab needing nothing asks nothing.
+
+    The backend here raises on any fetch, which is the assertion: a run that
+    needs no reservation must survive a scheduler outage.
+    """
+    import logging
+
+    from otto.reservations import ReservationBackendError
+
+    class _ExplodingBackend(ReservationBackendBase):
+        def fetch_reservations(self, username, start=None, end=None):
+            raise ReservationBackendError("scheduler is down")
+
+        def backend_name(self):
+            return "boom"
+
+    lab = Lab(name="test_lab")
+    assert not lab.resources  # the premise, stated
+    install_scoped_context(monkeypatch, lab, [])
+    gate = ReservationGate(
+        backend=_ExplodingBackend(username="alice"),
+        identity=ResolvedIdentity(username="alice", source="$USER"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="otto"):
+        assert gate.evaluate().checked is True
+
+    assert "expires" not in caplog.text.lower()

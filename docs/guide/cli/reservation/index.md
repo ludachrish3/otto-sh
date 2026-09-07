@@ -73,7 +73,8 @@ lock: distinct per-element identifiers can be held by different people at the
 same time, which is usually the point.  A single lab-level identifier is what
 *asks* the scheduler for one holder.  Otto enforces no exclusivity of its own:
 it asks your backend who holds a resource, accepts a list, and will report
-`held by: dana, sam` without complaint.  A chassis shared slot by slot needs
+`held by: dana until 16:00, sam` without complaint — one entry per holder,
+with the release time where the booking has one.  A chassis shared slot by slot needs
 only host-level entries.  This `rig` has all three kinds of thing, so it
 declares at all three levels:
 
@@ -159,12 +160,18 @@ such a pair — there is no reservation for the shared element to protect.
 ## Writing your own backend
 
 The `json` backend is a file; a team with a scheduler — Jira, a booking
-service, a database — writes a backend that reads it: three read-only
+service, a database — writes a backend that reads it: two read-only
 methods, registered from an `init` module, selected by name in
 `[reservations]`. {doc}`../../../library/reservation-backends` has the
 contract, the conformance helper that proves a backend against it, and the
-optional windows and username-completion capabilities. The Getting Started
+optional holder-lookup and username-completion capabilities. The Getting Started
 section walks through one ({doc}`../../../getting-started/reservations`).
+
+Already have a backend written against otto 0.10? The contract changed in
+0.11.0 — three methods became two, and every backend now reports times. There
+is no shim: see
+[Migrating from 0.10](../../../library/reservation-backends.md#migrating-from-010)
+for the mapping and the checklist.
 
 ## Fail-closed behavior
 

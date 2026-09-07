@@ -16,9 +16,9 @@ starting a run.
   which is also why the group opts out of per-invocation output directories.
 - **`check` is the preamble's gate, standalone.** It computes the same
   required set the preamble does, asks the backend what the effective user
-  holds, and reports what is missing and *who holds it* (backends answer
-  `who_reserved` with a list — resources can have multiple concurrent
-  holders). A one-second pre-flight before a twenty-minute `otto test`.
+  holds, and reports what is missing and *who holds it* (a capable backend
+  answers `holders` with a list of reservations — resources can have multiple
+  concurrent holders, and each row carries when it frees up). A one-second pre-flight before a twenty-minute `otto test`.
 - **Break-glass stays honest.** Under `-R` / `--skip-reservation-check` the
   backend is never even constructed — a hanging scheduler cannot block lab
   access — but a factory is kept so `reservation` subcommands can still
@@ -33,11 +33,18 @@ starting a run.
   mid-TAB, and a silent break-glass is not one), and a backend failure fails
   closed to *no suggestions* rather than to an error, because a completer that
   prints is a completer that corrupts the user's prompt.
-- **Windows are an optional capability, and only completion consumes them.**
-  A backend that can report booking start/end implements
-  {class}`~otto.reservations.protocol.SupportsReservationWindows`
-  (isinstance-detected, like `SupportsUsernameCompletion`), and completion uses
-  the edges to invalidate its cached reservation answer the moment a boundary
+- **Booking times are required, and the inverted query is the optional
+  capability.** Every backend returns
+  {class}`~otto.reservations.protocol.Reservation` rows carrying `start` and
+  `end`, so the expiry warning fires for every backend rather than only for
+  the ones that opted in (the rules those bounds obey are the implementer's
+  contract — {doc}`../../library/reservation-backends`). What stays optional
+  is
+  {class}`~otto.reservations.protocol.SupportsResourceHolders` — `holders`,
+  the inverted "who holds this?" query, isinstance-detected like
+  `SupportsUsernameCompletion`; a scheduler that answers only per-user queries
+  omits it and degrades only the refusal message. Completion uses the booking
+  edges to invalidate its cached reservation answer the moment a boundary
   passes. Owner ruling: that cache is completion-only — command execution
   always queries the backend live, because stale reservation data is an
   acceptable trade for a deliberate TAB and never for a recalled command. A

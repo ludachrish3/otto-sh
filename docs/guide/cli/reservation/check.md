@@ -58,8 +58,17 @@ reservations required by lab rig for chris (3 host(s)
 │ rig-pdu          │ lab     │ rig           │ yes  │
 ╰──────────────────┴─────────┴───────────────┴──────╯
 User 'chris' does not hold all resources required by lab 'rig'. Missing:
-  chassis-1-slot-2  host chassis_slot2  (held by: dana)
+  chassis-1-slot-2  host chassis_slot2  (held by: dana until 16:00)
 ```
+
+Each `held by:` clause names the current holders and, for any booking that has
+an end, when it frees up — so you can tell whether it is worth waiting.
+Multiple holders join with `, `, and a holder whose booking is open-ended
+contributes a bare name with no `until`. Naming holders at all is an
+[optional backend capability](../../../library/reservation-backends.md#the-optional-holders-capability):
+a scheduler that can only answer per-user queries yields
+`(held by: unknown — this backend cannot report other users)` instead, and
+nothing else about the check changes.
 
 ```{note}
 That rendering is illustrative.  No documentation harness captures `check`, so

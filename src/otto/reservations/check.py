@@ -4,7 +4,7 @@ The :func:`check_reservations` function is the heart of the subsystem:
 given a lab, a username, and a backend, it raises
 :class:`MissingReservationError` if the user does not hold every resource
 the lab needs.  The error message lists missing resources and their current
-holders (via :meth:`~otto.reservations.protocol.ReservationBackend.who_reserved`) but
+holders (via :meth:`~otto.reservations.protocol.SupportsResourceHolders.holders`) but
 deliberately does NOT advertise ``--skip-reservation-check`` — that flag is surfaced only when
 the backend itself is unreachable, where proceeding requires it.
 
@@ -18,6 +18,7 @@ framework — the CLI adapter that presents ``evaluate()``'s output lives in
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Literal, get_args
 
 from ..errors import OttoError
@@ -27,9 +28,95 @@ if TYPE_CHECKING:
 
     from ..config.lab import Lab
     from .identity import ResolvedIdentity
-    from .protocol import ReservationBackend
+    from .protocol import Reservation, ReservationBackend
 
 logger = logging.getLogger(__name__)
+
+EXPIRY_WARNING_WINDOW = timedelta(minutes=5)
+"""How far ahead to warn about a reservation that is about to end.
+
+A constant, not a setting: it is a nudge, and a configurable nudge is a
+support question with no right answer.
+"""
+
+_warned_expiring: "set[tuple[str, datetime]]" = set()
+"""``(resource, end)`` pairs already announced by :func:`warn_expiring_reservations`.
+
+Process-wide, because the same lab-level booking is visible to more than one
+call site in a single run — the preamble gate and the out-of-fleet named-host
+check both hold the lab's own requirement — and a user who is told twice that
+one rack is lapsing learns nothing the second time.
+"""
+
+
+def reset_expiry_warnings() -> None:
+    """Forget every expiry warning already announced this process.
+
+    Exists for tests: the suppression set is module state, so a test that
+    warns leaks into the next one unless it is cleared between them.
+    """
+    _warned_expiring.clear()
+
+
+def warn_expiring_reservations(
+    reservations: "list[Reservation]",
+    needed: "set[str]",
+    *,
+    now: "datetime | None" = None,
+) -> None:
+    """Log a warning for each held reservation in *needed* that ends soon.
+
+    Scoped to *needed* — the resources that would reject the next command —
+    because warning about racks the run does not touch is noise on every
+    invocation. Open-ended bookings never warn; an already-lapsed one does,
+    since that is the most urgent case there is.
+
+    This is deliberately NOT inside :func:`check_reservations`, which has
+    three call sites; a run naming an out-of-fleet host reaches two of them
+    and would warn twice for the lab-level requirement they share. Each
+    caller invokes it after its own short-circuits instead, so the helper
+    never causes a backend query, and a pair seen twice is announced once
+    (see :func:`reset_expiry_warnings`).
+
+    Parameters
+    ----------
+    reservations : list[Reservation]
+        Rows already fetched for the invoking user — both callers pass
+        :func:`active_reservations`, which is that user's rows by
+        construction. Nothing here fetches.
+    needed : set[str]
+        The resource identifiers this run requires.
+    now : datetime | None
+        The instant to measure from; defaults to
+        ``datetime.now(timezone.utc)``. Present so callers' tests can freeze
+        the clock without patching module globals.
+    """
+    reference = now if now is not None else datetime.now(tz=timezone.utc)
+    expiring = [
+        (r.end, r.resource)
+        for r in reservations
+        if r.end is not None
+        and r.resource in needed
+        and r.expires_within(EXPIRY_WARNING_WINDOW, now=reference)
+    ]
+    for end, resource in sorted(expiring):
+        if (resource, end) in _warned_expiring:
+            continue
+        _warned_expiring.add((resource, end))
+        minutes = max(0, int((end - reference).total_seconds() // 60))
+        logger.warning(
+            "\N{WARNING SIGN}  Reservation for %r expires in %d minute(s) (at %s).",
+            resource,
+            minutes,
+            # In the READER's zone, not the backend's. The JSON backend
+            # normalises every `expires` to UTC, and other schedulers answer in
+            # whatever zone they were configured with, so an unconverted clock
+            # time tells a user in CET their booking lapses an hour before it
+            # does — and they hand back hardware they still hold. `%H:%M` alone
+            # carries no offset to disambiguate it, so the conversion is the
+            # only thing that makes the string true.
+            end.astimezone().strftime("%H:%M"),
+        )
 
 
 @dataclass(frozen=True)
@@ -117,7 +204,27 @@ class ReservationGate:
         lab = get_lab()
         if self.identity is None:
             raise RuntimeError("identity must be resolved before evaluate() runs")
-        check_reservations(lab, self.identity.username, self.backend, host_ids=get_hosts_in_play())
+        in_play = get_hosts_in_play()
+        check_reservations(lab, self.identity.username, self.backend, host_ids=in_play)
+        # AFTER the check, and behind the same two guards it uses, so the
+        # warning never becomes the thing that queries a backend: a lab
+        # needing no reservation, or one configured with no scheduler, still
+        # runs while the scheduler is down.
+        #
+        # After, specifically, so a REFUSAL is never trailed by a nudge: when
+        # check_reservations raises, that message is the one line the user has
+        # to read, and "rack1 expires in 2 minutes" stacked underneath it
+        # competes with the thing actually blocking them. ``otto reservation
+        # check`` deliberately does the opposite — it warns BEFORE its check,
+        # so its report carries the expiry alongside the missing-resource
+        # verdict. That command is a status report and should say everything
+        # it knows; this one is a gate and should say the one thing that stops
+        # the run.
+        from .null_backend import is_null_backend
+
+        needed = required_resources(lab, host_ids=in_play)
+        if needed and not is_null_backend(self.backend):
+            warn_expiring_reservations(active_reservations(self.backend), needed)
         return ReservationGateResult(checked=True, skipped=False, warning=None)
 
 
@@ -128,6 +235,26 @@ class ReservationBackendError(OttoError):
     failures all surface as this exception so the CLI can translate them
     into a single fail-closed startup error.
     """
+
+
+def active_reservations(backend: "ReservationBackend") -> "list[Reservation]":
+    """Return *backend*'s cached active rows.
+
+    The ``ReservationBackend`` Protocol deliberately declares only methods:
+    ``isinstance`` against a ``runtime_checkable`` Protocol evaluates
+    non-method members, so declaring ``reservations`` there would turn every
+    type check into a live scheduler query. This accessor is the one place
+    that gap is bridged, and it converts a backend missing the member from a
+    bare ``AttributeError`` at an arbitrary call site into a named error.
+    """
+    rows = getattr(backend, "reservations", None)
+    if rows is None:
+        raise ReservationBackendError(
+            f"Reservation backend {type(backend).__name__!r} has no 'reservations' "
+            "attribute; inherit ReservationBackendBase or provide it (see "
+            "docs/library/reservation-backends.md)."
+        )
+    return rows
 
 
 class MissingReservationError(OttoError):
@@ -209,6 +336,27 @@ def required_resources(lab: "Lab", *, host_ids: "Iterable[str] | None" = None) -
     return {o.resource for o in required_resource_origins(lab, host_ids=host_ids)}
 
 
+def _describe_holders(holders: "list[Reservation]") -> str:
+    """Render holders for a refusal: who, and when each frees up.
+
+    An empty list is ``"nobody"`` — a definite answer from a backend that
+    looked. Rows without an ``end`` name only the holder, because the booking
+    is open-ended and there is no release time to promise.
+    """
+    if not holders:
+        return "nobody"
+    parts = []
+    for h in sorted(holders, key=lambda r: (r.user, r.resource)):
+        if h.end is None:
+            parts.append(h.user)
+        else:
+            # `.astimezone()` for the same reason the expiry warning converts:
+            # the refusal tells a locked-out engineer when to come back, and a
+            # time in the backend's zone sends them back at the wrong hour.
+            parts.append(f"{h.user} until {h.end.astimezone():%H:%M}")
+    return ", ".join(parts)
+
+
 def check_reservations(
     lab: "Lab",
     username: str,
@@ -263,18 +411,37 @@ def check_reservations(
     if not needed:
         return
 
-    reserved = backend.get_reserved_resources(username)
+    # The function takes a username AND the backend caches rows for the one it
+    # was constructed with. If they ever disagreed the comprehension below
+    # would yield an empty held set — a refusal blaming a user whose
+    # reservations were never fetched. Fail loudly instead.
+    backend_user = getattr(backend, "username", None)
+    if backend_user is not None and backend_user != username:
+        raise RuntimeError(
+            f"backend was built for {backend_user!r} but the check is for "
+            f"{username!r}; these must agree"
+        )
+
+    reserved = {r.resource for r in active_reservations(backend) if r.user == username}
     missing = needed - reserved
     if not missing:
         return
+
+    from .protocol import SupportsResourceHolders
 
     width = max(len(r) for r in missing)
     lines = [
         f"User {username!r} does not hold all resources required by lab {lab.name!r}. Missing:"
     ]
     for resource in sorted(missing):
-        who = backend.who_reserved(resource)
-        held = ", ".join(who) if who else "nobody"
+        # Absence of the capability is checked BEFORE the call, never
+        # inferred from an empty result: an empty holder list means "nobody
+        # holds it", and printing "nobody" for a backend that simply cannot
+        # tell would be a confident lie to a user who is locked out right now.
+        if isinstance(backend, SupportsResourceHolders):
+            held = _describe_holders(backend.holders(resource))
+        else:
+            held = "unknown — this backend cannot report other users"
         lines.extend(
             f"  {resource:<{width}}  {origin.level} {origin.owner}  (held by: {held})"
             for origin in needed_origins

@@ -3,6 +3,8 @@
 from otto.config.lab import Lab
 from otto.reservations import (
     NullReservationBackend,
+    Reservation,
+    SupportsResourceHolders,
     check_reservations,
     is_null_backend,
 )
@@ -12,24 +14,34 @@ from tests.conftest import make_host
 class _RealBackend:
     """A backend that DOES track reservations — the other side of the predicate."""
 
-    def get_reserved_resources(self, username: str) -> set[str]:
-        return {"rack1"}
+    def fetch_reservations(self, username: str, start=None, end=None) -> list[Reservation]:
+        return [Reservation(user=username, resource="rack1")]
 
-    def who_reserved(self, resource: str) -> list[str]:
-        return ["alice"]
+    def holders(self, resource: str) -> list[Reservation]:
+        return [Reservation(user="alice", resource=resource)]
 
     def backend_name(self) -> str:
         return "real"
 
 
-def test_empty_resources():
+def test_empty_reservations():
     backend = NullReservationBackend()
-    assert backend.get_reserved_resources("anyone") == set()
+    assert backend.fetch_reservations("anyone") == []
+
+
+def test_reservations_property_is_empty():
+    backend = NullReservationBackend(username="anyone")
+    assert backend.reservations == []
 
 
 def test_no_holder():
     backend = NullReservationBackend()
-    assert backend.who_reserved("any-resource") == []
+    assert backend.holders("any-resource") == []
+
+
+def test_it_declares_the_holders_capability():
+    """It answers the inverted query definitively: nobody holds anything."""
+    assert isinstance(NullReservationBackend(), SupportsResourceHolders)
 
 
 def test_backend_name():

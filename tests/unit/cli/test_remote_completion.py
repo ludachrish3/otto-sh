@@ -271,6 +271,20 @@ def gate_env(monkeypatch, tmp_path):
     return main
 
 
+def _ago(hours):
+    return datetime.now(tz=timezone.utc) - timedelta(hours=hours)
+
+
+def _ahead(hours):
+    return datetime.now(tz=timezone.utc) + timedelta(hours=hours)
+
+
+def _res(resource, start=None, end=None):
+    from otto.reservations import Reservation
+
+    return Reservation(user="carol", resource=resource, start=start, end=end)
+
+
 def _install_backend(monkeypatch, backend):
     monkeypatch.setattr(
         "otto.reservations.build_reservation_gate",
@@ -278,34 +292,31 @@ def _install_backend(monkeypatch, backend):
     )
 
 
-class _WindowsBackend:
-    def __init__(self, windows):
-        self._windows = windows
+class _Backend:
+    """A backend double exposing only what the gate is allowed to touch.
 
-    def get_reservation_windows(self, username):
-        return self._windows
+    The gate reaches the rows through ``active_reservations``, which reads the
+    ``reservations`` attribute — the member the ``ReservationBackend``
+    Protocol deliberately omits. Nothing here defines ``fetch_reservations``,
+    so a gate that tried to query live would fail loudly rather than pass.
+    """
 
-    def get_reserved_resources(self, username):
-        raise AssertionError("windows backend must use the windows path")
+    def __init__(self, reservations):
+        self.reservations = list(reservations)
 
-
-class _FlatBackend:
-    def __init__(self, held):
-        self._held = held
-
-    def get_reserved_resources(self, username):
-        return self._held
+    def backend_name(self):
+        return "double"
 
 
 def test_gate_no_reservation_config_allows(monkeypatch, gate_env):
     monkeypatch.setattr("otto.config.get_repos", lambda: [SimpleNamespace(reservation_settings={})])
-    _install_backend(monkeypatch, _FlatBackend(set()))  # would refuse if it were ever consulted
+    _install_backend(monkeypatch, _Backend([]))  # would refuse if it were ever consulted
     assert rc._reservation_allows(_chain()) is True
 
 
 def test_gate_no_required_resources_allows(monkeypatch, gate_env):
     monkeypatch.setattr(rc, "_required_for", lambda chain: set())
-    _install_backend(monkeypatch, _FlatBackend(set()))
+    _install_backend(monkeypatch, _Backend([]))
     assert rc._reservation_allows(_chain()) is True
 
 
@@ -321,65 +332,51 @@ def test_gate_missing_backend_allows(monkeypatch, gate_env):
     assert rc._reservation_allows(_chain()) is True
 
 
-def test_gate_windows_backend_allows_when_window_is_active(monkeypatch, gate_env):
-    from otto.reservations import ReservationWindow
-
-    now = datetime.now(tz=timezone.utc)
-    _install_backend(
-        monkeypatch,
-        _WindowsBackend(
-            [
-                ReservationWindow(
-                    resource="r1", start=now - timedelta(hours=1), end=now + timedelta(hours=1)
-                )
-            ]
-        ),
-    )
+def test_gate_allows_when_window_is_active(monkeypatch, gate_env):
+    _install_backend(monkeypatch, _Backend([_res("r1", start=_ago(1), end=_ahead(1))]))
     assert rc._reservation_allows(_chain()) is True
 
 
-def test_gate_windows_backend_refuses_when_window_has_not_started(monkeypatch, gate_env):
-    from otto.reservations import ReservationWindow
-
-    now = datetime.now(tz=timezone.utc)
-    _install_backend(
-        monkeypatch,
-        _WindowsBackend(
-            [
-                ReservationWindow(
-                    resource="r1", start=now + timedelta(hours=1), end=now + timedelta(hours=2)
-                )
-            ]
-        ),
-    )
+def test_gate_refuses_when_window_has_not_started(monkeypatch, gate_env):
+    _install_backend(monkeypatch, _Backend([_res("r1", start=_ahead(1), end=_ahead(2))]))
     assert rc._reservation_allows(_chain()) is False
 
 
-def test_gate_windows_backend_refuses_when_resource_is_not_covered(monkeypatch, gate_env):
-    from otto.reservations import ReservationWindow
-
-    now = datetime.now(tz=timezone.utc)
-    _install_backend(
-        monkeypatch,
-        _WindowsBackend(
-            [
-                ReservationWindow(
-                    resource="other", start=now - timedelta(hours=1), end=now + timedelta(hours=1)
-                )
-            ]
-        ),
-    )
+def test_gate_refuses_when_resource_is_not_covered(monkeypatch, gate_env):
+    _install_backend(monkeypatch, _Backend([_res("other", start=_ago(1), end=_ahead(1))]))
     assert rc._reservation_allows(_chain()) is False
 
 
-def test_gate_flat_backend_allows_when_resource_is_held(monkeypatch, gate_env):
-    _install_backend(monkeypatch, _FlatBackend({"r1", "r2"}))
+def test_gate_open_ended_reservation_allows(monkeypatch, gate_env):
+    """``end=None`` is an open-ended booking: held now, and held indefinitely."""
+    _install_backend(monkeypatch, _Backend([_res("r1", start=_ago(1))]))
     assert rc._reservation_allows(_chain()) is True
 
 
-def test_gate_flat_backend_refuses_when_resource_is_not_held(monkeypatch, gate_env):
-    _install_backend(monkeypatch, _FlatBackend({"r2"}))
+def test_gate_wholly_unbounded_reservation_allows(monkeypatch, gate_env):
+    """Neither bound known is still a held resource, not an unusable row."""
+    _install_backend(monkeypatch, _Backend([_res("r1")]))
+    assert rc._reservation_allows(_chain()) is True
+
+
+def test_gate_refuses_when_resource_is_not_held(monkeypatch, gate_env):
+    _install_backend(monkeypatch, _Backend([_res("r2")]))
     assert rc._reservation_allows(_chain()) is False
+
+
+def test_gate_open_ended_reservation_round_trips_through_the_cache(monkeypatch, gate_env):
+    """The stored row must read back as active — ``null`` bounds mean unbounded.
+
+    Writer and reader are separate code, and an open-ended booking that
+    serialized correctly but read back as dropped would silently refuse
+    completions the user is entitled to.
+    """
+    from otto.config.remote_completion_cache import cached_reservation_ok
+
+    now = datetime.now(tz=timezone.utc)
+    _install_backend(monkeypatch, _Backend([_res("r1")]))
+    assert rc._reservation_allows(_chain()) is True
+    assert cached_reservation_ok("carol", {"r1"}, now) is True
 
 
 def test_gate_backend_error_propagates_to_the_catch_all(monkeypatch, gate_env):
@@ -406,39 +403,20 @@ def test_gate_backend_error_stores_no_cache_entry(monkeypatch, gate_env):
     assert cached_reservation_ok("carol", {"r1"}, datetime.now(tz=timezone.utc)) is None
 
 
-def test_gate_windows_query_is_cached(monkeypatch, gate_env):
+def test_gate_query_is_cached(monkeypatch, gate_env):
     from otto.config.remote_completion_cache import cached_reservation_ok
-    from otto.reservations import ReservationWindow
 
     now = datetime.now(tz=timezone.utc)
-    _install_backend(
-        monkeypatch,
-        _WindowsBackend(
-            [
-                ReservationWindow(
-                    resource="r1", start=now - timedelta(hours=1), end=now + timedelta(hours=1)
-                )
-            ]
-        ),
-    )
+    _install_backend(monkeypatch, _Backend([_res("r1", start=_ago(1), end=_ahead(1))]))
     assert rc._reservation_allows(_chain()) is True
     assert cached_reservation_ok("carol", {"r1"}, now) is True
 
 
 def test_gate_cache_hit_never_builds_backend(monkeypatch, gate_env):
     from otto.config import remote_completion_cache as rcc
-    from otto.reservations import ReservationWindow
 
     now = datetime.now(tz=timezone.utc)
-    rcc.store_reservation_windows(
-        "carol",
-        [
-            ReservationWindow(
-                resource="r1", start=now - timedelta(hours=1), end=now + timedelta(hours=1)
-            )
-        ],
-        now,
-    )
+    rcc.store_reservations("carol", [_res("r1", start=_ago(1), end=_ahead(1))], now)
     monkeypatch.setattr(
         "otto.reservations.build_reservation_gate",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("backend built on cache hit")),
@@ -450,7 +428,7 @@ def test_gate_cached_refusal_is_honoured(monkeypatch, gate_env):
     from otto.config import remote_completion_cache as rcc
 
     now = datetime.now(tz=timezone.utc)
-    rcc.store_reservation_set("carol", {"r2"}, now)
+    rcc.store_reservations("carol", [_res("r2", start=_ago(1), end=_ahead(1))], now)
     monkeypatch.setattr(
         "otto.reservations.build_reservation_gate",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("backend built on cache hit")),
@@ -591,7 +569,7 @@ def test_gate_never_skips_under_dash_r(monkeypatch, gate_env):
 
     def _build(repos, *, as_user, skip_reservation_check, cwd_fallback):
         seen["skip"] = skip_reservation_check
-        return SimpleNamespace(backend=_FlatBackend({"r1"}))
+        return SimpleNamespace(backend=_Backend([_res("r1")]))
 
     monkeypatch.setattr("otto.reservations.build_reservation_gate", _build)
     assert rc._reservation_allows(_chain()) is True

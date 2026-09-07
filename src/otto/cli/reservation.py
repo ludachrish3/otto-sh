@@ -23,10 +23,12 @@ from ..reservations import (
     MissingReservationError,
     ReservationBackendError,
     ReservationGate,
+    active_reservations,
     build_reservation_gate,
     check_reservations,
     is_null_backend,
     required_resource_origins,
+    warn_expiring_reservations,
 )
 from .invoke import fail
 
@@ -184,11 +186,17 @@ def check(ctx: typer.Context) -> None:
     else:
         # The null backend reserves nothing and check_reservations
         # short-circuits on it, so "does alice hold this?" has no answer to
-        # give; asking anyway returns set() and would render every row unheld
-        # directly above the OK line. Same predicate as the verdict's, so the
-        # table and the check can never disagree about what "none" means.
+        # give; asking anyway answers [] (or raises, for a backend that treats
+        # an unset username as fatal) and would render every row unheld
+        # directly above the OK line. Same predicate as the verdict's — the
+        # user filter included — so the table and the check can never
+        # disagree about what "none" means.
         null = is_null_backend(backend)
-        held = set() if null else backend.get_reserved_resources(username)
+        held = (
+            set()
+            if null
+            else {r.resource for r in active_reservations(backend) if r.user == username}
+        )
         table = Table(
             title=(
                 f"reservations required by lab {lab.name} for {username} "
@@ -215,6 +223,14 @@ def check(ctx: typer.Context) -> None:
                 held_cell,
             )
         rprint(table)
+
+        # After the null/empty-origins short-circuits above, so this never
+        # becomes the call that queries a backend. Unlike the gate and the
+        # named-host check, this one is NOT suppressed by -R: the flag means
+        # "do not block me", and the command whose whole job is reporting
+        # reservation status should still say the booking is lapsing.
+        if not null:
+            warn_expiring_reservations(active_reservations(backend), {o.resource for o in origins})
 
     try:
         check_reservations(lab, username, backend, host_ids=in_play)

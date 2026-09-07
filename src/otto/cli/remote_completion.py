@@ -441,14 +441,9 @@ def _reservation_allows(chain: _ChainParams) -> bool:
     actually gave is ever cached.
     """
     from ..config import get_repos
-    from ..config.remote_completion_cache import (
-        cached_reservation_ok,
-        store_reservation_set,
-        store_reservation_windows,
-    )
-    from ..reservations import build_reservation_gate, is_null_backend
+    from ..config.remote_completion_cache import cached_reservation_ok, store_reservations
+    from ..reservations import active_reservations, build_reservation_gate, is_null_backend
     from ..reservations.identity import resolve_username
-    from ..reservations.protocol import SupportsReservationWindows
 
     repos = get_repos()
     if not any(getattr(r, "reservation_settings", None) for r in repos):
@@ -477,11 +472,14 @@ def _reservation_allows(chain: _ChainParams) -> bool:
     # three spellings of it is how they drift apart.
     if backend is None or is_null_backend(backend):
         return True
-    if isinstance(backend, SupportsReservationWindows):
-        windows = backend.get_reservation_windows(username)
-        store_reservation_windows(username, windows, now)
-        active = {w.resource for w in windows if w.start <= now <= w.end}
-        return required <= active
-    held = backend.get_reserved_resources(username)
-    store_reservation_set(username, held, now)
-    return required <= held
+    # The backend queries for the username it was CONSTRUCTED with, and the
+    # gate above was built from the same ``chain.as_user`` that ``username``
+    # was resolved from — so the two agree, but only by construction.
+    reservations = active_reservations(backend)
+    store_reservations(username, reservations, now)
+    active = {
+        r.resource
+        for r in reservations
+        if (r.start is None or r.start <= now) and (r.end is None or now <= r.end)
+    }
+    return required <= active

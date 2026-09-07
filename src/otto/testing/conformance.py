@@ -25,7 +25,9 @@ Usage::
 """
 
 import inspect
-from datetime import datetime, timezone
+import logging
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..config.lab import Lab
@@ -41,9 +43,10 @@ from ..models.inventory import (
     InventoryRecord,
 )
 from ..reservations import (
+    Reservation,
     ReservationBackend,
-    ReservationWindow,
-    SupportsReservationWindows,
+    ReservationBackendError,
+    SupportsResourceHolders,
     SupportsUsernameCompletion,
 )
 from ..suite.expect import ExpectCollector
@@ -53,6 +56,13 @@ _NO_SUCH_LAB = "__otto_conformance_no_such_lab__"
 _PROBE_USER = "__otto_conformance_probe_user__"
 _PROBE_RESOURCE = "__otto_conformance_probe_resource__"
 _PROBE_CREDS_KEY = "__otto_conformance_no_such_key__"
+
+# Distinguishes "the member is absent" from "the member is None", which a
+# structural backend could legitimately (if wrongly) return.
+_MISSING = object()
+
+_LOG = logging.getLogger(__name__)
+"""Where a rule the backend's own data cannot exercise is announced as skipped."""
 
 
 def assert_lab_repository_conforms(
@@ -359,6 +369,186 @@ def _expect_host_summaries_conform(
         )
 
 
+def _expect_reservation_rows(c: ExpectCollector, label: str, rows: object) -> list[Reservation]:
+    """Apply the per-row ``Reservation`` rules to *rows*.
+
+    Parameters
+    ----------
+    c : ExpectCollector
+        Collector recording every violated rule.
+    label : str
+        Names the call the rows came from, e.g. ``"reservations"``, so a
+        failure says which query produced the bad row.
+    rows : object
+        Whatever the backend returned.  A non-list is reported, not iterated.
+
+    Returns
+    -------
+    list[Reservation]
+        The entries that really are :class:`~otto.reservations.protocol.Reservation`
+        objects, so later rules can reason about resources without tripping
+        over a malformed row the caller has already been told about.
+    """
+    if not isinstance(rows, list):
+        c.expect(
+            False,
+            f"ReservationBackend: {label} must return a list of Reservation, got "
+            f"{type(rows).__name__}",
+        )
+        return []
+    good: list[Reservation] = []
+    for r in rows:
+        if not isinstance(r, Reservation):
+            c.expect(
+                False,
+                f"ReservationBackend: {label} entries must be Reservation, got {type(r).__name__}",
+            )
+            continue
+        c.expect(
+            isinstance(r.user, str) and r.user != "",
+            f"ReservationBackend: {label} user must be a non-empty str, got {r.user!r}",
+        )
+        c.expect(
+            isinstance(r.resource, str) and r.resource != "",
+            f"ReservationBackend: {label} resource must be a non-empty str, got {r.resource!r}",
+        )
+        aware = all(b is None or b.tzinfo is not None for b in (r.start, r.end))
+        c.expect(
+            aware,
+            f"ReservationBackend: {label} start/end must be timezone-aware when set "
+            f"({r.resource!r}: start={r.start!r}, end={r.end!r})",
+        )
+        if aware and r.start is not None and r.end is not None:
+            c.expect(
+                r.start <= r.end,
+                f"ReservationBackend: {label} start <= end required "
+                f"({r.resource!r}: {r.start} > {r.end})",
+            )
+        good.append(r)
+    return good
+
+
+def _expect_rows_belong_to(
+    c: ExpectCollector, label: str, rows: list[Reservation], user: str
+) -> None:
+    """Expect every row in *rows* to name *user* as its holder.
+
+    Parameters
+    ----------
+    c : ExpectCollector
+        Collector recording every violated rule.
+    label : str
+        Names the call the rows came from.
+    rows : list[Reservation]
+        Well-formed rows, as returned by :func:`_expect_reservation_rows`.
+    user : str
+        The username the query named.
+    """
+    for r in rows:
+        c.expect(
+            r.user == user,
+            f"ReservationBackend: {label} must return only rows for {user!r}, "
+            f"got a row held by {r.user!r} ({r.resource!r})",
+        )
+
+
+def _expect_overlap_semantics(
+    c: ExpectCollector,
+    backend: ReservationBackend,
+    probe_user: str,
+    unbounded: list[Reservation],
+) -> None:
+    """Expect the window predicate to be overlap rather than containment.
+
+    The helper cannot create a straddling booking — otto never writes
+    reservations — so the rule is checked differentially against the backend's
+    own data: a booking active right now overlaps *any* window containing now,
+    so every resource the unbounded call reports must come back for a window
+    bracketing this instant.  Containment semantics drop the straddling rows
+    here; overlap semantics do not.  This is the fail-open rule — a backend
+    that reads the window as "contained in" tells otto a held rack is free.
+
+    Parameters
+    ----------
+    c : ExpectCollector
+        Collector recording every violated rule.
+    backend : ReservationBackend
+        The backend instance under test.
+    probe_user : str
+        The username both calls query for.
+    unbounded : list[Reservation]
+        Well-formed rows from the unbounded ``fetch_reservations(probe_user)``.
+    """
+    wide = {r.resource for r in unbounded}
+    if not wide:
+        _LOG.warning(
+            "conformance: skipping the overlap rule — fetch_reservations(%r) returned no "
+            "rows, so there is nothing a narrow window could drop. Pass known_user= for a "
+            "user who holds something to exercise it.",
+            probe_user,
+        )
+        return
+    now = datetime.now(tz=timezone.utc)
+    narrow = backend.fetch_reservations(
+        probe_user, start=now - timedelta(seconds=1), end=now + timedelta(seconds=1)
+    )
+    narrow_rows = _expect_reservation_rows(c, "fetch_reservations(window)", narrow)
+    dropped = sorted(wide - {r.resource for r in narrow_rows})
+    c.expect(
+        not dropped,
+        f"ReservationBackend: fetch_reservations() must match bookings overlapping "
+        f"[start, end], not bookings contained in it — {dropped!r} came back unbounded "
+        f"but not for a window bracketing now, so a booking overlapping that window was "
+        f"dropped; that reading is what makes otto's gate fail open",
+    )
+
+
+def _expect_holder_agreement(
+    c: ExpectCollector,
+    backend: ReservationBackend,
+    holders: "Callable[[str], object]",
+    resources: list[str],
+    owned: dict[str, set[str]],
+) -> None:
+    """Expect ``holders()`` to agree with ``fetch_reservations()`` in both directions.
+
+    Parameters
+    ----------
+    c : ExpectCollector
+        Collector recording every violated rule.
+    backend : ReservationBackend
+        The backend instance under test, for the corroborating forward query.
+    holders : Callable[[str], object]
+        The backend's bound ``holders`` method — passed rather than reached for
+        through *backend*, whose Protocol type knows nothing of the optional
+        capability.
+    resources : list[str]
+        The resources to probe.
+    owned : dict[str, set[str]]
+        Resources each probed user holds per ``fetch_reservations``.  Every one
+        must show up as a holder row, and every holder row must show up here.
+    """
+    for resource in resources:
+        rows = _expect_reservation_rows(c, f"holders({resource!r})", holders(resource))
+        named = {r.user for r in rows}
+        for user, held in owned.items():
+            if resource in held:
+                c.expect(
+                    user in named,
+                    f"SupportsResourceHolders: holders({resource!r}) must include a row for "
+                    f"{user!r}, who holds it per fetch_reservations; got {sorted(named)!r}",
+                )
+        for r in rows:
+            back = _expect_reservation_rows(
+                c, f"fetch_reservations({r.user!r})", backend.fetch_reservations(r.user)
+            )
+            c.expect(
+                resource in {b.resource for b in back},
+                f"SupportsResourceHolders: holders({resource!r}) names {r.user!r} as a holder, "
+                f"but fetch_reservations({r.user!r}) does not return {resource!r}",
+            )
+
+
 def assert_reservation_backend_conforms(
     backend: ReservationBackend,
     *,
@@ -367,13 +557,30 @@ def assert_reservation_backend_conforms(
 ) -> None:
     """Assert *backend* satisfies the ReservationBackend contract.
 
-    Structural/type rules always run. When *known_user* and *known_resources*
+    The required contract is two methods (``fetch_reservations`` and
+    ``backend_name``) plus a ``reservations`` list member, which
+    :class:`~otto.reservations.ReservationBackendBase` provides.  Structural,
+    row and overlap rules always run.  When *known_user* and *known_resources*
     (resources that user is known to hold) are both given, round-trip
-    consistency rules run too. The optional
+    consistency rules run too.  The optional
     :class:`~otto.reservations.SupportsUsernameCompletion` and
-    :class:`~otto.reservations.SupportsReservationWindows` capabilities are
-    checked only when the backend implements them. Raises a single
-    :class:`AssertionError` aggregating every violated rule.
+    :class:`~otto.reservations.SupportsResourceHolders` capabilities are
+    checked only when the backend implements them — a backend whose scheduler
+    answers only per-user queries omits ``holders`` and is *skipped* for the
+    holder rules, not failed.  Raises a single :class:`AssertionError`
+    aggregating every violated rule.
+
+    There is deliberately **no** construction-time rule here.  The helper
+    receives an already-constructed instance, where a deliberately pre-seeded
+    cache (which the base class documents as available) is indistinguishable
+    from an eager base; the laziness of
+    :attr:`~otto.reservations.ReservationBackendBase.reservations` is otto's
+    own invariant, covered by otto's unit tests for the base class.
+
+    Rules the backend's own data cannot exercise — the overlap rule against a
+    user who holds nothing, the row rules against a backend built with no
+    identity — are logged as skipped on the ``otto.testing.conformance``
+    logger rather than passing silently.
 
     Parameters
     ----------
@@ -390,157 +597,85 @@ def assert_reservation_backend_conforms(
         isinstance(backend, ReservationBackend),
         "ReservationBackend: must satisfy the runtime_checkable ReservationBackend protocol",
     )
-    c.expect(
-        callable(getattr(backend, "get_reserved_resources", None)),
-        "ReservationBackend: get_reserved_resources must be callable",
-    )
-    c.expect(
-        callable(getattr(backend, "who_reserved", None)),
-        "ReservationBackend: who_reserved must be callable",
-    )
-    c.expect(
-        callable(getattr(backend, "backend_name", None)),
-        "ReservationBackend: backend_name must be callable",
-    )
+    fetch_ok = callable(getattr(backend, "fetch_reservations", None))
+    c.expect(fetch_ok, "ReservationBackend: fetch_reservations must be callable")
+    name_ok = callable(getattr(backend, "backend_name", None))
+    c.expect(name_ok, "ReservationBackend: backend_name must be callable")
 
-    _backend_name_callable = callable(getattr(backend, "backend_name", None))
-    name = backend.backend_name() if _backend_name_callable else ""
+    name = backend.backend_name() if name_ok else ""
     c.expect(
         isinstance(name, str) and name != "",
         f"ReservationBackend: backend_name() must return a non-empty str, got {name!r}",
     )
-    if _backend_name_callable:
+    if name_ok:
         c.expect(
             name == backend.backend_name(),
             "ReservationBackend: backend_name() must be stable across calls",
         )
 
-    probe_user = known_user if known_user is not None else _PROBE_USER
-    reserved = (
-        backend.get_reserved_resources(probe_user)
-        if callable(getattr(backend, "get_reserved_resources", None))
-        else set()
-    )
-    reserved_ok = isinstance(reserved, set)
-    c.expect(
-        reserved_ok,
-        f"ReservationBackend: get_reserved_resources() must return a set, got "
-        f"{type(reserved).__name__}",
-    )
-    if reserved_ok:
-        for r in reserved:
-            c.expect(
-                isinstance(r, str),
-                f"ReservationBackend: get_reserved_resources() entries must be str, "
-                f"got {type(r).__name__}",
-            )
-
-    probe_resource = known_resources[0] if known_resources else _PROBE_RESOURCE
-    holders = (
-        backend.who_reserved(probe_resource)
-        if callable(getattr(backend, "who_reserved", None))
-        else []
-    )
-    holders_ok = isinstance(holders, list)
-    c.expect(
-        holders_ok,
-        f"ReservationBackend: who_reserved() must return a list (empty = no holders, "
-        f"never None), got {type(holders).__name__}",
-    )
-    if holders_ok:
-        for u in holders:
-            c.expect(
-                isinstance(u, str),
-                f"ReservationBackend: who_reserved() entries must be str, got {type(u).__name__}",
-            )
-
-    if known_user is not None and known_resources is not None:
-        held = (
-            backend.get_reserved_resources(known_user)
-            if callable(getattr(backend, "get_reserved_resources", None))
-            else set()
-        )
-        for r in known_resources:
-            r_holders = (
-                backend.who_reserved(r) if callable(getattr(backend, "who_reserved", None)) else []
-            )
-            c.expect(
-                isinstance(r_holders, list) and known_user in r_holders,
-                f"ReservationBackend: who_reserved({r!r}) must include known holder "
-                f"{known_user!r}, got {r_holders!r}",
-            )
-            c.expect(
-                isinstance(held, set) and r in held,
-                f"ReservationBackend: get_reserved_resources({known_user!r}) must "
-                f"include {r!r}, got {held!r}",
-            )
-            if isinstance(r_holders, list):
-                for u in r_holders:
-                    u_held = (
-                        backend.get_reserved_resources(u)
-                        if callable(getattr(backend, "get_reserved_resources", None))
-                        else set()
-                    )
-                    c.expect(
-                        isinstance(u_held, set) and r in u_held,
-                        f"ReservationBackend: round-trip — {u!r} holds {r!r} per "
-                        f"who_reserved, but {r!r} not in get_reserved_resources({u!r})",
-                    )
-
-    if isinstance(backend, SupportsReservationWindows):
-        windows = backend.get_reservation_windows(probe_user)
-        windows_ok = isinstance(windows, list)
+    # The `reservations` member is absent from the Protocol on purpose —
+    # isinstance() against a runtime_checkable Protocol EVALUATES a non-method
+    # member, which would turn every type check into a live scheduler query —
+    # so this helper is where its presence and shape are enforced.
+    identity = getattr(backend, "username", None)
+    cached: object = _MISSING
+    try:
+        cached = getattr(backend, "reservations", _MISSING)
+    except ReservationBackendError as exc:
+        # Documented for a backend built with no identity purely to call
+        # list_usernames. It must never escape as anything but a recorded rule.
         c.expect(
-            windows_ok,
-            f"SupportsReservationWindows: get_reservation_windows() must return a list, "
-            f"got {type(windows).__name__}",
+            identity is None,
+            f"ReservationBackend: reservations must not raise for a backend whose "
+            f"username is {identity!r}, but it raised: {exc}",
         )
-        if windows_ok:
-            for w in windows:
-                is_window = isinstance(w, ReservationWindow)
-                c.expect(
-                    is_window,
-                    f"SupportsReservationWindows: entries must be ReservationWindow, "
-                    f"got {type(w).__name__}",
-                )
-                if not is_window:
-                    continue
-                c.expect(
-                    isinstance(w.resource, str) and w.resource != "",
-                    f"SupportsReservationWindows: resource must be a non-empty str, "
-                    f"got {w.resource!r}",
-                )
-                c.expect(
-                    w.start.tzinfo is not None and w.end.tzinfo is not None,
-                    f"SupportsReservationWindows: start/end must be timezone-aware "
-                    f"({w.resource!r})",
-                )
-                if w.start.tzinfo is not None and w.end.tzinfo is not None:
-                    c.expect(
-                        w.start <= w.end,
-                        f"SupportsReservationWindows: start <= end required "
-                        f"({w.resource!r}: {w.start} > {w.end})",
-                    )
-        # Only meaningful once every window is well-formed: a naive or
-        # non-ReservationWindow entry makes the comparison below either raise
-        # or report a difference the rules above already named.
-        if windows_ok and known_user is not None:
-            user_windows = backend.get_reservation_windows(known_user)
-            if isinstance(user_windows, list) and all(
-                isinstance(w, ReservationWindow)
-                and w.start.tzinfo is not None
-                and w.end.tzinfo is not None
-                for w in user_windows
-            ):
-                now = datetime.now(tz=timezone.utc)
-                active = {w.resource for w in user_windows if w.start <= now <= w.end}
-                flat = backend.get_reserved_resources(known_user)
-                c.expect(
-                    isinstance(flat, set) and active == flat,
-                    f"SupportsReservationWindows: resources with a window covering now "
-                    f"({sorted(active)!r}) must equal get_reserved_resources() "
-                    f"({sorted(flat) if isinstance(flat, set) else flat!r})",
-                )
+        if identity is None:
+            _LOG.warning(
+                "conformance: skipping the `reservations` rules — the backend was built "
+                "without a username, so the member raises by design."
+            )
+    else:
+        if cached is _MISSING:
+            c.expect(
+                False,
+                "ReservationBackend: must expose a `reservations` member holding the "
+                "invoking user's active rows; inherit ReservationBackendBase, which "
+                "provides it, or supply it yourself",
+            )
+        else:
+            cached_rows = _expect_reservation_rows(c, "reservations", cached)
+            if isinstance(identity, str) and identity != "":
+                _expect_rows_belong_to(c, "reservations", cached_rows, identity)
+
+    if not fetch_ok:
+        c.raise_if_failures()
+        return
+
+    probe_user = known_user if known_user is not None else identity or _PROBE_USER
+    label = f"fetch_reservations({probe_user!r})"
+    fetched = _expect_reservation_rows(c, label, backend.fetch_reservations(probe_user))
+    _expect_rows_belong_to(c, label, fetched, probe_user)
+    _expect_overlap_semantics(c, backend, probe_user, fetched)
+
+    held = {r.resource for r in fetched}
+    if known_user is not None and known_resources is not None:
+        # The caller's ground truth, which is the only thing here the backend
+        # cannot define into agreement with itself. It also carries the holder
+        # ground truth: once these resources are in the forward query's answer,
+        # `_expect_holder_agreement` requires holders() to name known_user for
+        # each of them.
+        for resource in known_resources:
+            c.expect(
+                resource in held,
+                f"ReservationBackend: {label} must include known-held resource "
+                f"{resource!r}, got {sorted(held)!r}",
+            )
+
+    if isinstance(backend, SupportsResourceHolders):
+        probes = sorted(held | set(known_resources or []))
+        _expect_holder_agreement(
+            c, backend, backend.holders, probes or [_PROBE_RESOURCE], {probe_user: held}
+        )
 
     if isinstance(backend, SupportsUsernameCompletion):
         usernames = backend.list_usernames()

@@ -187,15 +187,15 @@ when:
 Two short-lived caches keep repeated TABs quick: a directory listing is reused
 for 45 seconds per host and directory, and the reservation answer for up to
 two minutes — less when a booking of yours starts or ends sooner, since
-crossing a window edge invalidates it immediately (see
-[Reservation windows](reservation/windows.md)).
+crossing a booking edge invalidates it immediately (see
+[Reservation times](reservation/windows.md)).
 Both live in `remote_completion_cache.json` in [the workspace
 home](#the-workspace-home), beside the main completion cache, and
 [`otto cache clear`](cache/index.md) deletes both files.
 
 The cached reservation answer is read by tab completion and by nothing else —
-see {doc}`reservation/windows` for why, and for what a window-aware backend
-buys.
+see {doc}`reservation/windows` for why, and for what the booking times every
+backend reports are used for.
 
 ## Output directories
 

@@ -39,10 +39,7 @@ def test_collect_usernames_from_capable_backend(tmp_path):
         def __init__(self, **kwargs):
             pass
 
-        def get_reserved_resources(self, username):
-            return set()
-
-        def who_reserved(self, resource):
+        def fetch_reservations(self, username, start=None, end=None):
             return []
 
         def backend_name(self):

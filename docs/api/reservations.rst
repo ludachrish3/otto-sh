@@ -22,25 +22,38 @@ The backend contract
 --------------------
 
 Third-party backends satisfy the :class:`~otto.reservations.protocol.ReservationBackend`
-Protocol.  The contract is deliberately small — three read-only
+Protocol.  The contract is deliberately small — two read-only
 methods, no write methods of any kind.  Otto never mutates scheduler
 state.  The recommended way to satisfy it is to inherit
-:class:`~otto.reservations.ReservationBackendBase`, which declares the three
-methods as abstract and spells out the constructor the factory calls.
+:class:`~otto.reservations.ReservationBackendBase`, which declares the two
+methods as abstract, adds the cached ``reservations`` member every consumer
+reads, and spells out the constructor the factory calls.
 
 .. autoclass:: otto.reservations.ReservationBackendBase
    :members:
 
-Two optional capabilities sit alongside it: a backend that can enumerate its
-users implements ``list_usernames`` and a backend that knows when bookings
-begin and end implements ``get_reservation_windows``.  Both are detected
-structurally with ``isinstance`` — implement the method or don't.
+``fetch_reservations`` answers in :class:`~otto.reservations.protocol.Reservation`
+records (``backend_name`` returns a plain ``str``), so every backend reports
+*when* a booking runs.  The rules those times obey — the window predicate, and
+what a ``None`` bound means on the query versus on a row — are stated once,
+under "The query window" in :doc:`../library/reservation-backends`.  Porting a
+backend written for otto 0.10 is covered in the same page's "Migrating from
+0.10".
+
+.. autoclass:: otto.reservations.Reservation
+   :no-index:
+
+Two optional capabilities sit alongside the contract: a backend that can
+enumerate its users implements ``list_usernames``, and one that can answer the
+inverted "who holds this resource, and until when?" query implements
+``holders``.  Both are detected structurally with ``isinstance`` — implement
+the method or don't.  Omitting ``holders`` degrades only the refusal message,
+which then reports the holders as unknown;
+:doc:`../library/reservation-backends` is the implementer's guide to both.
 
 .. autoclass:: otto.reservations.SupportsUsernameCompletion
 
-.. autoclass:: otto.reservations.SupportsReservationWindows
-
-.. autoclass:: otto.reservations.ReservationWindow
+.. autoclass:: otto.reservations.SupportsResourceHolders
 
 .. automodule:: otto.reservations.protocol
 
@@ -120,9 +133,11 @@ Extension points for implementers
 A custom backend needs three pieces:
 
 1. **A class** that satisfies :class:`~otto.reservations.protocol.ReservationBackend`.
-   Inherit :class:`~otto.reservations.ReservationBackendBase` and implement its three
+   Inherit :class:`~otto.reservations.ReservationBackendBase` and implement its two
    abstract methods.  Protocol satisfaction is structural, so a class that merely has
-   the three methods also works — the base is the recommendation, not a requirement.
+   the two methods also works — but the base also supplies the cached
+   ``reservations`` member the conformance helper requires, which a structural
+   backend must then provide itself.
 2. **An init module** that registers the class under a bare name::
 
       from otto.reservations import register_reservation_backend
@@ -139,9 +154,13 @@ A custom backend needs three pieces:
    Optional per-backend kwargs go in a ``[reservations.my-team-jira]`` sub-table and
    are passed to the constructor alongside the optional ``url`` setting.
 
-The factory calls the class as ``Class(url=url, **kwargs_from_settings)`` when ``url``
-is set in settings, otherwise ``Class(**kwargs_from_settings)``.  Accept or omit ``url``
-as fits your deployment.
+The factory always passes ``repo_dir=`` and ``username=``, adds ``url=`` when the
+setting is present, and passes every ``[reservations.<name>]`` key as a further
+keyword argument — ``Class(url=url, repo_dir=..., username=..., **kwargs_from_settings)``.
+Accept or omit ``url`` as fits your deployment; forward the otto-owned arguments
+to ``super().__init__``.
 
-See the :doc:`user guide <../guide/cli/reservation/index>` for a worked example
-with request handling, credential loading, and package layout.
+See :doc:`../getting-started/reservations` for a worked example — a small
+backend, its ``init`` module registration, its ``[reservations]`` table, and
+the conformance test that proves it — and
+:doc:`../library/reservation-backends` for the full implementer's contract.

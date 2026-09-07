@@ -13,25 +13,25 @@ from typing_extensions import override
 from .base import ReservationBackendBase
 
 if TYPE_CHECKING:
-    from .protocol import ReservationBackend
+    from datetime import datetime
+
+    from .protocol import Reservation, ReservationBackend
 
 
 class NullReservationBackend(ReservationBackendBase):
     """Always returns "no reservations known" — the check is a no-op."""
 
     @override
-    def get_reserved_resources(
+    def fetch_reservations(
         self,
         username: str,
-    ) -> set[str]:
-        """Return an empty set — this backend tracks no reservations."""
-        return set()
+        start: "datetime | None" = None,
+        end: "datetime | None" = None,
+    ) -> "list[Reservation]":
+        """Return an empty list — this backend tracks no reservations."""
+        return []
 
-    @override
-    def who_reserved(
-        self,
-        resource: str,
-    ) -> list[str]:
+    def holders(self, resource: str) -> "list[Reservation]":  # noqa: ARG002 — capability signature: nothing is ever held, so the resource is not consulted
         """Return an empty list — this backend tracks no reservations."""
         return []
 
@@ -51,7 +51,7 @@ def is_null_backend(backend: "ReservationBackend") -> bool:
     they must agree. :func:`~otto.reservations.check.check_reservations`
     short-circuits on it, and ``otto reservation check`` reads it to decide
     whether querying the backend for the held set is worth doing at all —
-    :meth:`NullReservationBackend.get_reserved_resources` answers ``set()``, so
+    :meth:`NullReservationBackend.fetch_reservations` answers ``[]``, so
     a caller that queried it anyway would render every requirement as unheld
     directly above an OK verdict. A second ``isinstance`` at the second site is
     exactly how those two answers drift apart.
