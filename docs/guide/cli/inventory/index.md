@@ -12,7 +12,8 @@ Every verb reads the `[inventory]` table from your user settings file
 `.otto/settings.toml`, and exits 1 with the inventory's own error text when it
 cannot answer. No verb needs a lab, touches a host, or writes to the
 inventory — and none of them ever prints a password, whether the credentials
-came from a record or from a `creds_file`.
+came from a record or from the `[creds]` store; when a store is configured,
+`lookup` and `list` each print a `creds:` row naming it.
 
 ```{important}
 **A stale answer always says so.** When a cached remote inventory is
@@ -102,8 +103,9 @@ otto inventory export inventory.json
 ```
 
 Writes the inventory as a stage-1 JSON document: sorted keys, only the fields
-each record actually states, and never `creds` — those live in `creds_file`,
-so an export is shareable, diffable and committable without leaking one.
+each record actually states, and never `creds` — those live in the `[creds]`
+store, the records, or the lab file, so an export is shareable, diffable and
+committable without leaking one.
 
 The file is written whole or not at all (write-then-rename), at mode `0600`,
 and an existing path is refused until you pass `--force`. This is the same

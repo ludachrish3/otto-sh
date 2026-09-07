@@ -100,7 +100,8 @@ A `paths` entry names those files.  Each entry is a **directory**
 file itself), or a **glob** — an entry containing `*`, `?` or `[`.  A glob is
 expanded relative to its non-glob prefix and contributes the `.json` files it
 matches, in sorted order; one that matches nothing contributes nothing,
-exactly like an absent `lab.json`.
+exactly like an absent `lab.json`. See {doc}`host-sources` for the caution
+about a glob sweeping in `inventory.json`/`creds.json`.
 
 ```toml
 # .otto/settings.toml
@@ -240,7 +241,7 @@ host field — the third reservation level, beside the
 | Field | Type | Description |
 |-------|------|-------------|
 | `ip` | string | IP address or DNS name otto will connect to. |
-| `creds` | array of objects | Ordered list of `{"login": ..., "password": ...}` entries (the first is the default login unless `user` pins another one).  At least one entry required for Unix hosts; optional for embedded hosts (RTOS telnet shells typically have no login step).  An entry may also carry `proxy`/`via`/`params` to describe a login-proxy hop. |
+| `creds` | array of objects | Ordered list of `{"login": ..., "password": ...}` entries (the first is the default login unless `user` pins another one).  At least one entry required for Unix hosts; optional for embedded hosts (RTOS telnet shells typically have no login step).  An entry may also carry `proxy`/`via`/`params` to describe a login-proxy hop.  On a **referenced** host the list is optional and layers over the inventory's and the creds store's entries by login; its order is the login order (see {ref}`credentials-layered`). |
 
 ### Common optional
 
@@ -287,11 +288,13 @@ own facts:
 ```
 
 Otto then fills in the fields the configured inventory declares it supplies —
-typically `ip`, `interfaces`, `creds` and the location fields — and every one
-of those must be **absent** from the entry, or the load fails naming the field
-and the key.  Fields the inventory does not supply stay here exactly as for an
-inline host, and an entry with no `inventory` key is unaffected: the two forms
-sit side by side in one file.
+typically `ip`, `interfaces` and the location fields — and every one of those
+must be **absent** from the entry, or the load fails naming the field and the
+key.  `creds` is the exception: stated here beside a reference it **composes**
+over the inventory's, field by field within a login ({ref}`credentials-layered`).
+Fields the inventory does not supply stay here exactly as for an inline host,
+and an entry with no `inventory` key is unaffected: the two forms sit side by
+side in one file.
 
 `"inventory": null` means the same as no `inventory` key at all — the entry is
 inline.  The empty string is an error.

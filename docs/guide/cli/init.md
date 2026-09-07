@@ -22,7 +22,7 @@ it never creates an output directory.
 | ------ | ------- | ----------- |
 | `--all` | `False` | Scaffold every missing area without prompting |
 | `--schemas` | `False` | Scaffold (or refresh, if present) the schemas area: `.otto/schemas` + editor wiring + generated snippets |
-| `--lab` | `False` | Scaffold the lab area (`lab_data/lab.json` + README) |
+| `--lab` | `False` | Scaffold the lab area (`lab_data/lab.json` + `inventory.json` + `creds.json` + README) |
 | `--tests` | `False` | Scaffold the tests area (example suite + conftest) |
 | `--instructions` | `False` | Scaffold the instructions area (`pylib/<name>_instructions/`) |
 | `--name NAME` | directory name | Product name for `settings.toml` |
@@ -78,8 +78,8 @@ element name repeated (compared by slug) across two of that source's files,
 is reported here exactly as it would fail at load.  Anything it finds is a
 *problem*: it lands in the summary table and the run exits 1.
 
-Two findings are advisory instead, printed in a yellow `Warnings` block that
-never changes the exit code:
+Some findings are advisory instead, printed in a yellow `Warnings` block that
+never changes the exit code. Two are about lab shape:
 
 - A **dead membership pattern** — `element 'x' labs pattern 'p' matches no
   declared lab`.  A shared lab file may legitimately serve projects that
@@ -91,6 +91,11 @@ never changes the exit code:
   declare a shared lab identifier, give the element (or each of its hosts) a
   `resources` entry, or make one lab a sub-lab of the other.  (A lab that
   reserves nothing is never half of such a pair.)
+
+When an inventory is configured, its own doctor findings join the same
+`Warnings` block — see the
+[Warnings](../configuration/inventory.md#warnings) section of the inventory
+guide.
 
 Alongside the schemas, `otto init --schemas` writes
 `.vscode/otto.code-snippets` — generated `lab.json` skeletons for a `labs`

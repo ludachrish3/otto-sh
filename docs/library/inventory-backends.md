@@ -76,14 +76,13 @@ register_inventory_backend("mycmdb", MyInventory)
 [inventory]
 backend = "mycmdb"
 url = "https://cmdb.example.com"
-creds_file = "~/.otto/creds.json"
 cache_ttl = "24h"
 ```
 
 Otto constructs it as
 `MyInventory(repo_dir=<declaring directory>, url="https://cmdb.example.com")` —
-every key in the table except otto's own (`backend`, `creds_file`, `cache_ttl`)
-becomes a keyword argument. `repo_dir` is always passed, and it is **the
+every key in the table except otto's own (`backend`, `cache_ttl`) becomes a
+keyword argument. `repo_dir` is always passed, and it is **the
 directory the declaration came from**: the repository root for a project
 `[inventory]` override, and `~/.otto` — otto's home — for the user settings
 file, which is where most declarations live. Anchor your own relative
@@ -102,18 +101,17 @@ the same named-registry mechanism otto uses for host sources, reservation
 backends, term/transfer backends and host classes — see
 {doc}`Extension points <../architecture/subsystems/extension-points>`.
 
-## Credentials are not your problem
+## Credentials are layered
 
-`creds_file` is a **core** `[inventory]` key, not a backend's. Otto wraps the
-selected backend in {class}`~otto.inventory.creds.CredsOverlay`, which supplies
-`creds` from that file for every lookup, so a backend never has to see a
-password — and a backend record that carries `creds` while `creds_file` is
-configured is an error naming the key.
-
-Carry credentials in your own records only if your source of record genuinely
-holds them and the deployment does not configure `creds_file`. If it does, the
-overlay is authoritative; one home per field, and no reader ever chooses
-between two sources.
+`[creds]` is a **core** table, not a backend's: otto wraps the selected
+inventory in {class}`~otto.inventory.creds.CredsOverlay`, which merges the
+configured creds store's entries UNDER the record's, by login, and the lab
+file's over both ({ref}`credentials-layered`). A backend therefore never has
+to see a password — leave `creds` out of your records and the store supplies
+them — but it may carry them when the source of record genuinely holds them;
+the record then overrides the store for the logins it names. A backend whose
+`supplies` includes `creds` is never snapshot-cached (below). Writing a store
+of your own is {doc}`creds-backends`.
 
 ## Opting into the snapshot cache
 
@@ -139,8 +137,8 @@ reads, which is why an operator can copy one out of otto's home and point a
 A snapshot never holds credentials — that is what makes it shareable — so a
 backend whose own `supplies` includes `creds` is **refused** the cache rather
 than quietly losing them for the rest of the TTL. The fix is on your side of
-the API: leave `creds` out of `supplies` and let the deployment's
-`creds_file` carry them instead (which is where credentials belong anyway).
+the API: leave `creds` out of `supplies` and let the deployment's `[creds]`
+store carry them instead (which is where credentials belong anyway).
 An operator who cannot change the backend still has `cache_ttl = "0"`. The
 error names your backend and the settings file that declared it.
 

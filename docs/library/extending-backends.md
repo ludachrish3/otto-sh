@@ -517,4 +517,5 @@ a host that sets either key itself wins over the profile, field by field.
 - {doc}`../guide/configuration/lab-config` — the `term` / `transfer` lab-data fields
 - {doc}`../guide/configuration/host-sources` — the `creds` field reference and login-proxy ownership
   consequences
+- {doc}`creds-backends` — a creds store of your own
 - {doc}`../guide/cli/schema/editors` — `otto schema export` for editor autocompletion

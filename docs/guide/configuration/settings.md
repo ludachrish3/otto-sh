@@ -186,16 +186,23 @@ init
   host entry reads its machine facts from.  Its usual home is the user-level
   file described below; a table here is a per-project **override**, and when
   more than one active repo declares one, the tables must be identical or
-  bootstrap fails naming both.  Three keys are otto's own: `backend` (a
-  registered name — `"json"` and `"netbox"` ship with otto), `creds_file` (a
-  JSON file of credentials keyed by inventory key, read by otto rather than by
-  the backend) and `cache_ttl` (`"0"`, or `<n>m` / `<n>h` / `<n>d`; default
-  `"24h"`).  Every other key belongs to the selected backend: `path`
-  (required) and `supplies` for `json`; `url`, `token_env`, `verify`,
-  `filter`, `ip_source`, `custom_fields`, `extra_custom_fields` and `timeout`
-  (seconds per request, default `30`) for
-  `netbox`.  A relative `path` or `creds_file` anchors to the repo root, like
-  every other settings path.  See {doc}`inventory` for the full treatment.
+  bootstrap fails naming both.  Two keys are otto's own: `backend` (a
+  registered name — `"json"` and `"netbox"` ship with otto) and `cache_ttl`
+  (`"0"`, or `<n>m` / `<n>h` / `<n>d`; default `"24h"`).  Every other key
+  belongs to the selected backend: `path` (required) and `supplies` for
+  `json`; `url`, `token_env`, `verify`, `filter`, `ip_source`,
+  `custom_fields`, `extra_custom_fields` and `timeout` (seconds per request,
+  default `30`) for `netbox`.  A relative `path` anchors to the repo root,
+  like every other settings path.  See {doc}`inventory` for the full
+  treatment.
+
+\[creds\]
+: Optional table selecting the **creds store** — credentials by inventory key,
+  the lowest of the three creds layers (lab file over inventory record over
+  store, by login). Same two homes and the same override-and-agree rule as
+  `[inventory]`, resolved independently of it; requires an inventory to be
+  keyed against. `backend` is otto's (`"json"` ships with otto); the `json`
+  store takes `path`, anchored to the repo root. See {doc}`inventory`.
 
 \[logging.levels\]
 : Optional table setting the per-library noise floor — which third-party
@@ -247,14 +254,17 @@ fails validation, naming the file and pointing here.
 
 One file sits outside every repo: `~/.otto/settings.toml`, otto's **user-level**
 settings.  It holds what is true of the person and the machine rather than of a
-project — today that is exactly one table, `[inventory]`, because a machine is a
-machine regardless of which repo you are working in:
+project — today that is two tables, `[inventory]` and `[creds]`, because a
+machine is a machine regardless of which repo you are working in:
 
 ```toml
 [inventory]
 backend = "json"
 path = "~/lab/inventory.json"
-creds_file = "~/.otto/creds.json"
+
+[creds]
+backend = "json"
+path = "~/.otto/creds.json"
 ```
 
 Otto neither creates nor scaffolds this file; write it by hand when you adopt
@@ -263,9 +273,9 @@ with everything else there, and a relative path inside it anchors to that
 directory (`~/.otto`) rather than to any repo.  A repo-only table pasted into
 it is an error naming the key — this file is not a second `settings.toml`.
 
-A project's own `[inventory]` table overrides it, which is the seam for a repo
-that has moved to a different inventory ahead of the rest.  See
-{doc}`inventory`.
+A project's own `[inventory]` or `[creds]` table overrides the matching one,
+which is the seam for a repo that has moved to a different inventory or store
+ahead of the rest.  See {doc}`inventory`.
 
 ## What happens at startup
 

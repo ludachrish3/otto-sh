@@ -7,6 +7,10 @@ inventory wraps the selected store in
 :class:`otto.inventory.creds.CredsOverlay`, which merges its entries under the
 record's by login; the lab file's entries layer over both.
 
+For configuration and the merge rules see
+:doc:`../guide/configuration/inventory`; for writing a store of your own,
+:doc:`../library/creds-backends`.
+
 .. automodule:: otto.creds
    :no-members:
 
@@ -15,7 +19,7 @@ record's by login; the lab file's entries layer over both.
 .. autofunction:: otto.creds.get_creds_backend_class
 
 The store contract
--------------------
+------------------
 
 .. automodule:: otto.creds.protocol
 

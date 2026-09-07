@@ -14,10 +14,66 @@ file the lab team maintains, or by a NetBox instance that already exists. None
 of it is required: a host entry that carries its own `ip` and `creds` works
 exactly as it always has, and the two forms sit side by side in one lab file.
 
+## Three files, one key, one order
+
+```text
+lab_data/lab.json                 inventory.json               creds.json (optional)
+────────────────────────          ─────────────────────        ──────────────────────
+elements[].hosts[]:               "device-01.lab.example":     "device-01.lab.example": [
+  inventory: "device-01.lab…"  ──►  ip, interfaces, site,  ──►   {login, password},
+  os_type, valid_terms,             rack, shelf, board, …          {login, password}
+  valid_transfers, hop, …           creds: [...] (optional)     ]
+  creds: [ {login, proxy, via} ]
+  (optional)
+        HIGHEST  ───────────────────►  middle  ─────────────────►  LOWEST
+```
+
+`otto init` writes these three files and the two settings tables that tie
+them together. Three statements, each of which the loader enforces:
+
+1. **The inventory key is the only thing the files share.** A host entry that
+   says `"inventory": "<key>"` gets its machine facts from the inventory
+   record under that key and its creds from the creds store under that same
+   key. Nothing else — not an IP, not an element name, not a host id — is ever
+   used to line the files up.
+2. **The creds store is optional; the inventory is not, for a referenced
+   entry.** Without `[creds]`, creds come from the inventory record and the
+   lab file; without `creds` in the record, from the store and the lab file;
+   with neither, from the lab file alone. Inline hosts — no `inventory` key —
+   carry their creds inline as they always have. `[creds]` without
+   `[inventory]` is an error: the store is keyed by inventory keys, so
+   nothing could ever look one up.
+3. **Creds are matched by `login`, and within a login the highest layer that
+   states a field wins.** Lab file over inventory record over creds store,
+   field by field; a `null` states nothing and removes nothing. The lab
+   file's order is the login order — it is the one layer written knowing
+   that otto's first cred is the default login — then record-only logins in
+   record order, then store-only logins in store order. A lab file that wants
+   to fix the order of logins it does not otherwise touch lists them by
+   `login` alone.
+
+`creds` is therefore the one host field the inventory partition **composes**
+rather than **refuses**: every other supplied field must be absent inline
+beside a reference (the rule below). This is deliberately lax. A per-field
+precedence goes silent the day both sides state the field — a password set
+in the lab file hides the store's with no error anywhere — which is exactly
+why the rule below refuses precedence for machine facts. For creds the trade
+is made the other way, on purpose: one order every layer obeys is simpler to
+teach, it lets a team move creds between layers one entry at a time without
+the load failing in between, and the lab file is where a cred change is tried
+before the team-wide inventory or store changes. One consequence deserves its
+own sentence: a `proxy` names project code — a login proxy an `init` module
+registers — so an inventory or store shared across projects that carries a
+route loads only in projects that register that proxy; the doctor names the
+cred and the missing proxy.
+
 ## Two layers, one rule
 
 > **Data lives in exactly one layer. Keys may be asserted in both, and must
 > agree.**
+
+(`creds` is the one exception — see [Three files, one key, one
+order](#three-files-one-key-one-order).)
 
 The configured inventory declares, once, **which record fields it supplies**:
 `supplies` in the settings table for the `json` backend, the native set plus
@@ -92,7 +148,7 @@ join is a plain key copy and there is no mapping table to drift.
 | ----- | ---- | ----- |
 | `ip` | string | **Required.** The management address every record must carry. |
 | `interfaces` | object | Test-network interfaces, `{"eth2": {"ip": ..., "subnet": ...}}`; a bare string is shorthand for `{"ip": ...}`. |
-| `creds` | array of objects | `{"login": ..., "password": ...}` entries. Configure `creds_file` and these come from there instead — see {ref}`credentials-creds-file`. |
+| `creds` | array of objects | `{"login": ..., "password": ...}` entries, optionally with a route. The **middle** creds layer: overridden by the lab file, overriding the creds store — see {ref}`credentials-layered`. |
 | `hw_version` | string | Hardware version. |
 | `sw_version` | string | The version the device is *declared* to run — a declaration, never an observation: what you find on the device is never merged back into the record. |
 | `os_name` | string | Free-form OS name. `os_type` stays otto-owned — its values select the host class. |
@@ -131,8 +187,11 @@ The same table shape works in both places it may be written:
 [inventory]
 backend = "json"                   # a registered backend name
 path = "~/lab/inventory.json"      # json kwarg: "~" expands; relative anchors
-creds_file = "~/.otto/creds.json"  # backend-independent
 cache_ttl = "24h"                  # remote backends only; "0" disables caching
+
+[creds]
+backend = "json"
+path = "~/.otto/creds.json"  # the creds store; optional
 ```
 
 ```toml
@@ -142,13 +201,30 @@ url = "https://netbox.example"
 token_env = "NETBOX_TOKEN"                      # the token never sits in a file
 filter = { site = "lab-a", status = "active" }  # any NetBox device filter
 custom_fields = { sw_version = "sw_version" }   # optional, and opt-in
-creds_file = "~/.otto/creds.json"
+
+[creds]
+backend = "json"
+path = "~/.otto/creds.json"  # the creds store; optional
 ```
 
-`backend`, `creds_file` and `cache_ttl` are otto's; every other key belongs to
-the backend the entry selected, and is validated knowing which one that is. The
+`backend` and `cache_ttl` are otto's; every other key belongs to the backend
+the entry selected, and is validated knowing which one that is. The
 `json` backend takes `path` (required) and `supplies`; any other key is an
 error naming it.
+
+### `[creds]`
+
+The creds store is declared the same way, in the same two files, and resolves
+independently — a project may override `[inventory]` alone and inherit the
+user file's `[creds]`, or the reverse. `backend` is otto's; the `json` store
+takes `path` (required) and nothing else; a third-party store takes whatever
+its constructor declares. When more than one active repo declares `[creds]`,
+the tables must be identical after anchoring, exactly as for `[inventory]`.
+
+`creds_file`, the key that used to live under `[inventory]`, is gone: a
+settings file still carrying it fails validation with a message pointing here.
+Move the path to `[creds] backend = "json"` / `path = "…"`; the file's contents
+need no change.
 
 ### Resolution order
 
@@ -165,12 +241,13 @@ exactly two files, and a process has exactly one. An empty `[inventory]` table
 declares nothing and falls through to the user file.
 
 When more than one active repo declares `[inventory]`, the tables must be
-**identical** — same backend, same kwargs after anchoring, same `creds_file`
-**and** the same `cache_ttl`. Otherwise bootstrap fails naming both settings
-files. Two inventories would reintroduce precedence through the back door, and
-`cache_ttl` is in the comparison because it is behaviour, not decoration: one
-repo saying `"0"` and another `"24h"` would let declaration order decide
-whether the process caches at all.
+**identical** — same backend, same kwargs after anchoring, **and** the same
+`cache_ttl`; the `[creds]` tables are compared among themselves the same way.
+Otherwise bootstrap fails naming both settings files. Two inventories would
+reintroduce precedence through the back door, and `cache_ttl` is in the
+comparison because it is behaviour, not decoration: one repo saying `"0"` and
+another `"24h"` would let declaration order decide whether the process caches
+at all.
 
 ```{note}
 The doctor (`otto init`) validates **this** repo's declaration against the user
@@ -181,19 +258,22 @@ both of them active, not when you run the doctor in one.
 
 ### Paths
 
-A relative `path` or `creds_file` anchors to the directory of the settings file
-that declared it: the **repo root** for a project override (the directory
-holding `.otto/`), `~/.otto` for the user file. `~` expands, absolute paths are
+A relative `path` (under `[inventory]` or `[creds]`) anchors to the directory
+of the settings file that declared it: the **repo root** for a project
+override (the directory holding `.otto/`), `~/.otto` for the user file. `~`
+expands, absolute paths are
 used as written — the rule every otto settings path follows, for the same
 reason: a committed relative path must resolve the same wherever the repo is
 checked out. See [Path resolution](settings.md#path-resolution).
 
-### The scaffolded block
+### The scaffolded tables
 
-`otto init` writes a commented `#[inventory]` block into a new
-`.otto/settings.toml`, next to the other optional sections. It is a template,
-not a working declaration — uncomment it only to override the user file for
-this project, and remember `path` is required once you do.
+`otto init` writes live `[inventory]` and `[creds]` tables into a new
+`.otto/settings.toml`, pointing at `lab_data/inventory.json` and
+`lab_data/creds.json`, with `supplies = ["ip"]` — so a new repo starts in the
+three-file shape and grows `supplies` as the inventory takes over more
+fields. The user-level file is still where a shared inventory lives: delete
+the project tables once one exists, or keep them as this repo's override.
 
 ## The json backend
 
@@ -231,37 +311,65 @@ data produces the same file.
 editor can validate this file as you type it; the editor wiring is in
 {doc}`../cli/schema/editors`.
 
-(credentials-creds-file)=
+(credentials-layered)=
 
-## Credentials: `creds_file`
+## Credentials: the `[creds]` store and the layered merge
 
-Credentials are universal and secret, so they get one home whatever the
-backend: a JSON file keyed by the same inventory keys, named by `creds_file`
-and read by otto rather than by the backend.
+Credentials are universal and secret, so they get a store of their own,
+keyed by the same inventory keys and read by otto rather than by the
+inventory backend:
 
 ```json
 {
+  "$schema": "~/.otto/schemas/creds.schema.json",
   "carrot-b1": [
     { "login": "root", "password": "…" }
   ]
 }
 ```
 
-- Keep it outside every repository, at mode `0600`. The doctor warns when it is
-  group- or world-readable, and when it is named but missing.
-- Configuring `creds_file` makes `creds` inventory-owned — you do not list it
-  in `supplies`, and a referenced host entry may not carry `creds` inline.
-- A backend record that carries `creds` while `creds_file` is configured is an
-  error naming the key. One home per field; the overlay never chooses between
-  two sources.
-- Without `creds_file`, records carry their own `creds` (the `json` backend
-  allows it; NetBox has nowhere to keep them).
-- The file is read on the first lookup, like everything else here, so a lab
-  with no referenced entry never opens it.
+- Every entry is the same `creds` object a lab file spells — `login`
+  (required), `password`, and optionally the route fields `proxy`, `via`,
+  `params` ({doc}`host-sources` has the field reference). A login may not
+  repeat under one key.
+- Keep the file outside every repository, or at mode `0600`. The doctor warns
+  when it is group- or world-readable, and when it is named but missing.
+- The store is read on the first lookup, like everything else here, so a lab
+  with no referenced entry never opens it. An unknown key is not an error at
+  the store — it is an empty list, and whether a unix host without creds is a
+  problem is the host spec's call, made after the merge.
 
-This is what keeps a stage-1 inventory file free of secrets — shareable,
-diffable, committable if you want — and it means moving to NetBox migrates no
-credentials at all: the creds file stays exactly where it is.
+Configuring `[creds]` makes the inventory supply `creds`: you do not list it
+in `supplies`. What happens then is the merge of [Three files, one key, one
+order](#three-files-one-key-one-order), applied twice:
+
+1. **Store → record.** The record's `creds`, if it states any, layer over the
+   store's by login. A record may carry creds beside a configured store; it
+   overrides the store's fields for the logins it names.
+2. **Record → lab file.** The host entry's inline `creds`, if any, layer over
+   the result the same way, and the entry's order becomes the list's order.
+
+A worked case — store `[{vagrant, vagrant}, {test, Password1}]`, no record
+creds, lab file `[{vagrant}, {test}, {root, proxy: sudo-root, via: vagrant}]`
+— yields `[{vagrant, vagrant}, {test, Password1}, {root, sudo-root via
+vagrant}]`: the two login-only placeholders pin the order, the third entry
+adds a route no store could know. Had the lab file listed only the route,
+`root` would have come first and been the default login; that is the lab
+file's call, which is why its order wins.
+
+Two errors the merge itself raises, each naming the layer and the inventory
+key: a login repeated within one layer, and an entry with no `login`. A
+composed entry the cred rules refuse (`via` or `params` without `proxy`) is
+caught one step later, where that entry is next validated: at the
+store-to-record step the overlay names the inventory key and both layers; at
+the record-to-lab-file step it surfaces from the host spec, naming the lab
+file, the element, the host and the cred. A `proxy` no loaded `init` module
+registers fails the same way, naming the cred.
+
+Other stores plug into the same seam: {doc}`../../library/creds-backends` is
+the contract and the conformance helper. NetBox holds no credentials, so a
+NetBox-backed inventory always pairs with a `[creds]` store — moving from the
+json inventory to NetBox migrates no credentials at all.
 
 ## The NetBox backend
 
@@ -320,7 +428,7 @@ a record by accident.
 
 - Any record field may be mapped **except** `ip`, `creds` and `interfaces`.
   `ip` has `ip_source` (two ways to say one thing is a way for them to
-  disagree), `creds` come from `creds_file` and nowhere else, and `interfaces`
+  disagree), `creds` come from the `[creds]` store or the lab file, and `interfaces`
   is a structure no custom field holds.
 - A mapped field of the wrong NetBox type — `element_id` mapped to a text field
   — fails the record's validation naming the device and the field.
@@ -402,6 +510,8 @@ is printed once, so you can see which one answered:
 inventory: json:/home/me/lab/inventory.json
 ```
 
+and a second row, `creds: json:/…/creds.json`, when a store resolves.
+
 ### Problems
 
 - A dead reference — a key the inventory does not hold — naming the file, the
@@ -416,6 +526,7 @@ inventory: json:/home/me/lab/inventory.json
 - A broken `[inventory]` declaration, or an unparseable user settings file,
   reported **once** rather than once per referencing entry. Those entries are
   skipped for that run and validate again once the declaration is fixed.
+- `[creds]` declared with no `[inventory]` resolvable, naming the file.
 
 ### Warnings
 
@@ -431,8 +542,10 @@ inventory: json:/home/me/lab/inventory.json
   defect. A project that has adopted nothing yet gets it listing everything,
   which is exactly the state the bridge starts from — the warning is how you
   watch that list shrink.
-- A `creds_file` that is group- or world-readable, naming the mode, or one that
-  is named and does not exist.
+- A creds-store file that is group- or world-readable, naming the mode, or one
+  that is named and does not exist.
+- **Orphan creds** — keys the store holds that the inventory does not, up to
+  ten by name: a renamed or retired inventory key leaves its creds behind.
 
 ## The verbs
 
@@ -504,7 +617,7 @@ JSON file did (step 3 below).
   files are then already in their stage-2 shape, and `otto inventory diff`
   compares like with like. Leaving it at the default (everything) is fine for a
   file-only future; it just means more re-homing later.
-- **Credentials in `creds_file` from day one**, mode `0600`, outside every
+- **Credentials in a `[creds]` store from day one**, mode `0600`, outside every
   repository. The inventory file then holds no secrets, and stage 2 migrates
   none.
 - **Checks**: `otto inventory list` parses and counts, `otto init` in each
@@ -530,7 +643,7 @@ JSON file did (step 3 below).
 5. If you mapped custom fields, populate them from the JSON file. A script over
    `otto inventory export` output is the obvious tool: otto never writes to
    NetBox.
-6. Point `[inventory]` at NetBox and keep `creds_file` exactly as it was.
+6. Point `[inventory]` at NetBox and keep `[creds]` exactly as it was.
    During the fractured phase one project can do this alone, with its own
    `[inventory]` override, while the others stay on the file.
 7. Run `otto inventory diff ~/lab/inventory.json` and iterate in NetBox until
@@ -630,7 +743,7 @@ file.)
 }
 ```
 
-`~/.otto/creds.json` — one home for credentials, mode `0600`, keyed by the same
+`~/.otto/creds.json` — the creds store, mode `0600`, keyed by the same
 keys:
 
 <!-- fixture: tech1-inventory/creds.json -->
@@ -738,7 +851,8 @@ calls `resolve_host_entry(host_data, inventory, element)`: it looks up
 `test2`, finds no inventory-owned field stated inline — had the entry also
 said `"ip": …`, that is the error at the top of this page — copies `ip`,
 `interfaces`, `is_virtual`, `site`, `rack` and `shelf` onto the entry, and the
-creds file supplies `creds`. The host spec then validates the whole thing
+creds store supplies `creds`, the lab file may layer routes over them, and the
+host spec then validates the whole thing
 exactly as it would an inline entry, the host id is still `test2` from the
 element, and the host carries its provenance as
 `host.inventory_ref` — the key, the backend label and the record's `extra`.
@@ -756,7 +870,10 @@ backend = "netbox"
 url = "https://netbox.example"
 token_env = "NETBOX_TOKEN"
 filter = { site = "lab-a", status = "active" }
-creds_file = "~/.otto/creds.json"
+
+[creds]
+backend = "json"
+path = "~/.otto/creds.json"
 ```
 
 …with devices named `test1`/`test2`/`test3` carrying primary IPv4s, site

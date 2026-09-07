@@ -502,6 +502,7 @@ extending-embedded
 lab-source-backends
 reservation-backends
 inventory-backends
+creds-backends
 custom-parsers
 ```
 

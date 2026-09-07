@@ -36,6 +36,7 @@ functions; the class is the shared engine behind them.
 | `SESSION_SETUPS` | session setup hook | `otto.host.session_setup.register_session_setup` | — |
 | `LAB_REPOSITORIES` | lab repository (host source) | {func}`otto.labs.register_lab_repository` | `json` |
 | `RESERVATION_BACKENDS` | reservation backend | `otto.reservations.registry.register_reservation_backend` | `json`, `none` |
+| `CREDS_BACKENDS` | creds store | `otto.creds.register_creds_backend` | `json` |
 | `HOST_PARSERS` | monitor parser set | `otto.monitor.parsers.register_host_parsers` | default `/proc` parsers |
 | `SNMP_METRICS` | SNMP metric descriptor | `otto.monitor.snmp.register_snmp_metric` | standard OIDs |
 

@@ -43,7 +43,8 @@ in the entry above:
 ```
 
 Passwords live in the creds store `[creds]` names — `creds.json` beside it,
-mode `0600` — so the inventory file itself can be world-readable:
+which must be kept at mode `0600` (the doctor warns otherwise) — so the
+inventory file itself can be world-readable:
 
 ```{literalinclude} ../../examples/getting-started-inventory/creds.json
 :language: json

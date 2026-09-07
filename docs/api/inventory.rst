@@ -46,6 +46,8 @@ The backend contract
 Credentials
 -----------
 
+The overlay and the by-login merge; the store itself is :doc:`creds`.
+
 .. automodule:: otto.inventory.creds
 
 Backend registry

@@ -67,6 +67,13 @@ of three forms:
 - a **glob** — any entry containing `*`, `?` or `[` — expanded relative to its
   non-glob prefix, contributing the `.json` files it matches in sorted order.
 
+A plain **directory** entry only ever contributes that directory's own
+`lab.json` — never a glob — so `lab_data/inventory.json` and
+`lab_data/creds.json` ({doc}`inventory`) sitting beside it are safe by
+default; a glob you write yourself for a split layout (`lab_data/*.json`) is
+not, and would parse them as lab files too, so keep any such glob narrower
+than that.
+
 Entries resolve like every other settings path: `~` expands, a relative path
 anchors to the **repo root** (never the directory you ran `otto` from), and an
 absolute path is used as written — so a file shared outside the repo is simply
@@ -275,6 +282,12 @@ required `login` and four optional fields:
 | `proxy` | string | Name of a registered login proxy (see {doc}`../../library/extending-backends`) that drives the steps to *become* this login, after authenticating as `via`. Omit for a directly-loginable account — a proxy-less entry still uses the built-in `"su"` proxy when `switch_user`/`as_user` switches to it. |
 | `via` | string | The `login` of another entry in this same list to authenticate as first. Only valid alongside `proxy`. Omit to default to the first proxy-less (directly-loginable) entry. |
 | `params` | object | Free-form data handed to the proxy callable (e.g. a container name, a service name). Otto interprets only two keys, and only in the built-in `"su"` proxy: `login_shell` (default `true`) and `expect_prompt` — see below. |
+
+On a host that references the inventory, this list is optional and is the
+**highest** of three creds layers — it overrides the inventory record's and
+the creds store's entries for the logins it names, field by field, and its
+order is the login order. A login-only entry is a placeholder whose fields
+come from below. See {ref}`credentials-layered`.
 
 The built-in `"su"` proxy switches with `su - <login>`, a **login shell**: the
 target's environment is set up from its own profile and the shell starts in
