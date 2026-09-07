@@ -468,6 +468,61 @@ class TestOneHostileDoublePerRule:
         with pytest.raises(AssertionError, match="must match bookings overlapping"):
             assert_reservation_backend_conforms(_base(fetch_reservations=containment))
 
+    def test_rejects_a_backend_that_returns_a_lapsed_booking(self):
+        """The OTHER fail-open direction: over-returning an already-ended row.
+
+        A backend reading a query's ``start=None`` as "-infinity" rather than
+        "this instant" hands back bookings that have already ended.  The
+        overlap rule computes ``wide - narrow`` and so cannot see it, and
+        otto's gate never re-filters by ``end`` — it would admit a user whose
+        booking is over.
+        """
+
+        def over_returns(self, username, start=None, end=None):
+            now = datetime.now(tz=timezone.utc)
+            return [
+                Reservation(
+                    user=username,
+                    resource="rack3",
+                    start=now - timedelta(days=2),
+                    end=now - timedelta(days=1),
+                )
+            ]
+
+        with pytest.raises(AssertionError, match="must return only bookings still active"):
+            assert_reservation_backend_conforms(_base(fetch_reservations=over_returns))
+
+    def test_a_booking_that_ended_moments_ago_is_forgiven_as_clock_skew(self):
+        """The backend's clock is not this helper's; a microsecond race is not a defect.
+
+        Bracketed by the same one second the overlap rule brackets ``now`` with
+        — a row still legitimately returned for that window must not be failed
+        as lapsed by this one.
+        """
+
+        def just_expired(self, username, start=None, end=None):
+            now = datetime.now(tz=timezone.utc)
+            return [
+                Reservation(
+                    user=username,
+                    resource="rack3",
+                    start=now - timedelta(days=1),
+                    end=now - timedelta(milliseconds=10),
+                )
+            ]
+
+        assert_reservation_backend_conforms(_base(fetch_reservations=just_expired))
+
+    def test_an_open_ended_booking_is_never_lapsed(self):
+        """``end=None`` is open-ended, not a missing value to treat as expired."""
+        assert_reservation_backend_conforms(
+            _base(
+                fetch_reservations=lambda self, username, start=None, end=None: [
+                    Reservation(user=username, resource="rack3", end=None)
+                ]
+            )
+        )
+
     def test_rejects_holders_that_omit_a_known_holder(self):
         with pytest.raises(AssertionError, match="who holds it per fetch_reservations"):
             assert_reservation_backend_conforms(

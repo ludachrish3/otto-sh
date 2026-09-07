@@ -31,8 +31,9 @@ with the times once a backend reports them.
 **`None` means the OPPOSITE thing on the two sides of this call.** Getting it
 backwards is the one mistake here that fails *open* — otto admits a user whose
 booking has already lapsed — and nothing downstream catches it: the gate does
-not re-filter by `end`, and the conformance helper only checks that you never
-*drop* a row.
+not re-filter by `end`. The conformance helper checks both directions, but only
+the dropping one is provable against any fixture; see
+[How the window predicate is checked](#how-the-window-predicate-is-checked).
 
 | `None` on… | means | so the unbounded call is |
 |---|---|---|
@@ -283,12 +284,33 @@ re-asks for a narrow window bracketing right now, and requires every resource
 from the first answer back in the second — which a correct backend satisfies
 and a containment-reading one does not.
 
-Two limits worth knowing before you lean on it. A backend whose user currently
-holds nothing is **reported as skipped** for this rule rather than passing
-silently, so pass `known_user=` for someone who does hold something. And the
-rule only checks that nothing is *dropped*: returning **too much** — the
-expired rows a `start=None` misread as "-infinity" would pull in — is exactly
-what it cannot see. That half is on you.
+A backend whose user currently holds nothing is **reported as skipped** for
+this rule rather than passing silently, so pass `known_user=` for someone who
+does hold something.
+
+The other direction — returning **too much** — gets its own rule, because the
+differential above cannot see it: it computes "unbounded minus narrow", so a
+backend that over-returns in *both* calls subtracts to nothing. That is the
+misread of `start=None` as "-infinity", which pulls in every booking that ever
+existed, expired ones included. So the helper reads the second clause of the
+[predicate](#the-query-window) back against the unbounded answer: every row it
+returns must satisfy `row.end is None or row.end > now`. A row whose `end` has
+passed fails, naming the resource and the instant it ended. `end is None` is
+open-ended and always passes — it is not a missing value to treat as expired.
+
+Two things to know about that rule before you lean on it:
+
+- **It forgives one second.** Your scheduler's clock is not the helper's, and
+  the round trip costs time; a booking that lapsed microseconds before the
+  answer came back is a race, not a defect. One second is also exactly the
+  bracket the differential rule uses, so a row still legitimately returned for
+  `[now - 1s, now + 1s]` is never failed as lapsed.
+- **It is vacuous on a fixture with nothing lapsed.** Conformance runs against
+  *your* data, and the helper will not fabricate a row your backend never
+  returned. If every booking you hand it is open-ended — as both of otto's own
+  samples are — the rule cannot fire, and a green run is not evidence that your
+  filter works. Point it at a fixture containing an expired booking if you want
+  that evidence.
 
 ### The helper cannot check a capability you dropped
 

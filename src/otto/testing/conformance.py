@@ -64,6 +64,18 @@ _MISSING = object()
 _LOG = logging.getLogger(__name__)
 """Where a rule the backend's own data cannot exercise is announced as skipped."""
 
+_CLOCK_SKEW = timedelta(seconds=1)
+"""Slack allowed between the backend's clock and this helper's.
+
+The two do not share an instant — a remote scheduler answers from its own
+clock, and the round trip costs time on top.  Every time-sensitive rule here
+brackets ``now`` by this one amount rather than inventing its own tolerance:
+the overlap rule asks for ``[now - _CLOCK_SKEW, now + _CLOCK_SKEW]``, and the
+lapsed-row rule forgives a booking that ended within ``_CLOCK_SKEW`` of now.
+The two are the same number on purpose — a row still returned for that window
+is exactly a row the lapsed rule must not fail.
+"""
+
 
 def assert_lab_repository_conforms(
     repo: LabRepository,
@@ -489,9 +501,7 @@ def _expect_overlap_semantics(
         )
         return
     now = datetime.now(tz=timezone.utc)
-    narrow = backend.fetch_reservations(
-        probe_user, start=now - timedelta(seconds=1), end=now + timedelta(seconds=1)
-    )
+    narrow = backend.fetch_reservations(probe_user, start=now - _CLOCK_SKEW, end=now + _CLOCK_SKEW)
     narrow_rows = _expect_reservation_rows(c, "fetch_reservations(window)", narrow)
     dropped = sorted(wide - {r.resource for r in narrow_rows})
     c.expect(
@@ -501,6 +511,63 @@ def _expect_overlap_semantics(
         f"but not for a window bracketing now, so a booking overlapping that window was "
         f"dropped; that reading is what makes otto's gate fail open",
     )
+
+
+def _expect_no_lapsed_rows(c: ExpectCollector, label: str, rows: list[Reservation]) -> None:
+    """Expect the default query to return no booking that has already ended.
+
+    The other direction of the window predicate, and the one nothing else
+    catches.  :func:`_expect_overlap_semantics` computes ``wide - narrow``, so
+    it only sees a backend that *drops* rows; a backend that reads a query's
+    ``start=None`` as "-infinity" instead of "this instant" hands back every
+    booking that ever existed, lapsed ones included, and passes it.  That is
+    the dangerous direction: otto's gate never re-filters by ``end`` — it reads
+    ``.end`` only for the expiry warning and the "held by … until" text — so a
+    lapsed row admits a user whose booking is over.  It fails OPEN.
+
+    The published predicate (``docs/library/reservation-backends.md``, "The
+    query window") is ``row.end is None or row.end > start``, with ``start``
+    substituted as ``now`` for the unbounded call.  So for the default query
+    every returned row must satisfy ``row.end is None or row.end > now``, and
+    this rule is that clause read back.  ``end is None`` is open-ended and
+    always passes; it is never a sentinel far-future date.
+
+    Applied to a **freshly issued** ``fetch_reservations`` only, never to the
+    cached ``reservations`` member: that cache is deliberately populated once
+    per run (and may be pre-seeded), so a row lapsing while the process lives
+    is correct behaviour rather than an over-return.
+
+    The rule is **vacuous against a fixture holding no lapsed booking** — every
+    row open-ended, say, as both of otto's documentation samples are.  That is
+    inherent: conformance runs against the author's own data and this helper
+    cannot fabricate a row the backend never returned.  A green run here is not
+    proof the backend filters; it is proof it did not over-return *this* data.
+
+    Parameters
+    ----------
+    c : ExpectCollector
+        Collector recording every violated rule.
+    label : str
+        Names the call the rows came from.
+    rows : list[Reservation]
+        Well-formed rows from the unbounded ``fetch_reservations(user)``.
+    """
+    now = datetime.now(tz=timezone.utc)
+    cutoff = now - _CLOCK_SKEW
+    for r in rows:
+        # A naive ``end`` is uncomparable to an aware ``now``; the row rules
+        # already report it, and raising TypeError here would lose every other
+        # violation the collector holds.
+        if r.end is None or r.end.tzinfo is None or r.end > cutoff:
+            continue
+        c.expect(
+            False,
+            f"ReservationBackend: {label} must return only bookings still active — "
+            f"{r.resource!r} ended at {r.end.isoformat()}, before now ({now.isoformat()}), "
+            f"so a lapsed booking came back; an unbounded call means 'active at this "
+            f"instant', not 'every booking that ever existed', and otto's gate does not "
+            f"re-filter by end, so that reading admits a user whose booking is over",
+        )
 
 
 def _expect_holder_agreement(
@@ -560,7 +627,7 @@ def assert_reservation_backend_conforms(
     The required contract is two methods (``fetch_reservations`` and
     ``backend_name``) plus a ``reservations`` list member, which
     :class:`~otto.reservations.ReservationBackendBase` provides.  Structural,
-    row and overlap rules always run.  When *known_user* and *known_resources*
+    row, lapsed-row and overlap rules always run.  When *known_user* and *known_resources*
     (resources that user is known to hold) are both given, round-trip
     consistency rules run too.  The optional
     :class:`~otto.reservations.SupportsUsernameCompletion` and
@@ -580,7 +647,10 @@ def assert_reservation_backend_conforms(
     Rules the backend's own data cannot exercise — the overlap rule against a
     user who holds nothing, the row rules against a backend built with no
     identity — are logged as skipped on the ``otto.testing.conformance``
-    logger rather than passing silently.
+    logger rather than passing silently.  The lapsed-row rule is the one that
+    cannot announce itself: it is vacuous against a fixture that holds no
+    already-ended booking, and no query this helper can issue distinguishes
+    that from a backend that filters correctly.
 
     Parameters
     ----------
@@ -655,6 +725,7 @@ def assert_reservation_backend_conforms(
     label = f"fetch_reservations({probe_user!r})"
     fetched = _expect_reservation_rows(c, label, backend.fetch_reservations(probe_user))
     _expect_rows_belong_to(c, label, fetched, probe_user)
+    _expect_no_lapsed_rows(c, label, fetched)
     _expect_overlap_semantics(c, backend, probe_user, fetched)
 
     held = {r.resource for r in fetched}

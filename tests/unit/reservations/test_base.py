@@ -9,7 +9,7 @@ cache is lazy and fetched exactly once, and the optional capabilities stay
 structural.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -28,13 +28,27 @@ AWARE = datetime(2026, 9, 7, 15, 0, tzinfo=timezone.utc)
 
 
 class _Complete(ReservationBackendBase):
+    """A conforming double: it honours the window predicate rather than ignoring it.
+
+    Its rows end an hour from now, computed at call time. A fixed instant was
+    the earlier spelling and it was a time bomb — the conformance helper's
+    lapsed-row rule (an unbounded call means "active at this instant") would
+    have started failing this double the moment that instant went past.
+    """
+
     def __init__(self, *, url=None, repo_dir=None, username=None, holdings=None):
         super().__init__(url=url, repo_dir=repo_dir, username=username)
         self._holdings = holdings or {}
 
     def fetch_reservations(self, username, start=None, end=None):
+        now = datetime.now(tz=timezone.utc)
+        window_start = start if start is not None else now
+        window_end = end if end is not None else now
+        expires = now + timedelta(hours=1)
+        if not (expires > window_start and window_start <= window_end):
+            return []
         return [
-            Reservation(user=username, resource=r, end=AWARE)
+            Reservation(user=username, resource=r, end=expires)
             for r in self._holdings.get(username, ())
         ]
 
