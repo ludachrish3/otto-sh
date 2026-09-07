@@ -68,12 +68,20 @@ _CLOCK_SKEW = timedelta(seconds=1)
 """Slack allowed between the backend's clock and this helper's.
 
 The two do not share an instant — a remote scheduler answers from its own
-clock, and the round trip costs time on top.  Every time-sensitive rule here
-brackets ``now`` by this one amount rather than inventing its own tolerance:
-the overlap rule asks for ``[now - _CLOCK_SKEW, now + _CLOCK_SKEW]``, and the
-lapsed-row rule forgives a booking that ended within ``_CLOCK_SKEW`` of now.
-The two are the same number on purpose — a row still returned for that window
-is exactly a row the lapsed rule must not fail.
+clock.  Every time-sensitive rule here brackets ``now`` by this one amount
+rather than inventing its own tolerance: the overlap rule asks for
+``[now - _CLOCK_SKEW, now + _CLOCK_SKEW]``, and the lapsed-row rule forgives a
+booking that ended within ``_CLOCK_SKEW`` of the instant it asked about.  The
+two are the same number on purpose — a row still returned for that window is
+exactly a row the lapsed rule must not fail.
+
+It covers skew **only**, never the round trip, and that is why the lapsed-row
+rule is handed the instant read *before* the fetch rather than reading the
+clock when the answer lands.  Reading it afterwards would spend the tolerance
+on latency: an 800 ms scheduler holding a booking that ends 300 ms after it
+answers reports an ``end`` 1.1 s before the helper's clock, and a correct
+backend fails intermittently.  A tolerance consumed by transport is not a
+tolerance.
 """
 
 
@@ -533,7 +541,9 @@ def _expect_overlap_semantics(
     )
 
 
-def _expect_no_lapsed_rows(c: ExpectCollector, label: str, rows: list[Reservation]) -> None:
+def _expect_no_lapsed_rows(
+    c: ExpectCollector, label: str, rows: list[Reservation], asked_at: datetime
+) -> None:
     """Expect the default query to return no booking that has already ended.
 
     The other direction of the window predicate, and the one nothing else
@@ -574,9 +584,14 @@ def _expect_no_lapsed_rows(c: ExpectCollector, label: str, rows: list[Reservatio
         Names the call the rows came from.
     rows : list[Reservation]
         Well-formed rows from the unbounded ``fetch_reservations(user)``.
+    asked_at : datetime
+        The instant the caller read the clock **before** issuing the fetch.
+        Not re-read here, and that is the whole point: taking it afterwards
+        would let the round trip eat into ``_CLOCK_SKEW`` instead of being
+        covered by it, so a slow scheduler holding a booking that lapses
+        mid-call would fail a backend doing nothing wrong.
     """
-    now = datetime.now(tz=timezone.utc)
-    cutoff = now - _CLOCK_SKEW
+    cutoff = asked_at - _CLOCK_SKEW
     for r in rows:
         # A naive ``end`` is uncomparable to an aware ``now``; the row rules
         # already report it, and raising TypeError here would lose every other
@@ -586,10 +601,11 @@ def _expect_no_lapsed_rows(c: ExpectCollector, label: str, rows: list[Reservatio
         c.expect(
             False,
             f"ReservationBackend: {label} must return only bookings still active — "
-            f"{r.resource!r} ended at {r.end.isoformat()}, before now ({now.isoformat()}), "
-            f"so a lapsed booking came back; an unbounded call means 'active at this "
-            f"instant', not 'every booking that ever existed', and otto's gate does not "
-            f"re-filter by end, so that reading admits a user whose booking is over",
+            f"{r.resource!r} ended at {r.end.isoformat()}, before the instant asked about "
+            f"({asked_at.isoformat()}), so a lapsed booking came back; an unbounded call "
+            f"means 'active at this instant', not 'every booking that ever existed', and "
+            f"otto's check gate does not re-filter by end, so that reading admits a user "
+            f"whose booking is over",
         )
 
 
@@ -759,9 +775,13 @@ def assert_reservation_backend_conforms(
 
     probe_user = known_user if known_user is not None else identity or _PROBE_USER
     label = f"fetch_reservations({probe_user!r})"
+    # Read BEFORE the call, not after: this is the instant the query means by
+    # "now", and _expect_no_lapsed_rows compares against it so that the round
+    # trip cannot eat the skew tolerance.
+    asked_at = datetime.now(tz=timezone.utc)
     fetched = _expect_reservation_rows(c, label, backend.fetch_reservations(probe_user))
     _expect_rows_belong_to(c, label, fetched, probe_user)
-    _expect_no_lapsed_rows(c, label, fetched)
+    _expect_no_lapsed_rows(c, label, fetched, asked_at)
     _expect_overlap_semantics(c, backend, probe_user, fetched)
 
     held = {r.resource for r in fetched}

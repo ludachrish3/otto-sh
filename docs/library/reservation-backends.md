@@ -30,8 +30,8 @@ with the times once a backend reports them.
 ```{warning}
 **`None` means the OPPOSITE thing on the two sides of this call.** Getting it
 backwards is the one mistake here that fails *open* — otto admits a user whose
-booking has already lapsed — and nothing downstream catches it: the gate does
-not re-filter by `end`. The conformance helper checks both directions, but only
+booking has already lapsed — and nothing downstream catches it: the check gate
+does not re-filter by `end`. The conformance helper checks both directions, but only
 the dropping one is provable against any fixture; see
 [How the window predicate is checked](#how-the-window-predicate-is-checked).
 

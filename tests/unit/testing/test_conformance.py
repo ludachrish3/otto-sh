@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import ClassVar
@@ -27,6 +28,7 @@ from otto.testing import (
     assert_lab_repository_conforms,
     assert_reservation_backend_conforms,
 )
+from otto.testing.conformance import _CLOCK_SKEW
 from tests._fixtures.labdata import write_lab_json
 
 
@@ -484,7 +486,7 @@ class TestOneHostileDoublePerRule:
         A backend reading a query's ``start=None`` as "-infinity" rather than
         "this instant" hands back bookings that have already ended.  The
         overlap rule computes ``wide - narrow`` and so cannot see it, and
-        otto's gate never re-filters by ``end`` — it would admit a user whose
+        otto's check gate never re-filters by ``end`` — it would admit a user whose
         booking is over.
         """
 
@@ -522,6 +524,39 @@ class TestOneHostileDoublePerRule:
             ]
 
         assert_reservation_backend_conforms(_base(fetch_reservations=just_expired))
+
+    def test_the_skew_tolerance_is_not_eaten_by_the_round_trip(self):
+        """The clock must be read BEFORE the fetch, not when the answer lands.
+
+        A slow scheduler is not a broken one. If the helper read ``now`` after
+        the call returned, transport latency would be spent out of
+        ``_CLOCK_SKEW`` rather than covered by it: an 800 ms backend holding a
+        booking that ends shortly after it answers reports an ``end`` more than
+        a second before the helper's clock, and a CORRECT backend fails
+        intermittently — the worst failure mode a conformance helper can have.
+
+        Pinning the ordering needs real elapsed time, because the ordering IS
+        elapsed time: nothing else distinguishes the two readings. So this
+        double sleeps longer than ``_CLOCK_SKEW`` inside the unbounded call and
+        expires its row at the instant it was entered — legitimately active
+        when asked, lapsed by the time a post-fetch clock read would happen.
+        Under the old ordering the cutoff lands ~0.1 s AFTER that row's ``end``
+        and the helper fails it; under the correct ordering the cutoff precedes
+        the call entirely, so no amount of delay can trip it. The asymmetry is
+        deliberate — extra slowness only strengthens the red, and cannot
+        weaken the green.
+        """
+        delay = _CLOCK_SKEW.total_seconds() + 0.1
+
+        def slow(self, username, start=None, end=None):
+            entered = datetime.now(tz=timezone.utc)
+            if start is None and end is None:
+                # Only the unbounded call pays the latency; the overlap rule's
+                # narrow re-query would otherwise double this test's cost.
+                time.sleep(delay)
+            return [Reservation(user=username, resource="rack3", end=entered)]
+
+        assert_reservation_backend_conforms(_base(fetch_reservations=slow))
 
     def test_an_open_ended_booking_is_never_lapsed(self):
         """``end=None`` is open-ended, not a missing value to treat as expired."""

@@ -52,9 +52,12 @@ class _Complete(ReservationBackendBase):
     def fetch_reservations(self, username, start=None, end=None):
         now = datetime.now(tz=timezone.utc)
         window_start = start if start is not None else now
-        window_end = end if end is not None else now
         expires = now + timedelta(hours=1)
-        if not (expires > window_start and window_start <= window_end):
+        # The published predicate, and only it. These rows carry no start, so
+        # its first clause (`row.start is None or row.start <= end`) is
+        # unconditionally true and only `row.end > start` can exclude one --
+        # the same one-sided case the shipped JSON backend is.
+        if expires <= window_start:
             return []
         return [
             Reservation(user=username, resource=r, end=expires)
