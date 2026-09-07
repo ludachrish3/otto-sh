@@ -308,6 +308,17 @@ def cached_reservation_ok(username: str, required: "set[str]", now: datetime) ->
     cannot tell — and that row is skipped rather than counted, so corrupt
     cache data narrows the answer instead of widening it.
 
+    "Active" itself is decided by
+    :meth:`otto.reservations.protocol.Reservation.is_active`, the one home for
+    that rule, by rebuilding a :class:`~otto.reservations.protocol.Reservation`
+    from each stored row: the live gate in :mod:`otto.cli.remote_completion`
+    asks the same object the same question, so a warm cache and a cold one
+    cannot answer a TAB differently.  The import is function-scope because
+    :mod:`otto.reservations` is a heavy package and this module sits under
+    :mod:`otto.cli.remote_completion`'s module-level import, which is on a
+    budgeted completion surface; the sole caller has already imported
+    ``otto.reservations`` by the time it gets here, so this costs nothing.
+
     A naive *now* reports a miss — see :func:`_usable_clock`.
     """
     if not _usable_clock(now):
@@ -320,6 +331,8 @@ def cached_reservation_ok(username: str, required: "set[str]", now: datetime) ->
         return None
     if not isinstance(entry.get("windows"), list):
         return None
+    from ..reservations.protocol import Reservation
+
     active: set[str] = set()
     for w in entry["windows"]:
         if not isinstance(w, dict):
@@ -334,8 +347,9 @@ def cached_reservation_ok(username: str, required: "set[str]", now: datetime) ->
             continue
         if raw_end is not None and end is None:
             continue
-        if (start is None or start <= now) and (end is None or now <= end):
-            active.add(str(w.get("resource")))
+        row = Reservation(user=username, resource=str(w.get("resource")), start=start, end=end)
+        if row.is_active(now=now):
+            active.add(row.resource)
     return required <= active
 
 

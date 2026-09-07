@@ -178,6 +178,38 @@ class Reservation:
         reference = now if now is not None else datetime.now(timezone.utc)
         return self.end - reference <= delta
 
+    def is_active(self, *, now: "datetime | None" = None) -> bool:
+        """Whether this booking covers *now* — the "is it held right now?" rule.
+
+        Both bounds are **inclusive**: a booking is active at the instant it
+        starts and at the instant it ends. Absent bounds are infinite —
+        ``start is None`` reads as "since before this backend knows",
+        ``end is None`` as "never expires" — so a row with neither bound is
+        always active rather than an unusable one.
+
+        This is a question about a single *instant*, and it is deliberately
+        not the window predicate
+        :meth:`~otto.reservations.protocol.ReservationBackend.fetch_reservations`
+        applies: that one asks whether a booking overlaps a *range*, and its
+        end clause is ``row.end is None or row.end > start`` — strictly
+        greater, because a row ending at the window's start contributes zero
+        overlap. The exact and only divergence is a row whose ``end`` is the
+        very instant being asked about: the query drops it, ``is_active`` still
+        holds it. That is deliberate, and it fails closed. The two rules must
+        not be collapsed into one.
+
+        Parameters
+        ----------
+        now : datetime | None
+            The instant to test; defaults to ``datetime.now(timezone.utc)``.
+            Present so callers' tests can freeze the clock without patching
+            module globals.
+        """
+        reference = now if now is not None else datetime.now(timezone.utc)
+        return (self.start is None or self.start <= reference) and (
+            self.end is None or reference <= self.end
+        )
+
 
 @runtime_checkable
 class SupportsResourceHolders(Protocol):

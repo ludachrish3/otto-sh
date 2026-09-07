@@ -521,16 +521,19 @@ def _expect_no_lapsed_rows(c: ExpectCollector, label: str, rows: list[Reservatio
     it only sees a backend that *drops* rows; a backend that reads a query's
     ``start=None`` as "-infinity" instead of "this instant" hands back every
     booking that ever existed, lapsed ones included, and passes it.  That is
-    the dangerous direction: otto's gate never re-filters by ``end`` — it reads
-    ``.end`` only for the expiry warning and the "held by … until" text — so a
-    lapsed row admits a user whose booking is over.  It fails OPEN.
+    the dangerous direction: otto's *check* gate never re-filters by ``end`` —
+    it reads ``.end`` only for the expiry warning and the "held by … until"
+    text — so a lapsed row admits a user whose booking is over.  It fails OPEN.
 
     The published predicate (``docs/library/reservation-backends.md``, "The
     query window") is ``row.end is None or row.end > start``, with ``start``
     substituted as ``now`` for the unbounded call.  So for the default query
     every returned row must satisfy ``row.end is None or row.end > now``, and
     this rule is that clause read back.  ``end is None`` is open-ended and
-    always passes; it is never a sentinel far-future date.
+    always passes; it is never a sentinel far-future date.  The ``>`` here is
+    deliberately not the ``<=`` in
+    :meth:`otto.reservations.protocol.Reservation.is_active`, whose docstring
+    names the one row the two disagree about and why.
 
     Applied to a **freshly issued** ``fetch_reservations`` only, never to the
     cached ``reservations`` member: that cache is deliberately populated once

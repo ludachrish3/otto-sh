@@ -51,6 +51,74 @@ def test_expires_within_defaults_now_to_utc_now():
     assert r.expires_within(timedelta(minutes=5)) is True
 
 
+def test_is_active_wholly_unbounded_is_always_active():
+    """Neither bound known is a held resource, not an unusable row."""
+    r = Reservation(user="alice", resource="rack3")
+    assert r.is_active(now=AWARE) is True
+
+
+def test_is_active_open_ended_after_start():
+    """``end=None`` never expires: started an hour ago, still held."""
+    r = Reservation(user="alice", resource="rack3", start=AWARE - timedelta(hours=1))
+    assert r.is_active(now=AWARE) is True
+
+
+def test_is_active_false_before_a_known_start():
+    r = Reservation(user="alice", resource="rack3", start=AWARE + timedelta(seconds=1))
+    assert r.is_active(now=AWARE) is False
+
+
+def test_is_active_unknown_start_within_a_known_end():
+    """``start=None`` reads as since-forever, so only the end can refuse."""
+    r = Reservation(user="alice", resource="rack3", end=AWARE + timedelta(seconds=1))
+    assert r.is_active(now=AWARE) is True
+
+
+def test_is_active_false_after_a_known_end_with_unknown_start():
+    r = Reservation(user="alice", resource="rack3", end=AWARE - timedelta(seconds=1))
+    assert r.is_active(now=AWARE) is False
+
+
+def test_is_active_inside_both_bounds():
+    r = Reservation(
+        user="alice",
+        resource="rack3",
+        start=AWARE - timedelta(hours=1),
+        end=AWARE + timedelta(hours=1),
+    )
+    assert r.is_active(now=AWARE) is True
+
+
+def test_is_active_at_the_start_instant_is_inclusive():
+    """``start <= now``: a booking is held the moment it begins."""
+    r = Reservation(user="alice", resource="rack3", start=AWARE, end=AWARE + timedelta(hours=1))
+    assert r.is_active(now=AWARE) is True
+
+
+def test_is_active_at_the_end_instant_is_inclusive():
+    """``now <= end``: a booking is still held the moment it ends."""
+    r = Reservation(user="alice", resource="rack3", start=AWARE - timedelta(hours=1), end=AWARE)
+    assert r.is_active(now=AWARE) is True
+
+
+def test_is_active_one_second_past_the_end_is_false():
+    r = Reservation(
+        user="alice",
+        resource="rack3",
+        start=AWARE - timedelta(hours=1),
+        end=AWARE - timedelta(seconds=1),
+    )
+    assert r.is_active(now=AWARE) is False
+
+
+def test_is_active_defaults_now_to_utc_now():
+    now = datetime.now(timezone.utc)
+    assert Reservation(user="alice", resource="rack3", start=now - timedelta(minutes=1)).is_active()
+    assert not Reservation(
+        user="alice", resource="rack3", start=now + timedelta(minutes=1)
+    ).is_active()
+
+
 def test_holders_capability_is_structural():
     class WithHolders:
         def holders(self, resource: str) -> "list[Reservation]":

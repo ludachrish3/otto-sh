@@ -477,9 +477,9 @@ def _reservation_allows(chain: _ChainParams) -> bool:
     # was resolved from — so the two agree, but only by construction.
     reservations = active_reservations(backend)
     store_reservations(username, reservations, now)
-    active = {
-        r.resource
-        for r in reservations
-        if (r.start is None or r.start <= now) and (r.end is None or now <= r.end)
-    }
+    # `Reservation.is_active` and not a fourth spelling of the bounds check:
+    # this gate and the cached one it just consulted must agree to the instant
+    # about what "held right now" means, or a TAB answers differently
+    # depending only on whether the cache happened to be warm.
+    active = {r.resource for r in reservations if r.is_active(now=now)}
     return required <= active

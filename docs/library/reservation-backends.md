@@ -55,7 +55,11 @@ Substitute `now` for each missing *query* bound, then return a row **iff**:
 That is **overlap**, not containment: a booking that began before `start` and
 ends after `end` is active during the window and must come back. `>` on the
 second clause is what drops rows that have already lapsed at the instant asked
-about — dropping lapsed rows is this comparison, not a separate pass. A `None` on a *row* satisfies its clause unconditionally, which is what
+about — dropping lapsed rows is this comparison, not a separate pass. That
+strict `>` is deliberately not the inclusive `<=` in
+[`Reservation.is_active`](../api/reservations.rst), which asks about a single
+instant rather than a range; its docstring names the one row the two disagree
+about and why. A `None` on a *row* satisfies its clause unconditionally, which is what
 "unbounded" means.
 
 A backend whose rows carry both bounds writes it out once — this is the body
