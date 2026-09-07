@@ -180,6 +180,14 @@ path = "otto.coverage"
 depends_on = ["otto.utils", "otto.host", "otto._webassets", "otto.config", "otto.version", "otto.errors"]
 
 [[modules]]
+path = "otto.creds"
+# The creds-store seam (spec 2026-09-06 creds-store §5). Sits BENEATH
+# otto.inventory, which imports it function-locally from the bootstrap path;
+# this package never imports otto.inventory — one-way by construction. Every
+# dependency here is a leaf or a boundary-model package.
+depends_on = ["otto.errors", "otto.models", "otto.registry", "otto.utils"]
+
+[[modules]]
 path = "otto.docker"
 depends_on = [
     "otto.host",

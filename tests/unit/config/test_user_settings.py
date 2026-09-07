@@ -77,3 +77,13 @@ def test_default_path_is_used_when_none_is_passed(tmp_path, monkeypatch):
     assert model is not None
     assert model.inventory is not None
     assert model.inventory.backend == "json"
+
+
+def test_parses_creds_table(tmp_path):
+    p = _user_file(tmp_path, '[creds]\nbackend = "json"\npath = "c.json"\n')
+    model = load_user_settings(p)
+    assert model is not None
+    assert model.creds is not None
+    assert model.creds.backend == "json"
+    assert model.creds.model_extra == {"path": "c.json"}
+    assert model.inventory is None

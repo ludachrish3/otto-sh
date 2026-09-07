@@ -345,6 +345,20 @@ class InventoryConfigSpec(OttoModel):
         return v
 
 
+class CredsConfigSpec(OttoModel):
+    """The otto-owned ``[creds]`` envelope (spec 2026-09-06 creds-store §4.1).
+
+    ``backend`` selects a registered creds store; ``extra='allow'`` keeps the
+    store's own kwargs (``path`` for json) open here —
+    :func:`otto.creds.config.compile_creds` validates them knowing the backend,
+    exactly as :class:`InventoryConfigSpec` defers to ``compile_inventory``.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    backend: str
+
+
 #: Level names ``[logging.levels]`` accepts: the five stdlib names, plus otto's
 #: aliases taken FROM the module that registers them rather than hand-copied —
 #: a third alias in ``otto.logger.levels`` becomes configurable here with no
@@ -874,6 +888,10 @@ class SettingsModel(OttoModel):
     ``~/.otto/settings.toml`` is the usual home — an inventory is a per-user
     fact; this key exists for the fractured phase where one repo needs its own.
     """
+    creds: CredsConfigSpec | None = None
+    """Per-project creds-store override (spec 2026-09-06 creds-store §4.2). Same
+    two homes and the same override rule as ``inventory``; resolved
+    independently of it."""
     dependencies: DependenciesSpec = DependenciesSpec()
     env: EnvSettingsSpec = EnvSettingsSpec()
     project: ProjectScopeSpec | None = None
@@ -988,6 +1006,7 @@ class UserSettingsModel(OttoModel):
     """
 
     inventory: InventoryConfigSpec | None = None
+    creds: CredsConfigSpec | None = None
 
 
 # ---------------------------------------------------------------------------

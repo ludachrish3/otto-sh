@@ -1,6 +1,11 @@
 """Shared base model for all otto pydantic boundary specs."""
 
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel, ConfigDict
+
+if TYPE_CHECKING:
+    from pydantic import ValidationError
 
 
 class OttoModel(BaseModel):
@@ -17,3 +22,17 @@ class OttoModel(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+
+
+def compact_validation_error(error: "ValidationError") -> str:
+    """One-line rendering of *error*: ``field: message`` per problem, ``;``-joined.
+
+    ``str(ValidationError)`` spans several lines, and an error a human reads in
+    a log line — or a test matches with a single regex — must not. Shared by
+    every boundary reader that re-raises a pydantic failure as its own error:
+    the inventory's stage-1 parser, the NetBox backend, the creds store.
+    """
+    return "; ".join(
+        f"{'.'.join(str(part) for part in item['loc']) or '<entry>'}: {item['msg']}"
+        for item in error.errors()
+    )

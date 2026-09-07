@@ -61,7 +61,8 @@ def test_a_record_level_error_names_the_file_the_key_and_the_index(tmp_path):
 
 
 def test_a_field_level_error_names_the_offending_field(tmp_path):
-    """The other half of ``_compact``: a per-field error puts the FIELD left of the colon.
+    """The other half of ``compact_validation_error``: a per-field error puts the FIELD
+    left of the colon.
 
     Every other creds test raises through CredSpec's model validator, whose
     ``loc`` is ``()`` — so without this case the whole ``'.'.join(loc)`` half

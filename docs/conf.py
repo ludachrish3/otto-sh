@@ -225,6 +225,10 @@ _SHORT_TYPE_ALIASES = {
     "SettingsConfigDict": "pydantic_settings.SettingsConfigDict",
     "PydanticBaseSettingsSource": "pydantic_settings.PydanticBaseSettingsSource",
     "CliSettingsSource": "pydantic_settings.CliSettingsSource",
+    # pydantic re-exports this from pydantic-core; the inventory carries it
+    # only under its defining module (bare ``ValidationError`` and
+    # ``pydantic.ValidationError`` both miss).
+    "ValidationError": "pydantic_core.ValidationError",
     # A discriminated union declared the only way pydantic allows for a list
     # of variants -- ``list[Annotated[A | B, Field(discriminator=...)]]``,
     # since the discriminator must sit on the union and not on the list

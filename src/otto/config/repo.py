@@ -907,6 +907,17 @@ class Repo:
         """
         return self.settings.get("inventory", {}) or {}
 
+    @property
+    def creds_settings(self) -> dict[str, Any]:
+        """Return the raw ``[creds]`` sub-dict — the per-project creds-store override.
+
+        Spec 2026-09-06 creds-store §4.2. Empty when absent; literal parsed
+        TOML like ``inventory_settings``, so this module never imports
+        :mod:`otto.creds`. Anchoring and kwarg validation happen in
+        :func:`otto.creds.config.compile_creds`.
+        """
+        return self.settings.get("creds", {}) or {}
+
     def add_libs_to_pythonpath(self) -> None:
         """Add configured library directories to the PYTHONPATH."""
         for lib in self.libs:

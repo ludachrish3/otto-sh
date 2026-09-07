@@ -30,8 +30,8 @@ from typing import Any
 from pydantic import ValidationError
 from typing_extensions import override
 
+from ..models.base import compact_validation_error
 from ..models.inventory import FILLABLE_INVENTORY_FIELDS, INVENTORY_KEY_FIELDS, InventoryRecord
-from .creds import _compact
 from .errors import InventoryError, InventoryKeyError
 from .protocol import check_supplies
 
@@ -448,7 +448,8 @@ class NetBoxInventory:
             return InventoryRecord.model_validate(raw)
         except ValidationError as e:
             raise InventoryError(
-                f"netbox inventory {self.url}: device {d.name!r} (id {d.id}): {_compact(e)}"
+                f"netbox inventory {self.url}: device {d.name!r} (id {d.id}): "
+                f"{compact_validation_error(e)}"
             ) from e
 
     # -- protocol ----------------------------------------------------------

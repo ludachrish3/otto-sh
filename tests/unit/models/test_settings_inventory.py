@@ -88,3 +88,21 @@ def test_user_settings_model_forbids_repo_only_tables():
     assert model.inventory.backend == "json"
     with pytest.raises(ValidationError, match=r"reservations\n\s+Extra inputs are not permitted"):
         UserSettingsModel.model_validate({"reservations": {"backend": "none"}})
+
+
+def test_creds_table_parses_in_both_models():
+    """Spec 2026-09-06 creds-store §4.1: [creds] beside [inventory], same two homes."""
+    from otto.models.settings import CredsConfigSpec
+
+    settings = SettingsModel.model_validate(
+        {"name": "x", "version": "0.1.0", "creds": {"backend": "json", "path": "c.json"}}
+    )
+    assert settings.creds is not None
+    assert settings.creds.backend == "json"
+    assert settings.creds.model_extra == {"path": "c.json"}
+    assert SettingsModel.model_validate({"name": "x", "version": "0.1.0"}).creds is None
+    user = UserSettingsModel.model_validate({"creds": {"backend": "json", "path": "c.json"}})
+    assert user.creds is not None
+    assert user.creds.backend == "json"
+    with pytest.raises(ValidationError, match="backend"):
+        CredsConfigSpec()

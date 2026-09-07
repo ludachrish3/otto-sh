@@ -50,6 +50,7 @@ from otto.coverage.errors import (
 )
 from otto.coverage.overrides import OverrideConfigError
 from otto.coverage.tickets import TicketConfigError
+from otto.creds.errors import CredsError
 from otto.docker.resolve import UseCaseResolutionError
 from otto.env import EnvBuildError, EnvExistsError
 from otto.env.backends import BackendUnavailableError
@@ -113,6 +114,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (CoverageDataMismatchError, RuntimeError),
     (OverrideConfigError, ValueError),
     (TicketConfigError, ValueError),
+    (CredsError, Exception),
     (UseCaseResolutionError, ValueError),
     (ParseMismatch, ValueError),
     (HostUnreachableError, RuntimeError),
@@ -176,6 +178,10 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         # mangle every message this class exists to carry.
         InventoryError,
         InventoryKeyError,
+        # A creds store's failure (I/O, parse, network, auth, a bad entry) is
+        # the same "otto's own concept" as the inventory pair above — no
+        # stdlib type otto ever raised for this before the store existed.
+        CredsError,
         ReservationBackendError,
         MissingReservationError,
     }

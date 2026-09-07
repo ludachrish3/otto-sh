@@ -113,6 +113,14 @@ paths = ["lab_data"]
 #cache_ttl = "24h"
 # path = "~/lab/inventory.json"
 
+# --- [creds] — the creds store, keyed by inventory key (optional) -----------
+# Same two homes and the same per-project override rule as [inventory]; a
+# store is only consulted for hosts that name an inventory key. The json store
+# takes `path`. See docs/guide/configuration/inventory.md.
+#[creds]
+#backend = "json"
+# path = "~/.otto/creds.json"
+
 # --- [coverage] — coverage tiers + remote gcov collection --------------------
 # Embedded build settings live in [coverage.embedded] (see the coverage docs).
 #[coverage]

@@ -6,22 +6,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from ..models.base import compact_validation_error
 from ..models.host import CredSpec
 from ..models.inventory import InventoryRecord
 from .errors import InventoryError
 from .protocol import Inventory
-
-
-def _compact(error: ValidationError) -> str:
-    """One-line rendering of *error*: ``field: message`` per problem.
-
-    ``str(ValidationError)`` spans several lines, and an error a human reads in
-    a log line — or a test matches with a single regex — must not.
-    """
-    return "; ".join(
-        f"{'.'.join(str(part) for part in item['loc']) or '<entry>'}: {item['msg']}"
-        for item in error.errors()
-    )
 
 
 def _validated(path: Path, key: str, idx: int, entry: Any) -> dict[str, Any]:
@@ -29,7 +18,9 @@ def _validated(path: Path, key: str, idx: int, entry: Any) -> dict[str, Any]:
     try:
         CredSpec.model_validate(entry)
     except ValidationError as e:
-        raise InventoryError(f"creds_file {path}: key {key!r}: creds[{idx}]: {_compact(e)}") from e
+        raise InventoryError(
+            f"creds_file {path}: key {key!r}: creds[{idx}]: {compact_validation_error(e)}"
+        ) from e
     return dict(entry)
 
 

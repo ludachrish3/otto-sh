@@ -13,8 +13,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from ..models.base import compact_validation_error
 from ..models.inventory import SUPPLIES_EXEMPT_FIELDS, InventoryRecord
-from .creds import _compact
 from .errors import InventoryError, InventoryKeyError
 from .protocol import check_supplies
 
@@ -54,7 +54,7 @@ def parse_inventory_document(
         try:
             records[key] = InventoryRecord.model_validate(raw)
         except ValidationError as e:
-            raise InventoryError(f"{source}: key {key!r}: {_compact(e)}") from e
+            raise InventoryError(f"{source}: key {key!r}: {compact_validation_error(e)}") from e
     return records
 
 

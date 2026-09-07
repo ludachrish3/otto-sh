@@ -12,6 +12,7 @@ from otto.cli.init_templates import (
 )
 from otto.models.settings import (
     CoverageSettingsSpec,
+    CredsConfigSpec,
     DependenciesSpec,
     DockerSettingsSpec,
     EnvSettingsSpec,
@@ -38,6 +39,7 @@ _SECTION_SPECS = {
     "monitor": (MonitorSettingsSpec, set()),
     "reservations": (ReservationConfigSpec, set()),
     "inventory": (InventoryConfigSpec, set()),
+    "creds": (CredsConfigSpec, set()),
     "coverage": (CoverageSettingsSpec, {"embedded"}),
     "docker": (DockerSettingsSpec, set()),
     "dependencies": (DependenciesSpec, set()),

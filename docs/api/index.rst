@@ -23,6 +23,7 @@ API Reference
    reservations
    labs
    inventory
+   creds
    testing
    examples
    result
