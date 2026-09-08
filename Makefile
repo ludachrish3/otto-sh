@@ -518,7 +518,7 @@ web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + cova
 # recipe line (see the release: warning above for what happens when that rule
 # is violated).
 # NOTE: prerequisites assume serial execution; do not run wheel-check under make -j.
-wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + wheel and assert the wheel embeds both src/otto/_webassets/{monitor/dist,covapp}/ artifacts (air-gap requirement)
+wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + wheel and assert the wheel embeds both src/otto/_webassets/{monitor/dist,covapp}/ artifacts (air-gap requirement) and the PEP 561 py.typed marker
 	@$(SAY) "asserting dist/*.whl embeds the web assets"
 	@for entry in monitor/dist/index.html covapp/index.html; do \
 		dir="otto/_webassets/$${entry%%/*}/"; \
@@ -533,6 +533,16 @@ wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + w
 		fi; \
 		echo "wheel-check: OK — $$count $$dir entries embedded (incl. $${entry#*/})."; \
 	done
+	@if ! unzip -l dist/*.whl | grep -q 'otto/py\.typed$$'; then \
+		echo "wheel-check: FAIL — otto/py.typed missing from dist/*.whl; without it, type checkers treat \`import otto\` as untyped and every otto symbol becomes Any." >&2; \
+		exit 1; \
+	fi; \
+	# 0 bytes here means "empty", not "absent" — relies on the presence check above having already exited on a missing entry. \
+	if [ "$$(unzip -p dist/*.whl "otto/py.typed" | wc -c)" -ne 0 ]; then \
+		echo "wheel-check: FAIL — otto/py.typed embedded in dist/*.whl is not empty (PEP 561 requires an empty marker file)." >&2; \
+		exit 1; \
+	fi; \
+	echo "wheel-check: OK — otto/py.typed (PEP 561 marker) embedded."
 	@scripts/check_airgap.sh
 	@if unzip -l dist/*.whl | grep -q '\.map$$'; then \
 		echo "wheel-check: FAIL — sourcemap (*.map) files embedded in the wheel; the wheel-exclude in pyproject.toml [tool.uv.build-backend] should strip them." >&2; \

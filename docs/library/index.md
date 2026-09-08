@@ -3,7 +3,9 @@
 Using otto as a library — otto is not limited to the `otto` CLI. You can use it directly in your own
 async Python scripts — for example, one-off automation, CI tooling, or
 integration scripts that operate on lab hosts without needing test suites or
-instructions.
+instructions. otto ships inline type annotations under [PEP 561](https://peps.python.org/pep-0561/)
+(a `py.typed` marker in the installed package), so a consumer's type checker
+sees otto's real signatures rather than treating `import otto` as untyped.
 
 ## Imports are side-effect-free; `open_context()` runs the composition root
 

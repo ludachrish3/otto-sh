@@ -62,9 +62,11 @@ Pushing a `v*` tag fires [`.github/workflows/release.yml`](https://github.com/lu
   skipped here — those are for the TestPyPI dry-run workflow instead.
 - **build** produces the sdist and wheel via `make wheel-check`: it builds
   the web frontends first (they ship inside the wheel for air-gapped labs),
-  runs the air-gap/brand gates, then `uv build` plus embed assertions. The
-  build backend itself refuses an asset-less wheel, so a bare `uv build`
-  without the web step fails rather than publishing a frontend-less package.
+  runs the air-gap/brand gates, then `uv build` plus embed assertions —
+  including that the wheel carries the `py.typed` marker described in the
+  {doc}`library docs <library/index>`. The build backend itself refuses an asset-less wheel,
+  so a bare `uv build` without the web step fails rather than publishing a
+  frontend-less package.
 - **publish** uploads to PyPI via OIDC, gated by the `pypi` GitHub
   Environment.
 - **docs** builds the HTML documentation on a clean runner and packs the two
