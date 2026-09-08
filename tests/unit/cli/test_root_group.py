@@ -8,6 +8,7 @@ import typer
 from typer.testing import CliRunner
 
 from otto.cli.main import app
+from tests._fixtures.cli_registry import builtin_command_names as _builtin_command_names
 
 runner = CliRunner()
 
@@ -17,17 +18,7 @@ def test_root_help_lists_all_builtins_without_importing_them(monkeypatch):
         monkeypatch.delitem(sys.modules, mod, raising=False)
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for name in (
-        "run",
-        "test",
-        "monitor",
-        "cov",
-        "host",
-        "docker",
-        "reservation",
-        "inventory",
-        "schema",
-    ):
+    for name in _builtin_command_names():
         assert name in result.output
     assert "otto.cli.cov" not in sys.modules
     assert "otto.cli.monitor" not in sys.modules
@@ -52,25 +43,6 @@ _NUMBER_WORDS = {
     16: "sixteen",
 }
 """Enough of the range to outlive a few more groups; a count outside it fails loudly."""
-
-
-def _builtin_command_names() -> list[str]:
-    """The groups ``register_builtin_commands`` itself registered, by ORIGIN.
-
-    Not every name in the registry: a third-party plugin — or a test that
-    registered one and is running in the same process — is not a first-party
-    group, and counting those would make this assertion drift with whatever
-    else the worker had done.
-    """
-    from otto.cli.builtin_commands import register_builtin_commands
-    from otto.cli.registry import CLI_COMMANDS
-
-    register_builtin_commands()  # idempotent
-    return [
-        name
-        for name in CLI_COMMANDS.names()
-        if CLI_COMMANDS.get(name).origin == "otto.cli.builtin_commands"
-    ]
 
 
 def _one_match(pattern: str, text: str, what: str) -> str:

@@ -10,16 +10,28 @@ from pathlib import Path
 
 import pytest
 
+from tests._fixtures.cli_registry import builtin_group_names
 from tests.e2e._otto_subprocess import REPO_E2E, assert_no_output_dir, run_otto
 
 pytestmark = pytest.mark.hostless
 
-GROUPS = ["run", "test", "monitor", "cov", "host", "docker", "reservation", "schema"]
+# The registry, not a hand-list: every built-in name whose registered object
+# resolves to a Typer GROUP (see tests._fixtures.cli_registry.builtin_group_names
+# for what that excludes — a single-command loader like `init`, or a Typer app
+# that flattens to one bare leaf like `monitor`, which has its own dedicated
+# flat-CLI coverage below).
+GROUPS = builtin_group_names()
 
 # Subcommand-level help across every group whose callback creates an output dir
 # when a subcommand is pending. Each once crashed (bug#3): the root callback skips
 # init_cli_logging on the help path, so the group callback's create_output_dir
 # raised. All are hostless (no --lab needed — the help flag is lab-free).
+#
+# Kept as a literal: several of these groups (run, test, host) resolve their
+# subcommands dynamically at dispatch time rather than listing them on the
+# Typer object, so there is no static first-subcommand to derive. The
+# completeness assertion below is what stops a new group with subcommands
+# from going unchecked here.
 SUBCOMMAND_HELP = [
     ["run", "noop", "--help"],
     ["test", "TestE2EFixture", "--help"],
@@ -27,7 +39,25 @@ SUBCOMMAND_HELP = [
     ["cov", "report", "--help"],
     ["docker", "up", "--help"],
     ["reservation", "check", "--help"],
+    ["cache", "info", "--help"],
+    ["env", "create", "--help"],
+    ["inventory", "lookup", "--help"],
+    ["link", "impair", "--help"],
+    ["schema", "export", "--help"],
+    ["tunnel", "add", "--help"],
 ]
+
+
+def test_subcommand_help_covers_every_group_with_subcommands() -> None:
+    """Every group in ``GROUPS`` must have at least one entry in ``SUBCOMMAND_HELP``.
+
+    ``GROUPS`` is derived from the registry (see above); this is what makes a
+    newly-added group with subcommands fail loudly here instead of silently
+    going unchecked by ``SUBCOMMAND_HELP``, which stays a hand-written list.
+    """
+    covered = {argv[0] for argv in SUBCOMMAND_HELP}
+    missing = [group for group in GROUPS if group not in covered]
+    assert not missing, f"add a SUBCOMMAND_HELP entry for: {missing}"
 
 
 def test_schema_export_writes_json_files(tmp_path: Path) -> None:
