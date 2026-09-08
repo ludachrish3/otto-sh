@@ -950,24 +950,34 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
 
         Raises:
-            NotImplementedError: ``user`` was given on a non-SSH host.
+            NotImplementedError: ``user`` was given on a non-SSH host. Raised by
+                :meth:`_refuse_exec_user`, above ``exec``'s dry-run arm.
 
         See Also:
             :meth:`~otto.host.host.BaseHost.run`: stateful, sequential alternative
             with expect support.
         """
         if user is not None:
-            if self.term != "ssh":
-                raise NotImplementedError(
-                    f"{self.name}: exec(user=...) on a {self.term!r} host — "
-                    f"per-user exec needs an SSH exec channel (v1 scope); "
-                    f"use as_user() on the session instead"
-                ) from None
             conn = await self._connections.ssh_as(user)
             return await self._session_mgr.exec_on(
                 conn, cmd, timeout=timeout, log=self._effective_log(log)
             )
         return await self._session_mgr.exec(cmd, timeout=timeout, log=self._effective_log(log))
+
+    @override
+    def _refuse_exec_user(self, user: str) -> None:
+        """Refuse ``exec(user=...)`` on a host whose term has no exec channel to authenticate on.
+
+        Only ``term="ssh"`` has a stateless exec primitive that can be opened
+        as another user; telnet has none. Reads this host's own ``term``, so
+        the answer costs no round trip.
+        """
+        if self.term != "ssh":
+            raise NotImplementedError(
+                f"{self.name}: exec(user=...) on a {self.term!r} host — "
+                f"per-user exec needs an SSH exec channel (v1 scope); "
+                f"use as_user() on the session instead"
+            ) from None
 
     ####################
     #  File transfer

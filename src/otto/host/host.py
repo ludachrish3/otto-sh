@@ -1481,10 +1481,28 @@ class BaseHost(ABC):
         """
         if user is not None:
             _validate_user(user)
+            self._refuse_exec_user(user)
         timeout = _validate_timeout(timeout)
         if is_dry_run():
             return self._dry_run_result(cmd, log)
         return await self._exec_one(cmd, timeout=timeout, log=log, user=user)
+
+    def _refuse_exec_user(self, user: str) -> None:  # noqa: B027 — an empty default is the POINT: most families honour user= and have nothing to refuse
+        """Refuse an ``exec(user=...)`` this family can never honour, before anything else.
+
+        ``run``, ``put`` and ``get`` refuse in the first line of their own
+        bodies, above their own dry-run arm, so a dry run of a call the family
+        could never honour refuses rather than declining as though it could
+        have. ``exec`` cannot get that ordering for free: its dry-run arm lives
+        here in :meth:`exec`, ABOVE the family's ``_exec_one``, so a refusal
+        written there is unreachable under ``--dry-run``. A family that cannot
+        act on *user* overrides this instead, and the refusal lands above the
+        arm like every other verb's.
+
+        Synchronous and side-effect free by construction: the answer comes from
+        the host's own configuration, never from the target, so refusing costs
+        no I/O. The default has nothing to refuse.
+        """
 
     async def _exec_one(
         self,

@@ -331,13 +331,19 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         Each call spawns an independent process — no state persists between
         calls, and multiple exec() calls can run concurrently via
         asyncio.gather().
+
+        The *user* refusal is :meth:`_refuse_exec_user`'s, not this method's,
+        so it lands above ``exec``'s dry-run arm.
         """
-        if user is not None:
-            raise NotImplementedError(
-                f"{self.name}: exec(user=...) is not supported on LocalHost — "
-                f"otto already runs as the invoking user"
-            ) from None
         return await self._exec_subprocess(cmd, timeout, log=self._effective_log(log))
+
+    @override
+    def _refuse_exec_user(self, user: str) -> None:
+        """Refuse ``exec(user=...)``: otto already runs as the invoking user."""
+        raise NotImplementedError(
+            f"{self.name}: exec(user=...) is not supported on LocalHost — "
+            f"otto already runs as the invoking user"
+        ) from None
 
     async def _exec_subprocess(
         self,

@@ -511,13 +511,19 @@ class EmbeddedHost(RemoteHost):
         primitive, so ``exec`` runs on the same persistent session as
         ``run``. It exists for API parity; use ``run`` for stateful
         workflows.
+
+        The *user* refusal is :meth:`_refuse_exec_user`'s, not this method's,
+        so it lands above ``exec``'s dry-run arm.
         """
-        if user is not None:
-            raise NotImplementedError(
-                f"{self.name}: exec(user=...) is not supported on EmbeddedHost — "
-                f"a serial console has no user to switch to"
-            ) from None
         return await self._session_mgr.run_cmd(cmd, timeout=timeout, log=self._effective_log(log))
+
+    @override
+    def _refuse_exec_user(self, user: str) -> None:
+        """Refuse ``exec(user=...)``: a serial console has no user to switch to."""
+        raise NotImplementedError(
+            f"{self.name}: exec(user=...) is not supported on EmbeddedHost — "
+            f"a serial console has no user to switch to"
+        ) from None
 
     def _require_loader(self) -> BinaryLoader:
         """Return this host's binary loader, or fail loud if none is declared."""

@@ -157,11 +157,17 @@ async def test_exec_is_stateless():
 
 @pytest.mark.asyncio
 async def test_exec_user_refused_on_local():
-    """Call `_exec_one` directly — `exec()`'s dry-run/timeout validation
-    must not be able to short-circuit the branch under test."""
+    """The refusal is `_refuse_exec_user`'s, which `exec()` calls ABOVE its own
+    dry-run arm — so a dry run refuses too rather than declining as though the
+    call could have been honoured."""
     host = LocalHost()
     with pytest.raises(NotImplementedError, match="otto already runs as the invoking user"):
-        await host._exec_one("id", timeout=5.0, user="root")
+        await host.exec("id", timeout=5.0, user="root")
+    with (
+        active_context(dry_run=True),
+        pytest.raises(NotImplementedError, match="otto already runs as the invoking user"),
+    ):
+        await host.exec("id", timeout=5.0, user="root")
 
 
 @pytest.mark.asyncio

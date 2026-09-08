@@ -732,8 +732,9 @@ class TestExec:
 
     @pytest.mark.asyncio
     async def test_exec_user_refused_on_telnet(self):
-        """Call `_exec_one` directly — `exec()`'s dry-run/timeout validation
-        must not be able to short-circuit the branch under test."""
+        """The refusal is `_refuse_exec_user`'s, which `exec()` calls ABOVE its
+        own dry-run arm — so a dry run refuses too rather than declining as
+        though the call could have been honoured."""
         h = UnixHost(
             ip="10.0.0.1",
             element=Element("box"),
@@ -741,8 +742,15 @@ class TestExec:
             term="telnet",
             log=LogMode.QUIET,
         )
+        from tests.conftest import active_context
+
         with pytest.raises(NotImplementedError, match=r"per-user exec needs an SSH exec channel"):
-            await h._exec_one("id", timeout=5.0, user="root")
+            await h.exec("id", timeout=5.0, user="root")
+        with (
+            active_context(dry_run=True),
+            pytest.raises(NotImplementedError, match=r"per-user exec needs an SSH exec channel"),
+        ):
+            await h.exec("id", timeout=5.0, user="root")
 
     @pytest.mark.asyncio
     async def test_run_user_refused_on_unix(self, host: UnixHost):
