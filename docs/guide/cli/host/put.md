@@ -31,7 +31,7 @@ destination — completes against the host itself
 | Option | Default | Description |
 | ------ | ------- | ----------- |
 | `--mode TEXT` | backend default | **`put` only.** Octal permission bits for the uploaded file(s) — `755`, `0644`, `0o4755`. Always read as octal, never decimal |
-| `--user NAME` | none | Transfer as this owner. On containers it chowns the landed file(s), and `get` accepts it and ignores it — reads are ownership-indifferent (see {ref}`container-users`). On unix hosts it *authenticates* as that user, so `put` lands the bytes already owned by them and `get` reads with their permissions — direct-cred users only, never over the `ftp` backend. Every other host family refuses it on both verbs |
+| `--user NAME` | none | Transfer as this owner. What each host family does with it — authenticate as them, chown after the fact, ignore it, or refuse — is declared per family in {doc}`../../hosts/families` |
 
 On a unix host the transfer rides that user's own connection, so a `DEST` that
 is still relative once

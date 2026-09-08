@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Annotated,
+    ClassVar,
     NoReturn,
     Protocol,
     TypeVar,
@@ -43,6 +44,7 @@ from ..utils import (
 
 if TYPE_CHECKING:
     from .app_shell import AppShell
+    from .capability_grid import HostCapabilities
     from .dev_tool import DevTool
     from .element import Element
     from .inventory_ref import InventoryRef
@@ -902,6 +904,16 @@ class BaseHost(ABC):
     ``EmbeddedHost``, etc.) inherit from :class:`BaseHost`, implement the
     family-specific hooks (``_run_one``, ``exec``, ``_soft_reboot``, …),
     and satisfy the :class:`Host` protocol.
+    """
+
+    capabilities: ClassVar["HostCapabilities"]
+    """What this family promises for ``user=``, progress and session identity.
+
+    THE ANNOTATION ONLY -- :class:`BaseHost` promises nothing, exactly as
+    :attr:`~otto.host.transfer.base.BaseFileTransfer.progress_granularity`
+    does: every concrete family declares its own, and
+    :func:`~otto.host.os_profile.register_host_class` refuses a class that
+    inherits this annotation without giving it a value.
     """
 
     id: str

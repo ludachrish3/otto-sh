@@ -29,7 +29,7 @@ otto host <HOST_ID> run [OPTIONS] COMMANDS...
 | `COMMANDS...` | — | One or more shell commands (space-separated, each quoted as needed) |
 | `--sudo / --no-sudo` | `--no-sudo` | Run every command through `sudo` |
 | `--timeout SECS` | `30.0` | Cumulative timeout in seconds across all commands. Must be `>= 0`; pass `inf` for a deliberately unbounded command |
-| `--user NAME` | none | Run as this user. Containers only (`docker exec -u`); every other host family refuses. The container's persistent channel binds its user when it opens, so a later `run` naming a different user refuses |
+| `--user NAME` | none | Run as this user. Which families accept it, and what each does with it, is declared per family in {doc}`../../hosts/families` |
 
 On a unix host `run --user` refuses by design: `run` drives the *persistent*
 session, and that session's identity belongs to `as_user` — see

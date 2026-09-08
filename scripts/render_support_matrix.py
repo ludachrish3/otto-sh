@@ -50,6 +50,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from scripts.collate_support_matrix import FAILURE_SUMMARY_LIMIT
 from tests._fixtures.paths import PROJECT_ROOT
@@ -62,6 +63,15 @@ from tests._fixtures.support_matrix import (
     discover_profiles,
 )
 
+if TYPE_CHECKING:
+    # The product is reached at RUNTIME only from inside the two functions that
+    # need it, for the ``sys.path`` reason the module docstring gives; these are
+    # for the annotations alone.
+    from collections.abc import Sequence
+    from enum import Enum
+
+    from otto.host.capability_grid import HostCapabilities
+
 PAGE_PATH = PROJECT_ROOT / "docs" / "architecture" / "support-matrix.md"
 """The rendered page.
 
@@ -69,6 +79,17 @@ GIT-IGNORED and regenerated on every Sphinx build (``docs/conf.py``'s
 ``builder-inited`` hook, beside ``_generate_docs_media``), the same standing
 ``docs/_static/generated/`` has. Committing it would put a second copy of every verdict
 in the tree, and the copy that goes stale is the one nothing runs.
+"""
+
+FAMILIES_PAGE_PATH = PROJECT_ROOT / "docs" / "guide" / "hosts" / "families.md"
+"""The rendered host-families page.
+
+COMMITTED, unlike :data:`PAGE_PATH`, and for the opposite reason. Its source is
+the tree itself -- the ``capabilities`` declaration on each host class -- so a
+reader of the repository can see the promise without building the docs, and
+``tests/unit/test_support_matrix.py`` re-renders it and compares byte for byte,
+so a declaration edited without regenerating this page reds. It carries no
+date and no measurement, which is what makes a byte comparison meaningful.
 """
 
 
@@ -1362,6 +1383,10 @@ def _progress_promises_section() -> "list[str]":
         "which is applied last and wins -- replaces the default below, and it is that",
         "configured value a run measures the bar against.",
         "",
+        "{doc}`../guide/hosts/families` is the declared counterpart for the host verbs:",
+        "what each host family promises for `user=`, progress and session identity, read",
+        "off the host classes the same way this table is read off the backends.",
+        "",
         "| backend | put stride | get stride | note |",
         "|---|---|---|---|",
     ]
@@ -1664,6 +1689,125 @@ def _provenance_section() -> "list[str]":
     ]
 
 
+def _transfer_cell(capabilities: "HostCapabilities") -> str:
+    """Name what moves this family's bytes, preferring the registry's own answer.
+
+    ``transfer_family`` names a ``BaseFileTransfer.host_families`` key, so the
+    backends are LISTED off the registry and a backend added to a family shows
+    up here with no edit. ``transfer`` is the declared fallback for the two
+    families that select no registered backend by name — see the field
+    docstrings on ``HostCapabilities``.
+    """
+    from otto.host.transfer import TRANSFER_BACKENDS, build_transfer_backend
+
+    if not capabilities.transfer_family:
+        return capabilities.transfer
+    names = [
+        name
+        for name in sorted(TRANSFER_BACKENDS.names())
+        if capabilities.transfer_family in build_transfer_backend(name).host_families
+    ]
+    return _join(_code(names))
+
+
+def _meaning_rows(members: "Sequence[Enum]") -> "list[str]":
+    """One ``| value | meaning |`` row per enum member, read off member ``__doc__``.
+
+    The meanings are NOT retyped here. Each member carries its own sentence
+    (``UserSupport.__new__`` attaches it), which is the single place the
+    vocabulary is defined; this renders it.
+    """
+    return [f"| `{member.value}` | {(member.__doc__ or '').strip()} |" for member in members]
+
+
+def render_families() -> str:
+    """Render the host-families page from the ``capabilities`` on each host class.
+
+    DECLARED, not measured — the counterpart to everything else this module
+    renders. Every cell below is read off a frozen ``HostCapabilities`` on a
+    host class; nothing here consults a run, an artifact or a date, which is
+    why this page can be committed and compared byte for byte.
+    """
+    from otto.host.capability_grid import SessionIdentity, UserSupport, shipped_host_families
+
+    families = shipped_host_families()
+    lines = [
+        "<!-- GENERATED FILE -- do not edit by hand.",
+        "     scripts/render_support_matrix.py renders this from the `capabilities`",
+        "     declaration on each host class, on every Sphinx build (docs/conf.py,",
+        "     builder-inited). Edits are overwritten. -->",
+        "",
+        "# Host families",
+        "",
+        "otto ships several kinds of host, and they do not all answer the four verbs the",
+        "same way. A serial console has no second user to become; a container has no",
+        "credentials for one; a unix box has both. This page is the standing answer for",
+        "each family, and every cell on it is **declared**: each row is the",
+        "`capabilities` object on that family's own host class, rendered here rather than",
+        "written here.",
+        "",
+        "That is what separates this page from {doc}`../../architecture/support-matrix`.",
+        "The matrix publishes what a run **measured** against real hardware, cell by cell,",
+        "and it changes when the bed changes. This publishes what the code **promises**,",
+        "and it changes only when a host class does. A promise below that a device does",
+        "not keep is a bug in one of the two, and the conformance suite is what tells them",
+        "apart.",
+        "",
+        "A class registered from your own repository must declare one too:",
+        "`register_host_class` refuses a class without it, so a custom family can never",
+        "reach this page's readers as a blank row.",
+        "",
+        "## What the `user=` answers mean",
+        "",
+        "| answer | what it means |",
+        "|---|---|",
+    ]
+    lines += _meaning_rows(list(UserSupport))
+    lines += [
+        "",
+        "## Where a session's identity comes from",
+        "",
+        "`run` drives a **persistent** session; `exec`, `put` and `get` are stateless. So",
+        "`run(user=)` is a question about an identity that already exists, and each family",
+        "answers it one of the ways below.",
+        "",
+        "| identity | what it means |",
+        "|---|---|",
+    ]
+    lines += _meaning_rows(list(SessionIdentity))
+    lines += [
+        "",
+        "## The families",
+        "",
+        "**Progress bar** is about the family's own transfer leg: whether the bytes move",
+        "through a backend that can report while they are moving. Per-backend strides",
+        "are published with the backends themselves, in {ref}`matrix-progress-promises`.",
+        "",
+        (
+            "| family | how selected | `run(user=)` | `exec(user=)` | `put(user=)` "
+            "| `get(user=)` | progress bar | session identity | transfer | note |"
+        ),
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for family in families:
+        caps = family.capabilities
+        lines.append(
+            f"| `{family.name}` | {family.selector} "
+            f"| `{caps.run_user.value}` | `{caps.exec_user.value}` "
+            f"| `{caps.put_user.value}` | `{caps.get_user.value}` "
+            f"| {'yes' if caps.show_progress else 'no'} "
+            f"| {caps.session_identity.value} | {_transfer_cell(caps)} | {caps.note} |"
+        )
+    lines += [
+        "",
+        "The CLI pages for the verbs themselves — {doc}`../cli/host/run`,",
+        "{doc}`../cli/host/put`, {doc}`../cli/host/get` — say how to pass `--user`; this",
+        "page says what each family will do with it.",
+        "",
+    ]
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render(matrix: dict, *, rendered_on: "_datetime.date | None" = None) -> str:
     """Render the whole page, refusing a matrix whose axes the tree no longer backs."""
     problems = axes_mismatch(matrix)
@@ -1721,10 +1865,11 @@ def main(argv: "list[str]") -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--matrix", type=Path, default=MATRIX_PATH)
     parser.add_argument("--page", type=Path, default=PAGE_PATH)
+    parser.add_argument("--families-page", type=Path, default=FAMILIES_PAGE_PATH)
     parser.add_argument(
         "--check",
         action="store_true",
-        help="report axis disagreement and write nothing",
+        help="report axis disagreement and a stale families page, and write nothing",
     )
     args = parser.parse_args(argv)
     matrix = json.loads(args.matrix.read_text(encoding="utf-8"))
@@ -1735,13 +1880,30 @@ def main(argv: "list[str]") -> int:
             file=sys.stderr,
         )
         return 1
+    families = render_families()
     if args.check:
+        # The families page is COMMITTED, so --check can compare it; the matrix
+        # page is git-ignored and regenerated, so there is nothing to compare.
+        stale = (
+            not args.families_page.exists()
+            or args.families_page.read_text(encoding="utf-8") != families
+        )
+        if stale:
+            print(
+                f"{args.families_page} is not what the tree would generate; "
+                f"re-run `uv run python -m scripts.render_support_matrix` and commit it",
+                file=sys.stderr,
+            )
+            return 1
         print(f"{args.matrix}: axes agree with the tree; wrote nothing (--check)")
         return 0
     args.page.parent.mkdir(parents=True, exist_ok=True)
     args.page.write_text(render(matrix), encoding="utf-8")
     cells = sum(len(row) for row in matrix["cells"].values())
     print(f"{args.page}: rendered {cells} cells")
+    args.families_page.parent.mkdir(parents=True, exist_ok=True)
+    args.families_page.write_text(families, encoding="utf-8")
+    print(f"{args.families_page}: rendered the declared host families")
     return 0
 
 

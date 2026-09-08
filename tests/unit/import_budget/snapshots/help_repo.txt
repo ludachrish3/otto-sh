@@ -65,6 +65,7 @@ otto.host
 otto.host.binary_loader
 otto.host.builtin_hosts
 otto.host.capability
+otto.host.capability_grid
 otto.host.command_frame
 otto.host.connections
 otto.host.daemon

@@ -64,6 +64,7 @@ from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .binary_loader import BinaryLoader
 from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
+from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager
 from .dev_tool import DevTool
@@ -115,6 +116,23 @@ class EmbeddedHost(RemoteHost):
     raises ``ValueError`` (fail loud). :class:`ZephyrHost` is the in-tree
     concrete subclass and worked example.
     """
+
+    capabilities = HostCapabilities(
+        run_user=UserSupport.refused,
+        exec_user=UserSupport.refused,
+        put_user=UserSupport.refused,
+        get_user=UserSupport.refused,
+        show_progress=True,
+        session_identity=SessionIdentity.none,
+        transfer_family="embedded",
+        note=(
+            "A serial console has no user to switch to, and transfer ownership "
+            "follows the connection's own identity."
+        ),
+    )
+    """What this family promises. :class:`ZephyrHost` inherits it unchanged --
+    a Zephyr target answers ``user=`` no differently from any other embedded
+    one. See :class:`~otto.host.capability_grid.HostCapabilities`."""
 
     ip: str
     """IP address of the host's telnet shell."""

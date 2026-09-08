@@ -49,6 +49,7 @@ from scripts.collate_support_matrix import main as collate_main
 from scripts.render_support_matrix import (
     _UNINTERPRETED,
     _UNWATCHED_STATES,
+    FAMILIES_PAGE_PATH,
     FAMILY_BLURB,
     PAGE_PATH,
     VOICE,
@@ -60,6 +61,7 @@ from scripts.render_support_matrix import (
     promise_mismatch,
     promise_of,
     render,
+    render_families,
 )
 from scripts.render_support_matrix import main as render_main
 from tests._ambient_env import ambient_opt_ins
@@ -337,6 +339,34 @@ def committed() -> dict:
     return json.loads(MATRIX_PATH.read_text())
 
 
+@pytest.fixture(autouse=True)
+def no_test_writes_the_committed_families_page():
+    """Fail any test in this file that rewrites ``docs/guide/hosts/families.md``.
+
+    THE TRIPWIRE FOR A DEFECT THIS FILE ALREADY SHIPPED ONCE. ``render_main``
+    writes BOTH pages, so a call site that redirects ``--page`` into ``tmp_path``
+    and forgets ``--families-page`` regenerates the committed page in the
+    developer's working tree — silently erasing the staleness
+    :func:`test_the_committed_families_page_is_what_the_tree_would_generate`
+    exists to catch, and racing that test across xdist workers.
+
+    Placed here rather than fixed only at the call site because the failure is
+    invisible: the guilty test still passes, and the test it disarms passes for
+    the wrong reason. The page is RESTORED as well as reported, so one mistake
+    does not leave a dirty tree behind it.
+    """
+    before = FAMILIES_PAGE_PATH.read_bytes()
+    yield
+    after = FAMILIES_PAGE_PATH.read_bytes()
+    if after != before:
+        FAMILIES_PAGE_PATH.write_bytes(before)
+        pytest.fail(
+            f"this test rewrote the committed {FAMILIES_PAGE_PATH.name}; a "
+            f"render_main call must redirect --families-page into tmp_path as "
+            f"well as --page (the page has been restored)"
+        )
+
+
 def _with_cell(committed: dict, cell: dict, at: "tuple[str, str]") -> "tuple[dict, tuple]":
     """*committed* with the cell at *at* replaced by *cell* -- a real hand-edit.
 
@@ -477,6 +507,61 @@ def test_the_committed_artifact_is_what_the_tree_would_generate(committed):
     """
     rebuilt = build_matrix(existing=committed)
     assert rebuilt == committed, f"the artifact no longer matches the tree; {_REGENERATE}"
+
+
+def test_the_committed_families_page_is_what_the_tree_would_generate():
+    """The host-families page, re-rendered from the tree and compared byte for byte.
+
+    The sibling above pins the JSON artifact, which is written by a run. This
+    pins a PAGE, which is written by the declarations on the host classes —
+    committed precisely so a reader of the repository sees the promises without
+    building the docs, which only works while the two agree. Mirrors what
+    ``render_support_matrix --check`` reports, so the failure a developer sees
+    here is the failure CI sees there.
+    """
+    assert FAMILIES_PAGE_PATH.read_text(encoding="utf-8") == render_families(), (
+        f"{FAMILIES_PAGE_PATH} is stale; re-run "
+        f"`uv run python -m scripts.render_support_matrix` and commit the page"
+    )
+
+
+def _rendered_into(tmp_path, committed) -> "tuple[Path, Path, Path]":
+    """A matrix, a matrix page and a families page, all under *tmp_path*."""
+    matrix = tmp_path / "support_matrix.json"
+    matrix.write_text(json.dumps(committed, indent=2) + "\n", encoding="utf-8")
+    return matrix, tmp_path / "support-matrix.md", tmp_path / "families.md"
+
+
+def test_main_writes_the_families_page_it_was_pointed_at(tmp_path, committed):
+    """``main`` writes BOTH pages, and writes the families page where it was told.
+
+    The second half is the part with teeth: a families page that ignored
+    ``--families-page`` would land on the committed one instead, which is how a
+    test run comes to regenerate the artifact another test is checking.
+    """
+    matrix, page, families = _rendered_into(tmp_path, committed)
+    argv = ["--matrix", str(matrix), "--page", str(page), "--families-page", str(families)]
+    assert render_main(argv) == 0
+    assert families.read_text(encoding="utf-8") == render_families()
+
+
+def test_check_reports_a_stale_families_page(tmp_path, committed, capsys):
+    """``--check`` is what CI runs, so it must SEE a page the tree no longer backs."""
+    matrix, page, families = _rendered_into(tmp_path, committed)
+    families.write_text("# Host families\n\nsomething a person typed\n", encoding="utf-8")
+    argv = ["--matrix", str(matrix), "--page", str(page), "--families-page", str(families)]
+    assert render_main([*argv, "--check"]) == 1
+    assert "is not what the tree would generate" in capsys.readouterr().err
+    assert page.exists() is False, "--check must write nothing"
+
+
+def test_check_accepts_a_current_families_page(tmp_path, committed, capsys):
+    """The positive control: a ``--check`` that failed on ANY page would pass above."""
+    matrix, page, families = _rendered_into(tmp_path, committed)
+    families.write_text(render_families(), encoding="utf-8")
+    argv = ["--matrix", str(matrix), "--page", str(page), "--families-page", str(families)]
+    assert render_main([*argv, "--check"]) == 0
+    assert capsys.readouterr().err == ""
 
 
 # --------------------------------------------------------------------------
@@ -5162,9 +5247,23 @@ def test_rendering_never_writes_to_the_artifact(tmp_path, committed):
     matrix.write_text(json.dumps(committed, indent=2) + "\n", encoding="utf-8")
     before = matrix.read_bytes()
     page = tmp_path / "support-matrix.md"
-    assert render_main(["--matrix", str(matrix), "--page", str(page)]) == 0
+    families = tmp_path / "families.md"
+    assert (
+        render_main(
+            [
+                "--matrix",
+                str(matrix),
+                "--page",
+                str(page),
+                "--families-page",
+                str(families),
+            ]
+        )
+        == 0
+    )
     assert matrix.read_bytes() == before, "the RENDERER wrote to the artifact"
     assert page.read_text(encoding="utf-8").startswith("<!-- GENERATED FILE")
+    assert families.read_text(encoding="utf-8").startswith("<!-- GENERATED FILE")
 
 
 def test_the_renderer_recovers_no_field_by_parsing_prose():

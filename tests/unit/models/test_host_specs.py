@@ -1,4 +1,5 @@
 import dataclasses
+import typing
 from pathlib import Path
 from typing import ClassVar
 
@@ -323,18 +324,65 @@ def _otto_host_dataclasses() -> list[type]:
     return [seen[n] for n in sorted(seen)]
 
 
+def _is_class_var(annotation: object) -> bool:
+    """Whether *annotation* declares a ``ClassVar``, evaluated or written as text.
+
+    Both spellings, because this module reads ``__annotations__`` raw (see
+    :func:`_basehost_contract_fields`) and so sees whichever form the author
+    used: a class-body annotation is evaluated at class creation, giving a real
+    ``typing.ClassVar[...]`` object, but a fully quoted one
+    (``"ClassVar[Thing]"``) stays a string that no ``get_origin`` can see
+    through.
+    """
+    if isinstance(annotation, str):
+        return annotation.lstrip().startswith(("ClassVar[", "typing.ClassVar["))
+    return typing.get_origin(annotation) is ClassVar
+
+
 def _basehost_contract_fields() -> list[str]:
-    """``BaseHost``'s BARE annotations — the names that are a promise only.
+    """``BaseHost``'s BARE INSTANCE annotations — the names that are a promise only.
 
     An annotation carrying a value (``source_lab: str = ""``) creates a real
     class attribute every subclass inherits, so it can never be the gap this
     sweep hunts. A bare one creates nothing.
 
+    ``ClassVar`` is excluded, and the exclusion is about what the sweep MEANS,
+    not about silencing it. This function feeds a ``dataclasses.fields()``
+    comparison, and a ``ClassVar`` is by definition not a dataclass field —
+    ``@dataclass`` skips it deliberately. So a bare ``ClassVar`` annotation on
+    ``BaseHost`` (``capabilities``, which every concrete family gives a VALUE
+    rather than a field) would read as missing from all five host classes
+    forever, and no correct declaration could ever satisfy it. The hazard this
+    sweep hunts — an attribute the type checker credits to a subclass that has
+    no runtime value — is caught for ``ClassVar`` by
+    ``register_host_class``'s own ``isinstance`` refusal instead.
+
     ``__annotations__`` rather than ``typing.get_type_hints``: the names are
     all this needs, and several of these are string forward references to
     modules ``host.py`` imports only under ``TYPE_CHECKING``.
     """
-    return sorted(a for a in BaseHost.__annotations__ if a not in vars(BaseHost))
+    return sorted(
+        name
+        for name, annotation in BaseHost.__annotations__.items()
+        if name not in vars(BaseHost) and not _is_class_var(annotation)
+    )
+
+
+def _missing_contract_fields(classes: list[type], contract: list[str]) -> list[str]:
+    """``Class.field`` for every contract name no dataclass field of *classes* provides.
+
+    Collected rather than asserted per class: a gap is usually the SAME missing
+    field on every host class, and one assertion per class would report the
+    alphabetically first and hide the other four. Extracted so
+    :func:`test_the_classvar_exclusion_does_not_blind_the_sweep` can drive the
+    real comparison rather than a copy of it.
+    """
+    return [
+        f"{cls.__name__}.{name}"
+        for cls in classes
+        for name in contract
+        if name not in {f.name for f in dataclasses.fields(cls)}
+    ]
 
 
 def test_every_host_class_declares_every_basehost_contract_field():
@@ -366,16 +414,9 @@ def test_every_host_class_declares_every_basehost_contract_field():
     contract = _basehost_contract_fields()
     # Nor let the CONTRACT collapse: an empty annotation set would sweep nothing.
     assert {"resources", "element", "lab_info"} <= set(contract), contract
-    # Collected, not asserted per class: a gap is usually the SAME missing
-    # field on every host class, and one assertion per class would report the
-    # alphabetically first and hide the other four.
-    missing = [
-        f"{cls.__name__}.{name}"
-        for cls in classes
-        for name in contract
-        if name not in {f.name for f in dataclasses.fields(cls)}
-    ]
-    assert not missing, f"host classes missing a BaseHost contract field: {missing}"
+    assert not (missing := _missing_contract_fields(classes, contract)), (
+        f"host classes missing a BaseHost contract field: {missing}"
+    )
     # The default_factory, not just the field: the set is read by iterating and
     # is not normalised on assignment. NOTE (no code here): a plain ``str``
     # assigned to ``resources`` would satisfy every type check this sweep can
@@ -385,6 +426,36 @@ def test_every_host_class_declares_every_basehost_contract_field():
     for cls in classes:
         by_name = {f.name: f for f in dataclasses.fields(cls)}
         assert by_name["resources"].default_factory is frozenset, cls.__name__
+
+
+def test_the_classvar_exclusion_does_not_blind_the_sweep(monkeypatch):
+    """The ``ClassVar`` exclusion must drop ``ClassVar`` and NOTHING ELSE.
+
+    An exclusion is a hole until something proves how narrow it is, and this
+    one was added to let a real declaration (``BaseHost.capabilities``) through
+    a sweep it could never have satisfied. So: inject BOTH shapes of bare
+    annotation onto ``BaseHost``, and require the sweep to keep seeing the
+    instance one while ignoring the ``ClassVar`` twin beside it. Without the
+    first half, an exclusion widened to "every bare annotation" would still
+    pass every other assertion in this file.
+
+    Both spellings of ``ClassVar`` are injected, because ``__annotations__``
+    can hold either — see :func:`_is_class_var`.
+    """
+    injected = dict(BaseHost.__annotations__)
+    injected["an_instance_field_nobody_declares"] = str
+    injected["a_class_var_nobody_declares"] = ClassVar[str]
+    injected["a_quoted_class_var_nobody_declares"] = "ClassVar[str]"
+    monkeypatch.setattr(BaseHost, "__annotations__", injected)
+
+    contract = _basehost_contract_fields()
+    assert "an_instance_field_nobody_declares" in contract
+    assert "a_class_var_nobody_declares" not in contract
+    assert "a_quoted_class_var_nobody_declares" not in contract
+
+    missing = _missing_contract_fields(_otto_host_dataclasses(), contract)
+    assert missing, "a bare instance annotation no host class declares must still fail"
+    assert all(name.endswith(".an_instance_field_nobody_declares") for name in missing), missing
 
 
 # Runtime host init fields applied by overridable repo logic (NOT lab data) —

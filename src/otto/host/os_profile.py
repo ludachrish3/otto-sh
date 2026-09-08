@@ -175,9 +175,13 @@ def register_host_class(
     ------
     ValueError
         If *cls* is not a ``RemoteHost`` subclass; if *spec* is given but is not
-        a ``HostSpec`` subclass; or if *spec* is ``None`` and no base class of
-        *cls* has a registered spec.
+        a ``HostSpec`` subclass; if *spec* is ``None`` and no base class of
+        *cls* has a registered spec; or if *cls* declares no
+        :class:`~otto.host.capability_grid.HostCapabilities` under
+        ``capabilities`` (inheriting the bare annotation on
+        :class:`~otto.host.host.BaseHost` is not a declaration).
     """
+    from .capability_grid import HostCapabilities
     from .remote_host import RemoteHost
 
     if not (isinstance(cls, type) and issubclass(cls, RemoteHost)):
@@ -198,6 +202,18 @@ def register_host_class(
             raise ValueError(
                 f"register_host_class({name!r}): spec must be a HostSpec subclass, got {spec!r}"
             )
+    # isinstance, not hasattr: BaseHost carries the ClassVar ANNOTATION and no
+    # value, which creates no attribute but would satisfy a name check on a
+    # subclass — and a class declaring some other object under the name would
+    # promise nothing the guide page or the conformance surfaces can read. Same
+    # reasoning as ``transfer/registry.py``'s ``progress_granularity`` check.
+    if not isinstance(getattr(cls, "capabilities", None), HostCapabilities):
+        raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see the RemoteHost check above)
+            f"register_host_class({name!r}): cls.capabilities is missing; a host "
+            f"class must declare what its verbs promise for user=, progress and "
+            f"session identity (e.g. capabilities = HostCapabilities(...) — see "
+            f"otto.host.capability_grid)."
+        )
     if name in _BUILTIN_NAMES and (name in HOST_CLASSES or name in OS_PROFILES):
         logger.warning(f"register_host_class: overriding built-in host class {name!r}")
     # Last-writer-wins by design (see docstring) — always overwrite rather

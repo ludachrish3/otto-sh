@@ -53,6 +53,13 @@ class MyRtosHost(EmbeddedHost):
 register_host_class("my-rtos", MyRtosHost)
 ```
 
+Your class must also declare a `capabilities`
+({class}`~otto.host.capability_grid.HostCapabilities`) saying what its verbs
+promise for `user=`, progress and session identity — `register_host_class`
+refuses a class that does not, so no family reaches a reader as a blank row in
+{doc}`../guide/hosts/families`.  Subclassing `EmbeddedHost` or `UnixHost`
+inherits theirs; redeclare only where yours differs.
+
 `ZephyrHost` in `otto.host.embedded_host` is the in-tree worked example — it
 re-declares `os_type`, `os_name`, and `command_frame` as class-level field
 defaults and is registered under `"zephyr"` at module load.

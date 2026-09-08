@@ -36,6 +36,7 @@ from typing_extensions import override
 from ..logger.mode import LogMode
 from ..result import CommandNotRunError, CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
+from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .connections import teardown_step
 from .dev_tool import DevTool
 from .errors import MountNotFoundError
@@ -67,6 +68,24 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     successful ``docker compose up``; tests instantiate it directly with a
     mocked parent.
     """
+
+    capabilities = HostCapabilities(
+        run_user=UserSupport.chown,
+        exec_user=UserSupport.chown,
+        put_user=UserSupport.chown,
+        get_user=UserSupport.ignored,
+        show_progress=False,
+        session_identity=SessionIdentity.bound_at_open,
+        transfer=(
+            "the parent host's own backend for the staging leg, then `docker cp` "
+            "across the container boundary"
+        ),
+        note=(
+            "`user=` defaults to the service's declared user, and falls back to "
+            "the image's own `USER` when neither is set."
+        ),
+    )
+    """What this family promises. See :class:`~otto.host.capability_grid.HostCapabilities`."""
 
     parent: "Host"
     """The lab host running the docker daemon. Owns auth, hop chain, and

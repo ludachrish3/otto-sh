@@ -29,6 +29,7 @@ from typing_extensions import override
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
+from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .dev_tool import DevTool
 from .file_ops import PosixFileOps
 from .host import _EXEC_REAP_TIMEOUT, BaseHost, is_dry_run
@@ -157,6 +158,22 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     session; ``exec`` bypasses it and spawns an independent subprocess, making
     concurrent calls safe. File transfers delegate to :class:`LocalFileTransfer`.
     """
+
+    capabilities = HostCapabilities(
+        run_user=UserSupport.refused,
+        exec_user=UserSupport.refused,
+        put_user=UserSupport.refused,
+        get_user=UserSupport.refused,
+        show_progress=False,
+        session_identity=SessionIdentity.as_user_scoped,
+        transfer="`shutil.copy2` on the machine's own filesystem",
+        note=(
+            "otto already runs as the invoking user and local copies keep that "
+            "user's ownership, so no verb takes `user=`; `as_user()` still "
+            "switches the persistent session."
+        ),
+    )
+    """What this family promises. See :class:`~otto.host.capability_grid.HostCapabilities`."""
 
     name: str = field(default="localhost", init=False)
 

@@ -74,6 +74,7 @@ from ..utils import (
     wait_for_async,
 )
 from .capability import IMPAIRER_RESOLVER, TERM_RESOLVER, TRANSFER_RESOLVER
+from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .command_frame import CommandFrame, build_command_frame
 from .connections import (
     ConnectionManager,
@@ -259,6 +260,22 @@ def _measured_absent(userland: "Userland", applet: str) -> bool:
 @dataclass(slots=True)
 class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     """Unix host accessed via SSH or Telnet, with bash as the remote shell."""
+
+    capabilities = HostCapabilities(
+        run_user=UserSupport.refused,
+        exec_user=UserSupport.authenticate,
+        put_user=UserSupport.authenticate,
+        get_user=UserSupport.authenticate,
+        show_progress=True,
+        session_identity=SessionIdentity.as_user_scoped,
+        transfer_family="unix",
+        note=(
+            "Direct-cred users only, and never over the `ftp` backend, which "
+            "authenticates separately with its own credentials; `exec(user=)` "
+            'additionally requires `term="ssh"`.'
+        ),
+    )
+    """What this family promises. See :class:`~otto.host.capability_grid.HostCapabilities`."""
 
     ip: str
     """IP address of the host."""
