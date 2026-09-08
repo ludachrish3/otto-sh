@@ -7,8 +7,12 @@ listing every contract violation.
 
 .. autofunction:: otto.testing.assert_creds_store_conforms
 
+.. autofunction:: otto.testing.assert_host_conforms
+
 .. autofunction:: otto.testing.assert_inventory_conforms
 
 .. autofunction:: otto.testing.assert_lab_repository_conforms
 
 .. autofunction:: otto.testing.assert_reservation_backend_conforms
+
+.. autofunction:: otto.testing.assert_transfer_backend_conforms

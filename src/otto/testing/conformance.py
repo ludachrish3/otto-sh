@@ -1,7 +1,9 @@
 """Reusable conformance suites for otto's pluggable backend interfaces.
 
-Four helpers — one per interface — assert that a backend satisfies otto's
-contract. Each runs every rule as a non-fatal ``expect()`` on a single
+Four of :mod:`otto.testing`'s six helpers — one per interface — assert that a
+backend satisfies otto's contract; the two host-side ones live in
+:mod:`otto.testing.conformance_host` and are re-exported alongside these.
+Each runs every rule as a non-fatal ``expect()`` on a single
 :class:`~otto.suite.expect.ExpectCollector`, then raises once with *all*
 violations, so a backend author sees every problem at once instead of fixing
 them one failed assertion at a time.
@@ -14,9 +16,11 @@ Usage::
 
     from otto.testing import (
         assert_creds_store_conforms,
+        assert_host_conforms,
         assert_inventory_conforms,
         assert_lab_repository_conforms,
         assert_reservation_backend_conforms,
+        assert_transfer_backend_conforms,
     )
 
 

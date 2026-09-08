@@ -227,6 +227,23 @@ register_term_backend("my_term", MyTerm, host_families=frozenset({"unix"}))
 # host_families is required (no default) — omitting it raises TypeError
 ```
 
+### Proving it
+
+```python
+from otto.testing import assert_transfer_backend_conforms
+
+
+def test_xmodem_conforms():
+    assert_transfer_backend_conforms(XmodemTransfer)
+```
+
+{func}`~otto.testing.assert_transfer_backend_conforms` runs every rule above:
+the two declarations `register_transfer_backend` demands, an overriding
+`create`, nothing left abstract, and the call shapes the host and the base
+class rely on — read off `BaseFileTransfer`'s own definitions, so a keyword
+added there is asked of your backend rather than silently skipped.  It raises
+once, listing every violation.
+
 ## Login proxies
 
 Some accounts can't be reached by direct authentication — the classic case is

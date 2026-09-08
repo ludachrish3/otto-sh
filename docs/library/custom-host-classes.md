@@ -72,6 +72,36 @@ dataclass, so their annotations are a contract the type checker credits to
 every subclass while creating no attribute and no dataclass field: the first
 read raises `AttributeError`.  The failure is loud and happens at load rather
 than mid-run, but nothing warns you before it.
+
+### Proving it
+
+```python
+from otto.host.element import Element
+from otto.testing import assert_host_conforms
+
+
+def test_my_rtos_host_conforms():
+    assert_host_conforms(MyRtosHost, instance=MyRtosHost(ip="192.0.2.1", element=Element("dev")))
+```
+
+{func}`~otto.testing.assert_host_conforms` checks the call shapes production
+depends on — read off the `Host` protocol itself, so a parameter added there is
+asked of your class rather than silently skipped — and, given an `instance`,
+probes each verb against what your `capabilities` promise for it: a verb
+declared `refused` must raise `NotImplementedError`, and one declared anything
+else must not.  The probes run inside a dry-run context, so nothing connects and
+no bytes move; what each value means is in {doc}`../guide/hosts/families`.  Call
+it from a synchronous test — the probes drive their own event loop.
+
+Your `capabilities` are read per **class**, while behaviour can depend on the
+**instance**: there is no dimension in the declaration for a host's own
+configuration.  A class whose answer varies that way conforms on one instance
+and reports a violation on another, both truthfully — otto's own `unix` row
+declares `exec_user=authenticate`, which holds over `term="ssh"` while a
+`term="telnet"` host refuses.  Probe the configuration your declaration speaks
+for, and put the conditions in your row's `note` so a reader of
+{doc}`../guide/hosts/families` sees them too.
+
 ## Composition
 
 Layer a defaults bundle over a custom class to create per-build profiles

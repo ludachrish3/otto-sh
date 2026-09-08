@@ -490,7 +490,10 @@ path = "otto.testing"
 # alongside the json backend) checks a candidate against the Inventory
 # protocol and its InventoryRecord fields.
 # otto.creds: assert_creds_store_conforms (spec 2026-09-06 §5.3).
-depends_on = ["otto.config", "otto.creds", "otto.inventory", "otto.labs", "otto.models", "otto.reservations", "otto.host", "otto.suite"]
+# otto.context: assert_host_conforms probes a host's verbs under a dry run, and
+# `dry_run` is a field of the active OttoContext -- installing one is the only
+# way to ask a host what it would do without letting it do it.
+depends_on = ["otto.config", "otto.context", "otto.creds", "otto.inventory", "otto.labs", "otto.models", "otto.reservations", "otto.host", "otto.suite"]
 
 [[modules]]
 path = "otto.tunnel"

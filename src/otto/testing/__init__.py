@@ -7,9 +7,11 @@ violation):
 
     from otto.testing import (
         assert_creds_store_conforms,
+        assert_host_conforms,
         assert_inventory_conforms,
         assert_lab_repository_conforms,
         assert_reservation_backend_conforms,
+        assert_transfer_backend_conforms,
     )
 """
 
@@ -24,4 +26,10 @@ from .conformance import (
 )
 from .conformance import (
     assert_reservation_backend_conforms as assert_reservation_backend_conforms,
+)
+from .conformance_host import (
+    assert_host_conforms as assert_host_conforms,
+)
+from .conformance_host import (
+    assert_transfer_backend_conforms as assert_transfer_backend_conforms,
 )

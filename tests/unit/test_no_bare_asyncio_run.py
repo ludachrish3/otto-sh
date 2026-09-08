@@ -13,8 +13,19 @@ from tests._fixtures.paths import PROJECT_ROOT
 
 SRC = PROJECT_ROOT / "src" / "otto"
 
-# The one module allowed to call asyncio.run: the lifecycle entry itself.
-ALLOWED = {SRC / "lifecycle.py"}
+# The two modules allowed to call asyncio.run.
+#
+# `lifecycle.py` is the entry this rule exists to funnel command bodies through.
+#
+# `testing/conformance_host.py` is not a command path at all: it is a helper a
+# backend author calls from their own SYNCHRONOUS pytest test, and its probes
+# await one host verb under a dry run. There is no host scope to sweep -- the
+# caller built the instance and closes it -- and installing the two-stage
+# interrupt policy from inside an assertion helper would take pytest's own
+# signal handling away for the duration. Routing it through `run_command` would
+# buy neither and cost both. The exemption is per FILE, so the other
+# `otto.testing` modules stay covered.
+ALLOWED = {SRC / "lifecycle.py", SRC / "testing" / "conformance_host.py"}
 
 
 def _bare_asyncio_run_lines(path: Path) -> list[int]:
