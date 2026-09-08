@@ -1,5 +1,6 @@
 import dataclasses
 import typing
+from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar
 
@@ -339,7 +340,7 @@ def _is_class_var(annotation: object) -> bool:
     return typing.get_origin(annotation) is ClassVar
 
 
-def _basehost_contract_fields() -> list[str]:
+def _basehost_contract_fields(annotations: Mapping[str, object] | None = None) -> list[str]:
     """``BaseHost``'s BARE INSTANCE annotations — the names that are a promise only.
 
     An annotation carrying a value (``source_lab: str = ""``) creates a real
@@ -359,11 +360,27 @@ def _basehost_contract_fields() -> list[str]:
 
     ``__annotations__`` rather than ``typing.get_type_hints``: the names are
     all this needs, and several of these are string forward references to
-    modules ``host.py`` imports only under ``TYPE_CHECKING``.
+    modules ``host.py`` imports only under ``TYPE_CHECKING``, so
+    ``get_type_hints`` would raise ``NameError`` trying to evaluate them.
+
+    *annotations* lets a caller drive the sweep over an injected mapping
+    (:func:`test_the_classvar_exclusion_does_not_blind_the_sweep` does this)
+    instead of ``BaseHost``'s own. Accepting the mapping rather than mutating
+    the class matters on Python 3.14: PEP 649 lazy annotations mean
+    ``"__annotations__" not in BaseHost.__dict__`` there, so
+    ``monkeypatch.setattr(BaseHost, "__annotations__", ...)`` records the
+    attribute as ABSENT and undoes itself with ``delattr`` — leaving
+    ``BaseHost.__annotations__ == {}`` for the rest of the process and
+    order-dependently failing whichever test reads it next.
     """
+    # Default: read BaseHost.__annotations__ directly. Do NOT reintroduce a
+    # monkeypatch of this attribute — see the docstring above and
+    # test_the_classvar_exclusion_does_not_blind_the_sweep.
+    if annotations is None:
+        annotations = BaseHost.__annotations__
     return sorted(
         name
-        for name, annotation in BaseHost.__annotations__.items()
+        for name, annotation in annotations.items()
         if name not in vars(BaseHost) and not _is_class_var(annotation)
     )
 
@@ -428,27 +445,36 @@ def test_every_host_class_declares_every_basehost_contract_field():
         assert by_name["resources"].default_factory is frozenset, cls.__name__
 
 
-def test_the_classvar_exclusion_does_not_blind_the_sweep(monkeypatch):
+def test_the_classvar_exclusion_does_not_blind_the_sweep():
     """The ``ClassVar`` exclusion must drop ``ClassVar`` and NOTHING ELSE.
 
     An exclusion is a hole until something proves how narrow it is, and this
     one was added to let a real declaration (``BaseHost.capabilities``) through
     a sweep it could never have satisfied. So: inject BOTH shapes of bare
-    annotation onto ``BaseHost``, and require the sweep to keep seeing the
-    instance one while ignoring the ``ClassVar`` twin beside it. Without the
-    first half, an exclusion widened to "every bare annotation" would still
-    pass every other assertion in this file.
+    annotation alongside ``BaseHost``'s own, and require the sweep to keep
+    seeing the instance one while ignoring the ``ClassVar`` twin beside it.
+    Without the first half, an exclusion widened to "every bare annotation"
+    would still pass every other assertion in this file.
 
     Both spellings of ``ClassVar`` are injected, because ``__annotations__``
     can hold either — see :func:`_is_class_var`.
+
+    Passed in as a plain dict rather than ``monkeypatch.setattr(BaseHost,
+    "__annotations__", injected)``: on Python 3.14, PEP 649 lazy annotations
+    mean ``"__annotations__"`` is not in ``BaseHost.__dict__``, so monkeypatch
+    records the attribute as ABSENT and undoes the patch with ``delattr``
+    instead of restoring the original value — leaving
+    ``BaseHost.__annotations__ == {}`` for every test that runs afterward in
+    the same process. ``_basehost_contract_fields`` takes the mapping as a
+    parameter precisely so this test can drive it without touching the class
+    at all.
     """
     injected = dict(BaseHost.__annotations__)
     injected["an_instance_field_nobody_declares"] = str
     injected["a_class_var_nobody_declares"] = ClassVar[str]
     injected["a_quoted_class_var_nobody_declares"] = "ClassVar[str]"
-    monkeypatch.setattr(BaseHost, "__annotations__", injected)
 
-    contract = _basehost_contract_fields()
+    contract = _basehost_contract_fields(injected)
     assert "an_instance_field_nobody_declares" in contract
     assert "a_class_var_nobody_declares" not in contract
     assert "a_quoted_class_var_nobody_declares" not in contract
