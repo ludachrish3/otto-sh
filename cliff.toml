@@ -146,3 +146,14 @@ sort_commits = "newest"
 # block back together with a token (`GITHUB_TOKEN`), and expect the render to
 # need the network — then `tests/unit/test_changelog_rendering.py` must keep
 # passing `--offline`, which it already does.
+
+[bump]
+# Pre-1.0 convention (Cargo/npm-style): with major == 0, a breaking (`!`)
+# commit bumps MINOR rather than MAJOR, and a feature bumps PATCH rather than
+# MINOR -- otherwise every breaking API change before 1.0 would jump straight
+# to v1.0.0. `make release` reads this via `git-cliff --bumped-version` as
+# the census a human's BUMP=/NEW_VERSION= may raise but never silently lower.
+# Flipping both to `true` is the 1.0 switch: once otto commits to a stable
+# API, a breaking change is a MAJOR bump like any post-1.0 project.
+breaking_always_bump_major = false
+features_always_bump_minor = false

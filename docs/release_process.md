@@ -24,10 +24,22 @@ The distribution name is `otto-sh`; the installed CLI command is `otto`.
 2. **Run `make release`.** This validates and prepares everything locally:
 
    ```bash
-   make release              # patch bump (default)
-   make release BUMP=minor   # or minor / major
+   make release              # git-cliff's conventional-commit census decides the version
+   make release BUMP=minor   # raise the census's bump (minor / major) -- a LOWER BUMP= is refused
    make release NEW_VERSION=0.4.0rc1   # explicit version, e.g. a prerelease
    ```
+
+   The version is decided by `scripts/release_bump.py`, which reads
+   `git-cliff --bumped-version` (driven by `cliff.toml`'s `[bump]` section) as
+   the census, and never lets a human override it downward: otto is pre-1.0
+   and follows the Cargo/npm convention that, while major is `0`, a breaking
+   (`!`) commit bumps MINOR and everything else bumps PATCH, so a plain
+   `make release` always ships at least what the commit history demands. A
+   `BUMP=` below the census is refused with the offending commits named;
+   `NEW_VERSION=` is the prerelease escape hatch and only warns, never
+   refuses, since a prerelease's exact number is the human's call. At 1.0,
+   `cliff.toml`'s `[bump]` section flips to standard semver (a breaking
+   change becomes a MAJOR bump).
 
    `make release` runs `typecheck`, builds the docs, runs the **full nox
    matrix across every supported Python** (this requires the dev VM with

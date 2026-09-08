@@ -11,9 +11,11 @@
 
 .PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed support-matrix web-install web web-dev test-ts web-clean wheel-check
 
-# Bump component for `make release`. Override on the command line:
+# git-cliff's conventional-commit census decides the bump by default (see
+# scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
+# on the command line:
 #   make release BUMP=minor
-BUMP ?= patch
+BUMP ?=
 
 HYPERFINE_VERSION := 1.20.0
 
@@ -283,7 +285,7 @@ changelog: ## (Build & Release) Regenerate the WHOLE of CHANGELOG.md from conven
 # git-cliff/git-add/bump-my-version commands run for real (version bump +
 # CHANGELOG staged). Never dry-run this target.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) npm ci web/, Python static checks (check-python), docs, nox, build web dist, all-browser dashboard e2e, full TS gate (validate-ts, incl. merged coverage), profile, then changelog, bump, build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
+release: ## (Build & Release) npm ci web/, Python static checks (check-python), docs, nox, build web dist, all-browser dashboard e2e, full TS gate (validate-ts, incl. merged coverage), profile, then changelog, bump, build dist (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
 	@$(MAKE) clean-dist \
 		&& $(MAKE) web-install \
 		&& $(MAKE) check-python \
@@ -294,13 +296,13 @@ release: ## (Build & Release) npm ci web/, Python static checks (check-python), 
 		&& $(MAKE) dashboard-all \
 		&& $(MAKE) validate-ts \
 		&& $(MAKE) profile \
-		&& NEW_VERSION="$${NEW_VERSION:-$$(bump-my-version show new_version --increment $(BUMP))}" \
+		&& NEW_VERSION="$$(uv run python scripts/release_bump.py)" \
 		&& $(SAY) "targeting v$$NEW_VERSION" \
 		&& $(SAY) "git-cliff → CHANGELOG.md (tagged v$$NEW_VERSION)" \
 		&& git-cliff --tag "v$$NEW_VERSION" -o CHANGELOG.md \
 		&& git add CHANGELOG.md \
 		&& $(SAY) "bump-my-version → v$$NEW_VERSION" \
-		&& bump-my-version bump --verbose --allow-dirty --new-version "$$NEW_VERSION" $(BUMP) \
+		&& bump-my-version bump --verbose --allow-dirty --new-version "$$NEW_VERSION" \
 		&& $(MAKE) wheel-check \
 		&& $(MAKE) build \
 		&& echo \
