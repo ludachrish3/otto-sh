@@ -193,7 +193,6 @@ _COMMON_PLAIN_FIELDS = (
     "has_bash",
     "max_filename_len",
     "log",
-    "log_stdout",
     "power_control",
     "session_setup",
     "landing_frame",
@@ -358,7 +357,6 @@ class HostSpec(OttoModel):
 
     interfaces: dict[str, InterfaceSpec] = Field(default_factory=dict)
     log: LogMode = LogMode.NORMAL
-    log_stdout: bool = True  # common: both UnixHost and EmbeddedHost declare it
     telnet_options: TelnetOptionsSpec = TelnetOptionsSpec()
     snmp: SnmpOptionsSpec | None = None
     toolchain: ToolchainSpec = ToolchainSpec()

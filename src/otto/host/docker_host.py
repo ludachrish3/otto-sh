@@ -134,9 +134,6 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     refusal makes the distinction there instead, where it is wanted.
     """
 
-    log_stdout: bool = field(default=True, repr=False)
-    """Whether output is mirrored to stdout in addition to log files."""
-
     _pending_run_user: "str | None" = field(default=None, init=False, repr=False)
     """Per-call ``user`` of the ``run()`` attempt CURRENTLY in flight.
 

@@ -278,13 +278,6 @@ class RemoteHost(BaseHost):
     (empty by default). Resolve a name (or pass a literal through) with
     :meth:`~otto.host.remote_host.RemoteHost.address_for`."""
 
-    log_stdout: bool = field(default=True, repr=False)
-    """Determines whether this host should log its output to stdout.
-    Commands and their output are still written to the log files unless the
-    effective :class:`~otto.logger.mode.LogMode` — this host's ``log``
-    composed with the per-command mode — is ``LogMode.NEVER``, which redacts
-    them from every sink."""
-
     _lab: "Lab | None" = field(default=None, compare=False, repr=False)
     """Back-reference to the owning Lab, wired by Lab.add_host. Lets hop
     resolution use self._lab.hosts[...] instead of ambient state."""
