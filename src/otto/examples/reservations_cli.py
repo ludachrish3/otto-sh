@@ -97,16 +97,16 @@ def main(
         str,
         typer.Option("--backend", help="Registered backend name; 'none' needs no scheduler."),
     ] = "none",
-    as_user: Annotated[
+    holder: Annotated[
         str | None,
-        typer.Option("--as-user", help="Query as this user instead of $USER."),
+        typer.Option("--holder", help="Query as this user instead of $USER."),
     ] = None,
 ) -> None:
     """Build a backend + identity from CLI flags, then delegate to `run_check`."""
     # Resolve identity before building the backend: the backend is constructed
     # with the username it will query for, so there is nothing to build until
     # we know who is asking.
-    identity = resolve_username(as_user)
+    identity = resolve_username(holder)
     try:
         backend = build_backend(
             {"backend": backend_name}, repo_dir=Path.cwd(), username=identity.username

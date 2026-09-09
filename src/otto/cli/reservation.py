@@ -76,7 +76,7 @@ def _reservation_gate(ctx: typer.Context) -> ReservationGate | None:
     try:
         gate = build_reservation_gate(
             get_repos(),
-            as_user=opts.as_user,
+            holder=opts.holder,
             skip_reservation_check=opts.skip_reservation_check,
             cwd_fallback=Path.cwd(),
         )

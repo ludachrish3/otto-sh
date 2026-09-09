@@ -350,7 +350,7 @@ class RootOptions:
     rich_log_file: bool
     show_time: bool
     dry_run: bool
-    as_user: "str | None"
+    holder: "str | None"
     skip_reservation_check: bool
     probe: bool = False
     """``--probe``: under a dry run, open a connection to each host the command
@@ -640,7 +640,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     try:
         reservation_gate = build_reservation_gate(
             repos,
-            as_user=opts.as_user,
+            holder=opts.holder,
             skip_reservation_check=opts.skip_reservation_check,
             cwd_fallback=Path.cwd(),
         )
@@ -652,10 +652,10 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
         ) from e
 
     identity = reservation_gate.identity
-    if identity is not None and identity.source == "--as-user":
+    if identity is not None and identity.source == "--holder":
         getLogger(__name__).info(
             rf"[bold magenta]\[reservations] acting as {identity.username!r}"
-            rf" (--as-user)[/bold magenta]"
+            rf" (--holder)[/bold magenta]"
         )
 
     meta["otto_reservation"] = reservation_gate

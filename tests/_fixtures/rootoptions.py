@@ -23,7 +23,7 @@ def make_root_options(**overrides: Any) -> RootOptions:
         "rich_log_file": False,
         "show_time": False,
         "dry_run": False,
-        "as_user": None,
+        "holder": None,
         "skip_reservation_check": False,
     }
     defaults.update(overrides)

@@ -179,7 +179,7 @@ init
   gate explicitly; `"json"` reads a reservation file) — a table without it,
   even a bare `[reservations]` header, refuses the load rather than silently
   allowing everything. See {doc}`../cli/reservation/index` for backends,
-  the file format, and the `--as-user` / `-R` break-glass overrides.
+  the file format, and the `--holder` / `-R` break-glass overrides.
 
 \[inventory\]
 : Optional table selecting the **host inventory** — the tool-agnostic layer a
@@ -437,7 +437,7 @@ otto for a team:
    layers its own equipment over a global database. See {doc}`host-sources`.
 3. **Decide on reservation gating** — leave it off (`backend = "none"`, the
    default) for sandbox labs, or wire `[reservations]` to your scheduler so otto
-   refuses to clobber a held rack. Tell the team about the `--as-user` and
+   refuses to clobber a held rack. Tell the team about the `--holder` and
    `-R` / `--skip-reservation-check` break-glass overrides *before* they need
    them. See {doc}`../cli/reservation/index`.
 4. **Register shared code** — put instruction/option modules under `libs` and

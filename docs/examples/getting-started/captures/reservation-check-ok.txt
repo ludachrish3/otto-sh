@@ -1,5 +1,5 @@
-$ otto --lab busybox --as-user chris reservation check
-INFO     [reservations] acting as 'chris' (--as-user)                                               
+$ otto --lab busybox --holder chris reservation check
+INFO     [reservations] acting as 'chris' (--holder)                                                
 INFO     fleet of interest: 5 of 7 lab hosts (1 repo(s), 0 excluded)                                
 reservations required by lab busybox for chris (5
                 host(s) in play)                 

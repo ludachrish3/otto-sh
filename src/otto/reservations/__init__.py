@@ -305,7 +305,7 @@ def build_backend(
 def build_reservation_gate(
     repos: "list[Repo]",
     *,
-    as_user: str | None,
+    holder: str | None,
     skip_reservation_check: bool,
     cwd_fallback: Path,
 ) -> ReservationGate:
@@ -333,7 +333,7 @@ def build_reservation_gate(
     # Resolve identity BEFORE constructing the backend: the backend is given
     # the username at construction and queries for it lazily, so there is no
     # backend to build until we know who is asking.
-    identity = resolve_username(as_user)
+    identity = resolve_username(holder)
 
     def _factory() -> ReservationBackend:
         return build_backend(reservation_settings, reservation_repo_dir, username=identity.username)

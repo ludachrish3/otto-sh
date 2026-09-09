@@ -55,7 +55,7 @@ Backends are a registry like everything else (`json`, `none` built in;
 custom schedulers register by name — {doc}`registries`), and
 {func}`otto.testing.assert_reservation_backend_conforms` verifies a custom
 one against the contract. See {doc}`../../guide/cli/reservation/index` for the
-built-in JSON backend's configuration, `--as-user`, `-R`, and the full
+built-in JSON backend's configuration, `--holder`, `-R`, and the full
 walkthrough for writing and registering a custom backend.
 
 ## Three levels, one reader

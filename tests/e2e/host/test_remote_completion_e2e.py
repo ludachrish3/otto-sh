@@ -78,7 +78,7 @@ def _must_run_on_host(host_id: str, command: str, xdir: Path) -> None:
     )
 
 
-def _ctx(host_id: str, lab: str = _LAB, as_user: "str | None" = None, term: "str | None" = None):
+def _ctx(host_id: str, lab: str = _LAB, holder: "str | None" = None, term: "str | None" = None):
     """Build the Click-context chain the completer walks (``SimpleNamespace`` is enough).
 
     *term* mirrors the real ``otto host <id> --term ssh`` override, which the
@@ -87,7 +87,7 @@ def _ctx(host_id: str, lab: str = _LAB, as_user: "str | None" = None, term: "str
     """
     from types import SimpleNamespace
 
-    root = SimpleNamespace(params={"labs": [lab], "as_user": as_user}, parent=None)
+    root = SimpleNamespace(params={"labs": [lab], "holder": holder}, parent=None)
     group = SimpleNamespace(params={"host_id": host_id, "hop": "", "term": term}, parent=root)
     return SimpleNamespace(params={}, parent=group)
 

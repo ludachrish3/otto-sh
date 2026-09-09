@@ -4,7 +4,7 @@
 otto reservation whoami
 ```
 
-Prints the resolved identity, its source (`--as-user` or `$USER`), the
+Prints the resolved identity, its source (`--holder` or `$USER`), the
 configured backend name, and the lab named on the command line (if any).
 Needs no lab at all — identity and backend come from repo settings —
 and never contacts a host.

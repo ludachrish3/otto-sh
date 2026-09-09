@@ -53,8 +53,8 @@ beside `.otto/`, with your own login name in place of `chris`:
 
 `otto reservation check` prints what the lab requires, whether the identity
 holds each, and the verdict a gated command would reach. The identity is your
-login name unless `--as-user` overrides it, and the `reservations.json` above
-names `chris`, so the walkthrough passes `--as-user`. `alice` holds nothing:
+login name unless `--holder` overrides it, and the `reservations.json` above
+names `chris`, so the walkthrough passes `--holder`. `alice` holds nothing:
 
 ```{literalinclude} ../examples/getting-started/captures/reservation-check-refused.txt
 :language: text

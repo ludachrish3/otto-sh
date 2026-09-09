@@ -1,4 +1,4 @@
-"""Tests for cached --as-user usernames + the best-effort collector."""
+"""Tests for cached --holder usernames + the best-effort collector."""
 
 import types
 

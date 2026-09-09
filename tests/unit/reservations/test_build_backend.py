@@ -323,7 +323,7 @@ def test_half_ported_backend_never_warns_into_shell_completion(
 ):
     """Completion has no log handler, so a warning here lands in the user's TAB.
 
-    ``otto --as-user <TAB>`` reaches ``build_backend`` through the completion
+    ``otto --holder <TAB>`` reaches ``build_backend`` through the completion
     cache's username collection. The root callback returns before logging is
     configured, so ``logging.lastResort`` prints any WARNING straight to
     stderr, corrupting the completion stream (spec §6.1, §8).

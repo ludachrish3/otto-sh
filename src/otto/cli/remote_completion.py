@@ -115,7 +115,7 @@ class _ChainParams:
     hop: str
     term: "str | None"
     labs: "list[str]"
-    as_user: "str | None"
+    holder: "str | None"
 
 
 def _collect_chain_params(ctx: "typer.Context") -> _ChainParams:
@@ -137,7 +137,7 @@ def _collect_chain_params(ctx: "typer.Context") -> _ChainParams:
             break
         params = getattr(node, "params", None)
         if isinstance(params, dict):
-            for key in ("host_id", "hop", "term", "labs", "as_user"):
+            for key in ("host_id", "hop", "term", "labs", "holder"):
                 if key not in found and key in params:
                     found[key] = params[key]
         node = getattr(node, "parent", None)
@@ -147,7 +147,7 @@ def _collect_chain_params(ctx: "typer.Context") -> _ChainParams:
         hop=found.get("hop") or "",
         term=found.get("term") or None,
         labs=[x for x in labs if isinstance(x, str)] if isinstance(labs, list) else [],
-        as_user=found.get("as_user") or None,
+        holder=found.get("holder") or None,
     )
 
 
@@ -453,7 +453,7 @@ def _reservation_allows(chain: _ChainParams) -> bool:
     if not required:
         return True
 
-    username = resolve_username(chain.as_user).username
+    username = resolve_username(chain.holder).username
     now = datetime.now(tz=timezone.utc)
     cached = cached_reservation_ok(username, required, now)
     if cached is not None:
@@ -461,7 +461,7 @@ def _reservation_allows(chain: _ChainParams) -> bool:
 
     gate = build_reservation_gate(
         repos,
-        as_user=chain.as_user,
+        holder=chain.holder,
         skip_reservation_check=False,
         cwd_fallback=Path.cwd(),
     )
@@ -473,7 +473,7 @@ def _reservation_allows(chain: _ChainParams) -> bool:
     if backend is None or is_null_backend(backend):
         return True
     # The backend queries for the username it was CONSTRUCTED with, and the
-    # gate above was built from the same ``chain.as_user`` that ``username``
+    # gate above was built from the same ``chain.holder`` that ``username``
     # was resolved from — so the two agree, but only by construction.
     reservations = active_reservations(backend)
     store_reservations(username, reservations, now)

@@ -1,31 +1,31 @@
 # Identity and overrides
 
 By default otto queries the backend using `getpass.getuser()` — i.e.
-your shell login.  Pass `--as-user` on the top-level callback to query
+your shell login.  Pass `--holder` on the top-level callback to query
 as someone else:
 
 ```bash
-otto --as-user alice test TestSmoke
-otto --as-user alice host router1 run "uname -a"
+otto --holder alice test TestSmoke
+otto --holder alice host router1 run "uname -a"
 ```
 
-When `--as-user` is on the command line, otto prints a bold-magenta
+When `--holder` is on the command line, otto prints a bold-magenta
 banner before the command runs:
 
 ```text
-[reservations] acting as alice (--as-user)
+[reservations] acting as alice (--holder)
 ```
 
 The banner fires only in that one case.  On a normal run (no
-`--as-user`) there is no banner — you already know who you are.
+`--holder`) there is no banner — you already know who you are.
 
 ## Username tab-completion
 
-If your backend can enumerate its users, otto offers them as `--as-user`
+If your backend can enumerate its users, otto offers them as `--holder`
 tab-completion values. A backend opts in by implementing the optional
 [`SupportsUsernameCompletion`](../../../api/reservations.rst) capability — a single
 `list_usernames() -> list[str]` method. Otto detects it structurally; backends
-that can't list users simply omit it and `--as-user` still accepts free-form
+that can't list users simply omit it and `--holder` still accepts free-form
 input.
 
 The values are cached with the same policy as host ids (otto's completion cache,
@@ -37,7 +37,7 @@ them — so a repo that configures one falls back to a short cache lifetime
 no suggestions and refreshes on the next normal run — completion never blocks on
 the backend.
 
-Real situations where `--as-user` is the right tool:
+Real situations where `--holder` is the right tool:
 
 - A teammate has a shared rack booked under their name; you need to run
   a one-off `otto host` command against it without rebooking.

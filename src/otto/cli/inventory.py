@@ -10,7 +10,7 @@ Lab-free, and settings-only: §8 resolves the process inventory from the active
 repos' ``[inventory]`` tables and the user settings file, and from nothing
 else — no lab, no root option and no host reaches it. That is why the verbs
 below take no ``typer.Context``: unlike ``otto reservation whoami``, which
-reads ``--as-user``/``-R`` off the root options, there is nothing on the
+reads ``--holder``/``-R`` off the root options, there is nothing on the
 context an inventory answer depends on.
 
 IMPORT DISCIPLINE: everything from :mod:`otto.inventory` and

@@ -108,14 +108,14 @@ labless = true
 project = "getting-started"
 settings_append = "reservations.toml"
 expect_exit = 1
-argv = ["{otto}", "--lab", "busybox", "--as-user", "alice", "reservation", "check"]
+argv = ["{otto}", "--lab", "busybox", "--holder", "alice", "reservation", "check"]
 
 [[capture]]
 id = "reservation-check-ok"
 labless = true
 project = "getting-started"
 settings_append = "reservations.toml"
-argv = ["{otto}", "--lab", "busybox", "--as-user", "chris", "reservation", "check"]
+argv = ["{otto}", "--lab", "busybox", "--holder", "chris", "reservation", "check"]
 
 [[capture]]
 id = "session-setup-test1"

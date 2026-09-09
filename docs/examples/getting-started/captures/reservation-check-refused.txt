@@ -1,5 +1,5 @@
-$ otto --lab busybox --as-user alice reservation check
-INFO     [reservations] acting as 'alice' (--as-user)                                               
+$ otto --lab busybox --holder alice reservation check
+INFO     [reservations] acting as 'alice' (--holder)                                                
 INFO     fleet of interest: 5 of 7 lab hosts (1 repo(s), 0 excluded)                                
 reservations required by lab busybox for alice (5
                 host(s) in play)                 

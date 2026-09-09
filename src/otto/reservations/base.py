@@ -57,7 +57,7 @@ class ReservationBackendBase(ABC):
         The SUT repo root. Otto always passes it; anchor any relative
         path-like setting of your own against it.
     username : str | None
-        The identity otto resolved for this invocation (``--as-user`` or the
+        The identity otto resolved for this invocation (``--holder`` or the
         login name). Otto always passes it; it is what :attr:`reservations`
         queries for.
     """

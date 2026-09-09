@@ -130,7 +130,7 @@ def log_level_callback(value: str) -> str:
 
 @completion_source(kind="payload", key="usernames", sort=True)
 def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
-    """Completion source for ``--as-user``: usernames the reservation backend knows.
+    """Completion source for ``--holder``: usernames the reservation backend knows.
 
     Prefers the completion-cache snapshot (slow-path populated, so no backend is
     built in the completion fast path); falls back to a live best-effort
@@ -625,10 +625,10 @@ def main(  # noqa: PLR0913 — CLI command params
             help="Show program version and exit.",
         ),
     ] = None,
-    as_user: Annotated[
+    holder: Annotated[
         str | None,
         typer.Option(
-            "--as-user",
+            "--holder",
             metavar="USERNAME",
             autocompletion=_username_completer,
             help=(
@@ -698,7 +698,7 @@ def main(  # noqa: PLR0913 — CLI command params
         show_time=show_time,
         dry_run=dry_run,
         probe=probe,
-        as_user=as_user,
+        holder=holder,
         skip_reservation_check=skip_reservation_check,
         include_projects=tuple(include_projects or ()),
         exclude_projects=tuple(exclude_projects or ()),

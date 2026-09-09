@@ -487,7 +487,7 @@ def test_check_table_does_not_credit_a_foreign_users_row(capsys, monkeypatch):
 
 
 def test_whoami_builds_backend_on_demand(capsys):
-    identity = ResolvedIdentity(username="alice", source="--as-user")
+    identity = ResolvedIdentity(username="alice", source="--holder")
     # -R shape: backend not built, but a factory is available.
     res = ReservationGate(
         backend=None,
@@ -542,7 +542,7 @@ def test_check_without_lab_exits_with_usage_error(capsys):
 
 
 def test_check_builds_backend_on_demand(capsys, monkeypatch):
-    identity = ResolvedIdentity(username="alice", source="--as-user")
+    identity = ResolvedIdentity(username="alice", source="--holder")
     res = ReservationGate(
         backend=None,
         identity=identity,
@@ -631,7 +631,7 @@ def test_check_still_warns_under_skip_reservation_check(capsys, monkeypatch, cap
     """
     import logging
 
-    identity = ResolvedIdentity(username="alice", source="--as-user")
+    identity = ResolvedIdentity(username="alice", source="--holder")
     res = ReservationGate(
         backend=None,
         identity=identity,

@@ -23,7 +23,7 @@ def test_skip_does_not_build_backend(tmp_path, monkeypatch):
     monkeypatch.setattr(r, "build_backend", _spy)
     gate = build_reservation_gate(
         [_repo({"backend": "none"}, tmp_path)],
-        as_user=None,
+        holder=None,
         skip_reservation_check=True,
         cwd_fallback=tmp_path,
     )
@@ -35,7 +35,7 @@ def test_skip_does_not_build_backend(tmp_path, monkeypatch):
 def test_no_skip_builds_backend(tmp_path):
     gate = build_reservation_gate(
         [_repo({"backend": "none"}, tmp_path)],
-        as_user=None,
+        holder=None,
         skip_reservation_check=False,
         cwd_fallback=tmp_path,
     )
@@ -46,7 +46,7 @@ def test_no_skip_builds_backend(tmp_path):
 def test_factory_builds_on_demand(tmp_path):
     gate = build_reservation_gate(
         [_repo({"backend": "none"}, tmp_path)],
-        as_user=None,
+        holder=None,
         skip_reservation_check=True,
         cwd_fallback=tmp_path,
     )
@@ -61,7 +61,7 @@ def test_factory_passes_resolved_username(tmp_path):
     """
     gate = build_reservation_gate(
         [_repo({"backend": "none"}, tmp_path)],
-        as_user="bob",
+        holder="bob",
         skip_reservation_check=True,
         cwd_fallback=tmp_path,
     )
@@ -76,21 +76,21 @@ def test_build_failure_propagates(tmp_path, monkeypatch):
     with pytest.raises(ReservationBackendError):
         build_reservation_gate(
             [_repo({"backend": "x"}, tmp_path)],
-            as_user=None,
+            holder=None,
             skip_reservation_check=False,
             cwd_fallback=tmp_path,
         )
 
 
-def test_as_user_sets_identity(tmp_path):
+def test_holder_sets_identity(tmp_path):
     gate = build_reservation_gate(
         [_repo({"backend": "none"}, tmp_path)],
-        as_user="bob",
+        holder="bob",
         skip_reservation_check=False,
         cwd_fallback=tmp_path,
     )
     assert gate.identity.username == "bob"
-    assert gate.identity.source == "--as-user"
+    assert gate.identity.source == "--holder"
 
 
 class TestAPresentTableMustNameItsBackend:

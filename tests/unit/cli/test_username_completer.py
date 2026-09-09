@@ -1,4 +1,4 @@
-"""Tests for the --as-user shell-completion callback."""
+"""Tests for the --holder shell-completion callback."""
 
 
 def test_username_completer_prefers_cache(monkeypatch):

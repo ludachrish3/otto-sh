@@ -292,7 +292,7 @@ HAND_WRITTEN = [
     ("otto -l west docker up --on ", 6),
     ("otto -I ", 2),
     ("otto -I s", 2),
-    ("otto --as-user ", 2),
+    ("otto --holder ", 2),
     ("otto plug ", 2),
     ("otto plug nest leaf --kind f", 5),
     ("otto plug nest leaf ", 4),

@@ -194,7 +194,7 @@ normal `MissingReservationError` path, which does not mention `-R`.
 : Expected when the check is working correctly.  One line follows per
   missing identifier and the level and owner that required it — read it as
   "reserve *this* thing" rather than "reserve the lab".  Either reserve the
-  listed resources in your scheduler, pass `--as-user` if the booking
+  listed resources in your scheduler, pass `--holder` if the booking
   is in someone else's name, or (if you're certain the data is wrong)
   use `-R` for one command.
 
@@ -215,7 +215,7 @@ normal `MissingReservationError` path, which does not mention `-R`.
 Check passes locally but fails in CI
 : CI runs under a different username (often a service account).  Either
   reserve resources under that service account, or pass
-  `--as-user SERVICE_USER` in the CI invocation so otto queries the
+  `--holder SERVICE_USER` in the CI invocation so otto queries the
   scheduler under the right identity.
 
 ```{toctree}

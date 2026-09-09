@@ -388,7 +388,7 @@ tightening the contract. Otto passes it for its own documentation example — se
   anchor any relative path-like settings your own backend accepts, the same
   way custom lab backends do, and `username` as the identity `reservations`
   queries for.
-- **Optionally implement `list_usernames()`** to power cached `--as-user`
+- **Optionally implement `list_usernames()`** to power cached `--holder`
   completion (see [Username tab-completion](../guide/cli/reservation/identity.md#username-tab-completion)).
 - **Optionally implement `holders()`** if your scheduler can answer the
   inverted query — see [above](#the-optional-holders-capability).

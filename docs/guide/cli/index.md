@@ -33,7 +33,7 @@ These options are available on every `otto` command:
 | `--show-time, -t` | | `False` | Show per-line timestamps on the live console (log files are always timestamped) |
 | `--dry-run, -n` | | `False` | Validate, print what would run, and exit 0 **before the command body runs**. Never runs a command on any device — see {doc}`dry-run` |
 | `--probe` | | `False` | With `--dry-run`: open a connection to each host the command names and report reachability. A connection only — never a command |
-| `--as-user USERNAME` | | current user | Check reservations as USERNAME instead of the current user |
+| `--holder USERNAME` | | current user | Check reservations as USERNAME instead of the current user |
 | `--skip-reservation-check, -R` | | `False` | Bypass the reservation check entirely (emergency use only) |
 | `--list-labs` | | | List available lab names and exit |
 | `--list-hosts` | | | List host IDs in the loaded lab and exit |

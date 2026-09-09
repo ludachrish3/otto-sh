@@ -70,7 +70,7 @@ def test_cli_exits_1_when_identity_is_missing_a_resource(monkeypatch):
         "build_backend",
         lambda settings, repo_dir, username=None: ExampleReservationBackend(username=username),
     )
-    result = runner.invoke(app, ["--resource", "lab-a", "--as-user", "carol"])
+    result = runner.invoke(app, ["--resource", "lab-a", "--holder", "carol"])
     assert result.exit_code == 1
 
 

@@ -129,7 +129,7 @@ class TestEagerOptions:
         assert "otto" in result.output.lower() or "OTTO" in result.output
 
     def test_root_reservation_flag_untouched(self, monkeypatch: pytest.MonkeyPatch):
-        # Task 8 pin: `--as-user` on the root command is reservation identity
+        # Task 8 pin: `--holder` on the root command is reservation identity
         # (see otto.reservations.identity) — a different concept from the
         # per-call `user=`/`--user` Tasks 1-7 threaded through host verbs.
         # Task 1 renamed the host-verb flag to `--user`; the root reservation
@@ -141,7 +141,7 @@ class TestEagerOptions:
         monkeypatch.setenv("COLUMNS", "300")
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "--as-user" in result.output
+        assert "--holder" in result.output
 
     def test_list_labs_exits_zero(self):
         # get_repos() returns [] in test env; just verifies the flag is accepted

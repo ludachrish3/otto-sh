@@ -103,9 +103,9 @@ def test_present_home_directory_keeps_tilde():
 ####################
 
 
-def _ctx(host_id="dut1", labs=("unix",), as_user=None):
+def _ctx(host_id="dut1", labs=("unix",), holder=None):
     """A mock Click context chain: leaf command -> `otto host` group -> root."""
-    root = SimpleNamespace(params={"labs": list(labs), "as_user": as_user}, parent=None)
+    root = SimpleNamespace(params={"labs": list(labs), "holder": holder}, parent=None)
     group = SimpleNamespace(params={"host_id": host_id, "hop": "", "term": None}, parent=root)
     return SimpleNamespace(params={}, parent=group)
 
@@ -125,17 +125,17 @@ def _patch_happy(monkeypatch, listing):
 
 
 def test_chain_walk_takes_each_key_from_the_innermost_context_that_has_it():
-    chain = rc._collect_chain_params(_ctx(host_id="dut2", labs=("unix",), as_user="carol"))
+    chain = rc._collect_chain_params(_ctx(host_id="dut2", labs=("unix",), holder="carol"))
     assert chain.host_id == "dut2"
     assert chain.labs == ["unix"]
-    assert chain.as_user == "carol"
+    assert chain.holder == "carol"
 
 
 def test_chain_walk_survives_a_self_referential_mock():
     node = SimpleNamespace(params="not-a-dict")
     node.parent = node
     assert rc._collect_chain_params(node) == rc._ChainParams(
-        host_id="", hop="", term=None, labs=[], as_user=None
+        host_id="", hop="", term=None, labs=[], holder=None
     )
 
 
@@ -249,8 +249,8 @@ def test_any_exception_yields_empty(monkeypatch):
 ####################
 
 
-def _chain(as_user="carol", labs=("unix",), host_id="dut1"):
-    return rc._ChainParams(host_id=host_id, hop="", term=None, labs=list(labs), as_user=as_user)
+def _chain(holder="carol", labs=("unix",), host_id="dut1"):
+    return rc._ChainParams(host_id=host_id, hop="", term=None, labs=list(labs), holder=holder)
 
 
 @pytest.fixture
@@ -265,7 +265,7 @@ def gate_env(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "otto.reservations.identity.resolve_username",
-        lambda as_user: SimpleNamespace(username="carol", source="$USER"),
+        lambda holder: SimpleNamespace(username="carol", source="$USER"),
     )
     monkeypatch.setattr(rc, "_required_for", lambda chain: {"r1"})
     return main
@@ -532,7 +532,7 @@ def test_required_for_adds_the_hop_when_it_is_outside_the_fleet(monkeypatch, tmp
     monkeypatch.setattr("otto.config.get_ordered_repos", lambda: [repo])
     monkeypatch.setattr("otto.cli.invoke.build_lab_from_repos", lambda repos, labnames: lab)
 
-    chain = rc._ChainParams(host_id="slot1", hop="slot2", term=None, labs=["rig"], as_user="carol")
+    chain = rc._ChainParams(host_id="slot1", hop="slot2", term=None, labs=["rig"], holder="carol")
     assert rc._required_for(chain) == {"slot-1", "slot-2"}
 
 
@@ -567,7 +567,7 @@ def test_gate_never_skips_under_dash_r(monkeypatch, gate_env):
     """-R must not reach the completion gate: the backend is always constructed."""
     seen = {}
 
-    def _build(repos, *, as_user, skip_reservation_check, cwd_fallback):
+    def _build(repos, *, holder, skip_reservation_check, cwd_fallback):
         seen["skip"] = skip_reservation_check
         return SimpleNamespace(backend=_Backend([_res("r1")]))
 
@@ -867,7 +867,7 @@ rc._store_listing_for = lambda host_id, directory, entries: None
 rc._release_context = lambda token: None
 rc._live_listing = _warn_then_list
 
-root = SimpleNamespace(params={"labs": ["unix"], "as_user": None}, parent=None)
+root = SimpleNamespace(params={"labs": ["unix"], "holder": None}, parent=None)
 group = SimpleNamespace(params={"host_id": "dut1"}, parent=root)
 got = rc.remote_path_completer(SimpleNamespace(params={}, parent=group), "/var/")
 assert got == ["/var/logs/"], got

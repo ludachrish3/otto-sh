@@ -490,7 +490,7 @@ def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
 
     - any ``[[lab.sources]]`` entry with a non-json backend (hosts, lab
       names).
-    - any ``[reservations]`` backend (``--as-user`` names). The built-in json
+    - any ``[reservations]`` backend (``--holder`` names). The built-in json
       reservation backend does not implement username completion at all, so
       that field is populated *exclusively* by custom, typically networked
       backends — the same constant-digest problem, one field over.
@@ -1546,7 +1546,7 @@ def collect_cli_commands() -> list[dict[str, Any]]:
 
 
 def collect_reservation_usernames(repos: list["Repo"]) -> list[str]:
-    """Best-effort usernames for ``--as-user`` completion (cached).
+    """Best-effort usernames for ``--holder`` completion (cached).
 
     Builds the selected reservation backend (first repo with a
     ``[reservations]`` section) and, when it implements
