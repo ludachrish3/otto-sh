@@ -31,7 +31,7 @@ from otto.utils import wait_for
 
 _CHILD = """
 import asyncio, os, signal, sys, time
-from otto.lifecycle import register_force_exit_hook, sync_phase
+from otto.lifecycle import register_force_exit_hook, run_command, sync_phase
 
 mode = sys.argv[1]
 # Only the wedged mode wants a fast deadline; everywhere else a live 1s
@@ -46,6 +46,23 @@ with sync_phase(deadline=deadline, what="probe") as guard:
     try:
         # Mid-flight positive control: the guard's handler is installed.
         assert signal.getsignal(signal.SIGINT) is not signal.default_int_handler
+        if mode == "nested":
+            # The everyday nested shape, run for real rather than mimicked:
+            # `otto test` runs a whole pytest session inside this phase and
+            # any suite reaching run_command lands here. asyncio's
+            # remove_signal_handler restores default_int_handler/SIG_DFL —
+            # never the PRIOR handler — so an unguarded nested command hands
+            # the phase's dispositions to asyncio's defaults on its way out.
+            run_command(asyncio.sleep(0))
+            # Mid-flight positive controls, one per disposition: the phase
+            # still owns both, so its two stages both still exist.
+            assert signal.getsignal(signal.SIGINT) is not signal.default_int_handler, (
+                "nested command disarmed SIGINT"
+            )
+            assert signal.getsignal(signal.SIGTERM) is not signal.SIG_DFL, (
+                "nested command disarmed SIGTERM"
+            )
+            print("NEST-DONE", flush=True)
         if mode == "stolen":
             # An async command running INSIDE the phase — the everyday shape,
             # since `otto test` runs a whole pytest session inside one and any
@@ -62,8 +79,24 @@ with sync_phase(deadline=deadline, what="probe") as guard:
             asyncio.run(_borrow())
             assert signal.set_wakeup_fd(-1) == -1, "premise broken: fd was NOT dropped"
             print("FD-STOLEN", flush=True)
-        print("PHASE-START", flush=True)
-        time.sleep(30)
+        if mode == "nested-live":
+            # The interrupt must land while the nested command is STILL
+            # RUNNING — the shape a user actually produces by pressing Ctrl-C
+            # during `otto test`. An installing nested command owns the
+            # signals at that instant, so its own loop callback eats the
+            # interrupt and the SystemExit it raises leaves the phase's
+            # teardown unentered. PHASE-START is printed from INSIDE the
+            # coroutine on purpose: run_command installs its handlers before
+            # the body runs, so announcing from here is what puts the parent's
+            # signal in the live window instead of the race that precedes it.
+            async def _live():
+                print("PHASE-START", flush=True)
+                await asyncio.sleep(30)
+
+            run_command(_live())
+        else:
+            print("PHASE-START", flush=True)
+            time.sleep(30)
         print("PHASE-UNREACHED", flush=True)
     except KeyboardInterrupt:
         if mode == "stranded":
@@ -76,9 +109,14 @@ with sync_phase(deadline=deadline, what="probe") as guard:
             # handler did not run", made deterministic instead of racy.
             signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
         print("TEARDOWN-START", flush=True)
+        if mode.startswith("nested"):
+            # The arming evidence, reported from inside the teardown: the
+            # phase recorded the first signal, so its deadline is counting
+            # and a second signal has something to force.
+            print("ARMED=%r" % (guard.interrupted_signum,), flush=True)
         if mode == "graceful":
             print("TEARDOWN-DONE", flush=True)
-        else:  # wedged/double/stranded: teardown never finishes on its own
+        else:  # every wedged mode: teardown never finishes on its own
             time.sleep(30)
 print("PHASE-EXITED", flush=True)
 if guard.interrupted_signum is None:
@@ -535,6 +573,78 @@ def test_second_signal_forces_after_asyncio_takes_the_wakeup_fd_away(tmp_path):
         f"forced exit took {elapsed:.1f}s — the second signal did not force, so the "
         f"handler channel died with the wakeup fd; child said:\n{out[-4000:]}"
     )
+
+
+def test_a_nested_run_command_leaves_the_phase_armed(tmp_path):
+    """A command run INSIDE a phase must hand the signals back, not to asyncio.
+
+    ``run_command`` installs its own loop-callback handlers with
+    ``add_signal_handler``, and asyncio's ``remove_signal_handler`` restores
+    ``default_int_handler`` for SIGINT and ``SIG_DFL`` for everything else —
+    never the handler it displaced. So a phase that nests one ordinary
+    command comes out the other side with NO handlers of its own: the first
+    signal is a bare ``KeyboardInterrupt`` that arms nothing (no deadline, no
+    notice, no watchdog countdown), and the second lands on ``SIG_DFL`` and
+    kills the process outright — force-exit hooks skipped, the bounded log
+    flush skipped, teardown abandoned without the exit code that says so.
+
+    That is the flagship shape, not a corner: ``otto test`` runs a whole
+    pytest session inside a phase and any suite reaching ``run_command``
+    lands here. The dispositions are asserted child-side the moment the
+    nested command returns; ``ARMED=`` is the same claim measured one stage
+    later, from inside the teardown the first signal is supposed to start.
+    Immediacy is its siblings' subject — this test only asks that the two
+    stages still EXIST after nesting.
+    """
+    with _spawned(tmp_path, "nested") as child:
+        _wait_line(child, "NEST-DONE")  # dispositions asserted child-side
+        _wait_line(child, "PHASE-START")
+        os.kill(child.pid, signal.SIGINT)  # first signal: must arm the phase
+        _wait_line(child, "TEARDOWN-START")
+        armed = _wait_line(child, "ARMED=")[-1]
+        os.kill(child.pid, signal.SIGTERM)  # second signal: must reach the guard
+        rc, out = _finish(child)
+    assert armed == f"ARMED={int(signal.SIGINT)}", (
+        f"the phase did not record the first signal ({armed!r}) — it was disarmed, "
+        f"so nothing is counting its teardown deadline; child said:\n{out[-4000:]}"
+    )
+    assert "FORCE-HOOK" in out
+    assert "PHASE-EXITED" not in out
+    # 130, not 143: the guard exits 128 + the FIRST signal it saw. A SIG_DFL
+    # kill by the second one is rc=-15, which this pins apart from a force.
+    assert rc == 130, f"expected 128+SIGINT from the guard's force path, got {rc}"
+
+
+def test_an_interrupt_during_a_nested_command_reaches_the_phase(tmp_path):
+    """Ctrl-C while a nested command runs belongs to the PHASE, not the command.
+
+    The sibling above covers a nested command that has already returned; this
+    is the live window, and it is the one a user actually produces — pressing
+    Ctrl-C during ``otto test`` while some suite sits inside ``run_command``.
+    An installing nested command owns the dispositions at that instant, so its
+    own loop callback takes the signal, cancels its little body, and raises
+    ``SystemExit(130)`` out of the phase — whose teardown therefore never
+    starts and whose watchdog never arms. Deferring hands the interrupt to the
+    guard instead: ``SyncPhaseInterrupt`` unwinds the nested loop (its
+    finalization cancels the body exactly as the loop callback would have) and
+    surfaces in the phase's own teardown, where the deadline is counting and a
+    second signal has something to force.
+    """
+    with _spawned(tmp_path, "nested-live") as child:
+        _wait_line(child, "PHASE-START")
+        os.kill(child.pid, signal.SIGINT)  # lands INSIDE the nested command
+        _wait_line(child, "TEARDOWN-START")  # ...and the phase still gets it
+        armed = _wait_line(child, "ARMED=")[-1]
+        os.kill(child.pid, signal.SIGTERM)
+        rc, out = _finish(child)
+    assert armed == f"ARMED={int(signal.SIGINT)}", (
+        f"the phase did not record the interrupt ({armed!r}) — the nested command "
+        f"consumed it; child said:\n{out[-4000:]}"
+    )
+    assert "PHASE-UNREACHED" not in out, "the nested command was not cancelled"
+    assert "FORCE-HOOK" in out
+    assert "PHASE-EXITED" not in out
+    assert rc == 130, f"expected 128+SIGINT from the guard's force path, got {rc}"
 
 
 def test_wakeup_fd_is_taken_only_when_nobody_else_owns_it(real_sync_phase):

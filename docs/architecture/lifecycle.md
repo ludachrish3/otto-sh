@@ -153,6 +153,23 @@ connections. That *composes* the primitive rather than escaping it: the exit
 contract is identical, only the graceful path belongs to pytest instead of
 to the scope.
 
+Commands nested inside a phase **defer to it**. `run_command()` installs its
+handlers with `add_signal_handler`, and asyncio restores
+`default_int_handler`/`SIG_DFL` when it removes them — never the handler it
+displaced — so an installing nested command would hand the enclosing phase's
+signals to asyncio's defaults on its way out and delete both of its stages.
+Since a pytest session inside `otto test` reaches `run_command()` from any
+suite that touches a host, that is the ordinary case, not a corner. So a
+command that finds a phase in force leaves the dispositions alone and lets
+the phase's own handler deliver the interrupt: a `KeyboardInterrupt` raised
+into a live nested command unwinds its loop — which cancels the body exactly
+as the loop callback would have — and surfaces in the phase's teardown.
+
+
+A nested command has no separate teardown budget of its own: deferring means
+its loop callback never arms one, and the phase's deadline bounds the whole
+interrupted unwind, sweep included.
+
 `async def` is necessary but not sufficient. The async handler is installed
 with `loop.add_signal_handler`, which makes it a loop callback — so a body
 that blocks the loop (a bare `subprocess.run`, a `time.sleep`) is exactly as

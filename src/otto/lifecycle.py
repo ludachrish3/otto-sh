@@ -65,6 +65,22 @@ _FORCE_AFTER_DELIVERIES = 2
 """Signal deliveries that trip the force path: the first arms the teardown
 deadline, the second stops waiting. The two-stage policy's whole content."""
 
+_phase_guards: "list[Any]" = []
+"""Live :func:`sync_phase` guards that hold the process's SIGINT/SIGTERM.
+
+A guard joins only once its handlers are actually installed, so an inert
+phase (``install_handlers=False``) never appears here. Read by
+:func:`run_command`, which leaves the dispositions alone while a phase owns
+them — see :func:`_phase_owns_signals`. Main-thread-only state: ``sync_phase``
+refuses to install handlers off the main thread, so this is only ever mutated
+there, and a nested command on a worker thread already declines to install
+(``add_signal_handler`` raises there)."""
+
+
+def _phase_owns_signals() -> bool:
+    """Report whether a handler-installing :func:`sync_phase` is in force."""
+    return bool(_phase_guards)
+
 
 # Deliberately NOT rooted on otto.errors.OttoError: re-parenting onto an
 # Exception-rooted base would make this catchable by `except Exception`,
@@ -383,8 +399,20 @@ def sync_phase(
         guard._start()  # noqa: SLF001 — sync_phase owns its guard's lifecycle
         for sig in (signal.SIGINT, signal.SIGTERM):
             prior[sig] = signal.signal(sig, guard._on_signal)  # noqa: SLF001
+        # Joined once the handlers are actually installed, so a nested command
+        # never defers to a phase that does not own the signals.
+        _phase_guards.append(guard)
         yield guard
     finally:
+        # Unconditional, and by IDENTITY: a "did I join?" flag would be a
+        # one-bytecode window of exactly the kind this entry path already has
+        # — a signal landing between the append and the flag's store would
+        # leave this guard in the list for the life of the process, and every
+        # later command would silently defer to a phase that had ended. The
+        # suppress covers the entry that raised before joining; removal can
+        # never take an enclosing phase's guard, which is a different object.
+        with contextlib.suppress(ValueError):
+            _phase_guards.remove(guard)
         # Order matters: close the guard's ears first (making _on_signal a
         # no-op), THEN restore handlers — built incrementally above, so an
         # entry-window raise restores exactly what was installed — THEN
@@ -810,7 +838,21 @@ def run_command(
     a ``_CommandRun(install_handlers=False)`` they hold a reference to.
     """
     deadline = _resolve_teardown_deadline() if teardown_deadline is None else teardown_deadline
-    ctrl = _controller if _controller is not None else _CommandRun(teardown_deadline=deadline)
+    ctrl = (
+        _controller
+        if _controller is not None
+        # A command nested inside a sync_phase leaves the dispositions ALONE.
+        # asyncio's remove_signal_handler restores default_int_handler/SIG_DFL
+        # rather than the handler it displaced, so an installing nested
+        # command hands the enclosing phase's signals to asyncio's defaults on
+        # its way out — deleting the phase's two stages outright: the next
+        # SIGINT arms nothing and the next SIGTERM kills at SIG_DFL, skipping
+        # the force hooks and the bounded log flush. Deferring costs the
+        # nested body nothing, because the phase delivers the same two stages
+        # to it: the guard's KeyboardInterrupt lands inside this loop and
+        # cancels the body exactly as the loop callback would have.
+        else _CommandRun(teardown_deadline=deadline, install_handlers=not _phase_owns_signals())
+    )
     try:
         return asyncio.run(ctrl._main(coro))  # noqa: SLF001 (_main is test-visible seam, required for tier-1 state machine testing)
     except _InterruptedCommand as exc:
