@@ -182,6 +182,7 @@ otto:Results
 otto:RunOptions
 otto:SetupContext
 otto:ShellResult
+otto:Status
 otto:all_hosts
 otto:app
 otto:cli_command

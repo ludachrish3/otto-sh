@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from otto.project.state import InstallState
     from otto.result import CommandResult, Result, Results, ShellResult
     from otto.suite.run import RunOptions, run_suite
+    from otto.utils import Status
 
     from .config import all_hosts, get_host, get_lab, load_lab, run_on_all_hosts
     from .context import OttoContext, get_context, open_context, try_get_context
@@ -53,6 +54,7 @@ __all__ = [
     "RunOptions",
     "SetupContext",
     "ShellResult",
+    "Status",
     "all_hosts",
     "app",
     "cli_command",
@@ -101,6 +103,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "ShellResult": ("otto.result", "ShellResult"),
     "run_suite": ("otto.suite.run", "run_suite"),
     "RunOptions": ("otto.suite.run", "RunOptions"),
+    "Status": ("otto.utils", "Status"),
 }
 
 
