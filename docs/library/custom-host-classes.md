@@ -41,7 +41,7 @@ from otto.host.command_frame import ZephyrFrame
 from otto.host.os_profile import register_host_class
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class MyRtosHost(EmbeddedHost):
     """Custom RTOS host with project-specific defaults."""
 
@@ -52,6 +52,14 @@ class MyRtosHost(EmbeddedHost):
 
 register_host_class("my-rtos", MyRtosHost)
 ```
+
+`kw_only=True` is what keeps the constructor the shape every in-tree family
+has: `MyRtosHost(ip)` positionally, everything else by keyword.  Without it
+your three overrides join the positional signature behind `ip` —
+`MyRtosHost(ip, os_type, os_name, command_frame)` — which no otto host has.
+If your class genuinely needs a positional parameter of its own, keep the
+class `kw_only=True` and mark that one field `field(kw_only=False)`, the way
+{class}`~otto.host.remote_host.RemoteHost` marks `ip`.
 
 Your class must also declare a `capabilities`
 ({class}`~otto.host.capability_grid.HostCapabilities`) saying what its verbs
@@ -64,14 +72,42 @@ inherits theirs; redeclare only where yours differs.
 re-declares `os_type`, `os_name`, and `command_frame` as class-level field
 defaults and is registered under `"zephyr"` at module load.
 
-Subclassing `EmbeddedHost` or `UnixHost` inherits every field otto's loader
-stamps.  A class that subclasses `RemoteHost` (or `BaseHost`) **directly** must
-declare them itself — among them `resources`, `element`, `inventory_ref` and
-`lab_info`, each with its own `field(...)` default.  Neither `RemoteHost` nor `BaseHost` is a
-dataclass, so their annotations are a contract the type checker credits to
-every subclass while creating no attribute and no dataclass field: the first
-read raises `AttributeError`.  The failure is loud and happens at load rather
-than mid-run, but nothing warns you before it.
+### What you inherit, and what you may re-declare
+
+{class}`~otto.host.host.BaseHost` and {class}`~otto.host.remote_host.RemoteHost`
+are `@dataclass(kw_only=True)` bases, and each shared field — its type, its
+docstring, its default — is declared there exactly once.  `BaseHost` holds what
+all five families answer; `RemoteHost` holds what the networked families add.
+A subclass inherits the lot with its defaults already in place, whether it
+subclasses `EmbeddedHost`, `UnixHost`, or `RemoteHost`/`BaseHost` directly:
+there is nothing to copy, and no field you must re-declare to make it exist.
+The field-by-field reference is generated from the classes themselves — see
+{class}`~otto.host.host.BaseHost` and {class}`~otto.host.remote_host.RemoteHost`
+in the API pages.
+
+Re-declare a base field only to change its *value policy*: a different default,
+`init=False`, or "required here".  Do it keyword-only — either under a
+`kw_only=True` class as above, or as `field(kw_only=True, ...)` on that one
+line — so the override cannot shift the positional signature.  An override
+carries **no docstring**: the docstring lives with the field's one home, and
+`tests/unit/host/test_field_homes.py` holds otto's own leaves to that shape.
+
+### Migrating a subclass written before the bases became dataclasses
+
+Three things moved when the bases became dataclasses:
+
+- **Hosts are value-compared and unhashable.** The bases generate `__eq__`, so
+  `__hash__` is `None` on every host class, decorated or not.  A host can no
+  longer be a dict key or a set member — key on `host.id` instead.
+- **`element` is keyword-only on the embedded family.** It used to be the
+  second positional argument of `EmbeddedHost`; pass `element=` now.
+- **The `Host` protocol names four more members** — `app_shell`, `as_user`,
+  `switch_user` and the `current_user` property.  They were always there on
+  `BaseHost`; now the contract says so, and
+  {func}`~otto.testing.assert_host_conforms` asks your class for them.
+  `BaseHost.as_user`'s refusal is an async context manager that raises
+  `NotImplementedError` on `__aenter__`, so a family that cannot switch
+  identity refuses at `async with host.as_user(...)`, not at the call.
 
 ### Proving it
 
