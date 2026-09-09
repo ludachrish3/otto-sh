@@ -289,6 +289,16 @@ the message subject:
 | `refactor:` | Code restructuring, no behavior change      |
 | `ci:`       | CI/CD configuration                         |
 
+A commit that deletes or renames a public symbol (`otto.__all__`, or a deep
+import path the docs teach), a `Host` protocol parameter, or a settings/lab
+key is a breaking change — `type(scope)!:` in the subject plus a
+`BREAKING CHANGE:` footer — no matter how small the deletion looks; a rename
+is a deletion and an addition together, so it is marked too. `make
+check-breaking` (`scripts/check_breaking_marks.py`, run in CI) enforces this
+for the first two against the committed golden,
+`tests/unit/api_snapshot/public_api.txt`; settings/lab keys are not yet
+enforced (a later schema-diff gate).
+
 Before pushing, run `make all` locally — it mirrors CI
 (`clean-dist → typecheck → coverage → docs → build`).
 
@@ -382,6 +392,11 @@ Versioning is owned by maintainers and driven by
 [`bump-my-version`](https://github.com/callowayproject/bump-my-version).
 Do not hand-edit the `version` field in `pyproject.toml` — your PR will
 be asked to revert the change.
+
+The bump tool only sees what a commit says, never what it did — which is
+why the breaking-change marking rule above (see "Branching and commits")
+exists: an unmarked deletion cannot raise the conventional-commit census
+git-cliff computes below, and would otherwise ship as a patch release.
 
 `CHANGELOG.md` is **generated, not written**: `make changelog` regenerates
 the whole file from Conventional Commit history via `cliff.toml`, so a hand

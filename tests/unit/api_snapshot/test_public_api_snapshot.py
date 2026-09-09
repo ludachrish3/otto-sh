@@ -286,6 +286,51 @@ def test_red_a_broken_documented_import_is_reported_with_file_and_line(tmp_path)
     assert "DoesNotExistAtAll" in failures[0]
 
 
+def test_host_protocol_lines_cover_a_known_verb():
+    """``put`` must show up with its real, documented parameter names."""
+    lines = mod.host_protocol_lines()
+    assert "otto.host.host:Host.put(src_files, dest_dir, mode, user, show_progress)" in lines
+
+
+def test_red_a_host_protocol_parameter_rename_moves_the_surface(monkeypatch):
+    """RED-proof (d): a Host protocol parameter rename must move the golden line.
+
+    A conforming host that renamed a keyword otto's own call sites pass would
+    still type-check against a hand-typed allowlist; reading the signature
+    straight off the live ``Host`` class (the same way
+    ``otto.testing.conformance_host._keyword_names`` does) is what actually
+    catches it.
+    """
+    import otto.host.host as host_mod
+
+    class FakeHost:
+        async def put(
+            self,
+            src_files,
+            dest_dir,
+            mode=None,
+            renamed_user=None,
+            show_progress=True,
+        ): ...
+
+    monkeypatch.setattr(host_mod, "Host", FakeHost)
+
+    lines = mod.host_protocol_lines()
+
+    assert (
+        "otto.host.host:Host.put(src_files, dest_dir, mode, renamed_user, show_progress)" in lines
+    )
+    assert not any(
+        line.startswith("otto.host.host:Host.put(src_files, dest_dir, mode, user,")
+        for line in lines
+    )
+
+    surface, failures = mod.compute_surface()
+    assert not failures
+    expected = mod.read_golden()
+    assert set(surface) != set(expected), "a renamed Host protocol parameter must move the surface"
+
+
 def test_red_an_empty_docs_root_finds_no_known_path(monkeypatch, tmp_path):
     """RED-proof (c): if the docs walk is pointed at nothing, the canary test must fail.
 

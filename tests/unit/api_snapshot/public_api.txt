@@ -1,13 +1,19 @@
 # Golden snapshot of otto's public API surface — see scripts/api_snapshot.py.
 #
-# Two kinds of line:
-#   otto:<name>       a name in otto.__all__ (the PEP 562 lazy-export table)
-#   <module>:<name>   a deep import path the user docs teach; a bare
-#                      `import <module>` line contributes `<module>:` (no name)
+# Three kinds of line:
+#   otto:<name>              a name in otto.__all__ (the PEP 562 lazy-export table)
+#   <module>:<name>          a deep import path the user docs teach; a bare
+#                             `import <module>` line contributes `<module>:` (no name)
+#   otto.host.host:Host.<method>(<params>)
+#                             a public Host protocol method, with its keyword
+#                             parameter names pinned in signature order
 #
 # A name added/removed/renamed here is a public-API change and must show up
-# in this diff. The deep paths are declared entirely by docs/ (excluding the
-# archived docs/superpowers/) — there is no separate allowlist to maintain.
+# in this diff, and so is a Host protocol method whose parameters changed —
+# both are pinned so a breaking change to either one shows up unmarked
+# nowhere but here. The deep paths are declared entirely by docs/ (excluding
+# the archived docs/superpowers/) — there is no separate allowlist to
+# maintain.
 #
 # Regenerate with `make api-snapshot`; review the diff before committing it.
 otto.bootstrap:bootstrap
@@ -49,6 +55,38 @@ otto.host.embedded_filesystem:EmbeddedFileSystem
 otto.host.embedded_filesystem:register_filesystem
 otto.host.embedded_host:EmbeddedHost
 otto.host.factory:create_host_from_dict
+otto.host.host:Host.cleanup(get_product_logs, get_debug_logs)
+otto.host.host:Host.close()
+otto.host.host:Host.exec(cmd, timeout, log, user)
+otto.host.host:Host.expect(pattern, timeout)
+otto.host.host:Host.get(src_files, dest_dir, user, show_progress)
+otto.host.host:Host.get_debug_logs(dest)
+otto.host.host:Host.get_logs(product, debug, require_product_logs, dest, owner)
+otto.host.host:Host.get_product_logs(dest, owner)
+otto.host.host:Host.install(stage_only, owner)
+otto.host.host:Host.install_dev_tools(owner)
+otto.host.host:Host.install_toolchain_tools()
+otto.host.host:Host.install_tools(dev, toolchain)
+otto.host.host:Host.is_clean()
+otto.host.host:Host.is_installed(owner)
+otto.host.host:Host.is_reachable(timeout)
+otto.host.host:Host.is_uninstalled(owner)
+otto.host.host:Host.log_dest(dest)
+otto.host.host:Host.login(user)
+otto.host.host:Host.open_session(name)
+otto.host.host:Host.power(state)
+otto.host.host:Host.put(src_files, dest_dir, mode, user, show_progress)
+otto.host.host:Host.reboot(hard, wait, timeout, down_timeout, poll_interval)
+otto.host.host:Host.remove_toolchain_tools()
+otto.host.host:Host.run(cmds, expects, timeout, log, sudo, user)
+otto.host.host:Host.send(text, log)
+otto.host.host:Host.shutdown()
+otto.host.host:Host.stage(owner)
+otto.host.host:Host.toolchain_tools_absent()
+otto.host.host:Host.uninstall(get_product_logs, get_debug_logs, owner)
+otto.host.host:Host.uninstall_dev_tools(owner)
+otto.host.host:Host.wait_until_down(timeout, interval)
+otto.host.host:Host.wait_until_up(timeout, interval)
 otto.host.local_host:LocalHost
 otto.host.login_proxy:Cred
 otto.host.login_proxy:ProxyContext

@@ -467,10 +467,14 @@ def dashboard(session: nox.Session, browser: str) -> None:
 def lint(session: nox.Session) -> None:
     """Run ruff lint + format checks, then the architecture gates.
 
-    The architecture legs mirror `make lint-arch`: tach validates the module
-    dependency contracts in tach.toml (a ratchet baseline — see its header);
-    ast-grep enforces the scope-sensitive pattern rules in .ast-grep/rules/.
-    This session is what CI's lint-python job runs, so the gates bind on push.
+    The architecture legs mirror `make lint-arch`'s tach and ast-grep steps:
+    tach validates the module dependency contracts in tach.toml (a ratchet
+    baseline — see its header); ast-grep enforces the scope-sensitive pattern
+    rules in .ast-grep/rules/. `make lint-arch`'s third leg, `check-breaking`
+    (scripts/check_breaking_marks.py), is deliberately NOT run here — it
+    needs a resolved commit range, which this session has no opinion about;
+    CI's lint-python job runs it as its own step, after this session, with
+    the range computed from the workflow's push/pull_request event.
     """
     session.run("ruff", "check", ".")
     session.run("ruff", "format", "--check", ".")

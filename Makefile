@@ -9,13 +9,19 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot api-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed support-matrix web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot api-snapshot check-breaking hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed support-matrix web-install web web-dev test-ts web-clean wheel-check
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
 # on the command line:
 #   make release BUMP=minor
 BUMP ?=
+
+# The range `check-breaking` scans for an unmarked public-API-golden deletion
+# (scripts/check_breaking_marks.py). Default is what a branch carries beyond
+# main; override for a wider or narrower sweep:
+#   make check-breaking RANGE=v0.10.0..HEAD
+RANGE ?= origin/main..HEAD
 
 HYPERFINE_VERSION := 1.20.0
 
@@ -1165,7 +1171,14 @@ lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architectu
 # edge and forbid `tach sync` as a "fix"); .ast-grep/rules/ hold the
 # scope-sensitive pattern rules. Policy background:
 # todo/churn-and-design-review-2026-08-03.md §5.
-lint-arch: ## (Quality) Architecture gates: tach (module dependency contracts) + ast-grep (pattern rules)
+#
+# check-breaking is a PREREQUISITE here, the same way lint-arch is one of
+# lint-python's above: it is the same shape of rule as tach/ast-grep (a
+# structural gate no single-file lint rule can express) and, like them, is a
+# no-op success when RANGE has nothing to scan — true on `main` itself only
+# once a local `main` is caught up with `origin/main` (a `main` that is
+# ahead, or an `origin/main` a fetch would move, still has commits in range).
+lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts) + ast-grep (pattern rules) + check-breaking (public-API golden marking)
 	@$(SAY) "tach: module dependency contracts (tach.toml)"
 	@uv run --group lint tach check
 	@$(SAY) "ast-grep: architecture pattern rules (.ast-grep/rules/)"
@@ -1315,6 +1328,10 @@ import-snapshot: ## (Dev) Regenerate import-budget golden snapshots — module s
 api-snapshot: ## (Dev) Regenerate the public-API golden snapshot (otto.__all__ + every deep import path the docs teach — run after adding/removing/renaming a public name or a documented import, then review the diff)
 	@$(SAY) "updating public-API golden snapshot"
 	@uv run python scripts/api_snapshot.py --update
+
+check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD) that deletes a public-API golden line without a `!`/`BREAKING CHANGE:` mark
+	@$(SAY) "check-breaking-marks: $(RANGE)"
+	@uv run python scripts/check_breaking_marks.py $(RANGE)
 
 # ═══ Docs ═══════════════════════════════════════════════════════════════════
 

@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """Commit otto's public API surface as a golden snapshot.
 
-The surface is two kinds of name, both written as ``<module>:<name>`` lines
-(a bare ``import <module>`` contributes ``<module>:`` with no name):
+The surface is three kinds of line:
 
   * every name in ``otto.__all__`` (``otto:<name>``) — the PEP 562 lazy-export
     table in ``otto/__init__.py``;
-  * every deep import the USER DOCS teach — each ``from otto.a.b import Y``
-    or ``import otto.x`` inside a fenced code example, doctest block, or RST
-    literal block under ``docs/`` (excluding ``docs/superpowers/``, which is
-    archived specs/plans that intentionally contain dead paths, and
-    ``docs/_build/``).
+  * every deep import the USER DOCS teach, written ``<module>:<name>`` (a bare
+    ``import <module>`` contributes ``<module>:`` with no name) — each
+    ``from otto.a.b import Y`` or ``import otto.x`` inside a fenced code
+    example, doctest block, or RST literal block under ``docs/`` (excluding
+    ``docs/superpowers/``, which is archived specs/plans that intentionally
+    contain dead paths, and ``docs/_build/``);
+  * every public method the ``Host`` protocol (``src/otto/host/host.py``)
+    declares, written ``otto.host.host:Host.<method>(<params>)`` with its
+    keyword parameter names in signature order — a family-facing call shape
+    that ``otto.__all__`` never sees, so it is pinned separately.
 
 The docs are the single declaration of which deep paths are sanctioned: there
 is no separate allowlist to keep in sync. That also means a stale or broken
@@ -297,14 +301,23 @@ def _module_name_pairs(node: ast.Import | ast.ImportFrom) -> list[tuple[str, str
 
 
 def _resolve(module: str, name: str) -> str | None:
-    """Import *module* and getattr *name* off it; return an error message, or None."""
+    """Import *module* and getattr *name* off it; return an error message, or None.
+
+    *name* may be a dotted attribute chain (``Host.put``) and may carry a
+    trailing ``(...)`` parameter list — a :func:`host_protocol_lines` line's
+    ``Host.put(src_files, ...)`` — which is stripped before resolving; the
+    parameters themselves aren't independently checkable via ``getattr``, so
+    a signature drift is caught by the surface-equality check, not here.
+    """
     try:
         mod = importlib.import_module(module)
     except Exception as exc:  # noqa: BLE001 — a broken documented path is a finding, not a crash
         return f"cannot import {module!r}: {exc}"
     if name:
+        obj = mod
         try:
-            getattr(mod, name)
+            for part in name.split("(", 1)[0].split("."):
+                obj = getattr(obj, part)
         except AttributeError as exc:
             return f"{module}.{name} does not exist: {exc}"
     return None
@@ -360,10 +373,53 @@ def public_export_lines() -> list[str]:
     return sorted(f"otto:{name}" for name in otto.__all__)
 
 
+def host_protocol_lines() -> list[str]:
+    """``otto.host.host:Host.<method>(<params>)`` for every public method ``Host`` declares.
+
+    ``Host`` (``src/otto/host/host.py``) is a structural :class:`typing.Protocol`
+    with no default bump-tool visibility of its own: a family renames or drops a
+    parameter on ``run``/``put``/... and nothing about that shows up in a commit
+    subject unless a human remembers to mark it. Reading every public method's
+    parameter names straight off ``inspect.signature`` — via
+    :func:`otto.testing.conformance_host._keyword_names`, the same reader
+    :func:`~otto.testing.conformance_host.assert_host_conforms` already trusts,
+    not a retyped copy — turns that into a golden line per method, so a
+    parameter added, removed, renamed, or reordered is a reviewable diff here
+    exactly like a change to ``otto.__all__``.
+
+    Only names ``vars(Host)`` defines directly and that don't start with an
+    underscore qualify: that excludes the private ``_login`` hook, the dunder
+    protocol machinery (``__aenter__``/``__aexit__``), and the read-only
+    ``element`` property (a :class:`property` object, not callable, so
+    :func:`callable` already filters it out) — none of those is a call shape a
+    caller passes keyword arguments into.
+
+    What this line shape CANNOT see: a parameter moved to keyword-only behind
+    a bare ``*`` renders identically to one that was already keyword-only —
+    :func:`~otto.testing.conformance_host._keyword_names` reports a name, not
+    its :class:`inspect.Parameter.kind`, so a positional-or-keyword parameter
+    narrowed to keyword-only (breaking for a caller passing it positionally)
+    does not move the golden line. Nor is a removed or changed *default*
+    pinned — only the ordered name list is. Both are real, if narrower,
+    breaking changes this golden does not catch; only a genuinely
+    added/removed/renamed/reordered name does.
+    """
+    from otto.host.host import Host
+    from otto.testing.conformance_host import _keyword_names
+
+    lines = []
+    for name, member in vars(Host).items():
+        if name.startswith("_") or not callable(member):
+            continue
+        params = ", ".join(_keyword_names(member))
+        lines.append(f"otto.host.host:Host.{name}({params})")
+    return sorted(lines)
+
+
 def compute_surface() -> tuple[list[str], list[str]]:
     """Return (sorted deduped golden lines, resolution failures) for the whole surface."""
     deep_lines, failures = documented_deep_imports()
-    lines = sorted(set(public_export_lines()) | set(deep_lines))
+    lines = sorted(set(public_export_lines()) | set(deep_lines) | set(host_protocol_lines()))
     return lines, failures
 
 
@@ -382,14 +438,20 @@ instead of only a later test catching it.
 _HEADER = """\
 # Golden snapshot of otto's public API surface — see scripts/api_snapshot.py.
 #
-# Two kinds of line:
-#   otto:<name>       a name in otto.__all__ (the PEP 562 lazy-export table)
-#   <module>:<name>   a deep import path the user docs teach; a bare
-#                      `import <module>` line contributes `<module>:` (no name)
+# Three kinds of line:
+#   otto:<name>              a name in otto.__all__ (the PEP 562 lazy-export table)
+#   <module>:<name>          a deep import path the user docs teach; a bare
+#                             `import <module>` line contributes `<module>:` (no name)
+#   otto.host.host:Host.<method>(<params>)
+#                             a public Host protocol method, with its keyword
+#                             parameter names pinned in signature order
 #
 # A name added/removed/renamed here is a public-API change and must show up
-# in this diff. The deep paths are declared entirely by docs/ (excluding the
-# archived docs/superpowers/) — there is no separate allowlist to maintain.
+# in this diff, and so is a Host protocol method whose parameters changed —
+# both are pinned so a breaking change to either one shows up unmarked
+# nowhere but here. The deep paths are declared entirely by docs/ (excluding
+# the archived docs/superpowers/) — there is no separate allowlist to
+# maintain.
 #
 # Regenerate with `make api-snapshot`; review the diff before committing it.
 """
