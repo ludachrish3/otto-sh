@@ -65,8 +65,10 @@ if TYPE_CHECKING:
     # which would blow the import-budget guard on a bare ``import otto``.
     AppShellT = TypeVar("AppShellT", bound=AppShell)
 
-# Runtime type alias — mirrored from session.Expect so get_type_hints can resolve
-# it without a circular import (session.py imports from host.py at module level).
+# The one home of the expect-pattern alias: (regex_pattern, response_text). It
+# lives HERE rather than in session.py so ``get_type_hints`` can resolve it
+# without a circular import — session.py imports from host.py at module level,
+# and imports this name back from here.
 Expect = tuple[str | re.Pattern[str], str]
 
 DEFAULT_COMMAND_TIMEOUT = 30.0

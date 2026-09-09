@@ -56,6 +56,7 @@ from ..utils import Status
 from .host import (
     _EXEC_REAP_TIMEOUT,
     DEFAULT_COMMAND_TIMEOUT,
+    Expect,
     ShellCommand,
     is_dry_run,
     refuse_declined_elevation,
@@ -63,9 +64,6 @@ from .host import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Type alias for expect patterns: (regex_pattern, response_text)
-Expect = tuple[str | re.Pattern[str], str]
 
 # Max length hint for asyncssh regex readuntil (performance optimization)
 _MAX_SEPARATOR_LEN = 256
