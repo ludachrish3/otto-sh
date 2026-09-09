@@ -55,6 +55,8 @@ otto.host.embedded_filesystem:EmbeddedFileSystem
 otto.host.embedded_filesystem:register_filesystem
 otto.host.embedded_host:EmbeddedHost
 otto.host.factory:create_host_from_dict
+otto.host.host:Host.app_shell(shell_cls, user, timeout)
+otto.host.host:Host.as_user(user, password)
 otto.host.host:Host.cleanup(get_product_logs, get_debug_logs)
 otto.host.host:Host.close()
 otto.host.host:Host.exec(cmd, timeout, log, user)
@@ -82,6 +84,7 @@ otto.host.host:Host.run(cmds, expects, timeout, log, sudo, user)
 otto.host.host:Host.send(text, log)
 otto.host.host:Host.shutdown()
 otto.host.host:Host.stage(owner)
+otto.host.host:Host.switch_user(user, password)
 otto.host.host:Host.toolchain_tools_absent()
 otto.host.host:Host.uninstall(get_product_logs, get_debug_logs, owner)
 otto.host.host:Host.uninstall_dev_tools(owner)

@@ -7,7 +7,7 @@ import shlex
 import uuid
 from abc import ABC
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import (
     dataclass,
     replace,
@@ -21,8 +21,8 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Annotated,
+    Any,
     ClassVar,
-    NoReturn,
     Protocol,
     TypeVar,
     cast,
@@ -503,6 +503,50 @@ class Host(Protocol):
 
     async def login(self, user: str | None = None) -> None:
         """Open an interactive shell bridged to the local terminal."""
+        ...
+
+    @property
+    def current_user(self) -> str:
+        """User the default persistent session currently runs as.
+
+        Seeded from the login user; changes only through :meth:`switch_user`
+        / :meth:`as_user`. See :attr:`BaseHost.current_user`.
+        """
+        ...
+
+    async def switch_user(self, user: str = "", password: str | None = None) -> None:
+        """``su`` the persistent session to *user* and keep it there.
+
+        Families whose :attr:`~otto.host.capability_grid.HostCapabilities.session_identity`
+        is ``none`` raise :exc:`NotImplementedError`. See :meth:`BaseHost.switch_user`.
+        """
+        ...
+
+    def as_user(
+        self, user: str = "root", password: str | None = None
+    ) -> "AbstractAsyncContextManager[Any]":
+        """Run a block as *user*, restoring the prior identity on exit.
+
+        The scoped form of :meth:`switch_user`; same refusal rule. The
+        decorated form of :meth:`BaseHost.as_user`'s ``AsyncIterator`` — the
+        base annotates the undecorated generator, this annotates what a caller
+        receives.
+        """
+        ...
+
+    def app_shell(
+        self,
+        shell_cls: "type[AppShellT]",
+        *,
+        user: str | None = None,
+        timeout: float | None = None,
+    ) -> "AbstractAsyncContextManager[AppShellT]":
+        """Run *shell_cls* on a dedicated session.
+
+        The decorated form of :meth:`BaseHost.app_shell`'s ``AsyncIterator`` —
+        the base annotates the undecorated generator, this annotates what a
+        caller receives.
+        """
         ...
 
     async def run(
@@ -1212,15 +1256,24 @@ class BaseHost(ABC):
             f"su/switch_user is not supported on '{self.__class__.__name__}'"
         ) from None
 
-    def as_user(self, user: str = "root", password: str | None = None) -> NoReturn:
+    @asynccontextmanager
+    async def as_user(
+        self,
+        user: str = "root",  # noqa: ARG002 — named by the Host protocol; this refusing default never reads it
+        password: str | None = None,  # noqa: ARG002 — named by the Host protocol; this refusing default never reads it
+    ) -> "AsyncIterator[BaseHost]":
         """Async context manager to run a block as *user*.
 
-        Default raises — only posix-shell hosts (via ``PosixPrivilege``) support
-        ``su``-based user switching.
+        Default refuses — only posix-shell hosts (via ``PosixPrivilege``)
+        support ``su``-based user switching — and refuses with the REAL call
+        shape, on ``__aenter__``, so ``async with host.as_user(...)`` is what
+        raises rather than the bare call. ``user`` and ``password`` are the
+        protocol's parameters; the refusal never reads them.
         """
         raise NotImplementedError(
             f"as_user is not supported on '{self.__class__.__name__}'"
         ) from None
+        yield self  # pragma: no cover - unreachable; gives the generator its shape
 
     @property
     def current_user(self) -> str:

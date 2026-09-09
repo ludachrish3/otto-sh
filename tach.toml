@@ -493,7 +493,14 @@ path = "otto.testing"
 # otto.context: assert_host_conforms probes a host's verbs under a dry run, and
 # `dry_run` is a field of the active OttoContext -- installing one is the only
 # way to ask a host what it would do without letting it do it.
-depends_on = ["otto.config", "otto.context", "otto.creds", "otto.inventory", "otto.labs", "otto.models", "otto.reservations", "otto.host", "otto.suite"]
+# otto.result: the OUTCOME of that dry-run probe. A declined verb raises
+# CommandNotRunError, so the asserter cannot tell "this family declined the dry
+# run, as it should" from "this method is not the shape the protocol names"
+# without naming the type; its own docstring says to import it from otto.result
+# (it lives there, not in otto.host.errors, to avoid a result->host edge).
+# Cannot invert layering or create a cycle: otto.result depends only on
+# otto.errors, a zero-import leaf, and otto.host already depends on it.
+depends_on = ["otto.config", "otto.context", "otto.creds", "otto.inventory", "otto.labs", "otto.models", "otto.reservations", "otto.host", "otto.result", "otto.suite"]
 
 [[modules]]
 path = "otto.tunnel"

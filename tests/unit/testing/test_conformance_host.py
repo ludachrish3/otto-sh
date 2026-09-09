@@ -13,6 +13,7 @@ installs a dry-run context around each probe. The container's parent is a mock
 for the same reason otto's own docker tests use one.
 """
 
+import contextlib
 import inspect
 from abc import abstractmethod
 from dataclasses import replace
@@ -32,8 +33,9 @@ from otto.host.transfer import TRANSFER_BACKENDS
 from otto.host.transfer.base import BaseFileTransfer, ProgressGranularity
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
-from otto.result import Result
+from otto.result import CommandNotRunError, Result
 from otto.testing import assert_host_conforms, assert_transfer_backend_conforms
+from otto.testing.conformance_host import _probe_identity
 from otto.utils import Status
 
 
@@ -68,14 +70,18 @@ def _unix(term: str = "ssh") -> UnixHost:
     )
 
 
-def _embedded() -> ZephyrHost:
+def _embedded(cls: "type[ZephyrHost]" = ZephyrHost) -> ZephyrHost:
     """``ZephyrHost``, not a bare ``EmbeddedHost``.
 
     ``EmbeddedHost`` requires a command frame; ``ZephyrHost`` supplies the
     built-in one and redeclares no capabilities, so it answers for the
     ``embedded`` row exactly as ``tests/unit/host`` builds it.
+
+    *cls* lets a test build one of its own subclasses on the same inert
+    arguments, so there is a single spelling of "an embedded host that never
+    connects".
     """
-    return ZephyrHost(ip="192.0.2.2", element=Element("conformance-embedded"), log=LogMode.QUIET)
+    return cls(ip="192.0.2.2", element=Element("conformance-embedded"), log=LogMode.QUIET)
 
 
 def _container() -> DockerContainerHost:
@@ -253,6 +259,129 @@ class TestTheBehaviouralRule:
         """The same drifted declaration passes when nothing is there to probe."""
         monkeypatch.setattr(LocalHost, "_refuse_exec_user", lambda self, user: None)
         assert_host_conforms(LocalHost)
+
+
+class TestTheSessionIdentityRule:
+    """The same declaration-against-behaviour rule, over ``session_identity``.
+
+    ``as_user``/``switch_user`` are the two verbs that change the persistent
+    session's identity, so the column that says where that identity comes from
+    is the one they answer to (spec 2026-09-09 host-field-single-home §3.8).
+    """
+
+    def test_a_family_declaring_none_must_refuse_both_identity_verbs(self):
+        """``embedded`` promises nothing switches identity; the probe holds it to that."""
+        assert ZephyrHost.capabilities.session_identity.value == "none"
+        assert_host_conforms(ZephyrHost, instance=_embedded())
+
+    def test_a_none_family_whose_as_user_works_is_reported(self):
+        """Mutate-and-observe-red: a ``none`` family whose ``as_user`` does NOT refuse."""
+
+        @contextlib.asynccontextmanager
+        async def permissive(self, user="root", password=None):
+            yield self
+
+        class Lying(ZephyrHost):
+            pass
+
+        Lying.as_user = permissive  # type: ignore[method-assign]
+        with pytest.raises(
+            AssertionError, match=r"Host\.as_user: declared session_identity='none'"
+        ):
+            assert_host_conforms(Lying, instance=_embedded(Lying))
+
+    def test_a_none_family_whose_switch_user_works_is_reported(self):
+        """The other identity verb, so neither arm of the loop rests on the other."""
+
+        class AlsoLying(ZephyrHost):
+            async def switch_user(self, user="", password=None):
+                return None
+
+        with pytest.raises(
+            AssertionError, match=r"Host\.switch_user: declared session_identity='none'"
+        ):
+            assert_host_conforms(AlsoLying, instance=_embedded(AlsoLying))
+
+    def test_a_family_declaring_as_user_scoped_must_not_refuse(self):
+        """The other arm: ``local`` declines the dry run rather than refusing outright."""
+        assert LocalHost.capabilities.session_identity.value == "as_user scoped"
+        assert_host_conforms(LocalHost, instance=LocalHost())
+
+    def test_a_scoped_family_that_refuses_is_reported(self):
+        """Mutate-and-observe-red for the scoped arm."""
+
+        class Refusing(LocalHost):
+            async def switch_user(self, user="", password=None):
+                raise NotImplementedError("nope")
+
+        with pytest.raises(
+            AssertionError,
+            match=r"Host\.switch_user: declared session_identity='as_user scoped'",
+        ):
+            assert_host_conforms(Refusing, instance=Refusing())
+
+    def test_a_scoped_family_whose_identity_verbs_are_the_wrong_shape_is_reported(self):
+        """The scoped arm has positive content: only completion or the decline passes.
+
+        Neither method refuses here, so the ``NotImplementedError`` arm above
+        would let both through; what is wrong is the SHAPE -- an ``as_user``
+        that is not a context manager, a ``switch_user`` that is not awaitable.
+        A family declaring it can change identity is the one family for which
+        these verbs are meant to work, so this is where shape matters most.
+        """
+
+        class BrokenScoped(LocalHost):
+            def as_user(self, user="root", password=None):
+                return object()  # not a context manager
+
+            def switch_user(self, user="", password=None):
+                return None  # not awaitable
+
+        with pytest.raises(AssertionError) as caught:
+            assert_host_conforms(BrokenScoped, instance=BrokenScoped())
+        reported = str(caught.value)
+        assert "Host.as_user: declared session_identity='as_user scoped'" in reported
+        # The EXCEPTION CLASS is the interpreter's business and it changed:
+        # ``async with object()`` raises ``AttributeError: __aenter__`` up to
+        # 3.10 and ``TypeError: 'object' object does not support the
+        # asynchronous context manager protocol (missed __aexit__ method)``
+        # from 3.11 on. What this test owns is that the shape failure is
+        # REPORTED and names the missing protocol, not which class carried it.
+        assert "__aenter__" in reported or "asynchronous context manager" in reported, reported
+        assert "Host.switch_user: declared session_identity='as_user scoped'" in reported
+        assert "TypeError" in reported, reported
+
+    def test_a_scoped_family_that_declines_the_dry_run_is_accepted(self):
+        """The control for the test above: the decline is the expected outcome.
+
+        Without it, an arm that accepted nothing at all would look just as green.
+        """
+        raised = _probe_identity(LocalHost(), "as_user")
+        assert isinstance(raised, CommandNotRunError), raised
+
+    def test_bound_at_open_is_not_probed_at_all(self):
+        """The container exemption (spec §3.8), proven by a container that refuses.
+
+        ``bound at open`` speaks about ``run``'s channel, not about ``as_user``;
+        a container refusing both identity verbs is its own business, so the
+        probe must not report it.
+        """
+
+        class RefusingContainer(DockerContainerHost):
+            async def switch_user(self, user="", password=None):
+                raise NotImplementedError("nope")
+
+        assert DockerContainerHost.capabilities.session_identity.value == "bound at open"
+        assert_host_conforms(
+            RefusingContainer,
+            instance=RefusingContainer(
+                parent=_mock_parent(),
+                container_id="conformanceabc",
+                project="conformance",
+                service="api",
+                compose_project="otto-conformance",
+            ),
+        )
 
 
 class TestTheDeclarationIsPerClassNotPerInstance:

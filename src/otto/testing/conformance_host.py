@@ -23,9 +23,10 @@ from typing import Any
 
 from ..config.lab import Lab
 from ..context import OttoContext, reset_context, set_context
-from ..host.capability_grid import HostCapabilities, UserSupport
+from ..host.capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from ..host.host import BaseHost, Host
 from ..host.transfer.base import BaseFileTransfer, ProgressGranularity
+from ..result import CommandNotRunError
 from ..suite.expect import ExpectCollector
 
 _PROBE_USER = "__otto_conformance_probe_user__"
@@ -181,6 +182,35 @@ def _probe(instance: object, verb: str) -> "Exception | None":
     return _await_probe(lambda: call([_PROBE_SRC], _PROBE_DEST, user=_PROBE_USER))
 
 
+def _probe_identity(instance: object, verb: str) -> "Exception | None":
+    """Call the identity *verb* (``as_user`` / ``switch_user``) under a dry run.
+
+    ``user=`` goes by KEYWORD, as it does in :func:`_probe`, so these two
+    members are held to the protocol's parameter NAMES like every other verb;
+    a family that renamed the parameter fails here rather than probing green.
+
+    What comes back is the family's ANSWER, not its call shape: a plain method
+    raising synchronously and an ``@asynccontextmanager`` refusing on
+    ``__aenter__`` are indistinguishable from here, because ``async with`` runs
+    the call expression too. The shape is pinned on ``BaseHost`` itself, in
+    ``tests/unit/host/test_host_protocol_widening.py``.
+    """
+    call = getattr(instance, verb)
+    if verb == "as_user":
+
+        async def enter() -> None:
+            async with call(user=_PROBE_USER):
+                pass
+
+        return _await_probe(enter)
+    return _await_probe(lambda: call(user=_PROBE_USER))
+
+
+_IDENTITY_VERBS = ("as_user", "switch_user")
+"""The two verbs that change the persistent session's identity, probed against
+:attr:`~otto.host.capability_grid.HostCapabilities.session_identity`."""
+
+
 def assert_host_conforms(cls: type, *, instance: "Host | None" = None) -> None:
     """Assert *cls* satisfies the :class:`~otto.host.host.Host` contract it declares.
 
@@ -200,7 +230,12 @@ def assert_host_conforms(cls: type, *, instance: "Host | None" = None) -> None:
     A verb declared :attr:`~otto.host.capability_grid.UserSupport.refused` must
     raise :exc:`NotImplementedError` — under a dry run too, which is what
     forces the refusal above the dry-run arm rather than behind it. A verb
-    declared anything else must not.
+    declared anything else must not. ``as_user``/``switch_user`` are probed the
+    same way against
+    :attr:`~otto.host.capability_grid.HostCapabilities.session_identity`:
+    ``none`` must refuse; ``as_user scoped`` must either complete or decline the
+    dry run, so a method that is not the shape the protocol names is reported
+    too; ``bound at open`` is not probed.
 
     THE DECLARATION IS PER CLASS; BEHAVIOUR CAN BE PER INSTANCE.
     :class:`~otto.host.capability_grid.HostCapabilities` has one row per family
@@ -260,7 +295,11 @@ def _expect_declaration_holds(
     capabilities: HostCapabilities,
     instance: object,
 ) -> None:
-    """Probe each ``user=``-taking verb against what *capabilities* promises for it."""
+    """Probe each promise in *capabilities* against what *instance* does.
+
+    The four ``user=``-taking verbs answer to their own ``*_user`` field; the
+    two identity verbs answer to ``session_identity``.
+    """
     _refuse_inside_a_running_loop()
     for verb, field_name in _USER_VERBS.items():
         support = getattr(capabilities, field_name)
@@ -284,6 +323,40 @@ def _expect_declaration_holds(
                 raised is None,
                 f"Host.{verb}: declared {field_name}={support.value!r}, but a dry-run "
                 f"{verb}(user=...) raised {_outcome(raised)}",
+            )
+    identity = capabilities.session_identity
+    if identity is SessionIdentity.bound_at_open:
+        # The enum speaks about run's channel, not about as_user; a container's
+        # as_user answer is its own until a row says otherwise (spec 2026-09-09
+        # host-field-single-home §3.8).
+        return
+    for verb in _IDENTITY_VERBS:
+        raised = _probe_identity(instance, verb)
+        if identity is SessionIdentity.none:
+            c.expect(
+                isinstance(raised, NotImplementedError),
+                f"Host.{verb}: declared session_identity={identity.value!r}, so "
+                f"{verb}(...) must raise NotImplementedError under a dry run too; "
+                f"got {_outcome(raised)}",
+            )
+        elif isinstance(raised, NotImplementedError):
+            c.expect(
+                False,
+                f"Host.{verb}: declared session_identity={identity.value!r}, but "
+                f"{verb}(...) raised NotImplementedError: {raised}",
+            )
+        else:
+            # Not merely "did not refuse": a family that declares an identity it
+            # can change is the one family for which these two verbs are meant
+            # to WORK, so the only other outcome a dry run may produce is the
+            # decline itself. Anything else -- an as_user that is not a context
+            # manager, a switch_user that is not awaitable -- is the shape
+            # drifting from the protocol, and is reported by name.
+            c.expect(
+                raised is None or isinstance(raised, CommandNotRunError),
+                f"Host.{verb}: declared session_identity={identity.value!r}, so a dry-run "
+                f"{verb}(...) must either complete or decline the dry run; got "
+                f"{_outcome(raised)}",
             )
 
 
