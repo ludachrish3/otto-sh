@@ -34,11 +34,11 @@ import asyncio, os, signal, sys, time
 from otto.lifecycle import register_force_exit_hook, run_command, sync_phase
 
 mode = sys.argv[1]
-# Only the wedged mode wants a fast deadline; everywhere else a live 1s
+# Only the wedged modes want a fast deadline; everywhere else a live 1s
 # deadline is a flake window (a slow box finishing graceful teardown in
 # >1s would spuriously force). double=30 also guarantees only the SECOND
 # signal can force in time.
-deadline = 1.0 if mode == "wedged" else (5.0 if mode == "stranded" else 30.0)
+deadline = 1.0 if mode in ("wedged", "churn") else (5.0 if mode == "stranded" else 30.0)
 # os.write: force hooks run on the watchdog thread while the MAIN thread may
 # be wedged holding stdio locks (print there can deadlock/reentrant-IO).
 register_force_exit_hook(lambda: os.write(1, b"FORCE-HOOK\\n"))
@@ -46,6 +46,14 @@ with sync_phase(deadline=deadline, what="probe") as guard:
     try:
         # Mid-flight positive control: the guard's handler is installed.
         assert signal.getsignal(signal.SIGINT) is not signal.default_int_handler
+        if mode == "churn":
+            # A foreign signal the guard must COUNT AND IGNORE. It needs a
+            # Python-level handler to exist at all: the interpreter only
+            # writes a wakeup byte for signals it has a handler for, and
+            # SIGWINCH's default disposition is "ignore", which writes
+            # nothing. A terminal resize must never force-exit a command —
+            # nor postpone the deadline that bounds one.
+            signal.signal(signal.SIGWINCH, lambda *_: None)
         if mode == "nested":
             # The everyday nested shape, run for real rather than mimicked:
             # `otto test` runs a whole pytest session inside this phase and
@@ -687,6 +695,66 @@ def test_second_signal_forces_when_the_fd_was_stolen_and_no_handler_runs(tmp_pat
     assert elapsed < 2.0, (
         f"forced exit took {elapsed:.1f}s — the teardown deadline expired, so the "
         f"guard had no live channel for the second signal; child said:\n{out[-4000:]}"
+    )
+
+
+@pytest.mark.serial_timing
+def test_foreign_wakeup_bytes_cannot_postpone_the_teardown_deadline(tmp_path):
+    """The deadline is absolute from the arming signal, not a per-byte idle timer.
+
+    Every byte the watchdog reads restarts its wait, and foreign signals ride
+    the same wakeup fd while the phase owns it — so a signal the guard
+    deliberately does NOT count still resets the only bound on an interrupted
+    teardown. Anything periodic does it: ``otto test``'s own retry machinery
+    arms SIGALRM around each attempt (``otto/suite/_retry.py``), and a
+    resized terminal does it by hand. The deadline is the guarantee the
+    two-stage policy actually makes — a second signal forces sooner, but only
+    this bound promises that an interrupted phase terminates AT ALL — so a
+    deadline that any unrelated signal can push out indefinitely is not a
+    bound.
+
+    The storm here runs at 4x the child's 1s deadline and does not stop until
+    the child is gone, so a watchdog that restarts on each byte never expires
+    while it is being watched: the failure is a child that outlives its own
+    deadline, not a slow one.
+    """
+    with _spawned(tmp_path, "churn") as child:
+        _wait_line(child, "PHASE-START")
+        os.kill(child.pid, signal.SIGINT)  # arms the 1s deadline; teardown wedges
+        _wait_line(child, "TEARDOWN-START")
+        stop = threading.Event()
+
+        def _resize_storm() -> None:
+            while not stop.wait(0.25):  # comfortably inside the 1s deadline
+                with contextlib.suppress(ProcessLookupError, OSError):
+                    os.kill(child.pid, signal.SIGWINCH)
+
+        storm = threading.Thread(target=_resize_storm, name="resize-storm", daemon=True)
+        storm.start()
+        t_armed = time.monotonic()
+        # Not _finish(): the storm must be joined between the child's EOF and
+        # the wait() that REAPS it. Reaping first would let the last poke land
+        # on a recycled pid — some unrelated process on the box — and the
+        # suppress above would hide it rather than prevent it.
+        try:
+            out = child.reader.read_to_eof(time.monotonic() + 15.0)
+        except TimeoutError:
+            pytest.fail(
+                f"the wedged teardown outlived its 1s deadline — foreign wakeup bytes "
+                f"are postponing it; buffered output: {child.reader.buffered!r}"
+            )
+        finally:
+            stop.set()
+            storm.join(timeout=5.0)
+        rc = child.proc.wait(timeout=15.0)
+    elapsed = time.monotonic() - t_armed
+    assert "FORCE-HOOK" in out, f"never forced at all; child said:\n{out[-4000:]}"
+    assert rc == 130
+    # The child's teardown wedge is 30s and its deadline 1s, so the only way
+    # out inside this bound is the deadline firing while the storm runs.
+    assert elapsed < 5.0, (
+        f"the wedged teardown outlived its 1s deadline by {elapsed:.1f}s — foreign "
+        f"wakeup bytes are postponing it; child said:\n{out[-4000:]}"
     )
 
 

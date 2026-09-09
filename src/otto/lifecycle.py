@@ -23,6 +23,7 @@ import select
 import signal
 import sys
 import threading
+import time
 from collections.abc import Callable, Coroutine, Iterator
 from typing import Any, TypeVar, overload
 
@@ -296,9 +297,23 @@ class SyncPhaseGuard:
         watched = {int(signal.SIGINT), int(signal.SIGTERM)}
         by_handler = by_wakeup = 0
         first_signum: "int | None" = None
-        armed = False
+        expires_at: "float | None" = None
         while True:
-            byte = self._read_wake(self._bound if armed else None)
+            # ABSOLUTE from the arming signal, never a per-byte idle timer:
+            # every byte restarts the wait, and foreign signals ride this fd
+            # while the phase owns it, so a re-timed wait lets a signal the
+            # guard deliberately does NOT count postpone the only bound an
+            # interrupted teardown has. Anything that RECURS suffices — a
+            # resized terminal held down, or the suite re-arming SIGALRM
+            # once per retried attempt (`otto/suite/_retry.py`) — and the
+            # postponement is unbounded while it keeps arriving.
+            remaining = None if expires_at is None else expires_at - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                if self._closed:  # phase finished as the deadline landed
+                    os.close(self._wake_r)
+                    return
+                break  # deadline expiry after arming; unreachable before it
+            byte = self._read_wake(remaining)
             if self._closed or byte in (b"", b"C"):  # phase completed in time
                 os.close(self._wake_r)
                 return
@@ -314,7 +329,8 @@ class SyncPhaseGuard:
                 continue  # someone else's signal: not ours to count
             if max(by_handler, by_wakeup) >= _FORCE_AFTER_DELIVERIES:
                 break  # a second signal, on either channel: force now
-            armed = True  # the graceful-teardown deadline starts here
+            if expires_at is None:  # the graceful-teardown deadline starts here
+                expires_at = time.monotonic() + self._bound
         # The handler's record is the authoritative "which signal was first",
         # and the exit code names the first. It is None only when no handler
         # ever ran, which is exactly when the wakeup channel has the answer.

@@ -165,6 +165,13 @@ the phase's own handler deliver the interrupt: a `KeyboardInterrupt` raised
 into a live nested command unwinds its loop — which cancels the body exactly
 as the loop callback would have — and surfaces in the phase's teardown.
 
+The deadline runs from the arming signal and cannot be pushed out. Foreign
+signals ride the same wakeup fd while a phase owns it, so the watchdog counts
+them as deliveries it must ignore (a resized terminal must not force-exit a
+command) without letting them re-time the bound — otherwise anything periodic,
+that recurs — a held-down terminal resize, the suite re-arming SIGALRM once
+per retried attempt — would postpone an interrupted phase's only guarantee of
+termination for as long as it kept arriving.
 
 A nested command has no separate teardown budget of its own: deferring means
 its loop callback never arms one, and the phase's deadline bounds the whole

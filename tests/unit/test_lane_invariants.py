@@ -212,6 +212,7 @@ _SERIAL_TIMING_TESTS = {
         # child's 30s deadline, and the second asserts a wedged teardown dies
         # AT its 1s deadline while a foreign-signal storm runs.
         "test_second_signal_forces_when_the_fd_was_stolen_and_no_handler_runs",
+        "test_foreign_wakeup_bytes_cannot_postpone_the_teardown_deadline",
     ),
     "tests/unit/host/test_session.py": ("test_recovery_timeout_rebind_is_live",),
     # Fourth sighting of the class, caught by this wave's own gates run: the
