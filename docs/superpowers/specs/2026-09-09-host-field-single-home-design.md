@@ -120,7 +120,7 @@ Moves here, once: `ip`, `element` (required, `repr=False` — an override of
 `os_version`, `hw_version`, `sw_version`, `term`, `transfer`, `valid_terms`,
 `valid_transfers`, `is_virtual`, `command_frame`,
 `landing_frame`, `session_setup`, `default_dest_dir`, `max_filename_len`,
-`telnet_options`, `snmp`, `metadata`, `interfaces`, `log_stdout`, `_lab`.
+`telnet_options`, `snmp`, `metadata`, `interfaces`, `_lab` (`log_stdout` was listed here until item 10 removed the unread key).
 
 Rule for membership: a field lives on `RemoteHost` when both remote leaves
 declare it with the SAME type. That includes the connection plumbing:
