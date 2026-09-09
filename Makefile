@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed support-matrix web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot api-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed support-matrix web-install web web-dev test-ts web-clean wheel-check
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -1311,6 +1311,10 @@ monitor-fixtures: ## (Dev) Regenerate the committed monitor dummy-data fixtures 
 import-snapshot: ## (Dev) Regenerate import-budget golden snapshots — module sets, plus the I/O goldens for THIS interpreter only (`<key>.io.<major.minor>.txt`; the other minors need their own run) + print per-surface counts (run after an intentional import change, then review the diff and update caps)
 	@$(SAY) "updating import-budget golden snapshots"
 	@uv run python scripts/import_budget.py --update
+
+api-snapshot: ## (Dev) Regenerate the public-API golden snapshot (otto.__all__ + every deep import path the docs teach — run after adding/removing/renaming a public name or a documented import, then review the diff)
+	@$(SAY) "updating public-API golden snapshot"
+	@uv run python scripts/api_snapshot.py --update
 
 # ═══ Docs ═══════════════════════════════════════════════════════════════════
 
