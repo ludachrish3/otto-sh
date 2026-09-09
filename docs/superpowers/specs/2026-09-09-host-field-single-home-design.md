@@ -1,6 +1,6 @@
 # Host fields: one home per field
 
-**Status:** draft for review — periodic review 2026-09-02, Tier 2 item 11.
+**Status:** approved 2026-09-09 (Chris), including §3.8 — periodic review 2026-09-02, Tier 2 item 11.
 
 ## 1. Problem
 
@@ -228,6 +228,35 @@ its generated docs; `register_host_class`; what any verb does.
   (`:inherited-members:` or an explicit `.. autoattribute::`) and that
   `make docs` (`-W`) is clean.
 
+### 3.8 Widening the `Host` protocol (approved 2026-09-09)
+
+`BaseHost` carries four public members the protocol does not: `app_shell`,
+`as_user`, `switch_user` and the `current_user` property. All five families
+answer them (the base raises `NotImplementedError` for `as_user` /
+`switch_user` where the posix mixin is absent), the user docs already teach
+them (the sessions recipe, the Hosts guide, the families page's
+session-identity column), and no class can implement `Host` without
+`BaseHost` because `register_host_class` demands a `RemoteHost` subclass.
+They are public in practice; the protocol records it.
+
+- The protocol gains the four members with `BaseHost`'s signatures.
+  `current_user` joins as a property, like `element`.
+- `BaseHost.as_user`'s default is reshaped to the real call shape: an
+  `@asynccontextmanager` whose body raises `NotImplementedError` before
+  yielding, typed `AsyncIterator[BaseHost]`, so the protocol, the base and
+  the posix mixin agree and the conformance asserter's signature check
+  passes on every family.
+- The golden grows by three lines (`app_shell`, `as_user`, `switch_user`;
+  `current_user` is a property and the generator skips non-callables). An
+  additive change; regenerated with `make api-snapshot`.
+- The conformance asserter's behavioural probe learns the session-identity
+  column: a family declaring `SessionIdentity.none` must raise
+  `NotImplementedError` from `as_user(...)` and `switch_user(...)` under a
+  dry run; a family declaring `as_user_scoped` must not. `bound_at_open`
+  (containers) is not probed, because the enum's meaning is about `run`'s
+  channel, not about `as_user`, and the container family's `as_user` answer
+  is the container's own business until a row says otherwise.
+
 ## 4. Testing
 
 - New: `tests/unit/host/test_field_homes.py` (§3.5), each test proven red by
@@ -245,8 +274,10 @@ its generated docs; `register_host_class`; what any verb does.
 
 ## 5. Sequencing
 
-One logical commit for the product change (`refactor(host)!: one home per
-host field`), one for the guard module if it reads better separately, and
-this spec committed on its own first. Item 10 (the follow-up decision record)
-comes after; the four `BaseHost` public methods outside the protocol
-surfaced above are handed to it.
+Four logical commits, each gated: (1) `feat(host): the Host protocol names
+app_shell, as_user, switch_user and current_user` (§3.8, additive golden
+regeneration, asserter probe); (2) `refactor(host)!: one home per host
+field` (§3.2–3.4, §3.6); (3) `test(host): structural guard over field
+homes` (§3.5, retiring the sweep); (4) docs follow-through if `make docs`
+needs it. This spec is committed on its own first. Item 10 (the follow-up
+decision record) comes after.
