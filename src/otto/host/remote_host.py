@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from .host import Expect
     from .interface import Interface
     from .options import SnmpOptions
-    from .session import HostSession, SessionManager
+    from .session import HostSession
     from .session_setup import SessionSetup
     from .transport import SshHopTransport
 
@@ -210,13 +210,6 @@ class RemoteHost(BaseHost):
     is_virtual: bool = False
     """Determines whether a host is a VM / emulator (e.g. QEMU) or not."""
 
-    has_bash: bool = True
-    """Whether this host has a working ``bash`` a command can be tagged and
-    exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
-    (:mod:`otto.tunnel.discovery`) scans only ``has_bash`` hosts. Unix hosts
-    have bash by default and embedded targets do not; override in ``lab.json``
-    for a host that defies its family's norm."""
-
     command_frame: "CommandFrame | None" = None
     """Shell-framing *dialect* for this host's console — how a command is
     wrapped in sentinels and how output/retcode are parsed back. ``None`` lets
@@ -302,10 +295,6 @@ class RemoteHost(BaseHost):
 
     _connections: "ConnectionManager" = field(init=False, repr=False)
     """Manages the raw transport connection(s) for this host; built by the
-    family's ``__post_init__``."""
-
-    _session_mgr: "SessionManager" = field(init=False, repr=False)
-    """Manages the persistent shell session(s) for this host; built by the
     family's ``__post_init__``."""
 
     async def _probe_connection(self) -> None:

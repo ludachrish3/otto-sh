@@ -111,14 +111,6 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     is_virtual: bool = field(default=True, init=False)
     """Containers are always virtual by definition."""
 
-    has_bash: bool = True
-    """Whether this container has a working ``bash`` a command can be tagged
-    and exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
-    (:mod:`otto.tunnel.discovery`) scans only ``has_bash`` hosts. Defaults to
-    ``True`` but is a normal settable field, not ``init=False`` — minimal
-    container images (``alpine``, ``centos6``, …) may lack bash, so this must
-    be overridable per container."""
-
     user: "str | None" = None
     """Declared default access user for this container (``users = {...}`` in
     ``[[docker.composes]]``): the identity ``exec``/``run``/``login``/``put``
@@ -144,12 +136,6 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     log_stdout: bool = field(default=True, repr=False)
     """Whether output is mirrored to stdout in addition to log files."""
-
-    _session_mgr: SessionManager = field(init=False, repr=False)
-    """Manages the persistent shell session(s) inside the container. The
-    underlying transport is a ``docker exec -it`` channel multiplexed on the
-    parent's SSH connection; opening is lazy and gated on the parent being
-    an SSH-based :class:`UnixHost`."""
 
     _pending_run_user: "str | None" = field(default=None, init=False, repr=False)
     """Per-call ``user`` of the ``run()`` attempt CURRENTLY in flight.
@@ -188,6 +174,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     def _build_session_mgr(self) -> SessionManager:
         """Build a fresh SessionManager wired to this host.
+
+        The underlying transport is a ``docker exec -it`` channel multiplexed
+        on the parent's SSH connection; opening is lazy and gated on the parent
+        being an SSH-based :class:`~otto.host.unix_host.UnixHost`.
 
         Called from :meth:`__post_init__` and :meth:`rebuild_connections`.
         """

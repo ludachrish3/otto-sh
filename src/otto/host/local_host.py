@@ -169,12 +169,6 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     name: str = field(default="localhost", init=False)
 
-    has_bash: bool = True
-    """Whether this host has a working ``bash`` a command can be tagged and
-    exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
-    (:mod:`otto.tunnel.discovery`) scans only ``has_bash`` hosts. The local
-    machine has bash by default."""
-
     dry_run_exempt: bool = field(default=False, repr=False)
     """Opt this instance's ``run`` out of the ``--dry-run`` decline.
 
@@ -209,9 +203,6 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
       sessions and the power verbs all still decline on an exempt instance,
       because none of them is covered by the justification above.
     """
-
-    _session_mgr: SessionManager = field(init=False, repr=False)
-    """Manages persistent shell sessions for this host."""
 
     _file_transfer: LocalFileTransfer = field(init=False, repr=False)
     """Local copy via shutil, routed through BaseFileTransfer so progress

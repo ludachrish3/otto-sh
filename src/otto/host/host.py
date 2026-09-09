@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from .element import Element
     from .power import PowerController
     from .product import Product
-    from .session import HostSession
+    from .session import HostSession, SessionManager
 
     # Quoted-forward-ref only (see BaseHost.app_shell); keeping this TypeVar
     # under TYPE_CHECKING avoids a runtime import of otto.host.app_shell,
@@ -1059,6 +1059,20 @@ class BaseHost(ABC):
     call), which is a different statement from any lab name.
     """
 
+    has_bash: bool = True
+    """Whether this host has a working ``bash`` a command can be tagged and
+    exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
+    (:mod:`otto.tunnel.discovery`) scans only ``has_bash`` hosts. Unix, local
+    and container hosts have bash by default and embedded targets do not.
+    Override it for a host that defies its family's norm: a ``lab.json`` key
+    for a declared host, or the field itself — a normal settable field, not
+    ``init=False`` — for a container built from compose, where a minimal
+    image (``alpine``, ``centos6``, …) may carry no bash at all."""
+
+    _session_mgr: "SessionManager" = field(init=False, repr=False)
+    """Manages the persistent shell session(s) for this host; built by the
+    family's ``__post_init__``."""
+
     @override
     def __str__(self) -> str:
         """Return the human-readable display name.
@@ -1257,9 +1271,9 @@ class BaseHost(ABC):
         # The login user is CONFIGURATION, not a measurement, so the declined
         # handle reports it exactly as a real one would — read from the same
         # `_login_user()` that `SessionManager._seed_user` stamps a live named
-        # session with. `getattr` because `_session_mgr` is a concrete
-        # family's field, not `BaseHost`'s; the three `open_session` overrides
-        # that reach here all have one.
+        # session with. `getattr` because `_session_mgr` is `init=False` with
+        # no default: it is `BaseHost`'s field, but only a family's
+        # `__post_init__` fills it, so a base-typed double may have none.
         mgr = getattr(self, "_session_mgr", None)
         login_user = mgr._login_user() if mgr is not None else ""  # noqa: SLF001 — intra-package read of the manager's configured login user
         # `self.name`, not `self.id`, and deliberately: this identifier is
@@ -1344,7 +1358,7 @@ class BaseHost(ABC):
         :meth:`as_user`. See :attr:`~otto.host.session.HostSession.current_user`
         for named sessions.
         """
-        return self._session_mgr.current_user  # ty: ignore[unresolved-attribute]
+        return self._session_mgr.current_user
 
     def _apply_sudo(self, sc: "ShellCommand") -> "ShellCommand":
         """Rewrite a ``ShellCommand`` to run under sudo.

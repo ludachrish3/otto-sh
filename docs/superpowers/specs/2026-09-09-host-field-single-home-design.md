@@ -97,13 +97,16 @@ existing copy; the defaults are the ones the four leaves already agree on.
 | `power_control: PowerController \| None` | `None` | |
 | `debug_log_globs: list[str]` | `default_factory=list` | |
 | `source_lab: str` | `""` | already carried a value; unchanged |
+| `has_bash: bool` | `True` | moved here by follow-up item 10 (`todo/host-api-followups-2026-09-09.md`); `EmbeddedHost` overrides to `False` |
+| `_session_mgr: SessionManager` | `field(init=False, repr=False)` | moved here by the same item; every family fills it in `__post_init__` |
 
 `capabilities` stays a `ClassVar` annotation with no value.
 
-`repr` policy is decided once, here: a field is `repr=False` when it is
-bulky or is the lab's provenance rather than the host's identity. Where the
-leaves disagreed (`dev_tools`, `products`, `debug_log_globs`), the majority
-wins and the change is listed in the commit body.
+`repr` policy is decided once, here, and the landed rule is: the host's
+IDENTITY fields are shown, its BULK and its lab PROVENANCE are hidden.
+Where the leaves disagreed (`dev_tools`, `products`, `debug_log_globs`),
+that rule — not a head-count of the leaves — decided it, and the change is
+listed in the commit body.
 
 ### 3.3 `RemoteHost` fields
 
@@ -115,15 +118,16 @@ Moves here, once: `ip`, `element` (required, `repr=False` — an override of
 `creds` (`default_factory=list`; `UnixHost` overrides to required), `user`,
 `board`, `slot`, `site`, `rack`, `shelf`, `hop`, `os_type`, `os_name`,
 `os_version`, `hw_version`, `sw_version`, `term`, `transfer`, `valid_terms`,
-`valid_transfers`, `is_virtual`, `has_bash`, `command_frame`,
+`valid_transfers`, `is_virtual`, `command_frame`,
 `landing_frame`, `session_setup`, `default_dest_dir`, `max_filename_len`,
 `telnet_options`, `snmp`, `metadata`, `interfaces`, `log_stdout`, `_lab`.
 
 Rule for membership: a field lives on `RemoteHost` when both remote leaves
 declare it with the SAME type. That includes the connection plumbing:
-`_connection_factory` (`init=True`, default `None`), and `_connections` /
-`_session_mgr` as `field(init=False, repr=False)` that the leaf's
-`__post_init__` fills. They cannot stay as the bare "Connection-state
+`_connection_factory` (`init=True`, default `None`) and `_connections` as
+`field(init=False, repr=False)` that the leaf's `__post_init__` fills
+(`_session_mgr` was one of these until item 10 moved it to `BaseHost`,
+where all five families share it). They cannot stay as the bare "Connection-state
 contract" annotations `RemoteHost` carries today: on a dataclass a bare
 annotation IS a field, and without a default it becomes a required
 constructor argument. The one field the leaves type differently,
@@ -139,23 +143,21 @@ annotation, and the structural guard says so without exemptions.
    `shell_history`, `_file_transfer`, `_user_transfers`, `_userland_cache`,
    …; embedded: `filesystem`, `loader`, `_file_transfer`; docker: `parent`, `container_id`, `project`,
    `service`, `compose_project`, `user`, `mounts`, `is_virtual`, `_pending_run_user`
-   and the rest; local: `has_bash`, `dry_run_exempt`).
+   and the rest; local: `dry_run_exempt`).
 2. Value-policy overrides of a base field: a different default, `init=False`,
    `kw_only=False`, or "required". An override carries NO docstring — the
    docstring lives with the field's home — and appears in the allowlist:
 
 | Leaf | Overrides |
 |---|---|
-| `UnixHost` | `creds` (required, positional), `os_type="unix"`, `os_name="Linux"`, `term="ssh"`, `transfer="scp"`, `valid_terms`, `valid_transfers`, `has_bash=True` |
+| `UnixHost` | `creds` (required, positional), `os_name="Linux"` |
 | `EmbeddedHost` | `os_type="embedded"`, `term="telnet"`, `transfer="console"`, `valid_terms`, `valid_transfers`, `has_bash=False` |
 | `ZephyrHost` | `os_type="zephyr"`, `os_name="Zephyr"`, `command_frame` (narrowed to `CommandFrame`, `default_factory=ZephyrFrame`) |
-| `LocalHost` | `name` (`"localhost"`, `init=False`), `id` |
-| `DockerContainerHost` | `name` (`init=False`), `id` |
+| `LocalHost` | `name` (`"localhost"`, `init=False`) |
+| `DockerContainerHost` | `name` (`init=False`) |
 
-The `id` rows are there because `LocalHost.id` today is a field default
-(`"local"`, `init=False`); after the move it is `BaseHost`'s `init=False`
-field assigned in `__post_init__`, so the override disappears in practice
-but the allowlist tolerates it during the migration.
+No leaf overrides `id`: it is `BaseHost`'s `init=False` field and every
+family, `LocalHost` included, assigns it in `__post_init__`.
 
 ### 3.5 The structural guard (replaces the drift sweep)
 

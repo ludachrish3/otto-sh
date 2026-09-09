@@ -3,6 +3,22 @@
 Privilege elevation is Python-only — there are no CLI verbs for `as_user` or
 `switch_user`. Full signatures: {class}`~otto.host.host.BaseHost`.
 
+otto keeps **four** privilege layers, and they answer different questions.
+`run(sudo=True)` is *per-command* elevation: one command runs elevated and
+the session is untouched. {meth}`~otto.host.host.BaseHost.as_user` and
+{meth}`~otto.host.host.BaseHost.switch_user` set the *session identity*:
+every later call on that session runs as the new user until the block ends
+or the caller switches back. The elevation *mechanism* is chosen from the
+device's userland ({attr}`~otto.host.userland.Userland.elevation`, applied
+by `PosixPrivilege`) — which binary a `sudo=True` command is actually built
+around on a host that has no `sudo`. And the *login target*
+({attr}`~otto.host.connections.ConnectionManager.login_target`) is the user
+the connection lands as in the first place, before any elevation happens.
+Reach for the narrowest one that answers your question: a single command
+wants `sudo=True`, a block of them wants `as_user`, and the other two are
+configuration — probed from the device or declared in lab data — rather than
+something you call.
+
 ## One-off: `run(sudo=True)`
 
     await host.run("apt-get update", sudo=True)
