@@ -63,7 +63,7 @@ with sync_phase(deadline=deadline, what="probe") as guard:
                 "nested command disarmed SIGTERM"
             )
             print("NEST-DONE", flush=True)
-        if mode == "stolen":
+        if mode.startswith("stolen"):
             # An async command running INSIDE the phase — the everyday shape,
             # since `otto test` runs a whole pytest session inside one and any
             # suite reaching run_command lands here. asyncio's
@@ -99,7 +99,7 @@ with sync_phase(deadline=deadline, what="probe") as guard:
             time.sleep(30)
         print("PHASE-UNREACHED", flush=True)
     except KeyboardInterrupt:
-        if mode == "stranded":
+        if "stranded" in mode:
             # Block SIGTERM IN THIS THREAD ONLY, then say so. Python-level
             # handlers run only on the main thread, so the second signal the
             # parent is about to send can never reach this guard's handler —
@@ -645,6 +645,49 @@ def test_an_interrupt_during_a_nested_command_reaches_the_phase(tmp_path):
     assert "FORCE-HOOK" in out
     assert "PHASE-EXITED" not in out
     assert rc == 130, f"expected 128+SIGINT from the guard's force path, got {rc}"
+
+
+@pytest.mark.serial_timing
+def test_second_signal_forces_when_the_fd_was_stolen_and_no_handler_runs(tmp_path):
+    """Both channels down at once — the intersection its two siblings each miss.
+
+    ``test_second_signal_forces_after_asyncio_takes_the_wakeup_fd_away`` kills
+    the wakeup channel and leans on the handler; ``..._even_when_its_handler_
+    never_runs`` kills the handler and leans on the wakeup fd. Neither covers
+    the case where the SAME delivery has neither, which is not hypothetical:
+    a process-directed signal is delivered to whatever thread has it
+    unblocked, and when the kernel picks the watchdog thread the main thread's
+    blocking teardown is never interrupted, so its handler does not run — on a
+    phase whose wakeup fd asyncio already took. Measured at ~0.1% of runs
+    against the guard as it stood (2 in 2000), which is exactly the rate that
+    reddens one leg of a release matrix and reproduces nowhere.
+
+    The mask makes that race a certainty, the same way the stranded test does.
+    What rescues it is re-claiming the wakeup fd when the phase ARMS: the fd
+    is free again by then (asyncio hands back -1 rather than the previous
+    owner), and the delivery that armed us has to be seeded into the reclaimed
+    channel, since a channel that joins at delivery #1 is otherwise one behind
+    the count that forces.
+    """
+    with _spawned(tmp_path, "stolen-stranded") as child:
+        _wait_line(child, "FD-STOLEN")  # premise: the fd is gone, asserted child-side
+        _wait_line(child, "PHASE-START")
+        os.kill(child.pid, signal.SIGINT)  # first signal: arms, and re-claims the fd
+        _wait_line(child, "TEARDOWN-START")  # the mask is in place by now
+        _wait_until_blocked(child.pid)  # ...and no eval checkpoint remains
+        t_kill = time.monotonic()
+        os.kill(child.pid, signal.SIGTERM)  # deliverable, but un-handleable
+        rc, out = _finish(child)
+    elapsed = time.monotonic() - t_kill
+    assert "FORCE-HOOK" in out, f"never forced at all; child said:\n{out[-4000:]}"
+    assert "PHASE-EXITED" not in out
+    assert rc == 130, f"expected 128+SIGINT from the guard's force path, got {rc}"
+    # Discriminator, not a budget: the child's deadline is 30s, so anything at
+    # or past it IS the deadline path and the second signal changed nothing.
+    assert elapsed < 2.0, (
+        f"forced exit took {elapsed:.1f}s — the teardown deadline expired, so the "
+        f"guard had no live channel for the second signal; child said:\n{out[-4000:]}"
+    )
 
 
 def test_wakeup_fd_is_taken_only_when_nobody_else_owns_it(real_sync_phase):

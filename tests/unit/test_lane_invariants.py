@@ -206,6 +206,12 @@ _SERIAL_TIMING_TESTS = {
         # told apart from one that did by the only signal there is.
         "test_second_signal_forces_even_when_its_handler_never_runs",
         "test_second_signal_forces_after_asyncio_takes_the_wakeup_fd_away",
+        # Added 2026-09-09 with the arm-time wakeup-fd reclaim and the
+        # absolute deadline. Same discriminator again — the first is told
+        # apart from the deadline path only by an elapsed bound below the
+        # child's 30s deadline, and the second asserts a wedged teardown dies
+        # AT its 1s deadline while a foreign-signal storm runs.
+        "test_second_signal_forces_when_the_fd_was_stolen_and_no_handler_runs",
     ),
     "tests/unit/host/test_session.py": ("test_recovery_timeout_rebind_is_live",),
     # Fourth sighting of the class, caught by this wave's own gates run: the

@@ -184,10 +184,54 @@ class SyncPhaseGuard:
         """
         with contextlib.suppress(ValueError, OSError):
             prior = signal.set_wakeup_fd(self._wake_w, warn_on_full_buffer=False)
+            # Owned from HERE, not after the hand-back: the probe has already
+            # pointed the interpreter at our pipe, and handing an occupied fd
+            # back can itself fail (an owner that closed its fd before
+            # releasing it makes the restore EBADF). Claiming first means such
+            # a failure leaves the flag TRUE and `_close` still releases —
+            # clearing it early would strand the interpreter writing signal
+            # bytes into a pipe this guard is about to close, and thence into
+            # whatever unrelated file inherits the number.
+            self._owns_wakeup_fd = True
             if prior == -1:
-                self._owns_wakeup_fd = True
                 return
             signal.set_wakeup_fd(prior)  # occupied — put it back untouched
+            self._owns_wakeup_fd = False
+
+    def _reclaim_wakeup_fd(self, signum: int) -> None:
+        """Re-offer for the wakeup fd at ARM time, and seed what it missed.
+
+        Called from the handler, so it obeys the same reentrancy rule as its
+        caller: ``set_wakeup_fd`` takes no lock the interrupted frame could
+        hold (it is main-thread-only, which a handler always is, and stores an
+        fd), and the seed is one ``os.write`` to our own pipe.
+
+        Why re-offer at all: the entry claim (``_claim_wakeup_fd``) can be
+        undone mid-phase and silently. asyncio takes the fd in
+        ``add_signal_handler`` and hands back **-1** rather than the previous
+        owner when the loop closes, so the phase's thread-agnostic channel is
+        gone from the first nested async command onward. Arming is the moment
+        it is worth asking again: the interrupt has happened, whoever took it
+        has typically given it up, and everything after this point is the
+        force path this channel exists to serve.
+
+        Why the SEED: the watchdog forces on the LARGER of two per-channel
+        delivery counts, and a channel that comes online at delivery #1 is
+        permanently one behind — the interpreter had already declined to write
+        this signal's byte before we took the fd back, so a second signal
+        would leave both counts at 1 and force nothing. Writing the byte the
+        interpreter would have written credits the channel with the delivery
+        that armed us; ``_watch`` needs no special case, because a raw signal
+        number is already how it counts a wakeup delivery.
+        """
+        with contextlib.suppress(ValueError, OSError):
+            prior = signal.set_wakeup_fd(self._wake_w, warn_on_full_buffer=False)
+            self._owns_wakeup_fd = True  # claim first — see `_claim_wakeup_fd`
+            if prior == -1:  # unowned — it is ours again, one delivery behind
+                self._wake(bytes([signum]))
+            elif prior != self._wake_w:  # someone else's: never seize, never seed
+                signal.set_wakeup_fd(prior)
+                self._owns_wakeup_fd = False
 
     def _wake(self, byte: bytes) -> None:
         with contextlib.suppress(OSError):
@@ -336,6 +380,7 @@ class SyncPhaseGuard:
         # that a wedged teardown never reaches. Hence two channels.
         if self.interrupted_signum is None:
             self.interrupted_signum = signum
+            self._reclaim_wakeup_fd(signum)
             self._wake(b"A")  # start the watchdog's deadline countdown
             with contextlib.suppress(OSError):
                 os.write(2, self._notice)
