@@ -433,10 +433,10 @@ def _register_builtin_os_profiles() -> None:
     ``has_bash=False``
         A stock BusyBox ships no bash. This is not cosmetic —
         :mod:`otto.tunnel.discovery` scans only ``has_bash`` hosts (it builds
-        its process list from ``[h for h in lab.hosts.values() if
-        getattr(h, "has_bash", False)]``), and detached command tagging goes
-        through :func:`otto.host.daemon.launch_command`'s ``bash -c 'exec -a
-        …'`` — ``exec -a`` is a bash builtin. Left at the unix default of
+        its process list from ``[h for h in lab.hosts.values() if h.has_bash]``),
+        and detached command tagging goes through
+        :func:`otto.host.daemon.launch_command`'s ``bash -c 'exec -a …'`` —
+        ``exec -a`` is a bash builtin. Left at the unix default of
         ``True``, ``otto.tunnel.manage._resolve_chain`` would accept the host
         as a tunnel path member and then emit a bash-only launch command to a
         shell that cannot run it.

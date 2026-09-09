@@ -507,6 +507,10 @@ class Host(Protocol):
     source_lab: str
     """Lab this host came from, stamped by the loader (see :attr:`BaseHost.source_lab`)."""
 
+    has_bash: bool
+    """Whether this host has a working ``bash`` to tag and exec through (see
+    :attr:`BaseHost.has_bash`)."""
+
     async def _login(self, user: str | None = None) -> None: ...
 
     async def login(self, user: str | None = None) -> None:

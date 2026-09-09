@@ -226,7 +226,7 @@ async def _scan_hosts(hosts: list[Any]) -> tuple[list[tuple[str, Observation]], 
 # ast-grep-ignore: no-tuple-return
 async def discover_observations(lab: "Lab") -> tuple[list[tuple[str, Observation]], list[str]]:
     """Every tagged tunnel process across the lab's ``has_bash`` hosts."""
-    hosts = [h for h in lab.hosts.values() if getattr(h, "has_bash", False)]
+    hosts = [h for h in lab.hosts.values() if h.has_bash]
     return await _scan_hosts(hosts)
 
 

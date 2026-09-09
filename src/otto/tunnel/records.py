@@ -65,7 +65,7 @@ async def discover_tunnel_records(lab: "Lab") -> list[TunnelRecord]:
             "tunnel scan was not issued: this is a dry run, so no host was contacted and "
             "the last known tunnel set is the best answer available"
         )
-    scannable = [h for h in lab.hosts.values() if getattr(h, "has_bash", False)]
+    scannable = [h for h in lab.hosts.values() if h.has_bash]
     if scannable and len(discovery.unreachable) == len(scannable):
         raise TunnelScanFailedError(
             f"tunnel scan reached none of the lab's {len(scannable)} scannable hosts"

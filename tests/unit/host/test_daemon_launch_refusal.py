@@ -186,13 +186,16 @@ class TestWhoIsNotRefused:
     def test_a_host_declaring_nothing_at_all_is_not_refused(self) -> None:
         """Undeclared is not the measured class.
 
-        The ``getattr`` default is ``True`` — the OPPOSITE of
-        ``otto.tunnel.discovery``'s ``getattr(h, "has_bash", False)``, and
-        deliberately so. There the conservative answer is to keep a host out of
-        a scan; here it is to keep it out of a refusal, because refusing a host
-        otto was never told about converts "we were not told" into "does not
-        work". Every fake in otto's own link tests is exactly this shape, which
-        is the other reason the default matters.
+        The ``getattr`` default is ``True``, and deliberately so.
+        ``otto.tunnel.discovery`` does not use ``getattr`` at all — its hosts
+        come from ``Lab.hosts``, typed as the ``Host`` protocol, which names
+        ``has_bash``, so it reads ``h.has_bash`` plainly and an undeclared host
+        cannot arise. This function takes ``host: Any`` and wants the OPPOSITE
+        answer for one that declares nothing: there the conservative choice is
+        to keep a host out of a scan; here it is to keep it out of a refusal,
+        because refusing a host otto was never told about converts "we were not
+        told" into "does not work". Every fake in otto's own link tests is
+        exactly this shape, which is the other reason the default matters.
         """
         assert refuse_if_launch_wrapper_needs_bash(_Host()) is None
 

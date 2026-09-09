@@ -157,9 +157,13 @@ def refuse_if_launch_wrapper_needs_bash(host: Any, *, attempted: str = "") -> No
     :func:`~otto.host.userland.refuse_if_gapped` is built on, one level up:
     refusing a host otto has no declaration for would turn "we were not told"
     into "does not work", which is the expensive direction.
-    Note this is the OPPOSITE default from :mod:`otto.tunnel.discovery`'s
-    ``getattr(h, "has_bash", False)`` -- there the conservative answer is to
-    leave a host out of a scan, here it is to leave it out of the refusal.
+    Note the ``getattr`` here is deliberate, and not what
+    :mod:`otto.tunnel.discovery` does: that module's receivers come from
+    ``Lab.hosts``, typed as the :class:`~otto.host.host.Host` protocol, which
+    names ``has_bash``, so it reads the attribute plainly. This function takes
+    ``host: Any``, and wants the OPPOSITE default anyway -- there the
+    conservative answer is to leave a host out of a scan, here it is to leave
+    it out of the refusal.
 
     *attempted* is the caller's own one-line description of the launch, since
     only the caller knows what the daemon was for and what the operator can do

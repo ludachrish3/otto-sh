@@ -117,6 +117,7 @@ PROTOCOL_ATTRIBUTES = frozenset(
         "debug_log_globs",
         "power_control",
         "source_lab",
+        "has_bash",
     }
 )
 

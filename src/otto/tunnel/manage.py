@@ -202,7 +202,7 @@ def _validate_chain_shape(lab: "Lab", specs: list[EndpointSpec]) -> None:
         host = lab.hosts.get(host_id)
         if host is None:
             continue  # unknown-host error is raised by the per-hop resolution
-        if not getattr(host, "has_bash", False):
+        if not host.has_bash:
             raise ValueError(
                 f"host {host_id!r} cannot be part of a tunnel path (has_bash=False) — "
                 "it cannot run the tagged socat processes, and discovery/remove only "
@@ -922,7 +922,7 @@ def _plan_remove(lab: "Lab", *, tunnel_id: str | None) -> RemovedReport:
     the old dry run printed ``removed (none found)`` and exited 0, which is a
     statement about live processes on hosts nobody scanned.
     """
-    scannable = sorted(h.id for h in lab.hosts.values() if getattr(h, "has_bash", False))
+    scannable = sorted(h.id for h in lab.hosts.values() if h.has_bash)
     target = f"tunnel {tunnel_id!r}" if tunnel_id is not None else "EVERY otto tunnel"
     hosts = ", ".join(scannable) or "<none: no lab host declares has_bash>"
     would = [
