@@ -256,7 +256,7 @@ if installed.startswith("otto-agent-2."):
 ```python
 # After — the decline is a first-class outcome, and the branch never runs on a
 # fact nobody measured.
-from otto.utils import Status
+from otto import Status
 
 result = (await host.run("rpm -q otto-agent")).only
 if result.status is Status.NotRun:

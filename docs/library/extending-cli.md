@@ -29,7 +29,7 @@ from otto import options
 from otto.cli.registry import cli_command
 from otto.context import OttoContext
 from otto.result import Result
-from otto.utils import Status
+from otto import Status
 
 
 @options

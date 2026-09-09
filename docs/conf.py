@@ -578,7 +578,8 @@ from pathlib import Path
 GS_EXAMPLE = Path({str(_GS_EXAMPLE)!r})
 if str(GS_EXAMPLE / "libs") not in sys.path:
     sys.path.insert(0, str(GS_EXAMPLE / "libs"))
-from otto.utils import Status, complete_marker_expression, complete_separated_list, split_on
+from otto import Status
+from otto.utils import complete_marker_expression, complete_separated_list, split_on
 from otto.result import CommandResult, Result, Results
 from otto.config.lab import split_lab_names
 from otto.host.local_host import LocalHost

@@ -301,7 +301,7 @@ from pathlib import Path
 
 from otto.project import ProjectActions, register_project_actions
 from otto.result import Result
-from otto.utils import Status
+from otto import Status
 
 
 @register_project_actions

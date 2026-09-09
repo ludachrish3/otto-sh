@@ -158,7 +158,7 @@ from pathlib import Path
 from otto.host import register_transfer_backend
 from otto.host.transfer import BaseFileTransfer, ProgressGranularity, TransferContext
 from otto.result import Result
-from otto.utils import Status
+from otto import Status
 
 
 class XmodemTransfer(BaseFileTransfer):

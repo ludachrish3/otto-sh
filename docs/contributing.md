@@ -650,7 +650,7 @@ In Markdown documentation files (collected by Sphinx):
 
 ````markdown
 ```{doctest}
->>> from otto.utils import Status
+>>> from otto import Status
 >>> Status.Success
 <Status.Success: 0>
 ```

@@ -167,7 +167,6 @@ otto.tunnel:remove_tunnel
 otto.utils:Arg
 otto.utils:Exclude
 otto.utils:Opt
-otto.utils:Status
 otto.utils:cli_exposed
 otto:
 otto:AppShell
