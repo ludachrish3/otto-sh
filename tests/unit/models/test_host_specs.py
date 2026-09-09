@@ -1,6 +1,4 @@
 import dataclasses
-import typing
-from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar
 
@@ -8,14 +6,11 @@ import pytest
 from pydantic import ValidationError
 
 from otto.host.command_frame import ZephyrFrame
-from otto.host.docker_host import DockerContainerHost  # noqa: F401 — imported for the sweep below
 from otto.host.element import Element
 from otto.host.embedded_filesystem import NoFileSystem
-from otto.host.embedded_host import EmbeddedHost, ZephyrHost  # noqa: F401 — same
+from otto.host.embedded_host import EmbeddedHost
 from otto.host.factory import create_host_from_dict
-from otto.host.host import BaseHost
 from otto.host.interface import Interface
-from otto.host.local_host import LocalHost  # noqa: F401 — same
 from otto.host.options import TelnetOptions
 from otto.host.os_profile import HOST_CLASSES
 from otto.host.toolchain import Toolchain
@@ -295,193 +290,10 @@ def test_host_resources_reach_the_runtime_host_as_a_frozenset_copy():
         UnixHostSpec(**_minimal_unix_kwargs(), resources=[" "])
 
 
-def _otto_host_dataclasses() -> list[type]:
-    """Every concrete otto host dataclass in ``BaseHost``'s subtree.
-
-    Walked rather than listed, so a host class added later is swept without
-    editing this test — and filtered to ``otto.*`` modules, because
-    ``__subclasses__`` sees whatever the session has imported and a stand-in
-    some other test module defined must not join the sweep.
-
-    Seeded with ``HOST_CLASSES``, the ``os_type`` registry, as well. Today that
-    adds NOTHING: every registered class is a ``RemoteHost`` subclass whose
-    module is already imported by the time this runs, so the walk reaches all
-    of them on its own. It is insurance, not coverage — the walk is only as
-    good as the imports, and a class registered by an init module this session
-    never imported would otherwise slip the sweep while lab data can still
-    select it. (The registry is RemoteHost-only: ``LocalHost`` and
-    ``DockerContainerHost`` appear in no registry at all, which is why it can
-    never replace the walk.)
-    """
-    seen: dict[str, type] = {}
-    # ``HOST_CLASSES`` is an ``otto.registry.Registry``, not a dict — ``items()``
-    # is the only accessor that yields the classes; there is no ``values()``.
-    stack: list[type] = [BaseHost, *(cls for _, cls in HOST_CLASSES.items())]
-    while stack:
-        cls = stack.pop()
-        stack.extend(cls.__subclasses__())
-        if dataclasses.is_dataclass(cls) and cls.__module__.startswith("otto."):
-            seen[cls.__name__] = cls
-    return [seen[n] for n in sorted(seen)]
-
-
-def _is_class_var(annotation: object) -> bool:
-    """Whether *annotation* declares a ``ClassVar``, evaluated or written as text.
-
-    Both spellings, because this module reads ``__annotations__`` raw (see
-    :func:`_basehost_contract_fields`) and so sees whichever form the author
-    used: a class-body annotation is evaluated at class creation, giving a real
-    ``typing.ClassVar[...]`` object, but a fully quoted one
-    (``"ClassVar[Thing]"``) stays a string that no ``get_origin`` can see
-    through.
-    """
-    if isinstance(annotation, str):
-        return annotation.lstrip().startswith(("ClassVar[", "typing.ClassVar["))
-    return typing.get_origin(annotation) is ClassVar
-
-
-def _basehost_contract_fields(annotations: Mapping[str, object] | None = None) -> list[str]:
-    """``BaseHost``'s BARE INSTANCE annotations — the names that are a promise only.
-
-    An annotation carrying a value (``source_lab: str = ""``) creates a real
-    class attribute every subclass inherits, so it can never be the gap this
-    sweep hunts. A bare one creates nothing.
-
-    ``ClassVar`` is excluded, and the exclusion is about what the sweep MEANS,
-    not about silencing it. This function feeds a ``dataclasses.fields()``
-    comparison, and a ``ClassVar`` is by definition not a dataclass field —
-    ``@dataclass`` skips it deliberately. So a bare ``ClassVar`` annotation on
-    ``BaseHost`` (``capabilities``, which every concrete family gives a VALUE
-    rather than a field) would read as missing from all five host classes
-    forever, and no correct declaration could ever satisfy it. The hazard this
-    sweep hunts — an attribute the type checker credits to a subclass that has
-    no runtime value — is caught for ``ClassVar`` by
-    ``register_host_class``'s own ``isinstance`` refusal instead.
-
-    ``__annotations__`` rather than ``typing.get_type_hints``: the names are
-    all this needs, and several of these are string forward references to
-    modules ``host.py`` imports only under ``TYPE_CHECKING``, so
-    ``get_type_hints`` would raise ``NameError`` trying to evaluate them.
-
-    *annotations* lets a caller drive the sweep over an injected mapping
-    (:func:`test_the_classvar_exclusion_does_not_blind_the_sweep` does this)
-    instead of ``BaseHost``'s own. Accepting the mapping rather than mutating
-    the class matters on Python 3.14: PEP 649 lazy annotations mean
-    ``"__annotations__" not in BaseHost.__dict__`` there, so
-    ``monkeypatch.setattr(BaseHost, "__annotations__", ...)`` records the
-    attribute as ABSENT and undoes itself with ``delattr`` — leaving
-    ``BaseHost.__annotations__ == {}`` for the rest of the process and
-    order-dependently failing whichever test reads it next.
-    """
-    # Default: read BaseHost.__annotations__ directly. Do NOT reintroduce a
-    # monkeypatch of this attribute — see the docstring above and
-    # test_the_classvar_exclusion_does_not_blind_the_sweep.
-    if annotations is None:
-        annotations = BaseHost.__annotations__
-    return sorted(
-        name
-        for name, annotation in annotations.items()
-        if name not in vars(BaseHost) and not _is_class_var(annotation)
-    )
-
-
-def _missing_contract_fields(classes: list[type], contract: list[str]) -> list[str]:
-    """``Class.field`` for every contract name no dataclass field of *classes* provides.
-
-    Collected rather than asserted per class: a gap is usually the SAME missing
-    field on every host class, and one assertion per class would report the
-    alphabetically first and hide the other four. Extracted so
-    :func:`test_the_classvar_exclusion_does_not_blind_the_sweep` can drive the
-    real comparison rather than a copy of it.
-    """
-    return [
-        f"{cls.__name__}.{name}"
-        for cls in classes
-        for name in contract
-        if name not in {f.name for f in dataclasses.fields(cls)}
-    ]
-
-
-def test_every_host_class_declares_every_basehost_contract_field():
-    """Spec 2026-08-28 three-level-reservations §3: every host answers ``.resources``
-    and ``.element`` — generalised to the whole ``BaseHost`` contract.
-
-    ``BaseHost`` is NOT a dataclass, so a bare ``resources: frozenset[str]``
-    annotation is a contract the type checker credits to every subclass while
-    producing no runtime attribute and no dataclass field — no default, and
-    nothing for ``dataclasses.fields()`` to report. A host class that skips the
-    field therefore raises ``AttributeError`` on first read, which the lab-wide
-    aggregation walks straight into. (The instances DO have a ``__dict__``,
-    ``slots=True`` on the subclass notwithstanding, because the bases are plain
-    classes — so a loader CAN assign one late; the point is that nothing does,
-    and every read before the first assignment fails.) That hazard is not
-    specific to ``resources``: it is true of every bare annotation on
-    ``BaseHost``, so the sweep is over all of them rather than over the one
-    field a given plan happened to add.
-
-    Swept over every class rather than the ones the drift guard pairs with a
-    spec: ``LocalHost`` and ``DockerContainerHost`` have no spec at all, and
-    they are exactly the two whose reservation sets are always empty.
-    """
-    classes = _otto_host_dataclasses()
-    # Never let the sweep collapse: the walk is only as good as the imports.
-    assert {"UnixHost", "EmbeddedHost", "ZephyrHost", "LocalHost", "DockerContainerHost"} <= {
-        c.__name__ for c in classes
-    }, sorted(c.__name__ for c in classes)
-    contract = _basehost_contract_fields()
-    # Nor let the CONTRACT collapse: an empty annotation set would sweep nothing.
-    assert {"resources", "element", "lab_info"} <= set(contract), contract
-    assert not (missing := _missing_contract_fields(classes, contract)), (
-        f"host classes missing a BaseHost contract field: {missing}"
-    )
-    # The default_factory, not just the field: the set is read by iterating and
-    # is not normalised on assignment. NOTE (no code here): a plain ``str``
-    # assigned to ``resources`` would satisfy every type check this sweep can
-    # make and then iterate as its CHARACTERS at the gate — a requirement of
-    # one-letter resources. The factory is the one place that could reject or
-    # normalise it. (The element's own set is normalised by ``Element`` itself.)
-    for cls in classes:
-        by_name = {f.name: f for f in dataclasses.fields(cls)}
-        assert by_name["resources"].default_factory is frozenset, cls.__name__
-
-
-def test_the_classvar_exclusion_does_not_blind_the_sweep():
-    """The ``ClassVar`` exclusion must drop ``ClassVar`` and NOTHING ELSE.
-
-    An exclusion is a hole until something proves how narrow it is, and this
-    one was added to let a real declaration (``BaseHost.capabilities``) through
-    a sweep it could never have satisfied. So: inject BOTH shapes of bare
-    annotation alongside ``BaseHost``'s own, and require the sweep to keep
-    seeing the instance one while ignoring the ``ClassVar`` twin beside it.
-    Without the first half, an exclusion widened to "every bare annotation"
-    would still pass every other assertion in this file.
-
-    Both spellings of ``ClassVar`` are injected, because ``__annotations__``
-    can hold either — see :func:`_is_class_var`.
-
-    Passed in as a plain dict rather than ``monkeypatch.setattr(BaseHost,
-    "__annotations__", injected)``: on Python 3.14, PEP 649 lazy annotations
-    mean ``"__annotations__"`` is not in ``BaseHost.__dict__``, so monkeypatch
-    records the attribute as ABSENT and undoes the patch with ``delattr``
-    instead of restoring the original value — leaving
-    ``BaseHost.__annotations__ == {}`` for every test that runs afterward in
-    the same process. ``_basehost_contract_fields`` takes the mapping as a
-    parameter precisely so this test can drive it without touching the class
-    at all.
-    """
-    injected = dict(BaseHost.__annotations__)
-    injected["an_instance_field_nobody_declares"] = str
-    injected["a_class_var_nobody_declares"] = ClassVar[str]
-    injected["a_quoted_class_var_nobody_declares"] = "ClassVar[str]"
-
-    contract = _basehost_contract_fields(injected)
-    assert "an_instance_field_nobody_declares" in contract
-    assert "a_class_var_nobody_declares" not in contract
-    assert "a_quoted_class_var_nobody_declares" not in contract
-
-    missing = _missing_contract_fields(_otto_host_dataclasses(), contract)
-    assert missing, "a bare instance annotation no host class declares must still fail"
-    assert all(name.endswith(".an_instance_field_nobody_declares") for name in missing), missing
+# The BaseHost contract sweep lived here until spec 2026-09-09 made BaseHost a
+# dataclass; its hazard (a bare annotation with no runtime field) is now
+# structurally impossible and `tests/unit/host/test_field_homes.py` holds the
+# new shape.
 
 
 # Runtime host init fields applied by overridable repo logic (NOT lab data) —
@@ -678,7 +490,7 @@ def test_registered_pairs_drift_guard():
     same bidirectional check as HOST_SPEC_RUNTIME_PAIRS, but sourced from the
     live registry so it covers built-ins registered through register_host_class.
     """
-    from otto.host.os_profile import _HOST_SPECS, HOST_CLASSES
+    from otto.host.os_profile import _HOST_SPECS
 
     for name, spec_cls in _HOST_SPECS.items():
         runtime_cls = HOST_CLASSES.get(name)

@@ -28,8 +28,8 @@ class LabInfo:
     """The LAB's declared reservation identifiers (spec §8.1) — lab level only.
 
     Element and host resources live on the host itself
-    (:attr:`~otto.host.remote_host.RemoteHost.element`'s ``resources``,
-    :attr:`~otto.host.remote_host.RemoteHost.resources`; spec 2026-08-28
+    (:attr:`~otto.host.host.BaseHost.element`'s ``resources``,
+    :attr:`~otto.host.host.BaseHost.resources`; spec 2026-08-28
     three-level-reservations §3)."""
 
     metadata: dict[str, Any] = field(default_factory=dict)

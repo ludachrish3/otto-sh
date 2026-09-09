@@ -38,29 +38,22 @@ from ..result import CommandNotRunError, CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .connections import teardown_step
-from .dev_tool import DevTool
 from .errors import MountNotFoundError
 from .file_ops import PosixFileOps
 from .host import BaseHost, Host, _validate_user, is_dry_run, refuse_declined_fact
-from .inventory_ref import InventoryRef
-from .lab_info import LabInfo
 from .mount import Mount, mount_for, mount_for_parent, translate
 from .privilege import PosixPrivilege
-from .product import Product
 
 if TYPE_CHECKING:
     import re
 
-    from .element import Element
 
-from .power import PowerController
 from .session import Expect, HostSession, SessionManager, ShellSession, _DockerSshSession
-from .toolchain import Toolchain
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     """A Docker container exposed as a first-class otto host.
 
@@ -87,7 +80,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     )
     """What this family promises. See :class:`~otto.host.capability_grid.HostCapabilities`."""
 
-    parent: "Host"
+    parent: "Host" = field(kw_only=False)
     """The lab host running the docker daemon. Owns auth, hop chain, and
     the SSH connection used to reach the daemon. Typed as
     :class:`~otto.host.host.Host` (the protocol) so the type-system surface stays narrow,
@@ -97,28 +90,23 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     asyncssh connection. ``exec`` and file transfer work against any
     parent."""
 
-    container_id: str
+    container_id: str = field(kw_only=False)
     """Docker container id or unique name. Resolved by
     :func:`otto.docker.compose.compose_up` via
     ``docker compose -p <proj> ps -q <service>``."""
 
-    project: str
+    project: str = field(kw_only=False)
     """Owning project name (the repo's settings ``name``). Combined with
     *parent* and *service* to form the host id."""
 
-    service: str
+    service: str = field(kw_only=False)
     """Compose service name (e.g. ``api``)."""
 
-    compose_project: str
+    compose_project: str = field(kw_only=False)
     """The ``-p`` value passed to ``docker compose`` for this stack. Stored
     so other commands (``logs``, ``ps``, ``down``) can scope correctly."""
 
     name: str = field(default="", init=False)
-    """Human-readable host name. Filled in ``__post_init__``."""
-
-    id: str = field(default="", init=False)
-    """Unique host id used as the key in ``Lab.hosts`` and on the CLI.
-    Format: ``<parent_id>.<project>.<service>``."""
 
     is_virtual: bool = field(default=True, init=False)
     """Containers are always virtual by definition."""
@@ -154,50 +142,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     refusal makes the distinction there instead, where it is wanted.
     """
 
-    log: LogMode = field(default=LogMode.NORMAL, repr=False)
-    """Standing per-host logging disposition. ``QUIET`` keeps this host's command
-    I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
-    (warnings/errors are unaffected)."""
-
     log_stdout: bool = field(default=True, repr=False)
     """Whether output is mirrored to stdout in addition to log files."""
-
-    lab_info: LabInfo = field(default_factory=LabInfo, repr=False)
-    """The resolved lab this host was registered into (copied from the parent for containers)."""
-
-    resources: frozenset[str] = field(default_factory=frozenset, repr=False)
-    """Always empty — a container is never a reservable unit (spec 2026-08-28
-    three-level-reservations §3). Declared rather than inherited: ``BaseHost``
-    is not a dataclass, so its bare annotation creates no attribute and no
-    dataclass field, and every concrete host dataclass must therefore declare
-    the contract's fields itself (R11) — a read before anything assigns one is
-    an ``AttributeError`` the type checker cannot see."""
-
-    element: "Element | None" = field(default=None, repr=False)
-    """Always ``None`` — belongs to no element. Declared to satisfy the
-    :class:`~otto.host.host.Host` contract."""
-
-    inventory_ref: InventoryRef = field(default_factory=InventoryRef, repr=False)
-    """Inventory provenance; empty unless this host was resolved from a record."""
-
-    debug_log_globs: list[str] = field(default_factory=list, repr=False)
-    """Container paths/glob patterns ``get_debug_logs`` fetches. Default empty.
-    See :attr:`~otto.host.host.BaseHost.debug_log_globs`."""
-
-    products: list[Product] = field(default_factory=list, repr=False)
-    """Software-under-test deployed to this host. Default empty. See
-    :attr:`~otto.host.host.BaseHost.products`."""
-
-    dev_tools: list[DevTool] = field(default_factory=list, repr=False)
-    """Repo-internal tooling deployed to this host. Default empty. See
-    :attr:`~otto.host.host.BaseHost.dev_tools`."""
-
-    toolchain: Toolchain = field(default_factory=Toolchain, repr=False)
-    """Toolchain for this container's products. Defaults to the image's
-    system-installed tools. See :attr:`~otto.host.host.BaseHost.toolchain`."""
-
-    power_control: "PowerController | None" = field(default=None, repr=False)
-    """Always None — LocalHost/DockerContainerHost are not power-controlled."""
 
     _session_mgr: SessionManager = field(init=False, repr=False)
     """Manages the persistent shell session(s) inside the container. The

@@ -50,17 +50,11 @@ from dataclasses import (
 )
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING,
     Annotated,
-    Any,
     cast,
 )
 
 from typing_extensions import override
-
-if TYPE_CHECKING:
-    from ..config.lab import Lab
-    from .session_setup import SessionSetup
 
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
@@ -75,7 +69,7 @@ from ..utils import (
 )
 from .capability import IMPAIRER_RESOLVER, TERM_RESOLVER, TRANSFER_RESOLVER
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
-from .command_frame import CommandFrame, build_command_frame
+from .command_frame import build_command_frame
 from .connections import (
     ConnectionManager,
     TermContext,
@@ -83,8 +77,6 @@ from .connections import (
     build_term_backend,
     teardown_step,
 )
-from .dev_tool import DevTool
-from .element import Element
 from .errors import UnsupportedOnUserlandError
 from .file_ops import PosixFileOps
 from .host import (
@@ -94,29 +86,22 @@ from .host import (
     is_dry_run,
 )
 from .interact import run_ssh_login, run_telnet_login
-from .interface import Interface
-from .inventory_ref import InventoryRef
-from .lab_info import LabInfo
 from .login_proxy import Cred, LoginProxyError, cred_for, resolve_chain
 from .options import (
     FtpOptions,
     NcOptions,
     ScpOptions,
     SftpOptions,
-    SnmpOptions,
     SshOptions,
-    TelnetOptions,
     UserlandOptions,
 )
-from .power import PowerController, power_control_from_spec
+from .power import power_control_from_spec
 from .privilege import PosixPrivilege
-from .product import Product
-from .remote_host import OsType, RemoteHost
+from .remote_host import RemoteHost
 from .session import (
     SessionManager,
 )
 from .telnet import TelnetClient
-from .toolchain import Toolchain
 from .transfer import (
     TransferContext,
     UnixFileTransfer,
@@ -257,9 +242,14 @@ def _measured_absent(userland: "Userland", applet: str) -> bool:
     )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
-    """Unix host accessed via SSH or Telnet, with bash as the remote shell."""
+    """Unix host accessed via SSH or Telnet, with bash as the remote shell.
+
+    Every field this class shares with the other network family lives on
+    :class:`~otto.host.remote_host.RemoteHost`; what follows is the unix
+    family's own, plus the two value-policy overrides below.
+    """
 
     capabilities = HostCapabilities(
         run_user=UserSupport.refused,
@@ -277,69 +267,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     )
     """What this family promises. See :class:`~otto.host.capability_grid.HostCapabilities`."""
 
-    ip: str
-    """IP address of the host."""
-
-    creds: list[Cred]
-    """Login credentials for this host — one :class:`~otto.host.login_proxy.Cred`
-    entry per account, in priority order (the first entry is the default
-    login when ``user`` is unset). A proxied entry (``Cred.proxy`` set)
-    cannot be reached by direct authentication; :meth:`cred` /
-    :attr:`default_cred` and the connection-layer chain resolution
-    (:func:`~otto.host.login_proxy.resolve_chain`) handle that."""
-
-    element: Element = field(repr=False)
-    """The element this host belongs to. See :attr:`~otto.host.remote_host.RemoteHost.element`."""
-
-    os_type: OsType = "unix"
-    """Default profile selector for a bare :class:`UnixHost`. A custom
-    unix-based profile (e.g. ``ubuntu-22.04``) records its own name here."""
+    creds: list[Cred] = field(kw_only=False)
 
     os_name: str | None = "Linux"
-    """Kernel/OS name. Defaults to ``Linux`` (the concrete Unix kernel today)."""
-
-    os_version: str | None = None
-    """OS/kernel version string, or None if unspecified."""
-
-    name: str = ""
-    """Human readable name to represent the host. Automatically generated if not provided."""
-
-    user: str | None = None
-    """User with which to log in. If not provided, the first entry in `creds` will be used."""
-
-    board: str | None = field(default=None, repr=False)
-    """Name of the board type to which this host belongs."""
-
-    slot: int | None = field(default=None, repr=False)
-    """Phyiscal slot number of the board to which this host belongs."""
-
-    site: int | str | None = field(default=None, repr=False)
-    """Site the host is installed at (a name or a number)."""
-
-    rack: int | str | None = field(default=None, repr=False)
-    """Rack within the site (a name or a number)."""
-
-    shelf: int | None = field(default=None, repr=False)
-    """Shelf / rack position."""
-
-    hw_version: str | None = None
-    """Hardware version description."""
-
-    sw_version: str | None = None
-    """Software version description."""
-
-    term: str = "ssh"
-    """Protocol used to issue terminal commands."""
-
-    is_virtual: bool = False
-    """Determines whether a host is a VM or not."""
-
-    has_bash: bool = True
-    """Whether this host has a working ``bash`` a command can be tagged and
-    exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
-    (:mod:`otto.tunnel.discovery`) scans only ``has_bash`` hosts. Unix hosts have
-    bash by default; override to ``False`` in ``lab.json`` for a host that
-    defies the norm."""
 
     docker_capable: bool = False
     """Whether this host can run Docker containers (i.e., has a docker daemon
@@ -351,44 +281,15 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     use-case fragments name a role; placement resolves it to the unique
     docker-capable host carrying the tag (otto.docker.resolve)."""
 
-    transfer: str = "scp"
-    """Protocol used to transfer files."""
-
-    valid_terms: list[str] = field(default_factory=lambda: ["ssh", "telnet"])
-    """Closed menu of term backends this host supports (active is ``term``)."""
-
-    valid_transfers: list[str] = field(default_factory=lambda: ["scp", "sftp", "ftp", "nc"])
-    """Closed menu of transfer backends this host supports (active is ``transfer``)."""
-
     impairer: str = "netem"
     """Active impairer used for link-impairment placements on this host."""
 
     valid_impairers: list[str] = field(default_factory=lambda: ["netem"])
     """Closed menu of impairers this host supports (active is ``impairer``)."""
 
-    default_dest_dir: Path = field(default_factory=Path)
-    """Default landing directory for ``put`` / ``get`` when the caller
-    supplies an empty or relative ``dest_dir``. Defaults to ``Path()``,
-    which preserves the existing behavior — SCP/SFTP resolve a relative
-    destination against the SSH user's home directory. Override per-host
-    to land transfers in a fixed location regardless of the caller's
-    argument. See :attr:`~otto.host.remote_host.RemoteHost.default_dest_dir`."""
-
-    max_filename_len: int = 255
-    """Upper bound on the basename length (including extension) accepted by
-    the target's filesystem. Defaults to ``255`` — the Linux ``NAME_MAX``,
-    also the cap for ext4 / XFS / Btrfs / NTFS. Lower it for hosts on a
-    tighter filesystem; see :attr:`~otto.host.remote_host.RemoteHost.max_filename_len` for details.
-    Over-limit names are rejected by :meth:`put` / :meth:`get` with a
-    self-explaining error instead of an opaque ``File name too long``
-    midway through the transfer."""
-
     ssh_options: SshOptions = field(default_factory=SshOptions, repr=False)
     """Connection options for SSH sessions (port, timeout, known_hosts,
     port-forwarding rules, etc.)."""
-
-    telnet_options: TelnetOptions = field(default_factory=TelnetOptions, repr=False)
-    """Connection options for telnet sessions (port, cols/rows, auto-resize, etc.)."""
 
     sftp_options: SftpOptions = field(default_factory=SftpOptions, repr=False)
     """Connection options for SFTP file transfers."""
@@ -415,27 +316,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     consumers share. See
     ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``."""
 
-    command_frame: CommandFrame | None = None
-    """Shell-framing dialect for this host's bash console. ``None`` (the
-    default) lets the :class:`~otto.host.session.SessionManager` use its
-    built-in :class:`~otto.host.command_frame.BashFrame`, preserving the
-    historical behavior exactly. Lab data may name a registered frame by string
-    (resolved in ``__post_init__``); a profile or subclass may supply an
-    instance. Promoted to a common field in Phase A so any host can declare its
-    dialect — see :attr:`~otto.host.embedded_host.EmbeddedHost.command_frame`."""
-
-    landing_frame: CommandFrame | None = None
-    """Dialect of the shell otto lands in when it differs from ``command_frame``;
-    ``None`` means the same dialect. Lab data names a registered frame by
-    string (resolved in ``__post_init__``); only meaningful with
-    ``session_setup``, which manoeuvres from the landing shell to the target."""
-
-    session_setup: "SessionSetup | None" = None
-    """Session-setup hook run once per shell session, after the handshake and
-    every login-proxy hop, with a real :class:`~otto.host.session.HostSession`.
-    Lab data declares it by name or as a ``{"type": name, ...params}`` table
-    (resolved in ``__post_init__``). See :mod:`otto.host.session_setup`."""
-
     shell_history: bool = False
     """Whether otto's commands are recorded in this host's shell history.
 
@@ -451,82 +331,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     including shells reached through a login proxy); ``exec``-channel commands
     were never recorded in the first place, and ``otto login`` deliberately
     leaves a human's shell alone."""
-
-    snmp: SnmpOptions | None = field(default=None, repr=False)
-    """Optional SNMP polling config (lab ``snmp`` block). When set, otto's
-    monitor collects this host's metrics over SNMP instead of running shell
-    commands. SNMP monitoring is not embedded-only — a Unix host may use it to
-    poll a real SNMP agent. See :class:`~otto.host.options.SnmpOptions`."""
-
-    hop: str | None = None
-    """Host ID of the intermediate hop used to reach this host, or None for direct connection."""
-
-    metadata: dict[str, Any] = field(default_factory=dict, repr=False)
-    """Opaque per-host ``metadata`` from lab data. Never interpreted by otto."""
-
-    resources: frozenset[str] = field(default_factory=frozenset, repr=False)
-    """This host's own reservation identifiers — a slot; a copy of the spec's set.
-    See :attr:`~otto.host.remote_host.RemoteHost.resources`."""
-
-    lab_info: LabInfo = field(default_factory=LabInfo, repr=False)
-    """The resolved lab this host came from (loader-stamped, like ``source_lab``)."""
-
-    inventory_ref: InventoryRef = field(default_factory=InventoryRef, repr=False)
-    """Inventory provenance; empty unless this host was resolved from a record."""
-
-    debug_log_globs: list[str] = field(default_factory=list)
-    """Remote paths/glob patterns ``get_debug_logs`` fetches. Default empty.
-    See :attr:`~otto.host.host.BaseHost.debug_log_globs`."""
-
-    interfaces: dict[str, Interface] = field(default_factory=dict, repr=False)
-    """Named network devices
-    (see :attr:`~otto.host.remote_host.RemoteHost.interfaces`).
-    Resolve with :meth:`~otto.host.remote_host.RemoteHost.address_for`."""
-
-    products: list["Product"] = field(default_factory=list)
-    """Software-under-test deployed to this host. Default empty. See
-    :attr:`~otto.host.host.BaseHost.products`."""
-
-    dev_tools: list["DevTool"] = field(default_factory=list)
-    """Repo-internal tooling deployed to this host. Default empty. See
-    :attr:`~otto.host.host.BaseHost.dev_tools`."""
-
-    power_control: "PowerController | None" = None
-    """Pluggable power backend. Lab data declares it by string (a config-free
-    controller type) or a ``[power]`` table (``{type, on_cmd, off_cmd, ...}``);
-    ``__post_init__`` coerces it to an instance. None → power()/reboot(hard=True)
-    fail loud. See :attr:`~otto.host.host.BaseHost.power_control`."""
-
-    log: LogMode = field(default=LogMode.NORMAL, repr=False)
-    """Standing per-host logging disposition. ``QUIET`` keeps this host's command
-    I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
-    (warnings/errors are unaffected)."""
-
-    log_stdout: bool = field(default=True, repr=False)
-    """Determines whether this host should log its output to stdout.
-    Commands and their output are still logged to log files if `log` is `True`."""
-
-    toolchain: Toolchain = field(default_factory=Toolchain, repr=False)
-    """Toolchain associated with this host's products.  Used by the
-    coverage pipeline to select the correct ``gcov`` and ``lcov``
-    binaries.  Defaults to system-installed tools."""
-
-    _lab: "Lab | None" = field(default=None, compare=False, repr=False, kw_only=True)
-    """Back-reference to the owning Lab, wired by Lab.add_host. Lets hop
-    resolution use self._lab.hosts[...] instead of ambient state."""
-
-    id: str = field(init=False, repr=False)
-    """Unique identifier for this host."""
-
-    _connection_factory: type[ConnectionManager] | None = field(default=None, init=True, repr=False)
-    """Optional ConnectionManager subclass for dependency injection (e.g. test doubles).
-    When None, the real ConnectionManager is used."""
-
-    _connections: ConnectionManager = field(init=False, repr=False)
-    """Manages all raw transport connections for this host."""
-
-    _session_mgr: SessionManager = field(init=False, repr=False)
-    """Manages persistent shell sessions for this host."""
 
     _file_transfer: UnixFileTransfer = field(init=False, repr=False)
     """Handles all file transfer protocols for this host."""

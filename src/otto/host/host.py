@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import (
     dataclass,
+    field,
     replace,
 )
 from logging import (
@@ -42,17 +43,22 @@ from ..utils import (
     wait_for_async,
 )
 
+# Runtime imports, not TYPE_CHECKING ones: these three are ``default_factory``
+# callables on :class:`BaseHost`'s dataclass fields, so they must exist when the
+# class body executes. All three are leaf modules (stdlib-only imports), so they
+# add no edge to the host package's import graph beyond themselves.
+from .inventory_ref import InventoryRef
+from .lab_info import LabInfo
+from .toolchain import Toolchain
+
 if TYPE_CHECKING:
     from .app_shell import AppShell
     from .capability_grid import HostCapabilities
     from .dev_tool import DevTool
     from .element import Element
-    from .inventory_ref import InventoryRef
-    from .lab_info import LabInfo
     from .power import PowerController
     from .product import Product
     from .session import HostSession
-    from .toolchain import Toolchain
 
     # Quoted-forward-ref only (see BaseHost.app_shell); keeping this TypeVar
     # under TYPE_CHECKING avoids a runtime import of otto.host.app_shell,
@@ -938,6 +944,7 @@ class Host(Protocol):
     async def __aexit__(self, *exc: object) -> None: ...
 
 
+@dataclass(kw_only=True)
 class BaseHost(ABC):
     """Abstract base class providing shared mechanics for all host implementations.
 
@@ -948,6 +955,20 @@ class BaseHost(ABC):
     ``EmbeddedHost``, etc.) inherit from :class:`BaseHost`, implement the
     family-specific hooks (``_run_one``, ``exec``, ``_soft_reboot``, …),
     and satisfy the :class:`Host` protocol.
+
+    Every field shared by all host families is declared HERE, once, with its
+    type, docstring and default; :class:`~otto.host.remote_host.RemoteHost`
+    does the same for the network families. A family class declares only
+    its own fields and, where its policy differs, re-declares a base field
+    without a docstring (see ``tests/unit/host/test_field_homes.py`` for the
+    allowlist). ``kw_only`` is what lets a base with defaults sit under
+    leaves with required positional fields.
+
+    The base is deliberately UNSLOTTED. The concrete families are
+    ``@dataclass(slots=True)`` over it, which is the layout otto has today:
+    instances keep a ``__dict__`` from this base, and dozens of tests patch a
+    method on a single instance through it. Adding ``slots=True`` here would
+    take that away from every family at once.
     """
 
     capabilities: ClassVar["HostCapabilities"]
@@ -960,20 +981,59 @@ class BaseHost(ABC):
     inherits this annotation without giving it a value.
     """
 
-    id: str
-    name: str
-    log: LogMode
-    lab_info: "LabInfo"
-    resources: frozenset[str]
-    element: "Element | None"
-    inventory_ref: "InventoryRef"
-    products: list["Product"]
-    dev_tools: list["DevTool"]
-    toolchain: "Toolchain"
-    power_control: "PowerController | None"
+    id: str = field(init=False, repr=False)
+    """Unique identifier for this host; every family computes it in ``__post_init__``."""
 
-    debug_log_globs: list[str]
-    """Remote paths/glob patterns the default :meth:`get_debug_logs` fetches.
+    name: str = ""
+    """Human-readable name; a family fills an empty name in ``__post_init__``."""
+
+    log: LogMode = field(default=LogMode.NORMAL, repr=False)
+    """Standing per-host logging disposition. ``QUIET`` keeps this host's command
+    I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
+    (warnings/errors are unaffected)."""
+
+    lab_info: "LabInfo" = field(default_factory=LabInfo, repr=False)
+    """The resolved lab this host came from (see
+    :class:`~otto.host.lab_info.LabInfo`), stamped by the loader."""
+
+    resources: frozenset[str] = field(default_factory=frozenset, repr=False)
+    """This host's own reservation identifiers — a slot (spec 2026-08-28
+    three-level-reservations §3); empty for containers and ``local``. The lab's
+    are on :attr:`lab_info`; the element's on :attr:`element`'s ``resources``."""
+
+    element: "Element | None" = field(default=None, repr=False)
+    """The element this host belongs to, or ``None`` for a container / ``local``.
+
+    The ONLY path to element data (spec 2026-09-05 §2.5): ``element.name``,
+    ``.id``, ``.metadata``, ``.resources``. Shared with every sibling host.
+    :class:`~otto.host.remote_host.RemoteHost` narrows it to a required
+    :class:`~otto.host.element.Element`."""
+
+    inventory_ref: "InventoryRef" = field(default_factory=InventoryRef, repr=False)
+    """Inventory provenance (see :class:`~otto.host.inventory_ref.InventoryRef`); empty for an
+    inline host."""
+
+    products: list["Product"] = field(default_factory=list)
+    """Software-under-test deployed to this host. Default empty."""
+
+    dev_tools: list["DevTool"] = field(default_factory=list)
+    """Repo-internal tooling deployed to this host. Default empty."""
+
+    toolchain: "Toolchain" = field(default_factory=Toolchain, repr=False)
+    """Toolchain associated with this host's products. Used by the coverage
+    pipeline to select the correct ``gcov`` and ``lcov`` binaries. Defaults to
+    system-installed tools."""
+
+    power_control: "PowerController | None" = None
+    """Pluggable power backend. Lab data declares it by string (a config-free
+    controller type) or a ``[power]`` table (``{type, on_cmd, off_cmd, ...}``);
+    ``__post_init__`` coerces it to an instance. None → power()/reboot(hard=True)
+    fail loud. Always None for the container and ``local`` families, which are
+    not power-controlled at all."""
+
+    debug_log_globs: list[str] = field(default_factory=list)
+    """Remote paths/glob patterns the default
+    :meth:`~otto.host.host.BaseHost.get_debug_logs` fetches.
 
     Settable per host class, per OS profile, and per host in ``lab.json``;
     default empty. A pattern (``*``, ``?``, ``[``) is expanded on the device by
@@ -981,11 +1041,12 @@ class BaseHost(ABC):
     that capability must declare concrete paths or override the method.
     """
 
-    source_lab: str = ""
+    source_lab: str = field(default="", init=False, repr=False)
     """Name of the lab this host came from — assigned by the LOADER, not lab data.
 
     Not a ``lab.json`` field: the host specs are ``extra='forbid'``, so a lab
-    file can neither set it nor lie about it. It is stamped by
+    file can neither set it nor lie about it — hence ``init=False``, which
+    keeps it out of every family's constructor too. It is stamped by
     :func:`otto.host.factory.create_host_from_dict` (``lab_name=``), swept in
     per component by :func:`otto.config.lab.load_lab`, and backstopped by
     :meth:`otto.config.lab.Lab.add_host` for hosts built outside the loader

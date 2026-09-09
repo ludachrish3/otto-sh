@@ -179,7 +179,7 @@ def create_host_from_dict(
     ``element`` is the host's element — name, id, metadata, resources as one
     object (spec 2026-09-05 §2.6). A LOADER argument like ``lab_name``: the
     host spec forbids element keys on the entry. It becomes the host's
-    :attr:`~otto.host.remote_host.RemoteHost.element` unchanged — the very
+    :attr:`~otto.host.host.BaseHost.element` unchanged — the very
     instance passed here, so every host of one element shares it — and reaches
     ``to_host`` so the providers see it.
 

@@ -335,7 +335,10 @@ async def test_probe_less_remote_subclass_fails_with_a_named_error():
         def _log_command(self, msg, log=None):
             pass
 
-    host = ProbeLess()
+    # RemoteHost declares the shared remote fields itself now, so even a
+    # hand-rolled subclass takes its constructor: ``ip`` positional, the rest
+    # keyword-only.
+    host = ProbeLess("10.0.0.1", element=Element("lab"))
     result = await host.verify_connection()
     assert result.status is Status.Error
     assert "ProbeLess" in result.value

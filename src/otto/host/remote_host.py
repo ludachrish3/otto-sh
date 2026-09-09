@@ -14,18 +14,24 @@ The split makes the OS family of a host explicit (lab data carries an
 ``os_type`` field) and gives embedded targets a place to live alongside Unix
 ones without lying about their shape.
 
-``RemoteHost`` is intentionally **not** a dataclass. The concrete subclasses
-are ``@dataclass(slots=True)`` and the field-ordering rules of dataclass
-inheritance (no non-default field after a default one) make a shared dataclass
-base awkward. Instead this base owns the *behavior* shared by every remote
-host — host naming and the ``SshHopTransport`` machinery — and declares, as
-bare annotations, the instance attributes those shared methods rely on. Each
-concrete subclass supplies the real ``@dataclass`` fields.
+``RemoteHost`` **is** a ``@dataclass(kw_only=True)``, and every field the two
+network families share is declared here once, with its type, its docstring and
+its default. It used to be deliberately field-less — the field-ordering rule of
+dataclass inheritance (no non-default field after a default one) ruled a shared
+dataclass base out, so the base carried bare annotations and each concrete
+subclass re-declared every field. ``kw_only=True`` (Python 3.10+) removes that
+rule for keyword-only fields, so the base can hold the declarations and a
+subclass can still take required positional arguments. ``ip`` is the one field
+that stays positional (``field(kw_only=False)``), so ``UnixHost("10.0.0.1",
+creds)`` keeps working. The base stays UNSLOTTED, matching
+:class:`~otto.host.host.BaseHost`: the concrete subclasses are
+``@dataclass(slots=True)`` over it, exactly as before.
 """
 
 import asyncio
 import logging
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
@@ -36,23 +42,20 @@ from ..result import CommandResult
 from ..utils import Status
 from .host import BaseHost, is_dry_run
 from .login_proxy import Cred
+from .options import TelnetOptions
 
 if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
 
     from ..config.lab import Lab
+    from .command_frame import CommandFrame
     from .connections import ConnectionManager
-    from .dev_tool import DevTool
     from .element import Element
     from .host import Expect
     from .interface import Interface
-    from .inventory_ref import InventoryRef
-    from .lab_info import LabInfo
     from .options import SnmpOptions
-    from .power import PowerController
-    from .product import Product
     from .session import HostSession, SessionManager
-    from .toolchain import Toolchain
+    from .session_setup import SessionSetup
     from .transport import SshHopTransport
 
 logger = logging.getLogger(__name__)
@@ -107,6 +110,7 @@ class, not from this string.
 """
 
 
+@dataclass(kw_only=True)
 class RemoteHost(BaseHost):
     """Abstract base class for any host reached over a network.
 
@@ -115,156 +119,194 @@ class RemoteHost(BaseHost):
     transport-specific session/transfer machinery as ``@dataclass`` fields.
     Do not instantiate this class directly.
 
-    The bare annotations below are the instance-attribute *contract* every
-    concrete subclass must satisfy. They carry no values, so they create no
-    slots and do not participate in the subclasses' ``@dataclass`` field
-    collection — they exist purely so the shared methods here (and callers
-    holding a ``RemoteHost``-typed reference) type-check.
+    Every field the two network families share is declared below, once, with
+    its type, its docstring and its default — the same rule
+    :class:`~otto.host.host.BaseHost` follows for the fields all five families
+    share. A family class declares only its own fields and, where its policy
+    differs, re-declares a base field without a docstring (see
+    ``tests/unit/host/test_field_homes.py`` for the allowlist).
     """
 
-    # Keep slots harmony with the concrete dataclass subclasses, whose
-    # ``@dataclass(slots=True)`` would otherwise produce instances that mix
-    # ``__slots__`` with the inherited ``__dict__`` from this base.
-    __slots__ = ()
-
-    # --- Shared instance-attribute contract ------------------------------
-    ip: str
+    ip: str = field(kw_only=False)
     """IP address of the host."""
 
-    element: "Element"
-    """The element this host belongs to — the ONLY path to element data
-    (spec 2026-09-05 §2.5): ``element.name``, ``.id``, ``.metadata``,
-    ``.resources``. Shared with every sibling host."""
+    element: "Element" = field(repr=False)
+    """The element this host belongs to — see
+    :attr:`~otto.host.host.BaseHost.element` for what it carries. REQUIRED
+    here, unlike on the base: a networked host always belongs to one. Keyword-
+    only, so narrowing it cannot shift the positional order."""
 
-    id: str
-    """Unique identifier for this host."""
+    creds: list[Cred] = field(default_factory=list)
+    """Login credentials for this host — one :class:`~otto.host.login_proxy.Cred`
+    entry per account, in priority order (the first entry is the default
+    login when ``user`` is unset). A proxied entry (``Cred.proxy`` set)
+    cannot be reached by direct authentication;
+    :meth:`~otto.host.unix_host.UnixHost.cred` /
+    :attr:`~otto.host.unix_host.UnixHost.default_cred` and the
+    connection-layer chain resolution
+    (:func:`~otto.host.login_proxy.resolve_chain`) handle that. Optional on
+    a console family whose shell has no login step (a stock Zephyr target);
+    :class:`~otto.host.unix_host.UnixHost` makes it required."""
 
-    name: str
-    """Human-readable name; auto-generated from ``element``/``board`` if not given."""
-
-    creds: list[Cred]
-    """Login credentials for this host — see
-    :attr:`~otto.host.unix_host.UnixHost.creds`."""
-
-    metadata: dict[str, Any]
-    """Opaque per-host ``metadata`` table from lab data (spec §4); never read by otto."""
-
-    resources: frozenset[str]
-    """This host's own reservation identifiers — a slot (spec 2026-08-28
-    three-level-reservations §3); empty for containers and ``local``. The lab's
-    are on :attr:`lab_info`; the element's on :attr:`element`'s ``resources``."""
-
-    lab_info: "LabInfo"
-    """The resolved lab (see :class:`~otto.host.lab_info.LabInfo`), stamped by the loader."""
-
-    inventory_ref: "InventoryRef"
-    """Inventory provenance (see :class:`~otto.host.inventory_ref.InventoryRef`); empty for an
-    inline host."""
-
-    debug_log_globs: list[str]
-    """Remote paths/glob patterns ``get_debug_logs`` fetches (see
-    :attr:`~otto.host.host.BaseHost.debug_log_globs`)."""
-
-    log: LogMode
-    """Standing per-host logging disposition. ``QUIET`` keeps command I/O in
-    ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere."""
-
-    user: str | None
+    user: str | None = None
     """User with which to log in, or None to use the first entry in ``creds``."""
 
-    board: str | None
+    board: str | None = field(default=None, repr=False)
     """Board type name, or None."""
 
-    slot: int | None
+    slot: int | None = field(default=None, repr=False)
     """Physical slot number of the board, or None."""
 
-    site: int | str | None
+    site: int | str | None = field(default=None, repr=False)
     """Site the host is installed at (a name or a number), or None."""
 
-    rack: int | str | None
+    rack: int | str | None = field(default=None, repr=False)
     """Rack within the site (a name or a number), or None."""
 
-    shelf: int | None
+    shelf: int | None = field(default=None, repr=False)
     """Shelf / rack position, or None."""
 
-    hop: str | None
+    hop: str | None = None
     """Host ID of the intermediate hop used to reach this host, or None."""
 
-    os_type: OsType
+    os_type: OsType = "unix"
     """Profile selector recorded on this host (see :data:`OsType`). The base
-    *family* (unix vs embedded) is derived from the host class, not this string."""
+    *family* (unix vs embedded) is derived from the host class, not this string;
+    each family overrides the value (``embedded``, ``zephyr``, …), and a custom
+    profile over one of them records its own name here (e.g. ``ubuntu-22.04``
+    over the unix family)."""
 
-    os_name: str | None
-    """Kernel/OS name (e.g. ``Linux``, ``Zephyr``)."""
+    os_name: str | None = None
+    """Kernel/OS name (e.g. ``Linux``, ``Zephyr``), or None. A bare embedded
+    host carries no OS name; a concrete family sets one."""
 
-    os_version: str | None
+    os_version: str | None = None
     """OS/kernel version string, or None if unspecified."""
 
-    hw_version: str | None
-    """Hardware version description, or None. Informational — otto never parses it."""
+    hw_version: str | None = None
+    """Hardware version description, or None — the board revision, typically.
+    Informational; otto never parses it."""
 
-    sw_version: str | None
+    sw_version: str | None = None
     """Software version the host is DECLARED to run, or None; never a probe's
     observation. On the shared contract rather than
     :class:`~otto.host.unix_host.UnixHost` alone since spec 2026-08-28
     host-inventory §4."""
 
-    default_dest_dir: Path
+    term: str = "ssh"
+    """Protocol used to issue terminal commands (active member of
+    :attr:`valid_terms`)."""
+
+    transfer: str = "scp"
+    """Protocol used to transfer files (active member of
+    :attr:`valid_transfers`)."""
+
+    valid_terms: list[str] = field(default_factory=lambda: ["ssh", "telnet"])
+    """Closed menu of term backends this host supports (active is ``term``)."""
+
+    valid_transfers: list[str] = field(default_factory=lambda: ["scp", "sftp", "ftp", "nc"])
+    """Closed menu of transfer backends this host supports (active is ``transfer``)."""
+
+    is_virtual: bool = False
+    """Determines whether a host is a VM / emulator (e.g. QEMU) or not."""
+
+    has_bash: bool = True
+    """Whether this host has a working ``bash`` a command can be tagged and
+    exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
+    (:mod:`otto.tunnel.discovery`) scans only ``has_bash`` hosts. Unix hosts
+    have bash by default and embedded targets do not; override in ``lab.json``
+    for a host that defies its family's norm."""
+
+    command_frame: "CommandFrame | None" = None
+    """Shell-framing *dialect* for this host's console — how a command is
+    wrapped in sentinels and how output/retcode are parsed back. ``None`` lets
+    the :class:`~otto.host.session.SessionManager` use its built-in
+    :class:`~otto.host.command_frame.BashFrame`, which is the right answer for
+    a bash console; a bare :class:`~otto.host.embedded_host.EmbeddedHost` has
+    no dialect to fall back on and fails loud at construction unless a profile,
+    a subclass (e.g. :class:`~otto.host.embedded_host.ZephyrHost`) or an
+    explicit value supplies one.
+
+    Lab data declares the dialect by string in the ``command_frame`` field
+    (resolved in ``__post_init__``). Projects can register custom dialects via
+    :func:`otto.host.command_frame.register_command_frame`. The dialect is
+    independent of the transport, so it is handed straight to the
+    :class:`~otto.host.session.SessionManager`."""
+
+    landing_frame: "CommandFrame | None" = None
+    """Dialect of the shell otto lands in when it differs from ``command_frame``;
+    ``None`` means the same dialect. Lab data names a registered frame by
+    string (resolved in ``__post_init__``); only meaningful with
+    ``session_setup``, which manoeuvres from the landing shell to the target."""
+
+    session_setup: "SessionSetup | None" = None
+    """Session-setup hook run once per shell session, after the handshake and
+    every login-proxy hop, with a real :class:`~otto.host.session.HostSession`.
+    Lab data declares it by name or as a ``{"type": name, ...params}`` table
+    (resolved in ``__post_init__``). See :mod:`otto.host.session_setup`."""
+
+    default_dest_dir: Path = field(default_factory=Path)
     """Per-host default directory that ``put`` / ``get`` resolve a
     relative or empty ``dest_dir`` against. Lets a fan-out helper like
     ``do_for_all_hosts`` pass one generic destination (``Path()``) and
     have each host land the files where its filesystem actually lives —
     e.g. ``/RAM:`` on a Zephyr FAT target, ``/lfs`` on a Zephyr LittleFS
-    target. Defaults to ``Path()`` on Unix, which preserves the existing
-    "relative path lands in the SSH user's home" behavior."""
+    target. Defaults to ``Path()``, which preserves the existing
+    "relative path lands in the SSH user's home" behavior on Unix; the
+    embedded family resolves an empty default to ``filesystem.mount``."""
 
-    snmp: "SnmpOptions | None"
+    max_filename_len: int = 255
+    """Upper bound on the basename length (including extension) accepted by
+    the target's filesystem. Defaults to ``255`` — the Linux ``NAME_MAX``,
+    also the cap for ext4 / XFS / Btrfs / NTFS and the typical LittleFS
+    ceiling. Override per-host when the firmware enforces a tighter limit
+    (e.g. ``32`` for a Zephyr build that sets ``CONFIG_FS_FATFS_MAX_LFN=32``,
+    or ``12`` for a stock FAT 8.3 build without LFN support). ``put`` / ``get``
+    reject over-limit names up front with a clear message instead of letting
+    the device produce an opaque error like ``-ENOENT`` or ``File name too
+    long``."""
+
+    telnet_options: TelnetOptions = field(default_factory=TelnetOptions, repr=False)
+    """Connection options for telnet sessions (port, cols/rows, auto-resize, etc.)."""
+
+    snmp: "SnmpOptions | None" = field(default=None, repr=False)
     """Optional per-host SNMP polling config (lab ``snmp`` block), or None. When
     set, otto's monitor collects this host over SNMP instead of by running shell
-    commands. Declared on both concrete subclasses; see
-    :class:`~otto.host.options.SnmpOptions`."""
+    commands — not an embedded-only channel; a Unix host may poll a real SNMP
+    agent the same way. See :class:`~otto.host.options.SnmpOptions`."""
 
-    max_filename_len: int
-    """Upper bound on the basename length (including extension) accepted by
-    the target's filesystem. Defaults to ``255`` on every concrete subclass
-    — the Linux ``NAME_MAX``, also the cap for ext4 / XFS / Btrfs / NTFS
-    and the typical LittleFS ceiling. Override per-host when the firmware
-    enforces a tighter limit (e.g. ``32`` for a Zephyr build that sets
-    ``CONFIG_FS_FATFS_MAX_LFN=32``, or ``12`` for a stock FAT 8.3 build
-    without LFN support). ``put`` / ``get`` reject over-limit names up
-    front with a clear message instead of letting the device produce an
-    opaque error like ``-ENOENT`` or ``File name too long``."""
+    metadata: dict[str, Any] = field(default_factory=dict, repr=False)
+    """Opaque per-host ``metadata`` table from lab data (spec §4); never read by otto."""
 
-    interfaces: dict[str, "Interface"]
+    interfaces: dict[str, "Interface"] = field(default_factory=dict, repr=False)
     """Named network devices, keyed by the netdev name (e.g.
     ``{"eth0": Interface(ip="10.0.0.5"), "eth1": Interface(ip="192.168.1.5")}``).
     The *primary* address stays :attr:`ip`; this map is additive and optional
     (empty by default). Resolve a name (or pass a literal through) with
-    :meth:`address_for`."""
+    :meth:`~otto.host.remote_host.RemoteHost.address_for`."""
 
-    products: "list[Product]"
-    """Software-under-test deployed to this host (see
-    :attr:`~otto.host.host.BaseHost.products`)."""
+    log_stdout: bool = field(default=True, repr=False)
+    """Determines whether this host should log its output to stdout.
+    Commands and their output are still written to the log files unless the
+    effective :class:`~otto.logger.mode.LogMode` — this host's ``log``
+    composed with the per-command mode — is ``LogMode.NEVER``, which redacts
+    them from every sink."""
 
-    dev_tools: "list[DevTool]"
-    """Repo-internal tooling deployed to this host (see
-    :attr:`~otto.host.host.BaseHost.dev_tools`)."""
+    _lab: "Lab | None" = field(default=None, compare=False, repr=False)
+    """Back-reference to the owning Lab, wired by Lab.add_host. Lets hop
+    resolution use self._lab.hosts[...] instead of ambient state."""
 
-    toolchain: "Toolchain"
-    """Toolchain for this host's products (see
-    :attr:`~otto.host.host.BaseHost.toolchain`)."""
+    _connection_factory: "type[ConnectionManager] | None" = field(default=None, repr=False)
+    """Optional ConnectionManager subclass for dependency injection (e.g. test
+    doubles). When None, the real ConnectionManager is used."""
 
-    power_control: "PowerController | None"
-    """Pluggable power backend (see :attr:`~otto.host.host.BaseHost.power_control`)."""
+    _connections: "ConnectionManager" = field(init=False, repr=False)
+    """Manages the raw transport connection(s) for this host; built by the
+    family's ``__post_init__``."""
 
-    # --- Connection-state contract ---------------------------------------
-    # Concrete subclasses supply these as real ``@dataclass`` fields (a
-    # ``ConnectionManager`` and a ``SessionManager``). Declared here as bare
-    # annotations so the shared lifecycle below — ``_connected`` — type-checks
-    # against every remote host.
-    _connections: "ConnectionManager"
-    _session_mgr: "SessionManager"
-    _lab: "Lab | None"
+    _session_mgr: "SessionManager" = field(init=False, repr=False)
+    """Manages the persistent shell session(s) for this host; built by the
+    family's ``__post_init__``."""
 
     async def _probe_connection(self) -> None:
         """Open this family's transport channel(s) without running a command.

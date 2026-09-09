@@ -22,7 +22,7 @@ from errno import (
     ERANGE,
 )
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 from typing_extensions import override
 
@@ -30,26 +30,17 @@ from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
-from .dev_tool import DevTool
 from .file_ops import PosixFileOps
 from .host import _EXEC_REAP_TIMEOUT, BaseHost, is_dry_run
-from .inventory_ref import InventoryRef
-from .lab_info import LabInfo
-from .power import PowerController
 from .privilege import PosixPrivilege
-from .product import Product
 from .session import (
     Expect,
     HostSession,
     LocalSession,
     SessionManager,
 )
-from .toolchain import Toolchain
 from .transfer import BaseFileTransfer, ProgressGranularity, TransferProgressFactory
 from .transfer.base import mark_skipped
-
-if TYPE_CHECKING:
-    from .element import Element
 
 
 class LocalFileTransfer(BaseFileTransfer):
@@ -147,6 +138,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(
     slots=True,
+    kw_only=True,
 )
 class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     """A host that runs commands on the local machine via a persistent shell session.
@@ -177,53 +169,11 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     name: str = field(default="localhost", init=False)
 
-    id: str = field(default="local", init=False)
-    """Stable identifier for the local host — always ``"local"``."""
-
     has_bash: bool = True
     """Whether this host has a working ``bash`` a command can be tagged and
     exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
     (:mod:`otto.tunnel.discovery`) scans only ``has_bash`` hosts. The local
     machine has bash by default."""
-
-    log: LogMode = field(default=LogMode.NORMAL, repr=False)
-    """Standing per-host logging disposition. ``QUIET`` keeps this host's command
-    I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
-    (warnings/errors are unaffected)."""
-
-    lab_info: LabInfo = field(default_factory=LabInfo, repr=False)
-    """The resolved lab this host was registered into (empty unless a loader stamped it)."""
-
-    resources: frozenset[str] = field(default_factory=frozenset, repr=False)
-    """Empty for the builtin ``local`` host — it is never a reservable unit
-    (spec 2026-08-28 three-level-reservations §3), and no lab entry declares
-    it. Present so this class satisfies the :class:`~otto.host.host.Host`
-    contract."""
-
-    element: "Element | None" = field(default=None, repr=False)
-    """Always ``None`` — belongs to no element. Declared to satisfy the
-    :class:`~otto.host.host.Host` contract."""
-
-    inventory_ref: InventoryRef = field(default_factory=InventoryRef, repr=False)
-    """Inventory provenance; empty unless this host was resolved from a record."""
-
-    debug_log_globs: list[str] = field(default_factory=list, repr=False)
-    """Paths/glob patterns ``get_debug_logs`` fetches. Default empty. See
-    :attr:`~otto.host.host.BaseHost.debug_log_globs`."""
-
-    products: list[Product] = field(default_factory=list, repr=False)
-    """Software-under-test deployed to this host. Default empty."""
-
-    dev_tools: list[DevTool] = field(default_factory=list, repr=False)
-    """Repo-internal tooling deployed to this host. Default empty."""
-
-    toolchain: Toolchain = field(default_factory=Toolchain, repr=False)
-    """Toolchain for this host's products — the system one by default, which is
-    the right answer for the machine otto is already running on. See
-    :attr:`~otto.host.host.BaseHost.toolchain`."""
-
-    power_control: "PowerController | None" = field(default=None, repr=False)
-    """Always None — LocalHost/DockerContainerHost are not power-controlled."""
 
     dry_run_exempt: bool = field(default=False, repr=False)
     """Opt this instance's ``run`` out of the ``--dry-run`` decline.
@@ -268,6 +218,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     reporting works uniformly across every host backend."""
 
     def __post_init__(self) -> None:
+        self.id = "local"
         self._session_mgr = SessionManager(
             name=self.name,
             log_command=self._log_command,

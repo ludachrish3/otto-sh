@@ -8,7 +8,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     TypeVar,
-    cast,
 )
 
 from ..host.host import DEFAULT_COMMAND_TIMEOUT
@@ -96,14 +95,14 @@ def _apply_option_overrides(
     }
     if not candidates:
         return host
-    # RemoteHost subclasses (UnixHost, EmbeddedHost) are all dataclasses,
-    # but RemoteHost itself isn't decorated — cast around the type checker.
-    host_any = cast("Any", host)
-    host_fields = {f.name for f in dataclasses.fields(host_any)}
+    # By NAME, never by position: the override set is intersected with the
+    # concrete family's own fields, so a family that does not declare one of
+    # these options is left alone rather than handed an unknown keyword.
+    host_fields = {f.name for f in dataclasses.fields(host)}
     overrides = {k: v for k, v in candidates.items() if k in host_fields}
     if not overrides:
         return host
-    return cast("RemoteHost", dataclasses.replace(host_any, **overrides))
+    return dataclasses.replace(host, **overrides)
 
 
 def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_hosts)

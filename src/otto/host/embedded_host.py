@@ -47,17 +47,12 @@ The interactive bridge (``_login``) currently raises
 :class:`NotImplementedError`.
 """
 
+import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, NoReturn, cast
+from typing import Annotated, NoReturn, cast
 
 from typing_extensions import override
-
-if TYPE_CHECKING:
-    from ..config.lab import Lab
-    from .session_setup import SessionSetup
-
-import logging
 
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
@@ -67,8 +62,6 @@ from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager
-from .dev_tool import DevTool
-from .element import Element
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .host import (
     DEFAULT_COMMAND_TIMEOUT,
@@ -77,18 +70,11 @@ from .host import (
     is_dry_run,
     refuse_declined_fact,
 )
-from .interface import Interface
-from .inventory_ref import InventoryRef
-from .lab_info import LabInfo
-from .login_proxy import Cred
-from .options import SnmpOptions, TelnetOptions
-from .power import PowerController, power_control_from_spec
-from .product import Product
+from .power import power_control_from_spec
 from .remote_host import OsType, RemoteHost
 from .session import (
     SessionManager,
 )
-from .toolchain import Toolchain
 from .transfer import (
     EmbeddedFileTransfer,
     TransferContext,
@@ -106,7 +92,7 @@ logger = logging.getLogger(__name__)
 _EMBEDDED_INIT_TIMEOUT = 15.0
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class EmbeddedHost(RemoteHost):
     """OS-agnostic bare-metal / RTOS host reached over telnet.
 
@@ -115,6 +101,10 @@ class EmbeddedHost(RemoteHost):
     :class:`ZephyrHost`), or an explicit constructor argument — or construction
     raises ``ValueError`` (fail loud). :class:`ZephyrHost` is the in-tree
     concrete subclass and worked example.
+
+    Every field this class shares with the unix family lives on
+    :class:`~otto.host.remote_host.RemoteHost`; what follows is the embedded
+    family's own, plus the value-policy overrides below.
     """
 
     capabilities = HostCapabilities(
@@ -134,84 +124,17 @@ class EmbeddedHost(RemoteHost):
     a Zephyr target answers ``user=`` no differently from any other embedded
     one. See :class:`~otto.host.capability_grid.HostCapabilities`."""
 
-    ip: str
-    """IP address of the host's telnet shell."""
-
-    element: Element = field(repr=False)
-    """The element this host belongs to. See :attr:`~otto.host.remote_host.RemoteHost.element`."""
-
     os_type: OsType = "embedded"
-    """Default profile selector for a bare :class:`EmbeddedHost`. Subclasses
-    (e.g. :class:`ZephyrHost`) override this to their registered name."""
-
-    os_name: str | None = None
-    """Kernel/OS name, or None. A bare ``embedded`` host carries no OS name;
-    a concrete subclass (e.g. :class:`ZephyrHost`) sets it."""
-
-    os_version: str | None = None
-    """OS/kernel version string, or None if unspecified."""
-
-    hw_version: str | None = None
-    """Hardware version description, or None — the board revision, typically.
-    Informational; otto never parses it."""
-
-    sw_version: str | None = None
-    """Firmware version this target is DECLARED to run, or None. A declaration,
-    never an observation. Widened onto the embedded family by spec 2026-08-28
-    host-inventory §4: an embedded target has a firmware version as surely as a
-    Unix box has a distro one."""
-
-    name: str = ""
-    """Human readable name to represent the host. Automatically generated if not provided."""
-
-    creds: list[Cred] = field(default_factory=list)
-    """Login credentials, one :class:`~otto.host.login_proxy.Cred` entry per
-    account. Optional — the Zephyr telnet shell backend has no login step, so
-    this is empty for a stock Zephyr target. Rides the same
-    :class:`~otto.host.connections.ConnectionManager` path as
-    :attr:`~otto.host.unix_host.UnixHost.creds`."""
-
-    user: str | None = None
-    """User with which to log in, if the shell requires one. Usually unset."""
-
-    board: str | None = field(default=None, repr=False)
-    """Name of the board type to which this host belongs."""
-
-    slot: int | None = field(default=None, repr=False)
-    """Physical slot number of the board to which this host belongs."""
-
-    site: int | str | None = field(default=None, repr=False)
-    """Site the host is installed at (a name or a number)."""
-
-    rack: int | str | None = field(default=None, repr=False)
-    """Rack within the site (a name or a number)."""
-
-    shelf: int | None = field(default=None, repr=False)
-    """Shelf / rack position."""
-
-    is_virtual: bool = False
-    """Determines whether a host is a VM/emulator (e.g. QEMU) or not."""
 
     has_bash: bool = False
-    """Whether this host has a working ``bash`` a command can be tagged and
-    exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
-    (:mod:`otto.tunnel.discovery`) scans only ``has_bash`` hosts. Embedded
-    targets have no bash by default; override to ``True`` in ``lab.json`` for
-    a host that defies the norm."""
 
     term: str = "telnet"
-    """Active session transport. Embedded hosts speak telnet today; the command
-    frame is transport-independent, so this is not a hard coupling."""
 
     transfer: str = "console"
-    """File-transfer backend. ``console`` (default) drives the device shell's
-    ``fs`` commands; ``tftp`` is reserved and not yet implemented."""
 
     valid_terms: list[str] = field(default_factory=lambda: ["telnet"])
-    """Closed menu of term backends this host supports (active is ``term``)."""
 
     valid_transfers: list[str] = field(default_factory=lambda: ["console"])
-    """Closed menu of transfer backends this host supports (active is ``transfer``)."""
 
     filesystem: EmbeddedFileSystem = field(default_factory=NoFileSystem)
     """On-device filesystem variant — e.g. :class:`~otto.host.embedded_filesystem.FatRamFileSystem`,
@@ -226,34 +149,6 @@ class EmbeddedHost(RemoteHost):
     register custom variants via
     :func:`otto.host.embedded_filesystem.register_filesystem`."""
 
-    command_frame: CommandFrame | None = None
-    """Shell-framing *dialect* for this target's console — how a command is
-    wrapped in sentinels and how output/retcode are parsed back. There is NO
-    default: a bare ``embedded`` host carries no dialect, so a frame is
-    *required* — supplied either by a profile/subclass (e.g.
-    :class:`ZephyrHost`) or as an explicit value. A frame-less
-    :class:`EmbeddedHost` fails loud at construction.
-
-    Lab data declares the dialect by string in the ``command_frame`` field
-    (e.g. a Zephyr 2.7 build that reports its retcode inline would name a
-    project-registered frame); the host factory resolves the string to an
-    instance. Projects can register custom dialects via
-    :func:`otto.host.command_frame.register_command_frame`. The dialect is
-    independent of the transport, so it is handed straight to the
-    :class:`~otto.host.session.SessionManager`."""
-
-    landing_frame: CommandFrame | None = None
-    """Dialect of the shell otto lands in when it differs from ``command_frame``;
-    ``None`` means the same dialect. Lab data names a registered frame by
-    string (resolved in ``__post_init__``); only meaningful with
-    ``session_setup``, which manoeuvres from the landing shell to the target."""
-
-    session_setup: "SessionSetup | None" = None
-    """Session-setup hook run once per shell session, after the handshake and
-    every login-proxy hop, with a real :class:`~otto.host.session.HostSession`.
-    Lab data declares it by name or as a ``{"type": name, ...params}`` table
-    (resolved in ``__post_init__``). See :mod:`otto.host.session_setup`."""
-
     loader: BinaryLoader | None = None
     """Binary-load strategy for this target's runtime (e.g. Zephyr LLEXT).
     Unlike ``command_frame`` it is *optional* — many embedded hosts never load
@@ -262,104 +157,6 @@ class EmbeddedHost(RemoteHost):
     ``load()`` / ``unload()`` fail loud (``ValueError``) when it is None. Projects
     register custom loaders via
     :func:`otto.host.binary_loader.register_binary_loader`."""
-
-    default_dest_dir: Path = field(default_factory=Path)
-    """Default landing directory for ``put`` / ``get`` when the caller
-    supplies an empty or relative ``dest_dir``. When left at the default
-    (an empty ``Path()``), ``__post_init__`` resolves it to
-    ``filesystem.mount`` so generic fan-out callers like
-    ``do_for_all_hosts`` don't have to branch on host type. Override
-    in lab data to land transfers somewhere other than the FS root. See
-    :attr:`~otto.host.remote_host.RemoteHost.default_dest_dir`."""
-
-    max_filename_len: int = 255
-    """Upper bound on the basename length (including extension) accepted by
-    the target's filesystem. Defaults to ``255`` — the Linux ``NAME_MAX``,
-    also the typical LittleFS ceiling. Override per-host when the firmware
-    enforces a tighter limit (e.g. ``32`` for a Zephyr build that sets
-    ``CONFIG_FS_FATFS_MAX_LFN=32`` / ``CONFIG_FS_LITTLEFS_NAME_MAX=32``,
-    or ``12`` for a stock FAT 8.3 build without LFN support). See
-    :attr:`~otto.host.remote_host.RemoteHost.max_filename_len`."""
-
-    telnet_options: TelnetOptions = field(default_factory=TelnetOptions, repr=False)
-    """Connection options for the telnet shell (port, cols/rows, etc.)."""
-
-    snmp: SnmpOptions | None = field(default=None, repr=False)
-    """Optional SNMP polling config (lab ``snmp`` block). When set, otto's
-    monitor collects this host's metrics over SNMP — a separate channel from
-    the single telnet console — instead of running shell commands. See
-    :class:`~otto.host.options.SnmpOptions`."""
-
-    toolchain: Toolchain = field(default_factory=Toolchain, repr=False)
-    """Cross-toolchain for this bed's products.  Used by the coverage pipeline
-    to select the correct ``gcov``/``lcov``.  The host is the test bed, so it
-    owns the toolchain matching its target ABI — a Zephyr 3.7 bed and a 4.4 bed
-    declare different SDKs.  Defaults to system-installed tools."""
-
-    hop: str | None = None
-    """Host ID of the intermediate SSH hop used to reach this host, or None."""
-
-    metadata: dict[str, Any] = field(default_factory=dict, repr=False)
-    """Opaque per-host ``metadata`` from lab data. Never interpreted by otto."""
-
-    resources: frozenset[str] = field(default_factory=frozenset, repr=False)
-    """This host's own reservation identifiers — a slot; a copy of the spec's set.
-    See :attr:`~otto.host.remote_host.RemoteHost.resources`."""
-
-    lab_info: LabInfo = field(default_factory=LabInfo, repr=False)
-    """The resolved lab this host came from (loader-stamped, like ``source_lab``)."""
-
-    inventory_ref: InventoryRef = field(default_factory=InventoryRef, repr=False)
-    """Inventory provenance; empty unless this host was resolved from a record."""
-
-    debug_log_globs: list[str] = field(default_factory=list)
-    """Remote paths ``get_debug_logs`` fetches. Default empty. Embedded hosts
-    have no shell to expand a pattern with, so entries here must be concrete
-    paths (or the host class overrides ``get_debug_logs``). See
-    :attr:`~otto.host.host.BaseHost.debug_log_globs`."""
-
-    interfaces: dict[str, Interface] = field(default_factory=dict, repr=False)
-    """Named network devices
-    (see :attr:`~otto.host.remote_host.RemoteHost.interfaces`).
-    Resolve with :meth:`~otto.host.remote_host.RemoteHost.address_for`."""
-
-    products: list["Product"] = field(default_factory=list)
-    """Software-under-test deployed to this host. Default empty. See
-    :attr:`~otto.host.host.BaseHost.products`."""
-
-    dev_tools: list["DevTool"] = field(default_factory=list)
-    """Repo-internal tooling deployed to this host. Default empty. See
-    :attr:`~otto.host.host.BaseHost.dev_tools`."""
-
-    power_control: "PowerController | None" = None
-    """Pluggable power backend. Lab data declares it by string (a config-free
-    controller type) or a ``[power]`` table (``{type, on_cmd, off_cmd, ...}``);
-    ``__post_init__`` coerces it to an instance. None → power()/reboot(hard=True)
-    fail loud. See :attr:`~otto.host.host.BaseHost.power_control`."""
-
-    log: LogMode = field(default=LogMode.NORMAL, repr=False)
-    """Standing per-host logging disposition. ``QUIET`` keeps this host's command
-    I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
-    (warnings/errors are unaffected)."""
-
-    log_stdout: bool = field(default=True, repr=False)
-    """Whether this host should log its output to stdout."""
-
-    _lab: "Lab | None" = field(default=None, compare=False, repr=False, kw_only=True)
-    """Back-reference to the owning Lab, wired by Lab.add_host. Lets hop
-    resolution use self._lab.hosts[...] instead of ambient state."""
-
-    id: str = field(init=False, repr=False)
-    """Unique identifier for this host."""
-
-    _connection_factory: type[ConnectionManager] | None = field(default=None, init=True, repr=False)
-    """Optional ConnectionManager subclass for dependency injection (test doubles)."""
-
-    _connections: ConnectionManager = field(init=False, repr=False)
-    """Manages the raw telnet transport for this host."""
-
-    _session_mgr: SessionManager = field(init=False, repr=False)
-    """Manages the persistent shell session for this host."""
 
     _file_transfer: EmbeddedFileTransfer = field(init=False, repr=False)
     """Handles ``get``/``put`` over the device shell for this host."""
@@ -801,13 +598,14 @@ class EmbeddedHost(RemoteHost):
         )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class ZephyrHost(EmbeddedHost):
     """A Zephyr RTOS host — the concrete, registered embedded host.
 
-    This is the worked example for shipping a host subclass: it re-declares the
-    Zephyr-specific field defaults that :class:`EmbeddedHost` no longer assumes,
-    and is registered under ``os_type: "zephyr"`` via
+    This is the worked example for shipping a host subclass: it declares nothing
+    of its own and re-states only the Zephyr-specific field VALUES that
+    :class:`EmbeddedHost` does not assume, and is registered under
+    ``os_type: "zephyr"`` via
     :func:`otto.host.os_profile.register_host_class`. External repositories
     register their own ``EmbeddedHost``/``UnixHost`` subclasses the same way
     (from an init module listed in ``.otto/settings.toml``), and may layer
@@ -815,13 +613,10 @@ class ZephyrHost(EmbeddedHost):
     """
 
     os_type: OsType = "zephyr"
-    """Profile selector recorded on the host. ``zephyr`` for this class."""
 
     os_name: str | None = "Zephyr"
-    """Kernel/OS name — ``Zephyr`` for this class."""
 
     command_frame: CommandFrame = field(default_factory=ZephyrFrame)
-    """Stock Zephyr ``retval`` shell framing (3.7 / 4.4 LTS)."""
 
     ####################
     #  Power / reboot
