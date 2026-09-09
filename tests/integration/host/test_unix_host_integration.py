@@ -18,10 +18,12 @@ parametrized ``host1`` fixture lives in :mod:`tests.conftest` and resolves
 import hashlib
 import logging
 import time
+import uuid
 from pathlib import Path
 
 import pytest
 
+from otto.host.connections import teardown_step
 from otto.host.host import Host
 from otto.host.login_proxy import Cred
 from otto.host.session import ShellSession
@@ -410,6 +412,213 @@ class TestCredentials:
             assert elapsed < 15
         finally:
             await host.close()
+
+
+# ---------------------------------------------------------------------------
+# user= authenticates as that user
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.timeout(60)
+class TestUserAuthenticates:
+    """``exec``/``put``/``get`` with ``user=`` really AUTHENTICATE as that user.
+
+    The unix family declares ``exec_user``/``put_user``/``get_user`` as
+    :attr:`~otto.host.capability_grid.UserSupport.authenticate` — the verb rides
+    a connection opened as that user, not an elevation from the login user — and
+    :func:`otto.testing.assert_host_conforms` only probes that declaration under
+    a dry run, where nothing authenticates. These rows are the live half: each
+    one carries a discriminator that a decoration (a chown, a ``sudo``, an
+    ignored kwarg) could not produce.
+
+    One host per row, built as the DEFAULT login with BOTH bed credentials in
+    ``creds``, so the second login is a direct-cred user and ``user=`` has a
+    credential to authenticate with. Both halves of a row — the ``user=`` call
+    and its no-``user=`` control — are made against that one host, so they
+    differ in nothing but the kwarg.
+
+    SCOPE: the default ``scp`` backend only. ``ftp`` is excluded by the API
+    itself (``put``/``get`` refuse ``user=`` there), and ``sftp``/``nc``, which
+    ``test2`` also lists, stay mock-only — a reader should not take these rows
+    as evidence about those two.
+    """
+
+    @staticmethod
+    def _host_and_logins() -> tuple[UnixHost, str, str]:
+        """Build the bed host plus its (default, second) logins.
+
+        Fails — never skips — when the bed's two credentials are the same
+        login, because then no assertion below could tell the two identities
+        apart and a green would mean nothing.
+        """
+        data = host_data("test2")
+        default_login = data["creds"][0]["login"]
+        second = data["creds"][1]["login"]
+        assert second != default_login, (
+            f"bed data for test2 lists the same login twice ({second!r}); "
+            f"user= cannot be discriminated from the default identity"
+        )
+        host = UnixHost(
+            ip=data["ip"],
+            user=default_login,
+            element=element_for("test2"),
+            creds=[Cred(**c) for c in data["creds"]],
+            board=data.get("board"),
+        )
+        return host, default_login, second
+
+    @staticmethod
+    async def _cleanup(host: UnixHost, cmd: str, second: str) -> None:
+        """Best-effort remote cleanup as both identities, then close the host.
+
+        Each ``rm`` runs under :func:`~otto.host.connections.teardown_step`, so a
+        cleanup that fails against an already-broken transport logs instead of
+        replacing the assertion that diagnosed the real bug; ``close()`` sits in
+        its own ``finally`` arm so it runs whatever the removals did. This is the
+        shape ``.ast-grep/rules/no-awaited-exec-in-finally.yml`` mandates in
+        ``src/``; the hazard is identical here.
+        """
+        try:
+            with teardown_step(host.name, "rm-as-second"):
+                await host.exec(cmd, user=second)
+            with teardown_step(host.name, "rm-as-login"):
+                await host.exec(cmd)
+        finally:
+            await host.close()
+
+    @pytest.mark.asyncio
+    async def test_exec_user_runs_as_that_user(self):
+        """``id -un`` is the discriminator: the kernel's answer for the
+        identity the exec channel authenticated as.
+
+        A decoration could not move it — the same host, one call apart,
+        must report two different logins.
+        """
+        host, default_login, second = self._host_and_logins()
+        try:
+            as_second = await host.exec("id -un", user=second)
+            assert as_second.status == Status.Success, (
+                f"exec as {second} failed: {as_second.value!r}"
+            )
+            assert as_second.value.strip() == second, (
+                f"exec(user={second!r}) ran as {as_second.value.strip()!r}"
+            )
+
+            as_default = await host.exec("id -un")
+            assert as_default.status == Status.Success, f"exec failed: {as_default.value!r}"
+            assert as_default.value.strip() == default_login, (
+                f"plain exec ran as {as_default.value.strip()!r}, not the login user"
+            )
+        finally:
+            await host.close()
+
+    @pytest.mark.asyncio
+    async def test_put_user_lands_files_owned_by_that_user(self, tmp_path: Path):
+        """Ownership of the landed bytes is the discriminator.
+
+        The transfer rides the second user's own connection, so the file lands
+        owned by them with no chown step; the control ``put`` in the same
+        directory, same run, lands owned by the login user. A world-writable
+        scratch directory keeps the two halves symmetric — neither write is
+        privileged by the directory. Size is read alongside owner so an
+        authenticated-but-empty landing cannot pass for a transfer.
+        """
+        host, default_login, second = self._host_and_logins()
+        remote_dir = f"/tmp/otto_put_user_{uuid.uuid4().hex}"
+        try:
+            mk = await host.exec(f"mkdir -m 777 {remote_dir}")
+            assert mk.status == Status.Success, f"could not make {remote_dir}: {mk.value!r}"
+
+            by_second = tmp_path / "by_second.txt"
+            by_second.write_text("as the second user")
+            by_default = tmp_path / "by_default.txt"
+            by_default.write_text("as the login user")
+
+            res = await transfer_with_retry(
+                lambda: host.put([by_second], Path(remote_dir), user=second)
+            )
+            assert res.status == Status.Success, f"put(user={second!r}) failed: {res.msg}"
+            landed = await host.exec(f"stat -c %U:%s {remote_dir}/{by_second.name}")
+            assert landed.status == Status.Success, f"stat failed: {landed.value!r}"
+            assert landed.value.strip() == f"{second}:{len(by_second.read_bytes())}", (
+                f"put(user={second!r}) landed {landed.value.strip()!r}, expected "
+                f"{second}:{len(by_second.read_bytes())} (owner:size)"
+            )
+
+            res = await transfer_with_retry(lambda: host.put([by_default], Path(remote_dir)))
+            assert res.status == Status.Success, f"control put failed: {res.msg}"
+            landed = await host.exec(f"stat -c %U:%s {remote_dir}/{by_default.name}")
+            assert landed.status == Status.Success, f"stat failed: {landed.value!r}"
+            assert landed.value.strip() == f"{default_login}:{len(by_default.read_bytes())}", (
+                f"control put landed {landed.value.strip()!r}, expected "
+                f"{default_login}:{len(by_default.read_bytes())} (owner:size)"
+            )
+        finally:
+            await self._cleanup(host, f"rm -rf {remote_dir}", second)
+
+    @pytest.mark.asyncio
+    async def test_get_user_reads_with_that_users_permissions(self, tmp_path: Path):
+        """A file only the second user may read is the discriminator.
+
+        ``get(user=second)`` must bring the bytes back; the identical ``get``
+        without ``user=`` must FAIL, because the login user cannot open a
+        0600 file owned by somebody else. A ``user=`` that merely decorated
+        the call would make both halves succeed. The refusal is read where the
+        API documents it — the per-file ``dict[Path, Result]`` entry — and the
+        refused destination is asserted EMPTY, so a backend that creates the
+        local file and only then fails cannot pass as a clean refusal.
+        """
+        host, default_login, second = self._host_and_logins()
+        remote_path = f"/tmp/otto_get_user_{uuid.uuid4().hex}"
+        try:
+            uid = await host.exec("id -u")
+            assert uid.status == Status.Success, f"id -u failed: {uid.value!r}"
+            assert uid.value.strip() != "0", (
+                f"the bed's default login for test2 ({default_login!r}) is root; "
+                f"file permissions cannot discriminate an authenticated read, so "
+                f"this test needs an unprivileged default user"
+            )
+
+            made = await host.exec(f"umask 077 && printf secret > {remote_path}", user=second)
+            assert made.status == Status.Success, f"could not write {remote_path}: {made.value!r}"
+            perms = await host.exec(f"stat -c %U:%a {remote_path}")
+            assert perms.status == Status.Success, f"stat failed: {perms.value!r}"
+            assert perms.value.strip() == f"{second}:600", (
+                f"{remote_path} is {perms.value.strip()!r}; the test needs it owned "
+                f"by {second!r} and unreadable by anyone else"
+            )
+
+            allowed_dir = tmp_path / "as_second"
+            allowed_dir.mkdir()
+            res = await transfer_with_retry(
+                lambda: host.get([Path(remote_path)], allowed_dir, user=second)
+            )
+            assert res.status == Status.Success, f"get(user={second!r}) failed: {res.msg}"
+            got = allowed_dir / Path(remote_path).name
+            assert got.read_bytes() == b"secret", (
+                f"{got} came back as {got.read_bytes()!r}, not the bytes written as {second!r}"
+            )
+
+            refused_dir = tmp_path / "as_default"
+            refused_dir.mkdir()
+            res = await transfer_with_retry(lambda: host.get([Path(remote_path)], refused_dir))
+            assert not res.is_ok, (
+                f"get without user= read a file only {second!r} may read "
+                f"(status {res.status}); the transfer did not run as the login user"
+            )
+            entry = res.value[Path(remote_path)]
+            assert not entry.is_ok, (
+                f"the per-file entry for {remote_path} is {entry.status}; the aggregate "
+                f"failed for some other reason than this path being refused"
+            )
+            assert "denied" in (entry.msg or "").lower(), (
+                f"the refused get failed for the wrong reason: {entry.msg!r}"
+            )
+            assert list(refused_dir.iterdir()) == [], (
+                f"the refused get still left {[p.name for p in refused_dir.iterdir()]} behind"
+            )
+        finally:
+            await self._cleanup(host, f"rm -f {remote_path}", second)
 
 
 # ---------------------------------------------------------------------------
