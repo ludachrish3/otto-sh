@@ -32,10 +32,17 @@ Every claim below was checked against the tree at `c7870c43` (main,
 | 15 | Coverage fetch calls `host.get(..., show_progress=)` via the protocol; container `get` lacked it | — | **closed** (protocol and `DockerContainerHost.get` both carry `show_progress` now; conformance green) | — |
 | 16 | Four `BaseHost` public members outside the protocol | — | **closed** by item 11 (`56e6f251`) | — |
 | 17 | Spec §3.4 "id tolerated" row, the repr "majority" wording, the stale `UnixHost` allowlist row | — | **land now** (spec amendment, docs only) | — |
-| 18 | `has_bash` on the `Host` protocol so seven `getattr` sites become plain reads | no (additive attribute) | **land if ruled** | **yes/no** |
+| 18 | `has_bash` on the `Host` protocol so seven `getattr` sites become plain reads | no (additive attribute) | **landed** | ruled yes |
+| 19 | Golden lists module-level functions by name only — keyword renames invisible to the breaking-mark check | no (tooling) | **defer** (before a freeze) | — |
 
-**After 9 and 11 land, the foreseeable-breaks list is empty.** Every
-remaining item is additive by construction.
+**Status 2026-09-09 (evening):** Chris ruled yes on 9, 11, 13 and 18; all
+"land now" items are on main (10/12/13-export/17 in `5d27fec9`–`7f55aa12`;
+18/11/9/13-docs in `b286d9db`–`3e440542`). **The foreseeable-breaks list is
+empty.** Every remaining item is additive by construction. One limit
+surfaced while landing 9: the public-API golden records module-level
+functions by name only, so a keyword rename such as
+`resolve_username(as_user=)` → `holder=` is invisible to the breaking-mark
+check and is covered only by the commit's `!` (item 19, below).
 
 ## The items
 
@@ -197,6 +204,16 @@ answers it (it is a `BaseHost` field now), so adding `has_bash: bool` to
 the protocol's attribute block is valid contract growth: one golden-visible
 attribute, one `PROTOCOL_ATTRIBUTES` edit in the guard, and the seven sites
 become plain reads. **Chris rules yes/no** (contract growth).
+
+### 19. Golden is blind to keyword renames of module-level functions — defer
+
+`scripts/api_snapshot.py` writes parameter names only for `Host` protocol
+methods; every other public callable is a bare name. A keyword rename on
+`resolve_username` or any `otto.__all__` function therefore moves no golden
+line and `check_breaking_marks` cannot see it. Extending the line shape to
+`module:func(params)` for every callable in `otto.__all__` is additive to
+the tooling and would have caught item 9's second break automatically.
+**Defer**; worth doing before a freeze.
 
 ### 17. Spec 2026-09-09 amendments — land with 10
 
