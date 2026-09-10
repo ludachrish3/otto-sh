@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-09-10
+
+### Added
+
+- **BREAKING** **cli**: --as-user becomes --holder
+- **host**: has_bash is on the Host protocol
+- **api**: otto.Status is a sanctioned export
+- **host**: the Host protocol names app_shell, as_user, switch_user and current_user
+- **testing**: assert_host_conforms and assert_transfer_backend_conforms — a third party proves its class before an upgrade lands
+- **BREAKING** **host**: every host family declares what user=, progress and identity it supports
+
+
+### Changed
+
+- **BREAKING** **host**: drop the unread log_stdout lab key
+- **host**: one Expect alias
+- **host**: has_bash and _session_mgr live on BaseHost
+- **BREAKING** **host**: one home per host field — BaseHost and RemoteHost declare the shared fields once
+
+
+### Documentation
+
+- **todo**: follow-up — extend harness-bounds Part A to per-test timeout marks
+- **todo**: follow-up — golden must carry parameter names for every public callable
+- **todo**: host follow-ups record — status after the rulings landed; item 19 (golden blind to keyword renames)
+- **specs**: host-field spec no longer lists the removed log_stdout key
+- **BREAKING** import Status from otto
+- **todo**: Host API follow-ups disposition record (review item 10)
+- **host**: the custom-host-classes page tells the dataclass truth
+- **specs**: host-field spec — approved; widen the Host protocol by the four BaseHost-only members
+- **specs**: host fields get one home each — design for Tier 2 item 11
+
+
+### Fixed
+
+- **test**: stop the fanout flake — a runaway guard that could neither stop the test nor report itself
+- **lifecycle**: the teardown deadline runs from the arming signal, not from the last byte
+- **lifecycle**: the phase re-claims the signal-wakeup fd when it arms, and seeds what it missed
+- **lifecycle**: a command nested in a phase defers to it instead of disarming it
+- **host**: refuse exec(user=…) above the dry-run arm so a dry run does not decline a call the family can never honour
+
+
+### Maintenance
+
+- **matrix**: re-measure the bed support matrix
+- **matrix**: re-measure the bed support matrix
+
+
 ## [0.11.0] - 2026-09-07
 
 ### Added
@@ -1633,7 +1681,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/ludachrish3/otto-sh/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/ludachrish3/otto-sh/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/ludachrish3/otto-sh/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/ludachrish3/otto-sh/compare/v0.8.8...v0.9.0
