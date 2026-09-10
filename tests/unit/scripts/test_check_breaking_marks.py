@@ -19,7 +19,9 @@ import pytest
 from scripts.check_breaking_marks import (
     RangeError,
     commits_in_range,
+    is_library_line,
     main,
+    path_resolves,
     removed_golden_lines,
     validate_range,
 )
@@ -247,3 +249,140 @@ def test_red_inverting_the_marked_check_lets_an_unmarked_removal_through(tmp_pat
     exit_code = mod.main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
 
     assert exit_code == 0, "inverted classifier should have let the unmarked removal through"
+
+
+def test_docs_only_removal_that_still_imports_passes_unmarked(tmp_path, capsys):
+    """A path only the docs taught, still importable, is not a break."""
+    repo = TmpGitRepo(tmp_path)
+    _seed(repo, ["json:dumps", "otto:Alpha"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
+    tip = repo.commit("docs: stop teaching json:dumps")
+
+    exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "docs-only, still importable" in out
+    assert "json:dumps" in out
+
+
+def test_docs_only_removal_that_no_longer_imports_needs_a_mark(tmp_path, capsys):
+    repo = TmpGitRepo(tmp_path)
+    _seed(repo, ["json:no_such_name", "otto:Alpha"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
+    tip = repo.commit("docs: stop teaching a dead path")
+
+    exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert "json:no_such_name" in out
+
+    repo.write("golden.txt", GOLDEN_HEADER + "json:no_such_name\notto:Alpha\n")
+    repo.commit("docs: put it back")
+    repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
+    marked = repo.commit("docs!: stop teaching a dead path")
+
+    assert main([f"{marked}~1..{marked}", "--repo", str(repo.root), "--golden", "golden.txt"]) == 0
+
+
+def test_bare_module_line_follows_the_same_resolvability_rule(tmp_path, capsys):
+    repo = TmpGitRepo(tmp_path)
+    _seed(repo, ["json:", "no_such_module_at_all:", "otto:Alpha"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
+    tip = repo.commit("docs: stop teaching both bare imports")
+
+    exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert "docs-only, still importable" in out
+    assert "json:" in out
+    assert "no_such_module_at_all:" in out
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("otto:Status", True),
+        ("otto:", False),
+        ("otto.host.host:Host.run(a)", True),
+        ("otto.host.host:Host", False),
+        ("otto.utils:Status", False),
+        ("a line with no colon", True),
+    ],
+    ids=[
+        "all-exports-name",
+        "bare-otto-module",
+        "host-protocol-signature",
+        "host-class-without-method",
+        "deep-import-path",
+        "unrecognised-shape",
+    ],
+)
+def test_only_the_two_library_shapes_and_an_unrecognised_line_are_library_surface(line, expected):
+    assert is_library_line(line) is expected
+
+
+def test_library_line_removal_still_fails_unmarked_even_though_it_imports(tmp_path, capsys):
+    """A library line is a break even when the path it names still resolves."""
+    repo = TmpGitRepo(tmp_path)
+    _seed(repo, ["otto:Alpha", "otto:Status"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
+    tip = repo.commit("refactor(api): drop Status")
+
+    assert path_resolves("otto:Status", repo.root), "the removed line must still import"
+
+    exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 1
+    assert "otto:Status" in capsys.readouterr().out
+
+
+def test_resolution_imports_from_the_scanned_tree_not_the_interpreters_own(tmp_path, capsys):
+    """A module that exists only under ``--repo``'s ``src/`` counts as resolvable.
+
+    ``python -c`` in a src-layout project imports through the venv's ``.pth``,
+    which names one absolute source directory — so running the resolver with
+    its cwd inside the scanned tree is not enough. Only that tree's ``src/``
+    on the child's path makes this module visible.
+    """
+    repo = TmpGitRepo(tmp_path)
+    repo.write("src/zz_docs_only_probe.py", "thing = object()\n")
+    _seed(repo, ["otto:Alpha", "zz_docs_only_probe:thing"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
+    tip = repo.commit("docs: stop teaching the probe import")
+
+    exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "zz_docs_only_probe:thing" in out
+    assert "docs-only, still importable" in out
+
+
+def test_range_ending_at_an_annotated_tag_that_is_head_is_accepted(tmp_path):
+    """``rev-parse`` on an annotated tag yields the TAG object, not the commit."""
+    repo = TmpGitRepo(tmp_path)
+    base = _seed(repo, ["otto:Alpha"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\notto:Beta\n")
+    repo.commit("feat(api): add Beta")
+    repo.git("tag", "-a", "v9.9.9", "-m", "v9.9.9")
+    assert repo.git("rev-parse", "v9.9.9").strip() != repo.git("rev-parse", "HEAD").strip()
+
+    exit_code = main([f"{base}..v9.9.9", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 0
+
+
+def test_range_not_ending_at_head_is_refused(tmp_path, capsys):
+    repo = TmpGitRepo(tmp_path)
+    base = _seed(repo, ["otto:Alpha"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\notto:Beta\n")
+    repo.commit("feat(api): add Beta")
+
+    exit_code = main([f"{base}~0..{base}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 2
+    err = capsys.readouterr().err
+    assert "must end at HEAD" in err

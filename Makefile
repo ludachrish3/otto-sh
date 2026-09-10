@@ -19,7 +19,9 @@ BUMP ?=
 
 # The range `check-breaking` scans for an unmarked public-API-golden deletion
 # (scripts/check_breaking_marks.py). Default is what a branch carries beyond
-# main; override for a wider or narrower sweep:
+# main; override to start further back — but the range must END AT HEAD, since
+# the check decides whether a removed documented-import path still resolves by
+# importing it from the tree that is checked out:
 #   make check-breaking RANGE=v0.10.0..HEAD
 RANGE ?= origin/main..HEAD
 
@@ -1329,7 +1331,7 @@ api-snapshot: ## (Dev) Regenerate the public-API golden snapshot (otto.__all__ +
 	@$(SAY) "updating public-API golden snapshot"
 	@uv run python scripts/api_snapshot.py --update
 
-check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD) that deletes a public-API golden line without a `!`/`BREAKING CHANGE:` mark
+check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; RANGE must end at HEAD) that deletes a public-API golden line without a `!`/`BREAKING CHANGE:` mark
 	@$(SAY) "check-breaking-marks: $(RANGE)"
 	@uv run python scripts/check_breaking_marks.py $(RANGE)
 

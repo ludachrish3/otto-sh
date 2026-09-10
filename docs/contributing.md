@@ -297,7 +297,12 @@ is a deletion and an addition together, so it is marked too. `make
 check-breaking` (`scripts/check_breaking_marks.py`, run in CI) enforces this
 for the first two against the committed golden,
 `tests/unit/api_snapshot/public_api.txt`; settings/lab keys are not yet
-enforced (a later schema-diff gate).
+enforced (a later schema-diff gate). A library line (`otto:<name>`, or a
+`Host` protocol signature) always needs the mark; a line only the docs
+taught — a deep import path a page stopped teaching — needs none if the path
+still imports at `HEAD`, and the check reports it as "docs-only, still
+importable" instead. Because it resolves those paths by importing them from
+the checked-out tree, the range you pass must end at `HEAD`.
 
 Before pushing, run `make all` locally — it mirrors CI
 (`clean-dist → typecheck → coverage → docs → build`).
