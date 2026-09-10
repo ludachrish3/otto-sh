@@ -63,6 +63,8 @@
 - Bug: Safari overdraws to the right side of the screen. It's the hovering toolbar that overhangs. Claude is quite confused by this and kept coming up with more and more ways to make it all line up. If this is fixed by Claude, it needs to be made very clear just what is overhanging so that it can be fixed.
 - Add a `compress` argument to get/put, which is False by default.
 
+- Public-API golden: record parameter names for EVERY callable in `otto.__all__` (today only `Host` protocol methods carry `(params)`; module-level functions are name-only), so a keyword rename such as `resolve_username(as_user=)` → `holder=` moves a golden line and `scripts/check_breaking_marks.py` demands the `!` instead of trusting the author. Filed 2026-09-09 after the `--holder` rename slipped past the check (see `todo/host-api-followups-2026-09-09.md` item 19). Do before any model freeze.
+
 ## Big Picture
 
 - Projects need to have more control over customizing host usage. (The monitor half is done — project-level parser registration, per-parser collection intervals, parser API v2 — via monitor Phase 1; what remains is the non-monitor surface, e.g. custom protocols/host behavior hooks.)
