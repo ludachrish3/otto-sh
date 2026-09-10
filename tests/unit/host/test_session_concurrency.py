@@ -23,10 +23,38 @@ One assertion's truth is still produced by a timer, and that timer is a
 from a 0.05 s ``wait_for``. Its fake never answers the readiness probe, so
 the handshake cannot complete and the timeout is certain to fire; load
 pushes that in the safe direction, never toward a false red.
+
+The ``@pytest.mark.timeout(N)`` marks below are runaway guards, and nothing
+here passes or fails because of where they sit — so they are held at the 60 s
+floor ``tests/unit/test_declared_harness_bounds.py`` declares for this repo,
+rather than at a multiple of what a test costs when nothing else is running.
+They used to sit at 5 s and 10 s, and issue #305 is what that cost:
+``test_exec_pool_high_fanout`` costs 0.05 s (0.14 s worst of 300 consecutive
+runs) and was killed at 10 s in the nightly.
+
+What stalled it was the RUNNER, not contention and not this code, which is
+worth writing down because the obvious reading is wrong. In-guest CPU
+saturation was measured at only ~1.5x on this test (4 spinners on 4 cores,
+load 3.6: 0.21 s worst of 50), nowhere near the ~200x needed. The nightly log
+instead shows all four xdist workers AND the controller emitting nothing for
+the same 12.63 s and then flushing in a burst, with two sibling workers inside
+``test_session_manager_property`` — also a 0.05 s test — for that whole
+window. Three unrelated tests in three processes inflating ~200x at the same
+instant is a frozen VM (steal or I/O on a shared GitHub runner); no deadlock in
+``_exec_pool`` can produce it, and a deadlock could not then have resolved
+itself, which this one did, 2.6 s after the alarm.
+
+So the guard was not measuring the pool. It was measuring the hypervisor, which
+is the counterfeiting-by-load that #229 removed from the assertions in this
+file, arriving instead through the one wall-clock bound those assertions do not
+control. No defensible value survives a 12 s freeze; 60 s does. See
+:func:`_gather_settled` for the second half of that failure — why the guard
+could neither stop the test nor report itself.
 """
 
 import asyncio
 import re
+from collections.abc import Awaitable
 from types import SimpleNamespace
 from typing import cast
 
@@ -39,6 +67,37 @@ from otto.host.session import _HANDSHAKE_RETRY_BACKOFF, SessionManager, ShellSes
 from otto.result import CommandResult
 
 pytestmark = pytest.mark.concurrency
+
+
+async def _gather_settled(*aws: "Awaitable[CommandResult]") -> list[CommandResult | Exception]:
+    """``asyncio.gather`` that captures each call's ``Exception`` — and ONLY that.
+
+    ``gather(..., return_exceptions=True)`` captures ``BaseException`` too,
+    which silently includes the ``Failed`` that pytest-timeout's signal
+    handler raises into whatever coroutine the loop happens to be running.
+    That neuters the runaway guard twice over, and nightly #305 was both
+    halves at once: the alarm was captured as if it were a return value, so
+    (a) it could not stop the test — pytest-timeout arms its alarm ONCE, so a
+    swallowed one is gone, and a genuinely deadlocked ``exec()`` would hang
+    the run rather than fail it — and (b) the structural assertion downstream
+    reported ``1 exec() calls raised``, which reads as exactly the pool
+    corruption these tests exist to detect. Nothing had corrupted the pool;
+    the runner had stalled (see the module docstring).
+
+    Capturing per child instead of per gather keeps the "how many calls
+    raised" count that the assertions want, while letting a control-flow
+    escape (``Failed``, ``CancelledError``, ``KeyboardInterrupt``) do what it
+    is for: leave immediately, through a gather that is not swallowing it.
+    """
+
+    async def capture(aw: "Awaitable[CommandResult]") -> CommandResult | Exception:
+        try:
+            return await aw
+        except Exception as exc:  # noqa: BLE001 — the point: BaseException must NOT be caught
+            return exc
+
+    return await asyncio.gather(*(capture(aw) for aw in aws))
+
 
 # ── Fake session + factory ────────────────────────────────────────────────────
 
@@ -196,7 +255,7 @@ class _SlowConnectFactory(_Factory):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(10)
+@pytest.mark.timeout(60)
 async def test_exec_pool_connects_concurrently() -> None:
     """Concurrent ``exec()`` calls must connect their pool sessions in parallel.
 
@@ -252,7 +311,7 @@ async def test_exec_pool_connects_concurrently() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(10)
+@pytest.mark.timeout(60)
 async def test_exec_pool_high_fanout() -> None:
     """200 concurrent ``exec()`` calls must not corrupt ``_exec_pool``.
 
@@ -264,12 +323,9 @@ async def test_exec_pool_high_fanout() -> None:
     mgr = _make_mgr(factory)
 
     N = 200  # noqa: N806 — single-letter math dimension
-    results = await asyncio.gather(
-        *(mgr.exec(f"echo {i}") for i in range(N)),
-        return_exceptions=True,
-    )
+    results = await _gather_settled(*(mgr.exec(f"echo {i}") for i in range(N)))
 
-    exceptions = [r for r in results if isinstance(r, BaseException)]
+    exceptions = [r for r in results if isinstance(r, Exception)]
     assert not exceptions, f"{len(exceptions)} exec() calls raised; first: {exceptions[0]!r}"
     statuses = cast("list[CommandResult]", results)
     assert all(r.status.is_ok for r in statuses), "some execs returned non-ok status"
@@ -289,7 +345,7 @@ async def test_exec_pool_high_fanout() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(10)
+@pytest.mark.timeout(60)
 async def test_named_session_alive_check_race() -> None:
     """Concurrent ``open_session(name)`` after transport death must yield one replacement.
 
@@ -333,7 +389,7 @@ async def test_named_session_alive_check_race() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(10)
+@pytest.mark.timeout(60)
 async def test_ensure_default_session_recreation_race() -> None:
     """Concurrent commands after default-session death must trigger one recreation.
 
@@ -360,12 +416,9 @@ async def test_ensure_default_session_recreation_race() -> None:
     initial._alive = False
 
     M = 50  # noqa: N806 — single-letter math dimension
-    results = await asyncio.gather(
-        *(mgr.run_cmd(f"echo {i}", timeout=5.0) for i in range(M)),
-        return_exceptions=True,
-    )
+    results = await _gather_settled(*(mgr.run_cmd(f"echo {i}", timeout=5.0) for i in range(M)))
 
-    exceptions = [r for r in results if isinstance(r, BaseException)]
+    exceptions = [r for r in results if isinstance(r, Exception)]
     assert not exceptions, f"{len(exceptions)} run_cmd calls raised; first: {exceptions[0]!r}"
     statuses = cast("list[CommandResult]", results)
     assert all(r.status.is_ok for r in statuses), "some commands returned non-ok status"
@@ -522,7 +575,7 @@ class _HandshakeFailsOnceFakeSession(_StabilityFakeSession):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(60)
 async def test_ensure_session_retries_once_on_handshake_failure() -> None:
     """A ``ConnectionError`` from the first ``_ensure_initialized`` triggers
     exactly one rebuild + retry; the second attempt's success becomes the
@@ -541,9 +594,11 @@ async def test_ensure_session_retries_once_on_handshake_failure() -> None:
         connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
         session_factory=make_session,
         # Skip the real ~2 s peer-release backoff — these fakes have no peer to
-        # wait on, and paying it burns 40% of the tight timeout(5) budget,
-        # making the test flake under CI teardown load. See
-        # test_ensure_session_retry_backoff_is_configurable.
+        # wait on, so sleeping on one buys the test nothing and only puts wall
+        # clock where load can pile onto it. (It used to be charged against a
+        # timeout(5) runaway guard, which is why it was found; that guard now
+        # sits at the declared floor, and this is still the right call on its
+        # own merits.) See test_ensure_session_retry_backoff_is_configurable.
         retry_backoff=0.0,
     )
 
@@ -559,7 +614,7 @@ async def test_ensure_session_retries_once_on_handshake_failure() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(60)
 async def test_ensure_session_propagates_persistent_handshake_failure() -> None:
     """If both attempts fail, ``_ensure_session`` propagates the
     ``ConnectionError`` rather than looping forever. Genuine "device
@@ -577,8 +632,8 @@ async def test_ensure_session_propagates_persistent_handshake_failure() -> None:
     mgr = SessionManager(
         connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
         session_factory=make_session,
-        # Skip the real ~2 s peer-release backoff (no peer here) — it otherwise
-        # eats most of the timeout(5) budget and flakes under CI teardown load.
+        # Skip the real ~2 s peer-release backoff (no peer here) — sleeping on
+        # a peer that does not exist only adds wall clock for load to pile onto.
         retry_backoff=0.0,
     )
 
@@ -592,7 +647,7 @@ async def test_ensure_session_propagates_persistent_handshake_failure() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(60)
 async def test_ensure_session_retry_backoff_is_configurable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
