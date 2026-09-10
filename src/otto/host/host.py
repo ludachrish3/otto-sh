@@ -702,6 +702,7 @@ class Host(Protocol):
         dest_dir: Path,
         user: str | None = None,
         show_progress: bool = True,
+        recursive: bool = False,
     ) -> Result:
         """Download one or more files from the host to a local directory.
 
@@ -732,6 +733,11 @@ class Host(Protocol):
         ok, so the aggregate is non-ok and no caller reads the transfer as
         having happened; the per-file ``value`` still carries the destination
         path, because that is computed locally and IS the preview.
+
+        ``recursive`` transfers each directory among the sources as a tree,
+        landing under ``dest_dir`` with its own name; without it a directory
+        source is refused. Semantics, the nested per-file ``Result`` and the
+        symlink rule are documented once, in :ref:`recursive-transfers`.
         """
         ...
 
@@ -742,6 +748,7 @@ class Host(Protocol):
         mode: int | str | None = None,
         user: str | None = None,
         show_progress: bool = True,
+        recursive: bool = False,
     ) -> Result:
         """Upload one or more local files to a directory on the host.
 
@@ -784,6 +791,11 @@ class Host(Protocol):
         path, because that is computed locally and IS the preview. A file that
         transferred but whose ``mode`` could not be applied, or whose ``user``
         chown failed, is an error entry that still carries its ``dest_path``.
+
+        ``recursive`` transfers each directory among the sources as a tree,
+        landing under ``dest_dir`` with its own name; without it a directory
+        source is refused. Semantics, the nested per-file ``Result`` and the
+        symlink rule are documented once, in :ref:`recursive-transfers`.
         """
         ...
 
@@ -1746,6 +1758,7 @@ class BaseHost(ABC):
         dest_dir: Path,
         user: str | None = None,
         show_progress: bool = True,
+        recursive: bool = False,
     ) -> Result:
         """Download files from the host to a local directory. Subclasses must override."""
         raise NotImplementedError from None
@@ -1757,6 +1770,7 @@ class BaseHost(ABC):
         mode: int | str | None = None,
         user: str | None = None,
         show_progress: bool = True,
+        recursive: bool = False,
     ) -> Result:
         """Upload local files to a directory on the host. Subclasses must override."""
         raise NotImplementedError from None

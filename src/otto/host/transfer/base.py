@@ -225,6 +225,33 @@ def aggregate_transfer(per_file: dict[Path, Result]) -> Result:
     return Result(status=status, value=per_file, msg=msg)
 
 
+DIRECTORY_SOURCE_HINT = "is a directory (pass recursive=True, or -r on the CLI, to transfer a tree)"
+"""Per-file diagnostic for a directory handed to a non-recursive ``put``.
+
+One spelling for every backend: the recursive path never hands a backend a
+directory, so a backend seeing one means the caller forgot the flag.
+"""
+
+
+def refuse_directory_sources(src_files: list[Path]) -> Result | None:
+    """Return the refusal aggregate a non-recursive put owes, or ``None``.
+
+    Directory entries carry :data:`DIRECTORY_SOURCE_HINT` by name; the files
+    beside them are ``Skipped`` (nothing was attempted), so the batch moves
+    no byte at all rather than half of it.
+    """
+    dirs = [f for f in src_files if f.is_dir()]
+    if not dirs:
+        return None
+    per_file: dict[Path, Result] = {}
+    for f in src_files:
+        if f in dirs:
+            per_file[f] = Result(Status.Error, msg=f"{f}: {DIRECTORY_SOURCE_HINT}")
+        else:
+            per_file[f] = Result(Status.Skipped, msg="not attempted (directory source refused)")
+    return aggregate_transfer(per_file)
+
+
 def mark_skipped(per_file: dict[Path, Result], remaining: list[Path]) -> None:
     """Mark each not-yet-attempted source path Skipped after a sequential backend stops.
 
@@ -368,6 +395,10 @@ class BaseFileTransfer(ABC):
                 f"supports it."
             )
             return aggregate_transfer({f: Result(Status.Error, msg=msg) for f in src_files})
+
+        refused = refuse_directory_sources(src_files)
+        if refused is not None:
+            return refused
 
         name_check = validate_filename_lengths(
             src_files,

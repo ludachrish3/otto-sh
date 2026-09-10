@@ -20,6 +20,7 @@ from scripts.check_breaking_marks import (
     RangeError,
     commits_in_range,
     is_library_line,
+    is_widened_protocol_line,
     main,
     path_resolves,
     removed_golden_lines,
@@ -386,3 +387,151 @@ def test_range_not_ending_at_head_is_refused(tmp_path, capsys):
     assert exit_code == 2
     err = capsys.readouterr().err
     assert "must end at HEAD" in err
+
+
+def test_a_trailing_host_parameter_addition_widens_and_passes_unmarked(tmp_path, capsys):
+    """Spec 2026-09-10 recursive-transfer, fix round 1: a widening is not a break."""
+    repo = TmpGitRepo(tmp_path)
+    _seed(repo, ["otto.host.host:Host.put(a, b)"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto.host.host:Host.put(a, b, c)\n")
+    tip = repo.commit("feat(host): put gains c")
+
+    exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "widened" in out
+    assert "otto.host.host:Host.put(a, b)" in out
+    assert "no mark needed" in out
+
+
+def _fake_host_module(repo: TmpGitRepo, params: str) -> None:
+    """Give *repo* an importable ``otto.host.host:Host`` whose ``put`` takes *params*.
+
+    The checker puts ``<repo>/src`` FIRST on its resolver subprocess's path
+    (:func:`scripts.check_breaking_marks._resolver_env`), so a package
+    planted here is the one the live-signature check reads — never the
+    installed otto.
+    """
+    repo.write("src/otto/__init__.py", "")
+    repo.write("src/otto/host/__init__.py", "")
+    repo.write("src/otto/host/host.py", f"class Host:\n    def put(self, {params}):\n        ...\n")
+
+
+def test_an_appended_host_parameter_with_a_default_widens_and_passes_unmarked(tmp_path, capsys):
+    """The live signature agrees the appended parameter is optional."""
+    repo = TmpGitRepo(tmp_path)
+    _fake_host_module(repo, "a, b, c=None")
+    _seed(repo, ["otto.host.host:Host.put(a, b)"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto.host.host:Host.put(a, b, c)\n")
+    tip = repo.commit("feat(host): put gains an optional c")
+
+    exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "widened" in out
+    assert "no mark needed" in out
+
+
+def test_an_appended_host_parameter_without_a_default_is_a_break(tmp_path, capsys):
+    """A REQUIRED appended parameter breaks every caller that omits it — the
+    golden carries names only, so the live signature is what tells them apart."""
+    repo = TmpGitRepo(tmp_path)
+    _fake_host_module(repo, "a, b, c")
+    _seed(repo, ["otto.host.host:Host.put(a, b)"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto.host.host:Host.put(a, b, c)\n")
+    tip = repo.commit("feat(host): put gains a required c")
+
+    exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert "otto.host.host:Host.put(a, b)" in out
+    assert "REQUIRED parameter c" in out
+    assert "RULE:" in out
+
+
+def test_a_reordered_host_parameter_list_is_still_a_break(tmp_path, capsys):
+    repo = TmpGitRepo(tmp_path)
+    _seed(repo, ["otto.host.host:Host.put(a, b)"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto.host.host:Host.put(a, c, b)\n")
+    tip = repo.commit("feat(host): put reorders")
+
+    exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert "otto.host.host:Host.put(a, b)" in out
+    assert "widened" not in out
+
+
+def test_a_renamed_host_parameter_is_still_a_break(tmp_path, capsys):
+    repo = TmpGitRepo(tmp_path)
+    _seed(repo, ["otto.host.host:Host.put(a, b)"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto.host.host:Host.put(a, c)\n")
+    tip = repo.commit("feat(host): put renames b to c")
+
+    exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert "otto.host.host:Host.put(a, b)" in out
+    assert "widened" not in out
+
+
+def test_a_shortened_host_parameter_list_is_still_a_break(tmp_path, capsys):
+    repo = TmpGitRepo(tmp_path)
+    _seed(repo, ["otto.host.host:Host.put(a, b)"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto.host.host:Host.put(a)\n")
+    tip = repo.commit("feat(host): put drops b")
+
+    exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert "otto.host.host:Host.put(a, b)" in out
+    assert "widened" not in out
+
+
+def test_a_pure_host_removal_with_no_added_counterpart_is_still_a_break(tmp_path, capsys):
+    repo = TmpGitRepo(tmp_path)
+    _seed(repo, ["otto.host.host:Host.put(a, b)", "otto:Alpha"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
+    tip = repo.commit("feat(host): drop put entirely")
+
+    exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert "otto.host.host:Host.put(a, b)" in out
+    assert "widened" not in out
+
+
+@pytest.mark.parametrize(
+    ("removed", "added", "expected"),
+    [
+        ("otto.host.host:Host.put(a, b)", ["otto.host.host:Host.put(a, b, c)"], True),
+        ("otto.host.host:Host.put(a, b)", ["otto.host.host:Host.put(a, c, b)"], False),
+        ("otto.host.host:Host.put(a, b)", ["otto.host.host:Host.put(a, c)"], False),
+        ("otto.host.host:Host.put(a, b)", ["otto.host.host:Host.put(a)"], False),
+        ("otto.host.host:Host.put(a, b)", [], False),
+        ("otto.host.host:Host.put(a, b)", ["otto.host.host:Host.get(a, b, c)"], False),
+        ("otto:Alpha", ["otto:Alpha", "otto:Beta"], False),
+        ("otto.host.host:Host.put(a, b)", ["otto.host.host:Host.put_many(a, b, c)"], False),
+        ("otto.host.host:Host.put(a, b)", ["otto.host.host:Host.put(a, bb)"], False),
+    ],
+    ids=[
+        "trailing-addition-widens",
+        "reorder-does-not-widen",
+        "rename-does-not-widen",
+        "shortened-does-not-widen",
+        "no-added-counterpart",
+        "different-method-does-not-widen",
+        "non-protocol-line-never-widens",
+        "a-longer-method-name-does-not-widen",
+        "a-lengthened-parameter-name-does-not-widen",
+    ],
+)
+def test_is_widened_protocol_line(removed, added, expected):
+    assert is_widened_protocol_line(removed, added) is expected

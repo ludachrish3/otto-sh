@@ -581,3 +581,35 @@ async def test_timed_out_exec_does_not_leak_its_pipe_fds():
 
     leaked = _open_fds() - before
     assert not leaked, f"timed-out exec leaked file descriptor(s) {sorted(leaked)}"
+
+
+@pytest.mark.asyncio
+async def test_put_and_get_recursive_roundtrip(tmp_path: Path):
+    host = LocalHost()
+    tree = tmp_path / "tree"
+    (tree / "sub").mkdir(parents=True)
+    (tree / "empty").mkdir()
+    (tree / "a.txt").write_text("a")
+    (tree / "sub" / "b.bin").write_bytes(b"\x00\xff")
+    remote = tmp_path / "remote"
+    remote.mkdir()
+
+    put = await host.put(tree, remote, recursive=True)
+    assert put.status == Status.Success, put.msg
+    back = tmp_path / "back"
+    got = await host.get(remote / "tree", back, recursive=True)
+    assert got.status == Status.Success, got.msg
+
+    assert (back / "tree" / "a.txt").read_text() == "a"
+    assert (back / "tree" / "sub" / "b.bin").read_bytes() == b"\x00\xff"
+    assert (back / "tree" / "empty").is_dir()
+
+
+@pytest.mark.asyncio
+async def test_recursive_on_a_plain_file_is_harmless(tmp_path: Path):
+    host = LocalHost()
+    src = tmp_path / "file.txt"
+    src.write_text("data")
+    result = await host.put(src, tmp_path / "remote", recursive=True)
+    assert result.status == Status.Success
+    assert result.value[src].value == tmp_path / "remote" / "file.txt"

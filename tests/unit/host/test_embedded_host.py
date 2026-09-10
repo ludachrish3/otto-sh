@@ -233,6 +233,20 @@ class TestNotImplemented:
         ):
             await host.get(Path("a"), Path("/tmp"), user="root")
 
+    @pytest.mark.asyncio
+    async def test_put_recursive_refused_on_embedded(self, host: EmbeddedHost, tmp_path: Path):
+        with pytest.raises(
+            NotImplementedError, match=r"put\(recursive=True\) is not supported on EmbeddedHost"
+        ):
+            await host.put(tmp_path, Path("/tmp"), recursive=True)
+
+    @pytest.mark.asyncio
+    async def test_get_recursive_refused_on_embedded(self, host: EmbeddedHost, tmp_path: Path):
+        with pytest.raises(
+            NotImplementedError, match=r"get\(recursive=True\) is not supported on EmbeddedHost"
+        ):
+            await host.get(Path("/lfs"), tmp_path, recursive=True)
+
 
 # ---------------------------------------------------------------------------
 # File transfer

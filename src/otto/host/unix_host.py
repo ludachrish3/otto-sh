@@ -806,11 +806,15 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             Opt(help="Read as this user (authenticates as them). Direct-cred users only."),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
+        recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
     ) -> Result:
         """Transfer files from remote host to the local machine.
 
         *user* authenticates the transfer as that user (spec 2026-09-01 §4),
         so the read happens with their permissions — direct-cred users only.
+
+        ``recursive`` transfers each directory among the sources as a tree;
+        see :ref:`recursive-transfers`.
         """
         if user is not None:
             _validate_user(user)
@@ -821,6 +825,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 ) from None
         if not isinstance(src_files, list):
             src_files = [src_files]
+        if recursive:
+            from .recursive_transfer import get_tree
+
+            with SuppressCommandOutput(host=cast("Host", self)):
+                return await get_tree(
+                    self, src_files, dest_dir, user=user, show_progress=show_progress
+                )
         if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
         with SuppressCommandOutput(host=cast("Host", self)):
@@ -850,6 +861,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             ),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
+        recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
     ) -> Result:
         """Transfer files from local machine to remote host.
 
@@ -861,6 +873,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         *user* authenticates the transfer as that user (spec 2026-09-01 §4),
         so the bytes land owned by them with no chown step — direct-cred
         users only.
+
+        ``recursive`` transfers each directory among the sources as a tree;
+        see :ref:`recursive-transfers`.
         """
         if user is not None:
             _validate_user(user)
@@ -872,6 +887,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         if not isinstance(src_files, list):
             src_files = [src_files]
         dest_dir = self._resolve_dest(dest_dir)
+        if recursive:
+            from .recursive_transfer import put_tree
+
+            with SuppressCommandOutput(host=cast("Host", self)):
+                return await put_tree(
+                    self, src_files, dest_dir, mode=mode, user=user, show_progress=show_progress
+                )
         if is_dry_run():
             return self._dry_run_transfer("PUT", src_files, dest_dir, mode)
         with SuppressCommandOutput(host=cast("Host", self)):

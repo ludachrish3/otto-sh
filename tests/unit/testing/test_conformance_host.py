@@ -152,7 +152,9 @@ class TestTheStructuralRules:
         """The expected set is read off the ``Host`` protocol, never retyped."""
 
         class NoUserOnPut(UnixHost):
-            async def put(self, src_files, dest_dir, mode=None, show_progress=True):
+            async def put(
+                self, src_files, dest_dir, mode=None, show_progress=True, recursive=False
+            ):
                 return None
 
         with pytest.raises(AssertionError, match=r"Host\.put: does not accept user by keyword"):
@@ -536,7 +538,9 @@ class _RecordsItsProbe(LocalHost):
 
     capabilities = replace(LocalHost.capabilities, put_user=UserSupport.chown)
 
-    async def put(self, src_files, dest_dir, mode=None, user=None, show_progress=True):
+    async def put(
+        self, src_files, dest_dir, mode=None, user=None, show_progress=True, recursive=False
+    ):
         _PROBED_UNDER.append(is_dry_run())
 
 

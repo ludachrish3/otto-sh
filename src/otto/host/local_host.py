@@ -11,6 +11,7 @@ works uniformly across all host backends.
 import asyncio
 import contextlib
 import logging
+import os
 import re
 import shutil
 from dataclasses import (
@@ -22,7 +23,7 @@ from errno import (
     ERANGE,
 )
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from typing_extensions import override
 
@@ -41,6 +42,9 @@ from .session import (
 )
 from .transfer import BaseFileTransfer, ProgressGranularity, TransferProgressFactory
 from .transfer.base import mark_skipped
+
+if TYPE_CHECKING:
+    from .recursive_transfer import RemoteListing
 
 
 class LocalFileTransfer(BaseFileTransfer):
@@ -460,12 +464,16 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             ),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
+        recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
     ) -> Result:
         """Copy files to dest_dir on the local filesystem.
 
         Delegates to :class:`LocalFileTransfer` so progress reporting
         flows through the same :class:`~otto.host.transfer.BaseFileTransfer`
         machinery as Unix and embedded backends.
+
+        ``recursive`` transfers each directory among the sources as a tree;
+        see :ref:`recursive-transfers`.
         """
         if user is not None:
             raise NotImplementedError(
@@ -474,6 +482,10 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             ) from None
         if not isinstance(src_files, list):
             src_files = [src_files]
+        if recursive:
+            from .recursive_transfer import get_tree
+
+            return await get_tree(self, src_files, dest_dir, user=user, show_progress=show_progress)
         if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
         return await self._file_transfer.get_files(
@@ -502,6 +514,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             ),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
+        recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
     ) -> Result:
         """Copy files to dest_dir on the local filesystem.
 
@@ -510,6 +523,9 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         Python, or a string always read as octal (``"755"``, ``"0755"``,
         ``"0o755"``). Without it, ``shutil.copy2`` preserves the source
         file's own permissions.
+
+        ``recursive`` transfers each directory among the sources as a tree;
+        see :ref:`recursive-transfers`.
         """
         if user is not None:
             raise NotImplementedError(
@@ -518,6 +534,12 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             ) from None
         if not isinstance(src_files, list):
             src_files = [src_files]
+        if recursive:
+            from .recursive_transfer import put_tree
+
+            return await put_tree(
+                self, src_files, dest_dir, mode=mode, user=user, show_progress=show_progress
+            )
         if is_dry_run():
             return self._dry_run_transfer("PUT", src_files, dest_dir, mode)
         return await self._file_transfer.put_files(
@@ -526,6 +548,55 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             show_progress,
             mode,
         )
+
+    @override
+    async def _walk_remote(self, path: "str | Path") -> "RemoteListing":
+        """Walk the filesystem directly — the runner IS the host, same rules as the shell script."""
+        from .recursive_transfer import ListingError, RemoteListing
+
+        root = Path(path)
+        if "\n" in root.name:
+            raise ListingError(
+                f"{root}: a name in this tree contains a newline; rename it and retry"
+            )
+        if not root.is_dir():
+            kind = "f" if root.exists() or root.is_symlink() else "-"
+            return RemoteListing(kind=kind, dirs=[], files=[])
+        dirs: list[Path] = []
+        files: list[Path] = []
+        unreadable: list[OSError] = []
+        walker = os.walk(root, followlinks=False, onerror=unreadable.append)
+        for dirpath, dirnames, filenames in walker:
+            here = Path(dirpath)
+            for name in [*dirnames, *filenames]:
+                if "\n" in name:
+                    raise ListingError(
+                        f"{root}: a name in this tree contains a newline; rename it and retry"
+                    )
+            dirs.extend(here / d for d in dirnames if not (here / d).is_symlink())
+            files.extend(here / f for f in filenames if (here / f).is_file())
+        if unreadable:
+            raise ListingError(f"{root}: cannot read {unreadable[0].filename}")
+        return RemoteListing(kind="d", dirs=dirs, files=files)
+
+    @override
+    async def _mkdir_all(self, paths: "list[Path]", *, user: str | None = None) -> Result:
+        """Create the directories with no shell — the runner's own filesystem answers."""
+        if user is not None:
+            raise NotImplementedError(
+                f"{self.name}: _mkdir_all(user=...) is not supported on LocalHost — "
+                f"local transfers keep the invoking user's ownership"
+            ) from None
+        if is_dry_run():
+            names = ", ".join(str(p) for p in paths)
+            self._log_command(f"[DRY RUN] mkdir -p: {names}")
+            return Result(Status.NotRun, msg=f"[DRY RUN] mkdir -p: {names}")
+        try:
+            for p in paths:
+                p.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return Result(Status.Error, msg=f"{exc.filename}: {exc.strerror}")
+        return Result(Status.Success)
 
     ####################
     #  Power / reachability

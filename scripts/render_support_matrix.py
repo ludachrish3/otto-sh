@@ -303,6 +303,47 @@ VOICE: "dict[str, Voice]" = {
             "answer: `remote_scratch` is `None` for exactly those hosts."
         ),
     ),
+    "transfer-recursive": Voice(
+        short="tree roundtrip",
+        capability=(
+            "put a whole directory tree on the device and get it back with its nesting, "
+            "its file contents and its empty directories intact"
+        ),
+        # ★ THE SECOND SURFACE WHOSE CONTRACT WATCHES TWO DIFFERENT THINGS, and the
+        # same shape as `transfer-mode`'s: a device otto walks no tree for is watched
+        # REFUSING, and a refusal is not a quiet spelling of the promise.
+        branches=(
+            Branch(
+                marker="get(recursive=True) reads back",
+                capability=(
+                    "put a whole directory tree on the device and get it back with its "
+                    "nesting, its file contents and its empty directories intact"
+                ),
+            ),
+            Branch(
+                marker="raises for recursive=True",
+                headline="No -- and otto says so rather than pretending.",
+                # SAYS ONLY WHAT THAT ARM ASSERTS, which is a `raises` and
+                # nothing else: what otto did or did not transfer first is not
+                # watched there, so this may not claim it.
+                instead=(
+                    "otto implements no recursive transfer for such a device: what a run "
+                    "watched here is `put(recursive=True)` raising "
+                    "`NotImplementedError` rather than a tree landing"
+                ),
+                grid_word="refused",
+            ),
+        ),
+        narrowed=(
+            "otto reports nowhere to put a file on such a device -- its filesystem "
+            "backend answers `supports_transfer` False -- so there is no tree to put "
+            "and nothing to read back"
+        ),
+        narrowed_detail=(
+            "The same narrowing as the three transfer surfaces above, read from the same "
+            "answer: `remote_scratch` is `None` for exactly those hosts."
+        ),
+    ),
     "timeout": Voice(
         short="timeout",
         capability=(

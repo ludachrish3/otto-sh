@@ -6,6 +6,7 @@ create a per-invocation output dir — each test asserts that via
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -136,4 +137,13 @@ def test_test_suite_discovery_flag_no_crash(tmp_path: Path) -> None:
     combined = r.stdout + r.stderr
     assert "RuntimeError" not in combined, f"discovery flag after suite crashed:\n{combined}"
     assert "init_cli_logging" not in combined, f"create_output_dir ran before init:\n{combined}"
+    assert_no_output_dir(tmp_path)
+
+
+@pytest.mark.parametrize("verb", ["put", "get"])
+def test_host_transfer_help_lists_the_recursive_flag(tmp_path: Path, verb: str) -> None:
+    r = run_otto(["host", "local", verb, "--help"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    assert r.returncode == 0, r.stderr
+    assert "--recursive" in r.stdout
+    assert re.search(r"(?<![\w-])-r(?![\w-])", r.stdout), r.stdout
     assert_no_output_dir(tmp_path)

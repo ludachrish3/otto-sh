@@ -305,6 +305,15 @@ class Opt:
 
     elem_type: type | None = None
     name: str | None = None
+    short: str | None = None
+    """A short alias (``"-r"``) added beside the long flag.
+
+    The long flag is ``name`` when given, else the synthesized
+    ``--<param-name>`` — so ``Opt(short="-r")`` on ``recursive`` yields
+    ``--recursive`` and ``-r`` together, never ``-r`` alone. On a ``bool``
+    parameter the synthesized long flag is written ``--recursive/--no-recursive``
+    so the short alias never costs the option its auto-generated negative.
+    """
     help: str | None = None
     min: float | None = None
     """Inclusive lower bound forwarded to click's numeric range, or None.

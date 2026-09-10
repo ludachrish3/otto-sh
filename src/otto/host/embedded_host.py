@@ -117,7 +117,8 @@ class EmbeddedHost(RemoteHost):
         transfer_family="embedded",
         note=(
             "A serial console has no user to switch to, and transfer ownership "
-            "follows the connection's own identity."
+            "follows the connection's own identity. Refuses `put`/`get` with "
+            "`--recursive`."
         ),
     )
     """What this family promises. :class:`ZephyrHost` inherits it unchanged --
@@ -353,6 +354,7 @@ class EmbeddedHost(RemoteHost):
             ),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
+        recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
     ) -> Result:
         """Transfer files from the embedded host to the local machine.
 
@@ -360,7 +362,14 @@ class EmbeddedHost(RemoteHost):
         which speaks the device shell (the ``console`` backend uses Zephyr's
         ``fs`` commands). Transfers are sequential — an embedded target has a
         single console.
+
+        ``recursive`` is not supported: see :ref:`recursive-transfers`.
         """
+        if recursive:
+            raise NotImplementedError(
+                f"{self.name}: get(recursive=True) is not supported on EmbeddedHost — "
+                f"a console transfer of a tree needs its own measurement; transfer files one by one"
+            ) from None
         if user is not None:
             raise NotImplementedError(
                 f"{self.name}: get(user=...) is not supported on EmbeddedHost — "
@@ -393,6 +402,7 @@ class EmbeddedHost(RemoteHost):
             ),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
+        recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
     ) -> Result:
         """Transfer files from the local machine to the embedded host.
 
@@ -411,7 +421,14 @@ class EmbeddedHost(RemoteHost):
         accepting one would be a silent lie. The parameter exists on the
         signature only so the failure names this host and backend rather than
         surfacing as an unknown-argument error.
+
+        ``recursive`` is not supported: see :ref:`recursive-transfers`.
         """
+        if recursive:
+            raise NotImplementedError(
+                f"{self.name}: put(recursive=True) is not supported on EmbeddedHost — "
+                f"a console transfer of a tree needs its own measurement; transfer files one by one"
+            ) from None
         if user is not None:
             raise NotImplementedError(
                 f"{self.name}: put(user=...) is not supported on EmbeddedHost — "

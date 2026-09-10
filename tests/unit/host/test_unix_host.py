@@ -2682,3 +2682,151 @@ class TestInteractiveTelnetTeardown:
         assert any(
             "interactive telnet client close teardown failed" in r.message for r in caplog.records
         )
+
+
+class TestRecursiveTransfer:
+    """`recursive=True` reduces to one batched mkdir plus one non-recursive put/get per level."""
+
+    @pytest.mark.asyncio
+    async def test_put_recursive_mkdirs_once_then_puts_per_level(
+        self, host: UnixHost, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        tree = tmp_path / "tree"
+        (tree / "sub").mkdir(parents=True)
+        (tree / "a.txt").write_text("a")
+        (tree / "sub" / "b.txt").write_text("b")
+        mkdirs: list[list[Path]] = []
+
+        async def fake_mkdir_all(paths, *, user=None):
+            mkdirs.append(list(paths))
+            return Result(Status.Success)
+
+        monkeypatch.setattr(host, "_mkdir_all", fake_mkdir_all)
+        puts: list[tuple[list[Path], Path]] = []
+
+        # `_transfer_for(None)` answers the CACHED `_file_transfer` built at
+        # init, so the per-level puts are observed on that object directly.
+        async def put_files(files, dest_dir, show_progress, mode):
+            puts.append((list(files), dest_dir))
+            return Result(
+                Status.Success,
+                value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+            )
+
+        monkeypatch.setattr(host._file_transfer, "put_files", put_files)
+
+        result = await host.put(tree, Path("/opt"), recursive=True)
+
+        assert result.status == Status.Success, result.msg
+        assert mkdirs == [[Path("/opt/tree"), Path("/opt/tree/sub")]]
+        assert sorted(dest for _, dest in puts) == [Path("/opt/tree"), Path("/opt/tree/sub")]
+        assert result.value[tree].value[Path("sub/b.txt")].value == Path("/opt/tree/sub/b.txt")
+
+    @pytest.mark.asyncio
+    async def test_put_recursive_mkdirs_as_the_transfer_user(
+        self, host: UnixHost, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """The skeleton is created by the SAME identity that lands the files.
+
+        Built as the login identity instead, every directory is login-owned
+        with ``mkdir``'s default bits, and the per-file put — authenticated
+        as *user* — is refused by the destination it was just given.
+        """
+        tree = tmp_path / "tree"
+        (tree / "sub").mkdir(parents=True)
+        (tree / "a.txt").write_text("a")
+        execs = AsyncMock(return_value=_cs(command="mkdir -p", output=""))
+        monkeypatch.setattr(host, "exec", execs)
+
+        real_build = host._build_file_transfer
+
+        def spy_build(user=None):
+            ft = real_build(user=user)
+            ft.put_files = AsyncMock(
+                return_value=Result(Status.Success, value={tree / "a.txt": Result(Status.Success)})
+            )
+            return ft
+
+        monkeypatch.setattr(host, "_build_file_transfer", spy_build)
+        monkeypatch.setattr(host, "_user_transfers", {})
+
+        result = await host.put(tree, Path("/opt"), user="postgres", recursive=True)
+
+        assert result.status == Status.Success, result.msg
+        execs.assert_awaited_once()
+        assert "mkdir -p" in execs.await_args.args[0]
+        assert execs.await_args.kwargs["user"] == "postgres"
+
+    @pytest.mark.asyncio
+    async def test_get_recursive_lists_once_then_gets_per_level(
+        self, host: UnixHost, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        from otto.host.recursive_transfer import RemoteListing
+
+        listing = RemoteListing(
+            kind="d",
+            dirs=[Path("/var/log/sub"), Path("/var/log/empty")],
+            files=[Path("/var/log/a"), Path("/var/log/sub/b")],
+        )
+        walks: list[Path] = []
+
+        async def fake_walk(path):
+            walks.append(Path(path))
+            return listing
+
+        monkeypatch.setattr(host, "_walk_remote", fake_walk)
+        gets: list[tuple[list[Path], Path]] = []
+
+        async def get_files(files, dest_dir, show_progress):
+            gets.append((list(files), dest_dir))
+            return Result(
+                Status.Success,
+                value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+            )
+
+        monkeypatch.setattr(host._file_transfer, "get_files", get_files)
+
+        result = await host.get(Path("/var/log"), tmp_path, recursive=True)
+
+        assert result.status == Status.Success, result.msg
+        assert walks == [Path("/var/log")]
+        assert (tmp_path / "log" / "empty").is_dir()
+        assert sorted(dest for _, dest in gets) == [tmp_path / "log", tmp_path / "log" / "sub"]
+        assert (
+            result.value[Path("/var/log")].value[Path("sub/b")].value
+            == tmp_path / "log" / "sub" / "b"
+        )
+
+    @pytest.mark.asyncio
+    async def test_recursive_still_resolves_the_default_dest_dir(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        host = UnixHost(
+            ip="10.0.0.1",
+            element=Element("box"),
+            creds=[Cred(login="user", password="pass")],
+            default_dest_dir=Path("/srv"),
+            log=LogMode.QUIET,
+        )
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "a").write_text("a")
+        mkdirs: list[list[Path]] = []
+
+        async def fake_mkdir_all(paths, *, user=None):
+            mkdirs.append(list(paths))
+            return Result(Status.Success)
+
+        monkeypatch.setattr(host, "_mkdir_all", fake_mkdir_all)
+
+        async def put_files(files, dest_dir, show_progress, mode):
+            return Result(
+                Status.Success,
+                value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+            )
+
+        monkeypatch.setattr(host._file_transfer, "put_files", put_files)
+
+        await host.put(tree, Path("drop"), recursive=True)
+
+        assert mkdirs == [[Path("/srv/drop/tree")]]

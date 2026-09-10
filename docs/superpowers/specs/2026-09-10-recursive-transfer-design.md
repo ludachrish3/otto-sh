@@ -83,7 +83,7 @@ check in that preamble, for PUT: a local source that `is_dir()` is refused
 BEFORE any transfer with a per-file error entry
 
 ```
-<path>: is a directory (pass recursive=True / -r to transfer a tree)
+<path>: is a directory (pass recursive=True, or -r on the CLI, to transfer a tree)
 ```
 
 so nc's by-name refusal and ftp's silent breakage collapse into one message
@@ -189,8 +189,10 @@ async def get_tree(host, src_files, dest_dir, *, user, show_progress) -> Result
 ## 5. Error handling
 
 - **Missing/unreadable source directory**: that top-level entry fails with a
-  message naming it; other sources still proceed (a bad file in a list
-  behaves this way today).
+  message naming it; other sources still proceed.
+- **Missing plain source**: plain sources ride one batched non-recursive
+  put, so a missing plain file follows the backend's own sequential rule (a
+  sibling may be Skipped), exactly as a non-recursive call would.
 - **Failed `mkdir -p`**: the directory entry fails BEFORE any byte moves,
   carrying the host's message; no per-file entries are fabricated for a
   skeleton that never existed.

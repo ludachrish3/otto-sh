@@ -3,10 +3,12 @@
 import inspect
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, get_args
 
 import pytest
 import typer
+import typer.main
+import typer.models
 
 from otto.cli.param_synth import (
     build_cli_binding,
@@ -268,3 +270,73 @@ def test_markers_without_remote_path_get_no_completer():
     assert _autocompletion_of(_by_name(binding, "src_files")) is None  # variadic Arg
     assert _autocompletion_of(_by_name(binding, "src")) is None  # scalar Arg
     assert _autocompletion_of(_by_name(binding, "dest_dir")) is None  # scalar Opt
+
+
+def test_opt_short_adds_a_short_alias_beside_the_synthesized_long_flag():
+    async def verb(self, recursive: Annotated[bool, Opt(short="-r", help="Recurse.")] = False):
+        return recursive
+
+    binding = build_cli_binding(verb)
+    param = next(p for p in binding.params if p.name == "recursive")
+    typer_meta = param.annotation.__metadata__[0]
+    # A bool's synthesized long flag is the click slash form: see
+    # test_opt_short_on_bool_keeps_the_auto_generated_negative for why plain
+    # "--recursive" would silently drop typer's auto "--no-recursive".
+    assert typer_meta.param_decls == ("--recursive/--no-recursive", "-r")
+
+
+def test_opt_short_on_bool_keeps_the_auto_generated_negative():
+    """Opt(short=...) on a bool must not cost the option its "--no-<name>" secondary.
+
+    Regression guard: an earlier version of ``_opt_decls`` spelled the
+    synthesized long flag as a bare ``--recursive``, which — passed to
+    ``typer.Option`` as an explicit decl — suppresses typer's normal
+    auto-generated ``--no-recursive`` for a bool option (verified below via
+    click's own parsed ``secondary_opts``, not just the raw param_decls
+    string typer was given).
+    """
+
+    async def verb(self, recursive: Annotated[bool, Opt(short="-r", help="Recurse.")] = False):
+        return recursive
+
+    binding = build_cli_binding(verb)
+    param = next(p for p in binding.params if p.name == "recursive")
+    typer_meta = param.annotation.__metadata__[0]
+    assert typer_meta.param_decls == ("--recursive/--no-recursive", "-r")
+
+    # Behavioural check: hand the same OptionInfo typer produced to typer's own
+    # get_click_param (the function Typer itself uses to build the underlying
+    # click.Option) and inspect the real parsed opts/secondary_opts, the way
+    # click itself will see them at parse time.
+    base = get_args(param.annotation)[0]
+    param_meta = typer.models.ParamMeta(name="recursive", default=typer_meta, annotation=base)
+    click_param, _ = typer.main.get_click_param(param_meta)
+    assert click_param.opts == ["--recursive", "-r"]
+    assert click_param.secondary_opts == ["--no-recursive"]
+
+
+def test_opt_short_with_explicit_name_keeps_both():
+    async def verb(self, dest_dir: Annotated[str, Opt(name="--dest", short="-d")] = "/tmp"):
+        return dest_dir
+
+    binding = build_cli_binding(verb)
+    param = next(p for p in binding.params if p.name == "dest_dir")
+    typer_meta = param.annotation.__metadata__[0]
+    assert list(typer_meta.param_decls) == ["--dest", "-d"]
+
+
+def test_opt_without_name_or_short_gets_no_explicit_decls():
+    """Regression guard for every pre-existing ``Opt(help=...)`` with no name/short.
+
+    It must still get an empty ``param_decls`` so typer synthesizes its own
+    ``--<param-name>`` — a helper that started defaulting to a non-empty decl
+    list here would rename every option in the CLI that never asked for one.
+    """
+
+    async def verb(self, dest_dir: Annotated[str, Opt(help="Target.")] = "/tmp"):
+        return dest_dir
+
+    binding = build_cli_binding(verb)
+    param = next(p for p in binding.params if p.name == "dest_dir")
+    typer_meta = param.annotation.__metadata__[0]
+    assert typer_meta.param_decls == ()

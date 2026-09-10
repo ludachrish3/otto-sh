@@ -32,6 +32,7 @@ destination — completes against the host itself
 | ------ | ------- | ----------- |
 | `--mode TEXT` | backend default | **`put` only.** Octal permission bits for the uploaded file(s) — `755`, `0644`, `0o4755`. Always read as octal, never decimal |
 | `--user NAME` | none | Transfer as this owner. What each host family does with it — authenticate as them, chown after the fact, ignore it, or refuse — is declared per family in {doc}`../../hosts/families` |
+| `-r`, `--recursive` | off | Transfer each directory among `SRC...` as a tree, landing under `DEST` with its own name. Without it a directory source is refused. Semantics (layout, result shape, symlinks, dry run): {ref}`recursive-transfers` |
 
 On a unix host the transfer rides that user's own connection, so a `DEST` that
 is still relative once
@@ -45,5 +46,10 @@ rather than accepting it and silently doing nothing.
 
 ```console
 $ otto host web1 put ./app.bin /opt/bin --mode 755
+```
+
+```console
+$ otto host web1 put -r ./build /opt
+$ otto host web1 get -r /var/log ./logs
 ```
 The same argument shapes apply to {doc}`get`.

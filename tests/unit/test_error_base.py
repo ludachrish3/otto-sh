@@ -65,6 +65,7 @@ from otto.host.errors import (
     UnsupportedOnUserlandError,
 )
 from otto.host.login_proxy import LoginProxyError
+from otto.host.recursive_transfer import ListingError
 from otto.host.transport import HopTransportTornDownError
 from otto.inventory import InventoryError, InventoryKeyError
 from otto.labs.errors import LabNotFoundError, LabRepositoryError
@@ -120,6 +121,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (HostUnreachableError, RuntimeError),
     (HostCommandError, RuntimeError),
     (MountNotFoundError, ValueError),
+    (ListingError, ValueError),
     (UnsupportedOnUserlandError, RuntimeError),
     (RawLandingError, RuntimeError),
     (HopTransportTornDownError, RuntimeError),

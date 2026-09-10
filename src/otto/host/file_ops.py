@@ -25,13 +25,16 @@ import base64
 import binascii
 import shlex
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from ..logger.mode import LogMode
 from ..result import Result
 from ..utils import Arg, Status, cli_exposed
 from .host import is_dry_run, refuse_declined_fact
 from .userland import Userland, UserlandHost, refuse_if_gapped
+
+if TYPE_CHECKING:
+    from .recursive_transfer import RemoteListing
 
 
 async def refuse_if_base64_is_absent(
@@ -220,6 +223,47 @@ class PosixFileOps(UserlandHost):
         """Create directory *path* (``mkdir``; *parents* adds ``-p``)."""
         flag = "-p " if parents else ""
         result = await self.exec(f"mkdir {flag}{self._q(path)}")  # ty: ignore[unresolved-attribute]
+        return Result(result.status, msg=result.value)
+
+    async def _walk_remote(self, path: "str | Path") -> "RemoteListing":
+        """Enumerate the tree at *path* on the host in one exec of the host's own ``sh``.
+
+        See :mod:`otto.host.recursive_transfer` for the script and the
+        newline rule.
+
+        Raises:
+            ~otto.result.CommandNotRunError: under a dry run — a fabricated
+                empty tree would read as "nothing to transfer".
+            ~otto.host.recursive_transfer.ListingError: the listing command
+                failed, or the tree holds a name a line-oriented listing
+                cannot carry.
+        """
+        from .recursive_transfer import ListingError, parse_listing, walk_script
+
+        result = await self.exec(walk_script(self._q(path)))  # ty: ignore[unresolved-attribute]
+        refuse_declined_fact(result, asked=f"walk({str(path)!r})")
+        if not result.status.is_ok:
+            raise ListingError(f"{path}: tree listing failed: {result.value}")
+        return parse_listing(result.value, Path(path))
+
+    async def _mkdir_all(self, paths: "list[Path]", *, user: str | None = None) -> Result:
+        """Create every directory in *paths* (``mkdir -p``) in ONE command; ``Success`` for none.
+
+        *user* threads straight to :meth:`~otto.host.host.BaseHost.exec` —
+        ``None`` means the connection's own identity, exactly as *user*
+        means there. :class:`~otto.host.docker_host.DockerContainerHost`
+        overrides the default to run as ``root``.
+
+        A recursive ``put`` passes the *user* it was given, so the skeleton
+        is owned by whoever lands the files. That inherits ``exec``'s own
+        rule: on a unix host whose term carries no SSH exec channel,
+        ``exec(user=...)`` is refused by name — loudly, before any
+        directory exists, rather than half-landing a tree.
+        """
+        if not paths:
+            return Result(Status.Success)
+        cmd = "mkdir -p " + " ".join(self._q(p) for p in paths)
+        result = await self.exec(cmd, user=user)  # ty: ignore[unresolved-attribute]
         return Result(result.status, msg=result.value)
 
     @cli_exposed

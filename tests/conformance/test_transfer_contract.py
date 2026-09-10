@@ -98,6 +98,14 @@ _PAYLOAD_NAME = "payload.bin"
 _ROUNDTRIP_CONTROL_NAME = "roundtrip.bin"
 _MODE_CONTROL_NAME = "mode.bin"
 
+# The recursive surface's control puts a TREE of its own (and, on a host that
+# refuses recursion, a single file of its own), for the same reason and under
+# the same 32-character limit: `master_ctree` is 12 and `master_ctree.bin` is
+# 16. Distinct from the contract's `tree`, so the control's cleanup can never
+# remove a tree another worker's contract is mid-roundtrip on.
+_RECURSIVE_CONTROL_NAME = "ctree"
+_RECURSIVE_CONTROL_FILE = "ctree.bin"
+
 # The corrupted payload: `_PAYLOAD` with ONE byte changed, and nothing else.
 # A wholly different payload would also fail the comparison, and would prove
 # less -- the question is whether the roundtrip is byte-sensitive, not whether
@@ -243,6 +251,100 @@ async def test_put_get_roundtrip_preserves_content(
         f"{cell}: the roundtripped file is not the payload -- "
         f"sent {len(_PAYLOAD)} bytes, got back {len(retrieved.read_bytes())}"
     )
+
+
+@pytest.mark.observable(
+    "what a small tree put and got back over `{cell.transfer}` leaves behind -- which of "
+    "the two observables that is depends on whether otto walks a tree for this host at all"
+)
+async def test_put_get_roundtrip_recursive_tree(
+    resolved_cell: ResolvedCell,
+    remote_scratch: Path,
+    tmp_path: Path,
+    worker_id: str,
+    note_observable: "Callable[[str], None]",
+) -> None:
+    """``put -r`` then ``get -r``: a tree with nesting, an empty directory and
+    the tripwire payload, on every cell the transfer contract is about. An
+    embedded cell refuses rather than degrades -- that refusal IS its contract.
+
+    THE SAME TWO-OBSERVABLE SHAPE THE MODE CONTRACT HAS, and for the same
+    reason: which of them a cell offers is decided at run time by otto's own
+    answer -- there is a recursive walk for this host or there is not -- and the
+    marker's template cannot express it. A cell that watched the refusal must
+    never be published as a device you can put a tree on, so the branch is
+    RECORDED (``tests/conformance/_observable.py``) rather than aggregated
+    away.
+
+    ★ THE REFUSING ARM BELOW HAS NEVER RUN, and that gap is DECLARED rather
+    than closed. It is selected by ``isinstance(host, EmbeddedHost)``, and the
+    hermetic venue builds no such host -- ``tests/unit/test_support_matrix.py``'s
+    ``_FakeHost`` cannot become one either -- so the first execution of that arm
+    is the maintainer's bed run against a Zephyr guest with a filesystem.
+    **The mode contract does NOT share this gap**, and the difference is the
+    kind of question each asks: its arms turn on ``supports_mode``, a
+    CAPABILITY ANSWER any object can give, so a fake backend drives its refusal
+    hermetically and its positive control is proved both ways without a device.
+    Otto exposes no such answer for recursion -- there is no
+    ``supports_recursive_transfer`` to ask -- so this branch reads the host's
+    TYPE, which nothing hermetic can be. Closing it means giving the product a
+    fakeable capability answer, which is a change to ``src/`` and not to this
+    suite; until then the arm's prose and its declared
+    :data:`~scripts.render_support_matrix.VOICE` arm are reviewed rather than
+    executed, and they say only what the assertion below asserts.
+    """
+    from otto.host.embedded_host import EmbeddedHost
+
+    name = remote_name(worker_id, "tree")
+    tree = tmp_path / "source" / name
+    (tree / "sub").mkdir(parents=True)
+    (tree / "empty").mkdir()
+    (tree / "a.bin").write_bytes(_PAYLOAD)
+    (tree / "sub" / "b.bin").write_bytes(bytes(range(256)))
+    retrieved_dir = tmp_path / "retrieved"
+    retrieved_dir.mkdir()
+
+    cell = resolved_cell.cell
+    async with resolved_cell.open_host() as host:
+        # THE BRANCH THE MARKER'S TEMPLATE CANNOT EXPRESS, decided here by
+        # whether otto implements a recursive walk for this host kind -- the
+        # same shape as the mode contract's branch on `supports_mode`, but read
+        # off the host's TYPE, for the reason the docstring declares.
+        #
+        # SAYS ONLY WHAT THE ARM ASSERTS. The assertion below is a `raises`, so
+        # the observable names the raise and stops: whether anything transferred
+        # first, and whether the tree was walked at all, are claims this arm
+        # never makes and an observable is read as evidence.
+        note_observable(
+            f"the NotImplementedError {type(host).__name__} raises for recursive=True"
+            if isinstance(host, EmbeddedHost)
+            else f"the bytes, nesting and empty directory get(recursive=True) reads back "
+            f"over `{cell.transfer}` after put(recursive=True) of a small tree into this "
+            f"host's scratch directory",
+        )
+        if isinstance(host, EmbeddedHost):
+            with pytest.raises(NotImplementedError, match="recursive=True"):
+                await host.put(tree, remote_scratch, recursive=True)
+            return
+        try:
+            put = await host.put(tree, remote_scratch, recursive=True)
+            assert put.is_ok, f"{cell}: put -r reported {put.status!r} -- {put.msg!r}"
+            got = await host.get(remote_scratch / name, retrieved_dir, recursive=True)
+            assert got.is_ok, f"{cell}: get -r reported {got.status!r} -- {got.msg!r}"
+        finally:
+            # A bed cell's `remote_scratch` is a real device path that outlives
+            # this test (unlike the hermetic venue's `tmp_path`-backed one), and
+            # `remote_name` is stable across runs -- so a stale tree left behind
+            # by a prior run could satisfy the empty-directory assertion below
+            # even if `put -r` regressed. Best-effort and unasserted, matching
+            # the integration copy: a cleanup failure here must not mask a real
+            # put/get failure already on its way out of this block.
+            await host.rm(remote_scratch / name, recursive=True, force=True)
+
+    back = retrieved_dir / name
+    assert (back / "a.bin").read_bytes() == _PAYLOAD, f"{cell}: a.bin is not the payload"
+    assert (back / "sub" / "b.bin").read_bytes() == bytes(range(256)), f"{cell}: sub/b.bin differs"
+    assert (back / "empty").is_dir(), f"{cell}: the empty directory did not round-trip"
 
 
 @pytest.mark.observable(
@@ -414,6 +516,118 @@ async def test_control_the_roundtrip_comparison_rejects_a_corrupted_byte(
         f"{cell}: the reply differs from the contract's payload at {differing}, not at "
         f"the single corrupted byte {_CORRUPT_AT} -- the comparison is reacting to "
         f"something other than the corruption"
+    )
+
+
+@pytest.mark.positive_control("transfer-recursive")
+async def test_control_the_tree_that_comes_back_is_the_tree_that_was_sent(
+    resolved_cell: ResolvedCell, remote_scratch: Path, tmp_path: Path, worker_id: str
+) -> None:
+    """Round-trip a DIFFERENT tree; every instrument the contract uses must move with it.
+
+    The contract's instruments are three claims about a tree whose shape and
+    bytes this module wrote itself -- ``a.bin`` equals ``_PAYLOAD``,
+    ``sub/b.bin`` equals ``bytes(range(256))``, and ``empty`` is a directory --
+    and each of them is satisfied by a backend that produces that shape however
+    it came by it: one whose ``get`` answers a cached or echoed copy of the
+    local source rather than what is on the far side, and one that creates a
+    directory for every name it is asked about. So this puts a tree those
+    claims must REFUSE -- the payload corrupted at one byte, the nested file's
+    bytes reversed, and NO empty directory at all -- and requires the reply to
+    be the tree that was actually sent: different from the contract's, equal to
+    this one, and carrying no directory nobody created.
+
+    THE REFUSING ARM IS CONTROLLED TOO. Where the host refuses recursion the
+    contract's instrument is ``pytest.raises(NotImplementedError)``, and that
+    assertion is satisfied just as well by a host that refuses EVERYTHING --
+    against which the contract would be watching nothing. So on such a host
+    this puts a single file the same way the roundtrip contract does and
+    requires it to land: the refusal is about recursion, not about transfer.
+    That arm inherits the contract's declared gap -- it is selected by the same
+    ``isinstance`` and so first executes on the bed; the harness in
+    ``tests/unit/test_support_matrix.py`` drives this control both ways on the
+    round-trip arm only.
+
+    LEAVES THE BED AS FOUND, by the same route as the contract -- ``rm -r`` on
+    the tree, best-effort and unasserted, and
+    :func:`~tests.conformance._controls.remove_landed` plus
+    :func:`~tests.conformance._controls.assert_bed_left_clean` on the single
+    file, whose success also proves the file was there to delete.
+    """
+    from otto.host.embedded_host import EmbeddedHost
+
+    cell = resolved_cell.cell
+    words = resolved_cell.vocabulary
+    nested = bytes(range(255, -1, -1))
+
+    name = remote_name(worker_id, _RECURSIVE_CONTROL_NAME)
+    tree = tmp_path / "source" / name
+    (tree / "sub").mkdir(parents=True)
+    (tree / "a.bin").write_bytes(_CORRUPTED_PAYLOAD)
+    (tree / "sub" / "b.bin").write_bytes(nested)
+    retrieved_dir = tmp_path / "retrieved"
+    retrieved_dir.mkdir()
+
+    async with resolved_cell.open_host() as host:
+        if isinstance(host, EmbeddedHost):
+            source_dir = tmp_path / "flat"
+            source_dir.mkdir()
+            source = source_dir / remote_name(worker_id, _RECURSIVE_CONTROL_FILE)
+            source.write_bytes(_CORRUPTED_PAYLOAD)
+            landed = remote_scratch / source.name
+            try:
+                put = await host.put(source, remote_scratch)
+                assert put.is_ok, (
+                    f"{cell}: this host refuses a recursive transfer, and it refused a "
+                    f"single file too -- put reported {put.status!r}, {put.msg!r}. The "
+                    f"contract's `NotImplementedError` here would say nothing about "
+                    f"recursion"
+                )
+            finally:
+                removed = await remove_landed(host, words, landed)
+            assert_bed_left_clean(removed, landed, cell)
+            return
+
+        try:
+            put = await host.put(tree, remote_scratch, recursive=True)
+            assert put.is_ok, f"{cell}: put -r reported {put.status!r} -- {put.msg!r}"
+            got = await host.get(remote_scratch / name, retrieved_dir, recursive=True)
+            assert got.is_ok, f"{cell}: get -r reported {got.status!r} -- {got.msg!r}"
+        finally:
+            # Unasserted, for the reason the contract's own cleanup gives: an
+            # assertion raised from a `finally` replaces the failure already on
+            # its way out.
+            await host.rm(remote_scratch / name, recursive=True, force=True)
+
+    back = retrieved_dir / name
+    landed_payload = (back / "a.bin").read_bytes()
+    assert landed_payload != _PAYLOAD, (
+        f"{cell}: a tree whose a.bin was corrupted at byte {_CORRUPT_AT} came back "
+        f"carrying the contract's payload, so `a.bin == _PAYLOAD` is true of this cell "
+        f"whatever was sent and the contract's green means nothing here"
+    )
+    assert landed_payload == _CORRUPTED_PAYLOAD, (
+        f"{cell}: a.bin is neither the bytes sent nor the contract's -- sent "
+        f"{len(_CORRUPTED_PAYLOAD)} bytes, got back {len(landed_payload)}"
+    )
+    # `strict=False`: a reply of the wrong LENGTH is a different failure and is
+    # already reported by the equality above, so this must not raise first.
+    differing = [
+        i for i, (a, b) in enumerate(zip(landed_payload, _PAYLOAD, strict=False)) if a != b
+    ]
+    assert differing == [_CORRUPT_AT], (
+        f"{cell}: the reply differs from the contract's payload at {differing}, not at "
+        f"the single corrupted byte {_CORRUPT_AT} -- the comparison is reacting to "
+        f"something other than the corruption"
+    )
+    assert (back / "sub" / "b.bin").read_bytes() == nested, (
+        f"{cell}: the nested file did not come back reversed, so what the contract "
+        f"reads at `sub/b.bin` does not track what was put there"
+    )
+    assert not (back / "empty").exists(), (
+        f"{cell}: an `empty` directory nobody created is in the retrieved tree, so the "
+        f"contract's empty-directory assertion is satisfied by this cell whether or not "
+        f"an empty directory round-trips"
     )
 
 

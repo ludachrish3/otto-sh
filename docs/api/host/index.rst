@@ -45,4 +45,5 @@ local and remote machines.
    power
    privilege
    file_ops
+   recursive_transfer
    binary_loader

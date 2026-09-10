@@ -833,6 +833,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             ),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
+        recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
     ) -> Result:
         """Upload local files into the container.
 
@@ -866,12 +867,21 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         Returns a :class:`~otto.result.Result` whose ``value`` maps each source
         path (as passed) to its per-file outcome, matching
         :meth:`~otto.host.host.BaseHost.put`.
+
+        ``recursive`` transfers each directory among the sources as a tree;
+        see :ref:`recursive-transfers`.
         """
         from .transfer import aggregate_transfer, chmod_command, parse_file_mode
 
         files = src_files if isinstance(src_files, list) else [src_files]
         if user is not None:
             _validate_user(user)
+        if recursive:
+            from .recursive_transfer import put_tree
+
+            return await put_tree(
+                self, files, dest_dir, mode=mode, user=user, show_progress=show_progress
+            )
         if is_dry_run():
             return self._dry_run_transfer("PUT", files, dest_dir, mode)
         mode_check = parse_file_mode(mode)
@@ -1009,6 +1019,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             ),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
+        recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
     ) -> Result:
         """Download files from the container to the local machine.
 
@@ -1024,12 +1035,19 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         Returns a :class:`~otto.result.Result` whose ``value`` maps each source
         path (as passed) to its per-file outcome, matching
         :meth:`~otto.host.host.BaseHost.get`.
+
+        ``recursive`` transfers each directory among the sources as a tree;
+        see :ref:`recursive-transfers`.
         """
         from .transfer import aggregate_transfer
 
         files = src_files if isinstance(src_files, list) else [src_files]
         if user is not None:
             _validate_user(user)
+        if recursive:
+            from .recursive_transfer import get_tree
+
+            return await get_tree(self, files, dest_dir, user=user, show_progress=show_progress)
         if is_dry_run():
             return self._dry_run_transfer("GET", files, dest_dir)
         await self._ensure_running()
@@ -1090,6 +1108,27 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         finally:
             with teardown_step(host_name, "staging-dir removal"):
                 await self.parent.exec(f"rm -rf {shlex.quote(str(stage))}")
+
+    @override
+    async def _mkdir_all(self, paths: "list[Path]", *, user: str | None = None) -> Result:
+        """Create the tree's directories as root inside the container.
+
+        *user* is accepted for interface uniformity but ignored — like
+        :meth:`get`'s *user*, spec §4: ``docker cp`` lands files as root
+        regardless of the declared service user, so a directory the service
+        user could not create would still be the one ``docker cp`` writes
+        into, and mkdir must run as root for the same reason the
+        post-transfer chmod does.
+
+        Explicit two-argument ``super()``, not the zero-argument form: this
+        class is ``@dataclass(slots=True)``, which rebuilds the class object
+        to add ``__slots__`` and leaves this method's compiled ``__class__``
+        cell pointing at the pre-rebuild class — a bare ``super()`` here
+        raises ``TypeError: super(type, obj): obj must be an instance or
+        subtype of type`` at call time. Naming the class explicitly resolves
+        it fresh through the module's own name, which is the rebuilt one.
+        """
+        return await super(DockerContainerHost, self)._mkdir_all(paths, user="root")
 
     def rebuild_connections(self) -> None:
         """Drop any persistent session so the next call reopens it.

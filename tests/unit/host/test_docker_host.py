@@ -251,6 +251,27 @@ async def test_exec_uses_declared_default_user_when_none_given():
     assert sent.index(" -u postgres ") < sent.index(h.container_id)
 
 
+@pytest.mark.asyncio
+async def test_mkdir_all_creates_every_directory_as_root_in_one_command():
+    """``_mkdir_all`` delegates to the base ``PosixFileOps`` implementation with
+    ``user="root"`` — one ``parent.exec`` call, the container's ``docker exec
+    -u root`` wrapping a single ``mkdir -p`` naming every path, quoted.
+    """
+    parent = _mock_parent()
+    h = _make_container(parent)
+    parent.exec.return_value = _ok(out="")
+
+    result = await h._mkdir_all([Path("/a b/c"), Path("/c d")])
+
+    assert result.is_ok
+    assert parent.exec.call_count == 1
+    sent = parent.exec.call_args.args[0]
+    assert "mkdir -p" in sent
+    assert shlex.quote("/a b/c") in sent
+    assert shlex.quote("/c d") in sent
+    assert " -u root " in sent
+
+
 # ---------------------------------------------------------------------------
 # run — persistent-shell dispatch
 # ---------------------------------------------------------------------------
@@ -1852,3 +1873,49 @@ def test_no_shared_directories_message_names_the_lazily_resolved_placeholder_cau
     # placeholder whose container_id was resolved lazily in THIS process.
     with pytest.raises(MountNotFoundError, match="resolved lazily"):
         ctr.parent_path("/var/lib/app")
+
+
+@pytest.mark.asyncio
+async def test_put_recursive_mkdirs_as_root_then_stages_per_level(tmp_path: Path):
+    tree = tmp_path / "tree"
+    (tree / "sub").mkdir(parents=True)
+    (tree / "a.txt").write_text("a")
+    (tree / "sub" / "b.txt").write_text("b")
+    parent = _mock_parent()
+    h = _make_container(parent, user="postgres")
+
+    result = await h.put(tree, Path("/data"), recursive=True)
+
+    assert result.status == Status.Success, result.msg
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
+    mkdirs = [c for c in cmds if "mkdir -p /data/tree" in c]
+    assert len(mkdirs) == 1, cmds
+    assert " -u root " in mkdirs[0]
+    assert "/data/tree/sub" in mkdirs[0]
+    assert parent.put.await_count == 2
+    assert result.value[tree].value[Path("sub/b.txt")].value == Path("/data/tree/sub/b.txt")
+
+
+@pytest.mark.asyncio
+async def test_get_recursive_lists_inside_the_container_then_stages_per_level(tmp_path: Path):
+    parent = _mock_parent()
+    listing = "t d\nd /data/sub\nf /data/a\nf /data/sub/b\nn 3\n"
+    parent.exec = AsyncMock(
+        side_effect=lambda cmd, **kw: _ok(cmd, listing if "printf" in cmd else "")
+    )
+    # The container's get re-keys the parent's per-file dict by STAGED path
+    # (``stage / f.name``); a parent that answers keyed entries is what makes
+    # the landed destination visible in the nested result.
+    parent.get = AsyncMock(
+        side_effect=lambda files, dest, **kw: Result(
+            Status.Success, value={f: Result(Status.Success, value=dest / f.name) for f in files}
+        )
+    )
+    h = _make_container(parent)
+
+    result = await h.get(Path("/data"), tmp_path, recursive=True)
+
+    assert result.status == Status.Success, result.msg
+    assert (tmp_path / "data" / "sub").is_dir()
+    assert parent.get.await_count == 2
+    assert result.value[Path("/data")].value[Path("sub/b")].value == tmp_path / "data" / "sub" / "b"

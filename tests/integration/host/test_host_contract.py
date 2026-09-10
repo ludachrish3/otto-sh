@@ -219,6 +219,54 @@ class TestTransferContract:
         assert (landing / name_b).read_bytes() == payload_b
 
     @pytest.mark.asyncio
+    async def test_put_get_roundtrip_recursive_tree(
+        self,
+        host1,
+        host1_kit,
+        worker_id,
+        tmp_path: Path,
+    ):
+        """``put -r`` then ``get -r`` must round-trip a small tree — bytes,
+        nesting and an empty directory — on every configured backend. The
+        embedded family refuses rather than degrades, and that refusal is
+        the contract there."""
+        from otto.host.embedded_host import EmbeddedHost
+
+        if host1_kit.temp_remote_dir is None:
+            pytest.skip("backend has no filesystem — see no-FS error test")
+
+        name = remote_name(worker_id, "tree")
+        tree = tmp_path / name
+        (tree / "sub").mkdir(parents=True)
+        (tree / "empty").mkdir()
+        (tree / "a.txt").write_bytes(b"line\n\x00tail")
+        (tree / "sub" / "b.bin").write_bytes(bytes(range(256)))
+
+        if isinstance(host1, EmbeddedHost):
+            with pytest.raises(NotImplementedError, match="recursive=True"):
+                await host1.put(tree, Path(host1_kit.temp_remote_dir), recursive=True)
+            return
+
+        remote_root = Path(host1_kit.temp_remote_dir)
+        try:
+            put_result = await host1.put(tree, remote_root, recursive=True)
+            assert put_result.status == Status.Success, f"put -r failed: {put_result.msg}"
+            sub_entry = put_result.value[tree].value[Path("sub/b.bin")]
+            assert sub_entry.status == Status.Success, (
+                f"put -r: sub/b.bin entry reported {sub_entry.status!r} -- {sub_entry.msg!r}"
+            )
+
+            back = tmp_path / "back"
+            get_result = await host1.get(remote_root / name, back, recursive=True)
+            assert get_result.status == Status.Success, f"get -r failed: {get_result.msg}"
+        finally:
+            await host1.rm(remote_root / name, recursive=True, force=True)
+
+        assert (back / name / "a.txt").read_bytes() == b"line\n\x00tail"
+        assert (back / name / "sub" / "b.bin").read_bytes() == bytes(range(256))
+        assert (back / name / "empty").is_dir()
+
+    @pytest.mark.asyncio
     async def test_no_filesystem_backend_surfaces_clear_error(
         self,
         host1,

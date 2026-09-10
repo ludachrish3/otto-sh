@@ -20,12 +20,23 @@ RULE: a commit that deletes or renames a public symbol or a ``Host`` protocol
 parameter must be marked breaking, regardless of how small it looks. A
 rename is a deletion plus an addition; under this rule that is still a `!`
 commit -- there is no "it's just a rename" escape hatch. Additions never
-fail this check on their own.
+fail this check on their own. The one exception: a ``Host`` protocol line
+whose old parameter list survives, verbatim and in order, as a strict
+PREFIX of a new one for the same method is a WIDENING, not a break -- a
+caller that only ever passed the old keywords still resolves against the
+new signature -- so a trailing parameter addition needs no mark; a reorder,
+rename, or shortened list still does, because the checker is line-based and
+cannot otherwise tell a widening from a rename. The golden carries
+parameter NAMES only, so a widened shape is not trusted on its own: every
+appended parameter is looked up in the LIVE signature at HEAD, and one that
+is mandatory there is a break after all -- a caller who omits it no longer
+resolves.
 
 Not every golden line is library surface, though. ``otto:<name>`` (an
 ``otto.__all__`` export) and ``otto.host.host:Host.<method>(...)`` (a protocol
-signature) ARE the library: their removal is a break, always, with no escape
-hatch. Every other ``<module>:<name>`` / bare ``<module>:`` line records only
+signature) ARE the library: their removal is a break needing a mark, with no
+escape hatch beyond the widening exception above. Every other
+``<module>:<name>`` / bare ``<module>:`` line records only
 that some user-doc fence TEACHES that import path -- so a docs edit that stops
 teaching it removes a golden line without touching the library at all. A
 docs-only change must not count as a break when the underlying library is
@@ -66,6 +77,7 @@ was clean".
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -292,6 +304,155 @@ def removed_golden_lines(repo: Path, sha: str, golden: Path) -> "list[str]":
     return removed
 
 
+def added_golden_lines(repo: Path, sha: str, golden: Path) -> "list[str]":
+    """Return the golden data lines *sha* adds relative to its parent.
+
+    Mirrors :func:`removed_golden_lines`: same ``git diff-tree -p --root``
+    call (already run once per commit for the removals; a second pass here
+    keeps the two collectors independent and equally simple to read), same
+    header/comment/file-marker skipping, but collecting ``+`` lines instead
+    of ``-`` ones.
+    """
+    try:
+        golden_rel = golden.resolve().relative_to(repo.resolve()).as_posix()
+    except ValueError:
+        golden_rel = str(golden)
+    diff = _git(repo, "diff-tree", "-p", "--root", sha, "--", golden_rel)
+    added = []
+    for line in diff.splitlines():
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        content = line[1:]
+        if not content or content.startswith("#"):
+            continue
+        added.append(content)
+    return added
+
+
+_PROTOCOL_LINE_RE = re.compile(
+    rf"^{re.escape(PROTOCOL_LINE_MODULE)}:({re.escape(PROTOCOL_LINE_PREFIX)}\w+)\((.*)\)$"
+)
+
+
+def _parse_protocol_line(line: str) -> "tuple[str, list[str]] | None":
+    """Split a ``otto.host.host:Host.<method>(<p1>, <p2>, ...)`` line into method + params.
+
+    Returns ``None`` for anything else (a non-protocol golden line, or one
+    whose shape doesn't match) so callers can treat "not a protocol line" and
+    "no parameters" uniformly as "nothing to compare".
+    """
+    match = _PROTOCOL_LINE_RE.match(line)
+    if match is None:
+        return None
+    method, params_str = match.groups()
+    params = params_str.split(", ") if params_str else []
+    return method, params
+
+
+def _protocol_method(line: str) -> str:
+    """Return the ``Host.<method>`` part of a protocol *line* (``""`` if it isn't one)."""
+    parsed = _parse_protocol_line(line)
+    return "" if parsed is None else parsed[0]
+
+
+def widening_appended_params(removed: str, added: "list[str]") -> "list[str] | None":
+    """Return the parameters APPENDED to *removed* by a widening line in *added*.
+
+    A widening is a same-method line in *added* whose parameter list starts
+    with *removed*'s, verbatim and in the same order, and is strictly
+    longer -- i.e. only trailing parameters were appended; the appended tail
+    is what comes back. A reorder, a rename, or a shorter list is NOT a
+    widening (``None``), because a caller who only ever passed the
+    parameters *removed* names would no longer resolve against those
+    shapes. Pure textual line-diffing cannot otherwise distinguish "grew a
+    trailing keyword" from "renamed a parameter" -- both delete the old
+    line and add a new one -- so this is the one place that actually
+    compares the two parameter lists.
+
+    The appended tail is returned rather than a bare yes/no because the
+    golden carries parameter NAMES only: whether an appended parameter is
+    optional is not on the line, and only the live signature at HEAD can
+    say (see :func:`appended_params_without_defaults`).
+    """
+    parsed_removed = _parse_protocol_line(removed)
+    if parsed_removed is None:
+        return None
+    removed_method, removed_params = parsed_removed
+    for candidate in added:
+        parsed_candidate = _parse_protocol_line(candidate)
+        if parsed_candidate is None:
+            continue
+        candidate_method, candidate_params = parsed_candidate
+        if candidate_method != removed_method:
+            continue
+        if (
+            len(candidate_params) > len(removed_params)
+            and candidate_params[: len(removed_params)] == removed_params
+        ):
+            return candidate_params[len(removed_params) :]
+    return None
+
+
+def is_widened_protocol_line(removed: str, added: "list[str]") -> bool:
+    """Return True iff *removed* is a ``Host`` protocol line WIDENED by one of *added*.
+
+    The line-shape half of the widening exception; see
+    :func:`widening_appended_params`, whose answer this reduces to a yes/no.
+    A widened SHAPE is not yet a safe widening -- the appended parameters
+    must also be optional at HEAD.
+    """
+    return widening_appended_params(removed, added) is not None
+
+
+_SIGNATURE_SOURCE = """import importlib, inspect, sys
+module = importlib.import_module(sys.argv[1])
+obj = module
+for part in sys.argv[2].split("."):
+    obj = getattr(obj, part)
+params = inspect.signature(obj).parameters
+for name in sys.argv[3:]:
+    param = params.get(name)
+    if param is not None and param.default is inspect.Parameter.empty:
+        print(name)
+"""
+
+
+def appended_params_without_defaults(method: str, appended: "list[str]", cwd: Path) -> "list[str]":
+    """Return which of *appended* are REQUIRED on ``Host.<method>`` at HEAD.
+
+    The golden pins parameter names, not defaults, so a widened line and a
+    line that grew a MANDATORY parameter look identical on the page -- yet
+    the second breaks every existing caller. The live signature is the only
+    place that answer exists, so it is read from the tree under *cwd*, in a
+    SUBPROCESS with that tree's ``src/`` first on the path, exactly as
+    :func:`path_resolves` does: this script never imports the repo into its
+    own process.
+
+    A parameter the live signature does not carry AT ALL is not reported.
+    Only positive evidence -- "this name is there, and it is mandatory" --
+    classifies a line as breaking; a golden that has drifted from the
+    source, or a signature the child could not read (an import that
+    crashes, ``inspect`` refusing what it was handed), leaves the widening
+    standing rather than inventing a break out of a failed lookup.
+    """
+    argv = [sys.executable, "-c", _SIGNATURE_SOURCE, PROTOCOL_LINE_MODULE, method, *appended]
+    try:
+        proc = subprocess.run(  # noqa: S603 -- fixed argv, no shell; the parts are ours
+            argv,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+            env=_resolver_env(cwd),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0:
+        return []
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
 def main(argv: "list[str]") -> int:
     """Scan a commit range for an unmarked public-API-golden deletion."""
     parser = argparse.ArgumentParser(
@@ -330,12 +491,29 @@ def main(argv: "list[str]") -> int:
         removed = removed_golden_lines(args.repo, sha, args.golden)
         if not removed:
             continue
-        breaking, docs_only = [], []
+        added = added_golden_lines(args.repo, sha, args.golden)
+        breaking, docs_only, widened = [], [], []
         for line in removed:
-            if is_library_line(line) or not path_resolves(line, args.repo):
+            appended = widening_appended_params(line, added) if is_library_line(line) else None
+            required = (
+                appended_params_without_defaults(_protocol_method(line), appended, args.repo)
+                if appended
+                else []
+            )
+            if required:
+                breaking.append(
+                    f"{line} -- widened with a REQUIRED parameter "
+                    f"{', '.join(required)}; a caller omitting it now fails "
+                    f"-- mark the commit breaking"
+                )
+            elif appended is not None:
+                widened.append(line)
+            elif is_library_line(line) or not path_resolves(line, args.repo):
                 breaking.append(line)
             else:
                 docs_only.append(line)
+        for line in widened:
+            print(f"info: {sha[:12]} widened {line} -- trailing parameter(s) added; no mark needed")
         for line in docs_only:
             print(f"info: {sha[:12]} removed {line} -- docs-only, still importable; no mark needed")
         if not breaking:

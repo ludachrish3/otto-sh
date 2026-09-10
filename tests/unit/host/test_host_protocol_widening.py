@@ -48,3 +48,18 @@ def test_basehost_as_user_default_is_an_async_context_manager_that_refuses():
 
     with pytest.raises(NotImplementedError, match="as_user is not supported on 'Bare'"):
         asyncio.run(enter())
+
+
+@pytest.mark.parametrize("verb", ["put", "get"])
+def test_recursive_is_the_trailing_keyword_on_the_protocol_and_every_family(verb):
+    """Additive by construction: the new name is LAST, so no existing name moves."""
+    from otto.host.docker_host import DockerContainerHost
+    from otto.host.embedded_host import EmbeddedHost
+    from otto.host.local_host import LocalHost
+    from otto.host.unix_host import UnixHost
+    from otto.testing.conformance_host import _keyword_names
+
+    for cls in (Host, BaseHost, UnixHost, LocalHost, DockerContainerHost, EmbeddedHost):
+        names = _keyword_names(getattr(cls, verb))
+        assert names[-1] == "recursive", f"{cls.__name__}.{verb}: {names}"
+        assert names[:-1] == _keyword_names(getattr(Host, verb))[:-1], cls.__name__

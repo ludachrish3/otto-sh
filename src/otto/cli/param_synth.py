@@ -76,6 +76,31 @@ def _remote_completer(marker: "Arg | Opt | None") -> Any:
     return _complete
 
 
+def _opt_decls(opt: "Opt", param_name: str, norm_type: Any = None) -> "list[str]":
+    """Build the typer param_decls an ``Opt`` asks for: long flag first, short alias second.
+
+    Empty when the option carries neither, so typer synthesizes its own
+    ``--<param-name>`` exactly as before. A ``short`` alone still gets the
+    synthesized long flag spelled out, because typer names an option after
+    its FIRST decl and a bare ``-r`` would make ``r`` the option's name — and
+    when *norm_type* is ``bool``, that spelled-out flag is written in click's
+    ``--name/--no-name`` slash form, because a bare ``--name`` decl loses
+    typer's auto-generated ``--no-name`` secondary that a no-decls bool
+    option gets for free.
+    """
+    decls: list[str] = []
+    if opt.name:
+        decls.append(opt.name)
+    elif opt.short:
+        long_flag = "--" + param_name.replace("_", "-")
+        if norm_type is bool:
+            long_flag += "/--no-" + param_name.replace("_", "-")
+        decls.append(long_flag)
+    if opt.short:
+        decls.append(opt.short)
+    return decls
+
+
 @dataclass
 class CliBinding:
     """Typer-facing parameter list and metadata produced by ``build_cli_binding``.
@@ -230,7 +255,7 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
             else:
                 binding.converters[name] = lambda raw, e=elem: parse_kv_dict(raw, e)
                 help_txt = opt.help if opt else None
-            opt_decls = (opt.name,) if opt and opt.name else ()
+            opt_decls = _opt_decls(opt, name) if opt is not None else []
             # `typer.Option`'s signature is `Option(default=..., *param_decls, ...)`; a
             # name override must land in the vararg slot, so the leading `...` is
             # required — it's ignored in favor of the Python parameter's own default,
@@ -257,7 +282,7 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
             ]
             kind = inspect.Parameter.POSITIONAL_OR_KEYWORD
         elif opt is not None:  # explicit option
-            opt_decls = (opt.name,) if opt.name else ()
+            opt_decls = _opt_decls(opt, name, norm)
             # See the list/dict OPTION branch above for why `...` must precede
             # `*opt_decls` — `typer.Option`'s param_decls are varargs after `default`.
             ann = Annotated[

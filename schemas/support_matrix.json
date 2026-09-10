@@ -33,6 +33,11 @@
       "contract": "tests/conformance/test_progress_contract.py::test_progress_events_track_the_bytes_in_both_directions"
     },
     {
+      "id": "transfer-recursive",
+      "title": "transfer: put -r / get -r round-trip a tree, empty directory included",
+      "contract": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree"
+    },
+    {
       "id": "timeout",
       "title": "timeout: a command over budget fails the documented way",
       "contract": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way"
@@ -3232,6 +3237,35 @@
         ],
         "observable": "the progress events `console` emits while put() and then get() move a payload sized from the backend's own declared stride",
         "positive_control": "tests/conformance/test_progress_contract.py::test_control_the_instrument_refuses_a_bar_that_jumps[bed-zephyr[zephyr44_lfs:telnet:console]]"
+      }
+    },
+    "transfer-recursive": {
+      "busybox-1.16.1": {
+        "status": "untested"
+      },
+      "busybox-1.21.1": {
+        "status": "untested"
+      },
+      "busybox-1.28.1": {
+        "status": "untested"
+      },
+      "busybox-1.31.0": {
+        "status": "untested"
+      },
+      "busybox-1.35.0": {
+        "status": "untested"
+      },
+      "gnu": {
+        "status": "untested"
+      },
+      "zephyr-2.7": {
+        "status": "untested"
+      },
+      "zephyr-3.7": {
+        "status": "untested"
+      },
+      "zephyr-4.4": {
+        "status": "untested"
       }
     },
     "timeout": {

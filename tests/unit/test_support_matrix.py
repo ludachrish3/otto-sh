@@ -2268,6 +2268,10 @@ class _FakeHost:
         self._twists = frozenset(twists)
         self._watches_progress = watches_progress
         self._files: "dict[str, bytes]" = {}
+        # The directories a recursive put created, tracked separately because an
+        # EMPTY one is invisible in `_files` and is exactly what the recursive
+        # surface is about.
+        self._dirs: "set[str]" = set()
         self._modes: "dict[str, int]" = {}
         self._file_transfer = _FakeTransfer(mode_support)
 
@@ -2335,7 +2339,9 @@ class _FakeHost:
             f"a hard-coded spelling has crept into a control body"
         )
 
-    async def put(self, src: Path, dest_dir: Path, mode=None):
+    async def put(self, src: Path, dest_dir: Path, mode=None, recursive=False):
+        if recursive:
+            return self._put_tree(src, dest_dir)
         if mode is not None and not self._file_transfer.supports_mode:
             msg = (
                 "this backend refuses every put"
@@ -2385,7 +2391,9 @@ class _FakeHost:
             done = min(done + _FAKE_STRIDE, total)
             handler(str(src), landed, done, total)
 
-    async def get(self, src: Path, dest_dir: Path):
+    async def get(self, src: Path, dest_dir: Path, recursive=False):
+        if recursive:
+            return self._get_tree(src, dest_dir)
         if "get-answers-the-contracts-payload" in self._twists:
             data = _PAYLOAD
         else:
@@ -2394,6 +2402,61 @@ class _FakeHost:
             return Result(Status.Error, msg=f"no such file: {src}")
         (dest_dir / Path(src).name).write_bytes(data)
         return Result(Status.Success, value={src: Result(Status.Success)})
+
+    def _put_tree(self, src: Path, dest_dir: Path):
+        """Store every file AND every directory under *src*, keyed by its landed path."""
+        root = dest_dir / src.name
+        self._dirs.add(str(root))
+        for path in sorted(src.rglob("*")):
+            landed = str(root / path.relative_to(src))
+            if path.is_dir():
+                self._dirs.add(landed)
+            else:
+                self._files[landed] = path.read_bytes()
+        return Result(Status.Success, value={src: Result(Status.Success)})
+
+    def _get_tree(self, src: Path, dest_dir: Path):
+        """Write back what a recursive put stored -- or, twisted, the contract's own tree.
+
+        The twist is the tree-shaped sibling of ``get-answers-the-contracts-payload``:
+        a ``get`` that answers the shape the contract asserts against however the
+        far side got it, which is the host on which every one of the contract's
+        three claims is true whatever was sent.
+        """
+        back = dest_dir / Path(src).name
+        back.mkdir(parents=True, exist_ok=True)
+        if "get-answers-the-contracts-tree" in self._twists:
+            (back / "sub").mkdir()
+            (back / "empty").mkdir()
+            (back / "a.bin").write_bytes(_PAYLOAD)
+            (back / "sub" / "b.bin").write_bytes(bytes(range(256)))
+            return Result(Status.Success, value={src: Result(Status.Success)})
+        prefix = f"{src}/"
+        stored = [path for path in self._dirs if path.startswith(prefix)]
+        if not (stored or any(path.startswith(prefix) for path in self._files)):
+            return Result(Status.Error, msg=f"no such directory: {src}")
+        for path in sorted(stored):
+            (back / path[len(prefix) :]).mkdir(parents=True, exist_ok=True)
+        for path, data in sorted(self._files.items()):
+            if path.startswith(prefix):
+                landed = back / path[len(prefix) :]
+                landed.parent.mkdir(parents=True, exist_ok=True)
+                landed.write_bytes(data)
+        return Result(Status.Success, value={src: Result(Status.Success)})
+
+    async def rm(self, path: Path, recursive=False, force=False):
+        """Remove a landed tree. Only the recursive cleanup the tree control runs.
+
+        Unasserted by its caller, so it answers Success without claiming
+        anything was there -- the file spelling's own "the removal is its
+        verification" rule lives in ``rm`` the COMMAND, above, which is what
+        the other controls read.
+        """
+        prefix = f"{path}/"
+        for landed in [key for key in self._files if key.startswith(prefix)]:
+            del self._files[landed]
+        self._dirs -= {key for key in self._dirs if key == str(path) or key.startswith(prefix)}
+        return Result(Status.Success)
 
 
 def _fake_cell(host: _FakeHost) -> ResolvedCell:
@@ -2430,6 +2493,9 @@ CONTROLS = {
         _transfer_contract.test_control_the_landed_mode_follows_the_mode_that_was_asked_for
     ),
     "transfer-progress": (_progress_contract.test_control_the_instrument_refuses_a_bar_that_jumps),
+    "transfer-recursive": (
+        _transfer_contract.test_control_the_tree_that_comes_back_is_the_tree_that_was_sent
+    ),
     "timeout": (
         _timeout_contract.test_control_a_command_inside_its_budget_is_not_reported_as_timed_out
     ),
@@ -2480,6 +2546,14 @@ HOST_CASES = [
         "the bar jumps to 100%",
         "transfer-progress",
         ("progress-jumps-to-the-total",),
+        True,
+        False,
+    ),
+    ("get -r reads the far side", "transfer-recursive", (), True, True),
+    (
+        "get -r answers a constant tree",
+        "transfer-recursive",
+        ("get-answers-the-contracts-tree",),
         True,
         False,
     ),
@@ -5381,7 +5455,13 @@ def test_the_narrowing_pin_examines_a_real_mechanism_on_every_narrowing_surface(
         rule = _domain_rule(PROJECT_ROOT / surface.contract.split("::")[0])
         if rule is not None:
             with_rules[surface.id] = rule
-    narrowing = {"transfer-roundtrip", "transfer-mode", "transfer-progress", "timeout"}
+    narrowing = {
+        "transfer-roundtrip",
+        "transfer-mode",
+        "transfer-progress",
+        "transfer-recursive",
+        "timeout",
+    }
     assert set(with_rules) == narrowing, (
         f"the set of narrowing surfaces moved: {sorted(with_rules)}. That is not a "
         f"failure by itself, but every clause below has to be re-read against its new "
@@ -5622,6 +5702,84 @@ def test_a_cell_whose_contract_watched_a_refusal_never_renders_as_a_capability(c
     )
 
 
+def test_a_recursive_cell_that_watched_the_refusal_never_renders_as_a_capability(committed):
+    """The same pin for the OTHER branching surface, whose defect is still ahead of it.
+
+    `transfer-recursive` landed with every cell `untested` -- the bed measures it later --
+    so there is no row to read the way the Zephyr mode pin above reads a measured one,
+    and a guard that waited for the measurement would be a guard
+    that arrives after the defect it describes. The first bed run to draw an embedded
+    cell stores the refusal arm's observable, and a page composing the promise from a
+    per-surface constant would then publish *you can put a whole directory tree on the
+    device* about a device otto refuses to walk a tree for -- `transfer-mode`'s shipped
+    defect, one surface over.
+
+    So the measured cell is BUILT rather than waited for, out of the same profile's real
+    `transfer-roundtrip` cell -- a shape a run produced, not one this test invented --
+    with only its nodeid, its control citations and its observable moved to this surface.
+    Driven BOTH WAYS, because a page that promised nothing at all would satisfy the
+    refusal half on its own.
+
+    ★ WHAT THIS PIN DOES NOT PROVE, declared because the reader will otherwise assume it:
+    that the contract EVER WRITES the refusal observable. That arm is selected by
+    `isinstance(host, EmbeddedHost)`, and no hermetic cell is one -- `_FakeHost` above
+    cannot become one -- so the refusal arm first executes on the maintainer's bed run.
+    This guard pins the PAGE's half of the branch (an observable naming that arm may not
+    render as the promise) and `promise_mismatch` pins the marker to the contract's own
+    source, so a reworded arm reddens; what stays unexercised until the bed is the
+    contract writing it. `transfer-mode` has no such gap: its arms turn on
+    `supports_mode`, a capability answer a fake backend can give, so its refusal is driven
+    hermetically. Closing this one means a fakeable capability answer for recursion in
+    `src/`, which is a product change rather than a test one.
+    """
+    voice = VOICE["transfer-recursive"]
+    promising = next(branch for branch in voice.branches if branch.capability)
+    arm = next(branch for branch in voice.branches if not branch.capability)
+    assert arm.headline, "the arm declares no headline; the assertions below are vacuous"
+    assert arm.instead, "the arm declares no clause; the assertions below are vacuous"
+
+    control = positive_control_for("transfer-recursive")
+    donor = copy.deepcopy(committed["cells"]["transfer-roundtrip"]["zephyr-3.7"])
+    assert donor["status"] == "measured-ok", (
+        "the donor cell is no longer a measured pass; this guard is describing a cell "
+        "that has changed underneath it"
+    )
+    donor["nodeid"] = next(s.contract for s in SURFACES if s.id == "transfer-recursive")
+    for entry in donor["observed_cells"]:
+        if "positive_control" in entry:
+            entry["positive_control"] = f"{control}[{entry['cell_label']}]"
+
+    for observable, promised in (
+        (f"the NotImplementedError EmbeddedHost {arm.marker}", False),
+        (f"the bytes, nesting and empty directory {promising.marker} over `console`", True),
+    ):
+        injected = copy.deepcopy(committed)
+        cell = copy.deepcopy(donor)
+        cell["observable"] = observable
+        injected["cells"]["transfer-recursive"]["zephyr-3.7"] = cell
+        page = _page(injected)
+        row = _row(page, "transfer-recursive", "zephyr-3.7")
+        assert (promising.capability in row) is promised, (
+            f"an observable naming {observable!r} renders "
+            f"{'without' if promised else 'as'} the capability: {row}"
+        )
+        assert observable in _evidence_block(page, "transfer-recursive", "zephyr-3.7"), (
+            "the observable is evidence and must still be reproduced verbatim"
+        )
+        if promised:
+            continue
+        assert "You can" not in row, f"a refusal was published as some other promise: {row}"
+        assert f"| **{arm.headline}** " in row, f"the row loses its answer: {row}"
+        assert arm.instead[1:] in row, f"the row loses what was watched instead: {row}"
+        # `startswith`, like the Zephyr mode pin's: the donor is a two-of-four profile,
+        # so the grid rightly qualifies the word with the devices it rests on.
+        assert _grid_token(page, "transfer-recursive", "zephyr-3.7").startswith("refused"), (
+            f"the grid still says "
+            f"{_grid_token(page, 'transfer-recursive', 'zephyr-3.7')!r} for a cell "
+            f"whose row says otto refused"
+        )
+
+
 def test_a_cell_whose_observable_matches_no_declared_arm_promises_nothing(committed):
     """FAIL CLOSED. An observable this page cannot place must not fall back to the promise.
 
@@ -5745,7 +5903,7 @@ def test_a_cell_nothing_has_watched_yet_still_describes_the_promise(committed):
 
 
 def test_a_surface_with_one_observable_still_promises_it(committed):
-    """The accept-control for all of the above: six of the seven surfaces are unbranched.
+    """The accept-control for all of the above: six of the eight surfaces are unbranched.
 
     Without it, a `promise_of` that answered "no promise" for everything would satisfy
     every refusal above and publish a page that promises nothing at all.
