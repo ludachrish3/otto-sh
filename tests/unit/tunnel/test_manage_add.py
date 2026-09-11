@@ -16,7 +16,7 @@ from otto.tunnel.manage import (
     AddedTunnel,
     ResolvedHop,
     _kill_tunnel_on,
-    _probe_used_ports,
+    _probe_port_budget,
     _require_tools,
     _verify_chain,
     add_tunnel,
@@ -538,7 +538,7 @@ class TestInternals:
         with pytest.raises(HostUnreachableError, match="host 'a' timed out checking for socat"):
             asyncio.run(_require_tools(host, SocatCarrier()))
 
-    def test_probe_used_ports_gathers_across_hosts(self) -> None:
+    def test_probe_port_budget_gathers_across_hosts(self) -> None:
         a = FakeHost("a", ip="10.0.0.1", probe_ports="LISTEN 0 0.0.0.0:49200 *:*\n")
         b = FakeHost("b", ip="10.0.0.2", probe_ports="LISTEN 0 0.0.0.0:49201 *:*\n")
 
@@ -546,8 +546,45 @@ class TestInternals:
             ResolvedHop(hop=TunnelHop("a"), ip="10.0.0.1", host=a),
             ResolvedHop(hop=TunnelHop("b"), ip="10.0.0.2", host=b),
         ]
-        used = asyncio.run(_probe_used_ports(resolved))
-        assert used == {49200, 49201}
+        budget = asyncio.run(_probe_port_budget(resolved))
+        assert budget.used == {49200, 49201}
+        assert budget.floor == 49152, "a chain that reports no range keeps the legacy floor"
+
+    def test_probe_port_budget_clears_the_highest_ephemeral_ceiling(self) -> None:
+        """#284: carrier ports must start above every chain kernel's range."""
+        a = FakeHost(
+            "a",
+            ip="10.0.0.1",
+            probe_ports="otto-ephemeral 32768\t60999\nLISTEN 0 0.0.0.0:49200 *:*\n",
+        )
+        b = FakeHost(
+            "b",
+            ip="10.0.0.2",
+            probe_ports="otto-ephemeral 32768\t61234\nLISTEN 0 0.0.0.0:49201 *:*\n",
+        )
+
+        resolved = [
+            ResolvedHop(hop=TunnelHop("a"), ip="10.0.0.1", host=a),
+            ResolvedHop(hop=TunnelHop("b"), ip="10.0.0.2", host=b),
+        ]
+        budget = asyncio.run(_probe_port_budget(resolved))
+        assert budget.used == {49200, 49201}
+        assert budget.floor == 61235
+
+    def test_probe_port_budget_ignores_a_silent_host(self) -> None:
+        """One host without /proc must not drag the chain back into the range."""
+        a = FakeHost(
+            "a",
+            ip="10.0.0.1",
+            probe_ports="otto-ephemeral 32768\t60999\nLISTEN 0 0.0.0.0:49200 *:*\n",
+        )
+        b = FakeHost("b", ip="10.0.0.2", probe_ports="LISTEN 0 0.0.0.0:49201 *:*\n")
+
+        resolved = [
+            ResolvedHop(hop=TunnelHop("a"), ip="10.0.0.1", host=a),
+            ResolvedHop(hop=TunnelHop("b"), ip="10.0.0.2", host=b),
+        ]
+        assert asyncio.run(_probe_port_budget(resolved)).floor == 61000
 
     def test_kill_tunnel_on_is_best_effort_on_dead_host(self) -> None:
         """A host that raises during the rollback scan/kill must not blow up rollback."""

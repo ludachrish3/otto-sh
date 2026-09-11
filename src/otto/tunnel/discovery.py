@@ -80,7 +80,7 @@ async def _device_read(host: Any, cmd: str) -> Any:
     parsed read in ``otto.tunnel`` goes through:
     :func:`~otto.tunnel.manage._container_ip`,
     :func:`~otto.tunnel.manage._require_tools`,
-    :func:`~otto.tunnel.manage._probe_used_ports` and :func:`_scan_hosts` all
+    :func:`~otto.tunnel.manage._probe_port_budget` and :func:`_scan_hosts` all
     arrive by it. A dry run reaching this line means some path above forgot to
     short-circuit, and the only safe answer is to fail loudly — see
     :class:`TunnelNotMeasuredError` for what each caller does with the banner

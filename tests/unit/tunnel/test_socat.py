@@ -5,9 +5,12 @@ import pytest
 from otto.host.daemon import launch_command
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND
 from otto.tunnel.socat import (
+    FREE_PORT_PROBE_COMMAND,
     NoFreePortError,
+    carrier_port_floor,
     egress_socat_args,
     ingress_socat_args,
+    parse_ephemeral_ceiling,
     parse_listening_ports,
     pick_free_port,
     relay_socat_args,
@@ -80,3 +83,62 @@ class TestPorts:
         with pytest.raises(NoFreePortError):
             pick_free_port(set(range(49152, 65536)))
         assert issubclass(NoFreePortError, RuntimeError)
+
+
+class TestEphemeralRange:
+    """Carrier ports must sit where the kernel can never auto-assign them (#284).
+
+    The probe reports only LISTENING sockets, so a port held as the *source*
+    port of an outbound connection is invisible to it — and ``reuseaddr`` does
+    not waive that conflict (it waives ``TIME_WAIT`` and other reuse-flagged
+    sockets only). A carrier port drawn from inside the kernel's ephemeral
+    range can therefore be stolen between the probe and the bind, and socat
+    dies with ``EADDRINUSE``.
+    """
+
+    def test_probe_asks_for_the_ephemeral_range_and_the_listeners(self) -> None:
+        assert "ip_local_port_range" in FREE_PORT_PROBE_COMMAND
+        assert "ss -Htln" in FREE_PORT_PROBE_COMMAND
+        assert "netstat -tln" in FREE_PORT_PROBE_COMMAND
+
+    def test_parses_the_ceiling(self) -> None:
+        out = "otto-ephemeral 32768\t60999\nLISTEN 0 128 0.0.0.0:49152 0.0.0.0:*\n"
+        assert parse_ephemeral_ceiling(out) == 60999
+
+    def test_silent_host_yields_no_ceiling(self) -> None:
+        assert parse_ephemeral_ceiling("LISTEN 0 128 0.0.0.0:49152 0.0.0.0:*\n") is None
+
+    def test_range_line_contributes_no_phantom_listeners(self) -> None:
+        """The marker line must not read as two bound ports."""
+        used = parse_listening_ports("otto-ephemeral 32768\t60999\n")
+        assert used == set()
+
+    def test_floor_clears_the_ceiling(self) -> None:
+        assert carrier_port_floor([60999]) == 61000
+
+    def test_floor_clears_the_highest_ceiling_on_the_chain(self) -> None:
+        """One permissive host in the chain governs: its kernel is the thief."""
+        assert carrier_port_floor([60999, 61234, 55000]) == 61235
+
+    def test_floor_never_drops_below_the_legacy_dynamic_floor(self) -> None:
+        """A tight ephemeral range must not push carriers into registered ports."""
+        assert carrier_port_floor([40000]) == 49152
+
+    def test_silent_chain_keeps_the_legacy_floor(self) -> None:
+        assert carrier_port_floor([]) == 49152
+
+    def test_no_room_above_the_ceiling_falls_back(self) -> None:
+        """A host whose ephemeral range runs to the top has nowhere safe left.
+
+        Falling back to the legacy window is strictly better than refusing to
+        build a tunnel at all — the post-add verify still catches a collision.
+        """
+        assert carrier_port_floor([65535]) == 49152
+        assert carrier_port_floor([65500]) == 49152
+
+    def test_default_linux_range_puts_carriers_out_of_reach(self) -> None:
+        """The regression: 49152 is INSIDE the default 32768-60999 range."""
+        floor = carrier_port_floor([60999])
+        assert floor > 60999
+        assert pick_free_port(set(), lo=floor) == 61000
+        assert pick_free_port({61000}, lo=floor) == 61001

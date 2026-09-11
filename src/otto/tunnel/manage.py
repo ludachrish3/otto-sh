@@ -26,7 +26,13 @@ from .discovery import (
 )
 from .model import Direction, ProcKey, Role, Tunnel, TunnelHop
 from .sentinel import encode_sentinel
-from .socat import FREE_PORT_PROBE_COMMAND, parse_listening_ports, pick_free_port
+from .socat import (
+    FREE_PORT_PROBE_COMMAND,
+    carrier_port_floor,
+    parse_ephemeral_ceiling,
+    parse_listening_ports,
+    pick_free_port,
+)
 
 if TYPE_CHECKING:
     from ..config.lab import Lab
@@ -368,7 +374,7 @@ class AddedTunnel:
     ``--dry-run``, where :attr:`plan` carries the provisional pair instead.
 
     NOT the provisional numbers, deliberately. A real run picks these from the
-    union of every chain host's LISTENING ports (``_probe_used_ports``)
+    union of every chain host's LISTENING ports (``_probe_port_budget``)
     plus the service port; a dry run has only the service port, so it would
     hand back 49152/49153 on every lab in the world and a caller reading these
     two fields could not tell that from an allocation. The preview's own
@@ -406,21 +412,43 @@ async def _require_tools(host: Any, carrier: TunnelCarrier) -> None:
         )
 
 
-async def _probe_used_ports(resolved: list[ResolvedHop]) -> set[int]:
-    """Union of listening ports across the chain (spec §6.2).
+@dataclass(frozen=True, slots=True)
+class _PortBudget:
+    """What one probe pass across the chain says about carrier-port choice."""
+
+    used: set[int]
+    """Union of ports LISTENING anywhere on the chain — avoid these."""
+
+    floor: int
+    """Lowest port to allocate from: above every chain kernel's ephemeral
+    range, so no host can auto-assign a carrier port out from under us
+    (:func:`~otto.tunnel.socat.carrier_port_floor`, #284)."""
+
+
+async def _probe_port_budget(resolved: list[ResolvedHop]) -> _PortBudget:
+    """Report listening ports and the ephemeral ceiling, across the chain (spec §6.2).
 
     A probe that *times out* raises (wedged host — the launch would hang
     anyway); a probe whose command fails contributes nothing (minimal hosts
-    without ss/netstat — the post-add verify catches a real collision).
+    without ss/netstat — the post-add verify catches a real collision). A host
+    that answers the listener half but not the range half likewise contributes
+    no ceiling: absence of evidence, not a claim that its kernel assigns
+    nothing.
     """
 
-    async def probe(r: ResolvedHop) -> set[int]:
+    async def probe(r: ResolvedHop) -> tuple[set[int], int | None]:
         result = await _device_read(r.host, FREE_PORT_PROBE_COMMAND)
         if result.timed_out:
             raise HostUnreachableError(f"host {r.hop.host!r} timed out probing for free ports")
-        return parse_listening_ports(result.value) if result.is_ok else set()
+        if not result.is_ok:
+            return set(), None
+        return parse_listening_ports(result.value), parse_ephemeral_ceiling(result.value)
 
-    return set().union(*await asyncio.gather(*(probe(r) for r in resolved)))
+    replies = await asyncio.gather(*(probe(r) for r in resolved))
+    return _PortBudget(
+        used=set().union(*(used for used, _ceiling in replies)),
+        floor=carrier_port_floor([c for _used, c in replies if c is not None]),
+    )
 
 
 async def _kill_tunnel_on(hosts: list[Any], tunnel_id: str) -> None:
@@ -556,10 +584,13 @@ def _unresolved_addresses(unresolved: list[str]) -> str:
 
 
 _UNCHECKED_FREE_PORTS = (
-    "which ports are already bound anywhere on the chain. A real run probes every hop with "
-    "`ss -Htln` / `netstat -tln` first and skips what is listening, so the carrier pair above "
-    "is PROVISIONAL — it was picked from the service port alone. Every argv above names those "
-    "two ports, so a real run that finds either one taken emits different command lines"
+    "which ports are already bound anywhere on the chain, and where each hop's kernel stops "
+    "handing out ephemeral ports. A real run probes every hop with `ss -Htln` / `netstat -tln` "
+    "first and skips what is listening, and starts allocating ABOVE the highest ephemeral "
+    "ceiling it reads (commonly 61000 on Linux, vs the 49152 floor shown above), so the carrier "
+    "pair above is PROVISIONAL — it was picked from the service port alone. Every argv above "
+    "names those two ports, so a real run emits different command lines whenever either one is "
+    "taken or the chain's kernels push the floor up"
 )
 
 _UNCHECKED_CONFLICTS = (
@@ -773,9 +804,10 @@ async def add_tunnel(
         for r in resolved:
             await _require_tools(r.host, carrier_obj)
 
-        used = await _probe_used_ports(resolved) | {port}
-        carrier_fwd = pick_free_port(used)
-        carrier_rev = pick_free_port(used | {carrier_fwd})
+        budget = await _probe_port_budget(resolved)
+        used = budget.used | {port}
+        carrier_fwd = pick_free_port(used, lo=budget.floor)
+        carrier_rev = pick_free_port(used | {carrier_fwd}, lo=budget.floor)
 
         ips = [r.ip for r in resolved]
         deliver_fwd = dest_hop.ip if dest_hop else _LOOPBACK

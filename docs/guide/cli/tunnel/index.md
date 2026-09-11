@@ -97,11 +97,14 @@ Read both halves. The `would:` lines are the exact argv, but:
 :::{warning}
 **The two carrier ports are provisional, and every argv above names them.** A
 real `add` first probes every hop with `ss -Htln` / `netstat -tln` and skips
-what is already listening; a dry run has only your `--port` to go on, so it
-picks 49152/49153 on every lab. If a real run finds either taken, all 2n
-command lines change. `AddedTunnel.carrier_fwd` / `carrier_rev` are `None`
-under a dry run for exactly this reason — the provisional pair is in the plan,
-labelled, and nowhere else.
+what is already listening, then allocates from above the highest ephemeral
+ceiling the chain reports (so no hop's kernel can hand the same port to an
+outgoing connection) — commonly 61000/61001 on Linux. A dry run has only your
+`--port` to go on and contacts nothing, so it shows the `[49152, 65535]` floor
+instead. Expect the real pair to differ; if a real run also finds one taken,
+all 2n command lines change again. `AddedTunnel.carrier_fwd` / `carrier_rev`
+are `None` under a dry run for exactly this reason — the provisional pair is in
+the plan, labelled, and nowhere else.
 :::
 
 What each command shows:
