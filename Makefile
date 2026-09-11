@@ -46,22 +46,29 @@ COVERAGE_TARGET ?= coverage-python
 
 # Both floors are CODIFIED MINIMUMS, pinned by tests/unit/test_coverage_floors.py:
 # lowering either one has to change that file's constant in the same diff.
-# Measured 2026-08-25: full fold 96.27-96.31% (four runs); hostless selection
-# 95.21-95.29% across the five CI Pythons (since 2026-09-11 only the two
-# BOOKEND Pythons run the full hostless selection and gate on it — the interior
-# versions run a trimmed, uninstrumented tier; see noxfile.py
-# HOSTLESS_MIDDLE_TEST_ARGS), 95.18-95.22% on a local 3.14 leg.
+# Both judge the COMBINED line+branch total: .coveragerc sets `branch = true`,
+# so the console report carries Branch / BrPart columns and every
+# --cov-fail-under below compares against lines and branch arcs together
+# (the same test pins that setting — dropping it would raise every number
+# here while measuring less). Measured 2026-09-11 with branches on, on this
+# 3.10 dev VM: full fold 95.80% combined (lines 96.84%, branches 92.24%);
+# hostless selection 95.08% combined (lines 96.17%, branches 91.33%). For the
+# record, the lines-only history: full fold 96.27-96.31% (2026-08-25, four
+# runs); hostless 95.21-95.29% across the five CI Pythons (since 2026-09-11
+# only the two BOOKEND Pythons run the full hostless selection and gate on
+# it — the interior versions run a trimmed, uninstrumented tier; see
+# noxfile.py HOSTLESS_MIDDLE_TEST_ARGS), 95.18-95.22% on a local 3.14 leg.
 # The floors sit just under the measurements on purpose, so a change that
-# sheds covered lines argues with the gate rather than ratcheting the number
-# down — and .coveragerc sets `precision = 2` so the comparison is to the
-# number written here, not to a rounding of it (coverage's default precision
-# of 0 would accept 95.50 against a floor of 96).
-COVERAGE_THRESHOLD := 96
+# sheds covered lines or branches argues with the gate rather than ratcheting
+# the number down — and .coveragerc sets `precision = 2` so the comparison
+# is to the number written here, not to a rounding of it (coverage's default
+# precision of 0 would accept 95.00 against a floor of 95.5).
+COVERAGE_THRESHOLD := 95.5
 # CI runs the hostless selection only (integration/hops markers need Vagrant
 # VMs that don't exist in GitHub Actions), so its achievable number is lower.
 # Restated in noxfile.py's HOSTLESS_SERIAL_ARGS — CI invokes the nox session —
 # and the pair is held equal by the same test.
-CI_COVERAGE_THRESHOLD := 95
+CI_COVERAGE_THRESHOLD := 94.75
 
 # Iteration count for `make repeat`. Override on the command line:
 #   make repeat COUNT=50
@@ -657,13 +664,13 @@ build: ## (Build & Release) Build the project with uv
 # reports/coverage/html is written once per coverage-* target rather than by
 # every pytest invocation in the tree (each nox leg, each ad-hoc run).
 # Pinned by tests/unit/test_coverage_html_placement.py.
-coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Python) and enforce the 96 gate; the browser (Playwright) suite runs first as its own process via the `dashboard` prerequisite — its coverage data is folded in via --cov-append. Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage-python/.
+coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Python) and enforce the 95.5 gate (lines + branches); the browser (Playwright) suite runs first as its own process via the `dashboard` prerequisite — its coverage data is folded in via --cov-append. Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage-python/.
 	@$(SAY) "pytest: all tiers, pinned Python (browser lane folded in)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "not stability and not browser and not busybox and not conformance and not serial_timing" --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
-	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(COVERAGE_THRESHOLD)% on the full fold)"
+	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(COVERAGE_THRESHOLD)% lines+branches on the full fold)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and not stability and not browser and not busybox and not conformance" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) --cov-report=html $(call junitxml,coverage-python-serial)
 
-coverage: coverage-python coverage-ts ## Run BOTH language coverage gates: coverage-python (full pytest, 96 floor) + coverage-ts (merged vitest+e2e floor). The dashboard browser lane runs exactly once — coverage-python triggers it, and coverage-ts's artifact stamp sees it fresh.
+coverage: coverage-python coverage-ts ## Run BOTH language coverage gates: coverage-python (full pytest, 95.5 floor over lines and branches) + coverage-ts (merged vitest+e2e floor). The dashboard browser lane runs exactly once — coverage-python triggers it, and coverage-ts's artifact stamp sees it fresh.
 
 coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
 	@$(SAY) "pytest: tests/unit (no gate)"
@@ -678,7 +685,7 @@ coverage-integration: ## Run the unit + integration level tiers (tests/unit + te
 coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) and enforce the CI coverage gate. No VMs. JUnit XML lands in reports/junit/coverage-hostless/.
 	@$(SAY) "pytest: hostless CI slice, no VMs"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "$(M_HOSTLESS) and not serial_timing" --cov-fail-under=0 $(call junitxml,coverage-hostless)
-	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(CI_COVERAGE_THRESHOLD)% on the full fold)"
+	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(CI_COVERAGE_THRESHOLD)% lines+branches on the full fold)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "serial_timing and $(M_HOSTLESS)" -n0 --cov-append --cov-fail-under=$(CI_COVERAGE_THRESHOLD) --cov-report=html $(call junitxml,coverage-hostless-serial)
 
 collect-check: ## (Quality) Import every test module without running anything — the cheap half of what gate-fresh exists to catch (forgotten `git add`, a module that only imports because the dev tree has gitignored build artifacts). No VMs.

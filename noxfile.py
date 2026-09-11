@@ -57,17 +57,21 @@ nox.options.default_venv_backend = "uv"
 # that the strict config (select=ALL minus the deny-list) is green.
 nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
 
-# Coverage floors. tests_hostless gates at 95 on the BOOKEND Pythons — the
-# Makefile's CI_COVERAGE_THRESHOLD, and the floor `make coverage-hostless`
-# enforces on the same test selection, so it's the same number;
-# tests/unit/test_coverage_floors.py holds the pair equal and both above their
-# codified minimums (the Makefile comment on COVERAGE_THRESHOLD has the
-# measurements). The interior Pythons run the trimmed pair below with coverage
-# OFF: a trimmed selection cannot meet the floor, and instrumenting a leg whose
-# report nothing reads is a quarter of its CPU for no reader. tests_all gates at 92,
-# BELOW `make coverage`'s 96 (COVERAGE_THRESHOLD): `make coverage` folds the
-# dashboard browser process's Python coverage in via --cov-append, which these
-# browser-excluded nox sessions don't, so their achievable number is lower.
+# Coverage floors — every one a COMBINED line+branch number, since .coveragerc
+# measures branches (`branch = true`). tests_hostless gates at 94.75 on the
+# BOOKEND Pythons — the Makefile's CI_COVERAGE_THRESHOLD, and the floor `make
+# coverage-hostless` enforces on the same test selection, so it's the same
+# number; tests/unit/test_coverage_floors.py holds the pair equal and both
+# above their codified minimums (the Makefile comment on COVERAGE_THRESHOLD
+# has the measurements). The interior Pythons run the trimmed pair below with
+# coverage OFF: a trimmed selection cannot meet the floor, and instrumenting a
+# leg whose report nothing reads is a quarter of its CPU for no reader.
+# tests_all gates at 92, BELOW `make coverage`'s 95.5 (COVERAGE_THRESHOLD):
+# `make coverage` folds the dashboard browser process's Python coverage in via
+# --cov-append, which these browser-excluded nox sessions don't, so their
+# achievable number is lower (measured 2026-09-11 the fold-in is worth under
+# 0.01 of a point — 95.80% with it, 95.80% without — so the gap between the two
+# floors is headroom, not the browser lane).
 # Revisit tests_all if COVERAGE_THRESHOLD or that fold-in changes.
 
 # `not busybox and not conformance` rides every catch-all selector below, for
@@ -120,7 +124,7 @@ HOSTLESS_SERIAL_ARGS = (
     ),
     "-n0",
     "--cov-append",
-    "--cov-fail-under=95",
+    "--cov-fail-under=94.75",
 )
 
 # The INTERIOR Pythons' pair (every PYTHON_VERSIONS entry not in
@@ -446,10 +450,10 @@ def tests_all(session: nox.Session) -> None:
     instead. `stability` is excluded because those tests are bed-hostile
     (the SIGSTOP-wedge test stops test2's sshd; any other worker's fresh
     ssh to test2 then times out) — they own the bed only in the dedicated
-    `make stability-tunnel` lane. Coverage threshold is 92% — below
-    ``make coverage``'s 96% because this browser-excluded session omits the
-    dashboard --cov-append fold-in (see the module-level coverage-floor
-    note).
+    `make stability-tunnel` lane. Coverage threshold is 92% (combined
+    line+branch, like every floor here) — below ``make coverage``'s 95.5%
+    because this browser-excluded session omits the dashboard --cov-append
+    fold-in (see the module-level coverage-floor note).
     """
     session.run(
         "pytest",

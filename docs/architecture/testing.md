@@ -705,13 +705,17 @@ and lab growth.
 
 ## Coverage: a floor, not a scorecard
 
-`make coverage` enforces `--cov-fail-under=96` over the whole default run
+`make coverage` enforces `--cov-fail-under=95.5` over the whole default run
 (the `dashboard` browser lane's Python-side coverage folds in via
 `--cov-append` first); the hostless CI gate (`make coverage-hostless`,
-`nox -s tests_hostless`) enforces a lower 95, because it deliberately
+`nox -s tests_hostless`) enforces a lower 94.75, because it deliberately
 exercises only the slice of otto that needs no VM at all and can't reach
 the full-run number. `nox -s tests_all`'s browser-excluded matrix sits at 92
-for the same reason — it never folds in the dashboard lane's coverage. The
+for the same reason — it never folds in the dashboard lane's coverage. Every
+one of these is a *combined* line-and-branch number: `.coveragerc` measures
+branches, so the console report carries `Branch` / `BrPart` columns next to
+`Stmts` / `Miss`, and an `if` whose `else` arm no test reaches costs the
+gate a partial branch even when every line in it ran. The
 TypeScript side mirrors this shape: `coverage-ts-unit`'s vitest-only floor
 is the browserless CI analogue of `coverage-ts`'s full merged floor.
 

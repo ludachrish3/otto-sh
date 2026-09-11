@@ -10,13 +10,18 @@ is restated in ``noxfile.py``'s ``HOSTLESS_SERIAL_ARGS`` because the nox
 session is what CI actually invokes, and the two are a hand-kept pair — the
 noxfile comment says "keep in step" and nothing enforced it.
 
-This module turns the floors into decisions. Measured on 2026-08-25: the full
-fold at 96.27-96.31 % over four runs; the hostless selection at 95.21-95.29 %
-across the five CI Pythons and 95.18-95.22 % on a local 3.14 leg. The floors
-below sit just under those, so ordinary work that loses a few dozen covered
-lines has to argue with this file instead of quietly ratcheting the number
-down. Raising a floor is free; lowering one edits a constant here, on
-purpose, in a reviewed diff.
+This module turns the floors into decisions. Every floor is a COMBINED
+line+branch number: ``.coveragerc`` sets ``branch = true`` (pinned below), so
+``--cov-fail-under`` judges statements and branch arcs together and the console
+report carries the Branch / BrPart columns. Measured on 2026-09-11 with
+branches on: the full fold at 95.80 % (lines 96.84 %, branches 92.24 %); the
+hostless selection at 95.08 % (lines 96.17 %, branches 91.33 %). Lines-only
+history, 2026-08-25: full fold 96.27-96.31 % over four runs; hostless
+95.21-95.29 % across the five CI Pythons and 95.18-95.22 % on a local 3.14
+leg. The floors below sit just under the measurements, so ordinary work that
+loses a few dozen covered lines or branches has to argue with this file
+instead of quietly ratcheting the number down. Raising a floor is free;
+lowering one edits a constant here, on purpose, in a reviewed diff.
 
 The comparison has to mean its number for that to hold. ``--cov-fail-under``
 compares ``round(total, precision)`` and coverage's default precision is 0,
@@ -36,8 +41,8 @@ import pytest
 
 from tests._fixtures.paths import PROJECT_ROOT
 
-_FULL_COVERAGE_FLOOR = 96
-_HOSTLESS_COVERAGE_FLOOR = 95
+_FULL_COVERAGE_FLOOR = 95.5
+_HOSTLESS_COVERAGE_FLOOR = 94.75
 
 
 def _live_lines(text: str) -> str:
@@ -45,14 +50,17 @@ def _live_lines(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
 
-def makefile_threshold(text: str, name: str) -> int:
-    matches = re.findall(rf"^{name}\s*[?:]?=\s*(\d+)\s*$", _live_lines(text), re.MULTILINE)
+def makefile_threshold(text: str, name: str) -> float:
+    """The floor as declared; decimal since branch tracking (a quarter-point margin is real)."""
+    matches = re.findall(
+        rf"^{name}\s*[?:]?=\s*(\d+(?:\.\d+)?)\s*$", _live_lines(text), re.MULTILINE
+    )
     assert matches, f"Makefile no longer declares `{name}`"
     assert len(matches) == 1, f"Makefile declares `{name}` {len(matches)} times: {matches}"
-    return int(matches[0])
+    return float(matches[0])
 
 
-def noxfile_hostless_serial_floor(text: str) -> int:
+def noxfile_hostless_serial_floor(text: str) -> float:
     """The ``--cov-fail-under`` inside ``HOSTLESS_SERIAL_ARGS``, and only that one.
 
     The parallel leg deliberately gates at 0 (the threshold judges the whole
@@ -61,10 +69,21 @@ def noxfile_hostless_serial_floor(text: str) -> int:
     """
     block = re.search(r"^HOSTLESS_SERIAL_ARGS\s*=\s*\((.*?)^\)", text, re.MULTILINE | re.DOTALL)
     assert block is not None, "noxfile.py no longer declares HOSTLESS_SERIAL_ARGS"
-    matches = re.findall(r"--cov-fail-under=(\d+)", _live_lines(block.group(1)))
+    matches = re.findall(r"--cov-fail-under=(\d+(?:\.\d+)?)", _live_lines(block.group(1)))
     assert matches, "HOSTLESS_SERIAL_ARGS carries no --cov-fail-under"
     assert len(matches) == 1, f"HOSTLESS_SERIAL_ARGS carries {len(matches)} floors: {matches}"
-    return int(matches[0])
+    return float(matches[0])
+
+
+def coveragerc_branch(text: str) -> bool:
+    """Whether ``[run]`` measures branches — the floors are combined numbers only if so."""
+    section = re.search(r"^\[run\](.*?)(?=^\[|\Z)", text, re.MULTILINE | re.DOTALL)
+    assert section is not None, ".coveragerc has no [run] section"
+    live = "\n".join(
+        line for line in section.group(1).splitlines() if not line.lstrip().startswith(";")
+    )
+    match = re.search(r"^branch\s*=\s*(\w+)\s*$", live, re.MULTILINE)
+    return match is not None and match.group(1).lower() == "true"
 
 
 def coveragerc_precision(text: str) -> int:
@@ -121,6 +140,19 @@ def test_the_makefile_still_gates_on_both_variables() -> None:
         )
 
 
+def test_the_floors_judge_branches_as_well_as_lines() -> None:
+    """Every floor here was measured with branch tracking ON; without it the same
+    tree reports a higher number while measuring less, and a floor set against
+    the combined total would then pass on lines alone."""
+    assert coveragerc_branch((PROJECT_ROOT / ".coveragerc").read_text()), (
+        ".coveragerc [run] no longer sets `branch = true`: the coverage floors are "
+        "combined line+branch numbers and would silently gate lines only"
+    )
+    assert not coveragerc_branch("[run]\nsource = otto\n; branch = true\n")
+    assert not coveragerc_branch("[run]\nbranch = false\n[report]\nbranch = true\n")
+    assert coveragerc_branch("[run]\nsource = otto\nbranch = True\n[report]\n")
+
+
 def test_the_comparison_is_to_two_decimals_not_to_a_rounding() -> None:
     """``round(total, 0) >= 96`` accepts 95.50; the floor has to compare to its own number."""
     assert coveragerc_precision((PROJECT_ROOT / ".coveragerc").read_text()) >= 2, (
@@ -142,6 +174,8 @@ def test_the_floor_readers_fail_loud_on_the_shapes_they_must_not_guess() -> None
     )
     # The `?=` idiom this Makefile uses elsewhere is a declaration too.
     assert makefile_threshold("COVERAGE_THRESHOLD ?= 96\n", "COVERAGE_THRESHOLD") == 96
+    # A decimal floor reads as its own number, not truncated to the integer part.
+    assert makefile_threshold("COVERAGE_THRESHOLD := 95.5\n", "COVERAGE_THRESHOLD") == 95.5
     # Two live declarations: Make takes the last, a first-match reader the first; refuse both.
     with pytest.raises(AssertionError, match="2 times"):
         makefile_threshold(
@@ -157,6 +191,8 @@ def test_the_floor_readers_fail_loud_on_the_shapes_they_must_not_guess() -> None
         '    "--cov-fail-under=95",\n)\n'
     )
     assert noxfile_hostless_serial_floor(decoy_first) == 95
+    decimal = 'HOSTLESS_SERIAL_ARGS = (\n    "--cov-fail-under=94.75",\n)\n'
+    assert noxfile_hostless_serial_floor(decimal) == 94.75
     with pytest.raises(AssertionError, match="carries no"):
         noxfile_hostless_serial_floor('HOSTLESS_SERIAL_ARGS = (\n    "-n0",\n)\n')
 

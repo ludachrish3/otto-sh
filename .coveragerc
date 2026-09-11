@@ -11,6 +11,14 @@
 
 [run]
 source = otto
+; Branch (arc) coverage, not just lines: the console report grows Branch /
+; BrPart columns and every `--cov-fail-under` floor below judges the COMBINED
+; line+branch total, which is what `make coverage` enforces. Measured cost on
+; a pure-Python unit module: 4.14 s -> 4.17 s (coverage 7.12's C tracer), so
+; the floors are the only thing this changes. A config that dropped this line
+; would RAISE every measured number while measuring less — pinned by
+; tests/unit/test_coverage_floors.py.
+branch = true
 parallel = true
 relative_files = true
 sigterm = true
