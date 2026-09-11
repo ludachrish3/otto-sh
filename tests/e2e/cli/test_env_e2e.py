@@ -3,10 +3,15 @@
 Parametrized over both backends only where the backend is actually the thing
 under test. ``--backend pip`` forces the stdlib fallback on a uv-equipped host,
 which is the only way that arm is ever exercised here; measured cost is ~1s per
-uv build and ~9.5s per pip build, so the cases that exercise otto's own control
-flow (refusal, delegation, the dry-run seam) deliberately do NOT build twice --
-and the refusal case does not build at all, because "an environment already
-exists" is a question about a path, not about a venv.
+uv build and ~13s per pip build uncontended (venv bootstrap 1.7s, the repo's
+editable install 2.2s, otto's editable install 8.8s — pip's isolated build env
+plus an index round-trip per dependency; 20-30s under coverage and xdist), so
+the cases that exercise otto's own control flow (refusal, delegation, the
+dry-run seam, ``--force``) deliberately do NOT build twice -- and the refusal
+case does not build at all, because "an environment already exists" is a
+question about a path, not about a venv. The pip arm is exercised exactly
+twice: one create (which also checks the recorded backend) and the
+passthrough contrast, each backend's own argv path.
 
 Every case pins OTTO_HOME at a tmp_path: without it these would build into the
 developer's real ~/.otto.
@@ -110,6 +115,10 @@ class TestCreate:
         assert "installed (editable): repo4" in result.stdout, result.stdout
         assert "skipped, no pyproject.toml: repo1" in result.stdout, result.stdout
         assert f"source {env / 'bin' / 'activate'}" in result.stdout, result.stdout
+        # The metadata names the backend that built it — checked here, on the
+        # one create each backend pays for, rather than in a second pip build.
+        meta = json.loads((env / ".otto-env.json").read_text())
+        assert meta["backend"] == backend, meta
 
     def test_a_second_create_refuses_and_names_force(self, tmp_path):
         """NO VENV IS BUILT HERE: the refusal is about a path existing.
@@ -128,10 +137,16 @@ class TestCreate:
         assert result.returncode != 0, result.stdout
         assert "--force" in (result.stdout + result.stderr)
 
-    @pytest.mark.parametrize("backend", BACKENDS)
-    def test_force_rebuilds_and_the_metadata_records_the_backend(self, tmp_path, backend):
+    def test_force_rebuilds(self, tmp_path):
+        """``--force`` replaces the env; otto's own control flow, so the cheap backend.
+
+        Measured 2026-09-11: the pip arm of this test was two pip builds,
+        32-60 s per hostless leg, to re-prove a removal that happens before
+        either installer runs. The backend's own contract — that a pip create
+        builds and records itself — is ``test_it_builds_...[pip]``'s.
+        """
         home = tmp_path / "home"
-        first = _run(["env", "create", "--backend", backend], home=home, timeout=BUILD_TIMEOUT)
+        first = _run(["env", "create", "--backend", "uv"], home=home, timeout=BUILD_TIMEOUT)
         assert first.returncode == 0, first.stderr
 
         env = _the_env(home)
@@ -139,13 +154,10 @@ class TestCreate:
         scar.write_text("from the first build")
 
         again = _run(
-            ["env", "create", "--force", "--backend", backend], home=home, timeout=BUILD_TIMEOUT
+            ["env", "create", "--force", "--backend", "uv"], home=home, timeout=BUILD_TIMEOUT
         )
         assert again.returncode == 0, again.stderr
         assert not scar.exists(), "--force must remove the old env, not merge into it"
-
-        meta = json.loads((env / ".otto-env.json").read_text())
-        assert meta["backend"] == backend, meta
 
     def test_dry_run_creates_nothing(self, tmp_path):
         """F5: the lab-free dry-run seam stops env before the body and exits 0.
