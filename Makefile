@@ -346,7 +346,7 @@ nox-hostless: ## Run the no-testbed CI gate across all supported Pythons: the fu
 	@$(SAY) "nox: hostless CI gate, all Pythons (x$(NOX_COUNT))"
 	@uv run nox -s tests_hostless -- --count=$(NOX_COUNT) --repeat-scope=session
 
-nox-unit-repeat: ## Repeat the whole tests/unit tree twice in one process — the test-isolation leak guard (registry/tmp-import/module-identity) that also runs in CI. No VMs. JUnit XML lands in reports/junit/nox-unit-repeat/. (Count is fixed at 2; the check is pass/fail, not a soak.)
+nox-unit-repeat: ## Repeat the tests/unit tree (minus the stateless `interpreter_agnostic` guards) twice in one process — the test-isolation leak guard (registry/tmp-import/module-identity) that also runs in CI. No VMs. JUnit XML lands in reports/junit/nox-unit-repeat/. (Count is fixed at 2; the check is pass/fail, not a soak.)
 	@$(SAY) "nox: tests/unit twice in one process (isolation-leak guard)"
 	@uv run nox -s tests_unit_repeat
 

@@ -270,14 +270,16 @@ def tests_unit_repeat(session: nox.Session) -> None:
     ``busybox`` tier, which fetches from the network (see the ``-m`` below) —
     (``--count=2 --repeat-scope=session``, single-process via a cleared
     ``addopts``) trips any such regression at PR time instead of waiting for the
-    nightly. Single-process is deliberate: under ``-n auto`` the repeated items
-    scatter across workers, so within-module collisions become probabilistic and
-    cross-module leaks (a later test broken by an earlier one) are masked
-    entirely — exactly how the nightly missed the ``test_root_group`` →
-    ``test_listing`` desync. One Python is sufficient (isolation leakage is
-    interpreter-version-independent — the primary, 3.10); clearing ``addopts``
-    drops the repo-wide
-    ``-n auto`` / coverage / ``--doctest-modules`` so the repeat is single-process
+    nightly. The ``interpreter_agnostic`` guards are left out: they hold no
+    process-global state, and repeating them is most of the job's wall clock
+    (see the ``-m`` comment below). Single-process is deliberate: under
+    ``-n auto`` the repeated items scatter across workers, so within-module
+    collisions become probabilistic and cross-module leaks (a later test
+    broken by an earlier one) are masked entirely — exactly how the nightly
+    missed the ``test_root_group`` → ``test_listing`` desync. One Python is
+    sufficient (isolation leakage is interpreter-version-independent — the
+    primary, 3.10); clearing ``addopts`` drops the repo-wide ``-n auto`` /
+    coverage / ``--doctest-modules`` so the repeat is single-process
     (strictest accumulation) and quick. Supersedes the former
     ``tests_suite_repeat`` (``tests/unit/suite`` ⊂ ``tests/unit``).
     """
@@ -312,8 +314,17 @@ def tests_unit_repeat(session: nox.Session) -> None:
         # names `tests/unit`, and every conformance test lives under
         # `tests/conformance` — which makes it the clause that stays correct if
         # a conformance-marked module ever lands under `tests/unit`.
+        #
+        # `not interpreter_agnostic`: this session hunts state that leaks from
+        # one test into the next, and the interpreter-agnostic guards hold no
+        # registry state to leak — they read build files and spawn child
+        # pytests. Repeating them doubles the two most expensive shapes in the
+        # tree (the subprocess collections, and the shim differential — one
+        # test, ~4 min single-process) for a question they cannot answer. CI
+        # measured this job at 22 min, the longest in the workflow. Pinned by
+        # tests/unit/test_python_matrix_tiering.py.
         "-m",
-        "not stability and not busybox and not conformance",
+        "not stability and not busybox and not conformance and not interpreter_agnostic",
         # Clearing addopts must still re-state `-p no:tach`: the override drops
         # pyproject's entry whole, and that flag is the only thing protecting
         # plugin LOAD from issue #193 (the conftest stub seeds too late).

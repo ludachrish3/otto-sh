@@ -87,7 +87,8 @@ jobs:
       - name: Run tests under Python ${{ matrix.python }}
         run: uv run nox -s tests_hostless-${{ matrix.python }}
 
-  # Repeat the whole tests/unit tree twice in one process to catch tests that
+  # Repeat the tests/unit tree twice in one process (minus the stateless
+  # `interpreter_agnostic` guards — see noxfile.py) to catch tests that
   # leak process-global state — registry singletons (INSTRUCTIONS, LOADER_CLASSES,
   # CLI_COMMANDS, SUITES), tmp-path imports, or otto.cli.* module identity. Such a
   # leak passes the single-pass `tests` job above but breaks on the second run, so

@@ -188,6 +188,31 @@ def test_the_hostless_session_runs_each_pair_on_its_own_pythons(
         assert expected in seen, f"the invocation scanner does not see {bundle}: {expected}"
 
 
+def test_the_isolation_repeat_deselects_the_marker(noxfile_tree: ast.Module) -> None:
+    """``tests_unit_repeat`` exists to catch state leaking between tests; the
+    interpreter-agnostic guards hold no registry state and the differential
+    is one test, so repeating them buys nothing — and CI measured that job at
+    22 min, the longest in the workflow, with the differential alone ~8 min
+    of it. The session still selects by path and still carries every
+    exclusion it had; this pins only that the marker joined them.
+    """
+    session = next(
+        node
+        for node in noxfile_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "tests_unit_repeat"
+    )
+    exprs = [
+        _marker_expr(tokens)
+        for tokens in _python_pytest_invocations(_NOXFILE, resolve_names=True)
+        if "-m" in tokens and "--count=2" in tokens
+    ]
+    assert len(exprs) == 1, f"expected one --count=2 invocation, found {exprs}"
+    assert f"not {_MARKER}" in _clauses(exprs[0]), exprs[0]
+    assert "tests/unit" in {
+        node.value for node in ast.walk(session) if isinstance(node, ast.Constant)
+    }, "tests_unit_repeat no longer names tests/unit"
+
+
 def test_the_make_nox_target_keeps_the_middle_on_the_hostless_session() -> None:
     """``make nox`` is where the trim pays: its interior legs must stay tests_hostless."""
     text = (PROJECT_ROOT / "Makefile").read_text()
