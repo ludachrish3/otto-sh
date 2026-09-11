@@ -278,7 +278,9 @@ class TestGateLifecycle:
             resolve_ref(repo, "HEAD"),
             runner=lambda wt, targets: captured.append(targets) or True,
         )
-        assert captured == [["lint-python", "lint-arch", "typecheck-python", "collect-check"]]
+        assert captured == [
+            ["lint-python", "lint-arch", "typecheck-python", "collect-check", "docs"]
+        ]
 
     def test_an_exception_mid_run_leaks_no_registered_worktree(self, tmp_path: Path):
         repo = _repo(tmp_path)

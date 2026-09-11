@@ -50,6 +50,21 @@ from pathlib import Path
 #                              a gitignored-artifact dependency surface (issue
 #                              #196 arrived exactly this way, as a collect-time
 #                              trip), for ~20s instead of ~400s.
+#   docs                     — the sphinx lane builds with `-W`, so a docstring
+#                              that cross-references a target autodoc does not
+#                              emit is an ERROR, not a warning. Nothing else
+#                              here reads docstrings as markup: lint and
+#                              typecheck see them as strings, and the test
+#                              suites never render them. Added after the #284
+#                              docstrings put three `ref.data` warnings on main
+#                              green — every lane above passed, and only the
+#                              docs job caught it. Also covers doc8, the
+#                              markdown doctests and `--doctest-modules`.
+#
+# `docs` builds the two SPAs first (they are file prerequisites of the html
+# target) and still measured 86s end-to-end in a real pristine worktree —
+# npm ci included, from a warm npm cache. That is comfortably inside the budget
+# below; a cold npm cache pays once more than that, on one push.
 #
 # `coverage-hostless` was dropped: it is the same suite the author already ran
 # locally and CI runs again before merge, it was ~400s of the ~10 minutes, and
@@ -58,7 +73,7 @@ from pathlib import Path
 # it — trading it for a hook that finishes inside the transport's lifetime is
 # the better bargain, because a gate that cannot deliver its verdict protects
 # nothing.
-GATED_TARGETS = ["lint-python", "lint-arch", "typecheck-python", "collect-check"]
+GATED_TARGETS = ["lint-python", "lint-arch", "typecheck-python", "collect-check", "docs"]
 
 ZERO_SHA = "0" * 40
 _PRE_PUSH_LINE_FIELDS = 4
