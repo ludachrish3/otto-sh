@@ -66,6 +66,7 @@ from otto.host.errors import (
 )
 from otto.host.login_proxy import LoginProxyError
 from otto.host.recursive_transfer import ListingError
+from otto.host.transfer.nc import NcPortSharedError
 from otto.host.transport import HopTransportTornDownError
 from otto.inventory import InventoryError, InventoryKeyError
 from otto.labs.errors import LabNotFoundError, LabRepositoryError
@@ -130,6 +131,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (WaitTimeoutError, TimeoutError),
     (LoginProxyError, ConnectionError),
     (SessionSetupError, ConnectionError),
+    (NcPortSharedError, ConnectionError),
     (LabRepositoryError, Exception),
     (LabNotFoundError, Exception),
     (InventoryError, Exception),

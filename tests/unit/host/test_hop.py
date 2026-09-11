@@ -763,12 +763,18 @@ class TestNetcatPutThroughHop:
         mock_connections.term = "ssh"
         mock_connections._name = "test"
 
-        mock_exec = AsyncMock(
-            side_effect=[
-                _cs(command="python3 ...", output="55555\n", status=Status.Success, retcode=0),
-                _cs(command="nc -l ...", output="", status=Status.Success, retcode=0),
-            ]
-        )
+        # Command-dispatched, not a positional list: the listener check polls
+        # and now COUNTS listeners, and a listener gone before we connect is
+        # refused as another process's -- so the fake one waits for the connect.
+        connected = asyncio.Event()
+
+        async def mock_exec(cmd: str, **_kw) -> CommandResult:
+            if "nc -l" in cmd:
+                await connected.wait()
+                return _cs(command=cmd, output="", status=Status.Success, retcode=0)
+            if "grep -c" in cmd:
+                return _cs(command=cmd, output="1", status=Status.Success, retcode=0)
+            return _cs(command=cmd, output="55555\n", status=Status.Success, retcode=0)
 
         ft = NcFileTransfer(
             connections=mock_connections,
@@ -800,7 +806,12 @@ class TestNetcatPutThroughHop:
                 mock_writer.drain = AsyncMock()
                 mock_writer.close = MagicMock()
                 mock_writer.wait_closed = AsyncMock()
-                mock_connect.return_value = (MagicMock(), mock_writer)
+
+                async def fake_connect(*_a, **_kw):
+                    connected.set()
+                    return MagicMock(), mock_writer
+
+                mock_connect.side_effect = fake_connect
 
                 await ft.put_files([tmp_path], Path("/tmp"), show_progress=False)
 

@@ -28,6 +28,7 @@ import logging
 
 from typing_extensions import override
 
+from ...errors import OttoError
 from ...result import CommandResult, Result
 from ...utils import Status, WaitTimeoutError, wait_for_async
 from ..errors import HostCommandError, HostUnreachableError
@@ -308,7 +309,7 @@ _STRATEGY_PROBE = (
 )
 
 
-class NcPortSharedError(ConnectionError):
+class NcPortSharedError(OttoError, ConnectionError):
     """The remote port this transfer chose is held by more than one listener.
 
     Another process bound the same port between our scan and our bind, and a

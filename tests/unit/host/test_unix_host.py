@@ -1524,11 +1524,19 @@ class TestNcFileTransfer:
         # _put_files_nc now also runs `_wait_for_remote_listener`, which
         # probes for `ss`/`netstat` and then polls the listener — several
         # extra exec calls whose order a positional list can't capture.
+        connected = asyncio.Event()
+
         async def mock_exec(cmd: str, **kw) -> CommandResult:
             if "nc -l" in cmd:
+                # The listener serves our one connection, then exits; one gone
+                # before we connected is refused as another process's.
+                await connected.wait()
                 return _cs(command=cmd, output="", status=Status.Success, retcode=0)
             if cmd.startswith("type "):
                 return _cs(command=cmd, output="", status=Status.Success, retcode=0)
+            if "grep -c" in cmd or "echo $n" in cmd:
+                # The listener check counts: exactly one listener, ours.
+                return _cs(command=cmd, output="1", status=Status.Success, retcode=0)
             if "ss -tln" in cmd or "netstat -tln" in cmd or "/proc/net/tcp" in cmd:
                 return _cs(command=cmd, output="", status=Status.Success, retcode=0)
             if cmd.startswith("stat -c %s "):
@@ -1546,12 +1554,13 @@ class TestNcFileTransfer:
         mock_writer.wait_closed = AsyncMock()
         mock_reader = AsyncMock(spec=asyncio.StreamReader)
 
+        async def fake_connect(*_a, **_kw):
+            connected.set()
+            return mock_reader, mock_writer
+
         with (
             patch.object(h, "exec", AsyncMock(side_effect=mock_exec)),
-            patch(
-                "otto.host.transfer.nc._connect_with_retry",
-                AsyncMock(return_value=(mock_reader, mock_writer)),
-            ),
+            patch("otto.host.transfer.nc._connect_with_retry", AsyncMock(side_effect=fake_connect)),
         ):
             status, msg = _sm(await h.put([src], Path("/tmp"), show_progress=False))
 
@@ -1579,6 +1588,7 @@ class TestNcFileTransfer:
         src.write_bytes(b"test content")
 
         log_states: list[object] = []
+        connected = asyncio.Event()
 
         async def exec_capturing_log(cmd: str, **_kw) -> CommandResult:
             log_states.append(h.log)
@@ -1587,7 +1597,10 @@ class TestNcFileTransfer:
             if cmd.startswith("port=proc; listener=proc"):
                 return _cs(command=cmd, output="python proc", status=Status.Success, retcode=0)
             if "nc -l" in cmd:
+                await connected.wait()
                 return _cs(command=cmd, output="", status=Status.Success, retcode=0)
+            if "grep -c" in cmd or "echo $n" in cmd:
+                return _cs(command=cmd, output="1", status=Status.Success, retcode=0)
             if "ss -tln" in cmd or "netstat -tln" in cmd or "/proc/net/tcp" in cmd:
                 return _cs(command=cmd, output="", status=Status.Success, retcode=0)
             if cmd.startswith("stat -c %s "):
@@ -1604,13 +1617,14 @@ class TestNcFileTransfer:
         mock_writer.wait_closed = AsyncMock()
         mock_reader = AsyncMock(spec=asyncio.StreamReader)
 
+        async def fake_connect(*_a, **_kw):
+            connected.set()
+            return mock_reader, mock_writer
+
         assert h.log is LogMode.NORMAL
         with (
             patch.object(h, "exec", AsyncMock(side_effect=exec_capturing_log)),
-            patch(
-                "otto.host.transfer.nc._connect_with_retry",
-                AsyncMock(return_value=(mock_reader, mock_writer)),
-            ),
+            patch("otto.host.transfer.nc._connect_with_retry", AsyncMock(side_effect=fake_connect)),
         ):
             status, _ = _sm(await h.put([src], Path("/tmp"), show_progress=False))
 
