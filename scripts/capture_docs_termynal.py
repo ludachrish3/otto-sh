@@ -125,6 +125,10 @@ def _otto_env(demo: Path) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
     env.update(
         OTTO_SUT_DIRS=str(demo),
+        # A private user-level home beside the demo repo, so the completion
+        # cache each capture writes dies with the TemporaryDirectory instead
+        # of leaving a workspace in the real ~/.otto on every docs build.
+        OTTO_HOME=str(demo.parent / ".otto-home"),
         NO_COLOR="1",
         TERM="dumb",
         COLUMNS="80",

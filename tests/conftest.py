@@ -558,6 +558,46 @@ def active_context(lab=None, **kwargs):
         reset_context(token)
 
 
+@pytest.fixture(scope="session")
+def _hermetic_otto_home_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One private otto home per pytest process (per xdist worker), under basetemp."""
+    return tmp_path_factory.mktemp("otto-home")
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_otto_home(_hermetic_otto_home_dir: Path) -> Iterator[None]:
+    """Point every test's ``OTTO_HOME`` at a private directory, never the real ``~/.otto``.
+
+    otto keys a workspace directory under its user-level home and writes the
+    completion cache there, so a test that runs otto with the home unpinned
+    leaves a directory behind in the developer's real home — 8,974 of them on
+    the dev VM by 2026-09-11 — and any test reading the DEFAULT home walks all
+    of it. The import-time strip above drops an ambient ``OTTO_HOME``; this
+    puts a hermetic one back for the test's duration. A test that needs its
+    own home sets it over this one (``monkeypatch.setenv``) exactly as before;
+    a test that deliberately UNSETS it to exercise the default must pin
+    ``HOME`` as well. One directory per worker rather than per test: the
+    workspace key already isolates tests that use distinct SUT dirs, and ten
+    thousand ``mkdir``s per run is real cost on a network filesystem. Pinned
+    by tests/unit/test_otto_home_hermeticity.py.
+
+    A PRIVATE ``MonkeyPatch``, never the shared ``monkeypatch`` fixture. A
+    root autouse fixture is instantiated before every deeper fixture, so
+    requesting ``monkeypatch`` here would make the shared instance the
+    FIRST fixture of every test — and its teardown the LAST. A test whose
+    ``monkeypatch.setattr`` targets an attribute a deeper conftest's
+    ``mock.patch`` fixture owns then has its saved "original" (that fixture's
+    Mock) restored AFTER the patch exited: the Mock outlives both and every
+    later test on the worker sees it. Measured 2026-09-11 (first cut of this
+    fixture): ``tests/unit/cli``'s ``create_output_dir`` patch leaked into
+    the logger and dry-run tests on three gate runs out of three. Pinned by
+    tests/unit/test_autouse_fixture_ordering.py.
+    """
+    with pytest.MonkeyPatch.context() as private:
+        private.setenv("OTTO_HOME", str(_hermetic_otto_home_dir))
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _reset_otto_context():
     """Restore the OttoContext ContextVar to its pre-test value after every test.

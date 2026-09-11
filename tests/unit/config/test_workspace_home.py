@@ -11,9 +11,10 @@ from otto.config.home import otto_home, workspace_home, workspace_key
 
 
 class TestOttoHome:
-    def test_defaults_under_the_user_home(self, monkeypatch):
+    def test_defaults_under_the_user_home(self, monkeypatch, tmp_path):
         monkeypatch.delenv("OTTO_HOME", raising=False)
-        assert otto_home() == Path.home() / ".otto"
+        monkeypatch.setenv("HOME", str(tmp_path))  # the default is the USER's home
+        assert otto_home() == tmp_path / ".otto"
 
     def test_otto_home_relocates_it_wholesale(self, monkeypatch, tmp_path):
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "elsewhere"))

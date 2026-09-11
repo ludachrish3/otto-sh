@@ -37,18 +37,36 @@ _PROBE_VALUES = {name: f"probe-{i}" for i, name in enumerate(sorted(AMBIENT_OPT_
 # Deliberately NOT OTTO_-prefixed: the guard under test would strip it.
 PROBE_FLAG = "_TEST_OTTO_HERMETICITY_PROBE"
 
+# An ambient OTTO_HOME is product configuration like the others and must be
+# stripped — but unlike the others it is then REPLACED: the root conftest's
+# `_hermetic_otto_home` fixture gives every test a private home under
+# basetemp (tests/unit/test_otto_home_hermeticity.py). So the probe asserts
+# the ambient VALUE is gone and the hermetic one is in its place, rather
+# than that the variable is absent.
+_AMBIENT_HOME = "/somewhere/else/otto-home"
+
 
 @pytest.mark.skipif(PROBE_FLAG not in os.environ, reason="probe for the subprocess pin below")
-def test_probe_ambient_otto_env_is_stripped():
+def test_probe_ambient_otto_env_is_stripped(tmp_path_factory: pytest.TempPathFactory):
     """Runs only as the single test of the pin's inner session, where the
     process env is known exactly. In a full run this assertion would be
     order-fragile: any earlier in-worker test that exports an ``OTTO_*``
     variable without cleanup would fail it spuriously — the guard strips
     the *ambient* env once at conftest import, not between tests."""
-    leaked = [k for k in os.environ if k.startswith("OTTO_") and k not in AMBIENT_OPT_INS]
+    leaked = [
+        k
+        for k in os.environ
+        if k.startswith("OTTO_") and k not in AMBIENT_OPT_INS and k != "OTTO_HOME"
+    ]
     assert leaked == [], (
         f"ambient otto configuration leaked into the test process: {leaked} "
         "(tests/conftest.py should have stripped these at import time)"
+    )
+    home = os.environ.get("OTTO_HOME")
+    assert home, "OTTO_HOME is unset: the hermetic fixture did not run"
+    assert home != _AMBIENT_HOME, f"OTTO_HOME={home!r}: the ambient value survived the strip"
+    assert tmp_path_factory.getbasetemp().resolve() in Path(home).resolve().parents, (
+        f"OTTO_HOME={home} is not the per-worker home under basetemp"
     )
     # Positive pin (the subprocess below sets every one of them): EVERY
     # declared harness opt-in must SURVIVE the strip. Each of these is read
@@ -85,6 +103,8 @@ def test_ambient_otto_env_cannot_leak_into_a_pytest_run():
             # Product configuration: must be stripped.
             "OTTO_SUT_DIRS": "/somewhere/else/tests/repo1",
             "OTTO_XDIR": "/somewhere/else/xdir",
+            # Stripped AND replaced by the per-worker hermetic home.
+            "OTTO_HOME": _AMBIENT_HOME,
             # Every declared harness opt-in: must survive.
             **_PROBE_VALUES,
         },

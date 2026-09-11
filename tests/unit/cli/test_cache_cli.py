@@ -102,12 +102,17 @@ def test_info_home_line_annotates_from_otto_home_when_env_pins_it(tmp_path, monk
     assert "(default)" not in result.output
 
 
-def test_info_home_line_annotates_default_when_env_is_unset(monkeypatch):
+def test_info_home_line_annotates_default_when_env_is_unset(monkeypatch, tmp_path):
     """[Fix wave 3] Unpinned case: no $OTTO_HOME at all -- must read "default",
-    never "from $OTTO_HOME"."""
+    never "from $OTTO_HOME".
+
+    HOME is pinned too: the default is ``~/.otto``, and ``cache info`` walks
+    every workspace in it — the developer's real one held 8,974 and took 9 s
+    per call here (2026-09-11)."""
     from otto.cli.cache import cache_app
 
     monkeypatch.delenv("OTTO_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
 
     result = runner.invoke(cache_app, ["info"])
 
@@ -116,15 +121,17 @@ def test_info_home_line_annotates_default_when_env_is_unset(monkeypatch):
     assert "(from $OTTO_HOME)" not in result.output
 
 
-def test_info_home_line_treats_empty_otto_home_as_unset(monkeypatch):
+def test_info_home_line_treats_empty_otto_home_as_unset(monkeypatch, tmp_path):
     """`OttoEnvSettings` (`env_ignore_empty=True`) treats `OTTO_HOME=""` as
     unset, same as `otto_home()` itself does -- this is the nuance a naive
     "is the var present in os.environ" check would get wrong. Pinning it to
     the empty string, rather than deleting it, is what makes this test
-    different from the unset case above."""
+    different from the unset case above. HOME is pinned for the same reason
+    as there: an unset home resolves to the real ``~/.otto``."""
     from otto.cli.cache import cache_app
 
     monkeypatch.setenv("OTTO_HOME", "")
+    monkeypatch.setenv("HOME", str(tmp_path))
 
     result = runner.invoke(cache_app, ["info"])
 
