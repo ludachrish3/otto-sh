@@ -187,12 +187,33 @@ old-stable set (`UDP4-LISTEN`/`TCP4-LISTEN`/`UDP4`/`TCP4`, `fork`,
 - **Two carrier ports**, one per direction, each constant along its entire
   chain (`p_fwd` on every fwd hop, `p_rev` on every rev hop). Two are required
   because an intermediate host runs one relay listener per direction and they
-  cannot bind the same TCP port. Both are picked from `[49152, 65535]`, free
-  on **every** chain host: the free-port probe (`ss`/`netstat` fallback,
-  unchanged) runs on all chain hosts, the used-sets union, and
-  `pick_free_port` returns two distinct ports. A host whose probe fails
-  (tools missing — e.g. a minimal container) contributes nothing to the
-  union; an actual bind collision is then caught by the post-add verify.
+  cannot bind the same TCP port. Both are picked free on **every** chain host:
+  the free-port probe (`ss`/`netstat` fallback) runs on all chain hosts, the
+  used-sets union, and `pick_free_port` returns two distinct ports. A host
+  whose probe fails (tools missing — e.g. a minimal container) contributes
+  nothing to the union; an actual bind collision is then caught by the
+  post-add verify.
+
+  **Amended 2026-09-11 (issue #284):** the window is no longer the fixed
+  `[49152, 65535]`. That range overlaps Linux's default ephemeral range
+  (`ip_local_port_range` = `32768 60999`) across `49152-60999`, so every
+  carrier port was one the kernel could also auto-assign — and the probe
+  cannot see that happen, because `ss -Htln` reports LISTENING sockets only
+  while a stolen port is held as an outbound connection's *source* port.
+  `reuseaddr` does not waive that conflict (it waives `TIME_WAIT` and other
+  reuse-flagged sockets, not an ordinary active socket), so socat loses the
+  bind with `EADDRINUSE` and exits, which is what #284 observed as a relay
+  that was simply "not running". The probe therefore also reports each hop's
+  ephemeral ceiling, and allocation starts above the **highest** ceiling on
+  the chain — one permissive host is enough to steal a port the others
+  considered safe. A port the kernel will never hand out cannot be raced, so
+  this closes the window rather than narrowing it. Two cases keep the
+  `[49152, 65535]` floor, both best-effort since the post-add verify still
+  catches a collision: no host reported a range, or clearing the ceiling would
+  leave under 256 ports. The floor never drops below 49152, so a host with a
+  tight ephemeral range cannot push carriers down into registered ports.
+  `--dry-run` contacts nothing and so has no ceiling to read; it keeps showing
+  the 49152 pair, flagged provisional, and says the real run allocates higher.
 
 ### 6.3 Binds, delivery, and the loop hazard
 
@@ -228,6 +249,22 @@ ingress, so a delivered datagram would U-turn into the reverse tunnel. Rules:
   path), then raise with a per-host account of what failed to start. This is
   what turns quiet bind failures (§6.3 caveat, port races, missing socat)
   into loud add-time errors. No half-tunnels survive a failed add.
+
+  **Amended 2026-09-11 (issue #284):** loud is not the same as diagnosable.
+  The launch is detached, so the daemon's stderr has nowhere synchronous to
+  go, and a bare "not running" left #284 unable to tell a lost bind race from
+  a process that had not become observable yet. Before the reap — while the
+  offending socket still exists — each host with a missing process is asked
+  for an **all-states** socket dump (`ss -Htan`, `netstat -tan` fallback,
+  deliberately not the listeners-only allocation probe, since the thief in a
+  port race is by definition not listening), and the raise names what holds
+  the port that process should have bound: a named holder means the bind lost
+  a race, "port is free" rules that out. Which port to blame follows role
+  semantics, not argv parsing — an ingress binds the service port, a relay and
+  an egress their direction's carrier port — so it holds for any carrier. The
+  diagnosis is best-effort and bounded well under `_TUNNEL_HOST_TIMEOUT`, and
+  a host that answers nothing contributes no note rather than a false
+  "the port is free"; it never replaces or delays the real error.
 - Every remote `oneshot` on these paths stays bounded by
   `_TUNNEL_HOST_TIMEOUT = 30.0` (renamed from `_LINK_HOST_TIMEOUT`) via
   `asyncio.wait_for`, and `_require_tools`' socat/bash preflight extends over
