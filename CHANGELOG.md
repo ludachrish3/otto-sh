@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] - 2026-09-11
+
+### Added
+
+- **host**: put/get move a batch concurrently behind concurrent=True / --no-concurrent, bounded per protocol
+- **host**: put/get transfer a directory tree behind recursive=False / -r on every POSIX family
+
+
+### Documentation
+
+- **spec**: concurrent transfers — every file attempted in both modes, a per-protocol cap on scp/sftp/nc
+- **spec**: recursive put/get — a directory tree behind -r on every POSIX family
+
+
+### Fixed
+
+- **nc**: root NcPortSharedError at OttoError; the legacy nc put mocks answer the listener check with a count
+- **nc**: refuse a remote port another process shares; the listener check counts, the scan starts at a random offset
+
+
+### Maintenance
+
+- **matrix**: re-measure the bed support matrix
+
+
 ## [0.12.0] - 2026-09-10
 
 ### Added
@@ -1681,7 +1706,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/ludachrish3/otto-sh/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/ludachrish3/otto-sh/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/ludachrish3/otto-sh/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/ludachrish3/otto-sh/compare/v0.9.0...v0.10.0
