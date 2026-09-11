@@ -49,7 +49,7 @@ class _FakeCtx:
 
 
 @pytest.fixture
-def preamble_gate(monkeypatch):
+def preamble_gate(monkeypatch, no_logger_output_dir):
     """Isolate ``command_preamble`` down to its reservation-gate branch.
 
     Stubs bootstrap (no errors), session/lab setup, and output-dir creation so
@@ -62,7 +62,9 @@ def preamble_gate(monkeypatch):
     monkeypatch.setattr(invoke, "ensure_cli_session", _noop)
     monkeypatch.setattr(invoke, "ensure_lab_context", _noop)
     monkeypatch.setattr("otto.bootstrap.bootstrap", bootstrap_stub)
-    monkeypatch.setattr("otto.logger.management.create_output_dir", lambda *a, **k: None)
+    # create_output_dir is already the conftest's Mock (no_logger_output_dir);
+    # shape it there rather than monkeypatching over it — see that fixture.
+    no_logger_output_dir.return_value = None
     monkeypatch.setattr("otto.context.get_context", lambda: SimpleNamespace(output_dir=None))
 
 

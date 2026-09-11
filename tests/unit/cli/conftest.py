@@ -76,8 +76,18 @@ def no_logger_output_dir():
         if getattr(handler, OTTO_HANDLER_ATTR, False):
             root.removeHandler(handler)
     try:
-        with patch("otto.logger.management.create_output_dir"):
-            yield
+        # The Mock is yielded so a test that needs create_output_dir to DO
+        # something (record its calls, return a path) sets `side_effect` /
+        # `return_value` on THIS object rather than re-patching the attribute
+        # with `monkeypatch.setattr`. The two mechanisms unwind in fixture
+        # order, and the shared `monkeypatch` fixture's position is set by
+        # whichever fixture asks for it first — so a monkeypatch over a
+        # patched attribute restores the Mock AFTER this patch has already
+        # put the real function back, and the Mock outlives the test (seen
+        # 2026-09-11 in the logger and dry-run tests on three gate runs).
+        # Pinned by tests/unit/test_autouse_fixture_ordering.py.
+        with patch("otto.logger.management.create_output_dir") as mock_create:
+            yield mock_create
     finally:
         # Put back exactly what was there (membership AND order), which also
         # drops any handler the test itself installed on root.

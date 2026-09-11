@@ -38,7 +38,7 @@ class _FakeCtx:
 
 
 @pytest.fixture
-def preamble_naming(monkeypatch):
+def preamble_naming(monkeypatch, no_logger_output_dir):
     """Isolate ``command_preamble`` down to its output-dir naming call.
 
     Stubs bootstrap (no errors), session/lab setup, the reservation gate, and
@@ -56,7 +56,9 @@ def preamble_naming(monkeypatch):
     monkeypatch.setattr(invoke, "ensure_cli_session", _noop)
     monkeypatch.setattr(invoke, "ensure_lab_context", _noop)
     monkeypatch.setattr("otto.bootstrap.bootstrap", bootstrap_stub)
-    monkeypatch.setattr("otto.logger.management.create_output_dir", _create_output_dir)
+    # create_output_dir is already the conftest's Mock (no_logger_output_dir);
+    # shape it there rather than monkeypatching over it — see that fixture.
+    no_logger_output_dir.side_effect = _create_output_dir
     monkeypatch.setattr("otto.context.get_context", lambda: SimpleNamespace(output_dir=None))
     return calls
 
