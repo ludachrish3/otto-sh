@@ -19,10 +19,13 @@ a corpus of command lines against the bootstrapped app (the real dispatch tree,
 not a warm-load stub) and asserting the shim's answer equals Typer's for every
 case it accepts, in `tests/unit/shim/test_differential.py`. The corpus is
 generated from the serialised tree itself — every command, every option, every
-fragment and complete-word shape, under four `OTTO_LAB` environments — and the
-test asserts three things. Zero mismatches over every case the shim answers. A
-floor of `MIN_ANSWERED` answered cases, so a change that collapses coverage into
-hand-overs fails loud rather than passing quietly. And a counted histogram of
+fragment and complete-word shape, under four `OTTO_LAB` environments — and
+compared in eight interleaved slices (one parametrized test each, so xdist
+spreads what was a single 4-minute test across workers; every slice walks
+every command group). The tests assert three things. Zero mismatches over
+every case the shim answers. A floor of `MIN_ANSWERED_PER_CHUNK` answered
+cases per slice, so a change that collapses coverage into hand-overs fails
+loud rather than passing quietly. And a counted histogram of
 the hand-over reasons: each must fall in a named class (a `live` completer, a
 `tunnel add --hosts` fragment past its first comma, a value attached to a flag
 that takes none, a cold collected set, stacked short flags), and the two

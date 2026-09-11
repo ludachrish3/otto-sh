@@ -41,11 +41,28 @@ verb as the ``host_id`` positional and every option of that verb as an unknown o
 of the host group. They handed over, compared nothing, and counted as coverage.
 """
 
-MIN_ANSWERED = 25000
-"""A floor under the cases that actually COMPARE, measured at 29 472 of 36 824.
+CHUNKS = 8
+"""The generated corpus is compared in this many interleaved slices, one test each.
 
-Loose enough that adding a command or an option cannot fail it, tight enough that a
-generator change which turns real cases back into hand-overs does.
+One test over the whole corpus was 150-290 s on one xdist worker under coverage —
+the long pole of every hostless leg, since nothing else on that worker could start
+until it finished (measured 2026-09-11; ~86 s uncontended). Interleaved
+(``cases[chunk::CHUNKS]``) rather than contiguous, so every slice walks every
+command group and a generator change shows up in all of them, not in whichever
+slice happened to hold the affected subtree. Eight slices on four workers keeps
+each under a minute and lets xdist spread them; the corpus itself is unchanged.
+"""
+
+MIN_ANSWERED_PER_CHUNK = 3000
+"""A floor under the cases that actually COMPARE, per slice.
+
+The whole generated corpus answered 29 920 of 37 628 cases when measured
+(2026-09-11; the hand-written lines below are counted separately: 284 cases, 236
+answered, 20 of the hand-overs the unknown-name ones). Interleaving spreads that
+evenly — 3 724 to 3 752 per slice, ~10.5 s each uncontended, ~21 s under coverage
+and xdist. 3 000 is loose enough that adding a command or an option cannot fail
+it, tight enough that a generator change which turns real cases back into
+hand-overs does.
 """
 
 
@@ -332,16 +349,19 @@ HAND_WRITTEN = [
 ENVS = [{}, {"OTTO_LAB": "east"}, {"OTTO_LAB": "west east"}, {"OTTO_LAB": ""}]
 
 
-# ~86 s uncontended: every ANSWERED case bootstraps Typer's completer. Under
-# coverage + xdist on a shared box that is one contention factor from the
-# 180 s default, so the corpus carries its own ceiling rather than a trim.
-@pytest.mark.timeout(600)
-def test_shim_equals_typer_over_the_generated_corpus(world, monkeypatch):
-    _repo, cli = world
+def _generated_corpus(world) -> list[tuple[str, int]]:
     data = json.loads(cc._cache_path().read_text())
     tree = data["sections"]["shim"]["payload"]["tree"]
     classes = data["sections"]["names"]["payload"]["host_classes_by_id"]
-    cases = [*_corpus(tree, classes), *HAND_WRITTEN]
+    return _corpus(tree, classes)
+
+
+def _compare(cli, cases, monkeypatch) -> tuple[int, dict[str, int]]:
+    """Shim vs Typer over ``cases`` x ``ENVS``; asserts equality, returns the census.
+
+    Returns how many cases actually COMPARED and the hand-over reasons bucketed by
+    class, for the caller to hold against its own floor and expected classes.
+    """
     answered = 0
     reasons: dict[str, int] = {}
     mismatches: list[str] = []
@@ -358,10 +378,31 @@ def test_shim_equals_typer_over_the_generated_corpus(world, monkeypatch):
             )
         answered += 1
     assert not mismatches, "\n".join(mismatches[:40]) + f"\n… {len(mismatches)} mismatches"
-    assert answered >= MIN_ANSWERED, (answered, reasons)
+    return answered, reasons
+
+
+# Every ANSWERED case bootstraps Typer's completer, ~10 s per slice uncontended.
+# Under coverage + xdist on a shared box that is one contention factor from
+# the 180 s default, so the slices carry their own ceiling rather than a trim.
+@pytest.mark.timeout(600)
+@pytest.mark.parametrize("chunk", range(CHUNKS))
+def test_shim_equals_typer_over_the_generated_corpus(world, monkeypatch, chunk):
+    _repo, cli = world
+    cases = _generated_corpus(world)[chunk::CHUNKS]
+    answered, reasons = _compare(cli, cases, monkeypatch)
+    assert answered >= MIN_ANSWERED_PER_CHUNK, (answered, reasons)
     # Counted, not prefix-allowed: every hand-over falls in a named class, and the two
     # classes a corpus shape that never reaches Typer lands in are counted exactly, so
-    # such a shape cannot creep back in as coverage.
+    # such a shape cannot creep back in as coverage. The generated corpus produces
+    # NONE of them — the unknown-name hand-overs are the hand-written lines' alone.
+    assert set(reasons) <= EXPECTED_HANDOVER_REASONS, reasons
+    unknowns = {r: n for r, n in reasons.items() if r.startswith("unknown ")}
+    assert unknowns == {}, reasons
+
+
+def test_shim_equals_typer_over_the_hand_written_lines(world, monkeypatch):
+    _repo, cli = world
+    _answered, reasons = _compare(cli, HAND_WRITTEN, monkeypatch)
     assert set(reasons) <= EXPECTED_HANDOVER_REASONS, reasons
     unknowns = {r: n for r, n in reasons.items() if r.startswith("unknown ")}
     assert unknowns == HAND_WRITTEN_UNKNOWNS, reasons
