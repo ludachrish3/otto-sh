@@ -106,7 +106,7 @@ def parse_listening_ports(output: str) -> set[int]:
     """Extract every port appearing as ``:<port>`` in ss/netstat output.
 
     Safe superset of used ports — we only need to avoid them. The
-    :data:`_EPHEMERAL_MARKER` line is skipped explicitly: its two bare numbers
+    ``_EPHEMERAL_MARKER`` line is skipped explicitly: its two bare numbers
     are a RANGE, not two bound ports, and reading them as ports would blacklist
     two arbitrary ports on every chain.
     """
@@ -160,9 +160,9 @@ def carrier_port_floor(ceilings: list[int]) -> int:
     collision, which is strictly more than #284 had:
 
     * no host answered, so there is no ceiling to clear;
-    * clearing it would leave under :data:`_MIN_CARRIER_WINDOW` ports.
+    * clearing it would leave under ``_MIN_CARRIER_WINDOW`` ports.
 
-    The floor never drops BELOW :data:`_LEGACY_PORT_FLOOR`: a host with a tight
+    The floor never drops BELOW ``_LEGACY_PORT_FLOOR``: a host with a tight
     ephemeral range must not push carriers down into registered service ports.
     """
     if not ceilings:
@@ -185,7 +185,7 @@ _LOCAL_ADDR_FIELD = 3
 """Column of the LOCAL address in both dumps: ``ss -Htan`` prints
 ``State Recv-Q Send-Q Local Peer`` and ``netstat -tan`` prints
 ``Proto Recv-Q Send-Q Local Foreign State`` — the same index by luck, pinned
-by :class:`~tests.unit.tunnel.test_socat.TestPortHolders` for both tools."""
+for both tools by ``TestPortHolders`` in ``tests/unit/tunnel/test_socat.py``."""
 
 
 def parse_port_holders(output: str, port: int) -> list[str]:
