@@ -700,6 +700,12 @@ every later document in the same `sphinx-build -b doctest` process then sees.
 make coverage
 ```
 
+Any `make coverage-*` target writes the HTML report to `reports/coverage/html`
+on its final pytest leg. A bare `pytest` run (or a nox session) prints the
+`term-missing` console report only — the HTML tree is asked for per lane, not
+by `pyproject.toml`'s `addopts`, so the ten legs a release drives do not each
+rewrite it.
+
 ### Manually
 
 ```bash

@@ -290,7 +290,14 @@ log_cli_date_format = "%Y-%m-%d %H:%M:%S.%f"
 # its Rust extension sets a C-level SIGINT handler at import (invisible to the
 # root conftest's signal guards, and it displaces the chained faulthandler).
 # Harmless when tach isn't installed; load-bearing when it is (issue #193).
-addopts = "-p no:tach --doctest-modules --cov=otto --cov-context=test --cov-report term-missing --cov-report html -n auto --dist loadgroup"
+# No `--cov-report html` here: the 291-file html tree is asked for by the
+# `make coverage-*` targets' final pytest leg and nowhere else (every other
+# invocation — nox legs, ad-hoc runs — paid 6 s and 291 file writes for a
+# report only `make coverage`'s reader opens). pytest-cov's `--cov-report=`
+# suppresses reporting only when it is the SOLE report option, so a lane
+# cannot opt out of a global entry; lanes opt IN instead. Pinned by
+# tests/unit/test_coverage_html_placement.py.
+addopts = "-p no:tach --doctest-modules --cov=otto --cov-context=test --cov-report term-missing -n auto --dist loadgroup"
 doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "strict"
