@@ -29,6 +29,8 @@ from scripts.gate_fresh import (
 from tests._fixtures.gitrepo import git_env
 from tests._fixtures.paths import PROJECT_ROOT
 
+pytestmark = pytest.mark.interpreter_agnostic
+
 
 def _git(repo: Path, *args: str) -> str:
     """Run one git command against *repo*, hermetically.

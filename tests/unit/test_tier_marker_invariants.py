@@ -32,6 +32,7 @@ import sys
 from itertools import pairwise
 from pathlib import Path
 
+import pytest
 import yaml
 
 try:
@@ -40,6 +41,8 @@ except ModuleNotFoundError:  # pragma: no cover - 3.10 only, otto's floor
     import tomli as tomllib
 
 from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
+
+pytestmark = pytest.mark.interpreter_agnostic
 
 _UNIT = TESTS_ROOT / "unit"
 _NOXFILE = PROJECT_ROOT / "noxfile.py"

@@ -96,6 +96,8 @@ from tests.conformance.test_timeout_contract import _BUDGET_S
 from tests.conformance.test_transfer_contract import _PAYLOAD_NAME, applicable_cell
 from tests.conftest import remote_name
 
+pytestmark = pytest.mark.interpreter_agnostic
+
 # THE RECORDED ORDER. Not derived, not sorted, not regenerated at import: a
 # recorded expectation is the only thing that can see a STABLE-BUT-WRONG
 # order, which is precisely what comparing two calls of the same

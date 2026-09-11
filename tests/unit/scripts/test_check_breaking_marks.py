@@ -28,6 +28,8 @@ from scripts.check_breaking_marks import (
 )
 from tests._fixtures.gitrepo import TmpGitRepo
 
+pytestmark = pytest.mark.interpreter_agnostic
+
 GOLDEN_HEADER = "# a golden header line, never a data line\n"
 
 

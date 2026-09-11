@@ -12,6 +12,8 @@ import pytest
 from scripts import refresh_docs_captures as rdc
 from tests._fixtures.sutrepo import make_sut_repo
 
+pytestmark = pytest.mark.interpreter_agnostic
+
 
 def _manifest(tmp_path: Path, body: str) -> Path:
     p = tmp_path / "captures.toml"

@@ -3,10 +3,12 @@
 Two numbers gate Python coverage: ``COVERAGE_THRESHOLD`` (the full fold —
 ``make coverage``'s Python legs plus the dashboard browser process's
 ``--cov-append``) and ``CI_COVERAGE_THRESHOLD`` (the hostless selection CI
-runs on five Pythons). Both live in the Makefile; the hostless one is
-restated in ``noxfile.py``'s ``HOSTLESS_SERIAL_ARGS`` because the nox session
-is what CI actually invokes, and the two are a hand-kept pair — the noxfile
-comment says "keep in step" and nothing enforced it.
+runs and gates on the two bookend Pythons; the interior versions run a
+trimmed, uninstrumented tier — see ``noxfile.py``'s
+``HOSTLESS_MIDDLE_TEST_ARGS``). Both live in the Makefile; the hostless one
+is restated in ``noxfile.py``'s ``HOSTLESS_SERIAL_ARGS`` because the nox
+session is what CI actually invokes, and the two are a hand-kept pair — the
+noxfile comment says "keep in step" and nothing enforced it.
 
 This module turns the floors into decisions. Measured on 2026-08-25: the full
 fold at 96.27-96.31 % over four runs; the hostless selection at 95.21-95.29 %

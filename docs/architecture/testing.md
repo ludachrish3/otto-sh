@@ -315,9 +315,19 @@ Three more axes sit alongside level/resource, each narrower in scope:
   3.14. `make nox-unit` re-runs the no-VM unit tier across all five
   versions — the fastest safe cross-version check. `make nox` tiers this
   further: the full suite on the 3.10 floor and the 3.14 canary (where
-  version-specific deprecation warnings show up first), and the hostless
-  slice on the versions between. `make nox-full` is the complete matrix,
-  all tiers on all five Pythons, at roughly 5× `make nox`'s wall clock.
+  version-specific deprecation warnings show up first), and a *trimmed*
+  hostless slice on the versions between — the `tests/unit` tier with the
+  `interpreter_agnostic` modules deselected and coverage off. That marker
+  names tests whose subject is the repository, its build files or a
+  generated corpus rather than otto running under a particular interpreter
+  (the lane and tier guards, the support-matrix and conformance-bed
+  plumbing, the shim differential); together with the `tests/e2e` tier,
+  which drives real `otto` subprocesses and `pip` venv builds, they were
+  65 % of an interior leg's CPU and prove the same thing on every Python.
+  The bookends still run all of it, and the trim is pinned to be a strict
+  narrowing by `tests/unit/test_python_matrix_tiering.py`. `make nox-full`
+  is the complete matrix, all tiers on all five Pythons, at roughly 5×
+  `make nox`'s wall clock.
 
 ## The host axis space: what a bed host *is*
 

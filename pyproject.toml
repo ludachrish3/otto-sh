@@ -323,6 +323,7 @@ markers = [
     "hops: multi-hop integration tests requiring 3 Vagrant VMs (deselect with -m 'not hops')",
     "embedded: requires Zephyr QEMU under the zephyr Vagrant VM (deselect with -m 'not embedded')",
     "hostless: e2e test that needs no test bed (no Vagrant VMs, no docker daemon, no Zephyr) — deselect with -m 'not hostless'",
+    "interpreter_agnostic: the test's subject is the repository, its build files or a generated corpus — not otto running under THIS interpreter — so it proves the same thing on every Python. The cross-Python matrix runs it on the BOOKEND Pythons only (noxfile.py BOOKEND_PYTHONS: the 3.10 floor and the 3.14 canary); the interior versions deselect it (HOSTLESS_MIDDLE_TEST_ARGS). Declared at MODULE level (pytestmark) under tests/unit, never per function — pinned by tests/unit/test_python_matrix_tiering.py",
     "browser: needs a Playwright browser binary (make browsers) — additive resource refinement, deselect with -m 'not browser'",
     "timeout(seconds): fail the test if it exceeds the given number of seconds",
     "retry(n): re-run a failed test body until it passes, n TOTAL attempts (retry(2) = one retry); body must be idempotent — see tests/repo1 sample",

@@ -9,8 +9,12 @@ drift across sessions, and the fixture-only tunnels each session carries
 
 import json
 
+import pytest
+
 from otto.models import MonitorExport
 from scripts.gen_monitor_fixtures import OUTAGE_S, build_all, dumps
+
+pytestmark = pytest.mark.interpreter_agnostic
 
 
 def _subjects(doc):

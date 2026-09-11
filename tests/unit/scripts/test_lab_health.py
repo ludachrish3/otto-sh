@@ -32,6 +32,8 @@ from scripts.lab_health import (
     _print_report,
 )
 
+pytestmark = pytest.mark.interpreter_agnostic
+
 
 def _route_probes(monkeypatch):
     """Run ``_print_report`` over the real lab data with both probes stubbed,

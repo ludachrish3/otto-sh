@@ -25,6 +25,18 @@ PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 # DASHBOARD_MARKER_EXPR below for why Make can't read a Python constant).
 PRIMARY_PYTHON = "3.10"
 
+# The newest supported interpreter: the warning canary. With pytest's
+# filterwarnings=error a warning only fails on versions that actually run the
+# affected code, and the newest emits them first. The Makefile's NOX_CANARY
+# mirrors this value (hand-kept, like PRIMARY_PYTHON).
+CANARY_PYTHON = "3.14"
+
+# The two interpreters that run EVERYTHING: the floor and the ceiling. The
+# versions between run the trimmed hostless pair (HOSTLESS_MIDDLE_*_ARGS
+# below). Pinned to be exactly min/max of PYTHON_VERSIONS by
+# tests/unit/test_python_matrix_tiering.py.
+BOOKEND_PYTHONS = (PRIMARY_PYTHON, CANARY_PYTHON)
+
 # JUnit XML is written into a per-target subdirectory of reports/junit/ named
 # after the `make` target that drives the session (nox-unit, nox-unix,
 # nox-embedded, nox), matching the layout the standalone Makefile test targets
@@ -45,11 +57,14 @@ nox.options.default_venv_backend = "uv"
 # that the strict config (select=ALL minus the deny-list) is green.
 nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
 
-# Coverage floors. tests_hostless gates at 95 — the Makefile's
-# CI_COVERAGE_THRESHOLD, and the floor `make coverage-hostless` enforces on the
-# same test selection, so it's the same number; tests/unit/test_coverage_floors.py
-# holds the pair equal and both above their codified minimums (the Makefile
-# comment on COVERAGE_THRESHOLD has the measurements). tests_all gates at 92,
+# Coverage floors. tests_hostless gates at 95 on the BOOKEND Pythons — the
+# Makefile's CI_COVERAGE_THRESHOLD, and the floor `make coverage-hostless`
+# enforces on the same test selection, so it's the same number;
+# tests/unit/test_coverage_floors.py holds the pair equal and both above their
+# codified minimums (the Makefile comment on COVERAGE_THRESHOLD has the
+# measurements). The interior Pythons run the trimmed pair below with coverage
+# OFF: a trimmed selection cannot meet the floor, and instrumenting a leg whose
+# report nothing reads is a quarter of its CPU for no reader. tests_all gates at 92,
 # BELOW `make coverage`'s 96 (COVERAGE_THRESHOLD): `make coverage` folds the
 # dashboard browser process's Python coverage in via --cov-append, which these
 # browser-excluded nox sessions don't, so their achievable number is lower.
@@ -106,6 +121,39 @@ HOSTLESS_SERIAL_ARGS = (
     "-n0",
     "--cov-append",
     "--cov-fail-under=95",
+)
+
+# The INTERIOR Pythons' pair (every PYTHON_VERSIONS entry not in
+# BOOKEND_PYTHONS). Measured 2026-09-11: a full hostless leg is ~1,420 s of CPU
+# per interior Python, and 65 % of it is work whose subject is not otto under
+# THIS interpreter — the tests/e2e tier (real `otto` subprocesses, real `pip`
+# venv builds), the repo-policy guards that re-collect the whole tree in a
+# subprocess, and the shim differential's 25,000-case corpus. Those prove the
+# same thing on every Python, so the interior legs run the tests/unit tier
+# with `interpreter_agnostic` deselected and coverage off; the bookends keep
+# the full selection above. Each middle expression carries EVERY clause of its
+# bookend twin plus the trim, and the bookend pair never mentions the marker
+# (a mention there would stop those tests running anywhere in the matrix) —
+# both pinned by tests/unit/test_python_matrix_tiering.py, and the constant
+# pairing itself by tests/unit/test_lane_invariants.py's serial-leg scanner.
+HOSTLESS_MIDDLE_TEST_ARGS = (
+    "tests/unit",
+    "-m",
+    (
+        "not integration and not embedded and not stability and not browser "
+        "and not busybox and not conformance and not serial_timing and not interpreter_agnostic"
+    ),
+    "--no-cov",
+)
+HOSTLESS_MIDDLE_SERIAL_ARGS = (
+    "tests/unit",
+    "-m",
+    (
+        "serial_timing and not integration and not embedded and not stability and not browser "
+        "and not busybox and not conformance and not interpreter_agnostic"
+    ),
+    "-n0",
+    "--no-cov",
 )
 
 # The per-push browser lane's marker expression. MUST match the Makefile's
@@ -184,11 +232,24 @@ def tests_hostless(session: nox.Session) -> None:
     testbed across ``tests/unit`` and ``tests/e2e``. This is what
     ``.github/workflows/ci.yml`` runs and what ``nox.options.sessions`` defaults
     to. Auto-includes any future no-testbed e2e test.
+
+    Tiered by interpreter: the BOOKEND_PYTHONS run the full pair, the interior
+    versions the trimmed HOSTLESS_MIDDLE pair (see its comment for what is
+    trimmed and why). The junit group names are shared, so
+    reports/junit/nox-hostless/<session>.xml is one file per Python either way.
     """
-    session.run("pytest", *HOSTLESS_TEST_ARGS, _junitxml(session, "nox-hostless"), *session.posargs)
-    session.run(
-        "pytest", *HOSTLESS_SERIAL_ARGS, _junitxml(session, "nox-hostless-serial"), *session.posargs
-    )
+    # Each branch spells its bundles by NAME: the lane scanners in
+    # tests/unit/test_tier_marker_invariants.py expand `*MODULE_CONSTANT` and
+    # drop anything else, so a bundle passed through a local would read as a
+    # path-less, marker-less `pytest` — and be judged as reaching every tier.
+    parallel_junit = _junitxml(session, "nox-hostless")
+    serial_junit = _junitxml(session, "nox-hostless-serial")
+    if session.python in BOOKEND_PYTHONS:
+        session.run("pytest", *HOSTLESS_TEST_ARGS, parallel_junit, *session.posargs)
+        session.run("pytest", *HOSTLESS_SERIAL_ARGS, serial_junit, *session.posargs)
+    else:
+        session.run("pytest", *HOSTLESS_MIDDLE_TEST_ARGS, parallel_junit, *session.posargs)
+        session.run("pytest", *HOSTLESS_MIDDLE_SERIAL_ARGS, serial_junit, *session.posargs)
 
 
 @nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])

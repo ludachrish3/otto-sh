@@ -127,6 +127,8 @@ from tests.conformance._vocabulary import POSIX, vocabulary_for_userland
 from tests.conformance.test_transfer_contract import _MODE as _TRANSFER_MODE
 from tests.conformance.test_transfer_contract import _PAYLOAD
 
+pytestmark = pytest.mark.interpreter_agnostic
+
 
 def _fabricated_cell(element: str, term: str, transfer: str, *, kind: str) -> ResolvedCell:
     """A cell that names an element without standing anything up.

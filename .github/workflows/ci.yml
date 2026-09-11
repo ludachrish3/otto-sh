@@ -58,8 +58,10 @@ jobs:
       # This job merely CONSUMES them. Ten tests in
       # `tests/unit/test_support_matrix.py` drive a real hermetic conformance run,
       # and the hermetic venue builds its BusyBox cells from these artifacts — so
-      # an unreachable artifact source reds a DEFAULT-gate job, on five Pythons,
-      # for a reason with nothing to do with the change under test. That is issue
+      # an unreachable artifact source reds a DEFAULT-gate job, on the two
+      # bookend Pythons (the interior versions deselect that module — it is
+      # `interpreter_agnostic`; see noxfile.py HOSTLESS_MIDDLE_TEST_ARGS), for a
+      # reason with nothing to do with the change under test. That is issue
       # #261, when busybox.net alone was that source (the release mirror now
       # answers first — see tests/_fixtures/busybox.py):
       # an SSL handshake timeout fetching 1.16.1, on a release bump that touched

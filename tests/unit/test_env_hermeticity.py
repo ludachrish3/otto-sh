@@ -23,6 +23,8 @@ from tests._ambient_env import AMBIENT_OPT_INS as AMBIENT_OPT_IN_NOTES
 from tests._ambient_env import ambient, ambient_opt_ins
 from tests._fixtures.paths import PROJECT_ROOT
 
+pytestmark = pytest.mark.interpreter_agnostic
+
 # Imported, never re-declared: a hand-copied second copy of the allowlist is
 # what let issue #192 through — the copy here can agree with itself while the
 # real strip in tests/conftest.py is missing an entry.

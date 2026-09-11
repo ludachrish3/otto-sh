@@ -47,7 +47,10 @@ COVERAGE_TARGET ?= coverage-python
 # Both floors are CODIFIED MINIMUMS, pinned by tests/unit/test_coverage_floors.py:
 # lowering either one has to change that file's constant in the same diff.
 # Measured 2026-08-25: full fold 96.27-96.31% (four runs); hostless selection
-# 95.21-95.29% across the five CI Pythons, 95.18-95.22% on a local 3.14 leg.
+# 95.21-95.29% across the five CI Pythons (since 2026-09-11 only the two
+# BOOKEND Pythons run the full hostless selection and gate on it — the interior
+# versions run a trimmed, uninstrumented tier; see noxfile.py
+# HOSTLESS_MIDDLE_TEST_ARGS), 95.18-95.22% on a local 3.14 leg.
 # The floors sit just under the measurements on purpose, so a change that
 # sheds covered lines argues with the gate rather than ratcheting the number
 # down — and .coveragerc sets `precision = 2` so the comparison is to the
@@ -339,7 +342,7 @@ nox-embedded: ## Run the embedded (Zephyr) suite across all supported Pythons. R
 	@$(SAY) "nox: embedded/Zephyr suite, all Pythons (x$(NOX_COUNT))"
 	@uv run nox -s tests_embedded -- --count=$(NOX_COUNT) --repeat-scope=session
 
-nox-hostless: ## Run the no-testbed CI gate (tests/unit + no-VM e2e) across all supported Pythons. No VMs. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-hostless/.
+nox-hostless: ## Run the no-testbed CI gate across all supported Pythons: the full selection (tests/unit + no-VM e2e, 95 coverage floor) on the bookends 3.10 + 3.14, the trimmed tests/unit tier (minus `interpreter_agnostic`, no coverage) on 3.11-3.13. No VMs. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-hostless/.
 	@$(SAY) "nox: hostless CI gate, all Pythons (x$(NOX_COUNT))"
 	@uv run nox -s tests_hostless -- --count=$(NOX_COUNT) --repeat-scope=session
 
@@ -358,10 +361,11 @@ nox-unit-repeat: ## Repeat the whole tests/unit tree twice in one process — th
 # in VM-backed code paths, which are version-specific and surface on the
 # newest interpreter first (for a while only 3.14 emitted the asyncio
 # resource-leak warnings) — so the newest keeps full VM-backed coverage as
-# the early-warning leg. The MIDDLE versions run the hostless
-# selection (the exact slice CI gates on, per push, on all five versions
-# already): interpreter-sensitive regressions live overwhelmingly in the
-# unit/hostless code paths, while the VM-backed tiers exercise otto↔testbed
+# the early-warning leg. The MIDDLE versions run the TRIMMED hostless
+# selection (noxfile.py HOSTLESS_MIDDLE_TEST_ARGS: the tests/unit tier with
+# the `interpreter_agnostic` guards deselected, coverage off): interpreter-
+# sensitive regressions live overwhelmingly in the unit code paths, while the
+# VM-backed tiers, the e2e tier and the repo-scanning guards exercise
 # behavior that does not vary across interior versions — and cross-version
 # parallelism is not an option here because xdist_group pins are
 # process-local while the lab testbed is machine-global (two concurrent
@@ -373,8 +377,8 @@ NOX_PRIMARY := 3.10
 NOX_CANARY := 3.14
 NOX_MIDDLE := 3.11 3.12 3.13
 
-nox: ## Run the full suite on the PRIMARY (3.10, floor) + CANARY (3.14, newest — version-specific warnings) Pythons, and the hostless CI-gate slice on the middle versions. Requires dev VM with Vagrant hosts up. Not used by CI. Full cross-version matrix: `make nox-full`. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/ + reports/junit/nox-hostless/.
-	@$(SAY) "nox: full suite on $(NOX_PRIMARY) + $(NOX_CANARY), hostless on $(NOX_MIDDLE) (x$(NOX_COUNT))"
+nox: ## Run the full suite on the PRIMARY (3.10, floor) + CANARY (3.14, newest — version-specific warnings) Pythons, and the trimmed hostless slice (tests/unit minus the `interpreter_agnostic` guards, no coverage) on the middle versions. Requires dev VM with Vagrant hosts up. Not used by CI. Full cross-version matrix: `make nox-full`. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/ + reports/junit/nox-hostless/.
+	@$(SAY) "nox: full suite on $(NOX_PRIMARY) + $(NOX_CANARY), trimmed hostless on $(NOX_MIDDLE) (x$(NOX_COUNT))"
 	@uv run nox -s tests_all-$(NOX_PRIMARY) tests_all-$(NOX_CANARY) $(foreach v,$(NOX_MIDDLE),tests_hostless-$(v)) -- --count=$(NOX_COUNT) --repeat-scope=session
 
 nox-full: ## Run the FULL test suite (all environments) across ALL supported Pythons — the pre-tiering `make nox` (~5× its wall-clock). Requires dev VM with Vagrant hosts up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/.

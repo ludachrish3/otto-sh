@@ -44,6 +44,8 @@ import pytest
 
 from tests._fixtures.paths import TESTS_ROOT
 
+pytestmark = pytest.mark.interpreter_agnostic
+
 _FIXTURE_MODULE = TESTS_ROOT / "_fixtures" / "gitrepo.py"
 
 # Fixture SUT repos + firmware: user-example input data, not otto's tests —

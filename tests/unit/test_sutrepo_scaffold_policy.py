@@ -53,6 +53,8 @@ import pytest
 
 from tests._fixtures.paths import TESTS_ROOT
 
+pytestmark = pytest.mark.interpreter_agnostic
+
 _FIXTURE_MODULE = TESTS_ROOT / "_fixtures" / "sutrepo.py"
 _EXCLUDED_TREES = ("repo1", "repo2", "repo3", "repo4", "repo_broken", "repo_e2e", "firmware")
 _EXEMPT_MARKER = "# sutrepo-exempt:"

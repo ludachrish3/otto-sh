@@ -74,6 +74,8 @@ from tests.unit.test_tier_marker_invariants import (
     _selected_roots,
 )
 
+pytestmark = pytest.mark.interpreter_agnostic
+
 _REPO = PROJECT_ROOT
 
 _QUOTES = ('"', "'")
@@ -196,6 +198,15 @@ def test_scanner_sees_every_override_and_fails_loud_on_the_unparseable() -> None
 # deterministic error in that lane rather than a silent skip or a flake.
 _SERIAL_LEG_TOKEN = '"serial_timing and '
 
+# The module-level constant pairs noxfile.py may spell a serial_timing
+# exclusion in: (parallel bundle, its -n0 twin). The bookend pair is what CI
+# and the bookend Pythons run; the middle pair is the interior Pythons' trim
+# (tests/unit/test_python_matrix_tiering.py pins that it narrows its twin).
+_CONSTANT_PAIRS = (
+    ("HOSTLESS_TEST_ARGS", "HOSTLESS_SERIAL_ARGS"),
+    ("HOSTLESS_MIDDLE_TEST_ARGS", "HOSTLESS_MIDDLE_SERIAL_ARGS"),
+)
+
 _SERIAL_TIMING_TESTS = {
     "tests/unit/test_lifecycle_sync_phase.py": (
         "test_second_signal_forces_immediately",
@@ -274,10 +285,11 @@ def noxfile_serial_lane_gaps(text: str) -> list[str]:
     """Sessions (or module constants) that exclude serial_timing without a leg.
 
     Function-level: an exclusion inside a session must pair with a serial leg
-    inside the same session. Module-level: the one sanctioned shape is the
-    ``HOSTLESS_TEST_ARGS`` / ``HOSTLESS_SERIAL_ARGS`` constant pair, both run
-    by one session — anything else module-level is reported so a novel shape
-    extends this pin instead of sliding past it. Comment lines are dropped
+    inside the same session. Module-level: the sanctioned shapes are the
+    constant pairs in ``_CONSTANT_PAIRS`` — a ``*_TEST_ARGS`` bundle that
+    excludes serial_timing and its ``*_SERIAL_ARGS`` twin, both run by one
+    session — anything else module-level is reported so a novel shape extends
+    this pin instead of sliding past it. Comment lines are dropped
     from every segment before the tokens are looked for (the same
     annotated-removal trap the addopts scanner was reviewed for): without
     the strip, a commented-out leg with any statement after it would keep
@@ -319,34 +331,36 @@ def noxfile_serial_lane_gaps(text: str) -> list[str]:
         and not line.lstrip().startswith("#")
         and not any(start <= lineno <= end for start, end in def_ranges)
     ]
-    hostless_span = assign_ranges.get("HOSTLESS_TEST_ARGS")
+
+    def inside(lineno: int, name: str) -> bool:
+        span = assign_ranges.get(name)
+        return span is not None and span[0] <= lineno <= span[1]
+
     stray = [
         lineno
         for lineno in module_hits
-        if hostless_span is None or not hostless_span[0] <= lineno <= hostless_span[1]
+        if not any(inside(lineno, test_name) for test_name, _ in _CONSTANT_PAIRS)
     ]
     gaps.extend(
         f"line {lineno}: module-level serial_timing exclusion outside "
-        "HOSTLESS_TEST_ARGS — extend this pin for the new shape"
+        f"{'/'.join(test_name for test_name, _ in _CONSTANT_PAIRS)} — extend this pin "
+        "for the new shape"
         for lineno in stray
     )
-    if len(stray) < len(module_hits):  # HOSTLESS_TEST_ARGS carries an exclusion
-        serial_span = assign_ranges.get("HOSTLESS_SERIAL_ARGS")
+    for test_name, serial_name in _CONSTANT_PAIRS:
+        if not any(inside(lineno, test_name) for lineno in module_hits):
+            continue  # this bundle carries no exclusion (or does not exist)
+        serial_span = assign_ranges.get(serial_name)
         if serial_span is None:
-            gaps.append(
-                "HOSTLESS_TEST_ARGS excludes serial_timing but HOSTLESS_SERIAL_ARGS is gone"
-            )
-        else:
-            serial_segment = live_segment(serial_span[0], serial_span[1])
-            if _SERIAL_LEG_TOKEN not in serial_segment or '"-n0"' not in serial_segment:
-                gaps.append(
-                    "HOSTLESS_SERIAL_ARGS lost its positive serial_timing expression or -n0"
-                )
-            if not any(
-                "HOSTLESS_TEST_ARGS" in segment and "HOSTLESS_SERIAL_ARGS" in segment
-                for segment in def_segments.values()
-            ):
-                gaps.append("no session runs both HOSTLESS_TEST_ARGS and HOSTLESS_SERIAL_ARGS")
+            gaps.append(f"{test_name} excludes serial_timing but {serial_name} is gone")
+            continue
+        serial_segment = live_segment(serial_span[0], serial_span[1])
+        if _SERIAL_LEG_TOKEN not in serial_segment or '"-n0"' not in serial_segment:
+            gaps.append(f"{serial_name} lost its positive serial_timing expression or -n0")
+        if not any(
+            test_name in segment and serial_name in segment for segment in def_segments.values()
+        ):
+            gaps.append(f"no session runs both {test_name} and {serial_name}")
     return gaps
 
 
@@ -466,6 +480,13 @@ def test_serial_lane_scanner_covers_the_hostless_constant_pair() -> None:
     stray = 'STRAY_ARGS = ("-m", "not stability and not serial_timing")\n'
     (gap,) = noxfile_serial_lane_gaps(stray)
     assert "extend this pin" in gap  # novel module-level shapes are loud, never green
+    # The interior-Python pair is a second sanctioned shape, judged by the
+    # same rules: its twin must exist, keep -n0, and share a session.
+    middle = pair.replace("HOSTLESS_", "HOSTLESS_MIDDLE_").replace("tests_hostless", "middle")
+    assert noxfile_serial_lane_gaps(pair + middle) == []
+    assert noxfile_serial_lane_gaps(
+        pair + middle.replace('    session.run("pytest", *HOSTLESS_MIDDLE_SERIAL_ARGS)\n', "")
+    ) == ["no session runs both HOSTLESS_MIDDLE_TEST_ARGS and HOSTLESS_MIDDLE_SERIAL_ARGS"]
 
 
 class _MarkedItem:

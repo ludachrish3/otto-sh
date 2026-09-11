@@ -463,7 +463,7 @@ what you want to exercise:
 |----------|------------|------------|
 | Unit tier only (level) | `make coverage-unit` (pinned) / `make nox-unit` (all Pythons) | none |
 | Unit + integration tiers (level) | `make coverage-integration` / `make nox-integration` | full lab |
-| No-testbed CI gate (tests/unit + no-VM e2e) | `make coverage-hostless` (pinned) / `make nox-hostless` (all Pythons) | none |
+| No-testbed CI gate (tests/unit + no-VM e2e) | `make coverage-hostless` (pinned) / `make nox-hostless` (full on the 3.10 + 3.14 bookends, trimmed `tests/unit` minus `interpreter_agnostic` on 3.11–3.13) | none |
 | Full coverage gate (all tiers, excludes `stability`) | `make coverage` | lab VMs |
 | Unix VMs, incl. multi-hop (resource) | `make coverage-unix` / `make nox-unix` | test1/test2/test3 |
 | Embedded / Zephyr (resource) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |
@@ -474,7 +474,7 @@ what you want to exercise:
 | Host-contract conformance, hermetic venue (opt-in; also the GitHub nightly job) | `make conformance` (`OTTO_CONFORMANCE_CELLS=N\|all`) | none — loopback sshd + pinned BusyBox artifacts as subprocesses |
 | Host-contract conformance, real bed venue (opt-in, dev VM only) | `make conformance-bed` (`CONFORMANCE_CELLS=N` to sample) | full lab: test1–test4, the five BusyBox guests, the seven Zephyr guests |
 | Everything (the dev-VM contract) | `make all` | lab VMs |
-| Cross-Python matrix | `make nox-unit` (quick, no VMs) / `make nox` (full on 3.10 + 3.14, hostless on the middle versions) / `make nox-full` (full, all Pythons) | `nox`/`nox-full` need VMs |
+| Cross-Python matrix | `make nox-unit` (quick, no VMs) / `make nox` (full on 3.10 + 3.14, trimmed hostless on the middle versions) / `make nox-full` (full, all Pythons) | `nox`/`nox-full` need VMs |
 
 `make stability-tunnel` soaks the tunnel machinery against the live bed:
 add/remove churn (2- and 3-hop), concurrent populations, racing adds,
@@ -536,7 +536,7 @@ through 3.14 — use `nox`:
 ```bash
 make nox-unit                      # unit level tier across all Pythons (no VMs)
 make nox-integration               # unit + integration tiers across all Pythons (full lab)
-make nox                           # tiered matrix: full suite on 3.10 (floor) + 3.14 (warning canary), hostless on 3.11-3.13 (needs VMs)
+make nox                           # tiered matrix: full suite on 3.10 (floor) + 3.14 (warning canary), trimmed hostless on 3.11-3.13 (needs VMs)
 make nox-full                      # complete full-suite matrix, all Pythons (needs VMs; ~2.5x nox)
 uv run nox -s tests_hostless-3.10  # the no-testbed CI gate under one Python
 uv run nox -s tests_unit-3.14 -- -k test_session   # forward args to pytest

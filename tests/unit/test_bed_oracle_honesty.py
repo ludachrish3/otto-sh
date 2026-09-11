@@ -37,6 +37,8 @@ from tests.e2e.chaos._bed import (
 )
 from tests.e2e.chaos.conftest import _hygiene_bracket_impl
 
+pytestmark = pytest.mark.interpreter_agnostic
+
 _TIMEOUT_TEXT = "Command timed out after 30s"
 
 
