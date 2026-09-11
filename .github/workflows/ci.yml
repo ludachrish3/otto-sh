@@ -26,6 +26,12 @@ jobs:
   tests:
     name: tests_hostless-${{ matrix.python }}
     runs-on: ubuntu-latest
+    # A healthy lane finishes in 9-15 minutes. Without this the job inherits
+    # GitHub's 6-hour default, and one stalled runner (2026-09-11: both xdist
+    # workers went silent mid-file at 75% with no failure and no pytest-timeout,
+    # run 34592801664) then blocks every later push in this branch's
+    # concurrency group until it expires.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
