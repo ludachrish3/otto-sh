@@ -291,7 +291,17 @@ class TestTheProtocolIsWhyThisGuardExists:
         would refuse a host whose override names a binary the device has.
         """
         fields = {f.name for f in dataclasses.fields(ScpOptions)}
-        assert fields == {"preserve", "recurse", "block_size", "extra"}, (
+        # `max_concurrent_transfers` (added alongside the bounded per-file
+        # dispatcher) is a fan-out cap, not a binary-name override -- it
+        # cannot point the protocol at a differently-named `scp`, so its
+        # presence does not change this test's premise.
+        assert fields == {
+            "preserve",
+            "recurse",
+            "block_size",
+            "extra",
+            "max_concurrent_transfers",
+        }, (
             f"ScpOptions now carries {sorted(fields)}. `refuse_if_scp_is_absent` keys on "
             f"the `scp` applet alone because no field here can point the protocol at a "
             f"differently-named binary; a new one that can makes presence of `scp` the "

@@ -21,6 +21,7 @@ on every ``*ValidationError``. And the rejections are backed by
 negative test in this file and nothing else here would notice.
 """
 
+import asyncio
 import contextlib
 import copy
 import dataclasses
@@ -39,6 +40,7 @@ from jsonschema import Draft202012Validator
 from otto.host.transfer import (
     TRANSFER_BACKENDS,
     ProgressGranularity,
+    aggregate_transfer,
     build_transfer_backend,
 )
 from otto.result import CommandResult, Result, Results
@@ -2228,18 +2230,35 @@ _FAKE_STRIDE = 16
 
 
 class _FakeTransfer:
-    """Just enough of a transfer backend for ``_transfer_backend`` to read.
+    """Just enough of a transfer backend for the contracts' readers to ask.
 
     Answers ``effective_progress_granularity`` as a real backend does -- from
     the INSTANCE, which is what ``test_progress_contract`` asks and what
     ``ScpFileTransfer`` overrides.
+
+    AND IT ANSWERS A CAP, AND OWNS THE PER-FILE DISPATCHER. The batch control
+    reads ``concurrency_limit`` to size its batch and WRAPS
+    ``_dispatch_per_file`` to count what is in flight, so a fake that carried
+    neither would make that control watch nothing at all -- its peak would
+    stay 0 and the row that must pass would go red for the harness's reason
+    rather than the control's. One is the honest answer for a backend with no
+    fan-out story (the base class answers the same), and the dispatcher is a
+    PASSTHROUGH: it runs each file in turn, which is what a cap of one means,
+    and it is deliberately not a copy of the real bounded implementation --
+    ``tests/unit/host/test_transfer_dispatch.py`` measures that; what a control
+    needs here is the seam.
     """
 
     def __init__(self, supports_mode: bool) -> None:
         self.supports_mode = supports_mode
+        self.concurrency_limit = 1
 
     def effective_progress_granularity(self) -> ProgressGranularity:
         return ProgressGranularity(put=_FAKE_STRIDE, get=_FAKE_STRIDE)
+
+    async def _dispatch_per_file(self, src_files, transfer_one, *, concurrent):
+        """Run *transfer_one* per source, keyed by source exactly as passed."""
+        return {src: await transfer_one(src) for src in src_files}
 
 
 class _FakeHost:
@@ -2339,9 +2358,28 @@ class _FakeHost:
             f"a hard-coded spelling has crept into a control body"
         )
 
-    async def put(self, src: Path, dest_dir: Path, mode=None, recursive=False):
+    async def put(
+        self,
+        src: "list[Path] | Path",
+        dest_dir: Path,
+        mode=None,
+        recursive=False,
+        concurrent=True,
+    ):
+        """Store one file, or a batch of them, through the backend's dispatcher.
+
+        A LIST OR A SINGLE PATH, the way the host protocol takes it, so the
+        one-file controls and the batch control drive the same method rather
+        than two that could drift apart.
+
+        ROUTED THROUGH ``_file_transfer._dispatch_per_file`` even though this
+        fake could just loop: that call IS the seam the batch control wraps,
+        and a fake that bypassed it would leave that control's fan-out probe
+        measuring nothing while still passing.
+        """
         if recursive:
             return self._put_tree(src, dest_dir)
+        srcs = list(src) if isinstance(src, list) else [src]
         if mode is not None and not self._file_transfer.supports_mode:
             msg = (
                 "this backend refuses every put"
@@ -2351,14 +2389,46 @@ class _FakeHost:
                     f"mode 0o{mode:o}."
                 )
             )
-            return Result(Status.Error, value={src: Result(Status.Error, msg=msg)}, msg=msg)
-        landed = str(dest_dir / src.name)
-        payload = src.read_bytes()
-        self._files[landed] = payload
-        if mode is not None:
-            self._modes[landed] = mode
-        self._report_progress(src, landed, len(payload))
-        return Result(Status.Success, value={src: Result(Status.Success)})
+            return Result(
+                Status.Error, value={one: Result(Status.Error, msg=msg) for one in srcs}, msg=msg
+            )
+        first_payload: "bytes | None" = None
+
+        async def _store(one: Path) -> Result:
+            nonlocal first_payload
+            # A REAL SUSPENSION POINT, and it is load-bearing rather than
+            # decoration: a real per-file transfer awaits I/O, and the batch
+            # control's fan-out probe counts what is IN FLIGHT. A callable that
+            # never yields runs start-to-finish the moment it is scheduled, so
+            # a dispatcher that ignored its cap entirely would still show a
+            # peak of one here and the control's upper bound would be proved by
+            # nothing.
+            await asyncio.sleep(0)
+            landed = str(dest_dir / one.name)
+            payload = one.read_bytes()
+            # The twist, and it is deliberately the QUIETEST version of itself:
+            # every name of the batch lands, and every one of them carries the
+            # FIRST file's bytes -- so only one file really made it across,
+            # under a pile of other files' names. The put succeeds, the get
+            # succeeds, every name comes back, and the count is right --
+            # nothing but reading EACH landed name and comparing it to what was
+            # sent under that name can catch it, which is exactly the claim the
+            # batch control exists to keep honest. A twist that dropped the
+            # later files outright would be caught by `get` reporting an error,
+            # and the per-name comparison would then be proved by nothing.
+            if "the-first-files-bytes-land-under-every-name" in self._twists:
+                payload = first_payload if first_payload is not None else payload
+            if first_payload is None:
+                first_payload = payload
+            self._files[landed] = payload
+            if mode is not None:
+                self._modes[landed] = mode
+            self._report_progress(one, landed, len(payload))
+            return Result(Status.Success)
+
+        return aggregate_transfer(
+            await self._file_transfer._dispatch_per_file(srcs, _store, concurrent=concurrent)
+        )
 
     def _report_progress(self, src: Path, landed: str, total: int) -> None:
         """Drive the progress handler the way ``BaseFileTransfer.put_files`` does.
@@ -2391,17 +2461,26 @@ class _FakeHost:
             done = min(done + _FAKE_STRIDE, total)
             handler(str(src), landed, done, total)
 
-    async def get(self, src: Path, dest_dir: Path, recursive=False):
+    async def get(self, src: "list[Path] | Path", dest_dir: Path, recursive=False, concurrent=True):
+        """Write back one landed file, or a batch of them, through the dispatcher."""
         if recursive:
             return self._get_tree(src, dest_dir)
-        if "get-answers-the-contracts-payload" in self._twists:
-            data = _PAYLOAD
-        else:
-            data = self._files.get(str(src))
-        if data is None:
-            return Result(Status.Error, msg=f"no such file: {src}")
-        (dest_dir / Path(src).name).write_bytes(data)
-        return Result(Status.Success, value={src: Result(Status.Success)})
+        srcs = list(src) if isinstance(src, list) else [src]
+
+        async def _fetch(one: Path) -> Result:
+            await asyncio.sleep(0)  # see `_store`: the probe counts what is in flight
+            if "get-answers-the-contracts-payload" in self._twists:
+                data = _PAYLOAD
+            else:
+                data = self._files.get(str(one))
+            if data is None:
+                return Result(Status.Error, msg=f"no such file: {one}")
+            (dest_dir / Path(one).name).write_bytes(data)
+            return Result(Status.Success)
+
+        return aggregate_transfer(
+            await self._file_transfer._dispatch_per_file(srcs, _fetch, concurrent=concurrent)
+        )
 
     def _put_tree(self, src: Path, dest_dir: Path):
         """Store every file AND every directory under *src*, keyed by its landed path."""
@@ -2496,6 +2575,9 @@ CONTROLS = {
     "transfer-recursive": (
         _transfer_contract.test_control_the_tree_that_comes_back_is_the_tree_that_was_sent
     ),
+    "transfer-concurrent": (
+        _transfer_contract.test_control_the_batch_that_comes_back_is_the_batch_that_was_sent
+    ),
     "timeout": (
         _timeout_contract.test_control_a_command_inside_its_budget_is_not_reported_as_timed_out
     ),
@@ -2554,6 +2636,14 @@ HOST_CASES = [
         "get -r answers a constant tree",
         "transfer-recursive",
         ("get-answers-the-contracts-tree",),
+        True,
+        False,
+    ),
+    ("every file of a batch lands", "transfer-concurrent", (), True, True),
+    (
+        "the first file's bytes under every name",
+        "transfer-concurrent",
+        ("the-first-files-bytes-land-under-every-name",),
         True,
         False,
     ),
@@ -5389,8 +5479,8 @@ def test_the_page_is_reachable_from_the_architecture_index():
 
     In the OVERVIEW toctree beside `testing` and `quality-gates`, and deliberately NOT
     under `subsystems/`: the spec says "alongside the busybox-support page", but this
-    matrix is cross-cutting -- seven surfaces spanning hosts, execution and transfer over
-    nine profiles -- and filing a cross-cutting reference under one area makes it less
+    matrix is cross-cutting -- nine surfaces spanning execution, transfer and timeouts
+    over nine profiles -- and filing a cross-cutting reference under one area makes it less
     findable than it deserves.
     """
     index = (PROJECT_ROOT / "docs" / "architecture" / "index.rst").read_text(encoding="utf-8")
@@ -5460,6 +5550,7 @@ def test_the_narrowing_pin_examines_a_real_mechanism_on_every_narrowing_surface(
         "transfer-mode",
         "transfer-progress",
         "transfer-recursive",
+        "transfer-concurrent",
         "timeout",
     }
     assert set(with_rules) == narrowing, (
@@ -5903,14 +5994,14 @@ def test_a_cell_nothing_has_watched_yet_still_describes_the_promise(committed):
 
 
 def test_a_surface_with_one_observable_still_promises_it(committed):
-    """The accept-control for all of the above: six of the eight surfaces are unbranched.
+    """The accept-control for all of the above: seven of the nine surfaces are unbranched.
 
     Without it, a `promise_of` that answered "no promise" for everything would satisfy
     every refusal above and publish a page that promises nothing at all.
     """
     page = _page(committed)
     unbranched = [surface.id for surface in SURFACES if not VOICE[surface.id].branches]
-    assert len(unbranched) == 6, f"the tree's branching surfaces have changed: {unbranched}"
+    assert len(unbranched) == 7, f"the tree's branching surfaces have changed: {unbranched}"
     for surface_id in unbranched:
         cell = committed["cells"][surface_id]["gnu"]
         assert promise_of(surface_id, cell).capability == VOICE[surface_id].capability

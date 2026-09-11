@@ -108,10 +108,20 @@ class SftpOptionsSpec(OttoModel):
     env: dict[str, str] | None = None
     send_env: list[str] | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
+    # Bound as a `Field` kwarg, not as `Annotated[int, Field(ge=1)]`: autodoc's
+    # annotation stringifier turns the metadata into dotted py:class targets
+    # (`Ge`, `FieldInfo`, `NoneType`) and nitpicky -W fails the docs build on
+    # them. Same constraint, and the same reason as `CoverageReportSpec.high`.
+    max_concurrent_transfers: int | None = Field(default=None, ge=1)
 
     def to_runtime(self) -> rt.SftpOptions:
         """Build the ``SftpOptions`` runtime dataclass from the validated spec fields."""
-        return rt.SftpOptions(env=self.env, send_env=self.send_env, extra=dict(self.extra))
+        return rt.SftpOptions(
+            env=self.env,
+            send_env=self.send_env,
+            extra=dict(self.extra),
+            max_concurrent_transfers=self.max_concurrent_transfers,
+        )
 
 
 class ScpOptionsSpec(OttoModel):
@@ -126,6 +136,11 @@ class ScpOptionsSpec(OttoModel):
     recurse: bool = True
     block_size: int = 16384
     extra: dict[str, Any] = Field(default_factory=dict)
+    # Bound as a `Field` kwarg, not as `Annotated[int, Field(ge=1)]`: autodoc's
+    # annotation stringifier turns the metadata into dotted py:class targets
+    # (`Ge`, `FieldInfo`, `NoneType`) and nitpicky -W fails the docs build on
+    # them. Same constraint, and the same reason as `CoverageReportSpec.high`.
+    max_concurrent_transfers: int | None = Field(default=None, ge=1)
 
     def to_runtime(self) -> rt.ScpOptions:
         """Build the ``ScpOptions`` runtime dataclass from the validated spec fields."""
@@ -134,6 +149,7 @@ class ScpOptionsSpec(OttoModel):
             recurse=self.recurse,
             block_size=self.block_size,
             extra=dict(self.extra),
+            max_concurrent_transfers=self.max_concurrent_transfers,
         )
 
 

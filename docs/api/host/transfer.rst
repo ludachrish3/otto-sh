@@ -53,6 +53,57 @@ ordinary per-level gets. Every unix backend (``scp``, ``sftp``, ``ftp``,
 ``nc``, ``shell``) and every POSIX family carries it with its own progress
 bars, ``mode`` batching and ``user`` handling unchanged.
 
+.. _concurrent-transfers:
+
+Concurrent transfers
+--------------------
+
+``put`` and ``get`` move the files of one batch concurrently by default
+(``concurrent=True``; ``--concurrent`` on the CLI) and one at a time with
+``concurrent=False`` (``--no-concurrent``). The rules, stated once here:
+
+* **The flag is an in-flight count, nothing more.** With ``concurrent=True``
+  a backend may have up to its protocol's ``max_concurrent_transfers`` files
+  in flight; with ``False`` exactly one. Every source is attempted in both
+  modes and answers its own entry -- no source is ``Skipped`` because a
+  sibling failed. The only ``Skipped`` a transfer produces is a sibling of a
+  directory handed to a non-recursive ``put`` (:ref:`recursive-transfers`).
+* **The cap is per protocol and per connection.** ``scp_options``,
+  ``sftp_options`` and ``nc_options`` each carry ``max_concurrent_transfers``;
+  ``None`` derives a bound that fits a default OpenSSH server, described in
+  :ref:`the host-options guide <transfer-channel-budget>` (``null`` when you
+  spell it in lab data). ``shell``, ``ftp``,
+  the embedded ``console`` and ``tftp``, and the local copy carry one file at
+  a time; they accept ``concurrent=True`` and run one at a time.
+* **One budget per transfer object.** Overlapping calls on one host -- the
+  levels of a recursive transfer, or your own ``asyncio.gather`` of several
+  ``put`` calls -- share the object's semaphore, so together they never
+  exceed the cap. Three hosts each receiving a tree run three independent
+  budgets, and a ``user=`` transfer is its own object on its own SSH
+  connection with a budget of its own. The scp/sftp default deliberately
+  claims only half the connection's usable channels: the other half is left
+  for whatever else you run on that connection while the batch is in flight
+  -- your own exec calls, a second transfer on another backend, an
+  interactive session.
+* **Containers** forward ``concurrent`` to the staging leg through the parent
+  host; the ``docker cp`` leg is one command per file. Every file that
+  staged is copied; a failed ``docker cp`` is that file's entry only.
+* **Trees.** With ``concurrent=True`` every directory level's transfer is
+  launched together and the backend's cap bounds the whole tree; with
+  ``False`` levels and files go one at a time.
+* **Cancellation stops the batch.** A cancellation reaching a transfer --
+  a Ctrl-C, an ``asyncio.timeout`` -- cancels the files in flight and waits
+  for each to finish cleaning up before it propagates, so nothing is left
+  running behind it. No entry is fabricated for a cancelled file and nothing
+  is retried; with ``concurrent=False`` the files not yet reached are simply
+  never started.
+* **Dry run** is unchanged: every entry is ``NotRun`` before any dispatch.
+
+Two behaviours changed when this landed: ``scp`` and ``sftp`` batches larger
+than the cap now queue instead of failing past a default server's
+``MaxSessions``; and ``ftp``, ``shell``, ``console`` and local batches no
+longer stop at the first failure.
+
 .. ProgressGranularity is defined in otto.host.transfer.base and is documented
    there, on its own submodule page. That is the shape docs/api/link.rst and
    docs/api/tunnel.rst already use -- each excludes its re-exported members

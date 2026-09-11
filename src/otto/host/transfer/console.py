@@ -21,7 +21,6 @@ from .base import (
     TransferContext,
     TransferProgressFactory,
     TransferProgressHandler,
-    mark_skipped,
 )
 from .embedded_base import EmbeddedFileTransfer
 from .registry import register_transfer_backend
@@ -137,26 +136,28 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
-        """Transfer files off the embedded target — sequential (single console).
+        """Transfer files off the embedded target — one at a time (single console).
 
         ``_console_get_one`` reads the file in a single ``fs read`` command,
         so per-byte progress isn't feasible; the handler is invoked once at
-        completion to satisfy the "files complete to 100%" contract. A file
-        failure stops the loop and every not-yet-attempted file is Skipped.
+        completion to satisfy the "files complete to 100%" contract. A single
+        console means
+        :attr:`~otto.host.transfer.BaseFileTransfer.concurrency_limit` stays
+        one and ``concurrent=True`` is a no-op, but every file is attempted;
+        a failure is its own entry.
         """
         if not self._filesystem.supports_transfer:
             return {src: Result(Status.Error, msg=_NO_FILESYSTEM_MSG) for src in src_files}
         await self._ensure_mounted()
-        per_file: dict[Path, Result] = {}
-        for i, src in enumerate(src_files):
+
+        async def _get_one(src: Path) -> Result:
             handler = progress_factory() if progress_factory is not None else None
-            result = await self._console_get_one(src, dest_dir, handler)
-            per_file[src] = result
-            if not result.is_ok:
-                mark_skipped(per_file, src_files[i + 1 :])
-                break
-        return per_file
+            return await self._console_get_one(src, dest_dir, handler)
+
+        return await self._dispatch_per_file(src_files, _get_one, concurrent=concurrent)
 
     @override
     async def _run_put(
@@ -164,27 +165,27 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
-        """Transfer local files onto the embedded target — sequential.
+        """Transfer local files onto the embedded target — one at a time.
 
         ``_console_put_one`` writes in 32-byte chunks (``_WRITE_CHUNK``), so
         the handler is invoked after each chunk for genuine per-byte
         progress — much finer than asyncssh's 256 KB SCP block, fitting the
-        slowness of console transfer. A file failure stops the loop and every
-        not-yet-attempted file is Skipped.
+        slowness of console transfer. One console means ``concurrent=True``
+        is a no-op here, exactly as in :meth:`_run_get`; every file is
+        attempted; a failure is its own entry.
         """
         if not self._filesystem.supports_transfer:
             return {src: Result(Status.Error, msg=_NO_FILESYSTEM_MSG) for src in src_files}
         await self._ensure_mounted()
-        per_file: dict[Path, Result] = {}
-        for i, src in enumerate(src_files):
+
+        async def _put_one(src: Path) -> Result:
             handler = progress_factory() if progress_factory is not None else None
-            result = await self._console_put_one(src, dest_dir, handler)
-            per_file[src] = result
-            if not result.is_ok:
-                mark_skipped(per_file, src_files[i + 1 :])
-                break
-        return per_file
+            return await self._console_put_one(src, dest_dir, handler)
+
+        return await self._dispatch_per_file(src_files, _put_one, concurrent=concurrent)
 
     # ------------------------------------------------------------------
     # console backend — get

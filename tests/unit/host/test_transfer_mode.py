@@ -129,13 +129,13 @@ class _FakeBackend(BaseFileTransfer):
         self._chmod_result = Result(Status.Success) if chmod_result is None else chmod_result
         self._outcomes = outcomes
 
-    async def _run_put(self, src_files, dest_dir, progress_factory):
+    async def _run_put(self, src_files, dest_dir, progress_factory, *, concurrent=True):
         self.run_put_calls += 1
         if self._outcomes is not None:
             return dict(self._outcomes)
         return {src: Result(Status.Success, value=dest_dir / src.name) for src in src_files}
 
-    async def _run_get(self, src_files, dest_dir, progress_factory):
+    async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
         return {}
 
     async def _apply_mode(self, dest_paths, mode):
@@ -243,10 +243,10 @@ class _ConcreteUnix(UnixFileTransfer):
     transfer methods are stubbed out.
     """
 
-    async def _run_put(self, src_files, dest_dir, progress_factory):
+    async def _run_put(self, src_files, dest_dir, progress_factory, *, concurrent=True):
         return {}
 
-    async def _run_get(self, src_files, dest_dir, progress_factory):
+    async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
         return {}
 
 
@@ -432,10 +432,12 @@ async def test_docker_put_chmods_inside_the_container(monkeypatch):
     # The staging put must NOT carry the mode — staging is deleted anyway, and
     # relying on `docker cp` to preserve it is exactly what we are avoiding.
     # (An allowlist rather than "no kwargs at all": show_progress legitimately
-    # rides the staging leg, which is the transfer that renders bars; nothing
-    # else — not mode, not user — may.)
+    # rides the staging leg, which is the transfer that renders bars, and
+    # concurrent legitimately rides along too — it governs how many files the
+    # staging leg has in flight at once, the same knob the caller passed to
+    # this put(); nothing else — not mode, not user — may.)
     assert not staged_put_kwargs["args"]
-    assert set(staged_put_kwargs["kwargs"]) <= {"show_progress"}
+    assert set(staged_put_kwargs["kwargs"]) <= {"show_progress", "concurrent"}
 
 
 @pytest.mark.asyncio

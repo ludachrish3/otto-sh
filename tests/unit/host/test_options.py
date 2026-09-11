@@ -173,6 +173,12 @@ class TestSftpScpOptions:
         assert kw["block_size"] == 65536
         assert kw["preserve"] is True
 
+    def test_the_transfer_bound_is_otto_s_and_never_reaches_asyncssh(self):
+        assert ScpOptions().max_concurrent_transfers is None
+        assert SftpOptions().max_concurrent_transfers is None
+        assert "max_concurrent_transfers" not in ScpOptions(max_concurrent_transfers=3)._kwargs()
+        assert "max_concurrent_transfers" not in SftpOptions(max_concurrent_transfers=3)._kwargs()
+
 
 # ---------------------------------------------------------------------------
 # NcOptions

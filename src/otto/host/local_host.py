@@ -32,7 +32,7 @@ from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .file_ops import PosixFileOps
-from .host import _EXEC_REAP_TIMEOUT, BaseHost, is_dry_run
+from .host import _EXEC_REAP_TIMEOUT, CONCURRENT_HELP, BaseHost, is_dry_run
 from .privilege import PosixPrivilege
 from .session import (
     Expect,
@@ -41,7 +41,6 @@ from .session import (
     SessionManager,
 )
 from .transfer import BaseFileTransfer, ProgressGranularity, TransferProgressFactory
-from .transfer.base import mark_skipped
 
 if TYPE_CHECKING:
     from .recursive_transfer import RemoteListing
@@ -77,28 +76,35 @@ class LocalFileTransfer(BaseFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
+        *,
+        concurrent: bool,
     ) -> dict[Path, Result]:
-        # Sequential single-directory copy: an OSError (e.g. a missing source)
-        # stops the loop and every not-yet-copied file is marked Skipped. Keyed
-        # by the source path exactly as passed.
-        per_file: dict[Path, Result] = {}
+        # A single-directory copy, keyed by the source path exactly as passed.
+        # The destination directory is made ONCE, before any file: a failure
+        # there is every file's failure, not the first one's. Past it, an
+        # OSError (a missing source, say) is that file's own entry and the
+        # files beside it still copy.
         try:
             dest_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
             return {src: Result(Status.Error, msg=str(e)) for src in src_files}
-        for i, src in enumerate(src_files):
+
+        async def _copy_one(src: Path) -> Result:
             dest = dest_dir / src.name
             try:
                 await asyncio.to_thread(shutil.copy2, src, dest)
                 if progress_factory is not None:
+                    # Inside the try deliberately: `dest.stat()` is a syscall
+                    # of its own, and an OSError from it must carry the same
+                    # bare `str(e)` this arm has always reported rather than
+                    # the dispatcher's `f"{src}: {exc}"` fold.
                     size = dest.stat().st_size
                     progress_factory()(str(src), str(dest), size, size)
             except OSError as e:
-                per_file[src] = Result(Status.Error, msg=str(e))
-                mark_skipped(per_file, src_files[i + 1 :])
-                break
-            per_file[src] = Result(Status.Success, value=dest)
-        return per_file
+                return Result(Status.Error, msg=str(e))
+            return Result(Status.Success, value=dest)
+
+        return await self._dispatch_per_file(src_files, _copy_one, concurrent=concurrent)
 
     @override
     async def _run_put(
@@ -106,8 +112,10 @@ class LocalFileTransfer(BaseFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
-        return await self._do_copy(src_files, dest_dir, progress_factory)
+        return await self._do_copy(src_files, dest_dir, progress_factory, concurrent=concurrent)
 
     @override
     async def _run_get(
@@ -115,8 +123,10 @@ class LocalFileTransfer(BaseFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
-        return await self._do_copy(src_files, dest_dir, progress_factory)
+        return await self._do_copy(src_files, dest_dir, progress_factory, concurrent=concurrent)
 
     @override
     async def _apply_mode(self, dest_paths: list[Path], mode: int) -> Result:
@@ -162,7 +172,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         get_user=UserSupport.refused,
         show_progress=False,
         session_identity=SessionIdentity.as_user_scoped,
-        transfer="`shutil.copy2` on the machine's own filesystem",
+        transfer="`shutil.copy2` on the machine's own filesystem, one file at a time",
         note=(
             "otto already runs as the invoking user and local copies keep that "
             "user's ownership, so no verb takes `user=`; `as_user()` still "
@@ -465,6 +475,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
         recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
+        concurrent: Annotated[bool, Opt(help=CONCURRENT_HELP)] = True,
     ) -> Result:
         """Copy files to dest_dir on the local filesystem.
 
@@ -473,7 +484,8 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         machinery as Unix and embedded backends.
 
         ``recursive`` transfers each directory among the sources as a tree;
-        see :ref:`recursive-transfers`.
+        see :ref:`recursive-transfers`. ``concurrent`` bounds the files in
+        flight; see :ref:`concurrent-transfers`.
         """
         if user is not None:
             raise NotImplementedError(
@@ -485,13 +497,21 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         if recursive:
             from .recursive_transfer import get_tree
 
-            return await get_tree(self, src_files, dest_dir, user=user, show_progress=show_progress)
+            return await get_tree(
+                self,
+                src_files,
+                dest_dir,
+                user=user,
+                show_progress=show_progress,
+                concurrent=concurrent,
+            )
         if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
         return await self._file_transfer.get_files(
             src_files,
             dest_dir,
             show_progress,
+            concurrent=concurrent,
         )
 
     @override
@@ -515,6 +535,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
         recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
+        concurrent: Annotated[bool, Opt(help=CONCURRENT_HELP)] = True,
     ) -> Result:
         """Copy files to dest_dir on the local filesystem.
 
@@ -525,7 +546,8 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         file's own permissions.
 
         ``recursive`` transfers each directory among the sources as a tree;
-        see :ref:`recursive-transfers`.
+        see :ref:`recursive-transfers`. ``concurrent`` bounds the files in
+        flight; see :ref:`concurrent-transfers`.
         """
         if user is not None:
             raise NotImplementedError(
@@ -538,7 +560,13 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             from .recursive_transfer import put_tree
 
             return await put_tree(
-                self, src_files, dest_dir, mode=mode, user=user, show_progress=show_progress
+                self,
+                src_files,
+                dest_dir,
+                mode=mode,
+                user=user,
+                show_progress=show_progress,
+                concurrent=concurrent,
             )
         if is_dry_run():
             return self._dry_run_transfer("PUT", src_files, dest_dir, mode)
@@ -547,6 +575,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             dest_dir,
             show_progress,
             mode,
+            concurrent=concurrent,
         )
 
     @override

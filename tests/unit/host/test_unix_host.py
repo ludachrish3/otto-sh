@@ -22,7 +22,7 @@ from otto.host.connections import _UserConnections
 from otto.host.element import Element
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.login_proxy import Cred
-from otto.host.options import NcOptions, SshOptions, UserlandOptions
+from otto.host.options import NcOptions, SftpOptions, SshOptions, UserlandOptions
 from otto.host.session import ShellSession
 from otto.host.transfer.nc import _TIMEOUT_STYLE_PREFIXES
 from otto.host.userland import Userland
@@ -2706,7 +2706,7 @@ class TestRecursiveTransfer:
 
         # `_transfer_for(None)` answers the CACHED `_file_transfer` built at
         # init, so the per-level puts are observed on that object directly.
-        async def put_files(files, dest_dir, show_progress, mode):
+        async def put_files(files, dest_dir, show_progress, mode, *, concurrent=True):
             puts.append((list(files), dest_dir))
             return Result(
                 Status.Success,
@@ -2777,7 +2777,7 @@ class TestRecursiveTransfer:
         monkeypatch.setattr(host, "_walk_remote", fake_walk)
         gets: list[tuple[list[Path], Path]] = []
 
-        async def get_files(files, dest_dir, show_progress):
+        async def get_files(files, dest_dir, show_progress, *, concurrent=True):
             gets.append((list(files), dest_dir))
             return Result(
                 Status.Success,
@@ -2819,7 +2819,7 @@ class TestRecursiveTransfer:
 
         monkeypatch.setattr(host, "_mkdir_all", fake_mkdir_all)
 
-        async def put_files(files, dest_dir, show_progress, mode):
+        async def put_files(files, dest_dir, show_progress, mode, *, concurrent=True):
             return Result(
                 Status.Success,
                 value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
@@ -2830,3 +2830,73 @@ class TestRecursiveTransfer:
         await host.put(tree, Path("drop"), recursive=True)
 
         assert mkdirs == [[Path("/srv/drop/tree")]]
+
+
+class TestConcurrentPassThrough:
+    """``concurrent`` reaches the transfer backend, which is the only place it means anything."""
+
+    @pytest.mark.asyncio
+    async def test_put_passes_concurrent_to_the_backend(
+        self, host: UnixHost, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        src = tmp_path / "a.txt"
+        src.write_text("a")
+        seen: dict[str, object] = {}
+
+        async def put_files(files, dest_dir, show_progress, mode, *, concurrent):
+            seen["concurrent"] = concurrent
+            return Result(
+                Status.Success,
+                value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+            )
+
+        monkeypatch.setattr(host._file_transfer, "put_files", put_files)
+
+        await host.put([src], Path("/opt"), concurrent=False)
+
+        assert seen["concurrent"] is False
+
+    @pytest.mark.asyncio
+    async def test_get_passes_concurrent_to_the_backend(
+        self, host: UnixHost, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        seen: dict[str, object] = {}
+
+        async def get_files(files, dest_dir, show_progress, *, concurrent):
+            seen["concurrent"] = concurrent
+            return Result(
+                Status.Success,
+                value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+            )
+
+        monkeypatch.setattr(host._file_transfer, "get_files", get_files)
+
+        await host.get([Path("/remote/a.txt")], tmp_path, concurrent=False)
+
+        assert seen["concurrent"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_transfer_context_carries_the_sftp_options(monkeypatch: pytest.MonkeyPatch):
+    """sftp's cap is read from ctx.sftp_options -- a context without it silently derives forever."""
+    from otto.host import unix_host as uh
+
+    seen: dict[str, object] = {}
+
+    class _Recorder:
+        @classmethod
+        def create(cls, ctx):
+            seen["ctx"] = ctx
+            return MagicMock()
+
+    monkeypatch.setattr(uh, "build_transfer_backend", lambda name: _Recorder)
+    host = UnixHost(
+        ip="10.0.0.1",
+        element=Element("box"),
+        creds=[Cred(login="user", password="pass")],
+        transfer="sftp",
+        sftp_options=SftpOptions(max_concurrent_transfers=2),
+        log=LogMode.QUIET,
+    )
+    host._build_file_transfer()
+    assert seen["ctx"].sftp_options.max_concurrent_transfers == 2

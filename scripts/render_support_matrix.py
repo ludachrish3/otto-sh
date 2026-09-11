@@ -203,7 +203,7 @@ class Voice:
     branches: "tuple[Branch, ...]" = ()
     """The observables this surface can offer, when it offers more than one.
 
-    Empty for a surface with a single observable, which is six of the seven today.
+    Empty for a surface with a single observable, which is seven of the nine today.
     Non-empty means :attr:`capability` is never used for a MEASURED cell: the cell's
     own stored ``observable`` decides which arm ran, and an observable matching no arm
     -- or more than one -- publishes NO promise and fails the docs build.
@@ -341,6 +341,22 @@ VOICE: "dict[str, Voice]" = {
         ),
         narrowed_detail=(
             "The same narrowing as the three transfer surfaces above, read from the same "
+            "answer: `remote_scratch` is `None` for exactly those hosts."
+        ),
+    ),
+    "transfer-concurrent": Voice(
+        short="batch",
+        capability=(
+            "put a batch of files larger than the protocol's concurrency cap and get every "
+            "one back, whether the files move together or one at a time"
+        ),
+        narrowed=(
+            "otto reports nowhere to put a file on such a device -- its filesystem "
+            "backend answers `supports_transfer` False -- so there is no batch to put "
+            "and nothing to read back"
+        ),
+        narrowed_detail=(
+            "The same narrowing as the transfer surfaces above, read from the same "
             "answer: `remote_scratch` is `None` for exactly those hosts."
         ),
     ),

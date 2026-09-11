@@ -296,6 +296,20 @@ class SftpOptions:
     extra: dict[str, Any] = field(default_factory=dict)
     """Extra kwargs forwarded to ``SSHClientConnection.start_sftp_client()``."""
 
+    max_concurrent_transfers: int | None = None
+    """How many files of one transfer may be in flight at once. ``None`` derives
+    a bound that fits a DEFAULT OpenSSH server.
+
+    Each in-flight file is one SSH session on the shared connection, and the
+    real ceiling is that host's ``MaxSessions`` (10 unless configured), which
+    sshd enforces by REFUSING the excess rather than queueing it. The derived
+    default takes only half the usable budget, so a full fan-out still leaves
+    the connection room for whatever else the caller runs on it while the
+    batch is in flight. Raise it on a host with a raised ``MaxSessions``;
+    lower it on one that was lowered. Never forwarded to asyncssh -- it is
+    otto's own bound. The arithmetic lives in
+    :ref:`the host-options guide <transfer-channel-budget>`."""
+
     def _kwargs(self) -> dict[str, Any]:
         kw: dict[str, Any] = {}
         if self.env is not None:
@@ -330,6 +344,20 @@ class ScpOptions:
 
     extra: dict[str, Any] = field(default_factory=dict)
     """Extra kwargs forwarded to ``asyncssh.scp()``."""
+
+    max_concurrent_transfers: int | None = None
+    """How many files of one transfer may be in flight at once. ``None`` derives
+    a bound that fits a DEFAULT OpenSSH server.
+
+    Each in-flight file is one SSH session on the shared connection, and the
+    real ceiling is that host's ``MaxSessions`` (10 unless configured), which
+    sshd enforces by REFUSING the excess rather than queueing it. The derived
+    default takes only half the usable budget, so a full fan-out still leaves
+    the connection room for whatever else the caller runs on it while the
+    batch is in flight. Raise it on a host with a raised ``MaxSessions``;
+    lower it on one that was lowered. Never forwarded to asyncssh -- it is
+    otto's own bound. The arithmetic lives in
+    :ref:`the host-options guide <transfer-channel-budget>`."""
 
     def _kwargs(self) -> dict[str, Any]:
         kw: dict[str, Any] = {

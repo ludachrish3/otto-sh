@@ -31,12 +31,16 @@ from ...result import CommandResult, Result
 from ...utils import Status, WaitTimeoutError, wait_for_async
 from ..errors import HostCommandError, HostUnreachableError
 from .base import (
+    SSH_CHANNEL_HEADROOM,
+    SSHD_DEFAULT_MAX_SESSIONS,
     NcListenerCheck,
     NcPortStrategy,
     ProgressGranularity,
     TransferContext,
     TransferProgressFactory,
     TransferProgressHandler,
+    derive_concurrency_limit,
+    resolve_concurrency_limit,
 )
 from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
@@ -155,22 +159,22 @@ _TIMEOUT_STYLE_PREFIXES = {
 # a channel too, so once the budget is gone a perfectly healthy listener cannot
 # be confirmed.
 #
-# The bound is on whole TRANSFERS, not on channels, and that is load-bearing: a
-# semaphore at the channel layer DEADLOCKS here, because an in-flight listener
-# holds its channel while its own readiness poll asks for a second one — enough
-# listeners would take every permit and block the polls that must finish to
-# release them.
-_NC_SSHD_DEFAULT_MAX_SESSIONS = 10
-# One for the `nc -l` listener, held for the whole transfer; one for the
-# readiness poll that runs while it is held.
+# The four names stay local to this module because they say what THIS backend
+# spends, but each is the shared derivation's answer rather than a second
+# spelling of the same arithmetic.
+_NC_SSHD_DEFAULT_MAX_SESSIONS = SSHD_DEFAULT_MAX_SESSIONS
+# A permit spans one whole TRANSFER, not one channel, and that is load-bearing.
+# Bounding channels DEADLOCKS here: an in-flight listener holds its channel
+# while its own readiness poll asks for a second, so enough listeners would take
+# every permit and block the very polls that must finish to release them. So one
+# transfer is charged both channels up front: one for the `nc -l` listener, held
+# for the whole transfer; one for the readiness poll that runs while it is held.
 _NC_CHANNELS_PER_TRANSFER = 2
 # Left for the pooled control session and the exec the caller may already be
 # inside. Without it a full budget would sit exactly at the ceiling, where any
 # other concurrent exec on the same connection is the one that gets refused.
-_NC_CHANNEL_HEADROOM = 2
-_NC_MAX_CONCURRENT_TRANSFERS = (
-    _NC_SSHD_DEFAULT_MAX_SESSIONS - _NC_CHANNEL_HEADROOM
-) // _NC_CHANNELS_PER_TRANSFER
+_NC_CHANNEL_HEADROOM = SSH_CHANNEL_HEADROOM
+_NC_MAX_CONCURRENT_TRANSFERS = derive_concurrency_limit(_NC_CHANNELS_PER_TRANSFER)
 
 # Close-handshake bound; past it the transport is aborted (a stalled channel
 # never flushes, so its graceful close never completes — leaking the fd, the
@@ -473,21 +477,44 @@ class NcFileTransfer(UnixFileTransfer):
         self._prepare_lock = asyncio.Lock()
         # Resolved once, here, rather than read per transfer: an out-of-range
         # value must fail loudly at construction. A limit of 0 would otherwise
-        # hand `_gather_per_file` a semaphore no permit ever comes out of, and a
-        # bulk transfer would hang with nothing to point at.
-        limit = nc_options.max_concurrent_transfers
-        if limit is None:
-            limit = _NC_MAX_CONCURRENT_TRANSFERS
-        elif limit < 1:
-            raise ValueError(f"nc_options.max_concurrent_transfers must be at least 1, got {limit}")
-        self._max_concurrent_transfers = limit
-        # One budget per INSTANCE, because the ceiling it stands for is per
-        # CONNECTION. A semaphore created inside the dispatcher would bound one
-        # bulk transfer while handing every other concurrent transfer on the
-        # same host its own full budget — and they all spend the same channels.
-        # `test_real_nc_high_fanout_put` is that shape: 20 separate one-file
-        # puts gathered against one host.
-        self._transfer_semaphore = asyncio.Semaphore(limit)
+        # size a semaphore no permit ever comes out of, and a bulk transfer
+        # would hang with nothing to point at.
+        #
+        # The budget is spent through the base's `_semaphore`, which is sized
+        # from `concurrency_limit` and lives per INSTANCE, because the ceiling
+        # it stands for is per CONNECTION. A semaphore created inside the
+        # dispatcher would bound one bulk transfer while handing every other
+        # concurrent transfer on the same host its own full budget — and they
+        # all spend the same channels. `test_real_nc_high_fanout_put` is that
+        # shape: 20 separate one-file puts gathered against one host.
+        self._max_concurrent_transfers = resolve_concurrency_limit(
+            nc_options.max_concurrent_transfers,
+            derived=_NC_MAX_CONCURRENT_TRANSFERS,
+            option="nc_options.max_concurrent_transfers",
+        )
+
+    @property
+    @override
+    def concurrency_limit(self) -> int:
+        return self._max_concurrent_transfers
+
+    def _warmup_sessions(self, file_count: int, *, concurrent: bool) -> int:
+        """How many pooled sessions a batch of *file_count* will spend AT ONCE.
+
+        What `_warmup_for_transfer` pre-opens, and it is the fan-out that sizes
+        it, not the file count: a batch never has more than
+        `concurrency_limit` transfers in flight, so a session warmed past the
+        cap is a telnet login handshake for a transfer that cannot start until
+        another has finished and freed its session.
+
+        `concurrent=False` answers 1, and that one matters most. The flag
+        exists to keep a host off a burst it cannot take, and a warm-up that
+        still fired one handshake per file would deliver exactly that burst —
+        the transfers serialized, the load not.
+        """
+        if not concurrent:
+            return 1
+        return min(file_count, self.concurrency_limit)
 
     @override
     @classmethod
@@ -672,8 +699,12 @@ class NcFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
-        return await self._get_files_nc(src_files, dest_dir, progress_factory)
+        return await self._get_files_nc(
+            src_files, dest_dir, progress_factory, concurrent=concurrent
+        )
 
     @override
     async def _run_put(
@@ -681,8 +712,12 @@ class NcFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
-        return await self._put_files_nc(src_files, dest_dir, progress_factory)
+        return await self._put_files_nc(
+            src_files, dest_dir, progress_factory, concurrent=concurrent
+        )
 
     # ------------------------------------------------------------------
     # Netcat
@@ -1119,59 +1154,21 @@ class NcFileTransfer(UnixFileTransfer):
             await self._close_writer_bounded(writer)
         return None
 
-    async def _gather_per_file(
-        self,
-        src_files: list[Path],
-        transfer_one: Callable[[Path], Coroutine[Any, Any, Result]],
-    ) -> dict[Path, Result]:
-        """Run ``transfer_one`` per file with a BOUNDED fan-out, keyed by source.
-
-        The bound is the point of this helper: every nc direction used to
-        dispatch its files through a bare ``asyncio.gather``, which turns "many
-        files" into "many simultaneous SSH channels" and runs into the remote
-        sshd's ``MaxSessions`` — see ``_NC_MAX_CONCURRENT_TRANSFERS``. Sharing
-        one dispatcher is what makes that structural rather than something each
-        of the three call sites has to remember; the three used to hold
-        identical copies of this gather-and-zip, and the fix would have been
-        applied to whichever one the failing test happened to name.
-
-        ``return_exceptions=True`` and the per-source mapping are preserved
-        from those copies: one file's failure must not cancel its siblings, and
-        the caller reports per file.
-        """
-
-        # A permit spans one whole transfer, not one channel, and that is
-        # load-bearing. Bounding channels DEADLOCKS: an in-flight listener
-        # holds its channel while its own readiness poll asks for a second, so
-        # enough listeners would take every permit and block the very polls
-        # that must finish to release them.
-        #
-        # The semaphore is the instance's, not one made here — see `__init__`.
-        async def _bounded(src: Path) -> Result:
-            async with self._transfer_semaphore:
-                return await transfer_one(src)
-
-        gathered = await asyncio.gather(
-            *(_bounded(src) for src in src_files),
-            return_exceptions=True,
-        )
-        per_file: dict[Path, Result] = {}
-        for src, outcome in zip(src_files, gathered, strict=True):
-            if isinstance(outcome, BaseException):
-                per_file[src] = Result(Status.Error, msg=f"{src}: {outcome}")
-            else:
-                per_file[src] = outcome
-        return per_file
-
     async def _get_files_nc(
         self,
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
         if self._connections.has_tunnel:
-            return await self._get_files_nc_tunneled(src_files, dest_dir, progress_factory)
-        await self._warmup_for_transfer(len(src_files))
+            return await self._get_files_nc_tunneled(
+                src_files, dest_dir, progress_factory, concurrent=concurrent
+            )
+        await self._warmup_for_transfer(
+            self._warmup_sessions(len(src_files), concurrent=concurrent)
+        )
         local_ip = self._get_local_ip()
 
         # Pre-fetch remote file sizes through `_control_run` — same control-
@@ -1339,13 +1336,15 @@ class NcFileTransfer(UnixFileTransfer):
                 server.close()
                 await server.wait_closed()
 
-        return await self._gather_per_file(src_files, _get_one)
+        return await self._dispatch_per_file(src_files, _get_one, concurrent=concurrent)
 
     async def _get_files_nc_tunneled(
         self,
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
         """Netcat GET through an SSH hop using a reversed-listener approach.
 
@@ -1360,7 +1359,9 @@ class NcFileTransfer(UnixFileTransfer):
         attempt, and ``_get_one`` then retries once on a fresh port, mirroring
         ``_put_one``.
         """
-        await self._warmup_for_transfer(len(src_files))
+        await self._warmup_for_transfer(
+            self._warmup_sessions(len(src_files), concurrent=concurrent)
+        )
         # Pre-fetch remote file sizes through `_control_run` — see
         # `_get_files_nc` for the rationale, which this path now shares
         # whole: the size TERMINATES the read below, so a file whose size
@@ -1516,7 +1517,7 @@ class NcFileTransfer(UnixFileTransfer):
                     # arm would trade a named failure for a stranded process.
                     # It cannot strand the CALLER either — this path resolves
                     # no future, so a close that raised would still reach
-                    # `_gather_per_file` as this file's Error rather than as a
+                    # `_dispatch_per_file` as this file's Error rather than as a
                     # wait nobody ends.
                     await self._close_writer_bounded(writer)
 
@@ -1630,7 +1631,7 @@ class NcFileTransfer(UnixFileTransfer):
                 result = await _attempt(src, dst)
             return result
 
-        return await self._gather_per_file(src_files, _get_one)
+        return await self._dispatch_per_file(src_files, _get_one, concurrent=concurrent)
 
     async def _reap_nc_listener(self, port: int) -> None:
         """Best-effort: make a lingering remote ``nc -l`` exit immediately.
@@ -1714,11 +1715,15 @@ class NcFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
         # Fire strategy-probe + pool-warming concurrently so the
         # first-transfer handshakes don't stack up serially on the critical
         # path. On a warm host this is a no-op.
-        await self._warmup_for_transfer(len(src_files))
+        await self._warmup_for_transfer(
+            self._warmup_sessions(len(src_files), concurrent=concurrent)
+        )
 
         async def _attempt(src: Path, dst: Path) -> Result:
             # Use an ephemeral port on the remote side so multiple host objects
@@ -1932,7 +1937,7 @@ class NcFileTransfer(UnixFileTransfer):
                 result = await _attempt(src, dst)
             return result
 
-        per_file = await self._gather_per_file(src_files, _put_one)
+        per_file = await self._dispatch_per_file(src_files, _put_one, concurrent=concurrent)
         if all(r.is_ok for r in per_file.values()):
             _logger.debug("Finished nc transfers")
         return per_file

@@ -290,8 +290,8 @@ def test_host_protocol_lines_cover_a_known_verb():
     """``put`` must show up with its real, documented parameter names."""
     lines = mod.host_protocol_lines()
     assert (
-        "otto.host.host:Host.put(src_files, dest_dir, mode, user, show_progress, recursive)"
-        in lines
+        "otto.host.host:Host.put(src_files, dest_dir, mode, user, show_progress, "
+        "recursive, concurrent)" in lines
     )
 
 

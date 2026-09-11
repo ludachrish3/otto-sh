@@ -195,6 +195,15 @@ def test_nc_spec_rejects_unknown_key():
         NcOptionsSpec(extra={"x": 1})  # otto-owned: no passthrough
 
 
+@pytest.mark.parametrize("spec_cls", [ScpOptionsSpec, SftpOptionsSpec])
+def test_ssh_transfer_specs_carry_the_bound_and_reject_a_useless_one(spec_cls):
+    """Same boundary rule as nc's: the default stays 'derive it', a zero dies here by key."""
+    assert spec_cls().to_runtime().max_concurrent_transfers is None
+    assert spec_cls(max_concurrent_transfers=6).to_runtime().max_concurrent_transfers == 6
+    with pytest.raises(ValidationError, match="greater than or equal to 1"):
+        spec_cls(max_concurrent_transfers=0)
+
+
 def test_snmp_spec_coerces_oids_to_tuple():
     rt_obj = SnmpOptionsSpec(oids=["1.3.6.1.2.1.1.3.0"]).to_runtime()
     assert isinstance(rt_obj, SnmpOptions)

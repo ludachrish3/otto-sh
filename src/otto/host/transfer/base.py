@@ -8,6 +8,7 @@ the :data:`TransferProgressHandler` / :data:`TransferProgressFactory` type
 aliases consumed by the progress-bar wiring layer.
 """
 
+import asyncio
 import shlex
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
@@ -21,7 +22,7 @@ from ...utils import Status
 if TYPE_CHECKING:
     from ..connections import ConnectionManager
     from ..embedded_filesystem import EmbeddedFileSystem
-    from ..options import NcOptions, ScpOptions
+    from ..options import NcOptions, ScpOptions, SftpOptions
     from ..userland import Userland
 
 # (src_path, dst_path, bytes_done, bytes_total)  # noqa: ERA001 — signature doc
@@ -83,6 +84,7 @@ class TransferContext:
     connections: "ConnectionManager | None" = None
     nc_options: "NcOptions | None" = None
     scp_options: "ScpOptions | None" = None
+    sftp_options: "SftpOptions | None" = None
     get_local_ip: "Callable[[], str] | None" = None
     # The host's shared capability resolver. Not per-protocol like the option
     # tables above it: one object answers for the whole device, and a backend
@@ -212,6 +214,59 @@ def chmod_command(mode: int, paths: list[Path]) -> str:
     return f"chmod {mode:o} -- {quoted}"
 
 
+SSHD_DEFAULT_MAX_SESSIONS = 10
+"""``MaxSessions`` of a default OpenSSH server: the channels one CONNECTION may
+hold at once. sshd enforces it by REFUSING the excess channel (``open
+failed``), never by queueing, so every per-file fan-out over one SSH
+connection must stay under it."""
+
+SSH_CHANNEL_HEADROOM = 2
+"""The channels a fan-out leaves free -- the pooled control session and the
+exec a caller may already be inside. Without it a full fan-out sits exactly at
+the ceiling and the NEXT unrelated exec on the connection is the one refused."""
+
+
+def derive_concurrency_limit(channels_per_transfer: int, *, sharing_objects: int = 1) -> int:
+    """How many files one transfer object may have in flight against a default sshd.
+
+    *channels_per_transfer* is what one in-flight file holds (scp/sftp: one
+    session; nc: the listener's exec channel plus its readiness poll).
+    *sharing_objects* is how many ways the usable budget is divided, so one
+    batch takes only its share: scp and sftp pass ``2``, which leaves half
+    the channels for whatever else the caller runs on the same connection
+    while the batch is in flight. Never below one: a limit of zero would be a
+    semaphore no permit ever comes out of.
+    """
+    if channels_per_transfer < 1 or sharing_objects < 1:
+        raise ValueError("channels_per_transfer and sharing_objects must be at least 1")
+    usable = SSHD_DEFAULT_MAX_SESSIONS - SSH_CHANNEL_HEADROOM
+    return max(1, usable // (channels_per_transfer * sharing_objects))
+
+
+def resolve_concurrency_limit(configured: int | None, *, derived: int, option: str) -> int:
+    """Answer the limit a backend runs with: *configured* when set, else *derived*.
+
+    Refused at construction, by name, when *configured* is below one -- a zero
+    would otherwise park every transfer on that host forever with nothing to
+    point at.
+    """
+    if configured is None:
+        return derived
+    if configured < 1:
+        raise ValueError(f"{option} must be at least 1, got {configured}")
+    return configured
+
+
+DEFAULT_SESSION_TRANSFER_LIMIT = derive_concurrency_limit(1, sharing_objects=2)
+"""The scp/sftp default -- one SSH session per file, and half the usable
+budget rather than all of it.
+
+The other half is left for whatever else the caller runs on the same
+connection while the batch is in flight: its own exec calls, a second
+transfer on another backend, an interactive session. The derivation lives in
+:ref:`the host-options guide <transfer-channel-budget>`."""
+
+
 def aggregate_transfer(per_file: dict[Path, Result]) -> Result:
     """Fold a per-file mapping into the aggregate transfer Result.
 
@@ -252,19 +307,6 @@ def refuse_directory_sources(src_files: list[Path]) -> Result | None:
     return aggregate_transfer(per_file)
 
 
-def mark_skipped(per_file: dict[Path, Result], remaining: list[Path]) -> None:
-    """Mark each not-yet-attempted source path Skipped after a sequential backend stops.
-
-    A sequential backend (ftp/console/nc) stops on the first failure; the
-    files it never reached are recorded ``Status.Skipped`` (which
-    :attr:`~otto.result.Result.is_ok` treats as passing, so a trailing run of
-    Skipped never fails the aggregate on its own). Keyed by the source path
-    exactly as passed.
-    """
-    for src in remaining:
-        per_file[src] = Result(Status.Skipped, msg="not attempted (earlier failure)")
-
-
 class BaseFileTransfer(ABC):
     """Shared API + progress plumbing for any file-transfer backend.
 
@@ -280,7 +322,8 @@ class BaseFileTransfer(ABC):
     :class:`~otto.host.transfer.TftpFileTransfer`), and any
     future ones) implement two abstract methods —
     ``_run_put`` and ``_run_get`` — both of which receive a
-    :data:`TransferProgressFactory` and are responsible for invoking it
+    :data:`TransferProgressFactory` and a keyword-only ``concurrent``,
+    and are responsible for invoking the factory
     at least once per source file, terminating with
     ``bytes_done == bytes_total`` to mark completion.
 
@@ -334,6 +377,90 @@ class BaseFileTransfer(ABC):
         """Answer the promise THIS instance makes -- the class declaration unless overridden."""
         return type(self).progress_granularity
 
+    @property
+    def concurrency_limit(self) -> int:
+        """How many files this backend may have in flight at once (``>= 1``).
+
+        The base answers one: a backend with no fan-out story (shell, console,
+        ftp, the local copy) inherits it, and ``concurrent=True`` is then a
+        documented no-op. scp, sftp and nc override it from their options.
+        """
+        return 1
+
+    async def _dispatch_per_file(
+        self,
+        src_files: list[Path],
+        transfer_one: Callable[[Path], Coroutine[Any, Any, Result]],
+        *,
+        concurrent: bool,
+    ) -> dict[Path, Result]:
+        """Run *transfer_one* per source, keyed by source exactly as passed.
+
+        The instance semaphore (sized from :attr:`concurrency_limit`) is
+        acquired around EVERY file in BOTH modes, so overlapping calls on one
+        object -- the levels of a tree, a caller's own ``gather`` of one-file
+        puts -- share one budget. ``concurrent=True`` gathers the files;
+        ``concurrent=False`` awaits them in order. Every file is attempted: an
+        ``Exception`` from *transfer_one* folds into THAT file's ``Error``
+        entry and its siblings run.
+
+        Cancellation is the one thing that does NOT fold. Both arms run the
+        same per-file wrapper, which catches ``Exception`` only, so a
+        ``CancelledError`` -- the caller's, or one a per-file coroutine raises
+        itself -- comes straight out of this call and no Result is fabricated
+        for it. That is why the gather runs WITHOUT ``return_exceptions``:
+        with it, a cancelled child would come back as a value to be written
+        into the mapping as an ``Error`` with an empty diagnostic. In the
+        concurrent arm, a raise cancels and drains the siblings before
+        propagating; nothing is left running. The drain waits for each sibling
+        to honour that cancellation, so a per-file coroutine that swallows
+        ``CancelledError`` holds the drain for as long as it takes -- bounded
+        in practice by each backend's own cancellation cleanup timeouts.
+
+        The semaphore is rebuilt whenever the running loop is not the one it
+        was made for. ``asyncio.Semaphore`` binds to a loop the first time a
+        waiter has to be created, and a later acquire from another loop
+        raises; the old loop's tasks cannot still be running, so a fresh
+        semaphore loses no permit and one transfer object survives being
+        reused across separate ``asyncio.run`` calls.
+        """
+        loop = asyncio.get_running_loop()
+        if self._semaphore is None or self._semaphore_loop is not loop:
+            self._semaphore = asyncio.Semaphore(self.concurrency_limit)
+            self._semaphore_loop = loop
+        semaphore = self._semaphore
+
+        async def _bounded(src: Path) -> Result:
+            async with semaphore:
+                return await transfer_one(src)
+
+        async def _attempted(src: Path) -> Result:
+            try:
+                return await _bounded(src)
+            except Exception as exc:  # noqa: BLE001 — any per-file failure is that file's entry
+                return Result(Status.Error, msg=f"{src}: {exc}")
+
+        if not concurrent:
+            per_file: dict[Path, Result] = {}
+            for src in src_files:
+                per_file[src] = await _attempted(src)
+            return per_file
+        tasks = [asyncio.ensure_future(_attempted(src)) for src in src_files]
+        try:
+            gathered = await asyncio.gather(*tasks)
+        except BaseException:
+            # A raise (a caller cancellation, or a per-file coroutine's own
+            # CancelledError) must not leave the other files' tasks running
+            # detached, each still holding a semaphore permit — cancel every
+            # task, then drain (`return_exceptions=True`) so each one's own
+            # CancelledError is collected here rather than surfacing later as
+            # an unretrieved task exception.
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        return dict(zip(src_files, gathered, strict=True))
+
     @classmethod
     def create(cls, ctx: "TransferContext") -> "BaseFileTransfer":
         """Build a transfer backend from a :class:`TransferContext`.
@@ -353,6 +480,15 @@ class BaseFileTransfer(ABC):
     def __init__(self, name: str, max_filename_len: int = 255) -> None:
         self._name = name
         self._max_filename_len = max_filename_len
+        # One budget per INSTANCE: the ceiling it stands for is per connection,
+        # so a semaphore made per call would hand every overlapping transfer
+        # on the same object its own full budget. Built lazily because a
+        # subclass sets the options `concurrency_limit` reads AFTER this runs,
+        # and keyed to the loop that built it: an asyncio.Semaphore binds to
+        # the first loop that waits on it, so an object reused across separate
+        # asyncio.run() calls needs a fresh one rather than a bound leftover.
+        self._semaphore: asyncio.Semaphore | None = None
+        self._semaphore_loop: asyncio.AbstractEventLoop | None = None
 
     async def put_files(
         self,
@@ -360,6 +496,7 @@ class BaseFileTransfer(ABC):
         dest_dir: Path,
         show_progress: bool = True,
         mode: int | str | None = None,
+        concurrent: bool = True,
     ) -> Result:
         """Upload *src_files* to *dest_dir*, validating filenames and driving progress display.
 
@@ -374,6 +511,10 @@ class BaseFileTransfer(ABC):
         (``0o755``) from Python, or a string that is **always** read as octal
         (``"755"``, ``"0755"``, ``"0o755"``). ``None`` leaves whatever
         permissions the backend's own defaults produce.
+
+        *concurrent* decides how many files may be in flight at once: up to
+        :attr:`concurrency_limit` when ``True``, exactly one when ``False``.
+        Every file is attempted in both modes.
 
         Returns the aggregate :class:`~otto.result.Result` whose ``value`` maps
         each source path (exactly as passed) to its per-file
@@ -410,13 +551,14 @@ class BaseFileTransfer(ABC):
                 {f: Result(name_check.status, msg=name_check.msg) for f in src_files}
             )
         if not show_progress:
-            per_file = await self._run_put(src_files, dest_dir, None)
+            per_file = await self._run_put(src_files, dest_dir, None, concurrent=concurrent)
         else:
             async with _acquire_shared_progress() as progress:
                 per_file = await self._run_put(
                     src_files,
                     dest_dir,
                     make_rich_progress_factory(progress, self._name),
+                    concurrent=concurrent,
                 )
         return aggregate_transfer(await self._finish_put(per_file, resolved_mode))
 
@@ -425,11 +567,17 @@ class BaseFileTransfer(ABC):
         src_files: list[Path],
         dest_dir: Path,
         show_progress: bool = True,
+        concurrent: bool = True,
     ) -> Result:
         """Download *src_files* into *dest_dir*, validating filenames and driving progress display.
 
         Same validation and shared-progress contract as :meth:`put_files`,
         but delegates to the concrete backend's ``_run_get`` implementation.
+
+        *concurrent* decides how many files may be in flight at once: up to
+        :attr:`concurrency_limit` when ``True``, exactly one when ``False``.
+        Every file is attempted in both modes.
+
         Returns the aggregate :class:`~otto.result.Result` whose ``value`` maps
         each source path (exactly as passed) to its per-file
         :class:`~otto.result.Result`.
@@ -446,13 +594,16 @@ class BaseFileTransfer(ABC):
                 {f: Result(name_check.status, msg=name_check.msg) for f in src_files}
             )
         if not show_progress:
-            return aggregate_transfer(await self._run_get(src_files, dest_dir, None))
+            return aggregate_transfer(
+                await self._run_get(src_files, dest_dir, None, concurrent=concurrent)
+            )
         async with _acquire_shared_progress() as progress:
             return aggregate_transfer(
                 await self._run_get(
                     src_files,
                     dest_dir,
                     make_rich_progress_factory(progress, self._name),
+                    concurrent=concurrent,
                 )
             )
 
@@ -507,13 +658,17 @@ class BaseFileTransfer(ABC):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: "TransferProgressFactory | None",
+        *,
+        concurrent: bool,
     ) -> dict[Path, Result]:
         """Backend-specific put implementation.
 
         Returns a per-file mapping keyed by the source paths exactly as passed:
         each value is a :class:`~otto.result.Result` carrying ``value=dest_path``
-        on success, a per-file ``msg`` on failure, or ``Status.Skipped`` for a
-        file a sequential backend stopped short of attempting.
+        on success or a per-file ``msg`` on failure -- every file is attempted
+        whatever its siblings do; hand the per-file coroutine to
+        :meth:`_dispatch_per_file`, which honours *concurrent* and the
+        instance's :attr:`concurrency_limit`.
 
         For each src file the implementation must call
         ``progress_factory()`` (if not ``None``) to obtain a fresh
@@ -528,6 +683,8 @@ class BaseFileTransfer(ABC):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: "TransferProgressFactory | None",
+        *,
+        concurrent: bool,
     ) -> dict[Path, Result]:
         """Backend-specific get implementation.
 

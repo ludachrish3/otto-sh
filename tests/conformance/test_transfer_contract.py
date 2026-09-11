@@ -106,12 +106,54 @@ _MODE_CONTROL_NAME = "mode.bin"
 _RECURSIVE_CONTROL_NAME = "ctree"
 _RECURSIVE_CONTROL_FILE = "ctree.bin"
 
+# The batch surface's basenames, under the same 32-character limit and built
+# from an INDEX so the files of one batch are told apart by name as well as by
+# bytes. `master_batch-par-00.bin` is 23 and `master_ctl-00.bin` is 17, and
+# both stay inside the limit for any index a cap-sized batch can reach. The
+# contract's and the control's prefixes differ, so neither one's cleanup can
+# remove a file the other -- or another worker -- is mid-roundtrip on.
+_BATCH_NAME = "batch-{tag}-{index:02d}.bin"
+_BATCH_CONTROL_NAME = "ctl-{index:02d}.bin"
+
 # The corrupted payload: `_PAYLOAD` with ONE byte changed, and nothing else.
 # A wholly different payload would also fail the comparison, and would prove
 # less -- the question is whether the roundtrip is byte-sensitive, not whether
 # it is length-sensitive.
 _CORRUPT_AT = 0
 _CORRUPTED_PAYLOAD = bytes([_PAYLOAD[0] ^ 0x01]) + _PAYLOAD[1:]
+
+
+def _indexed_payload(index: int) -> bytes:
+    """The batch contract's file *index*: its position, then the tripwire bytes.
+
+    A COUNT IS NOT AN IDENTITY, and this is what makes the difference visible.
+    A backend that landed one file's bytes under every name of a batch satisfies
+    "every file came back" and is caught only by reading each file, so every
+    file of a batch carries its own position as a two-byte prefix -- distinct
+    for any batch a cap can produce -- ahead of the payload whose tripwires the
+    rest of this module is about.
+    """
+    return index.to_bytes(2, "big") + _PAYLOAD
+
+
+def _rotated_payload(index: int) -> bytes:
+    """The batch control's file *index*: its position, then a rotation by it.
+
+    THE SAME TWO-BYTE PREFIX :func:`_indexed_payload` CARRIES, and for the same
+    reason: a rotation alone repeats every 256 positions, so two files of a
+    large enough batch would carry identical bytes and a swap between them would
+    satisfy the per-name comparison this control exists to drive. With the
+    prefix every position is distinct for any batch a cap can produce.
+
+    THE ROTATION IS THE OTHER HALF. Past the prefix these bytes are never the
+    contract's ``_PAYLOAD`` -- a rotation of all 256 values is a different
+    SEQUENCE at every position, though it is of course built from the same byte
+    values -- so no file this control sends equals any file the contract sends,
+    and a host that answers the contract's payload however it came by it fails
+    here instead of passing.
+    """
+    start = index % 256
+    return index.to_bytes(2, "big") + bytes(range(start, 256)) + bytes(range(start))
 
 
 def applicable_cell(resolved: ResolvedCell) -> bool:
@@ -345,6 +387,101 @@ async def test_put_get_roundtrip_recursive_tree(
     assert (back / "a.bin").read_bytes() == _PAYLOAD, f"{cell}: a.bin is not the payload"
     assert (back / "sub" / "b.bin").read_bytes() == bytes(range(256)), f"{cell}: sub/b.bin differs"
     assert (back / "empty").is_dir(), f"{cell}: the empty directory did not round-trip"
+
+
+@pytest.mark.observable(
+    "the bytes of every file in a batch larger than the transfer's concurrency cap, read back "
+    "over `{cell.transfer}` after put() of the batch, once concurrent and once one at a time"
+)
+async def test_put_get_batch_lands_every_file_in_both_modes(
+    resolved_cell: ResolvedCell, remote_scratch: Path, tmp_path: Path, worker_id: str
+) -> None:
+    """Every file of a batch past the cap lands and reads back, in BOTH modes.
+
+    THE BATCH IS SIZED FROM THE BACKEND'S OWN CAP -- ``concurrency_limit + 3``
+    -- rather than from a number written here, and that is what makes it a
+    batch past the cap on every cell rather than on the ones whose cap happens
+    to be small. A bounded fan-out must then QUEUE at least three files rather
+    than refuse them, and a cap-of-one backend (shell, console, ftp, the local
+    copy, where ``concurrent=True`` is a documented no-op) is still driven on
+    more than one file, which is the case a one-file roundtrip never reaches.
+
+    BOTH MODES, ONE CONTRACT, because they are two promises rather than two
+    implementations of one. ``concurrent=False`` is what a caller reaches for
+    when the far side must see one file at a time, and a backend that fanned
+    out anyway -- or that dropped the tail of the batch when told not to --
+    would be watched by nothing if only the parallel arm ran.
+
+    EVERY FILE CARRIES ITS OWN BYTES (:func:`_indexed_payload`), so the
+    read-back is per NAME and not per count: a backend that landed the first
+    file's bytes under every name of the batch passes "the right number of
+    files came back" and fails here. That claim is driven from the other side
+    by the control beside this, which sends a batch these very comparisons
+    must refuse.
+
+    THE AGGREGATES ARE ASSERTED BEFORE THE BYTES, for the reason the roundtrip
+    contract gives: a transfer can land the right bytes and still report
+    failure, and can report success having written nothing. ``put.value`` is
+    additionally required to be keyed by the very sources handed in -- that
+    mapping is how a caller of a batch finds WHICH file failed, and a backend
+    that answered a bare aggregate would leave them nothing to act on.
+    """
+    cell = resolved_cell.cell
+    words = resolved_cell.vocabulary
+    async with resolved_cell.open_host() as host:
+        backend = transfer_backend_of(
+            host,
+            cell,
+            refusal_tail=(
+                "this cell's transfer backend cannot be asked how many files it may have "
+                "in flight, and the batch this contract sends is sized from that answer"
+            ),
+        )
+        count = backend.concurrency_limit + 3
+        for concurrent in (True, False):
+            tag = "par" if concurrent else "seq"
+            source_dir = tmp_path / f"source-{tag}"
+            retrieved_dir = tmp_path / f"retrieved-{tag}"
+            source_dir.mkdir()
+            retrieved_dir.mkdir()
+            sources = []
+            for i in range(count):
+                src = source_dir / remote_name(worker_id, _BATCH_NAME.format(tag=tag, index=i))
+                src.write_bytes(_indexed_payload(i))
+                sources.append(src)
+            landed = [remote_scratch / s.name for s in sources]
+            try:
+                put = await host.put(sources, remote_scratch, concurrent=concurrent)
+                assert put.is_ok, (
+                    f"{cell}: put(concurrent={concurrent}) of {count} files reported "
+                    f"{put.status!r} -- {put.msg!r}"
+                )
+                assert set(put.value) == set(sources), (
+                    f"{cell}: put(concurrent={concurrent}) keyed {sorted(put.value)} rather "
+                    f"than the {count} sources it was handed, so a caller cannot tell which "
+                    f"file of the batch a failure belongs to"
+                )
+                got = await host.get(landed, retrieved_dir, concurrent=concurrent)
+                assert got.is_ok, (
+                    f"{cell}: get(concurrent={concurrent}) of {count} files reported "
+                    f"{got.status!r} -- {got.msg!r}"
+                )
+            finally:
+                # Best-effort and UNASSERTED, the rule the recursive contract's
+                # own cleanup states: an assertion raised from a `finally`
+                # replaces the failure already on its way out, and would report
+                # a cleanup problem for a cell whose real defect was that half
+                # the batch never landed. `remove_landed` never raises, and the
+                # spelling is the cell's own vocabulary rather than `rm -f`,
+                # which an embedded userland refuses.
+                for path in landed:
+                    await remove_landed(host, words, path)
+            for i, src in enumerate(sources):
+                back = retrieved_dir / src.name
+                assert back.read_bytes() == _indexed_payload(i), (
+                    f"{cell}: file {i} of the {tag} batch of {count} is not the bytes that "
+                    f"were sent under that name"
+                )
 
 
 @pytest.mark.observable(
@@ -629,6 +766,137 @@ async def test_control_the_tree_that_comes_back_is_the_tree_that_was_sent(
         f"contract's empty-directory assertion is satisfied by this cell whether or not "
         f"an empty directory round-trips"
     )
+
+
+@pytest.mark.positive_control("transfer-concurrent")
+async def test_control_the_batch_that_comes_back_is_the_batch_that_was_sent(
+    resolved_cell: ResolvedCell, remote_scratch: Path, tmp_path: Path, worker_id: str
+) -> None:
+    """Send a batch the contract's read-back must tell apart, and watch the fan-out's width.
+
+    TWO CLAIMS THE CONTRACT LEANS ON, each given a way to fail here.
+
+    (1) EVERY FILE COMES BACK UNDER ITS OWN NAME. The contract's instrument is
+    a per-index comparison, and it is satisfied by any host that answers those
+    bytes however it came by them -- a cache, an echo of the local sources, a
+    get that never reached the far side. So this sends files
+    (:func:`_rotated_payload`) that are indexed rotations of one byte
+    permutation: no file of this batch is any file the contract sends, and no
+    file of this batch is any other file of it. Then it requires the reply to
+    match PER NAME -- a host that answers the contract's bytes fails, and so
+    does one that answers some other file of this very batch under the wrong
+    name.
+
+    (2) THE FAN-OUT IS BOUNDED. The contract sends ``cap + 3`` files and reads
+    nothing about how many moved at once, so it is equally green against a
+    backend that ignored its cap entirely and against one that never fanned
+    out at all. This wraps the backend's own per-file entry point and counts
+    what is in flight INSIDE it -- the point where the semaphore has already
+    been taken -- then refuses a run whose peak exceeded the cap, and, where
+    the cap is above one, a run whose peak never reached two. The probe reads
+    ``concurrency_limit`` off the backend rather than assuming a number, so a
+    cap-of-one backend is proved SEQUENTIAL by the same instrument that proves
+    a cap-of-four backend parallel.
+
+    THE WRAPPER IS THE BACKEND'S, NOT THE HOST'S, and on a container cell that
+    is the parent's staging backend -- the leg that actually fans out, which is
+    the leg the cap is about.
+
+    ★ THE ``limit > 1`` ARM IS NOT DRIVEN HERMETICALLY, and that gap is
+    DECLARED rather than closed, the way the recursive contract's refusing arm
+    declares its own. The harness in ``tests/unit/test_support_matrix.py``
+    drives this control against a fake backend whose cap is one -- so it proves
+    the bound and the per-name read-back, and the ``peak > 1`` assertion is
+    inert there because it is inert on every cap-of-one backend by design. It
+    first executes against a cell whose transfer really does fan out (scp,
+    sftp, nc), which is a bed run or the hermetic loopback-ssh cells.
+
+    LEAVES THE BED AS FOUND, by the route the other controls use: the
+    per-cell vocabulary's removal for every file it landed
+    (:func:`~tests.conformance._controls.remove_landed`), verified afterwards
+    on the path where nothing else went wrong
+    (:func:`~tests.conformance._controls.assert_bed_left_clean`), whose success
+    also proves each file was there to delete.
+    """
+    cell = resolved_cell.cell
+    words = resolved_cell.vocabulary
+    in_flight = 0
+    peak = 0
+    async with resolved_cell.open_host() as host:
+        backend = transfer_backend_of(
+            host,
+            cell,
+            refusal_tail=(
+                "this cell's transfer backend cannot be asked how many files it may have "
+                "in flight, which is the very number this control is watching"
+            ),
+        )
+        limit = backend.concurrency_limit
+        original = backend._dispatch_per_file
+
+        async def _counting_dispatch(src_files, transfer_one, *, concurrent):
+            """The backend's own dispatcher, with a counter around each file."""
+
+            async def _probe(src):
+                nonlocal in_flight, peak
+                # Counted INSIDE the per-file callable rather than around the
+                # dispatcher call: the dispatcher takes its semaphore permit
+                # around this very callable, so a count taken outside would
+                # measure how many files were HANDED OVER (always the whole
+                # batch) rather than how many are running.
+                in_flight += 1
+                peak = max(peak, in_flight)
+                try:
+                    return await transfer_one(src)
+                finally:
+                    in_flight -= 1
+
+            return await original(src_files, _probe, concurrent=concurrent)
+
+        backend._dispatch_per_file = _counting_dispatch
+        count = limit + 3
+        source_dir = tmp_path / "source"
+        retrieved_dir = tmp_path / "retrieved"
+        source_dir.mkdir()
+        retrieved_dir.mkdir()
+        sources = []
+        for i in range(count):
+            src = source_dir / remote_name(worker_id, _BATCH_CONTROL_NAME.format(index=i))
+            src.write_bytes(_rotated_payload(i))
+            sources.append(src)
+        landed = [remote_scratch / s.name for s in sources]
+        try:
+            put = await host.put(sources, remote_scratch, concurrent=True)
+            assert put.is_ok, f"{cell}: put reported {put.status!r} -- {put.msg!r}"
+            got = await host.get(landed, retrieved_dir, concurrent=True)
+            assert got.is_ok, f"{cell}: get reported {got.status!r} -- {got.msg!r}"
+        finally:
+            # The instance attribute goes first and the cleanup follows, both
+            # before any assertion: deleting it restores the class's own
+            # dispatcher, so nothing this control did outlives it even on the
+            # failing path. Neither statement asserts, for the reason the other
+            # controls' cleanups give.
+            del backend._dispatch_per_file
+            removed = [await remove_landed(host, words, path) for path in landed]
+    for result, path in zip(removed, landed, strict=True):
+        assert_bed_left_clean(result, path, cell)
+
+    assert 1 <= peak <= limit, (
+        f"{cell}: {peak} of {count} files were in flight at once against a cap of {limit} -- "
+        f"a peak of 0 means the backend's per-file dispatcher never ran and this control "
+        f"watched nothing, and a peak above the cap means the bound is not enforced"
+    )
+    if limit > 1:
+        assert peak > 1, (
+            f"{cell}: a cap of {limit} never had two files in flight, so the batch moved one "
+            f"file at a time and the contract's `concurrent=True` arm is watching a "
+            f"sequential transfer"
+        )
+    for i, src in enumerate(sources):
+        assert (retrieved_dir / src.name).read_bytes() == _rotated_payload(i), (
+            f"{cell}: the file landed as {src.name} came back as some other file's bytes, so "
+            f"the contract's per-name read-back does not track what was sent under each name"
+        )
 
 
 @pytest.mark.positive_control("transfer-mode")

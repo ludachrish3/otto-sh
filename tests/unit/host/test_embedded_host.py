@@ -368,6 +368,35 @@ class TestDefaultDestDir:
         passed_dest = host._file_transfer.put_files.call_args.args[1]
         assert passed_dest == Path("/RAM:")
 
+    @pytest.mark.asyncio
+    async def test_put_and_get_pass_concurrent_to_the_backend(
+        self, host: EmbeddedHost, monkeypatch, tmp_path
+    ):
+        """An embedded target has one console, so the backend runs one file at
+        a time whatever it is told — but the keyword must still ARRIVE, so a
+        family-agnostic caller passing it is not refused on this family alone."""
+        from otto.result import Result
+
+        src = tmp_path / "a.bin"
+        src.write_bytes(b"x")
+        seen: dict[str, object] = {}
+
+        async def put_files(files, dest_dir, show_progress, mode, *, concurrent):
+            seen["put"] = concurrent
+            return Result(Status.Success, value={f: Result(Status.Success) for f in files})
+
+        async def get_files(files, dest_dir, show_progress, *, concurrent):
+            seen["get"] = concurrent
+            return Result(Status.Success, value={f: Result(Status.Success) for f in files})
+
+        monkeypatch.setattr(host._file_transfer, "put_files", put_files)
+        monkeypatch.setattr(host._file_transfer, "get_files", get_files)
+
+        await host.put([src], Path("/RAM:"), concurrent=False)
+        await host.get([Path("/RAM:/a.bin")], tmp_path, concurrent=False)
+
+        assert seen == {"put": False, "get": False}
+
 
 # ---------------------------------------------------------------------------
 # Delegation to the session manager

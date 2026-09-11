@@ -636,7 +636,8 @@ async def test_a_bulk_hop_put_does_not_strand_a_forward_per_file(tmp_path: Path)
     at all, even sequentially.
 
     "Concurrently", not "N at once": the fan-out is bounded per host connection
-    (``NcFileTransfer._transfer_semaphore``) because each in-flight transfer
+    (the shared dispatcher's ``_semaphore``, sized from
+    ``NcFileTransfer.concurrency_limit``) because each in-flight transfer
     costs SSH channels against the remote sshd's ``MaxSessions``. That bound
     does not weaken this guard — the concurrent forwards are still distinct keys
     the cache cannot serve — but it does mean N here is an upper bound on the

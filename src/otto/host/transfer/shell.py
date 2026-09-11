@@ -90,7 +90,6 @@ from .base import (
     TransferContext,
     TransferProgressFactory,
     TransferProgressHandler,
-    mark_skipped,
 )
 from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
@@ -269,11 +268,16 @@ after).
 Collision risk, deliberately re-checked rather than waved through: two
 stagings collide only if they draw the same 32-bit token AND target the
 same directory AND the same destination basename AND overlap in time.
-Neither ``_run_put`` nor ``_run_get`` has any concurrency of its own --
-both are strictly sequential, one-file-at-a-time loops (see their
-docstrings), and each temp is renamed or unlinked away before the next file
-starts -- so a single transfer can never race itself; it takes two
-independent transfers aimed at one directory to get two live temps at all.
+Neither ``_run_put`` nor ``_run_get`` has any concurrency of its own: this
+backend answers
+:attr:`~otto.host.transfer.BaseFileTransfer.concurrency_limit` 1 and the
+base dispatcher wraps every file in that one permit, so exactly one file is
+in flight whatever ``concurrent`` says, and each temp is renamed or
+unlinked away before the next file starts -- so a single transfer can never
+race itself; it takes two independent transfers aimed at one directory to
+get two live temps at all. That limit is the load-bearing premise of this
+bound and of ``_INTERRUPTED_CLEANUP_TIMEOUT``'s below, and
+``test_shell_transfer_is_one_file_at_a_time`` pins it.
 At that scale the birthday bound is n^2 / 2^33, i.e. about 1.2e-4 even for a
 thousand simultaneous stagings of the same filename, against a failure mode
 that is loud rather than silent: PUT verifies the TEMP (see
@@ -307,8 +311,12 @@ costs a fifth of the teardown window instead of all of it -- the remaining
 ~8 s is what the session teardown behind it still needs.
 
 At most one temp is ever cleaned up per interrupt, whatever the batch size:
-:meth:`ShellFileTransfer._run_put` is strictly sequential, so exactly one
-file is in flight when the cancellation lands.
+this backend answers
+:attr:`~otto.host.transfer.BaseFileTransfer.concurrency_limit` 1 and the
+base dispatcher wraps every file in that one permit, so exactly one file is
+in flight when the cancellation lands -- in either mode, since
+``concurrent=True`` buys nothing against a limit of one. Pinned by
+``test_shell_transfer_is_one_file_at_a_time``.
 """
 
 
@@ -1228,11 +1236,13 @@ class ShellFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: "TransferProgressFactory | None",
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
-        """Sequential shell PUT: pick a codec or refuse, then chunk-and-mv one file at a time.
+        """One-at-a-time shell PUT: pick a codec or refuse, then chunk-and-mv one file at a time.
 
-        Two userland questions are answered before the loop -- and before
-        anything else in this method -- because each is about the WHOLE
+        Two userland questions are answered before any file is dispatched --
+        and before anything else in this method -- because each is about the WHOLE
         transfer, not about any one file: if the device can run neither codec,
         or has no way to confirm a PUT landed intact, every file would fail
         identically, and issuing the first file's chunk command anyway would
@@ -1258,11 +1268,12 @@ class ShellFileTransfer(UnixFileTransfer):
         ``_run_put`` -- rather than once per file -- is the intended usage,
         matching :meth:`~otto.host.transfer.nc.NcFileTransfer.prepare`.
 
-        Sequential, like :class:`~otto.host.transfer.ftp.FtpFileTransfer`:
-        this backend has no concurrency story of its own (every chunk is one
-        more exec round trip on the same control path), so a failure stops
-        the batch and every file not yet attempted is marked
-        ``Status.Skipped`` rather than guessed at.
+        One file at a time -- this backend has no concurrency story of its
+        own (every chunk is one more exec round trip on the same control
+        path), so :attr:`~otto.host.transfer.BaseFileTransfer.concurrency_limit`
+        stays one and ``concurrent=True`` is a no-op here -- but every file
+        is attempted: a failure is that file's entry and the next file still
+        moves.
         """
         await self._userland.resolve()
         codec = self._select_codec("put", "uudecode")
@@ -1276,16 +1287,14 @@ class ShellFileTransfer(UnixFileTransfer):
                 "this host. Nothing was attempted; transfer with a backend this host "
                 "actually supports."
             )
-        per_file: dict[Path, Result] = {}
-        for i, src in enumerate(src_files):
-            dst = dest_dir / src.name
+
+        async def _put_file(src: Path) -> Result:
             handler = progress_factory() if progress_factory is not None else None
-            result = await self._put_one(src, dst, codec, checksum, stat_size, handler)
-            per_file[src] = result
-            if not result.is_ok:
-                mark_skipped(per_file, src_files[i + 1 :])
-                break
-        return per_file
+            return await self._put_one(
+                src, dest_dir / src.name, codec, checksum, stat_size, handler
+            )
+
+        return await self._dispatch_per_file(src_files, _put_file, concurrent=concurrent)
 
     @override
     async def _run_get(
@@ -1293,11 +1302,13 @@ class ShellFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: "TransferProgressFactory | None",
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
-        """Sequential shell GET: size it, pick a codec, then decode one file at a time.
+        """One-at-a-time shell GET: size it, pick a codec, then decode one file at a time.
 
-        Two userland questions are answered before the loop, for the same
-        reason :meth:`_run_put`'s own two are: each is about
+        Two userland questions are answered before any file is dispatched,
+        for the same reason :meth:`_run_put`'s own two are: each is about
         the WHOLE transfer, not about any one file, so answering it
         late would read as "we tried and it failed" when nothing was tried
         at all. GET's two are not the same PAIR as PUT's, though: GET never
@@ -1326,9 +1337,10 @@ class ShellFileTransfer(UnixFileTransfer):
         its own is ever emitted remotely (decoding happens locally; see
         :meth:`_get_one`).
 
-        Sequential, like :meth:`_run_put`: this backend has no concurrency
-        story of its own, so a failure stops the batch and every file not
-        yet attempted is marked ``Status.Skipped``.
+        One file at a time, like :meth:`_run_put`: this backend has no
+        concurrency story of its own, so ``concurrent=True`` is a no-op
+        here -- but every file is attempted, and a failure is that file's
+        entry rather than the batch's.
         """
         await self._userland.resolve()
         stat_size = self._userland.stat_size
@@ -1342,16 +1354,14 @@ class ShellFileTransfer(UnixFileTransfer):
             )
         codec = self._select_codec("get", "uuencode")
         checksum = self._userland.checksum
-        per_file: dict[Path, Result] = {}
-        for i, src in enumerate(src_files):
-            dst = dest_dir / src.name
+
+        async def _get_file(src: Path) -> Result:
             handler = progress_factory() if progress_factory is not None else None
-            result = await self._get_one(src, dst, codec, stat_size, checksum, handler)
-            per_file[src] = result
-            if not result.is_ok:
-                mark_skipped(per_file, src_files[i + 1 :])
-                break
-        return per_file
+            return await self._get_one(
+                src, dest_dir / src.name, codec, stat_size, checksum, handler
+            )
+
+        return await self._dispatch_per_file(src_files, _get_file, concurrent=concurrent)
 
     def _select_codec(self, direction: str, applet: str) -> ShellCodec:
         """Choose the codec this host can actually run, or refuse before anything is sent.

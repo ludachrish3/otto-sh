@@ -22,7 +22,6 @@ to avoid. The definitive test is opening the subsystem, and that is the
 operation.
 """
 
-import asyncio
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -31,6 +30,7 @@ if TYPE_CHECKING:
     from asyncssh import SFTPClient
 
     from ..connections import ConnectionManager
+    from ..options import SftpOptions
 
 import logging
 
@@ -40,9 +40,11 @@ from ...result import CommandResult, Result
 from ...utils import Status
 from ..userland import refuse_if_gapped
 from .base import (
+    DEFAULT_SESSION_TRANSFER_LIMIT,
     ProgressGranularity,
     TransferContext,
     TransferProgressFactory,
+    resolve_concurrency_limit,
 )
 from .progress import _make_sftp_progress
 from .registry import register_transfer_backend
@@ -165,8 +167,9 @@ class SftpFileTransfer(UnixFileTransfer):
     Inherits ``put_files`` / ``get_files`` from
     :class:`~otto.host.transfer.base.BaseFileTransfer` and unix scaffolding
     (``_connections``, ``_exec_cmd``, ``_warmup_for_transfer``) from
-    :class:`~otto.host.transfer.unix_base.UnixFileTransfer`; implements
-    ``_run_put`` / ``_run_get`` directly for the SFTP protocol.
+    :class:`~otto.host.transfer.unix_base.UnixFileTransfer`; hands one
+    ``sftp_conn.put``/``get`` call per file to the base dispatcher, bounded by
+    ``sftp_options.max_concurrent_transfers``.
     """
 
     host_families = frozenset({"unix"})
@@ -190,14 +193,32 @@ class SftpFileTransfer(UnixFileTransfer):
         connections: "ConnectionManager",
         name: str,
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandResult]],
+        # Keyword-only from here: `sftp_options` was inserted ahead of
+        # `max_filename_len`, which would silently move the fourth positional
+        # of an exported class. Nothing in-tree passes these positionally.
+        *,
+        sftp_options: "SftpOptions | None" = None,
         max_filename_len: int = 255,
     ) -> None:
+        from ..options import SftpOptions
+
         super().__init__(
             connections=connections,
             name=name,
             exec_cmd=exec_cmd,
             max_filename_len=max_filename_len,
         )
+        self._sftp_options = SftpOptions() if sftp_options is None else sftp_options
+        self._max_concurrent_transfers = resolve_concurrency_limit(
+            self._sftp_options.max_concurrent_transfers,
+            derived=DEFAULT_SESSION_TRANSFER_LIMIT,
+            option="sftp_options.max_concurrent_transfers",
+        )
+
+    @property
+    @override
+    def concurrency_limit(self) -> int:
+        return self._max_concurrent_transfers
 
     @override
     @classmethod
@@ -225,6 +246,7 @@ class SftpFileTransfer(UnixFileTransfer):
             connections=ctx.connections,
             name=ctx.host_name,
             exec_cmd=ctx.exec_cmd,
+            sftp_options=ctx.sftp_options,
             max_filename_len=ctx.max_filename_len,
         )
 
@@ -234,11 +256,15 @@ class SftpFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
         sftp_conn = await open_sftp_or_attribute(
             self._connections, host=self._name, attempted=f"GET {len(src_files)} file(s)"
         )
-        return await self._get_files_sftp(sftp_conn, src_files, dest_dir, progress_factory)
+        return await self._get_files_sftp(
+            sftp_conn, src_files, dest_dir, progress_factory, concurrent=concurrent
+        )
 
     @override
     async def _run_put(
@@ -246,11 +272,15 @@ class SftpFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
         sftp_conn = await open_sftp_or_attribute(
             self._connections, host=self._name, attempted=f"PUT {len(src_files)} file(s)"
         )
-        return await self._put_files_sftp(sftp_conn, src_files, dest_dir, progress_factory)
+        return await self._put_files_sftp(
+            sftp_conn, src_files, dest_dir, progress_factory, concurrent=concurrent
+        )
 
     async def _get_files_sftp(
         self,
@@ -258,6 +288,8 @@ class SftpFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
         async def _get_one(src: Path) -> Result:
             _progress = (
@@ -272,16 +304,7 @@ class SftpFileTransfer(UnixFileTransfer):
             )
             return Result(Status.Success, value=dest_dir / src.name)
 
-        gathered = await asyncio.gather(
-            *(_get_one(src) for src in src_files), return_exceptions=True
-        )
-        per_file: dict[Path, Result] = {}
-        for src, outcome in zip(src_files, gathered, strict=True):
-            if isinstance(outcome, BaseException):
-                per_file[src] = Result(Status.Error, msg=f"{src}: {outcome}")
-            else:
-                per_file[src] = outcome
-        return per_file
+        return await self._dispatch_per_file(src_files, _get_one, concurrent=concurrent)
 
     async def _put_files_sftp(
         self,
@@ -289,6 +312,8 @@ class SftpFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
         async def _put_one(src: Path) -> Result:
             _progress = (
@@ -303,16 +328,7 @@ class SftpFileTransfer(UnixFileTransfer):
             )
             return Result(Status.Success, value=dest_dir / src.name)
 
-        gathered = await asyncio.gather(
-            *(_put_one(src) for src in src_files), return_exceptions=True
-        )
-        per_file: dict[Path, Result] = {}
-        for src, outcome in zip(src_files, gathered, strict=True):
-            if isinstance(outcome, BaseException):
-                per_file[src] = Result(Status.Error, msg=f"{src}: {outcome}")
-            else:
-                per_file[src] = outcome
-        return per_file
+        return await self._dispatch_per_file(src_files, _put_one, concurrent=concurrent)
 
 
 register_transfer_backend("sftp", SftpFileTransfer)

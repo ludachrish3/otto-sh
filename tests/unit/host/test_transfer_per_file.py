@@ -30,6 +30,6 @@ def test_failure_aggregate_is_first_non_ok_with_msg():
     assert agg.value[Path("c")].status is Status.Skipped
 
 
-def test_trailing_skipped_alone_never_fails_aggregate():
-    per_file = {Path("a"): Result(Status.Skipped, msg="not attempted")}
+def test_a_skipped_refusal_entry_alone_never_fails_aggregate():
+    per_file = {Path("a"): Result(Status.Skipped, msg="not attempted (directory source refused)")}
     assert aggregate_transfer(per_file).is_ok

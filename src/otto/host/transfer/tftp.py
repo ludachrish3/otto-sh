@@ -30,6 +30,8 @@ class TftpFileTransfer(EmbeddedFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
         raise NotImplementedError(
             "TFTP transfer for embedded hosts is not yet implemented"
@@ -41,6 +43,8 @@ class TftpFileTransfer(EmbeddedFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
         raise NotImplementedError(
             "TFTP transfer for embedded hosts is not yet implemented"

@@ -45,7 +45,18 @@ def _mock_parent(parent_id: str = "test3", *, term: str = "ssh"):
     parent.name = parent_id
     parent.term = term
     parent.exec = AsyncMock(return_value=_ok())
-    parent.put = AsyncMock(return_value=Result(Status.Success, value={}))
+
+    async def _staged_ok(files, dest, *args, **kwargs):
+        """A real parent ``put`` always reports PER FILE; the container's put
+        reads those entries to decide which files reach ``docker cp``, so a
+        mock that answered with an empty mapping would make every file look
+        unstaged."""
+        return Result(
+            Status.Success,
+            value={p: Result(Status.Success, value=dest / p.name) for p in files},
+        )
+
+    parent.put = AsyncMock(side_effect=_staged_ok)
     parent.get = AsyncMock(return_value=Result(Status.Success, value={}))
     return parent
 
@@ -1515,6 +1526,7 @@ async def test_put_parent_put_failure_passthrough(tmp_path):
     f = tmp_path / "payload.bin"
     f.write_bytes(b"data")
 
+    parent.put.side_effect = None
     parent.put.return_value = Result(
         Status.Error,
         value={f: Result(Status.Error, msg="sftp connection lost")},
@@ -1530,7 +1542,14 @@ async def test_put_parent_put_failure_passthrough(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_put_partial_staging_failure_downgrades_staged_files(tmp_path):
+async def test_put_partial_staging_failure_still_copies_the_staged_ok_file(tmp_path):
+    """One file's staging failure is its own entry; its siblings still land.
+
+    The staging leg reports per file, so a file whose bytes DID reach the
+    parent has nothing wrong with it — abandoning it because a sibling
+    failed would throw away work that succeeded and report a file as
+    untransferred that could have been transferred.
+    """
     parent = _mock_parent()
     h = _make_container(parent=parent)
     ok_file = tmp_path / "ok.bin"
@@ -1538,6 +1557,7 @@ async def test_put_partial_staging_failure_downgrades_staged_files(tmp_path):
     ok_file.write_bytes(b"data")
     bad_file.write_bytes(b"data")
 
+    parent.put.side_effect = None
     parent.put.return_value = Result(
         Status.Error,
         value={
@@ -1549,10 +1569,97 @@ async def test_put_partial_staging_failure_downgrades_staged_files(tmp_path):
 
     result = await h.put([ok_file, bad_file], Path("/dest"))
     assert result.status == Status.Error
-    # A file that only reached the parent staging dir must NOT read as
-    # Success — docker cp never ran, so it never reached the container.
-    assert result.value[ok_file].status == Status.Skipped
-    assert not result.value[bad_file].is_ok
+    assert result.value[ok_file].is_ok, (
+        "a staged-ok file must reach docker cp even when a sibling failed staging"
+    )
+    assert result.value[bad_file].status == Status.Error
+    cp_calls = [c.args[0] for c in parent.exec.await_args_list if "docker cp" in c.args[0]]
+    assert len(cp_calls) == 1
+    assert "ok.bin" in cp_calls[0]
+    assert not any(r.status is Status.Skipped for r in result.value.values())
+
+
+@pytest.mark.asyncio
+async def test_put_carries_a_staging_skipped_entry_without_a_docker_cp(tmp_path):
+    """``Skipped`` is ok-ish, and that is exactly the trap.
+
+    The one ``Skipped`` a transfer still produces is the sibling of a
+    directory handed to a non-recursive ``put``. Those bytes never reached
+    the staging dir, so testing the staging entry with ``is_ok`` -- which
+    ``Skipped`` satisfies -- would ``docker cp`` a path that does not exist
+    and report whatever the container's error happened to be. Only
+    ``Success`` earns a copy.
+    """
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    a_dir = tmp_path / "adir"
+    a_dir.mkdir()
+    sibling = tmp_path / "sibling.bin"
+    sibling.write_bytes(b"data")
+
+    parent.put.side_effect = None
+    parent.put.return_value = Result(
+        Status.Error,
+        value={
+            a_dir: Result(Status.Error, msg=f"{a_dir}: is a directory"),
+            sibling: Result(Status.Skipped, msg="not attempted (directory source refused)"),
+        },
+        msg=f"{a_dir}: is a directory",
+    )
+
+    result = await h.put([a_dir, sibling], Path("/dest"))
+
+    assert result.value[a_dir].status is Status.Error
+    assert result.value[sibling].status is Status.Skipped, (
+        "a Skipped staging entry must be carried verbatim, not treated as staged"
+    )
+    cp_calls = [c.args[0] for c in parent.exec.await_args_list if "docker cp" in c.args[0]]
+    assert not cp_calls, f"nothing staged, so nothing may be copied: {cp_calls}"
+
+
+@pytest.mark.asyncio
+async def test_put_forwards_concurrent_to_the_staging_leg(tmp_path):
+    """The container's own leg is one ``docker cp`` per file; the fan-out
+    the caller asked for belongs to the staging transfer, which is the leg
+    that actually moves bytes over a link."""
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    f = tmp_path / "payload.bin"
+    f.write_bytes(b"data")
+
+    await h.put([f], Path("/dest"), concurrent=False)
+
+    assert parent.put.await_args.kwargs["concurrent"] is False
+
+
+@pytest.mark.asyncio
+async def test_two_overlapping_puts_use_distinct_staging_dirs(tmp_path):
+    """Two transfers to ONE container must not delete each other's staging.
+
+    The staging dir is removed unconditionally in ``finally``; shared between
+    concurrent calls, the first to finish would carry off the other's files
+    mid-copy.
+    """
+    import asyncio
+
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    a = tmp_path / "a.bin"
+    b = tmp_path / "b.bin"
+    a.write_bytes(b"a")
+    b.write_bytes(b"b")
+
+    await asyncio.gather(h.put([a], Path("/dest")), h.put([b], Path("/dest")))
+
+    mkdirs = [
+        shlex.split(c.args[0])[-1]
+        for c in parent.exec.await_args_list
+        if c.args[0].startswith("mkdir -p ")
+    ]
+    assert len(mkdirs) == 2
+    assert mkdirs[0] != mkdirs[1], f"overlapping puts shared a staging dir: {mkdirs}"
+    for d in mkdirs:
+        assert d.startswith("/tmp/otto-docker-stage/abc123def456/")
 
 
 @pytest.mark.asyncio
@@ -1609,13 +1716,12 @@ async def test_get_docker_cp_failure_returns_error():
 
 
 @pytest.mark.asyncio
-async def test_get_mid_batch_docker_cp_failure_keeps_every_source_key(tmp_path):
-    """A mid-batch docker-cp failure must still key EVERY as-passed source
-    path — including files already copied to parent staging before the
-    failing file. Those earlier files never reach the caller (parent.get is
-    never invoked and the staging dir is removed in `finally`), so they must
-    be downgraded to Skipped rather than omitted; omitting them would make
-    ``result.value[first_file]`` raise KeyError."""
+async def test_get_mid_batch_docker_cp_failure_still_fetches_the_files_that_staged(tmp_path):
+    """One file's ``docker cp`` failure is its own entry, not a batch abort.
+
+    The files that DID stage are still fetched in the one ``parent.get``;
+    every as-passed source path stays a key, so no lookup raises KeyError.
+    """
     parent = _mock_parent()
     h = _make_container(parent=parent)
     first = Path("/remote/first.bin")
@@ -1628,12 +1734,62 @@ async def test_get_mid_batch_docker_cp_failure_keeps_every_source_key(tmp_path):
 
     parent.exec.side_effect = exec_side_effect
 
+    def get_side_effect(files, dest, *args, **kwargs):
+        return Result(
+            Status.Success,
+            value={p: Result(Status.Success, value=dest / p.name) for p in files},
+        )
+
+    parent.get.side_effect = get_side_effect
+
     result = await h.get([first, second], tmp_path)
     assert result.status == Status.Error
-    # Every as-passed source path must be a key — no KeyError on lookup.
     assert set(result.value.keys()) == {first, second}
-    assert result.value[first].status == Status.Skipped
-    assert not result.value[second].is_ok
+    assert result.value[second].status == Status.Error
+    parent.get.assert_awaited_once()
+    fetched = parent.get.await_args.args[0]
+    assert [p.name for p in fetched] == ["first.bin"], "the file that staged must still be fetched"
+    assert result.value[first].is_ok
+
+
+@pytest.mark.asyncio
+async def test_get_with_every_docker_cp_failing_never_calls_the_staging_leg(tmp_path):
+    """Nothing staged means there is nothing to fetch.
+
+    ``parent.get([])`` would be a pointless round trip on a real parent --
+    and on a backend that validates its inputs, an error of its own laid
+    over the per-file errors the caller actually needs to read.
+    """
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    first = Path("/remote/first.bin")
+    second = Path("/remote/second.bin")
+
+    def exec_side_effect(cmd, *args, **kwargs):
+        if "docker cp" in cmd:
+            return _fail(cmd, out="no such file or directory")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect
+
+    result = await h.get([first, second], tmp_path)
+
+    assert result.status == Status.Error
+    parent.get.assert_not_awaited()
+    assert set(result.value.keys()) == {first, second}
+    assert all(r.status is Status.Error for r in result.value.values())
+
+
+@pytest.mark.asyncio
+async def test_get_forwards_concurrent_to_the_staging_leg(tmp_path):
+    """As on :func:`test_put_forwards_concurrent_to_the_staging_leg`: the
+    fan-out belongs to the leg that moves bytes over a link."""
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+
+    await h.get([Path("/remote/one.bin")], tmp_path, concurrent=False)
+
+    assert parent.get.await_args.kwargs["concurrent"] is False
 
 
 # ---------------------------------------------------------------------------

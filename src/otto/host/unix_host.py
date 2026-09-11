@@ -80,6 +80,7 @@ from .connections import (
 from .errors import UnsupportedOnUserlandError
 from .file_ops import PosixFileOps
 from .host import (
+    CONCURRENT_HELP,
     Host,
     SuppressCommandOutput,
     _validate_user,
@@ -262,7 +263,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         note=(
             "Direct-cred users only, and never over the `ftp` backend, which "
             "authenticates separately with its own credentials; `exec(user=)` "
-            'additionally requires `term="ssh"`.'
+            'additionally requires `term="ssh"`. '
+            "`scp`, `sftp` and `nc` fan a batch out under "
+            "`max_concurrent_transfers`; `shell` and `ftp` move one file at a "
+            "time."
         ),
     )
     """What this family promises. See :class:`~otto.host.capability_grid.HostCapabilities`."""
@@ -532,6 +536,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     connections=connections,
                     nc_options=self.nc_options,
                     scp_options=self.scp_options,
+                    sftp_options=self.sftp_options,
                     userland=self._userland(),
                     get_local_ip=lambda: self._get_local_ip(),  # noqa: PLW0108 — late-bind self for monkeypatching
                     exec_cmd=exec_cmd,
@@ -807,6 +812,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
         recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
+        concurrent: Annotated[bool, Opt(help=CONCURRENT_HELP)] = True,
     ) -> Result:
         """Transfer files from remote host to the local machine.
 
@@ -814,7 +820,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         so the read happens with their permissions — direct-cred users only.
 
         ``recursive`` transfers each directory among the sources as a tree;
-        see :ref:`recursive-transfers`.
+        see :ref:`recursive-transfers`. ``concurrent`` bounds the files in
+        flight; see :ref:`concurrent-transfers`.
         """
         if user is not None:
             _validate_user(user)
@@ -830,12 +837,19 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
             with SuppressCommandOutput(host=cast("Host", self)):
                 return await get_tree(
-                    self, src_files, dest_dir, user=user, show_progress=show_progress
+                    self,
+                    src_files,
+                    dest_dir,
+                    user=user,
+                    show_progress=show_progress,
+                    concurrent=concurrent,
                 )
         if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
         with SuppressCommandOutput(host=cast("Host", self)):
-            return await self._transfer_for(user).get_files(src_files, dest_dir, show_progress)
+            return await self._transfer_for(user).get_files(
+                src_files, dest_dir, show_progress, concurrent=concurrent
+            )
 
     # TODO: Look into a way to batch a single list of files that goes to different hosts
     # The main use case is lists of products or tools. These are the same binaries, and
@@ -862,6 +876,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
         recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
+        concurrent: Annotated[bool, Opt(help=CONCURRENT_HELP)] = True,
     ) -> Result:
         """Transfer files from local machine to remote host.
 
@@ -875,7 +890,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         users only.
 
         ``recursive`` transfers each directory among the sources as a tree;
-        see :ref:`recursive-transfers`.
+        see :ref:`recursive-transfers`. ``concurrent`` bounds the files in
+        flight; see :ref:`concurrent-transfers`.
         """
         if user is not None:
             _validate_user(user)
@@ -892,13 +908,19 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
             with SuppressCommandOutput(host=cast("Host", self)):
                 return await put_tree(
-                    self, src_files, dest_dir, mode=mode, user=user, show_progress=show_progress
+                    self,
+                    src_files,
+                    dest_dir,
+                    mode=mode,
+                    user=user,
+                    show_progress=show_progress,
+                    concurrent=concurrent,
                 )
         if is_dry_run():
             return self._dry_run_transfer("PUT", src_files, dest_dir, mode)
         with SuppressCommandOutput(host=cast("Host", self)):
             return await self._transfer_for(user).put_files(
-                src_files, dest_dir, show_progress, mode
+                src_files, dest_dir, show_progress, mode, concurrent=concurrent
             )
 
     ####################

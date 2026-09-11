@@ -153,7 +153,13 @@ class TestTheStructuralRules:
 
         class NoUserOnPut(UnixHost):
             async def put(
-                self, src_files, dest_dir, mode=None, show_progress=True, recursive=False
+                self,
+                src_files,
+                dest_dir,
+                mode=None,
+                show_progress=True,
+                recursive=False,
+                concurrent=True,
             ):
                 return None
 
@@ -452,10 +458,10 @@ class _Conforming(BaseFileTransfer):
     def create(cls, ctx):
         return cls("probe")
 
-    async def _run_put(self, src_files, dest_dir, progress_factory):
+    async def _run_put(self, src_files, dest_dir, progress_factory, *, concurrent=True):
         return {}
 
-    async def _run_get(self, src_files, dest_dir, progress_factory):
+    async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
         return {}
 
 
@@ -480,7 +486,7 @@ class TestTheTransferBackendRules:
 
     def test_a_backend_missing_a_keyword_the_base_class_passes_is_refused(self):
         class NoProgressFactory(_Conforming):
-            async def _run_put(self, src_files, dest_dir):
+            async def _run_put(self, src_files, dest_dir, *, concurrent=True):
                 return {}
 
         with pytest.raises(
@@ -491,7 +497,7 @@ class TestTheTransferBackendRules:
 
     def test_a_backend_missing_a_keyword_the_host_passes_is_refused(self):
         class NoMode(_Conforming):
-            async def put_files(self, src_files, dest_dir, show_progress=True):
+            async def put_files(self, src_files, dest_dir, show_progress=True, concurrent=True):
                 return None
 
         with pytest.raises(
@@ -510,7 +516,7 @@ class TestTheTransferBackendRules:
     def test_a_backend_leaving_a_method_abstract_is_refused(self):
         class StillAbstract(_Conforming):
             @abstractmethod
-            async def _run_get(self, src_files, dest_dir, progress_factory):
+            async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
                 """Reopened, so the class cannot be instantiated."""
 
         with pytest.raises(AssertionError, match=r"leaves _run_get abstract"):
@@ -539,7 +545,14 @@ class _RecordsItsProbe(LocalHost):
     capabilities = replace(LocalHost.capabilities, put_user=UserSupport.chown)
 
     async def put(
-        self, src_files, dest_dir, mode=None, user=None, show_progress=True, recursive=False
+        self,
+        src_files,
+        dest_dir,
+        mode=None,
+        user=None,
+        show_progress=True,
+        recursive=False,
+        concurrent=True,
     ):
         _PROBED_UNDER.append(is_dry_run())
 

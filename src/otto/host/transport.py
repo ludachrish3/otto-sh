@@ -255,11 +255,12 @@ class SshHopTransport:
         """Release the forward for *dest_host:dest_port*.  A no-op if absent.
 
         Caching alone bounds the leak only where the destination repeats, and
-        the netcat path is where it does not: ``_put_files_nc`` gathers every
-        file concurrently and each in-flight transfer reserves its own remote
-        port, so a bulk put opens one forward per file with no reuse
-        available.  Measured on an 8-file put through a hop: 6 descriptors
-        stranded with caching alone, 0 once the attempt releases its own.  The
+        the netcat path is where it does not: ``_put_files_nc`` fans the files
+        out under the nc cap when ``concurrent`` and each in-flight transfer
+        reserves its own remote port, so a bulk put opens one forward per
+        in-flight file with no reuse available.  Measured on an 8-file put
+        through a hop: 6 descriptors stranded with caching alone, 0 once the
+        attempt releases its own.  The
         same holds sequentially on any target whose port strategy resolves to
         ``python`` or ``custom``, which return a fresh ephemeral port every
         call rather than rescanning from the base.

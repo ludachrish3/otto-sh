@@ -279,6 +279,22 @@ async def test_get_files_nonexistent_source(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_a_missing_source_does_not_skip_the_files_after_it(tmp_path: Path):
+    """A failing source is its own entry; the files after it still copy."""
+    host = LocalHost()
+    good = tmp_path / "good.txt"
+    good.write_text("ok")
+    missing = tmp_path / "missing.txt"
+
+    result = await host.get([missing, good], tmp_path / "dest")
+
+    assert result.status == Status.Error
+    assert not result.value[missing].is_ok
+    assert result.value[good].is_ok, result.value[good].msg
+    assert (tmp_path / "dest" / "good.txt").read_text() == "ok"
+
+
+@pytest.mark.asyncio
 async def test_put_user_refused_on_local(tmp_path: Path):
     """`user` is a container-only concept; a local copy keeps the invoking
     user's ownership. Enter at the public method — the refusal lives
@@ -613,3 +629,54 @@ async def test_recursive_on_a_plain_file_is_harmless(tmp_path: Path):
     result = await host.put(src, tmp_path / "remote", recursive=True)
     assert result.status == Status.Success
     assert result.value[src].value == tmp_path / "remote" / "file.txt"
+
+
+@pytest.mark.asyncio
+async def test_put_and_get_pass_concurrent_to_the_backend(monkeypatch, tmp_path: Path):
+    """A local copy carries one file at a time, but the keyword must still
+    reach the backend: the backend, not the family, is where the fan-out
+    decision lives, so a family that swallowed it would make
+    ``--no-concurrent`` a silent no-op on this host alone."""
+    from otto.result import Result
+
+    host = LocalHost()
+    src = tmp_path / "a.txt"
+    src.write_text("a")
+    seen: dict[str, object] = {}
+
+    async def put_files(files, dest_dir, show_progress, mode, *, concurrent):
+        seen["put"] = concurrent
+        return Result(
+            Status.Success,
+            value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+        )
+
+    async def get_files(files, dest_dir, show_progress, *, concurrent):
+        seen["get"] = concurrent
+        return Result(
+            Status.Success,
+            value={f: Result(Status.Success, value=dest_dir / f.name) for f in files},
+        )
+
+    monkeypatch.setattr(host._file_transfer, "put_files", put_files)
+    monkeypatch.setattr(host._file_transfer, "get_files", get_files)
+
+    await host.put([src], tmp_path / "dest", concurrent=False)
+    await host.get([src], tmp_path / "back", concurrent=False)
+
+    assert seen == {"put": False, "get": False}
+
+
+def test_local_transfer_is_one_file_at_a_time() -> None:
+    """A local copy keeps exactly one file in flight.
+
+    Inheritance from the base makes it true today; the point of writing it
+    down is that a future override fails HERE, beside the promise. The
+    families table in ``docs/api/host/transfer.rst`` and both
+    ``Host.put``/``Host.get`` docstrings name this backend as one that runs
+    one file at a time whatever ``concurrent`` says, and nothing else checks
+    that claim against the class.
+    """
+    from otto.host.local_host import LocalFileTransfer
+
+    assert LocalFileTransfer(name="local").concurrency_limit == 1

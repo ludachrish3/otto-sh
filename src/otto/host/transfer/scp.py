@@ -12,7 +12,6 @@ rather than letting the failure arrive as asyncssh's, one per file, after the
 connection is up.
 """
 
-import asyncio
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -30,9 +29,11 @@ from ...result import CommandResult, Result
 from ...utils import Status
 from ..userland import APPLET_ABSENT, applet_capability, refuse_if_gapped
 from .base import (
+    DEFAULT_SESSION_TRANSFER_LIMIT,
     ProgressGranularity,
     TransferContext,
     TransferProgressFactory,
+    resolve_concurrency_limit,
 )
 from .progress import _make_sftp_progress
 from .registry import register_transfer_backend
@@ -189,9 +190,9 @@ class ScpFileTransfer(UnixFileTransfer):
     Inherits ``put_files`` / ``get_files`` from
     :class:`~otto.host.transfer.base.BaseFileTransfer` and unix scaffolding
     (``_connections``, ``_exec_cmd``, ``_warmup_for_transfer``) from
-    :class:`~otto.host.transfer.unix_base.UnixFileTransfer`; implements
-    ``_run_put`` / ``_run_get``
-    directly for the SCP protocol.
+    :class:`~otto.host.transfer.unix_base.UnixFileTransfer`; hands one
+    ``asyncssh.scp`` call per file to the base dispatcher, bounded by
+    ``scp_options.max_concurrent_transfers``.
 
     ``userland`` is THREADED THROUGH and not validated, unlike the three fields
     above it in :meth:`create`, and the reason is a property of this backend's
@@ -248,7 +249,17 @@ class ScpFileTransfer(UnixFileTransfer):
             max_filename_len=max_filename_len,
         )
         self._scp_options = scp_options
+        self._max_concurrent_transfers = resolve_concurrency_limit(
+            scp_options.max_concurrent_transfers,
+            derived=DEFAULT_SESSION_TRANSFER_LIMIT,
+            option="scp_options.max_concurrent_transfers",
+        )
         self._userland = userland
+
+    @property
+    @override
+    def concurrency_limit(self) -> int:
+        return self._max_concurrent_transfers
 
     @override
     @classmethod
@@ -328,6 +339,8 @@ class ScpFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
         await refuse_if_scp_is_absent(
             self._userland,
@@ -337,7 +350,9 @@ class ScpFileTransfer(UnixFileTransfer):
                 f"legacy protocol and execs `scp` on the device to send them"
             ),
         )
-        return await self._get_files_scp(src_files, dest_dir, progress_factory)
+        return await self._get_files_scp(
+            src_files, dest_dir, progress_factory, concurrent=concurrent
+        )
 
     @override
     async def _run_put(
@@ -345,6 +360,8 @@ class ScpFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
         await refuse_if_scp_is_absent(
             self._userland,
@@ -354,13 +371,17 @@ class ScpFileTransfer(UnixFileTransfer):
                 f"legacy protocol and execs `scp` on the device to receive them"
             ),
         )
-        return await self._put_files_scp(src_files, dest_dir, progress_factory)
+        return await self._put_files_scp(
+            src_files, dest_dir, progress_factory, concurrent=concurrent
+        )
 
     async def _get_files_scp(
         self,
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
         import asyncssh
 
@@ -379,22 +400,15 @@ class ScpFileTransfer(UnixFileTransfer):
             )
             return Result(Status.Success, value=dest_dir / src.name)
 
-        gathered = await asyncio.gather(
-            *(_get_one(src) for src in src_files), return_exceptions=True
-        )
-        per_file: dict[Path, Result] = {}
-        for src, outcome in zip(src_files, gathered, strict=True):
-            if isinstance(outcome, BaseException):
-                per_file[src] = Result(Status.Error, msg=f"{src}: {outcome}")
-            else:
-                per_file[src] = outcome
-        return per_file
+        return await self._dispatch_per_file(src_files, _get_one, concurrent=concurrent)
 
     async def _put_files_scp(
         self,
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
+        *,
+        concurrent: bool = True,
     ) -> dict[Path, Result]:
         import asyncssh
 
@@ -413,16 +427,7 @@ class ScpFileTransfer(UnixFileTransfer):
             )
             return Result(Status.Success, value=dest_dir / src.name)
 
-        gathered = await asyncio.gather(
-            *(_put_one(src) for src in src_files), return_exceptions=True
-        )
-        per_file: dict[Path, Result] = {}
-        for src, outcome in zip(src_files, gathered, strict=True):
-            if isinstance(outcome, BaseException):
-                per_file[src] = Result(Status.Error, msg=f"{src}: {outcome}")
-            else:
-                per_file[src] = outcome
-        return per_file
+        return await self._dispatch_per_file(src_files, _put_one, concurrent=concurrent)
 
 
 register_transfer_backend("scp", ScpFileTransfer)

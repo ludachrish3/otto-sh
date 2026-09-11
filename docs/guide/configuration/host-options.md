@@ -172,6 +172,11 @@ dict that is forwarded verbatim to the underlying library (``asyncssh``,
 ``aioftp``) for any option not surfaced as a curated field.  ``NcOptions``
 has no ``extra`` — all netcat knobs are curated fields.
 
+``scp_options`` and ``sftp_options`` also carry ``max_concurrent_transfers``
+(default ``null``): how many files of one transfer are in flight at once, one
+SSH session each. ``null`` derives a bound that fits a default sshd — see
+{ref}`transfer-channel-budget` below.
+
 Each of these backends reports transfer progress at a fixed stride — the most
 the bar may advance between two ticks: 16 KiB for ``sftp`` and ``scp``, 8 KiB
 for ``ftp`` and ``nc``.  Only ``scp``'s follows your configuration: whatever
@@ -444,7 +449,18 @@ procfs and sysfs pseudo-files report a size that is not their content either
 apart from a genuinely empty file — so they are not refused, they simply
 arrive empty.  Use the ``shell`` backend for those.
 
-### Concurrency and the remote channel budget
+`nc_options` participates in the same layered merge as the other transport
+option objects, described at the top of this page.
+
+```json
+{
+    "nc_options": { "exec_name": "ncat", "port": 9500 }
+}
+```
+
+(transfer-channel-budget)=
+
+## Concurrency and the remote channel budget
 
 An nc transfer is not free of SSH channels just because it moves its bytes over
 its own TCP connection: otto holds one exec channel for the whole life of the
@@ -455,24 +471,26 @@ unbounded bulk transfer turns "many files" into ``open failed`` — or into
 ``Remote nc listener on port N not ready`` when it is the readiness poll that
 loses its channel.
 
-otto therefore caps the files in flight per host connection. The default is
-derived from the OpenSSH default, leaving headroom for otto's own control
-commands. Set ``max_concurrent_transfers`` when the remote sshd is *not*
-default — raise it for a host with a raised ``MaxSessions`` to transfer wider,
-and lower it for a host with a lowered one, which would otherwise lose files.
-otto cannot read the server's setting, so this is the only way to tell it.
+otto therefore caps the files in flight per host connection, for ``nc``,
+``scp`` and ``sftp`` alike. The default is derived from the OpenSSH default
+(``MaxSessions 10``) less two channels of headroom for otto's own control
+commands — 10 − 2 = **8 usable**. An nc transfer holds two channels per file,
+so its default is 8 ÷ 2 = 4. An scp or sftp transfer holds one session per
+file, and the 8 is halved to 4 rather than spent: a full fan-out then takes
+only half the usable budget and the other half is still there for whatever
+else you run on that connection while the batch is in flight — your own
+``run`` calls, a second transfer on another backend, an interactive session.
+(A ``user=`` transfer authenticates separately and rides its own SSH
+connection, so it does not share this budget; it has one of its own.) Set
+``max_concurrent_transfers`` on the protocol's own options table when the
+remote sshd is *not* default — raise it for a host with a raised
+``MaxSessions`` to transfer wider, and lower it for a host with a lowered
+one, which would otherwise lose files. otto cannot read the server's
+setting, so this is the only way to tell it.
 
 ```json
 {
-    "nc_options": { "max_concurrent_transfers": 12 }
-}
-```
-
-`nc_options` participates in the same layered merge as the other transport
-option objects, described at the top of this page.
-
-```json
-{
-    "nc_options": { "exec_name": "ncat", "port": 9500 }
+    "nc_options": { "max_concurrent_transfers": 12 },
+    "scp_options": { "max_concurrent_transfers": 8 }
 }
 ```

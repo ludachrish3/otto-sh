@@ -110,7 +110,8 @@ class TestSharedProgress:
 class TestBaseFileTransferIsAbstract:
     """``BaseFileTransfer`` makes progress reporting a structural requirement
     of every transfer backend: ``_run_put`` and ``_run_get`` are both
-    ``@abstractmethod`` and receive a ``TransferProgressFactory``. A new
+    ``@abstractmethod`` and receive a ``TransferProgressFactory`` and a
+    keyword-only ``concurrent``. A new
     backend cannot be instantiated without implementing both — the type
     system, not a runtime test, is the first line of defense."""
 
@@ -123,7 +124,7 @@ class TestBaseFileTransferIsAbstract:
 
     def test_missing_run_get_raises_type_error(self):
         class OnlyPut(BaseFileTransfer):
-            async def _run_put(self, src_files, dest_dir, progress_factory):
+            async def _run_put(self, src_files, dest_dir, progress_factory, *, concurrent=True):
                 return Status.Success, ""
 
         with pytest.raises(TypeError, match="_run_get"):
@@ -131,7 +132,7 @@ class TestBaseFileTransferIsAbstract:
 
     def test_missing_run_put_raises_type_error(self):
         class OnlyGet(BaseFileTransfer):
-            async def _run_get(self, src_files, dest_dir, progress_factory):
+            async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
                 return Status.Success, ""
 
         with pytest.raises(TypeError, match="_run_put"):
@@ -139,10 +140,10 @@ class TestBaseFileTransferIsAbstract:
 
     def test_both_hooks_present_instantiates(self):
         class Concrete(BaseFileTransfer):
-            async def _run_put(self, src_files, dest_dir, progress_factory):
+            async def _run_put(self, src_files, dest_dir, progress_factory, *, concurrent=True):
                 return Status.Success, ""
 
-            async def _run_get(self, src_files, dest_dir, progress_factory):
+            async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
                 return Status.Success, ""
 
         # No exception — both abstract methods supplied.
@@ -158,11 +159,11 @@ class TestBaseFileTransferProgressWiring:
         captured: dict[str, object] = {}
 
         class Spy(BaseFileTransfer):
-            async def _run_put(self, src_files, dest_dir, progress_factory):
+            async def _run_put(self, src_files, dest_dir, progress_factory, *, concurrent=True):
                 captured["put_factory"] = progress_factory
                 return {s: Result(Status.Success, value=dest_dir / s.name) for s in src_files}
 
-            async def _run_get(self, src_files, dest_dir, progress_factory):
+            async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
                 captured["get_factory"] = progress_factory
                 return {s: Result(Status.Success, value=dest_dir / s.name) for s in src_files}
 

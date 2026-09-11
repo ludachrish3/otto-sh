@@ -58,11 +58,11 @@ _FILES = 20
 _PER_FILE_PATHS = ["_put_files_nc", "_get_files_nc", "_get_files_nc_tunneled"]
 
 
-def _make_ft(**nc_kwargs) -> NcFileTransfer:
+def _make_ft(term: str = "ssh", **nc_kwargs) -> NcFileTransfer:
     connections = MagicMock(spec=ConnectionManager)
     connections.has_tunnel = False
     connections.ip = "10.0.0.1"
-    connections.term = "ssh"
+    connections.term = term
     return NcFileTransfer(
         connections=connections,
         name="fanout",
@@ -248,4 +248,79 @@ def test_the_channel_budget_constants_leave_headroom():
     assert needed <= _NC_SSHD_DEFAULT_MAX_SESSIONS, (
         f"a full fan-out needs {needed} channels plus headroom against a default "
         f"sshd ceiling of {_NC_SSHD_DEFAULT_MAX_SESSIONS}"
+    )
+
+
+@pytest.mark.parametrize("method", _PER_FILE_PATHS)
+@pytest.mark.asyncio
+async def test_no_concurrent_moves_one_file_at_a_time(method: str, tmp_path: Path):
+    """``concurrent=False`` is honoured by every per-file path.
+
+    The opt-out has to reach the dispatcher on all three, not just the one a
+    caller happened to exercise: a path that ignored the flag would keep
+    overlapping transfers a caller asked to serialize, and the only symptom is
+    load the caller explicitly said it could not take.
+    """
+    ft = _make_ft()
+    recorder = _install_recorder(ft, method)
+
+    await getattr(ft, method)(_files(tmp_path), Path("/tmp"), concurrent=False)
+
+    assert recorder.peak == 1, f"{method} ran {recorder.peak} at once under concurrent=False"
+
+
+def test_the_constants_are_the_shared_derivation():
+    """nc's channel budget is the shared derivation, not a parallel copy of it.
+
+    The four names stay because they say what they bound, but each must be the
+    base's answer: a second spelling of the same arithmetic is one that drifts
+    the moment the ceiling or the headroom moves.
+    """
+    from otto.host.transfer.base import (
+        SSH_CHANNEL_HEADROOM,
+        SSHD_DEFAULT_MAX_SESSIONS,
+        derive_concurrency_limit,
+    )
+
+    assert _NC_SSHD_DEFAULT_MAX_SESSIONS == SSHD_DEFAULT_MAX_SESSIONS
+    assert _NC_CHANNEL_HEADROOM == SSH_CHANNEL_HEADROOM
+    assert derive_concurrency_limit(_NC_CHANNELS_PER_TRANSFER) == _NC_MAX_CONCURRENT_TRANSFERS
+    assert _make_ft().concurrency_limit == _NC_MAX_CONCURRENT_TRANSFERS
+
+
+def _warmup_true_execs(ft: NcFileTransfer) -> int:
+    """How many pool-warming ``true`` execs the transfer asked for.
+
+    The warm-up is the only thing that execs a bare ``true``; the strategy
+    probe and the listener spawn are long scripts, so counting the literal
+    separates pool warming from everything else on the same seam.
+    """
+    return sum(1 for call in ft._exec_cmd.call_args_list if call.args and call.args[0] == "true")
+
+
+@pytest.mark.parametrize(
+    ("concurrent", "expected"),
+    [(True, _NC_MAX_CONCURRENT_TRANSFERS), (False, 1)],
+)
+@pytest.mark.asyncio
+async def test_the_warm_up_opens_only_the_sessions_the_batch_will_spend(
+    concurrent: bool, expected: int, tmp_path: Path
+):
+    """Pool warming is sized by the fan-out, not by the file count.
+
+    On telnet each warmed session is a real login handshake, so warming one
+    per file is load the host pays for sessions the transfer can never use at
+    once — the cap is the ceiling on in-flight transfers. Under
+    ``concurrent=False`` it is worse than waste: firing twenty handshakes is
+    exactly the burst the caller passed the flag to avoid, so the opt-out
+    would be honoured by the transfers and broken by the warm-up.
+    """
+    ft = _make_ft(term="telnet")
+    _install_recorder(ft, "_put_files_nc")
+
+    await ft._put_files_nc(_files(tmp_path), Path("/tmp"), concurrent=concurrent)
+
+    assert _warmup_true_execs(ft) == expected, (
+        f"warmed {_warmup_true_execs(ft)} telnet sessions for {_FILES} files under "
+        f"concurrent={concurrent}, which can spend at most {expected} at once"
     )

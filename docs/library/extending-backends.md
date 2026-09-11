@@ -147,9 +147,10 @@ the granularity it declared).
 file, keyed exactly as passed (no resolution). The public `put`/`get`
 methods fold that mapping into an aggregate `Result` via
 {func}`~otto.host.transfer.aggregate_transfer`: `value=dest_path` on a
-per-file success, a per-file `msg` on failure, and
-`Status.Skipped` (`"not attempted (earlier failure)"`) for a file a
-sequential backend never reached:
+per-file success and a per-file `msg` on failure. Every source is attempted,
+whatever its siblings do — a backend that carries one file at a time still
+moves on to the next after a failure, rather than answering for the files it
+has not tried:
 
 ```python
 # .otto/init.py — registered via [init] in .otto/settings.toml
@@ -170,23 +171,33 @@ class XmodemTransfer(BaseFileTransfer):
     def create(cls, ctx: TransferContext) -> "XmodemTransfer":
         return cls(name=ctx.host_name, max_filename_len=ctx.max_filename_len)
 
-    async def _run_put(self, src_files, dest_dir, progress_factory):
-        per_file: dict[Path, Result] = {}
-        for src in src_files:
+    async def _run_put(self, src_files, dest_dir, progress_factory, *, concurrent: bool = True):
+        async def _put_one(src: Path) -> Result:
             progress = progress_factory() if progress_factory is not None else None
-            try:
-                ...  # send src over XMODEM; drive `progress` as bytes move
-                per_file[src] = Result(Status.Success, value=dest_dir / src.name)
-            except OSError as exc:
-                per_file[src] = Result(Status.Error, msg=f"{src}: {exc}")
-        return per_file
+            ...  # send src over XMODEM; drive `progress` as bytes move
+            return Result(Status.Success, value=dest_dir / src.name)
+
+        return await self._dispatch_per_file(src_files, _put_one, concurrent=concurrent)
 
     # same shape as _run_put, reading from the device instead
-    async def _run_get(self, src_files, dest_dir, progress_factory): ...
+    async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent: bool = True):
+        async def _get_one(src: Path) -> Result:
+            ...  # receive src over XMODEM
+            return Result(Status.Success, value=dest_dir / src.name)
+
+        return await self._dispatch_per_file(src_files, _get_one, concurrent=concurrent)
 
 
 register_transfer_backend("xmodem", XmodemTransfer)
 ```
+
+Both hooks hand one per-file coroutine to the base's `_dispatch_per_file`
+rather than writing the loop themselves: it honours `concurrent` and the
+instance's `concurrency_limit`, and an exception out of `_put_one` becomes
+that file's own `Error` entry while its siblings keep moving.
+`concurrency_limit` defaults to 1 — override it only if the protocol really
+can carry more than one file at once (XMODEM cannot). The rules the flag obeys are documented
+once, in {ref}`concurrent-transfers`.
 
 Callers see the aggregate, not the per-backend hooks — `put`/`get` still
 return a single `Result` whose `value` is the per-file mapping:

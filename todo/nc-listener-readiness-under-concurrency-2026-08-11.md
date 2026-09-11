@@ -48,7 +48,7 @@ so the channel demand was whatever the caller's file count happened to be.
 
 ## The fix
 
-`NcFileTransfer._gather_per_file` — one dispatcher shared by all three
+`BaseFileTransfer._dispatch_per_file` — one dispatcher shared by all three
 directions, holding an `asyncio.Semaphore` bound. Three properties are
 load-bearing, each with its own guard in
 `tests/unit/host/test_transfer_nc_fanout.py`:

@@ -15,7 +15,7 @@ reads them rather than restating them:
 ``surfaces``
     The conformance CONTRACTS -- the test functions under
     ``tests/conformance/`` that take the ``resolved_cell`` fixture AND are not
-    positive controls. Eight today.
+    positive controls. Nine today.
     ``test_bed_opener_witness.py``'s two tests name their own cell instead and
     so are not contracts; that is the same distinction
     ``tests/conformance/conftest.py``'s ``_cell_under_test`` makes when it
@@ -23,7 +23,7 @@ reads them rather than restating them:
     POSITIVE CONTROLS are the other exclusion and the subtler one: they take
     ``resolved_cell`` too, because a control has to run on the cell it vouches
     for, so only the ``@pytest.mark.positive_control`` marker separates them
-    (``tests/conformance/_controls.py``). Eight of those today as well, one
+    (``tests/conformance/_controls.py``). Nine of those today as well, one
     per surface.
 
 **THE SURFACE TABLE IS KEYED BY NODEID AND IS CHECKED BOTH WAYS.**
@@ -38,9 +38,9 @@ losing or gaining a row. The failure mode this avoids is the one
 entry looks like a passing cell*.
 
 **DISCOVERY READS SIGNATURES, and that is a real limit.** RE-MEASURED
-(2026-09-10, this module's own walk over the tree): eighteen test functions
-are defined under ``tests/conformance/``, sixteen of which name
-``resolved_cell`` as a parameter -- eight contracts and eight positive
+(2026-09-11, this module's own walk over the tree): twenty test functions
+are defined under ``tests/conformance/``, eighteen of which name
+``resolved_cell`` as a parameter -- nine contracts and nine positive
 controls -- and NONE of the four contract modules contains the string
 ``usefixtures``. A contract that requested the
 cell through ``@pytest.mark.usefixtures`` instead would be invisible here, so
@@ -115,7 +115,7 @@ class Surface:
 
 #: nodeid -> (row id, human title). Order is the rendered row order, and it is
 #: a real declaration rather than a sort: the three exec contracts, then the
-#: four transfer ones, then timeout -- the order the contract modules and the
+#: five transfer ones, then timeout -- the order the contract modules and the
 #: spec's §4 list both use.
 SURFACES: "tuple[Surface, ...]" = (
     Surface(
@@ -168,6 +168,14 @@ SURFACES: "tuple[Surface, ...]" = (
         title="transfer: put -r / get -r round-trip a tree, empty directory included",
         contract=(
             "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree"
+        ),
+    ),
+    Surface(
+        id="transfer-concurrent",
+        title="transfer: a batch larger than the cap lands every file, concurrent and not",
+        contract=(
+            "tests/conformance/test_transfer_contract.py"
+            "::test_put_get_batch_lands_every_file_in_both_modes"
         ),
     ),
     Surface(

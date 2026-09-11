@@ -64,6 +64,7 @@ from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .host import (
+    CONCURRENT_HELP,
     DEFAULT_COMMAND_TIMEOUT,
     Host,
     SuppressCommandOutput,
@@ -118,7 +119,8 @@ class EmbeddedHost(RemoteHost):
         note=(
             "A serial console has no user to switch to, and transfer ownership "
             "follows the connection's own identity. Refuses `put`/`get` with "
-            "`--recursive`."
+            "`--recursive`; moves one file at a time, so `--concurrent` is a "
+            "no-op."
         ),
     )
     """What this family promises. :class:`ZephyrHost` inherits it unchanged --
@@ -355,13 +357,15 @@ class EmbeddedHost(RemoteHost):
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
         recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
+        concurrent: Annotated[bool, Opt(help=CONCURRENT_HELP)] = True,
     ) -> Result:
         """Transfer files from the embedded host to the local machine.
 
         Delegates to :class:`~otto.host.transfer.EmbeddedFileTransfer`,
         which speaks the device shell (the ``console`` backend uses Zephyr's
-        ``fs`` commands). Transfers are sequential — an embedded target has a
-        single console.
+        ``fs`` commands). One file at a time -- an embedded target has a
+        single console -- so ``concurrent`` is accepted and is a no-op; see
+        :ref:`concurrent-transfers`.
 
         ``recursive`` is not supported: see :ref:`recursive-transfers`.
         """
@@ -380,7 +384,9 @@ class EmbeddedHost(RemoteHost):
         if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
         with SuppressCommandOutput(host=cast("Host", self)):
-            return await self._file_transfer.get_files(src_files, dest_dir, show_progress)
+            return await self._file_transfer.get_files(
+                src_files, dest_dir, show_progress, concurrent=concurrent
+            )
 
     @override
     @cli_exposed(success="Transfer complete.", dry_run_preview=True)
@@ -403,12 +409,15 @@ class EmbeddedHost(RemoteHost):
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
         recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
+        concurrent: Annotated[bool, Opt(help=CONCURRENT_HELP)] = True,
     ) -> Result:
         """Transfer files from the local machine to the embedded host.
 
         Delegates to :class:`~otto.host.transfer.EmbeddedFileTransfer`
         (the ``console`` backend writes via Zephyr's chunked ``fs write``).
-        Transfers are sequential — an embedded target has a single console.
+        One file at a time -- an embedded target has a single console -- so
+        ``concurrent`` is accepted and is a no-op; see
+        :ref:`concurrent-transfers`.
 
         ``dest_dir`` is resolved against :attr:`default_dest_dir` so a
         generic ``Path()`` from a fan-out caller lands on the host's
@@ -440,7 +449,9 @@ class EmbeddedHost(RemoteHost):
         if is_dry_run():
             return self._dry_run_transfer("PUT", src_files, dest_dir, mode)
         with SuppressCommandOutput(host=cast("Host", self)):
-            return await self._file_transfer.put_files(src_files, dest_dir, show_progress, mode)
+            return await self._file_transfer.put_files(
+                src_files, dest_dir, show_progress, mode, concurrent=concurrent
+            )
 
     ####################
     #  File operations

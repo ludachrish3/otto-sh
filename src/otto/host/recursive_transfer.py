@@ -19,7 +19,9 @@ directory — it exists — but is NOT descended, and is marked with a separate
 "zero children" as "empty".
 """
 
+import asyncio
 import os
+from collections.abc import Coroutine
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -167,6 +169,51 @@ def _walk_local(root: Path) -> _LocalTree:
     return _LocalTree(levels=levels)
 
 
+async def _run_levels(
+    coros: "list[Coroutine[Any, Any, Result]]", *, concurrent: bool
+) -> "list[Result]":
+    """Run one ``host.put``/``host.get`` per directory level.
+
+    Together under ``asyncio.gather`` when *concurrent*: every level's files
+    then compete for the SAME transfer object's semaphore, so the whole tree
+    stays within the protocol's cap while a deep tree of small files fills it
+    instead of draining it level by level. In order otherwise. In both modes,
+    a raise cancels and drains the siblings before propagating; nothing is
+    left running. The drain waits for each sibling level to honour that
+    cancellation, so a per-file coroutine that swallows ``CancelledError``
+    holds the drain for as long as it takes -- bounded in practice by each
+    backend's own cancellation cleanup timeouts.
+    """
+    if concurrent:
+        tasks = [asyncio.ensure_future(coro) for coro in coros]
+        try:
+            return list(await asyncio.gather(*tasks))
+        except BaseException:
+            # A raise from one level must not leave its siblings' tasks
+            # running detached — cancel them, then drain (`return_exceptions`)
+            # so their own CancelledError is collected here rather than
+            # surfacing later as an unretrieved task exception.
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+    landed: list[Result] = []
+    try:
+        for coro in coros:
+            # Not a list comprehension: a mid-sequence raise must leave
+            # `landed` holding exactly what completed, so the except branch
+            # below knows which coroutines were never started.
+            landed.append(await coro)  # noqa: PERF401
+    except BaseException:
+        # A raise mid-sequence must not leave the remaining coroutine
+        # objects un-awaited and un-closed (a ResourceWarning, and a leaked
+        # generator) — the one that raised is already spent.
+        for coro in coros[len(landed) + 1 :]:
+            coro.close()
+        raise
+    return landed
+
+
 async def _put_one_tree(
     host: Any,
     root: Path,
@@ -175,6 +222,7 @@ async def _put_one_tree(
     mode: "int | str | None",
     user: "str | None",
     show_progress: bool,
+    concurrent: bool,
 ) -> Result:
     from .host import is_dry_run
 
@@ -198,16 +246,19 @@ async def _put_one_tree(
             msg=f"[DRY RUN] PUT {root} -> {dest_root}: directories only",
         )
     per_file: dict[Path, Result] = {}
-    for level in tree.levels:
-        if not level.files:
-            continue
-        landed = await host.put(
+    coros = [
+        host.put(
             level.files,
             dest_root / level.rel,
             mode=mode,
             user=user,
             show_progress=show_progress,
+            concurrent=concurrent,
         )
+        for level in tree.levels
+        if level.files
+    ]
+    for landed in await _run_levels(coros, concurrent=concurrent):
         for src, outcome in (landed.value or {}).items():
             per_file[src.relative_to(root)] = outcome
     return aggregate_transfer(per_file)
@@ -221,6 +272,7 @@ async def put_tree(
     mode: "int | str | None",
     user: "str | None",
     show_progress: bool,
+    concurrent: bool,
 ) -> Result:
     """Upload *src_files*, walking each directory among them; plain files ride one ordinary put.
 
@@ -245,6 +297,8 @@ async def put_tree(
     directories as ``root`` (the identity ``docker cp`` writes as anyway);
     ``LocalHost`` refuses a non-``None`` *user* upstream, before any of
     this runs.
+
+    *concurrent* fans the levels out together under the backend's own cap.
     """
     check = parse_file_mode(mode)
     if not check.is_ok:
@@ -255,15 +309,28 @@ async def put_tree(
     per_source: dict[Path, Result] = {}
     if plain:
         # One call carrying ALL plain sources: `put_tree` must not change what a
-        # plain, non-recursive put does, so a batch of plain sources keeps
-        # the backend's own sequential semantics (e.g. LocalHost Skips the
-        # rest of the batch after its first failure).
-        flat = await host.put(plain, dest_dir, mode=mode, user=user, show_progress=show_progress)
+        # plain, non-recursive put does, so every plain source is attempted
+        # and this single call exists only so the batch shares one dispatch
+        # under the cap, exactly as it would without recursion.
+        flat = await host.put(
+            plain,
+            dest_dir,
+            mode=mode,
+            user=user,
+            show_progress=show_progress,
+            concurrent=concurrent,
+        )
         per_source.update(flat.value or {})
     for src in src_files:
         if src.is_dir():
             per_source[src] = await _put_one_tree(
-                host, src, dest_dir / src.name, mode=mode, user=user, show_progress=show_progress
+                host,
+                src,
+                dest_dir / src.name,
+                mode=mode,
+                user=user,
+                show_progress=show_progress,
+                concurrent=concurrent,
             )
     return aggregate_transfer({src: per_source[src] for src in src_files})
 
@@ -276,6 +343,7 @@ async def _get_one_tree(
     *,
     user: "str | None",
     show_progress: bool,
+    concurrent: bool,
 ) -> Result:
     try:
         dest_root.mkdir(parents=True, exist_ok=True)
@@ -292,8 +360,13 @@ async def _get_one_tree(
     for f in listing.files:
         by_level.setdefault(f.parent.relative_to(root), []).append(f)
     per_file: dict[Path, Result] = {}
-    for rel, files in by_level.items():
-        landed = await host.get(files, dest_root / rel, user=user, show_progress=show_progress)
+    coros = [
+        host.get(
+            files, dest_root / rel, user=user, show_progress=show_progress, concurrent=concurrent
+        )
+        for rel, files in by_level.items()
+    ]
+    for landed in await _run_levels(coros, concurrent=concurrent):
         for src, outcome in (landed.value or {}).items():
             per_file[src.relative_to(root)] = outcome
     return aggregate_transfer(per_file)
@@ -306,6 +379,7 @@ async def get_tree(
     *,
     user: "str | None",
     show_progress: bool,
+    concurrent: bool,
 ) -> Result:
     """Download *src_files*, walking each that the host reports as a directory.
 
@@ -314,6 +388,8 @@ async def get_tree(
     dry run nothing is asked of the host: every source is a single
     ``NotRun`` entry previewing its destination, because a fabricated
     listing would read as "nothing to transfer".
+
+    *concurrent* fans the levels out together under the backend's own cap.
     """
     from .host import is_dry_run
 
@@ -344,9 +420,17 @@ async def get_tree(
             plain.append(src)
         else:
             per_source[src] = await _get_one_tree(
-                host, src, listing, dest_dir / src.name, user=user, show_progress=show_progress
+                host,
+                src,
+                listing,
+                dest_dir / src.name,
+                user=user,
+                show_progress=show_progress,
+                concurrent=concurrent,
             )
     if plain:
-        flat = await host.get(plain, dest_dir, user=user, show_progress=show_progress)
+        flat = await host.get(
+            plain, dest_dir, user=user, show_progress=show_progress, concurrent=concurrent
+        )
         per_source.update(flat.value or {})
     return aggregate_transfer({src: per_source[src] for src in src_files})

@@ -38,6 +38,11 @@
       "contract": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree"
     },
     {
+      "id": "transfer-concurrent",
+      "title": "transfer: a batch larger than the cap lands every file, concurrent and not",
+      "contract": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes"
+    },
+    {
       "id": "timeout",
       "title": "timeout: a command over budget fails the documented way",
       "contract": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way"
@@ -3240,6 +3245,35 @@
       }
     },
     "transfer-recursive": {
+      "busybox-1.16.1": {
+        "status": "untested"
+      },
+      "busybox-1.21.1": {
+        "status": "untested"
+      },
+      "busybox-1.28.1": {
+        "status": "untested"
+      },
+      "busybox-1.31.0": {
+        "status": "untested"
+      },
+      "busybox-1.35.0": {
+        "status": "untested"
+      },
+      "gnu": {
+        "status": "untested"
+      },
+      "zephyr-2.7": {
+        "status": "untested"
+      },
+      "zephyr-3.7": {
+        "status": "untested"
+      },
+      "zephyr-4.4": {
+        "status": "untested"
+      }
+    },
+    "transfer-concurrent": {
       "busybox-1.16.1": {
         "status": "untested"
       },

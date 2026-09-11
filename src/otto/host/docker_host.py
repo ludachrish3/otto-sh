@@ -23,6 +23,7 @@ the per-call ``exec`` path still works against any parent.
 import asyncio
 import logging
 import shlex
+import uuid
 from dataclasses import (
     dataclass,
     field,
@@ -40,7 +41,14 @@ from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .connections import teardown_step
 from .errors import MountNotFoundError
 from .file_ops import PosixFileOps
-from .host import BaseHost, Host, _validate_user, is_dry_run, refuse_declined_fact
+from .host import (
+    CONCURRENT_HELP,
+    BaseHost,
+    Host,
+    _validate_user,
+    is_dry_run,
+    refuse_declined_fact,
+)
 from .mount import Mount, mount_for, mount_for_parent, translate
 from .privilege import PosixPrivilege
 
@@ -71,7 +79,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         session_identity=SessionIdentity.bound_at_open,
         transfer=(
             "the parent host's own backend for the staging leg, then `docker cp` "
-            "across the container boundary"
+            "across the container boundary, `--concurrent` governing the "
+            "staging leg"
         ),
         note=(
             "`user=` defaults to the service's declared user, and falls back to "
@@ -810,8 +819,13 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     @staticmethod
     def _stage_dir(container_id: str) -> Path:
-        """Per-container staging directory on the parent filesystem."""
-        return Path(f"/tmp/otto-docker-stage/{container_id}")  # noqa: S108 — deliberate staging path
+        """Per-CALL staging directory under the container's own prefix on the parent filesystem.
+
+        Two overlapping transfers to one container must not remove each
+        other's files in ``finally``.
+        """
+        stage_root = "/tmp/otto-docker-stage"  # noqa: S108 — deliberate staging path
+        return Path(f"{stage_root}/{container_id}/{uuid.uuid4().hex}")
 
     @override
     @cli_exposed(success="Transfer complete.", dry_run_preview=True)
@@ -834,6 +848,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
         recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
+        concurrent: Annotated[bool, Opt(help=CONCURRENT_HELP)] = True,
     ) -> Result:
         """Upload local files into the container.
 
@@ -845,9 +860,11 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         suppressing bars for a bulk transfer through the protocol (the
         coverage fetcher does) raised ``TypeError`` on this family alone.
 
-        Two-step: ``parent.put`` to a per-container staging dir, then
-        ``docker cp`` from there into the container. The staging dir is
-        cleaned up unconditionally so a failed transfer doesn't leak.
+        Two-step: ``parent.put`` to a per-call staging dir, then ``docker cp``
+        from there into the container. The staging dir is cleaned up
+        unconditionally so a failed transfer doesn't leak. Every file whose
+        staging leg succeeded is copied into the container; a file that failed
+        staging keeps that verdict and its siblings still land.
 
         *mode* is applied with a ``chmod`` **inside the container** after the
         copies land — deliberately not by stamping the staging copy and
@@ -869,7 +886,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         :meth:`~otto.host.host.BaseHost.put`.
 
         ``recursive`` transfers each directory among the sources as a tree;
-        see :ref:`recursive-transfers`.
+        see :ref:`recursive-transfers`. *concurrent* is forwarded to the
+        staging leg; the ``docker cp`` leg runs one command per file --
+        see :ref:`concurrent-transfers`.
         """
         from .transfer import aggregate_transfer, chmod_command, parse_file_mode
 
@@ -880,7 +899,13 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             from .recursive_transfer import put_tree
 
             return await put_tree(
-                self, files, dest_dir, mode=mode, user=user, show_progress=show_progress
+                self,
+                files,
+                dest_dir,
+                mode=mode,
+                user=user,
+                show_progress=show_progress,
+                concurrent=concurrent,
             )
         if is_dry_run():
             return self._dry_run_transfer("PUT", files, dest_dir, mode)
@@ -901,25 +926,26 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 msg = f"failed to create staging dir on parent: {mkdir.value}"
                 return aggregate_transfer({f: Result(Status.Error, msg=msg) for f in files})
 
-            stage_result = await self.parent.put(files, stage, show_progress=show_progress)
-            if not stage_result.is_ok:
-                # Staged-but-not-copied files must not read as Success: the
-                # batch aborted before any docker cp, so they never reached
-                # the container. Keep failure entries; downgrade the rest.
-                staged = stage_result.value or {}
-                per_file = {}
-                for f in files:
-                    entry = staged.get(f, Result(Status.Error, msg="staging failed"))
-                    if entry.is_ok:
-                        entry = Result(
-                            Status.Skipped,
-                            msg="staged to parent; docker cp not attempted (staging batch failed)",
-                        )
-                    per_file[f] = entry
-                return aggregate_transfer(per_file)
-
+            stage_result = await self.parent.put(
+                files, stage, show_progress=show_progress, concurrent=concurrent
+            )
+            staged_entries = stage_result.value if isinstance(stage_result.value, dict) else {}
             per_file: dict[Path, Result] = {}
             for f in files:
+                staged_entry = staged_entries.get(
+                    f, Result(Status.Error, msg=stage_result.msg or "staging failed")
+                )
+                if staged_entry.status is not Status.Success:
+                    # The staging leg's own verdict IS this file's entry --
+                    # Error and Skipped alike; its siblings that DID stage are
+                    # still copied below. Tested against Success rather than
+                    # `is_ok` deliberately: `Skipped.is_ok` is True, and the
+                    # one Skipped a transfer still produces (the sibling of a
+                    # directory source refused by a non-recursive put) names a
+                    # file whose bytes never reached the staging dir, so an
+                    # `is_ok` test would docker cp a path that does not exist.
+                    per_file[f] = staged_entry
+                    continue
                 staged = stage / f.name
                 # Unbounded on purpose: this command's duration IS the
                 # transfer into the container, which scales with the file's
@@ -1020,14 +1046,17 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
         recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
+        concurrent: Annotated[bool, Opt(help=CONCURRENT_HELP)] = True,
     ) -> Result:
         """Download files from the container to the local machine.
 
         *show_progress* is forwarded to the staging leg (``parent.get`` from
         the parent host to the local machine) — see :meth:`put`.
 
-        Two-step: ``docker cp`` from the container into a per-container
-        staging dir on the parent, then ``parent.get`` to the local dir.
+        Two-step: ``docker cp`` from the container into a per-call staging dir
+        on the parent, then ``parent.get`` to the local dir. Every file
+        ``docker cp`` staged is fetched; one file's ``docker cp`` failure is
+        its own entry.
 
         *user* is accepted and validated but otherwise ignored: a read never
         changes what owns anything, so there is nothing to chown (spec §4).
@@ -1037,7 +1066,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         :meth:`~otto.host.host.BaseHost.get`.
 
         ``recursive`` transfers each directory among the sources as a tree;
-        see :ref:`recursive-transfers`.
+        see :ref:`recursive-transfers`. *concurrent* is forwarded to the
+        staging leg; the ``docker cp`` leg runs one command per file --
+        see :ref:`concurrent-transfers`.
         """
         from .transfer import aggregate_transfer
 
@@ -1047,7 +1078,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         if recursive:
             from .recursive_transfer import get_tree
 
-            return await get_tree(self, files, dest_dir, user=user, show_progress=show_progress)
+            return await get_tree(
+                self, files, dest_dir, user=user, show_progress=show_progress, concurrent=concurrent
+            )
         if is_dry_run():
             return self._dry_run_transfer("GET", files, dest_dir)
         await self._ensure_running()
@@ -1062,8 +1095,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 msg = f"failed to create staging dir on parent: {mkdir.value}"
                 return aggregate_transfer({f: Result(Status.Error, msg=msg) for f in files})
 
+            per_file: dict[Path, Result] = {}
             staged_paths: list[Path] = []
-            for i, f in enumerate(files):
+            for f in files:
                 staged = stage / f.name
                 # Unbounded on purpose: this command's duration IS the
                 # transfer out of the container, which scales with the file's
@@ -1074,37 +1108,25 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     timeout=float("inf"),
                 )
                 if not cp.status.is_ok:
-                    # docker cp for one file failed — mark it and skip the rest,
-                    # keyed by the source paths exactly as passed. files[:i] were
-                    # already copied to parent staging but parent.get never runs
-                    # for them (we return before that call) and the staging dir
-                    # is removed in `finally`, so they never actually arrived
-                    # locally: downgrade them to Skipped rather than omitting
-                    # them, mirroring the put-path staging-downgrade above.
-                    per_file: dict[Path, Result] = {
-                        skipped: Result(
-                            Status.Skipped, msg="staged but not fetched (later failure)"
-                        )
-                        for skipped in files[:i]
-                    }
+                    # One file's docker cp failure is that file's own entry;
+                    # the files that DID stage are still fetched below.
                     per_file[f] = Result(Status.Error, msg=f"docker cp failed: {cp.value}")
-                    for skipped in files[i + 1 :]:
-                        per_file[skipped] = Result(
-                            Status.Skipped, msg="not attempted (earlier failure)"
-                        )
-                    return aggregate_transfer(per_file)
-                staged_paths.append(staged)
+                else:
+                    staged_paths.append(staged)
 
             # parent.get keys its per-file dict by the staged paths; re-key it
             # back to the container source paths (as passed) so the caller sees
             # the keys it handed in.
-            parent_result = await self.parent.get(
-                staged_paths, dest_dir, show_progress=show_progress
-            )
-            staged_map = parent_result.value if isinstance(parent_result.value, dict) else {}
-            fallback = Result(parent_result.status, msg=parent_result.msg)
-            per_file = {f: staged_map.get(stage / f.name, fallback) for f in files}
-            return aggregate_transfer(per_file)
+            if staged_paths:
+                parent_result = await self.parent.get(
+                    staged_paths, dest_dir, show_progress=show_progress, concurrent=concurrent
+                )
+                staged_map = parent_result.value if isinstance(parent_result.value, dict) else {}
+                fallback = Result(parent_result.status, msg=parent_result.msg)
+                for f in files:
+                    if f not in per_file:
+                        per_file[f] = staged_map.get(stage / f.name, fallback)
+            return aggregate_transfer({f: per_file[f] for f in files})
         finally:
             with teardown_step(host_name, "staging-dir removal"):
                 await self.parent.exec(f"rm -rf {shlex.quote(str(stage))}")

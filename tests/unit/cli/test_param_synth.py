@@ -315,6 +315,28 @@ def test_opt_short_on_bool_keeps_the_auto_generated_negative():
     assert click_param.secondary_opts == ["--no-recursive"]
 
 
+def test_a_default_true_bool_option_renders_with_its_off_switch():
+    """``--concurrent/--no-concurrent``: the off switch is the whole point of a default-True flag.
+
+    A default-``False`` flag is turned ON by naming it; a default-``True``
+    one can only be turned OFF through the negative, so a synthesizer that
+    dropped typer's auto-generated ``--no-<name>`` would leave the option
+    with no way to say no at all.
+    """
+
+    async def verb(self, concurrent: Annotated[bool, Opt(help="Fan out.")] = True):
+        return concurrent
+
+    binding = build_cli_binding(verb)
+    param = next(p for p in binding.params if p.name == "concurrent")
+    typer_meta = param.annotation.__metadata__[0]
+    base = get_args(param.annotation)[0]
+    param_meta = typer.models.ParamMeta(name="concurrent", default=typer_meta, annotation=base)
+    click_param, _ = typer.main.get_click_param(param_meta)
+    assert "--concurrent" in click_param.opts
+    assert "--no-concurrent" in click_param.secondary_opts
+
+
 def test_opt_short_with_explicit_name_keeps_both():
     async def verb(self, dest_dir: Annotated[str, Opt(name="--dest", short="-d")] = "/tmp"):
         return dest_dir

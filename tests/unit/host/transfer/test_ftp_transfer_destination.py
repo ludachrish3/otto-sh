@@ -71,9 +71,13 @@ class _RecordingFtpClient:
     started reaching for something else on the client would go on passing here.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, fail_for: str | None = None) -> None:
         self.uploads: list[_RecordedUpload] = []
         self.stream_destinations: list[str] = []
+        # Basename whose upload raises the way a real server refusal reaches
+        # otto -- recorded first, so `uploads` stays the log of what otto
+        # ASKED for rather than only of what landed.
+        self._fail_for = fail_for
 
     async def upload(
         self, source: str, destination: str = "", *, write_into: bool = False, **_: Any
@@ -82,6 +86,8 @@ class _RecordingFtpClient:
         # default, so a caller that omits the flag records the same value the
         # real client would apply.
         self.uploads.append(_RecordedUpload(source, destination, write_into))
+        if self._fail_for is not None and Path(source).name == self._fail_for:
+            raise OSError("550 Failed to open file")
 
     def upload_stream(self, destination: str, **_: Any) -> Any:
         self.stream_destinations.append(destination)
@@ -223,6 +229,34 @@ async def test_the_no_progress_arm_never_creates_a_directory_named_after_the_fil
     assert created == PurePosixPath("/remote/dest"), (
         f"aioftp will mkdir {created} before writing -- a directory named after the "
         f"file. Only the intended destination directory may be created"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_refused_upload_is_its_own_error_and_the_next_file_still_lands(
+    tmp_path: Path,
+) -> None:
+    """One file's refusal must not answer for the batch.
+
+    A single data channel is a reason to move one file at a time, never a
+    reason to stop: the second file is uploaded after the first is refused,
+    and nothing in the mapping is ``Skipped``.
+    """
+    first = tmp_path / "a.bin"
+    first.write_bytes(b"a" * 32)
+    second = tmp_path / "b.bin"
+    second.write_bytes(b"b" * 32)
+    dest_dir = Path("/remote/dest")
+
+    client = _RecordingFtpClient(fail_for="a.bin")
+    result = await _backend(client)._run_put([first, second], dest_dir, None, concurrent=False)
+
+    assert result[first].status is Status.Error
+    assert "550" in (result[first].msg or ""), result[first].msg
+    assert result[second].status is Status.Success, result[second].msg
+    assert not any(r.status is Status.Skipped for r in result.values())
+    assert [Path(u.source).name for u in client.uploads] == ["a.bin", "b.bin"], (
+        "the second file was never attempted after the first was refused"
     )
 
 
@@ -383,3 +417,21 @@ def test_the_hand_mirrored_write_into_rule_still_matches_aioftp() -> None:
             f"this file's stand-ins and _effective_destination mirror the old "
             f"default and are no longer measuring aioftp's behaviour"
         )
+
+
+# ---------------------------------------------------------------------------
+# The documented one-at-a-time bound
+# ---------------------------------------------------------------------------
+
+
+def test_ftp_transfer_is_one_file_at_a_time() -> None:
+    """An FTP transfer keeps exactly one file in flight.
+
+    Inheritance from the base makes it true today; the point of writing it
+    down is that a future override fails HERE, beside the promise. The
+    families table in ``docs/api/host/transfer.rst`` and both
+    ``Host.put``/``Host.get`` docstrings name this backend as one that runs
+    one file at a time whatever ``concurrent`` says, and nothing else checks
+    that claim against the class.
+    """
+    assert _backend(_RecordingFtpClient()).concurrency_limit == 1

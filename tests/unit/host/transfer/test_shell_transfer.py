@@ -43,7 +43,7 @@ Guards, and which mutation each backs:
    reddens under the mutation: measured directly (``temp = dst``, the
    ``mv`` call left in place so it self-moves), 8 of the 50 tests this file
    held at the time, across 5 classes, fail -- ``TestShellPutOrdering``,
-   ``TestShellPutSequentialFailure``, ``TestShellPutIntegrityVerification``,
+   ``TestShellPutPerFileFailure``, ``TestShellPutIntegrityVerification``,
    ``TestShellPutContentIntegrity``, and ``TestShellChunkLineLength`` --
    each for its own reason (a changed transcript, a step never reached, a
    shorter command line once *temp* is no longer a generated name), not
@@ -69,7 +69,7 @@ Guards, and which mutation each backs:
 6. Every path interpolated into a command is quoted, and it matters --
    ``TestShellPutContentIntegrity::test_a_filename_with_shell_metacharacters_is_not_interpreted``.
 7. A failed temp CREATION (the empty-file path) cleans up like every other
-   failure -- ``TestShellPutSequentialFailure::test_a_failed_empty_file_creation_cleans_up``.
+   failure -- ``TestShellPutPerFileFailure::test_a_failed_empty_file_creation_cleans_up``.
 
 GET's own guards, ``G``-prefixed and numbered independently below -- NOT a
 claimed 1:1 correspondence to PUT's numbered list above (``G3``'s refusal
@@ -81,7 +81,7 @@ G1. Temp-then-``Path.replace()``, not a direct write to the destination --
     direct-write mutation), measured to redden 2 of 2 in that class (48
     passed elsewhere, measured when this file held 50 tests -- it has grown
     since, both then and again for the codec seam). Content tests
-    cannot substitute -- see ``TestShellGetSequentialFailure::test_a_failed_chunk_read_...``'s
+    cannot substitute -- see ``TestShellGetPerFileFailure::test_a_failed_chunk_read_...``'s
     own docstring for the measured reason a content check stays green under
     this exact mutation.
 G2. Staging happens in the destination's own directory, never elsewhere --
@@ -108,7 +108,7 @@ G4. Chunk slicing (via ``dd bs/skip/count``) reads the source byte-for-byte,
     short final chunk and a payload where chunk order is only provable by
     content).
 G5. A failure partway through leaves the real destination untouched and its
-    local temp removed -- ``TestShellGetSequentialFailure``.
+    local temp removed -- ``TestShellGetPerFileFailure``.
 G6. Size 0 is a real case: zero chunks, an empty file still lands, progress
     still fires once at ``(0, 0)`` -- ``TestShellGetEmptyFile``.
 G7. The device's ``base64`` wraps its output (measured, not assumed -- see
@@ -257,9 +257,10 @@ class _RecordingExec:
     ``_remote_size`` can parse) without needing a real shell.
 
     *answer_when*, when given, is a predicate-to-answer function checked
-    BEFORE *fail_when* and BEFORE the *outputs* queue: the first call it
-    returns a non-``None`` string for gets that string as its output,
-    regardless of position in the transcript. Added for PUT's integrity
+    AFTER *fail_when* and BEFORE the *outputs* queue: a command *fail_when*
+    claims fails, whatever *answer_when* would have said; otherwise the first
+    call *answer_when* returns a non-``None`` string for gets that string as
+    its output, regardless of position in the transcript. Added for PUT's integrity
     verification, whose one stat/wc-shaped command (``_put_one`` has no
     other) has to answer with the REAL local total for a test to reach its
     ``mv`` at all -- a position-dependent ``outputs`` entry would break the
@@ -1356,13 +1357,46 @@ class TestShellPutDecodeFlagVerbatim:
 
 
 # ---------------------------------------------------------------------------
-# Sequential batch semantics: stop on failure, skip the rest, clean up
+# The one-file-at-a-time premise two safety arguments rest on
 # ---------------------------------------------------------------------------
 
 
-class TestShellPutSequentialFailure:
+def test_shell_transfer_is_one_file_at_a_time() -> None:
+    """This backend keeps exactly one file in flight, and two bounds need that.
+
+    Not a behaviour this test discovers -- it is the PREMISE two arguments in
+    ``shell.py``'s module docstring spend, written down where a future
+    override would trip over it:
+
+    * ``_STAGED_TOKEN_HEX``'s collision bound. A single transfer can never
+      race itself, because the temp of file N is renamed or unlinked before
+      file N+1 starts. Raise the limit and two of this object's own stagings
+      can be live at once, which is the case that bound explicitly excludes.
+    * ``_INTERRUPTED_CLEANUP_TIMEOUT``'s "at most one temp is ever cleaned up
+      per interrupt". Raise the limit and an interrupt can land with several
+      staged temps outstanding, so the 2 s window would be bounding N
+      cleanups rather than one.
+
+    Both used to rest on the shape of a loop; they now rest on
+    ``concurrency_limit`` and the base dispatcher's single permit, which is a
+    number a subclass or an options table could change without touching
+    either paragraph. The value asserted is already true today -- this pin
+    exists to make a FUTURE override fail here, next to the two arguments it
+    would invalidate, rather than silently.
+    """
+    ft = _make_ft(_RecordingExec())
+
+    assert ft.concurrency_limit == 1
+
+
+# ---------------------------------------------------------------------------
+# Batch semantics: a failure is that file's own entry, the next file still moves
+# ---------------------------------------------------------------------------
+
+
+class TestShellPutPerFileFailure:
     @pytest.mark.asyncio
-    async def test_a_failed_chunk_write_skips_remaining_files_and_cleans_up(
+    async def test_a_failed_chunk_write_is_that_files_error_and_the_next_file_still_lands(
         self, tmp_path: Path
     ) -> None:
         src1 = tmp_path / "a.bin"
@@ -1374,16 +1408,20 @@ class TestShellPutSequentialFailure:
 
         # The temp filename always embeds the destination basename
         # (`a.bin.otto-<hex>`), so this reliably targets only src1's writes.
-        exec_cmd = _RecordingExec(fail_when=lambda c: "a.bin.otto-" in c and c.startswith("printf"))
+        # `answer_when` feeds b.bin's integrity check the real size (both
+        # files are 10 bytes), so the file that IS attempted after the
+        # failure can reach its `mv` and report its own success.
+        exec_cmd = _RecordingExec(
+            fail_when=lambda c: "a.bin.otto-" in c and c.startswith("printf"),
+            answer_when=_size_answer(10),
+        )
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src1, src2], dest_dir, None)
+        per_file = await ft._run_put([src1, src2], dest_dir, None, concurrent=False)
 
         assert per_file[src1].status is Status.Error
-        assert per_file[src2].status is Status.Skipped
-        assert not any("b.bin" in c for c in exec_cmd.calls), (
-            "the second file must never be attempted after the first fails"
-        )
+        assert per_file[src2].is_ok, "the second file must still be attempted after the first fails"
+        assert any("b.bin" in c for c in exec_cmd.calls), "b.bin was never attempted"
         rm_calls = [c for c in exec_cmd.calls if c.startswith("rm ")]
         assert rm_calls, f"a failed chunk write must clean up its temp: {exec_cmd.calls}"
         assert all("a.bin.otto-" in c for c in rm_calls)
@@ -1854,14 +1892,14 @@ class TestShellPutIntegrityVerification:
 
     Round 1 review (finding IMPORTANT 4): this docstring previously claimed
     "every test in those classes reaches this code path" and that
-    ``TestShellPutSequentialFailure`` was one of the classes doing so
+    ``TestShellPutPerFileFailure`` was one of the classes doing so
     through ``_ShellExecutingExec``. Both were false, and measured wrong in
     two different ways. Traced by reading each test's own control flow
     (which tests reach ``mv`` unimpeded, since verification sits directly
     before it): of ``TestShellPutContentIntegrity``'s 3 tests, 2 reach
     verification for real (the two that expect ``Status.Success``) and 1
     does not (its chunk write fails first, aborting before verification is
-    ever reached). ``TestShellPutSequentialFailure`` uses ``_RecordingExec``
+    ever reached). ``TestShellPutPerFileFailure`` uses ``_RecordingExec``
     exclusively, never ``_ShellExecutingExec``; of its 3 tests, exactly 1
     reaches verification (and must PASS it, by its own docstring's design,
     to isolate a later failure) -- the other 2 fail at an earlier step
@@ -2592,7 +2630,7 @@ def _make_the_staged_temps_close_fail(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "open", open_with_a_failing_close)
 
 
-class TestShellGetSequentialFailure:
+class TestShellGetPerFileFailure:
     @pytest.mark.asyncio
     async def test_a_failed_size_probe_fails_before_any_chunk_read(self, tmp_path: Path) -> None:
         src = tmp_path / "payload.bin"
@@ -2700,7 +2738,9 @@ class TestShellGetSequentialFailure:
         assert list(dest_dir.glob("*.otto-*")) == [], "the failed temp was left behind"
 
     @pytest.mark.asyncio
-    async def test_a_failed_file_skips_remaining_files(self, tmp_path: Path) -> None:
+    async def test_a_failed_file_is_its_own_error_and_the_rest_still_land(
+        self, tmp_path: Path
+    ) -> None:
         src1 = tmp_path / "a.bin"
         src1.write_bytes(b"x" * 10)
         src2 = tmp_path / "b.bin"
@@ -2715,12 +2755,12 @@ class TestShellGetSequentialFailure:
         )
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src1, src2], dest_dir, None)
+        per_file = await ft._run_get([src1, src2], dest_dir, None, concurrent=False)
 
         assert per_file[src1].status is Status.Error
-        assert per_file[src2].status is Status.Skipped
-        assert not any("/b.bin" in c for c in exec_cmd.calls if c.startswith("dd ")), (
-            "the second file must never be attempted after the first fails"
+        assert per_file[src2].is_ok, "the second file must still be attempted after the first fails"
+        assert any("/b.bin" in c for c in exec_cmd.calls if c.startswith("dd ")), (
+            "b.bin was never attempted"
         )
 
 

@@ -51,7 +51,7 @@ def test_basehost_as_user_default_is_an_async_context_manager_that_refuses():
 
 
 @pytest.mark.parametrize("verb", ["put", "get"])
-def test_recursive_is_the_trailing_keyword_on_the_protocol_and_every_family(verb):
+def test_concurrent_is_the_trailing_keyword_on_the_protocol_and_every_family(verb):
     """Additive by construction: the new name is LAST, so no existing name moves."""
     from otto.host.docker_host import DockerContainerHost
     from otto.host.embedded_host import EmbeddedHost
@@ -61,5 +61,6 @@ def test_recursive_is_the_trailing_keyword_on_the_protocol_and_every_family(verb
 
     for cls in (Host, BaseHost, UnixHost, LocalHost, DockerContainerHost, EmbeddedHost):
         names = _keyword_names(getattr(cls, verb))
-        assert names[-1] == "recursive", f"{cls.__name__}.{verb}: {names}"
+        assert names[-1] == "concurrent", f"{cls.__name__}.{verb}: {names}"
+        assert names[-2] == "recursive", f"{cls.__name__}.{verb}: {names}"
         assert names[:-1] == _keyword_names(getattr(Host, verb))[:-1], cls.__name__

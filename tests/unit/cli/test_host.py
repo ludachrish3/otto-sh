@@ -155,6 +155,25 @@ class TestHostHelp:
         result = runner.invoke(host_app, ["--help"])
         assert "get" in result.output
 
+    @pytest.mark.parametrize("verb", ["put", "get"])
+    def test_the_real_transfer_verbs_offer_the_concurrency_flag(self, verb: str):
+        """``otto host <id> put|get --help`` shows ``--concurrent/--no-concurrent``.
+
+        The synthesis mechanism is pinned in ``test_param_synth``; this is the
+        claim a reader of the docs actually checks -- that the flag reaches the
+        REAL verb, on both halves of the transfer pair, with its off switch
+        beside it.
+        """
+        with patch.object(host_module, "get_host", return_value=_make_host()):
+            result = runner.invoke(host_app, ["router1", verb, "--help"])
+
+        assert result.exit_code == 0, result.output
+        # Rich wraps the options table, so compare on collapsed whitespace
+        # rather than the rendered column positions.
+        flat = " ".join(result.output.split())
+        assert "--concurrent --no-concurrent" in flat
+        assert "[default: concurrent]" in flat
+
     def test_host_id_only_no_subcommand_shows_help(self):
         """otto host router1 (no verb) should show help."""
         result = runner.invoke(host_app, ["router1"])

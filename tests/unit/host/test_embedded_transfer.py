@@ -517,6 +517,32 @@ class TestGet:
         assert "fs read" in err
 
     @pytest.mark.asyncio
+    async def test_a_failed_file_does_not_skip_its_siblings(self, tmp_path):
+        """A file that fails is its own entry; the ones beside it still land.
+
+        The failure is provoked the way
+        ``test_missing_file_is_a_file_error`` provokes it -- a path the
+        device has no file for -- and the file after it is present, so the
+        only thing separating them is whether the backend kept going.
+        """
+        fake = FakeZephyrFs()
+        fake.store["/RAM:/b.bin"] = bytearray(b"bbb")
+        xfer = _console_transfer(fake)
+        missing = RAM / "a.bin"
+        present = RAM / "b.bin"
+
+        result = await xfer.get_files([missing, present], tmp_path)
+
+        assert not result.value[missing].is_ok
+        assert result.value[present].is_ok, result.value[present].msg
+        assert not any(r.status is Status.Skipped for r in result.value.values())
+        assert (tmp_path / "b.bin").read_bytes() == b"bbb"
+        reads = [c for c in fake.calls if c.startswith("fs read")]
+        assert [c.split()[-1] for c in reads] == ["/RAM:/a.bin", "/RAM:/b.bin"], (
+            f"b.bin's read must be issued AFTER a.bin's failed one: {fake.calls}"
+        )
+
+    @pytest.mark.asyncio
     async def test_corrupt_hexdump_gap_is_reported(self, tmp_path):
         """A dropped hexdump line is caught, not silently mis-decoded."""
 
@@ -917,3 +943,23 @@ class TestDecodeHexdump:
         )
         with pytest.raises(ValueError, match="gap or overlap"):
             ConsoleFileTransfer._decode_hexdump(dump)
+
+
+# ---------------------------------------------------------------------------
+# The documented one-at-a-time bound
+# ---------------------------------------------------------------------------
+
+
+def test_console_transfer_is_one_file_at_a_time() -> None:
+    """A console transfer keeps exactly one file in flight.
+
+    Inheritance from the base makes it true today; the point of writing it
+    down is that a future override fails HERE, beside the promise. The
+    families table in ``docs/api/host/transfer.rst`` and both
+    ``Host.put``/``Host.get`` docstrings name this backend as one that runs
+    one file at a time whatever ``concurrent`` says, and nothing else checks
+    that claim against the class.
+    """
+    xfer = _console_transfer(FakeZephyrFs())
+
+    assert xfer.concurrency_limit == 1

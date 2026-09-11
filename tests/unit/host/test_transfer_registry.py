@@ -87,10 +87,10 @@ class TestRegistry:
         class NoFamilies(BaseFileTransfer):
             host_families = frozenset()
 
-            async def _run_put(self, *a):  # pragma: no cover - not invoked
+            async def _run_put(self, *a, **kw):  # pragma: no cover - not invoked
                 ...
 
-            async def _run_get(self, *a):  # pragma: no cover - not invoked
+            async def _run_get(self, *a, **kw):  # pragma: no cover - not invoked
                 ...
 
         with pytest.raises(ValueError, match="host_families is empty"):
@@ -107,10 +107,10 @@ class TestRegistry:
         class NoPromise(BaseFileTransfer):
             host_families = frozenset({"unix"})
 
-            async def _run_put(self, *a):  # pragma: no cover - not invoked
+            async def _run_put(self, *a, **kw):  # pragma: no cover - not invoked
                 ...
 
-            async def _run_get(self, *a):  # pragma: no cover - not invoked
+            async def _run_get(self, *a, **kw):  # pragma: no cover - not invoked
                 ...
 
         with pytest.raises(ValueError, match="progress_granularity is missing"):
@@ -123,10 +123,10 @@ class TestRegistry:
             host_families = frozenset({"unix"})
             progress_granularity = 8192  # not a ProgressGranularity
 
-            async def _run_put(self, *a):  # pragma: no cover - not invoked
+            async def _run_put(self, *a, **kw):  # pragma: no cover - not invoked
                 ...
 
-            async def _run_get(self, *a):  # pragma: no cover - not invoked
+            async def _run_get(self, *a, **kw):  # pragma: no cover - not invoked
                 ...
 
         with pytest.raises(ValueError, match="progress_granularity is missing"):

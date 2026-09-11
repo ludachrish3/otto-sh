@@ -441,6 +441,15 @@ def _log_tree_state(directory: "Path") -> "set[tuple[str, int, int, int]]":
     return state
 
 
+#: Help text for the ``concurrent`` option every family's ``put``/``get``
+#: declares. Defined once here, beside the protocol that declares the
+#: parameter, so the four families cannot drift into four wordings of one flag.
+CONCURRENT_HELP = (
+    "Move several files at once, up to the transfer protocol's "
+    "max_concurrent_transfers; --no-concurrent moves one file at a time."
+)
+
+
 class Host(Protocol):
     """Structural protocol defining the public interface every otto host must satisfy.
 
@@ -703,6 +712,7 @@ class Host(Protocol):
         user: str | None = None,
         show_progress: bool = True,
         recursive: bool = False,
+        concurrent: bool = True,
     ) -> Result:
         """Download one or more files from the host to a local directory.
 
@@ -724,11 +734,11 @@ class Host(Protocol):
         Returns a :class:`~otto.result.Result` whose ``value`` is a
         ``dict[Path, Result]`` mapping each source path — keyed exactly as
         passed, with no resolution — to its per-file outcome: ``value=dest_path``
-        on success, a per-file ``msg`` on failure, or
-        :attr:`~otto.utils.Status.Skipped` (``"not attempted (earlier failure)"``)
-        for a file a sequential backend never reached. The aggregate status is
-        the first non-ok entry's status (Skipped counts as ok, so a trailing run
-        of Skipped never fails the aggregate on its own). Under ``--dry-run``
+        on success or a per-file ``msg`` on failure. Every source is attempted,
+        whatever its siblings do; the only ``Skipped`` entry a transfer produces
+        is a sibling of a directory handed to a non-recursive ``put`` (see
+        :ref:`recursive-transfers`). The aggregate status is the first non-ok
+        entry's status. Under ``--dry-run``
         every entry is :attr:`~otto.utils.Status.NotRun` instead, which is NOT
         ok, so the aggregate is non-ok and no caller reads the transfer as
         having happened; the per-file ``value`` still carries the destination
@@ -738,6 +748,13 @@ class Host(Protocol):
         landing under ``dest_dir`` with its own name; without it a directory
         source is refused. Semantics, the nested per-file ``Result`` and the
         symlink rule are documented once, in :ref:`recursive-transfers`.
+
+        ``concurrent`` decides only how many files may be in flight at once:
+        up to the transfer protocol's ``max_concurrent_transfers`` when
+        ``True`` (the default), exactly one when ``False``. Families whose
+        transfer carries one file at a time (shell, console, ftp, tftp, the
+        local copy) accept ``True`` and run one at a time. Documented once, in
+        :ref:`concurrent-transfers`.
         """
         ...
 
@@ -749,6 +766,7 @@ class Host(Protocol):
         user: str | None = None,
         show_progress: bool = True,
         recursive: bool = False,
+        concurrent: bool = True,
     ) -> Result:
         """Upload one or more local files to a directory on the host.
 
@@ -780,11 +798,11 @@ class Host(Protocol):
         Returns a :class:`~otto.result.Result` whose ``value`` is a
         ``dict[Path, Result]`` mapping each source path — keyed exactly as
         passed, with no resolution — to its per-file outcome: ``value=dest_path``
-        on success, a per-file ``msg`` on failure, or
-        :attr:`~otto.utils.Status.Skipped` (``"not attempted (earlier failure)"``)
-        for a file a sequential backend never reached. The aggregate status is
-        the first non-ok entry's status (Skipped counts as ok, so a trailing run
-        of Skipped never fails the aggregate on its own). Under ``--dry-run``
+        on success or a per-file ``msg`` on failure. Every source is attempted,
+        whatever its siblings do; the only ``Skipped`` entry a transfer produces
+        is a sibling of a directory handed to a non-recursive ``put`` (see
+        :ref:`recursive-transfers`). The aggregate status is the first non-ok
+        entry's status. Under ``--dry-run``
         every entry is :attr:`~otto.utils.Status.NotRun` instead, which is NOT
         ok, so the aggregate is non-ok and no caller reads the transfer as
         having happened; the per-file ``value`` still carries the destination
@@ -796,6 +814,13 @@ class Host(Protocol):
         landing under ``dest_dir`` with its own name; without it a directory
         source is refused. Semantics, the nested per-file ``Result`` and the
         symlink rule are documented once, in :ref:`recursive-transfers`.
+
+        ``concurrent`` decides only how many files may be in flight at once:
+        up to the transfer protocol's ``max_concurrent_transfers`` when
+        ``True`` (the default), exactly one when ``False``. Families whose
+        transfer carries one file at a time (shell, console, ftp, tftp, the
+        local copy) accept ``True`` and run one at a time. Documented once, in
+        :ref:`concurrent-transfers`.
         """
         ...
 
@@ -1759,6 +1784,7 @@ class BaseHost(ABC):
         user: str | None = None,
         show_progress: bool = True,
         recursive: bool = False,
+        concurrent: bool = True,
     ) -> Result:
         """Download files from the host to a local directory. Subclasses must override."""
         raise NotImplementedError from None
@@ -1771,6 +1797,7 @@ class BaseHost(ABC):
         user: str | None = None,
         show_progress: bool = True,
         recursive: bool = False,
+        concurrent: bool = True,
     ) -> Result:
         """Upload local files to a directory on the host. Subclasses must override."""
         raise NotImplementedError from None

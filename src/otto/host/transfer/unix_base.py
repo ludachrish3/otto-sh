@@ -79,10 +79,14 @@ class UnixFileTransfer(BaseFileTransfer):
         By firing them together we collapse wall-clock cost from ~N
         handshakes to ~max(handshakes).
 
-        ``file_count`` sessions are pre-opened on telnet so each concurrent
-        ``nc -l`` can pull a warm session from the pool.  On SSH the exec
-        path uses channels over the live connection, so no pool warming is
-        needed and we just run :meth:`prepare`.
+        ``file_count`` is the sessions the caller will actually spend AT
+        ONCE, not one per file: that many are pre-opened on telnet so each
+        concurrent ``nc -l`` can pull a warm session from the pool. A caller
+        whose fan-out is capped, or which was asked not to fan out at all,
+        passes the smaller number — warming past what can be in flight buys
+        nothing and costs a real login handshake each.  On SSH the exec path
+        uses channels over the live connection, so no pool warming is needed
+        and we just run :meth:`prepare`.
 
         Safe to call multiple times; :meth:`prepare` is idempotent and
         extra ``_exec_cmd('true')`` calls are cheap on warm sessions.
