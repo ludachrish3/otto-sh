@@ -173,6 +173,41 @@ def carrier_port_floor(ceilings: list[int]) -> int:
     return floor
 
 
+SOCKET_DUMP_COMMAND: str = "ss -Htan 2>/dev/null || netstat -tan 2>/dev/null || true"
+"""All-states socket dump, run only to DIAGNOSE a post-add verify failure.
+
+Deliberately not :data:`FREE_PORT_PROBE_COMMAND`: allocation wants listeners
+(the set to avoid), diagnosis wants every state, because the thief in a port
+race is precisely the socket that is not listening. Parsed by
+:func:`parse_port_holders`."""
+
+_LOCAL_ADDR_FIELD = 3
+"""Column of the LOCAL address in both dumps: ``ss -Htan`` prints
+``State Recv-Q Send-Q Local Peer`` and ``netstat -tan`` prints
+``Proto Recv-Q Send-Q Local Foreign State`` — the same index by luck, pinned
+by :class:`~tests.unit.tunnel.test_socat.TestPortHolders` for both tools."""
+
+
+def parse_port_holders(output: str, port: int) -> list[str]:
+    """Dump lines whose LOCAL port is *port* — what to blame for a failed bind.
+
+    Matches on the local address only. A line whose PEER is on *port* is
+    somebody else's listener seen from this host and holds nothing here, so
+    naming it would send the next reader after the wrong machine.
+
+    Never raises: this runs on a host that has already misbehaved, and a
+    diagnosis that throws would replace the real error with its own.
+    """
+    holders = []
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) > _LOCAL_ADDR_FIELD and fields[_LOCAL_ADDR_FIELD].rsplit(":", 1)[-1] == str(
+            port
+        ):
+            holders.append(line.strip())
+    return holders
+
+
 def pick_free_port(used: set[int], lo: int = _LEGACY_PORT_FLOOR, hi: int = _MAX_PORT) -> int:
     """First port in ``[lo, hi]`` not in ``used``. Raises when exhausted."""
     for port in range(lo, hi + 1):

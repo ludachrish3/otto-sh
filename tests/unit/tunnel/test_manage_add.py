@@ -23,7 +23,7 @@ from otto.tunnel.manage import (
 )
 from otto.tunnel.model import Direction, ProcKey, Role, Tunnel, TunnelHop
 from otto.tunnel.sentinel import ParsedSentinel, encode_sentinel, parse_sentinel
-from otto.tunnel.socat import FREE_PORT_PROBE_COMMAND, SocatCarrier
+from otto.tunnel.socat import FREE_PORT_PROBE_COMMAND, SOCKET_DUMP_COMMAND, SocatCarrier
 from otto.utils import Status
 from tests.conftest import active_context
 
@@ -55,6 +55,8 @@ class FakeHost:
     tools_timeout: bool = False
     """The tools-probe ``exec`` comes back ``timed_out=True`` instead of a reply."""
     probe_ports: str = ""
+    socket_dump: str = ""
+    """All-states dump served to the failure-path port diagnosis (#284)."""
     probe_ok: bool = True
     probe_timeout: bool = False
     launch_fail_at: int | None = None
@@ -102,6 +104,8 @@ class FakeHost:
                 result = CommandResult(status=Status.Failed, value="boom", command=cmd, retcode=1)
             else:
                 result = CommandResult(status=Status.Success, value=self.probe_ports, command=cmd)
+        elif cmd == SOCKET_DUMP_COMMAND:
+            result = CommandResult(status=Status.Success, value=self.socket_dump, command=cmd)
         elif cmd == DISCOVERY_PS_COMMAND:
             if self.scan_fail:
                 raise ConnectionError("host is unreachable")
@@ -409,6 +413,84 @@ class TestRollback:
         # Rollback: a had both procs running -> killed; b had 1 of 2 -> killed too.
         assert any(cmd.startswith("kill ") for cmd in a.commands)
         assert any(cmd.startswith("kill ") for cmd in b.commands)
+
+    def test_verify_failure_names_what_holds_the_port(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#284: "not running" alone cost a whole archaeology session.
+
+        The launch is detached, so the daemon's stderr has nowhere synchronous
+        to go; reading the port back off the host is what turns a bare "not
+        running" into a diagnosis.
+        """
+        monkeypatch.setattr(manage, "_VERIFY_RETRY_DELAY", 0.0)
+        lab, _calls, tunnel = _pair()
+        a, b = lab.hosts["a"], lab.hosts["b"]
+        carrier_fwd, carrier_rev = _LO, _LO + 1
+        a.ps_texts = ["", _full_ps(tunnel, "a", carrier_fwd, carrier_rev)]
+        missing_key: ProcKey = ("b", Direction.FWD, Role.EGRESS)
+        b.ps_texts = [
+            "",
+            _full_ps(tunnel, "b", carrier_fwd, carrier_rev, omit=frozenset({missing_key})),
+        ]
+        # Someone else's outbound connection is sitting on the fwd carrier port
+        # — invisible to `ss -Htln`, which is exactly how #284 stayed a mystery.
+        b.socket_dump = (
+            f"LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*\n"
+            f"ESTAB  0 0    10.0.0.2:{carrier_fwd} 10.0.0.9:443\n"
+        )
+
+        with pytest.raises(HostCommandError) as exc_info:
+            asyncio.run(manage.add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+
+        message = str(exc_info.value)
+        assert "b/fwd/egress" in message
+        assert f"port {carrier_fwd}" in message
+        assert "port held by" in message
+        assert f"10.0.0.2:{carrier_fwd}" in message, "must name the actual holder"
+
+    def test_verify_failure_says_so_when_the_port_is_free(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other half of the discriminator: rules the port race OUT."""
+        monkeypatch.setattr(manage, "_VERIFY_RETRY_DELAY", 0.0)
+        lab, _calls, tunnel = _pair()
+        a, b = lab.hosts["a"], lab.hosts["b"]
+        carrier_fwd, carrier_rev = _LO, _LO + 1
+        a.ps_texts = ["", _full_ps(tunnel, "a", carrier_fwd, carrier_rev)]
+        missing_key: ProcKey = ("b", Direction.FWD, Role.EGRESS)
+        b.ps_texts = [
+            "",
+            _full_ps(tunnel, "b", carrier_fwd, carrier_rev, omit=frozenset({missing_key})),
+        ]
+        b.socket_dump = "LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*\n"
+
+        with pytest.raises(HostCommandError) as exc_info:
+            asyncio.run(manage.add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+        assert "port is free" in str(exc_info.value)
+
+    def test_verify_failure_stays_raisable_when_diagnosis_is_unobtainable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A silent host must not turn into a false "the port is free" claim."""
+        monkeypatch.setattr(manage, "_VERIFY_RETRY_DELAY", 0.0)
+        lab, _calls, tunnel = _pair()
+        a, b = lab.hosts["a"], lab.hosts["b"]
+        carrier_fwd, carrier_rev = _LO, _LO + 1
+        a.ps_texts = ["", _full_ps(tunnel, "a", carrier_fwd, carrier_rev)]
+        missing_key: ProcKey = ("b", Direction.FWD, Role.EGRESS)
+        b.ps_texts = [
+            "",
+            _full_ps(tunnel, "b", carrier_fwd, carrier_rev, omit=frozenset({missing_key})),
+        ]
+        b.socket_dump = ""  # host said nothing
+
+        with pytest.raises(HostCommandError) as exc_info:
+            asyncio.run(manage.add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+        message = str(exc_info.value)
+        assert "b/fwd/egress" in message, "the original failure survives intact"
+        assert "port is free" not in message
+        assert "port held by" not in message
 
     def test_verify_retries_once_before_failing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(manage, "_VERIFY_RETRY_DELAY", 0.0)

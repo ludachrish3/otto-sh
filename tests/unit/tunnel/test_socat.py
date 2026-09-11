@@ -6,12 +6,14 @@ from otto.host.daemon import launch_command
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND
 from otto.tunnel.socat import (
     FREE_PORT_PROBE_COMMAND,
+    SOCKET_DUMP_COMMAND,
     NoFreePortError,
     carrier_port_floor,
     egress_socat_args,
     ingress_socat_args,
     parse_ephemeral_ceiling,
     parse_listening_ports,
+    parse_port_holders,
     pick_free_port,
     relay_socat_args,
 )
@@ -142,3 +144,44 @@ class TestEphemeralRange:
         assert floor > 60999
         assert pick_free_port(set(), lo=floor) == 61000
         assert pick_free_port({61000}, lo=floor) == 61001
+
+
+class TestPortHolders:
+    """A post-add verify failure must be able to name what holds the port (#284).
+
+    ``ss -Htln`` (the allocation probe) shows listeners only, so the thief in a
+    port race is invisible to it. The diagnosis probe dumps ALL states, which
+    is what makes "the port was stolen" distinguishable from "socat died for
+    some other reason" without re-running the whole suite.
+    """
+
+    def test_dump_asks_for_every_socket_state(self) -> None:
+        assert "ss -Htan" in SOCKET_DUMP_COMMAND
+        assert "netstat -tan" in SOCKET_DUMP_COMMAND
+        assert "-Htln" not in SOCKET_DUMP_COMMAND, "listeners-only would miss the thief"
+
+    def test_finds_an_established_holder_ss(self) -> None:
+        dump = "LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*\nESTAB  0 0    10.0.0.1:61000 10.0.0.9:443\n"
+        assert parse_port_holders(dump, 61000) == ["ESTAB  0 0    10.0.0.1:61000 10.0.0.9:443"]
+
+    def test_finds_an_established_holder_netstat(self) -> None:
+        dump = (
+            "tcp 0 0 0.0.0.0:22       0.0.0.0:*     LISTEN\n"
+            "tcp 0 0 10.0.0.1:61000   10.0.0.9:443  ESTABLISHED\n"
+        )
+        holders = parse_port_holders(dump, 61000)
+        assert len(holders) == 1
+        assert "ESTABLISHED" in holders[0]
+
+    def test_matches_the_local_port_only_never_the_peer(self) -> None:
+        """A remote peer on :61000 is somebody else's listener, not our thief."""
+        dump = "ESTAB 0 0 10.0.0.1:45000 10.0.0.9:61000\n"
+        assert parse_port_holders(dump, 61000) == []
+
+    def test_free_port_has_no_holders(self) -> None:
+        assert parse_port_holders("LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*\n", 61000) == []
+
+    def test_ragged_output_is_survivable(self) -> None:
+        """The diagnosis runs on a failing host; it must not raise on junk."""
+        assert parse_port_holders("", 61000) == []
+        assert parse_port_holders("wat\nss: command not found\n", 61000) == []

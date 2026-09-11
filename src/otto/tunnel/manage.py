@@ -28,9 +28,11 @@ from .model import Direction, ProcKey, Role, Tunnel, TunnelHop
 from .sentinel import encode_sentinel
 from .socat import (
     FREE_PORT_PROBE_COMMAND,
+    SOCKET_DUMP_COMMAND,
     carrier_port_floor,
     parse_ephemeral_ceiling,
     parse_listening_ports,
+    parse_port_holders,
     pick_free_port,
 )
 
@@ -44,6 +46,11 @@ EndpointSpec = tuple[str, str | None]
 
 _VERIFY_RETRY_DELAY = 1.0
 """One settle-then-retry before declaring a just-launched process missing."""
+
+_DIAGNOSIS_TIMEOUT = 10.0
+"""Per-host bound on the failure-path port diagnosis. Shorter than the tunnel
+host timeout on purpose: it runs while an error is already on its way up, and
+delaying that to finish an explanation is the wrong trade."""
 
 _LOOPBACK = "127.0.0.1"
 
@@ -413,6 +420,17 @@ async def _require_tools(host: Any, carrier: TunnelCarrier) -> None:
 
 
 @dataclass(frozen=True, slots=True)
+class _HostPorts:
+    """One host's answer to the free-port probe."""
+
+    used: set[int]
+    """Ports LISTENING on this host."""
+
+    ceiling: int | None
+    """Highest port this kernel may auto-assign, or ``None`` if it did not say."""
+
+
+@dataclass(frozen=True, slots=True)
 class _PortBudget:
     """What one probe pass across the chain says about carrier-port choice."""
 
@@ -436,18 +454,21 @@ async def _probe_port_budget(resolved: list[ResolvedHop]) -> _PortBudget:
     nothing.
     """
 
-    async def probe(r: ResolvedHop) -> tuple[set[int], int | None]:
+    async def probe(r: ResolvedHop) -> _HostPorts:
         result = await _device_read(r.host, FREE_PORT_PROBE_COMMAND)
         if result.timed_out:
             raise HostUnreachableError(f"host {r.hop.host!r} timed out probing for free ports")
         if not result.is_ok:
-            return set(), None
-        return parse_listening_ports(result.value), parse_ephemeral_ceiling(result.value)
+            return _HostPorts(used=set(), ceiling=None)
+        return _HostPorts(
+            used=parse_listening_ports(result.value),
+            ceiling=parse_ephemeral_ceiling(result.value),
+        )
 
     replies = await asyncio.gather(*(probe(r) for r in resolved))
     return _PortBudget(
-        used=set().union(*(used for used, _ceiling in replies)),
-        floor=carrier_port_floor([c for _used, c in replies if c is not None]),
+        used=set().union(*(reply.used for reply in replies)),
+        floor=carrier_port_floor([r.ceiling for r in replies if r.ceiling is not None]),
     )
 
 
@@ -497,7 +518,92 @@ def _raise_launch_timeout(resolved: list[ResolvedHop], proc: "_ProcSpec") -> Non
     )
 
 
-def _raise_verify_failure(tunnel: Tunnel, missing: set[ProcKey], unreachable: list[str]) -> None:
+def _bound_port(tunnel: Tunnel, key: ProcKey, carrier_fwd: int, carrier_rev: int) -> int:
+    """Which port the process for *key* binds — the one to blame if it died.
+
+    Role semantics, not argv parsing, so this stays true for any carrier: an
+    ingress binds the SERVICE port (spec §6.2's same-port-everywhere rule); a
+    relay and an egress bind their direction's carrier port.
+    """
+    _host, direction, role = key
+    if role is Role.INGRESS:
+        return tunnel.service_port
+    return carrier_fwd if direction is Direction.FWD else carrier_rev
+
+
+async def _diagnose_missing(
+    resolved: list[ResolvedHop],
+    missing: set[ProcKey],
+    tunnel: Tunnel,
+    carrier_fwd: int,
+    carrier_rev: int,
+) -> list[str]:
+    """Ask each host with a missing process what holds that port (#284).
+
+    A launched-then-absent process is nearly always a bind that lost a race,
+    and the launch discards the daemon's stderr (it is detached — there is
+    nowhere synchronous for it to go), so without this the failure can only
+    say "not running" and the next reader has to reproduce it under load to
+    learn anything. Naming the socket that holds the port turns that into a
+    reading.
+
+    Wholly best-effort and bounded: this runs on hosts that have already
+    misbehaved, on the way to raising, and a diagnosis that hangs or throws
+    would replace a real error with its own. Anything unobtainable is simply
+    left out.
+    """
+    by_host: dict[str, list[ProcKey]] = {}
+    for key in missing:
+        by_host.setdefault(key[0], []).append(key)
+    host_by_id = {r.hop.host: r.host for r in resolved}
+
+    async def dump(host_id: str) -> str:
+        """Never propagates an ordinary failure — an undiagnosable host is silent.
+
+        Catches ``Exception``, NOT ``BaseException``: a ``gather`` that
+        swallowed ``CancelledError`` (or pytest-timeout's alarm) would make a
+        Ctrl+C during diagnosis look like a host that merely had nothing to
+        say, and the cancellation would go missing.
+        """
+        try:
+            # Through `_device_read` like every other read in the package (the
+            # declared-touch roster), wrapped in the shorter deadline above:
+            # that helper's own bound is the launch timeout, too long to spend
+            # decorating an error that is already on its way up.
+            result = await asyncio.wait_for(
+                _device_read(host_by_id[host_id], SOCKET_DUMP_COMMAND), _DIAGNOSIS_TIMEOUT
+            )
+        except Exception as e:  # noqa: BLE001 — diagnosis is best-effort by design
+            logger.debug(f"otto tunnel: port diagnosis failed on {host_id!r}: {e}")
+            return ""
+        return result.value if result.is_ok else ""
+
+    ordered = sorted(by_host)
+    dumps = dict(zip(ordered, await asyncio.gather(*(dump(h) for h in ordered)), strict=True))
+
+    notes: list[str] = []
+    for host_id in ordered:
+        if not dumps[host_id]:
+            # Nothing came back. Saying "the port is free" here would be a
+            # claim about the host rather than a reading of it.
+            continue
+        for key in sorted(by_host[host_id], key=lambda k: (k[1].value, k[2].value)):
+            port = _bound_port(tunnel, key, carrier_fwd, carrier_rev)
+            holders = parse_port_holders(dumps[host_id], port)
+            where = f"{host_id}/{key[1].value}/{key[2].value} (port {port})"
+            if holders:
+                notes.append(f"{where}: port held by {'; '.join(holders)}")
+            else:
+                notes.append(f"{where}: port is free — the process died for some other reason")
+    return notes
+
+
+def _raise_verify_failure(
+    tunnel: Tunnel,
+    missing: set[ProcKey],
+    unreachable: list[str],
+    diagnosis: list[str] | None = None,
+) -> None:
     """Raise for a post-add verify that never converged (TRY301: kept out of the try body)."""
     pretty = ", ".join(
         f"{h}/{d.value}/{r.value}"
@@ -506,8 +612,10 @@ def _raise_verify_failure(tunnel: Tunnel, missing: set[ProcKey], unreachable: li
     unreachable_note = (
         f" (unreachable during verify: {', '.join(unreachable)})" if unreachable else ""
     )
+    why = "".join(f"\n  {note}" for note in diagnosis or [])
     raise HostCommandError(
-        f"tunnel {tunnel.id!r} failed post-add verify — not running: {pretty}{unreachable_note}"
+        f"tunnel {tunnel.id!r} failed post-add verify — not running: {pretty}"
+        f"{unreachable_note}{why}"
     )
 
 
@@ -839,7 +947,12 @@ async def add_tunnel(
                 present, unreachable = await _verify_chain(resolved, tunnel)
             missing = expected - present
             if missing:
-                _raise_verify_failure(tunnel, missing, unreachable)
+                # Before the rollback below reaps everything: the thief's
+                # socket is still there to be named, and will not be after.
+                diagnosis = await _diagnose_missing(
+                    resolved, missing, tunnel, carrier_fwd, carrier_rev
+                )
+                _raise_verify_failure(tunnel, missing, unreachable, diagnosis)
         except BaseException:
             if launched:
                 # Shielded: a Ctrl+C landing during the rollback itself must
