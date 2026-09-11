@@ -285,7 +285,7 @@ class TestReservedPorts:
 class TestListenerCheckSs:
     @pytest.mark.asyncio
     async def test_immediate_success(self):
-        mock_exec = AsyncMock(return_value=_ok())
+        mock_exec = AsyncMock(return_value=_ok("1\n"))
         ft = make_ft(nc_listener_check="ss", exec_cmd=mock_exec)
         await ft._wait_for_remote_listener(8080)
         cmd = mock_exec.call_args[0][0]
@@ -294,7 +294,7 @@ class TestListenerCheckSs:
 
     @pytest.mark.asyncio
     async def test_success_after_retry(self):
-        mock_exec = AsyncMock(side_effect=[_fail(), _fail(), _ok()])
+        mock_exec = AsyncMock(side_effect=[_fail(), _fail(), _ok("1\n")])
         ft = make_ft(nc_listener_check="ss", exec_cmd=mock_exec)
         await ft._wait_for_remote_listener(8080, timeout=5.0, interval=0.01)
         assert mock_exec.call_count == 3
@@ -310,7 +310,7 @@ class TestListenerCheckSs:
 class TestListenerCheckNetstat:
     @pytest.mark.asyncio
     async def test_immediate_success(self):
-        mock_exec = AsyncMock(return_value=_ok())
+        mock_exec = AsyncMock(return_value=_ok("1\n"))
         ft = make_ft(nc_listener_check="netstat", exec_cmd=mock_exec)
         await ft._wait_for_remote_listener(8080)
         cmd = mock_exec.call_args[0][0]
@@ -327,7 +327,7 @@ class TestListenerCheckNetstat:
 class TestListenerCheckProc:
     @pytest.mark.asyncio
     async def test_immediate_success(self):
-        mock_exec = AsyncMock(return_value=_ok())
+        mock_exec = AsyncMock(return_value=_ok("1\n"))
         ft = make_ft(nc_listener_check="proc", exec_cmd=mock_exec)
         await ft._wait_for_remote_listener(8080)
         cmd = mock_exec.call_args[0][0]
@@ -346,7 +346,7 @@ class TestListenerCheckProc:
 class TestListenerCheckCustom:
     @pytest.mark.asyncio
     async def test_uses_port_placeholder(self):
-        mock_exec = AsyncMock(return_value=_ok())
+        mock_exec = AsyncMock(return_value=_ok("1\n"))
         ft = make_ft(
             nc_listener_check="custom", nc_listener_cmd="check_port {port}", exec_cmd=mock_exec
         )
@@ -369,7 +369,7 @@ class TestListenerCheckAuto:
         async def mock_exec(cmd, **kw):
             if "command -v" in cmd:
                 return _ok("ss ss\n")
-            return _ok()  # listener check succeeds immediately
+            return _ok("1\n")  # listener check succeeds immediately
 
         ft = make_ft(nc_listener_check="auto", exec_cmd=AsyncMock(side_effect=mock_exec))
         await ft._wait_for_remote_listener(8080)
@@ -382,7 +382,7 @@ class TestListenerCheckAuto:
         async def mock_exec(cmd, **kw):
             if "command -v" in cmd:
                 return _ok("netstat netstat\n")
-            return _ok()
+            return _ok("1\n")
 
         ft = make_ft(nc_listener_check="auto", exec_cmd=AsyncMock(side_effect=mock_exec))
         await ft._wait_for_remote_listener(8080)
@@ -396,7 +396,7 @@ class TestListenerCheckAuto:
             if "command -v" in cmd:
                 # Port side could be python; listener falls back to proc.
                 return _ok("python proc\n")
-            return _ok()
+            return _ok("1\n")
 
         ft = make_ft(nc_listener_check="auto", exec_cmd=AsyncMock(side_effect=mock_exec))
         await ft._wait_for_remote_listener(8080)
@@ -405,7 +405,7 @@ class TestListenerCheckAuto:
     @pytest.mark.asyncio
     async def test_caches_resolved_strategy(self):
         """Second call uses the cached strategy without re-probing."""
-        mock_exec = AsyncMock(return_value=_ok())
+        mock_exec = AsyncMock(return_value=_ok("1\n"))
         ft = make_ft(nc_listener_check="auto", exec_cmd=mock_exec)
         ft._resolved_listener_check = "netstat"
         await ft._wait_for_remote_listener(8080)

@@ -40,10 +40,20 @@ The auto cascade order is: ss → netstat → python → proc.
 | Strategy     | How it works                                                                                          |
 |--------------|-------------------------------------------------------------------------------------------------------|
 | ``auto``     | Probe for ss, then netstat, falling back to proc. Cache the result.                                   |
-| ``ss``       | Check for LISTEN via ``ss -tln sport = :<port>``.                                                     |
-| ``netstat``  | Grep ``netstat -tln`` for the port.                                                                   |
-| ``proc``     | Scan ``/proc/net/tcp`` for LISTEN state (Linux-only, always available).                               |
+| ``ss``       | Count LISTEN sockets via ``ss -tln sport = :<port>``.                                                 |
+| ``netstat``  | Count the port's lines in ``netstat -tln``.                                                           |
+| ``proc``     | Count ``/proc/net/tcp`` rows in LISTEN state on the port (Linux-only, always available).              |
 | ``custom``   | Run the command in ``nc_options.listener_cmd`` with ``{port}`` placeholder. Must exit 0 if listening. |
+
+The built-in checks count listeners rather than merely detecting one. Some
+netcats (OpenBSD ``nc`` among them) bind with ``SO_REUSEPORT``, so a second
+process that chose the same port at the same moment gets a listener beside
+otto's instead of an address-in-use error, and the kernel then decides which
+of the two receives the connection. A port held by more than one listener is
+refused and the file is retried on a fresh port; the scan for that port starts
+at a random offset above ``nc_options.port`` so two scanners overlapping in
+time rarely agree. The ``custom`` check exits 0 or 1 by its contract and
+cannot count, so it remains a presence check.
 
 Override the strategy under ``nc_options`` on the host entry in ``lab.json``
 when auto-detection isn't appropriate for a particular host:

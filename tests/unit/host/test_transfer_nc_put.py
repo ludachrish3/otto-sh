@@ -345,7 +345,16 @@ class TestNcPutListenerWait:
                 )
             return None, _FakeWriter()
 
-        exec_cmd = AsyncMock(return_value=_ok("9000\n"))
+        async def exec_side(cmd: str, *a, **kw):
+            if "nc -l" in cmd:
+                # The listener serves our one connection, then exits. One that
+                # exited BEFORE we connected served someone else (port shared).
+                await listener_ready.wait()
+                await asyncio.sleep(0.01)
+                return _ok()
+            return _ok("9000\n")
+
+        exec_cmd = AsyncMock(side_effect=exec_side)
         ft = _make_ft(exec_cmd, has_tunnel=False)
 
         with (

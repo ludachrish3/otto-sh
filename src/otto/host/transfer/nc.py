@@ -13,6 +13,7 @@ by these spellings (``docs/superpowers/specs/2026-08-25-nc-universal-spelling-de
 """
 
 import asyncio
+import random
 from collections.abc import Callable, Coroutine
 from contextlib import suppress
 from pathlib import Path
@@ -253,16 +254,40 @@ _PROC_PORT_SCRIPT = (
 # Shell script templates for listener-check strategies
 # ---------------------------------------------------------------------------
 
-_SS_LISTENER_CHECK = "ss -tln sport = :{port} | grep -q LISTEN"
-_NETSTAT_LISTENER_CHECK = 'netstat -tln | grep -q ":{port} "'
+# Every built-in check prints HOW MANY listeners hold the port, not whether
+# one does. Measured 2026-09-11 on the bed (nc.openbsd 1.226): the listener
+# binds with SO_REUSEPORT, so a second `nc -l -p PORT` from another process
+# does not fail with EADDRINUSE -- it coexists on the same 0.0.0.0:PORT and
+# the kernel hands each incoming connection to whichever listener it hashes
+# to. A presence check ("some listener is up") was satisfied by the OTHER
+# process's listener, and the two streams crossed: A's bytes in B's file, B's
+# in A's, rc 0 on both sides, and a byte-count verify blind to it whenever the
+# two files were the same length. `_wait_for_remote_listener` reads the count
+# and refuses a port more than one process holds.
+#
+# `grep -c` prints the count and exits 1 when it is zero, so the count is read
+# from stdout and the exit code is not the signal.
+_SS_LISTENER_CHECK = "ss -tln sport = :{port} | grep -c LISTEN"
+_NETSTAT_LISTENER_CHECK = 'netstat -tln | grep -c ":{port} "'
 
-# Precompute hex port in Python, then scan /proc/net/tcp for LISTEN state (0A).
+# Precompute hex port in Python, then count /proc/net/tcp rows in LISTEN
+# state (0A) on it.
 _PROC_LISTENER_CHECK = (
-    "while read line; do "
+    "n=0; while read line; do "
     "set -- $line; "
-    "case $2 in *:{hex_port}) case $4 in 0A) exit 0;; esac;; esac; "
-    "done < /proc/net/tcp; exit 1"
+    "case $2 in *:{hex_port}) case $4 in 0A) n=$((n+1));; esac;; esac; "
+    "done < /proc/net/tcp; echo $n"
 )
+
+# The scan for a free port starts at `port + randrange(SPREAD)` rather than at
+# `port` itself. Two otto processes scanning one host from the same base in
+# the same window otherwise agree on the same lowest free port -- neither can
+# see a port the other has chosen but not yet bound -- and with a SO_REUSEPORT
+# netcat (above) both listeners then come up on it. The ownership check makes
+# that collision a refusal instead of a silent swap; this offset is what keeps
+# the refusal's fresh-port retry from landing both processes on the same NEXT
+# port. Clamped so the scan never starts past the port range.
+_NC_PORT_SCAN_SPREAD = 2000
 
 _PORT_STRATEGY_ORDER: list[NcPortStrategy] = ["ss", "netstat", "python", "proc"]
 _LISTENER_CHECK_ORDER: list[NcListenerCheck] = ["ss", "netstat", "proc"]
@@ -281,6 +306,35 @@ _STRATEGY_PROBE = (
     "fi; "
     'echo "$port $listener"'
 )
+
+
+class NcPortSharedError(ConnectionError):
+    """The remote port this transfer chose is held by more than one listener.
+
+    Another process bound the same port between our scan and our bind, and a
+    SO_REUSEPORT netcat let both listeners come up. Nothing may be sent to or
+    read from such a port: the kernel decides which listener gets the
+    connection, and a stream that lands in the other process's file reports
+    success on both sides. A ``ConnectionError`` so the existing readiness
+    handlers turn it into this file's ``Error``, which the per-file retry
+    answers with a fresh port.
+    """
+
+
+def _listener_fed_by_another(verb: str, path: Path, port: int) -> str:
+    """Word the refusal for a listener that exited before this side ever connected.
+
+    A ``nc -l`` serves exactly one connection and exits. Ours gone before we
+    connected means another process's stream reached it -- the other half of
+    the shared-port swap, where the count check on this side saw only the
+    other listener (ours not yet bound) or the other side's check saw only
+    ours. Connecting now would reach THEIR listener and report the wrong
+    bytes as success, so the attempt is refused and retried on a fresh port.
+    """
+    return (
+        f"nc {verb} {path}: the listener on port {port} exited before this side connected, "
+        f"so another process's stream reached it (port shared)"
+    )
 
 
 async def _connect_with_retry(
@@ -895,15 +949,29 @@ class NcFileTransfer(UnixFileTransfer):
     def _reserved_str(self) -> str:
         return " ".join(str(p) for p in self._reserved_ports)
 
+    def _scan_start(self) -> int:
+        """Where this scan starts: the base port plus a random offset.
+
+        See ``_NC_PORT_SCAN_SPREAD``. Not a security boundary, so the module
+        ``random`` is the right tool; the property it needs is only that two
+        processes scanning at once rarely pick the same start.
+        """
+        ceiling = 65535 - self._nc_port
+        if ceiling <= 0:
+            return self._nc_port
+        return self._nc_port + random.randrange(min(_NC_PORT_SCAN_SPREAD, ceiling))  # noqa: S311 — collision spreading, not a secret
+
     async def _find_free_port_ss(self) -> int:
-        script = _SS_PORT_SCRIPT.format(base_port=self._nc_port, reserved=self._reserved_str())
+        script = _SS_PORT_SCRIPT.format(base_port=self._scan_start(), reserved=self._reserved_str())
         result = await self._control_run(script)
         if result.retcode != 0:
             raise _probe_failure(result.timed_out, f"ss port scan failed: {result.value}")
         return int(result.value.strip())
 
     async def _find_free_port_netstat(self) -> int:
-        script = _NETSTAT_PORT_SCRIPT.format(base_port=self._nc_port, reserved=self._reserved_str())
+        script = _NETSTAT_PORT_SCRIPT.format(
+            base_port=self._scan_start(), reserved=self._reserved_str()
+        )
         result = await self._control_run(script)
         if result.retcode != 0:
             raise _probe_failure(result.timed_out, f"netstat port scan failed: {result.value}")
@@ -922,7 +990,9 @@ class NcFileTransfer(UnixFileTransfer):
         raise _probe_failure(last_timed_out, f"python port discovery failed: {last_output}")
 
     async def _find_free_port_proc(self) -> int:
-        script = _PROC_PORT_SCRIPT.format(base_port=self._nc_port, reserved=self._reserved_str())
+        script = _PROC_PORT_SCRIPT.format(
+            base_port=self._scan_start(), reserved=self._reserved_str()
+        )
         result = await self._control_run(script)
         if result.retcode != 0:
             raise _probe_failure(
@@ -966,12 +1036,39 @@ class NcFileTransfer(UnixFileTransfer):
         iterations (when nc usually becomes ready on a warm session) and
         ramps up to *interval* afterward, so fast-ready listeners don't
         pay the full *interval* tax on the very first miss.
+
+        AN OWNERSHIP CHECK, NOT A PRESENCE CHECK. The built-in strategies
+        print how many listeners hold *port* (see ``_SS_LISTENER_CHECK``);
+        one is ours and ready, none is not yet, and more than one means
+        another process bound the same port beside us, which raises
+        :class:`NcPortSharedError` at once rather than waiting anything out.
+        The ``custom`` strategy is a 0/1 exit by its documented contract and
+        cannot count, so it stays a presence check.
         """
-        check = await self._get_listener_check_cmd(port)
+        strategy = self._nc_listener_check
+        if strategy == "auto":
+            strategy = await self._resolve_listener_strategy()
+        check = self._listener_cmd_for(strategy, port)
         fast_interval = min(0.05, interval)
+        counts = strategy != "custom"
 
         async def listening() -> bool:
-            return (await self._control_run(check)).retcode == 0
+            result = await self._control_run(check)
+            if not counts:
+                return result.retcode == 0
+            try:
+                holders = int(result.value.strip())
+            except ValueError:
+                # The tool printed no count (missing, or a shell error):
+                # nothing is known, so keep polling until the deadline says
+                # the listener never came.
+                return False
+            if holders > 1:
+                raise NcPortSharedError(
+                    f"Remote port {port} is shared: {holders} listeners hold it, so another "
+                    f"process chose it too and the kernel would pick which one gets the stream"
+                )
+            return holders == 1
 
         try:
             await wait_for_async(
@@ -1450,8 +1547,10 @@ class NcFileTransfer(UnixFileTransfer):
 
                 try:
                     await self._wait_for_remote_listener(port)
-                except ConnectionError:
-                    return Result(Status.Error, msg=f"Remote nc listener on port {port} not ready")
+                except ConnectionError as not_ours:
+                    return Result(Status.Error, msg=f"nc get of {src}: {not_ours}")
+                if listen_task.done():
+                    return Result(Status.Error, msg=_listener_fed_by_another("get of", src, port))
 
                 try:
                     local_port = await asyncio.wait_for(
@@ -1787,7 +1886,17 @@ class NcFileTransfer(UnixFileTransfer):
                 # `_wait_for_remote_listener` routes through `_control_run`,
                 # which on telnet hosts serializes probes onto one warm
                 # pooled session instead of paying a fresh handshake each.
-                await self._wait_for_remote_listener(port)
+                #
+                # Caught HERE, not left to `_dispatch_per_file`'s per-file
+                # wrapper: an exception out of `_attempt` folds into the file's
+                # Error without passing `_put_one`, whose fresh-port retry is
+                # the whole answer to a port another process shares.
+                try:
+                    await self._wait_for_remote_listener(port)
+                except ConnectionError as not_ours:
+                    return Result(Status.Error, msg=f"nc put to {dst}: {not_ours}")
+                if listen_task.done():
+                    return Result(Status.Error, msg=_listener_fed_by_another("put to", dst, port))
                 if self._connections.has_tunnel:
                     try:
                         local_port = await asyncio.wait_for(

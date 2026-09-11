@@ -716,7 +716,7 @@ Available strategies:
 
 - ``'auto'`` (default) — probe for ss, then netstat, falling back to proc.
   The first tool found is cached and reused for subsequent checks.
-- ``'ss'`` — check for a LISTEN socket via ``ss -tln sport = :<port>``.
+- ``'ss'`` — count LISTEN sockets via ``ss -tln sport = :<port>``; more than one is refused.
 - ``'netstat'`` — grep ``netstat -tln`` output for the port.
 - ``'proc'`` — scan ``/proc/net/tcp`` for LISTEN state (0A) on the port
   (Linux-only, always available as a last resort).

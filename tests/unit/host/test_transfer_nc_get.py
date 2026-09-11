@@ -1069,9 +1069,10 @@ class TestGetFilesNcTunneled:
             )
 
         assert status is Status.Error, msg
-        # Exact message from line 712.
-        assert "Remote nc listener on port" in msg
-        assert "not ready" in msg
+        # The wait's own words, prefixed with the file: a shared port and a
+        # never-ready listener both come out through this one handler.
+        assert "nc get of" in msg
+        assert "probe failed" in msg
 
     @pytest.mark.asyncio
     async def test_forward_connect_error_returns_status_error(self, tmp_path: Path) -> None:

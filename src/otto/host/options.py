@@ -469,8 +469,9 @@ class NcOptions:
     BusyBox, traditional netcat and ncat)."""
 
     port: int = 9000
-    """Base port for netcat transfers. Used as the scan-start for the
-    ss/netstat/python/proc port-finding strategies."""
+    """Base port for netcat transfers. The ss/netstat/proc port-finding
+    strategies scan upward from a random offset above it, so two otto
+    processes scanning one host at once rarely choose the same port."""
 
     port_strategy: "NcPortStrategy" = "auto"
     """Strategy for finding free ports on the remote host. ``'auto'``
