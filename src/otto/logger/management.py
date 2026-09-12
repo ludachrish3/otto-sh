@@ -354,7 +354,7 @@ def _set_sink_levels(log_level: str) -> None:
     what an embedder raising the level mid-process is asking for.
     """
     if _state.console_log_handler is not None:
-        _state.console_log_handler.setLevel(logging.getLevelName(log_level))
+        _state.console_log_handler.setLevel(log_level)
     if _state.verbose_handler is not None:
         _state.verbose_handler.setLevel(verbose_floor(log_level))
     _state.sinks_log_level = log_level
@@ -534,7 +534,7 @@ def create_output_dir(command: str, subcommand: str | None = None) -> Path:
     return output_dir
 
 
-def _make_file_handler(path: Path, level: int, rich: bool) -> FileHandler:
+def _make_file_handler(path: Path, level: "int | str", rich: bool) -> FileHandler:
     """Build a ``FileHandler`` at *level* with a (optionally rich) ``RichFormatter``."""
     fh = FileHandler(path, mode="x")
     fh.setLevel(level)
@@ -615,7 +615,6 @@ def install_sinks(output_dir: Path) -> None:
     # Build the new async fan-out: console (non-blocking) + two files.
     console_handlers = [_state.console_handler] if _state.console_handler is not None else []
     log_level = _state.log_level or "INFO"
-    level = logging.getLevelName(log_level)
     if reusable is not None:
         # Already open, already carrying this directory's transcript and (for
         # console.log) the console's suppress filters. Only the levels can have
@@ -623,7 +622,9 @@ def install_sinks(output_dir: Path) -> None:
         console_log, verbose_log = reusable
         _set_sink_levels(log_level)
     else:
-        console_log = _make_file_handler(output_dir / "console.log", level, _state.rich_log_file)
+        console_log = _make_file_handler(
+            output_dir / "console.log", log_level, _state.rich_log_file
+        )
         verbose_log = _make_file_handler(
             output_dir / "verbose.log", verbose_floor(log_level), _state.rich_log_file
         )
