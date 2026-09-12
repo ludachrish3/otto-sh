@@ -173,7 +173,7 @@ dev = [
     "ruff>=0.15.20",
     "sphinx>=8.0",
     "doc8>=1.1",
-    "ty==0.0.77",
+    "ty==0.0.79",
     # Stub-only package for `requests`, which ships no py.typed and no
     # annotations at all: without it a checker reads `Session.verify`'s type
     # off the bare `self.verify = True` in requests/sessions.py and concludes
@@ -257,6 +257,38 @@ unsound-return-statement = "ignore"
 # `ty: ignore[unsound-assignment]` comments at the site, each with its reason,
 # so the rule stays enforced for all new code. The Result[T] workstream
 # retires the two Result.value sites and earns back the demotion above.
+
+# ty 0.0.79 added redundant-condition-strict, and it arrives DISABLED BY
+# DEFAULT (level `ignore`): ty's own documentation says it covers exactly the
+# cases with "a significantly higher rate of unavoidable false positives" that
+# its enabled-by-default sibling `redundant-condition` deliberately excludes.
+# `all = "error"` opts into it regardless, and this is the one place that
+# policy overshoots — the demotion returns the rule to the level its authors
+# ship it at rather than silencing a check they recommend. `redundant-condition`
+# STAYS at error and finds ZERO hits here, so the real-bug cases it exists for
+# (a bool-returning function never called, a coroutine never awaited) are
+# still caught.
+#
+# All 23 hits were triaged; none is a defect. Every one is a defensive check
+# at a boundary where the declared type is not yet true: `__post_init__` Path
+# coercions of lab JSON (embedded_host, unix_host), isinstance guards over
+# TOML/JSON-parsed input (completion_cache, creds), and a dispatch filtering a
+# heterogeneous host list (coverage.fetcher.embedded). TWELVE are in
+# otto.testing.conformance, where runtime-verifying that a third-party backend
+# returns what its protocol declares IS the product: `list_labs()` is typed
+# `-> list[str]`, so `isinstance(names, list)` is statically redundant, and
+# catching the backend that violates it is the entire feature. The rule exempts
+# `if not isinstance(...): raise` but not `continue`/`return None`/coercion,
+# which is why this shape fires and honest guards elsewhere do not.
+#
+# One hit is a ty bug rather than a judgement call: inventory/netbox.py:345
+# narrows `api` inside a `finally` as though the `try` body had succeeded,
+# calling `api is not None` always true when `api = None` is bound before the
+# `try`. Reduced to a 12-line repro for upstream.
+#
+# What would earn it back: ty promoting the rule to enabled-by-default, which
+# would mean the precision caveat above no longer holds.
+redundant-condition-strict = "ignore"
 
 [tool.pytest.ini_options]
 testpaths = [
