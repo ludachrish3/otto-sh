@@ -24,6 +24,36 @@ T = TypeVar("T")
 _STARTUP_TIMEOUT = 15.0
 
 
+class DashboardHarnessTeardownError(AssertionError):
+    """The harness's loop teardown did not leave the process clean.
+
+    Deliberately NOT a ``RuntimeError``: ``stop()`` already raises one for a
+    thread that would not join, and the test that hammers shutdown catches that
+    to report non-convergence. A teardown leak is a different claim and must
+    read as one.
+    """
+
+
+def _live_transports_on(loop: asyncio.AbstractEventLoop) -> "list[Any]":
+    """Every selector transport bound to *loop* that still holds an fd.
+
+    ``_SelectorTransport`` is the concrete base of the read/write selector
+    transports; there is no public per-loop transport registry, so scan the
+    heap (as tests/conftest.py's leak detector does). ``_call_connection_lost``
+    clears ``_sock`` and ``_loop`` together, so a transport that answers both
+    predicates is one nothing has finished closing.
+    """
+    from asyncio.selector_events import _SelectorTransport
+
+    return [
+        obj
+        for obj in gc.get_objects()
+        if isinstance(obj, _SelectorTransport)
+        and getattr(obj, "_loop", None) is loop
+        and getattr(obj, "_sock", None) is not None
+    ]
+
+
 class DashboardHarness(Generic[C]):
     """Serve *collector*'s dashboard on ``127.0.0.1:<ephemeral>``.
 
@@ -59,6 +89,11 @@ class DashboardHarness(Generic[C]):
         )
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
+        # Teardown runs on the harness thread, where nothing can fail a test.
+        # What it finds is recorded here and raised from stop(), on the test's
+        # own thread (see _close_loop / _check_teardown, and issue #319).
+        self._teardown_error: BaseException | None = None
+        self._leaked: list[str] = []
 
     @property
     def url(self) -> str:
@@ -103,38 +138,91 @@ class DashboardHarness(Generic[C]):
         try:
             self._loop.run_until_complete(self.server.serve())
         finally:
-            # `server.serve()` returning doesn't guarantee uvicorn's own
-            # background lifespan task (LifespanOn.main(), started via
-            # loop.create_task() inside uvicorn) has reached a *terminal*
-            # state yet -- shutdown_event.set() is its last statement, which
-            # unblocks our await but needs one more loop iteration to mark
-            # the task itself done. asyncio.run() drains exactly this case
-            # for free; a hand-rolled new_event_loop()/close() does not. Skip
-            # this and the still-"pending" task gets closed out from under it,
-            # so Python's GC finalizes it against an already-closed loop at
-            # some arbitrary *later* point -- raising "Event loop is closed"
-            # that pytest's unraisableexception hook then attributes to
-            # whatever unrelated test happens to be running at GC time.
-            pending = list(asyncio.all_tasks(loop=self._loop))
-            if pending:
-                for task in pending:
-                    task.cancel()
-                results = self._loop.run_until_complete(
-                    asyncio.gather(*pending, return_exceptions=True)
-                )
-                for task, result in zip(pending, results, strict=True):
-                    if isinstance(result, BaseException) and not isinstance(
-                        result, asyncio.CancelledError
-                    ):
-                        self._loop.call_exception_handler(
-                            {
-                                "message": "dashboard harness: task failed during teardown",
-                                "exception": result,
-                                "task": task,
-                            }
-                        )
+            self._close_loop()
+
+    def _close_loop(self) -> None:
+        """Drain, reap, close — then record whatever survived, for stop() to raise.
+
+        This runs on the harness thread, where neither failure mode can reach a
+        test on its own: an exception here lands in ``threading.excepthook``,
+        and an fd still open at ``loop.close()`` lands in whichever *later*
+        test is running when the collector next fires. Issue #319 is five
+        successive fixes diagnosed through that second channel, and the run
+        that reopened it could not be shown to name the harness that leaked. So
+        both are captured here and re-raised from ``stop()`` (see
+        ``_check_teardown``), on the thread that owns the harness.
+
+        After ``close()`` is the one turn where "leaked" is decidable: no
+        callback can ever run again, so a transport still holding an fd is
+        leaked for good. Describe it before hard-closing it, so the failure
+        names the fd rather than a bare count — and hard-close it, or this
+        diagnostic would fire the very ``ResourceWarning`` it replaces.
+        """
+        loop = self._loop
+        assert loop is not None
+        try:
+            self._drain_pending_tasks()
             self._reap_orphaned_transports()
-            self._loop.close()
+        except BaseException as exc:  # noqa: BLE001 - recorded verbatim, re-raised in stop()
+            # BaseException, not Exception: a cancelled task that raises
+            # SystemExit propagates out of run_until_complete (Task.__step
+            # re-raises it into the loop), which would otherwise skip the reap
+            # entirely and leak every transport at once, invisibly.
+            self._teardown_error = exc
+        finally:
+            loop.close()
+        for transport in _live_transports_on(loop):
+            self._leaked.append(repr(transport))
+            sock, transport._sock = transport._sock, None
+            sock.close()
+
+    def _check_teardown(self) -> None:
+        """Re-raise on the caller's thread whatever ``_close_loop`` recorded."""
+        error, leaked = self._teardown_error, self._leaked
+        self._teardown_error, self._leaked = None, []
+        if error is not None:
+            raise DashboardHarnessTeardownError(
+                "dashboard harness teardown raised before the transport reap finished; "
+                "every transport on the loop leaked with it"
+            ) from error
+        if leaked:
+            raise DashboardHarnessTeardownError(
+                f"{len(leaked)} transport(s) still held an fd after loop.close(), so nothing "
+                f"could ever have closed them (issue #319): {'; '.join(leaked)}"
+            )
+
+    def _drain_pending_tasks(self) -> None:
+        """Cancel every task still pending on the loop, and settle it."""
+        loop = self._loop
+        assert loop is not None
+        # `server.serve()` returning doesn't guarantee uvicorn's own
+        # background lifespan task (LifespanOn.main(), started via
+        # loop.create_task() inside uvicorn) has reached a *terminal*
+        # state yet -- shutdown_event.set() is its last statement, which
+        # unblocks our await but needs one more loop iteration to mark
+        # the task itself done. asyncio.run() drains exactly this case
+        # for free; a hand-rolled new_event_loop()/close() does not. Skip
+        # this and the still-"pending" task gets closed out from under it,
+        # so Python's GC finalizes it against an already-closed loop at
+        # some arbitrary *later* point -- raising "Event loop is closed"
+        # that pytest's unraisableexception hook then attributes to
+        # whatever unrelated test happens to be running at GC time.
+        pending = list(asyncio.all_tasks(loop=loop))
+        if pending:
+            for task in pending:
+                task.cancel()
+            results = loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            for task, result in zip(pending, results, strict=True):
+                if isinstance(result, BaseException) and not isinstance(
+                    result, asyncio.CancelledError
+                ):
+                    loop.call_exception_handler(
+                        {
+                            "message": "dashboard harness: task failed during teardown",
+                            "exception": result,
+                            "task": task,
+                        }
+                    )
 
     def _reap_orphaned_transports(self) -> None:
         """Abort any live server connection whose transport would outlive the loop.
@@ -161,22 +249,11 @@ class DashboardHarness(Generic[C]):
         never actively closes live transports, so production only escapes this
         by exiting the process.
         """
-        # _SelectorTransport is the concrete base of the read/write selector
-        # transports; there is no public per-loop transport registry, so scan
-        # the heap (as tests/conftest.py's leak detector does).
-        from asyncio.selector_events import _SelectorTransport
-
         loop = self._loop
         assert loop is not None
 
-        def holding_an_fd() -> list[_SelectorTransport]:
-            return [
-                obj
-                for obj in gc.get_objects()
-                if isinstance(obj, _SelectorTransport)
-                and getattr(obj, "_loop", None) is loop
-                and getattr(obj, "_sock", None) is not None
-            ]
+        def holding_an_fd() -> "list[Any]":
+            return _live_transports_on(loop)
 
         for _ in range(10):  # loop-until-clean: a late connection_made may add one mid-reap
             loop.run_until_complete(asyncio.sleep(0))
@@ -217,6 +294,10 @@ class DashboardHarness(Generic[C]):
         open SSE connections to drain and aborts their transports so a live
         EventSource on the browser side sees the connection die promptly
         (see that method's docstring for the full h11/force_exit rationale).
+
+        Once the thread has joined, raises whatever its loop teardown recorded
+        (``_check_teardown``) — here, where the failure lands on the test that
+        owns the harness instead of on a later one's garbage collection.
         """
         if self._thread is None:
             return
@@ -225,3 +306,4 @@ class DashboardHarness(Generic[C]):
         if self._thread.is_alive():
             raise RuntimeError("dashboard harness thread did not exit within 10s")
         self._thread = None
+        self._check_teardown()

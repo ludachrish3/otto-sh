@@ -34,7 +34,10 @@ from otto.models import (
 from otto.monitor import server as server_module
 from otto.monitor.collector import MetricCollector
 from otto.monitor.session import new_frame
-from tests._fixtures._dashboard_harness import DashboardHarness
+from tests._fixtures._dashboard_harness import (
+    DashboardHarness,
+    DashboardHarnessTeardownError,
+)
 from tests._fixtures._fake_collector import FakeCollector
 
 pytestmark = [
@@ -521,3 +524,71 @@ def test_sse_event_lifecycle_wire_contract(
         assert deleted == {"format": 1, "session": "", "deleted_event_ids": [ev.id]}
     finally:
         conn.close()
+
+
+def test_teardown_names_a_transport_that_outlived_the_reap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An fd still open after ``loop.close()`` must fail the test that owns the harness.
+
+    Issue #319, the instrument rather than the sixth fix. Five successive
+    narrowings of ``force_stop``/the reap were all diagnosed from a
+    ``ResourceWarning`` that pytest's ``[unraisable]`` hook escalated onto
+    whichever test happened to be running at gc time — which need not be the
+    one whose harness leaked, and on the run that reopened #319 could not be
+    shown to be. So the harness now reads its own leftovers on the one turn
+    where "leaked" is decidable: after ``loop.close()``, when no callback can
+    ever run again. The reap is stubbed to a no-op here to stand in for the
+    unexplained escape, because the escape route itself is what is unknown —
+    the assertion is that *whatever* survives is named, on this thread, with
+    its fd, instead of surfacing as somebody else's flake.
+    """
+    loop = asyncio.new_event_loop()
+    harness: DashboardHarness[FakeCollector] = DashboardHarness(FakeCollector())
+    harness._loop = loop
+    transport, peer = _build_accepted_transport(loop)
+    fd = transport._sock.fileno()
+    monkeypatch.setattr(harness, "_reap_orphaned_transports", lambda: None)
+    try:
+        harness._close_loop()
+        assert loop.is_closed()
+        # Recorded *and* hard-closed: a diagnostic that leaves the fd open
+        # would fire the very ResourceWarning it exists to replace.
+        assert transport._sock is None
+        with pytest.raises(DashboardHarnessTeardownError) as caught:
+            harness._check_teardown()
+        assert f"fd={fd}" in str(caught.value), caught.value
+    finally:
+        sock, transport._sock = transport._sock, None
+        if sock is not None:
+            sock.close()
+        peer.close()
+
+
+def test_teardown_failure_is_re_raised_on_the_test_s_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An exception during the reap must not vanish into ``threading.excepthook``.
+
+    The other live hypothesis for #319: if anything raises out of the harness
+    thread's teardown before the reap finishes, every transport on the loop
+    leaks at once and the reap is never even reached — and because it happens
+    on a daemon thread, nothing connects the resulting warnings back to it.
+    ``BaseException`` deliberately: a ``SystemExit`` thrown by a cancelled task
+    propagates out of ``run_until_complete``, which is exactly the candidate
+    worth being able to see. The loop is still closed either way.
+    """
+    loop = asyncio.new_event_loop()
+    harness: DashboardHarness[FakeCollector] = DashboardHarness(FakeCollector())
+    harness._loop = loop
+    boom = SystemExit("a cancelled task exited the interpreter")
+
+    def _explode() -> None:
+        raise boom
+
+    monkeypatch.setattr(harness, "_reap_orphaned_transports", _explode)
+    harness._close_loop()
+    assert loop.is_closed(), "the loop must be closed even when teardown raises"
+    with pytest.raises(DashboardHarnessTeardownError) as caught:
+        harness._check_teardown()
+    assert caught.value.__cause__ is boom
