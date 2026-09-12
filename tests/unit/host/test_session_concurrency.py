@@ -568,8 +568,9 @@ class _HandshakeFailsOnceFakeSession(_StabilityFakeSession):
     async def _write(self, data: str) -> None:
         if self._ready_marker in data and self.instance_id <= self.fail_until_instance:
             raise ConnectionError(
-                "shell never became ready after open — the device is "
-                "unresponsive or login failed (e.g. bad credentials)"
+                "shell never became ready after open — the transport connected "
+                "but the shell never reached a prompt; the shell may never have "
+                "started, or the login never completed (e.g. bad credentials)"
             )
         await super()._write(data)
 

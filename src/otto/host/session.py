@@ -576,7 +576,24 @@ class ShellSession(ABC):
         await self._handshake(timeout=timeout)
 
     async def _fail_init(self, attempt: int = 0) -> None:
-        """Tear down a session whose readiness handshake never completed."""
+        """Tear down a session whose readiness handshake never completed.
+
+        The message must not accuse the device of being down (issue #260).
+        This method is reachable ONLY from :meth:`_handshake`, which runs only
+        after :meth:`_open` has already returned — and for telnet the transport
+        is established before the session object even exists. So the transport
+        is up EVERY time this raises, and the old wording ("the device is
+        unresponsive or login failed") was never true of the first clause. It
+        cost a real investigation of power and credentials on a Zephyr guest
+        that was up, answering TCP, and merely holding its one console slot.
+
+        The dialect decides the second clause, because the two conditions have
+        opposite remedies: on a
+        :attr:`~otto.host.command_frame.CommandFrame.single_client_console`
+        the cause is contention (find the other client, or restart the
+        console); anywhere else it is a shell that never started or a login
+        that never completed (check credentials).
+        """
         logger.debug(
             f"{self._log_tag}: handshake FAILED after {attempt} attempt(s); "
             f"marking session dead and closing"
@@ -584,9 +601,20 @@ class ShellSession(ABC):
         self._alive = False
         with suppress(Exception):  # pragma: no cover - best-effort cleanup
             await self.close()
+        if self._frame.single_client_console:
+            why = (
+                "this console serves ONE client at a time, so its slot is most "
+                "likely still held — by another otto run, a stray client, or a "
+                "wedged console that needs restarting"
+            )
+        else:
+            why = (
+                "the shell may never have started, or the login never completed "
+                "(e.g. bad credentials)"
+            )
         raise ConnectionError(
-            "shell never became ready after open — the device is "
-            "unresponsive or login failed (e.g. bad credentials)"
+            f"shell never became ready after open — the transport connected but the "
+            f"shell never reached a prompt; {why}"
         )
 
     # --- Public API ---
@@ -2358,9 +2386,10 @@ class SessionManager:
         ``ConnectionError``. Rebuilding the transport (the closed session's
         teardown drops the stale ``TelnetClient``; ``connections.telnet()``
         re-opens cleanly) and retrying once recovers from the race without
-        masking a genuine misconfiguration: a real "device unresponsive /
-        bad credentials" failure will fail the same way on the second
-        attempt and propagate.
+        masking a genuine misconfiguration: a real never-reached-a-prompt
+        failure (see :meth:`ShellSession._fail_init` for what that message now
+        distinguishes) will fail the same way on the second attempt and
+        propagate.
         """
         if self._session and self._session.alive:
             return

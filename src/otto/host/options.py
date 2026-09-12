@@ -251,7 +251,12 @@ class TelnetOptions:
     process-local set so the embedded test teardown can force-release the slot if
     a timed-out test left it half-open (see
     :func:`otto.host.telnet.abort_console_transports`). Unix telnet (multi-session
-    telnetd) leaves this False, so it is never registered or aborted."""
+    telnetd) leaves this False, so it is never registered or aborted.
+
+    Shares its name with
+    :attr:`otto.host.command_frame.CommandFrame.single_client_console` — the same
+    property declared per-DIALECT, where it selects the readiness-failure wording
+    (issue #260). See that attribute for why the two are separate."""
 
     auto_window_resize: bool = False
     """When True and stdin is a TTY, install a SIGWINCH handler that sends

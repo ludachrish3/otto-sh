@@ -96,6 +96,29 @@ class CommandFrame(ABC):
     """Lab-data string for this dialect (e.g. ``'bash'``). Looked up against
     ``FRAME_CLASSES`` by the host factory; unique across frames."""
 
+    single_client_console: ClassVar[bool] = False
+    """Whether this dialect's console serves exactly ONE client at a time.
+
+    Declared here because it changes what a failed readiness handshake MEANS
+    (issue #260). On a multi-client shell the likely causes are a shell that
+    never started or a login that never completed; on a single-client console
+    the overwhelmingly likely cause is that the one slot is already held — a
+    condition with a completely different remedy, and one otto's session error
+    used to mis-report as "the device is unresponsive or login failed". Read by
+    ``ShellSession._fail_init`` in :mod:`otto.host.session`.
+
+    A project registering its own dialect for an exclusive console (a serial
+    line, a single-session debug port) should set this True.
+
+    Deliberately the same name as
+    :attr:`otto.host.options.TelnetOptions.single_client_console`, which is the
+    same real-world property declared for a different purpose one layer down:
+    that one is per-CONNECTION and registers the transport so the embedded test
+    teardown can force-release a half-held slot. This one is per-DIALECT and only
+    shapes the diagnostic. They are not plumbed together because ``ShellSession``
+    holds a frame and not the connection's options; if that ever changes, collapse
+    them rather than letting the two drift."""
+
     streams_output_live: ClassVar[bool] = False
     """Whether this dialect's raw inter-marker byte stream is already clean
     line-by-line and can be streamed to the log as it arrives. Default False:
@@ -486,6 +509,11 @@ class ZephyrFrame(CommandFrame):
     """
 
     type_name = "zephyr"
+
+    single_client_console = True
+    """Zephyr's ``shell_telnet`` backend accepts exactly one client per device
+    and the console has no login at all — see ``tests/conformance/
+    _console_safety.py``, which serializes this tree's access for that reason."""
 
     @override
     def handshake(self, m: SessionMarkers) -> str:

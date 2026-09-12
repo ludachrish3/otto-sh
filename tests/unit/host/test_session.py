@@ -19,7 +19,7 @@ import asyncssh
 import pytest
 import pytest_asyncio
 
-from otto.host.command_frame import CommandFrame, ZephyrFrame, ZephyrSerialFrame
+from otto.host.command_frame import BashFrame, CommandFrame, ZephyrFrame, ZephyrSerialFrame
 from otto.host.local_host import LocalHost
 from otto.host.session import LocalSession, SessionManager, ShellSession
 from otto.utils import Status, wait_for_async
@@ -1190,6 +1190,74 @@ class TestEnsureInitializedTimeout:
         await drop_task
 
         assert s.alive is False
+
+
+class TestHandshakeFailureNamesTheRealCondition:
+    """The readiness failure must not accuse the device of being down (#260).
+
+    ``_fail_init`` is reachable ONLY from ``_handshake``, which runs only after
+    ``_open()`` has already returned — for telnet the transport is established
+    before the session is even built. So by construction the transport is up
+    every time this message is raised, and "the device is unresponsive" is
+    never true here. On a Zephyr console it sent a real investigation after
+    power and credentials while the guest was up, answering TCP, and simply
+    holding its one client slot.
+    """
+
+    async def _fail_the_handshake(self, frame: CommandFrame | None = None) -> str:
+        """Run a handshake that never confirms; return the raised message."""
+        s = MockSession(command_frame=frame)
+        s._init_timeout = 0.05
+        await s._open()
+        with pytest.raises(ConnectionError) as exc_info:
+            await s._ensure_initialized()
+        return str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_never_claims_the_device_is_unresponsive(self):
+        """The transport answered — only the readiness handshake failed."""
+        message = await self._fail_the_handshake()
+        assert "unresponsive" not in message
+
+    @pytest.mark.asyncio
+    async def test_says_the_transport_was_open(self):
+        """Name what IS known, so the reader starts at the shell, not the wire."""
+        message = await self._fail_the_handshake()
+        assert "never became ready" in message, "the stable stem callers match on"
+        assert "connect" in message.lower()
+
+    @pytest.mark.asyncio
+    async def test_single_client_console_names_the_held_slot(self):
+        """A Zephyr console: the one condition that actually produces this."""
+        message = await self._fail_the_handshake(ZephyrFrame())
+        assert "single client" in message.lower() or "one client" in message.lower()
+
+    @pytest.mark.asyncio
+    async def test_single_client_console_never_blames_credentials(self):
+        """A Zephyr console has no login, so creds can never be the cause."""
+        message = await self._fail_the_handshake(ZephyrFrame())
+        assert "credential" not in message.lower()
+        assert "login" not in message.lower()
+
+    @pytest.mark.asyncio
+    async def test_login_capable_dialect_keeps_the_credentials_hint(self):
+        """Don't lose a TRUE diagnostic: a bash shell does have a login."""
+        message = await self._fail_the_handshake()
+        assert "credential" in message.lower()
+
+
+class TestSingleClientConsoleIsDeclared:
+    """Which dialects own a console that serves exactly one client (#260)."""
+
+    def test_bash_is_not_single_client(self):
+        assert BashFrame.single_client_console is False
+
+    def test_zephyr_is_single_client(self):
+        assert ZephyrFrame.single_client_console is True
+
+    def test_zephyr_serial_inherits_single_client(self):
+        """A serial line is if anything MORE exclusive than the telnet slot."""
+        assert ZephyrSerialFrame.single_client_console is True
 
 
 def test_session_manager_current_user_falls_back_to_login():
