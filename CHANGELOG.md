@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.2] - 2026-09-12
+
+### Changed
+
+- **logger**: resolve level names through setLevel, not the deprecated getLevelName
+
+
+### Dependencies
+
+- **deps-dev**: bump ty from 0.0.77 to 0.0.79
+- **deps-dev**: bump @biomejs/biome from 2.5.11 to 2.5.12 in /web
+- **deps-dev**: bump knip from 6.34.0 to 6.35.1 in /web
+- **deps-dev**: bump ruff from 0.16.5 to 0.16.6
+- **deps-dev**: bump @types/react-dom from 19.2.5 to 19.2.7 in /web
+- **deps-dev**: bump @types/node from 26.4.1 to 26.5.0 in /web
+- **deps-dev**: bump hypothesis from 6.167.1 to 6.168.0
+- **deps-dev**: bump the vitest group in /web with 2 updates
+- **deps-dev**: bump types-requests
+- **deps**: bump wouter from 3.10.0 to 3.11.0 in /web
+- **deps**: bump the react-aria group in /web with 2 updates
+- **deps**: bump sse-starlette from 3.4.8 to 3.4.11
+
+
+### Documentation
+
+- **spec**: refresh the readiness-failure message quoted in the history-suppression spec
+- **tunnel**: don't cross-reference private constants from rendered docstrings
+- **spec**: amend tunnel 2b §6.2/§6.4 for the carrier-port race
+
+
+### Fixed
+
+- **session**: a stalled handshake names the console, not the device
+- **tunnel**: a failed post-add verify names what holds the port
+- **tunnel**: allocate carrier ports above the kernel's ephemeral range
+
+
+### Maintenance
+
+- **matrix**: re-measure the bed support matrix
+
+
 ## [0.12.1] - 2026-09-11
 
 ### Added
@@ -1706,7 +1748,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.12.2...HEAD
+[0.12.2]: https://github.com/ludachrish3/otto-sh/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/ludachrish3/otto-sh/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/ludachrish3/otto-sh/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/ludachrish3/otto-sh/compare/v0.10.0...v0.11.0
