@@ -465,7 +465,7 @@ def test_help_io_does_not_scale_with_corpus_size():
     )
 
 
-def test_a_warm_surface_is_seeded_and_repeats_identically():
+def test_a_warm_surface_is_seeded_and_repeats_identically(tmp_path):
     """``warm=True`` must actually seed, and warm measurement must be repeatable.
 
     Two properties, and the first is what keeps the second honest. Determinism
@@ -477,12 +477,59 @@ def test_a_warm_surface_is_seeded_and_repeats_identically():
 
     The two surfaces have the same shape and therefore byte-identical
     generated corpora; only the seed differs.
-    """
-    warm = harness.surface_by_key("help_repo_warm")
-    first = harness.measure_surface(warm)["io"]
-    second = harness.measure_surface(warm)["io"]
-    assert first == second, f"repeat warm measurements disagree: {first} vs {second}"
 
+    REPEATABILITY IS ASSERTED OVER ``gated_io``, NOT THE WHOLE ``io`` DICT.
+    Comparing the whole dict is what made this test flaky (issue #321): the
+    whole-process ``open`` total counts every open ATTEMPT in the child, which
+    the import machinery dominates, and a module whose ``.pyc`` is missing
+    costs TWO of them (the probe fires the audit event before it fails, then
+    the source is read) where a cached one costs one. That cache is shared,
+    mutable, cross-process state living outside BOTH defences ``surface_env``
+    raises — it is neither under the per-call ``OTTO_HOME`` nor inside the tree
+    ``PYTHONDONTWRITEBYTECODE`` protects — so any other process importing the
+    same module moves the number. CI measured 648 then 647, ``open`` alone, on
+    a dependabot bump that changed no product code.
+
+    So the hostile condition is INJECTED here rather than waited for. The two
+    measurements are taken either side of a child that writes bytecode, with
+    ``PYTHONPYCACHEPREFIX`` pointing the cache at ``tmp_path`` — so the real
+    trees are never touched, and the injection is total rather than whatever
+    this machine happens to have cached already. A gated counter must not move;
+    the ``open`` total MUST, or the injection has quietly stopped biting and
+    the independence being asserted is no longer being tested at all.
+    """
+    import dataclasses
+
+    def redirect_bytecode_cache(surface):
+        """Point *surface*'s child at the throwaway cache, keeping its own extras."""
+        return dataclasses.replace(
+            surface,
+            env_extra=(*surface.env_extra, ("PYTHONPYCACHEPREFIX", str(tmp_path / "bytecode"))),
+        )
+
+    warm = redirect_bytecode_cache(harness.surface_by_key("help_repo_warm"))
+    first = harness.measure_surface(warm)["io"]
+    # The perturbation: a sibling process filling the shared bytecode cache
+    # mid-flight. `import_otto` is the REAL writer rather than a stand-in — it
+    # is one of the surfaces that leave `PYTHONDONTWRITEBYTECODE` unset (only
+    # repo-bearing surfaces pin it, and only for their own fixture tree), and
+    # under `-n auto` it runs in another worker while this test measures.
+    harness.measure_surface(redirect_bytecode_cache(harness.surface_by_key("import_otto")))
+    second = harness.measure_surface(warm)["io"]
+
+    assert harness.gated_io(first) == harness.gated_io(second), (
+        f"repeat warm measurements disagree on the counters this harness owns: "
+        f"{harness.gated_io(first)} vs {harness.gated_io(second)}"
+    )
+    assert first["open"] != second["open"], (
+        f"the bytecode-cache injection did not bite ({first['open']} both times), so this "
+        f"test no longer proves the gated counters are independent of that cache"
+    )
+
+    # The cold twin is measured WITHOUT the redirect, as every other test
+    # measures it: this arm compares `scandir`, which counts otto's walk of the
+    # corpus and which no bytecode cache can move, and redirecting it would
+    # only have it read the cache the injection above just warmed.
     cold = harness.measure_surface(harness.surface_by_key("help_repo"))["io"]
     assert first["scandir"] < cold["scandir"], (
         f"the seed run left nothing behind: warm {first} vs cold {cold}"

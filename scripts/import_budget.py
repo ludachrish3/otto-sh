@@ -97,7 +97,11 @@ class Surface:
     The seed writes ONLY into ``OTTO_HOME`` (the cache file). Nothing is
     written into the fixture tree — ``PYTHONDONTWRITEBYTECODE`` still keeps
     ``__pycache__`` out of it — so the pair stays deterministic and repeated
-    warm measurements read identical counts.
+    warm measurements read identical GATED counts (:func:`gated_io`). Not
+    identical ``open`` totals: that counter also carries the state of a
+    bytecode cache this harness neither owns nor can quiesce, so it drifts
+    between two measurements of one surface whenever another process on the
+    machine imports the same module. Issue #321 was a test comparing it.
     """
 
     env_extra: tuple[tuple[str, str], ...] = ()
@@ -864,6 +868,21 @@ one a fixture total cannot be read back apart into.
 """
 
 
+def gated_io(io: dict[str, int]) -> dict[str, int]:
+    """Return only the counters this harness OWNS, out of a child's full ``io``.
+
+    The one place the distinction is made, because it is the distinction that
+    keeps every comparison honest — a golden's, and a repeat measurement's. The
+    dropped counter is ``open``: a whole-process open TOTAL is a fact about the
+    machine's bytecode cache as much as about otto, and that cache is shared,
+    mutable, cross-process state sitting outside both defences
+    :func:`surface_env` raises. Two measurements of one surface may therefore
+    disagree on it while agreeing on everything otto actually did. Comparing
+    full ``io`` dicts is how that reached CI as a flake (issue #321).
+    """
+    return {name: io[name] for name in GATED_IO_COUNTERS}
+
+
 def interpreter_tag() -> str:
     """Return the running interpreter's ``major.minor``, which keys an I/O golden.
 
@@ -888,7 +907,7 @@ def write_io_snapshot(key: str, io: dict) -> None:
         f"# I/O golden: surface `{key}`, CPython {interpreter_tag()}. "
         f"Regenerate with `make import-snapshot` UNDER THIS INTERPRETER.\n"
     )
-    body = "".join(f"{name} {io[name]}\n" for name in GATED_IO_COUNTERS)
+    body = "".join(f"{name} {count}\n" for name, count in gated_io(io).items())
     io_snapshot_path(key).write_text(header + body)
 
 
@@ -983,7 +1002,7 @@ def _check_io(surface: Surface, result: dict) -> list[str]:
     things needed to fix it: which file, which interpreter, and the command
     that writes it.
     """
-    measured = {name: result["io"][name] for name in GATED_IO_COUNTERS}
+    measured = gated_io(result["io"])
     try:
         recorded = read_io_snapshot(surface.key)
     except FileNotFoundError:
