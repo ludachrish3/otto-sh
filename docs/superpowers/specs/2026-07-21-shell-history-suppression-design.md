@@ -210,8 +210,11 @@ Best-effort — but "best-effort" is a property that had to be *engineered*, not
 follows from redirecting stderr. The payload shares its line with the readiness probe, so
 a statement that merely *fails* is fine while a statement that **aborts the line** is
 fatal: it strands `echo <READY>`, the handshake never completes, and otto reports "shell
-never became ready after open — the device is unresponsive or login failed (e.g. bad
+never became ready after open — the transport connected but the shell never reached a
+prompt; the shell may never have started, or the login never completed (e.g. bad
 credentials)". A host that works today would go unreachable, blaming credentials.
+(Wording updated for issue #260, which removed this message's "the device is
+unresponsive" clause; the hazard this section guards is unchanged.)
 
 POSIX gives two ways to abort that line — an error in a special builtin, and a failed
 variable assignment — and the payload's two statements are between them capable of both.
