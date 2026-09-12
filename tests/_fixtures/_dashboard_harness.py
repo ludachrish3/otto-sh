@@ -54,6 +54,46 @@ def _live_transports_on(loop: asyncio.AbstractEventLoop) -> "list[Any]":
     ]
 
 
+def _never_constructed(loop: asyncio.AbstractEventLoop, transport: "Any") -> bool:
+    """True if asyncio only got *part way* through building *transport*.
+
+    ``_SelectorTransport.__init__`` assigns ``_sock``, ``_server`` and
+    ``_protocol_connected``, then calls ``Server._attach()``, and only as its
+    very last statement registers itself in ``loop._transports``. ``_attach``
+    asserts ``self._sockets is not None`` — already false once the listening
+    sockets are closed — so a connection accepted just before ``force_stop``
+    closes them (the accept runs in a selector callback, but the transport is
+    built in a *task* that does not step until the next turn) leaves a
+    transport that holds the accepted fd yet never finished construction, and
+    is therefore absent from that registry. Issue #320.
+
+    Such a transport must never be ``abort()``ed: its protocol never received
+    ``connection_made`` (that ``call_soon`` is in the subclass constructor,
+    past the raise) and its server never recorded the matching ``_attach()``,
+    so ``_call_connection_lost`` would break both invariants at once.
+
+    The registry is the discriminator because nothing else distinguishes the
+    two: it is a ``WeakValueDictionary`` keyed by fd, written only by that last
+    constructor line, and (3.10-3.14) removed only by ``_sendfile_native``,
+    which restores the entry in its own ``finally`` and cannot be in flight
+    here — the reap runs after the loop has stopped serving.
+    """
+    internals: Any = loop
+    return internals._transports.get(transport._sock_fd) is not transport
+
+
+def _hard_close(transport: "Any") -> None:
+    """Reclaim *transport*'s fd without running any asyncio callback.
+
+    The last resort, for a transport nothing can ever close properly.
+    ``__del__`` warns whenever ``_sock`` is set — even for an already-closed
+    socket — so the attribute is cleared as well as the fd closed.
+    """
+    sock, transport._sock = transport._sock, None
+    if sock is not None:
+        sock.close()
+
+
 class DashboardHarness(Generic[C]):
     """Serve *collector*'s dashboard on ``127.0.0.1:<ephemeral>``.
 
@@ -173,8 +213,7 @@ class DashboardHarness(Generic[C]):
             loop.close()
         for transport in _live_transports_on(loop):
             self._leaked.append(repr(transport))
-            sock, transport._sock = transport._sock, None
-            sock.close()
+            _hard_close(transport)
 
     def _check_teardown(self) -> None:
         """Re-raise on the caller's thread whatever ``_close_loop`` recorded."""
@@ -261,7 +300,18 @@ class DashboardHarness(Generic[C]):
             if not live:
                 break
             for transport in live:
-                transport.abort()
+                if _never_constructed(loop, transport):
+                    # Half-built by the accept-vs-close race (issue #320).
+                    # abort() would deliver connection_lost to a protocol that
+                    # never got connection_made — real uvicorn raises
+                    # AttributeError there — and _detach() a server this
+                    # transport never attached to, either under-counting the
+                    # _active_count wait_closed() waits on or tripping
+                    # CPython's own `assert self._active_count > 0`. Only its
+                    # fd is ours to reclaim, and this is the one safe way.
+                    _hard_close(transport)
+                else:
+                    transport.abort()
         # Final turn so the last abort()'s _call_connection_lost closes its socket.
         loop.run_until_complete(asyncio.sleep(0))
         # Last resort. abort() only reaches a transport that *exists* by the scan
@@ -272,14 +322,12 @@ class DashboardHarness(Generic[C]):
         # uvicorn registers a connection *in* connection_made.) Such a transport
         # is never aborted, and once the loop is closed no callback can ever run
         # to close its socket -- it reaches GC with a live fd and fires the
-        # ResourceWarning this reap exists to prevent. So close the fd by hand,
-        # here and only here: `_call_connection_lost` would raise on a cleared
-        # `_sock`, and immediately before ``loop.close()`` is the one point where
-        # it can no longer run. `__del__` warns whenever `_sock` is set, even
-        # for an already-closed socket, so clear the attribute as well.
+        # ResourceWarning this reap exists to prevent. So close the fd by hand:
+        # `_call_connection_lost` would raise on a cleared `_sock`, and
+        # immediately before ``loop.close()`` is the one point where it can no
+        # longer run.
         for transport in holding_an_fd():
-            sock, transport._sock = transport._sock, None
-            sock.close()
+            _hard_close(transport)
 
     def run(self, coro: Coroutine[Any, Any, T]) -> T:
         """Run *coro* on the server's loop and return its result."""

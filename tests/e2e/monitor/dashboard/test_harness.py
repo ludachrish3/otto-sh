@@ -22,6 +22,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import pytest
+from typing_extensions import override
 
 from otto.models import (
     HostSnapshot,
@@ -37,6 +38,7 @@ from otto.monitor.session import new_frame
 from tests._fixtures._dashboard_harness import (
     DashboardHarness,
     DashboardHarnessTeardownError,
+    _live_transports_on,
 )
 from tests._fixtures._fake_collector import FakeCollector
 
@@ -420,6 +422,124 @@ def _build_accepted_transport(
     server_sock.setblocking(False)
     internals: Any = loop
     return internals._make_socket_transport(server_sock, asyncio.Protocol()), peer
+
+
+class _NeverMade(asyncio.Protocol):
+    """Records the one ordering asyncio owes every protocol.
+
+    ``connection_lost`` is delivered only to a protocol that already got
+    ``connection_made``. uvicorn's ``H11Protocol`` is written against that
+    guarantee — its ``connection_lost`` calls ``self.transport.close()``, and
+    ``self.transport`` stays ``None`` until ``connection_made`` assigns it — so
+    breaking the order raises ``AttributeError: 'NoneType' object has no
+    attribute 'close'`` straight out of the callback (issue #320).
+    """
+
+    def __init__(self) -> None:
+        self.made = False
+        self.lost_without_made = False
+
+    @override
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        self.made = True
+
+    @override
+    def connection_lost(self, exc: Exception | None) -> None:
+        self.lost_without_made = not self.made
+
+
+def _build_half_constructed_transport(
+    loop: asyncio.AbstractEventLoop,
+    server: Any,
+    protocol: asyncio.Protocol,
+) -> socket.socket:
+    """Leave on the heap the transport a *closing* server's accept half-builds.
+
+    ``_accept_connection2`` hands ``_make_socket_transport`` the
+    ``asyncio.Server`` it accepted for. ``_SelectorTransport.__init__`` assigns
+    ``_sock``, ``_server`` and ``_protocol_connected`` and only *then* calls
+    ``Server._attach()``, whose ``assert self._sockets is not None`` is already
+    false once the listening sockets have closed. The constructor therefore
+    raises with the transport fully reachable through ``gc`` — holding the
+    accepted fd, its ``connection_made`` never queued, its ``_attach()`` never
+    recorded, and absent from ``loop._transports`` (that registration is the
+    constructor's last statement).
+
+    Returns the peer socket, for the caller to close.
+    """
+    server_sock, peer = socket.socketpair()
+    server_sock.setblocking(False)
+    internals: Any = loop
+    with pytest.raises(AssertionError):
+        internals._make_socket_transport(server_sock, protocol, server=server)
+    return peer
+
+
+def test_teardown_never_aborts_a_transport_the_accept_race_half_built() -> None:
+    """The reap must not ``abort()`` a transport whose constructor never finished.
+
+    Regression for issue #320. ``force_stop`` closes the listening sockets
+    while asyncio can still have an accepted connection in flight: the accept
+    runs in a selector callback but builds its transport in a *task*, which
+    does not step until the next turn. Reached in that order — proven both by
+    stepping the loop by hand and by hammering connections across a real
+    ``force_stop`` — the task builds its transport against a server whose
+    ``_sockets`` is already ``None``, ``Server._attach()`` trips its own
+    assertion, and what is left on the heap is a transport that still holds the
+    accepted fd, still reads as ``_protocol_connected``, and still carries
+    ``_server`` — but whose protocol never saw ``connection_made`` and whose
+    server never saw the matching ``_attach()``.
+
+    It bears an fd and is not ``is_closing()``, so the reap's scan picks it up.
+    ``abort()`` on it does two wrong things: it delivers ``connection_lost`` to
+    a protocol that never got ``connection_made`` (where real uvicorn raises
+    ``AttributeError``), and it ``_detach()``es a server this transport never
+    attached to — silently under-counting the ``Server._active_count`` that
+    ``wait_closed()`` waits on, or tripping CPython's own
+    ``assert self._active_count > 0`` when the count is already spent.
+
+    Its fd must still be reclaimed, but by the hard close, which neither calls
+    back into the protocol nor touches the server's bookkeeping.
+    """
+    loop = asyncio.new_event_loop()
+    harness: DashboardHarness[FakeCollector] = DashboardHarness(FakeCollector())
+    harness._loop = loop
+
+    server: Any = loop.run_until_complete(loop.create_server(asyncio.Protocol, "127.0.0.1", 0))
+    server.close()  # the race: listening sockets gone, an accept still in flight
+    detaches: list[object] = []
+    server._detach = lambda: detaches.append(server)
+
+    protocol = _NeverMade()
+    peer = _build_half_constructed_transport(loop, server, protocol)
+    orphans = _live_transports_on(loop)
+    assert len(orphans) == 1, f"expected exactly one half-built transport, got {orphans}"
+    orphan = orphans[0]
+    assert not orphan.is_closing(), "injection is void: the reap's scan skips a closing transport"
+
+    try:
+        harness._reap_orphaned_transports()
+        assert orphan._sock is None, (
+            "the half-built transport still holds the accepted fd after the reap; "
+            "nothing runs after loop.close() to reclaim it"
+        )
+        assert not protocol.lost_without_made, (
+            "the reap delivered connection_lost to a protocol that never got "
+            "connection_made — real uvicorn raises AttributeError there (#320)"
+        )
+        assert not detaches, (
+            "the reap detached the server for a transport that never attached to it, "
+            "corrupting the _active_count that wait_closed() waits on (#320)"
+        )
+    finally:
+        # Belt and braces, as in the sibling test: a failure must not leave the
+        # loop closing over a live fd, or this test fires the very
+        # ResourceWarning the reap exists to prevent.
+        sock, orphan._sock = orphan._sock, None
+        if sock is not None:
+            sock.close()
+        peer.close()
+        loop.close()
 
 
 def test_teardown_closes_a_transport_built_after_the_reap_s_last_scan() -> None:
