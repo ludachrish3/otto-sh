@@ -85,6 +85,36 @@ nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
 # session selects them. `make busybox` and `make conformance` are their opt-in
 # lanes.
 
+# Arms the asyncio transport-leak detector's REPORTING on every hostless leg —
+# the same token the Makefile's gate targets use, and deliberately the same
+# value, so "which lanes are armed" stays one grep across both files.
+#
+# Reporting is all this buys, and that is the point. The registry itself
+# (tests/_fixtures/_transport_leaks.py) is installed UNCONDITIONALLY by
+# tests/conftest.py's pytest_configure, so every lane already pays to record
+# transports at __init__ whether or not anyone reads the result. Armed, the
+# per-test check iterates the live tracked transports — normally zero — and on
+# the leak path only, prints the CREATING test and forces the gc that lands the
+# ResourceWarning on it. Unarmed, that check returns before doing anything, and
+# a leak instead surfaces as an unraisable warning on whichever unrelated test
+# is running when the collector next fires.
+#
+# EVERY leg, not just the bookends, for two reasons. The cost is not
+# measurable: tests/unit/host (2878 tests, the densest asyncio tree and where
+# the exec-timeout transport leak fixed in dab13a7b lived) ran 20.65 s / 21.21 s
+# unarmed against 20.29 s / 20.94 s armed on 2026-09-12 — armed was faster in
+# both pairs, i.e. inside the noise. And "bookend-only" is a property of the
+# current lane shape, not of the bug: the same leak class this is for was seen
+# on tests_hostless-3.11 (see _dashboard_harness._reap_orphaned_transports and
+# its sibling regression test) back when the interior legs still ran tests/e2e.
+#
+# This can redden an interior leg that is green today, on a latent leak whose
+# warning currently fires outside any test's unraisable window. That is the
+# instrument working. Read the registry module's docstring before trusting a
+# green either way: an UNREFERENCED transport is collected before the boundary
+# and is attributed to nobody, so this flag catches a half, not the whole.
+_LEAK_ENV = {"OTTO_DETECT_ASYNCIO_LEAKS": "1"}
+
 # browser (Playwright) tests always run as their own pytest process — sync
 # Playwright keeps an event loop running in the worker main thread for the
 # whole session, which breaks pytest-asyncio tests that share the process.
@@ -249,11 +279,15 @@ def tests_hostless(session: nox.Session) -> None:
     parallel_junit = _junitxml(session, "nox-hostless")
     serial_junit = _junitxml(session, "nox-hostless-serial")
     if session.python in BOOKEND_PYTHONS:
-        session.run("pytest", *HOSTLESS_TEST_ARGS, parallel_junit, *session.posargs)
-        session.run("pytest", *HOSTLESS_SERIAL_ARGS, serial_junit, *session.posargs)
+        session.run("pytest", *HOSTLESS_TEST_ARGS, parallel_junit, *session.posargs, env=_LEAK_ENV)
+        session.run("pytest", *HOSTLESS_SERIAL_ARGS, serial_junit, *session.posargs, env=_LEAK_ENV)
     else:
-        session.run("pytest", *HOSTLESS_MIDDLE_TEST_ARGS, parallel_junit, *session.posargs)
-        session.run("pytest", *HOSTLESS_MIDDLE_SERIAL_ARGS, serial_junit, *session.posargs)
+        session.run(
+            "pytest", *HOSTLESS_MIDDLE_TEST_ARGS, parallel_junit, *session.posargs, env=_LEAK_ENV
+        )
+        session.run(
+            "pytest", *HOSTLESS_MIDDLE_SERIAL_ARGS, serial_junit, *session.posargs, env=_LEAK_ENV
+        )
 
 
 @nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
