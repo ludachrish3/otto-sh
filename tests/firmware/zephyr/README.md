@@ -138,3 +138,50 @@ expected set for Zephyr 3.7 LTS but **have not been build-verified end to
 end**. If `west build` complains about an unknown symbol or binding, the fix
 is local to the affected `overlay.conf` / `app.overlay` — none of the other
 configs are affected.
+
+## Known guest defects (kept on purpose)
+
+The 3.7 guests carry two Zephyr-side bugs that otto users with real 3.7
+hardware can hit. They are **not** worked around on the bed: a flaky host is
+the cheapest way to keep otto honest about the shapes it must survive. Read
+from `subsys/shell/backends/shell_telnet.c` at `799e7a82` and verified by
+packet capture on the hop, 2026-09-13.
+
+- **A connection closing mid-send can kill the telnet backend for the guest's
+  life.** If any close (FIN *or* RST) lands while `shell_telnet` still has
+  queued output, its next `telnet_send` fails — `net_tcp_queue` returns
+  `-ENOTCONN` for a socket no longer in `TCP_ESTABLISHED` — logging `Failed to
+  send N, shutting down` and closing the client fd. A `net_socket_service`
+  POLLERR for that same fd, already queued, then reads `SO_ERROR` on a closed
+  fd (`Telnet socket N error (0)`), no longer matches the client slot, and
+  drops into `telnet_restart_server()`. The rebind fails `EADDRINUSE (-112)` —
+  the just-closed contexts still hold port 23 and the code sets no
+  `SO_REUSEADDR` — and the backend is unregistered:
+  `Telnet fatal error, failed to restart server`. When the rebind happens to
+  succeed you get the other face: `Telnet shell backend initialized` followed
+  by `Telnet client already connected` forever (#260). Either way the only
+  recovery is `make qemu-restart` (or `systemctl restart
+  zephyr-qemu-<id>.service` on the hop for one guest). The guest itself stays
+  up: ICMP, SNMP `sysUpTime`, and the systemd unit all answer — only the
+  console is gone. otto's part of this — releasing a console connection while
+  the guest is still sending — is tracked as a tunnel-safe teardown in #324;
+  the restart-path defects below are Zephyr's.
+
+- **3.7's RST-to-SYN is malformed, so a dead console reads as a hang, not a
+  refusal.** With no listener, the guest answers a SYN to port 23 with an RST
+  whose ack equals the SYN's own ISS instead of ISS+1. A Linux client in
+  SYN-SENT must drop that segment (RFC 793), so `connect()` retransmits until
+  its timeout. The healthy 3.7 guests do the same on any closed port (`nc -z
+  192.0.2.5 2323` times out); 4.4 refuses correctly. Consequence for every
+  console probe: **silence is not evidence** — a passive `recv()` on a healthy
+  3.7 guest also looks like silence, because 3.7 sends no unsolicited banner.
+  Assert a real `~$` after writing CRLF, before and after anything that churns
+  the console; and count journal signatures scoped to the unit invocation
+  (`journalctl -u <unit> _SYSTEMD_INVOCATION_ID=<id>`), never `-b`, which
+  counts every restart's `backend initialized`.
+
+Diagnostic recipe for "is it dead or just held?": on the hop, `sudo tcpdump -S
+-ni zeth-<id> 'tcp port 23'` around one `nc -z 192.0.2.<n> 23`. `[S.]` back
+means alive and held or serving; `[R.]` with `ack == the SYN's seq` means the
+backend is gone (restart it); nothing back at all means the guest's network
+stack is down.

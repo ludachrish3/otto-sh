@@ -492,7 +492,10 @@ their hosts are reachable — including completing a partial reap after a host
 returns.
 
 `uv run pytest -k <kw>` filters any run by keyword. Recover a wedged embedded bed
-with `make qemu-restart`; probe the whole lab with `make vm-health`.
+with `make qemu-restart`; probe the whole lab with `make vm-health`. The 3.7
+guests wedge by design of two upstream Zephyr bugs that are deliberately left in
+place — see "Known guest defects" in `tests/firmware/zephyr/README.md` for the
+mechanism, the tell, and why silence from a console is not evidence.
 
 #### Adding a harness environment knob
 
