@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-09-13
+
+### Added
+
+- **BREAKING** **project**: per-repo options on project instructions
+
+
+### Documentation
+
+- **bed**: document the two Zephyr 3.7 console defects, kept on purpose
+- **spec**: project instructions — per-repo options on orchestrated instructions
+
+
+### Fixed
+
+- **host**: quiesce a single-client console before releasing a failed handshake
+- **monitor**: stop accepting a turn before force_stop closes the listeners
+
+
+### Maintenance
+
+- **matrix**: re-measure the bed support matrix
+
+
 ## [0.12.2] - 2026-09-12
 
 ### Changed
@@ -1748,7 +1772,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.12.2...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/ludachrish3/otto-sh/compare/v0.12.2...v0.13.0
 [0.12.2]: https://github.com/ludachrish3/otto-sh/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/ludachrish3/otto-sh/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/ludachrish3/otto-sh/compare/v0.11.0...v0.12.0
