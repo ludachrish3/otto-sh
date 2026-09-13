@@ -94,6 +94,18 @@ _RECOVERY_PROBE_TIMEOUT = 0.5
 # never appear — surfaces as a clear error instead of hanging indefinitely.
 _INIT_TIMEOUT = 3.0
 
+# Single-client console quiesce (issue #324). Before a single-client console
+# connection is released on a failed-handshake teardown, otto reads it until it
+# has been silent for _CONSOLE_QUIESCE_QUIET_WINDOW, capped at
+# _CONSOLE_QUIESCE_BUDGET. A Zephyr shell_telnet backend whose send fails
+# because the connection was released while it still had queued output can take
+# a restart path that leaves it dead for the guest's life; letting it go quiet
+# first avoids that. A healthy console goes quiet within milliseconds, so the
+# window only binds on a console still talking, and the budget only on one that
+# never stops. See ShellSession._quiesce / TelnetSession._quiesce.
+_CONSOLE_QUIESCE_QUIET_WINDOW = 0.2
+_CONSOLE_QUIESCE_BUDGET = 2.0
+
 # Default pause between a failed first readiness handshake and the single retry
 # in ``SessionManager._ensure_session``. Calibrated to single-client RTOS telnet
 # servers (Zephyr's ``CONFIG_SHELL_BACKEND_TELNET``) that don't free the console
@@ -411,6 +423,16 @@ class ShellSession(ABC):
         """Read from stdout until pattern matches. Returns data including the match."""
         ...
 
+    async def _quiesce(self) -> None:  # noqa: B027 — a concrete no-op default hook, not abstract: subclasses opt in
+        """Read the transport until the peer goes quiet, before it is released.
+
+        No-op by default. Overridden by transports whose peer must not have a
+        send fail under a mid-stream close — a single-client console (issue
+        #324). Called from :meth:`_fail_init` only for a
+        ``single_client_console`` frame, and only there, because that is the
+        one teardown point reached while the transport is still live.
+        """
+
     @abstractmethod
     async def close(self) -> None:
         """Close the session and release resources."""
@@ -599,6 +621,16 @@ class ShellSession(ABC):
             f"marking session dead and closing"
         )
         self._alive = False
+        # A single-client console must go quiet before its connection is
+        # released: a send that fails because we closed mid-stream can wedge
+        # the backend for the guest's life (issue #324). This is the one
+        # teardown point reached while the transport is still live (the
+        # readiness deadline just expired; nothing has torn the connection
+        # down), so the drain belongs here, not in close(). Best-effort and
+        # bounded; close() still runs regardless.
+        if self._frame.single_client_console:
+            with suppress(Exception):  # pragma: no cover - best-effort drain
+                await self._quiesce()
         with suppress(Exception):  # pragma: no cover - best-effort cleanup
             await self.close()
         if self._frame.single_client_console:
@@ -1195,6 +1227,39 @@ class TelnetSession(ShellSession):
         bytes_pattern = re.compile(pattern.pattern.encode())
         raw: bytes = await self._reader.readuntil_pattern(bytes_pattern)  # type: ignore[attr-defined]  # ty: ignore[unsound-assignment] — asyncssh attaches readuntil_pattern dynamically; returns Any
         return raw.decode("utf-8", errors="replace")
+
+    @override
+    async def _quiesce(self) -> None:
+        """Read the console until it has been silent for the quiet window (bounded).
+
+        Sending stops the guest from having a ``telnet_send`` fail under the
+        connection's release (issue #324): once the guest has nothing left to
+        send, releasing the connection cannot fault a send, whatever shape the
+        close takes and whether the path is direct or hop-tunneled — silence is
+        observable through the hop because otto is reading the forwarded stream.
+        Bounded by ``_CONSOLE_QUIESCE_BUDGET`` so a console that never stops
+        talking cannot turn a fast failure into a hang; best-effort, so any read
+        error just ends the drain and lets ``close()`` proceed.
+        """
+        reader = self._reader
+        if reader is None:
+            return
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _CONSOLE_QUIESCE_BUDGET
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return
+            try:
+                data = await asyncio.wait_for(
+                    reader.read(4096), timeout=min(_CONSOLE_QUIESCE_QUIET_WINDOW, remaining)
+                )
+            except asyncio.TimeoutError:
+                return  # silent for the quiet window → quiesced
+            except Exception:  # noqa: BLE001 — best-effort; close() still releases the fd
+                return
+            if not data:
+                return  # EOF — the peer closed first; nothing left to drain
 
     @override
     async def close(self) -> None:
