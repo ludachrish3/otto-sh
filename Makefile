@@ -37,6 +37,21 @@ HYPERFINE_VERSION := 1.20.0
 # an already-active venv ($VIRTUAL_ENV); otherwise fall back to ./.venv.
 VENV_BIN := $(if $(VIRTUAL_ENV),$(VIRTUAL_ENV)/bin,$(CURDIR)/.venv/bin)
 
+# Keep an inherited VIRTUAL_ENV out of the recipe environment (#325). When a
+# venv from a DIFFERENT checkout is active — the classic case is main's `.venv`
+# activated in the shell while `make` runs in a worktree — every `uv run` child
+# prints "warning: VIRTUAL_ENV=... does not match the project environment path
+# .venv and will be ignored; use --active to target the active environment
+# instead". uv is already doing the right thing (it ignores the stale
+# VIRTUAL_ENV and uses THIS tree's ./.venv); the warning is pure noise. NOT
+# `--active`: that flag would make uv adopt AND re-sync the foreign venv,
+# repointing that other checkout's editable install at this tree's src. Hiding
+# the var from children makes uv resolve ./.venv silently. `unexport` only
+# stops EXPORTING it — the Make-level `$(VIRTUAL_ENV)` above still reads its
+# value, so VENV_BIN's honor-the-active-venv fallback for changelog/release is
+# unaffected (those tools resolve via the explicit VENV_BIN PATH prepend).
+unexport VIRTUAL_ENV
+
 # Coverage target invoked by `validate-python`. Defaults to the full Python
 # gate (coverage-python); `ci` overrides this to `coverage-hostless` because
 # GitHub Actions doesn't have the Vagrant VMs that integration/hops tests
