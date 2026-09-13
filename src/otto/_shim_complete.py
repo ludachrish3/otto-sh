@@ -589,7 +589,8 @@ def _marker_fresh(marker: str, cache_mtime_ns: int, now: float) -> bool:
         st = os.stat(marker)
     except OSError:
         return False
-    return st.st_mtime_ns >= cache_mtime_ns and now - st.st_mtime < WINDOW_SECONDS
+    # A marker dated after `now` (the clock stepped back) is not "under a minute old".
+    return st.st_mtime_ns >= cache_mtime_ns and 0 <= now - st.st_mtime < WINDOW_SECONDS
 
 
 def _touch(marker: str) -> None:

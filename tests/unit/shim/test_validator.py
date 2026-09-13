@@ -94,6 +94,24 @@ def test_a_fresh_entry_validates_by_stat_then_by_marker(workspace):
     assert marker.stat().st_mtime_ns != stamp_ns  # the stat pass re-touched it
 
 
+def test_a_marker_dated_in_the_future_is_not_trusted(workspace):
+    """A backward clock step (a resume, an NTP correction) leaves the marker dated
+    AFTER `now`. A negative age is not "under a minute old": trusting it would serve
+    an unchecked key set for the size of the step plus the window, and `otto cache
+    info` would report the marker as validated a negative number of seconds ago."""
+    _, cache = workspace
+    data = _data(cache)
+    assert sc.validate_keys(cache, data, "names", time.time()) == "stat"
+    marker = cache.parent / sc.MARKER_FILENAMES["names"]
+    stamp_ns = (cache.stat().st_mtime_ns // 10**9 + 1000) * 10**9
+    stamp = stamp_ns / 10**9
+    os.utime(marker, ns=(stamp_ns, stamp_ns))
+    assert sc.validate_keys(cache, data, "names", stamp) == "marker"  # age 0 is fresh
+    assert sc.validate_keys(cache, data, "names", stamp - 1) == "stat"
+    os.utime(marker, ns=(stamp_ns, stamp_ns))
+    assert sc.inspect_shim(cache, stamp - 1) == "served (validated now)"
+
+
 def test_tests_site_checks_both_key_sets_and_both_markers(workspace):
     _, cache = workspace
     now = time.time()

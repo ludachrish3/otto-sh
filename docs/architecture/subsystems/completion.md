@@ -103,11 +103,14 @@ always right.
 
 A successful validation pass leaves a marker file beside the cache
 (`otto.config.cache_maintenance.MARKER_FILENAMES`); a marker fresher than the
-cache and under `SHIM_WINDOW_SECONDS` (60) old lets the next TAB skip the
-stat pass entirely. Because the marker must be at least as new as the
-cache's own mtime, rewriting the cache invalidates every marker beside it
-automatically — nothing has to remember to delete them. The marker lifecycle
-under the cache commands is on {doc}`../../guide/cli/cache/index`.
+cache, not dated after the current time, and under `SHIM_WINDOW_SECONDS` (60)
+old lets the next TAB skip the stat pass entirely. A marker dated in the
+future — the clock stepped back — is not trusted: it would pass the
+fresher-than-the-cache check against every rewrite, and its window would last
+the size of the step plus the minute. Because the marker must be at least as
+new as the cache's own mtime, rewriting the cache invalidates every marker
+beside it automatically — nothing has to remember to delete them. The marker
+lifecycle under the cache commands is on {doc}`../../guide/cli/cache/index`.
 
 **Known inequalities**, beyond the window itself:
 
