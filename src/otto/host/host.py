@@ -2059,18 +2059,19 @@ class BaseHost(ABC):
         product-log haul into a failure (there is deliberately no debug twin —
         no case was made for one, and symmetry alone does not buy a flag).
 
-        *require_product_logs* with ``product=False`` is a contradiction and is
-        refused up front rather than ignored: the flag pair is expressible from
-        the CLI (``get-logs --no-product --require-product-logs``), and a
-        requirement that is parsed but unenforceable would exit 0 having
-        promised logs nobody went looking for.
+        *require_product_logs* when product logs are not gathered is a
+        contradiction and is refused up front rather than ignored: the flag
+        pair is expressible from the CLI
+        (``get-logs --no-product --require-product-logs``), and a requirement
+        that is parsed but unenforceable would exit 0 having promised logs
+        nobody went looking for.
         """
         if require_product_logs and not product:
             return Result(
                 Status.Error,
                 msg=(
-                    "require_product_logs cannot be satisfied with product=False: "
-                    "the product-log haul it requires is the step being skipped. "
+                    "require_product_logs cannot be satisfied when product logs are not "
+                    "gathered: the product-log haul it requires is the step being skipped. "
                     "Gather product logs, or drop the requirement."
                 ),
             )

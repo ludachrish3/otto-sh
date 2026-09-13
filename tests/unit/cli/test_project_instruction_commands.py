@@ -1,44 +1,80 @@
-"""First-party default instructions: registration, dispatch, and collision policy.
+"""Published project-instruction commands: the merge, the dispatch, the panel.
 
-The six ``otto run`` verbs that wrap :mod:`otto.project.orchestrator`, the guard
-that stops a repo shadowing one of their names, and the ``otto defaults`` panel
-that ``--list-instructions`` puts them in.
+``otto run install`` and its five siblings are no longer hand-written wrappers.
+:func:`otto.project.commands.publish_project_instructions` builds ONE command
+per name in :data:`~otto.instructions.PROJECT_INSTRUCTIONS`, whose flags are the
+union of every registered body's options class, and whose body forwards to
+:func:`otto.project.orchestrator.run_project_instruction`. This file covers the
+publish (what lands in ``INSTRUCTIONS``), the merge (whose flags land on the
+command, and what a cross-repo field collision does), the dispatch (every flag
+reaching the orchestrator as an options instance), ``status``' rendering and its
+three exit codes, and the ``otto defaults`` panel.
 
-REGISTRATION IS AN IMPORT-ONCE, PROCESS-WIDE SIDE EFFECT, while the root
-conftest's ``_isolate_registries`` rolls every registry back after each test —
-so a later test that merely imports the (already cached) module gets nothing,
-and any assertion about the six would then depend on what ran before it. Tests
-that need them registered go through the ``registered`` fixture, which clears
-the names and RE-EXECUTES the module body: a real import, on demand, in any
-order.
+PUBLISHING IS A CALL, NOT AN IMPORT, which is the whole point of this task: the
+flag set is only known once every repo's init has spoken, so bootstrap publishes
+AFTER the repo loop. The root conftest's ``_isolate_registries`` rolls every
+registry back after each test, so tests that need the six present go through the
+``registered`` fixture, which re-declares otto's bodies and publishes them --
+in any order, whatever ran in this process before.
+
+THE ORCHESTRATOR IS PATCHED AT ``orchestrator.<name>``, never at
+``otto.project.<name>``: :data:`otto.project.orchestrator._ENTRIES` resolves the
+six public functions BY NAME on that module at call time, so the package's
+re-exported objects are not what the dispatcher consults.
+
+Real invocations use :class:`~tests._fixtures.dispatch.DispatchRunner` rather
+than a bare ``CliRunner``: the published leaves are ``async def``, so they only
+run under the leaf-invoke bridge the root dispatch installs. ``--help`` and
+``--list-instructions`` exit during parse and use the plain runner.
 """
 
 import io
 import re
+from typing import Annotated
 
 import pytest
 import typer
 from rich.console import Console
 from typer.testing import CliRunner
 
-from otto.instructions import FIRST_PARTY_INSTRUCTIONS, INSTRUCTIONS
+from otto import options
+from otto.cli.run import instruction, run_app
+from otto.instructions import FIRST_PARTY_INSTRUCTIONS, INSTRUCTIONS, PROJECT_INSTRUCTIONS
 from otto.project import (
     Cleanliness,
     CleanlinessItem,
     CleanlinessKind,
     CleanlinessReport,
+    CleanupOptions,
+    GetLogsOptions,
+    InstallOptions,
     InstallState,
+    InstallToolsOptions,
+    ProjectActions,
     ProjectStatus,
     RepoScope,
+    UninstallOptions,
     orchestrator,
+    register_project_actions,
 )
+from otto.project.commands import (
+    OptionsCollisionError,
+    merged_option_params,
+    publish_project_instructions,
+)
+from otto.registry import registering_repo
 from otto.result import Result
 from otto.utils import Status
+from tests._fixtures.dispatch import DispatchRunner
 from tests._fixtures.sutrepo import make_sut_repo
 
 SIX = ["install", "uninstall", "cleanup", "get-logs", "install-tools", "status"]
 
+ACTIONS_MODULE = "otto.project.actions"
+"""The module every first-party entry is attributed to -- where the bodies live."""
+
 runner = CliRunner()
+dispatch = DispatchRunner()
 
 
 def _clear_first_party() -> None:
@@ -48,25 +84,19 @@ def _clear_first_party() -> None:
             INSTRUCTIONS.unregister(name)
 
 
-def _reimport():
-    """Re-execute ``otto.project.instructions``' body and return the module.
-
-    ``importlib.reload`` rather than a ``sys.modules`` eviction on purpose: it
-    updates the EXISTING module object in place, so the package attribute and
-    the ``sys.modules`` entry stay one object (the desync behind issue #108).
-    """
-    import importlib
-
-    from otto.project import instructions as mod
+def _publish_the_six():
+    """Re-declare otto's own bodies and publish every project instruction."""
+    from otto.project import actions as mod
 
     _clear_first_party()
-    return importlib.reload(mod)
+    mod.register_project_instruction_bodies(ProjectActions, None)
+    publish_project_instructions()
 
 
 @pytest.fixture
 def registered():
-    """The six, registered, whatever ran in this process before."""
-    return _reimport()
+    """The six, published, whatever ran in this process before."""
+    _publish_the_six()
 
 
 def _render(renderable) -> str:
@@ -76,30 +106,62 @@ def _render(renderable) -> str:
     return buf.getvalue()
 
 
+def _leaf(name: str):
+    """The published command's callback for *name* -- what ``otto run <name>`` runs."""
+    (command,) = INSTRUCTIONS.get(name).sub_app.registered_commands
+    return command.callback
+
+
+async def _run(name: str, **flags):
+    """Await the published command's body for *name* with *flags*, and return its value.
+
+    The CLI's own path minus click's parsing: the leaf takes the parsed flags
+    as keywords and hands them to the orchestrator, so a flag the test omits
+    defaults exactly where the real invocation's would -- in the options class
+    the dispatcher builds, not in a signature this call had to restate.
+    """
+    return await _leaf(name)(**flags)
+
+
 class _Recorder:
-    """Async double for an orchestrator verb: records kwargs, returns *result*."""
+    """Async double for an orchestrator verb: records the ``OptionsSource`` it got.
+
+    POSITIONAL, because that is the whole orchestrator signature now: every
+    public verb takes ONE options instance (or an ``OptionsSource``), so a
+    double that only accepted keywords would certify a dispatcher that still
+    spelled the old flat flags.
+    """
 
     def __init__(self, result=None):
         self.result = Result(Status.Success) if result is None else result
-        self.calls: list[dict] = []
+        self.calls: list = []
 
-    async def __call__(self, **kwargs):
-        self.calls.append(kwargs)
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(args[0] if args and not kwargs else kwargs)
         return self.result
+
+    def built(self, opts_cls: type) -> list:
+        """Every recorded source, built into *opts_cls* -- the instance the body sees."""
+        return [source.build(opts_cls) for source in self.calls]
 
 
 # ── Registration ─────────────────────────────────────────────────────────────
 
 
-def test_importing_the_module_registers_all_six(registered):
+def test_publishing_registers_all_six(registered):
     for name in SIX:
         assert name in INSTRUCTIONS, name
-        assert INSTRUCTIONS.get(name).module == "otto.project.instructions"
+        entry = INSTRUCTIONS.get(name)
+        assert entry.module == ACTIONS_MODULE
+        # First-party whoever declared the body: the dispatch gate refuses an
+        # instruction whose OWNER is inactive, and a project instruction has a
+        # body per repo rather than one owner.
+        assert entry.registered_by is None
     assert frozenset(SIX) == FIRST_PARTY_INSTRUCTIONS
 
 
 def test_the_registered_set_is_exactly_the_declared_set(registered):
-    """No drift between the frozenset the guard reads and what actually registers.
+    """No drift between the frozenset the guard reads and what actually publishes.
 
     The guard refuses a repo instruction by NAME, from
     ``FIRST_PARTY_INSTRUCTIONS`` — a name in that set with no instruction
@@ -107,7 +169,7 @@ def test_the_registered_set_is_exactly_the_declared_set(registered):
     from it is one a repo can still shadow.
     """
     registered_here = {
-        name for name, entry in INSTRUCTIONS.items() if entry.module == registered.__name__
+        name for name, entry in INSTRUCTIONS.items() if entry.module == ACTIONS_MODULE
     }
     assert registered_here == FIRST_PARTY_INSTRUCTIONS
 
@@ -118,10 +180,7 @@ def test_the_registered_set_is_exactly_the_declared_set(registered):
 def test_repo_defining_a_first_party_name_fails_loud_with_migration_message():
     # THE collision policy: fail loud, point at ProjectActions. Kills silent
     # shadowing (the CLI/fixture split-brain the design exists to prevent).
-    from otto.cli.run import instruction
-    from otto.registry import registering_repo
-
-    with registering_repo("acme"), pytest.raises(ValueError, match="ProjectActions"):
+    with registering_repo("acme"), pytest.raises(ValueError, match="project instruction"):
 
         @instruction()
         async def install() -> None: ...
@@ -135,28 +194,22 @@ def test_the_refusal_beats_the_registry_and_leaves_ottos_entry_intact(registered
     "already registered" error, which says nothing about ProjectActions), and
     a first registration ORDER where the repo goes first would win outright.
     """
-    from otto.cli.run import instruction
-    from otto.registry import registering_repo
-
-    with registering_repo("acme"), pytest.raises(ValueError, match="ProjectActions"):
+    with registering_repo("acme"), pytest.raises(ValueError, match="project instruction"):
 
         @instruction()
         async def cleanup() -> None: ...
 
-    assert INSTRUCTIONS.get("cleanup").module == "otto.project.instructions"
+    assert INSTRUCTIONS.get("cleanup").module == ACTIONS_MODULE
 
 
 def test_otto_itself_may_register_first_party_names():
     # The guard keys on the registering-repo marker, NOT on the name alone —
-    # otherwise otto's own registration trips it (order-independence).
-    _reimport()  # no registering-repo marker is set: must not raise
+    # otherwise otto's own publish trips it (order-independence).
+    _publish_the_six()  # no registering-repo marker is set: must not raise
     assert set(SIX) <= set(INSTRUCTIONS.names())
 
 
 def test_repo_instruction_with_novel_name_is_unaffected():
-    from otto.cli.run import instruction
-    from otto.registry import registering_repo
-
     with registering_repo("acme"):
 
         @instruction()
@@ -168,8 +221,16 @@ def test_repo_instruction_with_novel_name_is_unaffected():
 # ── Bootstrap wiring ─────────────────────────────────────────────────────────
 
 
-def test_bootstrap_imports_the_defaults_before_any_repo_init(tmp_path, monkeypatch):
-    """Phase 2 registers otto's defaults, and does it before the repo loop.
+def test_bootstrap_declares_before_any_repo_init_and_publishes_after(tmp_path, monkeypatch):
+    """Phase 2 imports the BODIES first and publishes the COMMANDS last.
+
+    The two halves are ordered against opposite ends of the repo loop and both
+    orderings are load-bearing. ``otto.project.actions`` must be imported
+    first, so the decorator's guard knows the project-instruction names before
+    a repo can claim one and so the walk shapes are fixed; the publish must
+    come last, because a repo's override is what ADDS flags to the merged
+    command and a publish taken before the loop would ship the union of
+    nothing.
 
     Observed as the CALL, not as ``sys.modules`` afterwards: the module is
     imported once per process, so an "is it imported" assertion passes on the
@@ -187,6 +248,9 @@ def test_bootstrap_imports_the_defaults_before_any_repo_init(tmp_path, monkeypat
         seen.append(name)
         return real_import(name, *args, **kwargs)
 
+    def _publish_spy() -> None:
+        seen.append("<publish>")
+
     repo = make_sut_repo(
         tmp_path / "acme",
         name="acme",
@@ -195,6 +259,7 @@ def test_bootstrap_imports_the_defaults_before_any_repo_init(tmp_path, monkeypat
     )
     monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
     monkeypatch.setattr(bs.importlib, "import_module", _spy)
+    monkeypatch.setattr("otto.project.commands.publish_project_instructions", _publish_spy)
     bs._reset()
     try:
         result = bs.bootstrap()
@@ -202,8 +267,9 @@ def test_bootstrap_imports_the_defaults_before_any_repo_init(tmp_path, monkeypat
         bs._reset()
 
     assert result.errors == []
-    assert "otto.project.instructions" in seen
-    assert seen.index("otto.project.instructions") < seen.index("acme_init")
+    assert ACTIONS_MODULE in seen
+    assert seen.index(ACTIONS_MODULE) < seen.index("acme_init")
+    assert seen.index("acme_init") < seen.index("<publish>")
 
 
 def test_a_repos_collision_reaches_the_user_as_a_framed_error_not_a_crash(
@@ -257,104 +323,124 @@ def test_a_repos_collision_reaches_the_user_as_a_framed_error_not_a_crash(
     assert "ProjectActions" in str(err)
     assert "docs/guide/cli/run/defaults.md" in str(err)
     # otto keeps the name; the repo did not shadow it on the way past.
-    assert INSTRUCTIONS.get("install").module == "otto.project.instructions"
+    assert INSTRUCTIONS.get("install").module == ACTIONS_MODULE
 
 
 # ── Dispatch: every flag reaches the orchestrator ────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_install_forwards_the_converge_flags(monkeypatch, registered):
-    """``--ensure``/``--recover-partial`` are the orchestrator's, not the wrapper's.
+def test_install_forwards_the_converge_flags(monkeypatch, registered):
+    """``--ensure``/``--recover-partial`` are the orchestrator's, not the command's.
 
     The branch between a flat install and the converge lives in
     ``orchestrator.install`` so the ensure_* fixtures take the same one; a
-    wrapper that re-decided it here would be a second place to get it wrong.
+    published command that re-decided it would be a second place to get it
+    wrong. Asserted on the OPTIONS INSTANCE the source builds, which is what
+    the body is handed.
     """
     rec = _Recorder()
     monkeypatch.setattr(orchestrator, "install", rec)
 
-    await registered.install(ensure=True, recover_partial=False)
-    await registered.install()
+    first = dispatch.invoke(
+        run_app, ["install", "--ensure", "--no-recover-partial"], async_leaves=True
+    )
+    second = dispatch.invoke(run_app, ["install"], async_leaves=True)
 
-    assert rec.calls == [
-        {"ensure": True, "recover_partial": False},
-        {"ensure": False, "recover_partial": True},
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    assert rec.built(InstallOptions) == [
+        InstallOptions(ensure=True, recover_partial=False),
+        InstallOptions(ensure=False, recover_partial=True),
     ]
 
 
-@pytest.mark.asyncio
-async def test_uninstall_forwards_both_log_flags(monkeypatch, registered):
+def test_uninstall_forwards_both_log_flags(monkeypatch, registered):
     rec = _Recorder()
     monkeypatch.setattr(orchestrator, "uninstall", rec)
 
-    await registered.uninstall(product_logs=False, debug_logs=True)
+    result = dispatch.invoke(
+        run_app, ["uninstall", "--no-product-logs", "--debug-logs"], async_leaves=True
+    )
 
-    assert rec.calls == [{"get_product_logs": False, "get_debug_logs": True}]
+    assert result.exit_code == 0, result.output
+    assert rec.built(UninstallOptions) == [UninstallOptions(product_logs=False, debug_logs=True)]
 
 
-@pytest.mark.asyncio
-async def test_cleanup_forwards_all_four_flags(monkeypatch, registered):
+def test_cleanup_forwards_all_four_flags(monkeypatch, registered):
     """Both log flags AND the two lab-infrastructure ones.
 
-    Asserted as an exact mapping, defaults included: a flag the wrapper accepts
+    Asserted as an exact mapping, defaults included: a flag the command accepts
     and drops is a `--no-remove-tunnels` that reaps the tunnels anyway, and it
     would pass any assertion that only checked the flags it bothered to pass.
     """
     rec = _Recorder()
     monkeypatch.setattr(orchestrator, "cleanup", rec)
 
-    await registered.cleanup(product_logs=True, debug_logs=False, remove_tunnels=False)
-    await registered.cleanup(reset_impairments=False)
+    first = dispatch.invoke(
+        run_app,
+        ["cleanup", "--product-logs", "--no-debug-logs", "--no-remove-tunnels"],
+        async_leaves=True,
+    )
+    second = dispatch.invoke(run_app, ["cleanup", "--no-reset-impairments"], async_leaves=True)
 
-    assert rec.calls == [
-        {
-            "get_product_logs": True,
-            "get_debug_logs": False,
-            "reset_impairments": True,
-            "remove_tunnels": False,
-        },
-        {
-            "get_product_logs": True,
-            "get_debug_logs": True,
-            "reset_impairments": False,
-            "remove_tunnels": True,
-        },
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    assert rec.built(CleanupOptions) == [
+        CleanupOptions(
+            product_logs=True,
+            debug_logs=False,
+            reset_impairments=True,
+            remove_tunnels=False,
+        ),
+        CleanupOptions(
+            product_logs=True,
+            debug_logs=True,
+            reset_impairments=False,
+            remove_tunnels=True,
+        ),
     ]
 
 
-@pytest.mark.asyncio
-async def test_get_logs_forwards_all_three_flags(monkeypatch, registered):
+def test_get_logs_forwards_all_three_flags(monkeypatch, registered):
     rec = _Recorder()
     monkeypatch.setattr(orchestrator, "get_logs", rec)
 
-    await registered.get_logs(product_logs=True, debug_logs=False, require_product_logs=True)
+    result = dispatch.invoke(
+        run_app,
+        ["get-logs", "--product-logs", "--no-debug-logs", "--require-product-logs"],
+        async_leaves=True,
+    )
 
-    assert rec.calls == [{"product": True, "debug": False, "require_product_logs": True}]
+    assert result.exit_code == 0, result.output
+    assert rec.built(GetLogsOptions) == [
+        GetLogsOptions(product_logs=True, debug_logs=False, require_product_logs=True)
+    ]
 
 
-@pytest.mark.asyncio
-async def test_install_tools_forwards_dev_and_toolchain(monkeypatch, registered):
+def test_install_tools_forwards_dev_and_toolchain(monkeypatch, registered):
     rec = _Recorder()
     monkeypatch.setattr(orchestrator, "install_tools", rec)
 
-    await registered.install_tools(dev=False, toolchain=True)
+    result = dispatch.invoke(
+        run_app, ["install-tools", "--no-dev", "--toolchain"], async_leaves=True
+    )
 
-    assert rec.calls == [{"dev": False, "toolchain": True}]
+    assert result.exit_code == 0, result.output
+    assert rec.built(InstallToolsOptions) == [InstallToolsOptions(dev=False, toolchain=True)]
 
 
 @pytest.mark.asyncio
 async def test_the_orchestrators_result_is_returned_unchanged(monkeypatch, registered):
     """Including a ``Skipped`` one — the converge layer's no-op arm.
 
-    ``Result.is_ok`` is true for Skipped, so the render seam exits 0; a wrapper
-    that repacked (or worse, tested ``is Status.Success``) would turn "already
-    installed" into a failure.
+    ``Result.is_ok`` is true for Skipped, so the render seam exits 0; a
+    dispatcher that repacked (or worse, tested ``is Status.Success``) would
+    turn "already installed" into a failure.
     """
     skipped = Result(Status.Skipped, msg="already installed")
     monkeypatch.setattr(orchestrator, "install", _Recorder(skipped))
 
-    returned = await registered.install(ensure=True)
+    returned = await _run("install", ensure=True)
 
     assert returned is skipped
 
@@ -395,32 +481,27 @@ async def test_status_exit_code_is_the_answer(monkeypatch, registered, state, co
         orchestrator, "status", _Recorder(ProjectStatus(overall=state, repos={"acme": state}))
     )
 
-    assert (await registered.status()).exit_code == code
+    assert (await _run("status")).exit_code == code
 
 
 @pytest.mark.parametrize(
     ("state", "code"), [(InstallState.UNINSTALLED, 1), (InstallState.PARTIAL, 2)]
 )
-@pytest.mark.asyncio
-async def test_the_status_answer_reaches_the_process_exit_code(
-    monkeypatch, registered, state, code
-):
+def test_the_status_answer_reaches_the_process_exit_code(monkeypatch, registered, state, code):
     """The returned carrier is the WHOLE mechanism — nothing else sets the code.
 
-    ``exit_code`` on the value proves the mapping; this proves the renderer
-    honors it. A carrier the leaf bridge shrugged at (a bare int, a dataclass
-    of otto's own) would pass the test above and still exit 0.
+    ``exit_code`` on the value proves the mapping; this proves the dispatch
+    honors it, through the real command. A carrier the leaf bridge shrugged at
+    (a bare int, a dataclass of otto's own) would pass the test above and still
+    exit 0.
     """
-    from otto.cli.invoke import render_leaf_value
-
     monkeypatch.setattr(
         orchestrator, "status", _Recorder(ProjectStatus(overall=state, repos={"acme": state}))
     )
 
-    with pytest.raises(typer.Exit) as excinfo:
-        render_leaf_value(await registered.status())
+    result = dispatch.invoke(run_app, ["status"], async_leaves=True)
 
-    assert excinfo.value.exit_code == code
+    assert result.exit_code == code, result.output
 
 
 @pytest.mark.asyncio
@@ -431,7 +512,7 @@ async def test_status_prints_every_repos_state(monkeypatch, registered, capsys):
     )
     monkeypatch.setattr(orchestrator, "status", _Recorder(report))
 
-    answer = await registered.status()
+    answer = await _run("status")
 
     # ROW-WISE, because "installed" is a SUBSTRING of "uninstalled": a renderer
     # that printed every repo as uninstalled — or as installed — satisfies both
@@ -502,7 +583,7 @@ async def test_bare_status_asks_for_no_cleanliness_at_all(monkeypatch, registere
     """
     probe = _wire_status(monkeypatch, InstallState.INSTALLED, {"acme": InstallState.INSTALLED})
 
-    await registered.status()
+    await _run("status")
 
     assert probe.calls == []
 
@@ -527,10 +608,34 @@ async def test_status_full_leaves_the_exit_code_to_the_install_axis(monkeypatch,
         ),
     )
 
-    answer = await registered.status(full=True)
+    answer = await _run("status", full=True)
 
     assert answer.exit_code == 0
-    assert answer is await registered.status()  # the same carrier the bare run returns
+    assert answer is await _run("status")  # the same carrier the bare run returns
+
+
+def test_status_full_is_parsed_off_the_command_line(monkeypatch, registered):
+    """THE FLAG ITSELF, through click: `--full` is a merged parameter, not a keyword.
+
+    Every other `--full` test here calls the leaf with ``full=True``, which
+    proves the renderer and skips the half this task owns -- that the flag is
+    on the published signature at all and that its parsed value reaches the
+    dispatcher. A leaf whose signature lost the parameter would fail to parse
+    `--full` (exit 2) while every keyword-driven test stayed green.
+    """
+    probe = _wire_status(
+        monkeypatch,
+        InstallState.INSTALLED,
+        {"acme": InstallState.INSTALLED},
+        _report(_clean_row(CleanlinessKind.TUNNEL, "lab", Cleanliness.DIRTY)),
+    )
+
+    result = dispatch.invoke(run_app, ["status", "--full"], async_leaves=True)
+
+    assert result.exit_code == 0, result.output
+    assert len(probe.calls) == 1  # --full is what asks the cleanliness question
+    assert "tunnels" in result.output
+    assert "lab is dirty" in result.output
 
 
 @pytest.mark.asyncio
@@ -548,7 +653,7 @@ async def test_status_full_prints_a_row_per_thing_and_heads_each_section_once(
         ),
     )
 
-    await registered.status(full=True)
+    await _run("status", full=True)
     out = capsys.readouterr().out
 
     # Row-wise, because "clean" is a substring of nothing here by luck alone:
@@ -588,7 +693,7 @@ async def test_status_full_renders_a_cell_for_what_could_not_be_read(
         ),
     )
 
-    answer = await registered.status(full=True)
+    answer = await _run("status", full=True)
     out = capsys.readouterr().out
 
     assert "clean" in _row_line(out, "h0")
@@ -623,7 +728,7 @@ async def test_status_full_does_not_read_a_device_message_as_markup(
         ),
     )
 
-    await registered.status(full=True)
+    await _run("status", full=True)
 
     assert detail in _row_line(capsys.readouterr().out, "core")
 
@@ -686,7 +791,7 @@ async def test_status_prints_a_not_applicable_row_for_the_repo_the_walks_skipped
         ),
     )
 
-    await registered.status()
+    await _run("status")
 
     assert _state_rows(capsys.readouterr().out) == {
         "acme": "installed",
@@ -727,7 +832,7 @@ async def test_status_prints_a_no_matching_hosts_row_for_the_host_starved_repo(
         },
     )
 
-    await registered.status()
+    await _run("status")
 
     assert _state_rows(capsys.readouterr().out) == {
         "acme": "installed",
@@ -759,7 +864,7 @@ async def test_status_full_lists_each_repos_labs_and_hosts(monkeypatch, register
         },
     )
 
-    await registered.status(full=True)
+    await _run("status", full=True)
     out = capsys.readouterr().out
 
     assert _cells(_fleet_line(out, "acme")) == ["acme", "labs: bench", "hosts: h0, h1"]
@@ -784,7 +889,7 @@ async def test_status_full_prints_no_section_for_an_empty_scoping_mapping(
     """
     _wire_status(monkeypatch, InstallState.INSTALLED, {"acme": InstallState.INSTALLED})
 
-    await registered.status(full=True)
+    await _run("status", full=True)
 
     assert "fleet of interest" not in capsys.readouterr().out
 
@@ -841,7 +946,7 @@ async def test_status_full_renders_a_row_per_repo_on_an_undeclared_lab(
     monkeypatch.setattr(orchestrator, "_counts", lambda actions: False)
     monkeypatch.setattr(orchestrator, "cleanliness", _Recorder(_report()))
 
-    await registered.status(full=True)
+    await _run("status", full=True)
     out = capsys.readouterr().out
 
     # Asserted before the row parser runs: `_fleet_line` locates its slice with
@@ -908,7 +1013,7 @@ async def test_status_full_renders_both_rows_for_a_host_starved_repo(
     monkeypatch.setattr(orchestrator, "_counts", lambda actions: False)
     monkeypatch.setattr(orchestrator, "cleanliness", _Recorder(_report()))
 
-    await registered.status(full=True)
+    await _run("status", full=True)
     out = capsys.readouterr().out
 
     assert "fleet of interest" in out
@@ -939,7 +1044,7 @@ async def test_bare_status_prints_no_fleet_of_interest_section(monkeypatch, regi
         },
     )
 
-    await registered.status()
+    await _run("status")
 
     assert "fleet of interest" not in capsys.readouterr().out
 
@@ -968,8 +1073,6 @@ def test_no_panel_when_otto_registered_nothing():
 
 def test_list_instructions_shows_the_defaults_with_no_repos_configured(registered):
     from unittest.mock import patch
-
-    from otto.cli.run import run_app
 
     with patch("otto.config.get_repos", return_value=[]):
         result = runner.invoke(run_app, ["--list-instructions"])
@@ -1007,8 +1110,6 @@ def test_list_instructions_puts_the_defaults_ahead_of_the_repo_panels(registered
     """
     from unittest.mock import patch
 
-    from otto.cli.run import run_app
-
     repos = [_PanelRepo("first-repo 1.0"), _PanelRepo("second-repo 1.0")]
     with patch("otto.config.get_repos", return_value=repos):
         result = runner.invoke(run_app, ["--list-instructions"])
@@ -1017,3 +1118,248 @@ def test_list_instructions_puts_the_defaults_ahead_of_the_repo_panels(registered
     (titles,) = [ln for ln in result.output.splitlines() if "otto defaults" in ln]
     assert "first-repo" in titles, "the repo panels share the title line with otto's"
     assert titles.index("otto defaults") < titles.index("first-repo") < titles.index("second-repo")
+
+
+# ── The merge: one command, every body's flags ───────────────────────────────
+
+
+@options
+class _Shared:
+    """A base two repos can agree on: one declaring class, so one flag."""
+
+    lab_env: Annotated[str, typer.Option(help="Lab environment name.")] = "bench"
+
+
+@options
+class _DeployOptions:
+    """A repo-added instruction's own flags."""
+
+    target: Annotated[str, typer.Option(help="Where to deploy.")] = "bench"
+
+
+class TestMergedFlags:
+    def test_a_repos_fields_join_the_first_party_flags(self, registered) -> None:
+        @options
+        class WidgetInstall(InstallOptions):
+            variant: Annotated[str, typer.Option(help="Firmware variant.")] = "field"
+
+        with registering_repo("widget"):
+
+            @register_project_actions
+            class Widget(ProjectActions):
+                @instruction(options=WidgetInstall)
+                async def install(self, opts: WidgetInstall):
+                    return await super().install(opts)
+
+        publish_project_instructions()
+        out = runner.invoke(run_app, ["install", "--help"]).output
+
+        assert "--ensure" in out
+        assert "--recover-partial" in out
+        assert "--variant" in out
+
+    def test_two_repos_sharing_a_base_get_one_flag(self, registered) -> None:
+        """One BASE CLASS, one flag — identity of the declaring class decides.
+
+        Two repos that agree on a field by inheriting it from one class are
+        describing one flag; merging by NAME instead would either refuse this
+        (the collision below) or silently keep whichever copy came first.
+        """
+
+        @options
+        class AInstall(_Shared, InstallOptions):
+            pass
+
+        @options
+        class BInstall(_Shared, InstallOptions):
+            pass
+
+        with registering_repo("a"):
+
+            @register_project_actions
+            class A(ProjectActions):
+                @instruction(options=AInstall)
+                async def install(self, opts: AInstall):
+                    return await super().install(opts)
+
+        with registering_repo("b"):
+
+            @register_project_actions
+            class B(ProjectActions):
+                @instruction(options=BInstall)
+                async def install(self, opts: BInstall):
+                    return await super().install(opts)
+
+        publish_project_instructions()
+        out = runner.invoke(run_app, ["install", "--help"]).output
+
+        assert out.count("--lab-env") == 1, out
+        params = merged_option_params(PROJECT_INSTRUCTIONS.get("install"))
+        assert [p.name for p in params].count("lab_env") == 1
+
+    def test_two_repos_each_declaring_the_same_field_collide_loud(self, registered) -> None:
+        """The same NAME from two classes is two flags, and otto refuses to guess.
+
+        Silently keeping the first would hand repo ``b``'s body repo ``a``'s
+        value — a flag that reads as its own and is not — so the publish fails
+        and the message says how to share one.
+        """
+
+        @options
+        class AInstall(InstallOptions):
+            lab_env: Annotated[str, typer.Option(help="A's lab environment.")] = "bench"
+
+        @options
+        class BInstall(InstallOptions):
+            lab_env: Annotated[str, typer.Option(help="B's lab environment.")] = "floor"
+
+        with registering_repo("a"):
+
+            @register_project_actions
+            class A(ProjectActions):
+                @instruction(options=AInstall)
+                async def install(self, opts: AInstall):
+                    return await super().install(opts)
+
+        with registering_repo("b"):
+
+            @register_project_actions
+            class B(ProjectActions):
+                @instruction(options=BInstall)
+                async def install(self, opts: BInstall):
+                    return await super().install(opts)
+
+        with pytest.raises(OptionsCollisionError) as excinfo:
+            publish_project_instructions()
+
+        message = str(excinfo.value)
+        assert "'install'" in message
+        assert "'lab_env'" in message
+        assert "repo 'a'" in message
+        assert "repo 'b'" in message
+        assert "share one base class" in message
+
+    def test_a_repo_added_instruction_is_published_under_its_module(self, registered) -> None:
+        """A name otto never declared is published too, attributed to ITS declarer.
+
+        ``module`` is what ``--list-instructions`` attributes panels by, so a
+        repo's own project instruction has to carry the repo's module or it
+        lands in otto's panel.
+        """
+        with registering_repo("widget"):
+
+            @register_project_actions
+            class Widget(ProjectActions):
+                @instruction(options=_DeployOptions)
+                async def deploy(self, opts: _DeployOptions) -> Result:
+                    """Deploy this repo's firmware."""
+                    return Result(Status.Success, value=opts.target)
+
+        publish_project_instructions()
+
+        entry = INSTRUCTIONS.get("deploy")
+        assert entry.registered_by is None
+        assert entry.module == Widget.__module__
+        assert "--target" in runner.invoke(run_app, ["deploy", "--help"]).output
+
+    def test_the_published_command_serialises_for_the_completion_cache(self, registered) -> None:
+        """TAB completion reads the command's SIGNATURE, which this one builds by hand.
+
+        ``_serialize_options`` refuses a parameter whose annotation is not
+        ``Annotated[..., typer.Option(...)]`` and skips the whole command, so a
+        leaf that carried only ``**kwargs`` — or annotations that did not match
+        its signature — would silently lose its flags from every completion.
+        """
+        import typer.main
+
+        from otto.config.completion_cache import _serialize_options
+
+        cmd = typer.main.get_command(INSTRUCTIONS.get("install").sub_app)
+        leaf = cmd.commands["install"] if hasattr(cmd, "commands") else cmd
+        serialised = _serialize_options(leaf.callback, command_name="install")
+
+        assert serialised is not None
+        assert {o["name"] for o in serialised} >= {"ensure", "recover_partial"}
+
+    def test_the_published_help_is_the_lab_wide_summary(self, registered) -> None:
+        """`--help` describes the command, which walks EVERY repo.
+
+        The bodies' docstrings are per-repo ("this repo's products"), so the
+        published summary comes from each declaration's ``help=`` instead --
+        and ``status`` keeps the exit-code contract a script branches on, which
+        no other surface states.
+        """
+        install = runner.invoke(run_app, ["install", "--help"]).output
+        status = runner.invoke(run_app, ["status", "--help"]).output
+
+        assert "every repo" in install
+        assert "exit 0" in status
+
+    def test_a_hand_built_repo_added_entry_is_refused_at_publish(self, registered) -> None:
+        """The backstop holds for a REPO's own name, where the modules match.
+
+        A repo declares ``deploy`` on its actions class and hand-registers an
+        ``InstructionEntry`` under the same name from the same init module.
+        Keying the republish on the entry's ``module`` would read that as "mine,
+        overwrite it" and silently take the name; the registry's own attribution
+        (``origin``) does not, so the second registration is refused.
+        """
+        with registering_repo("widget"):
+
+            @register_project_actions
+            class Widget(ProjectActions):
+                @instruction(options=_DeployOptions, help="Deploy the lab's firmware.")
+                async def deploy(self, opts: _DeployOptions) -> Result:
+                    """Deploy this repo's firmware."""
+                    return Result(Status.Success, value=opts.target)
+
+        from otto.instructions import InstructionEntry
+
+        INSTRUCTIONS.register(
+            "deploy",
+            InstructionEntry(
+                name="deploy",
+                sub_app=typer.Typer(),
+                module=Widget.__module__,
+                registered_by="widget",
+            ),
+            origin=Widget.__module__,
+        )
+
+        with pytest.raises(ValueError, match="already registered"):
+            publish_project_instructions()
+
+    def test_publishing_twice_republishes_its_own_entries(self, registered) -> None:
+        """The republish path still works -- the backstop must not refuse otto's own.
+
+        ``registered`` has already published once, so this second call is the
+        one a re-entrant bootstrap (or a test) makes; it must overwrite rather
+        than collide, and the entry it leaves must still be a usable command.
+        """
+        publish_project_instructions()  # must not raise
+
+        entry = INSTRUCTIONS.get("install")
+        assert entry.module == ACTIONS_MODULE
+        assert "--ensure" in runner.invoke(run_app, ["install", "--help"]).output
+
+    def test_a_hand_built_first_party_entry_is_refused_at_publish(self, registered) -> None:
+        """The registry-order backstop: a repo cannot pre-empt a published name.
+
+        Only an entry THIS module published is overwritten. Anything else is
+        left for ``INSTRUCTIONS.register`` to refuse, which is what stops a repo
+        that hand-built an ``InstructionEntry`` under a project instruction's
+        name from shadowing it — the route the decorator's guard never sees.
+        """
+        from otto.instructions import InstructionEntry
+
+        INSTRUCTIONS.unregister("install")
+        INSTRUCTIONS.register(
+            "install",
+            InstructionEntry(
+                name="install", sub_app=typer.Typer(), module="repo.init", registered_by="repo"
+            ),
+            origin="repo.init",
+        )
+
+        with pytest.raises(ValueError, match="already registered"):
+            publish_project_instructions()

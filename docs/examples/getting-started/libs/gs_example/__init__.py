@@ -3,6 +3,12 @@
 Each section registers one extension the worked example uses; the pages
 include them between the ``# doc: begin`` / ``# doc: end`` markers.
 
+The products, dev tools and project actions this project defines are NOT
+imported here: ``gs_example.products``, ``gs_example.dev_tools`` and
+``gs_example.actions`` are listed in ``init`` in their own right, so the
+inventory twin next door — which shares this package for its login proxy alone
+— does not become a providing repo.
+
 Most sections keep their imports beside their code. The rule that decides
 whether they can is ruff's "imports at the top of the file" (E402): its
 preamble tolerates ``if`` / ``try`` blocks between imports — which is why the

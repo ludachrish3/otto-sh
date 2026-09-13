@@ -28,15 +28,35 @@ orchestrator's to perform once (spec section 5):
   than exposing a flag. N repos each sweeping the same host's debug logs means
   N transfers, each overwriting the last.
 * **toolchain tools** -- one toolchain per host, shared by every owner;
-  ``install_tools(toolchain=True)`` is a no-op at this layer.
+  ``install_tools`` acts on ``opts.dev`` only; ``opts.toolchain`` is read by
+  the orchestrator, not at this layer.
 """
 
-from typing import TYPE_CHECKING, TypeVar
+import dataclasses
+from typing import TYPE_CHECKING, Any, TypeVar
 
+from ..cli.run import instruction
+from ..instructions import (
+    MARK_ATTR,
+    PROJECT_INSTRUCTIONS,
+    ProjectInstructionError,
+    ProjectInstructionMark,
+    register_project_instruction_body,
+)
+from ..params import OptionsSource, shared_field_values
 from ..registry import Registry, get_registering_repo
 from ..result import Result
 from ..utils import Status
-from .state import InstallState
+from .options import (
+    CleanupOptions,
+    GetLogsOptions,
+    InstallOptions,
+    InstallToolsOptions,
+    StatusOptions,
+    UninstallOptions,
+)
+from .render import render_status
+from .state import InstallState, combine_install_states
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
@@ -66,7 +86,7 @@ def _owned(items: "list[_OwnedT]", owner: str) -> "list[_OwnedT]":
 
 
 _REQUIRE_PRODUCT_LOGS_CONTRADICTION = (
-    "require_product_logs cannot be satisfied with product=False: "
+    "require_product_logs cannot be satisfied when product logs are not gathered: "
     "the product-log haul it requires is the step being skipped. "
     "Gather product logs, or drop the requirement."
 )
@@ -136,6 +156,69 @@ def _reduce_results(results: "dict[str, Result | BaseException]") -> Result:
         if not outcome.is_ok:
             return Result(outcome.status, msg=f"host {host_id!r}: {outcome.msg}")
     return Result(Status.Success)
+
+
+def _options_for(actions: "ProjectActions", name: str, base: Any, caller: str) -> Any:
+    """Rebuild *base* as the options class *name*'s body on ``type(actions)`` declares.
+
+    TWO BASE BODIES CALL A THIRD (:meth:`ProjectActions.cleanup` calls
+    ``uninstall``, :meth:`~ProjectActions.is_uninstalled` calls ``status``),
+    and either callee may be overridden by a repo with an options class of its
+    own. The call resolves through the MRO to the repo's body, so the instance
+    it receives has to be the repo's class -- a base instance carries none of
+    the fields that body declared and raises ``AttributeError`` on the first
+    one it reads.
+
+    The rebuild is :class:`~otto.params.OptionsSource`'s instance path, the
+    same one a suite's ``ensure`` marker converges through: fields shared with
+    *base* BY DECLARING CLASS flow (``product_logs`` reaches a
+    ``CleanupOpts``-driven teardown), the override's own take their defaults.
+    A field with no default cannot take one, so it is refused HERE, up front,
+    naming the class, the field and the fix. Letting the construction fail
+    instead would report it in one of two unrelated vocabularies -- a pydantic
+    options class raises ``ValidationError`` (which
+    :func:`~otto.params.build_options` turns into a CLI ``BadParameter``) and a
+    plain dataclass a bare ``TypeError`` -- and neither names ``cleanup``,
+    which is the only place the reader can fix it.
+
+    Falls back to *base* whenever there is nothing better to build: the name is
+    not in the table, ``type(actions)`` has no registered body for it (an
+    unregistered subclass -- a test double, or a class used directly), or that
+    body declares no options class. Each is a case where the MRO lands on a
+    body that wants exactly what otto's own body wants.
+
+    Args:
+        actions: The instance whose class decides which body will run.
+        name: The project instruction being called (``"uninstall"``, ``"status"``).
+        base: The options instance otto's own body would have received.
+        caller: The method doing the calling, named in the refusal.
+
+    Returns:
+        *base*, or a fresh instance of the registered body's options class.
+    """
+    if name not in PROJECT_INSTRUCTIONS:
+        return base
+    body = PROJECT_INSTRUCTIONS.get(name).body_for(type(actions))
+    if body is None or body.options_cls is None or body.options_cls is type(base):
+        return base
+    opts_cls = body.options_cls
+    shared = shared_field_values(opts_cls, base)
+    required = [
+        field.name
+        for field in dataclasses.fields(opts_cls)
+        if field.name not in shared
+        and field.default is dataclasses.MISSING
+        and field.default_factory is dataclasses.MISSING
+    ]
+    if required:
+        raise ProjectInstructionError(
+            f"{type(actions).__name__}.{caller} cannot build {opts_cls.__name__} for "
+            f"{name!r}: {', '.join(sorted(required))} has no default, and {caller} has only "
+            f"otto's own {type(base).__name__} to build from. Override {caller} on "
+            f"{type(actions).__name__} too, and call {name} from there with an instance of "
+            f"{opts_cls.__name__} you built yourself."
+        )
+    return OptionsSource.from_instance(base).build(opts_cls)
 
 
 ####################
@@ -251,7 +334,21 @@ class ProjectActions:
     #  Lifecycle
     ####################
 
-    async def install(self) -> Result:
+    # EVERY DECORATOR BELOW PASSES help=, and it is not the method's docstring
+    # restated. The docstring says what THIS body does -- one repo's products,
+    # on that repo's fleet -- while the published `otto run <name>` walks every
+    # repo and performs the host-global tail no body may (the debug sweep, the
+    # toolchain, the impairments, the tunnels). `--help` is read by someone
+    # running the lab-wide command, so it is written for that.
+
+    @instruction(
+        options=InstallOptions,
+        help="Install every repo's products, dependencies first, stopping at the first failure.",
+        walk="forward",
+        continue_on_failure=False,
+        require_dependencies=True,
+    )
+    async def install(self, opts: InstallOptions) -> Result:  # noqa: ARG002 — the base body needs no flag; the parameter is the override's, and super() passes it through
         """Install this repo's products on every fleet host.
 
         Hosts proceed in parallel; within a host, products install in
@@ -261,7 +358,14 @@ class ProjectActions:
         """
         return _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_install))
 
-    async def uninstall(self, get_product_logs: bool = True) -> Result:
+    @instruction(
+        options=UninstallOptions,
+        help="Uninstall every repo in reverse order (best-effort), then sweep debug logs once.",
+        walk="reverse",
+        continue_on_failure=True,
+        require_dependencies=False,
+    )
+    async def uninstall(self, opts: UninstallOptions) -> Result:
         """Uninstall this repo's products on every fleet host.
 
         Product logs come off each host BEFORE its teardown, which is the host
@@ -272,12 +376,19 @@ class ProjectActions:
         return _reduce_results(
             await self.ctx.do_for_all_hosts(
                 _dispatch_uninstall,
-                get_product_logs=get_product_logs,
+                get_product_logs=opts.product_logs,
                 get_debug_logs=False,
             )
         )
 
-    async def cleanup(self, get_product_logs: bool = True) -> Result:
+    @instruction(
+        options=CleanupOptions,
+        help="Clean the lab: every repo, the debug logs, the toolchain, impairments, tunnels.",
+        walk="reverse",
+        continue_on_failure=True,
+        require_dependencies=False,
+    )
+    async def cleanup(self, opts: CleanupOptions) -> Result:
         """Uninstall this repo's products, then remove its dev tools.
 
         Strictly more than :meth:`uninstall`, in that order: products first (a
@@ -288,8 +399,24 @@ class ProjectActions:
         Toolchain tools are NOT removed here. One toolchain serves every owner
         on a host, so removing it is the orchestrator's final host-global step;
         a repo tearing it down would take its neighbours' tooling with it.
+
+        A REPO'S ``uninstall`` OVERRIDE IS HONOURED, and is handed an instance
+        of ITS OWN options class -- not the base
+        :class:`~otto.project.options.UninstallOptions` built here, which
+        carries none of the fields that override declared and would raise
+        ``AttributeError`` on the first one it read. ``_options_for``
+        rebuilds this instance as the registered body's class, so the shared
+        fields (``product_logs`` among them) flow and the override's own take
+        their defaults. An override whose class has a field with NO default
+        cannot be built that way and is refused, naming the field: such a repo
+        overrides ``cleanup`` itself and calls its own ``uninstall`` from
+        there.
         """
-        uninstalled = await self.uninstall(get_product_logs=get_product_logs)
+        uninstalled = await self.uninstall(
+            _options_for(
+                self, "uninstall", UninstallOptions(product_logs=opts.product_logs), "cleanup"
+            )
+        )
         tools = _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_uninstall_dev_tools))
         return uninstalled if not uninstalled.is_ok else tools
 
@@ -297,7 +424,15 @@ class ProjectActions:
     #  Logs
     ####################
 
-    async def get_logs(self, product: bool = True, require_product_logs: bool = False) -> Result:
+    @instruction(
+        "get-logs",
+        options=GetLogsOptions,
+        help="Gather every repo's product logs (best-effort), then sweep debug logs once.",
+        walk="forward",
+        continue_on_failure=True,
+        require_dependencies=False,
+    )
+    async def get_logs(self, opts: GetLogsOptions) -> Result:
         """Retrieve this repo's product logs from every fleet host.
 
         There is no debug half, deliberately -- see this module's docstring.
@@ -311,11 +446,14 @@ class ProjectActions:
         from the whole fleet would fail a repo that retrieved everything it
         owns, named after a host it never deploys to.
 
-        *require_product_logs* with ``product=False`` is a contradiction and is
-        refused up front rather than ignored: the haul it requires is the step
-        being skipped, and a requirement that is parsed but unenforceable would
-        report success having promised logs nobody went looking for.
+        *require_product_logs* when product logs are not gathered is a
+        contradiction and is refused up front rather than ignored: the haul it
+        requires is the step being skipped, and a requirement that is parsed
+        but unenforceable would report success having promised logs nobody
+        went looking for.
         """
+        product = opts.product_logs
+        require_product_logs = opts.require_product_logs
         if require_product_logs and not product:
             return Result(Status.Error, msg=_REQUIRE_PRODUCT_LOGS_CONTRADICTION)
         if not product:
@@ -341,19 +479,28 @@ class ProjectActions:
     #  Tools
     ####################
 
-    async def install_tools(self, dev: bool = True, toolchain: bool = False) -> Result:  # noqa: ARG002 — toolchain is host-global (see below); the parameter mirrors the host and orchestrator verbs so an override can honour it
+    @instruction(
+        "install-tools",
+        options=InstallToolsOptions,
+        help="Install every repo's dev tools, then (when asked) the host toolchains.",
+        walk="forward",
+        continue_on_failure=False,
+        require_dependencies=True,
+    )
+    async def install_tools(self, opts: InstallToolsOptions) -> Result:
         """Install this repo's dev tools on every fleet host.
 
         *toolchain* is accepted and does nothing at this layer, which is the
         declared contract rather than an oversight: a host has ONE toolchain,
         shared by every owner, so placing it is the orchestrator's host-global
         step -- the same reasoning that keeps debug logs out of
-        :meth:`uninstall`. The parameter stays in the signature so a subclass
+        :meth:`uninstall`. The field stays on the options class so a subclass
         with toolchain work of its own has somewhere to hang it, and so
-        ``super().install_tools(...)`` can be called with the caller's flags
-        unchanged.
+        ``super().install_tools(opts)`` can be called with the caller's flags
+        unchanged. ``toolchain`` is read off *opts* by the orchestrator, not
+        here.
         """
-        if not dev:
+        if not opts.dev:
             return Result(Status.Success)
         return _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_install_dev_tools))
 
@@ -372,7 +519,19 @@ class ProjectActions:
         """
         return any(_owned(host.products, self.repo.name) for host in self.ctx.all_hosts())
 
-    async def status(self) -> InstallState:
+    @instruction(
+        options=StatusOptions,
+        help=(
+            "Report each repo's install state, and the lab's: "
+            "exit 0 installed, 1 uninstalled, 2 partial."
+        ),
+        walk="forward",
+        continue_on_failure=True,
+        require_dependencies=False,
+        combine_results=combine_install_states,
+        render=render_status,
+    )
+    async def status(self, opts: StatusOptions) -> InstallState:  # noqa: ARG002 — --full is the orchestrator's (cleanliness is lab-level); the parameter is the override's
         """Report this repo's install state across the fleet.
 
         COUNTS PRODUCTS, NOT HOSTS. A host-level ``is_installed()`` answers
@@ -409,8 +568,17 @@ class ProjectActions:
         host's own answer is per-product; a repo's is an aggregate, and an
         aggregate is where the middle state appears. Ask :meth:`status` for
         anything except "is there nothing of mine left to find".
+
+        ONE AUTHORITY: a repo whose install state comes from something otto
+        cannot see overrides ``status`` and nothing else, and this answer
+        follows it. The override is handed an instance of ITS OWN options
+        class, rebuilt by ``_options_for`` -- see :meth:`cleanup`, which
+        reaches its ``uninstall`` the same way and for the same reason. An
+        override whose class has a field with no default is refused naming the
+        field; such a repo overrides ``is_uninstalled`` itself.
         """
-        return await self.status() is InstallState.UNINSTALLED
+        probe = _options_for(self, "status", StatusOptions(), "is_uninstalled")
+        return await self.status(probe) is InstallState.UNINSTALLED
 
     async def is_clean(self) -> bool:
         """Whether none of this repo's products or dev tools remain installed.
@@ -439,6 +607,63 @@ PROJECT_ACTIONS: "Registry[type[ProjectActions]]" = Registry(
 """Registered :class:`ProjectActions` subclasses, keyed by repo name."""
 
 
+def _already_registered(name: str, cls: "type[ProjectActions]") -> bool:
+    """Whether *cls* itself (not an ancestor) already owns *name*'s body.
+
+    Split out of :func:`register_project_instruction_bodies` for line length,
+    and to name the idempotence check on its own: a re-import of this module,
+    or a test whose isolation rolled :data:`~otto.instructions.PROJECT_INSTRUCTIONS`
+    back mid-run, must be able to call that function again without tripping
+    the walk-shape-is-fixed or foreign-options refusals it would otherwise hit
+    re-declaring the SAME class's own body.
+    """
+    if name not in PROJECT_INSTRUCTIONS:
+        return False
+    body = PROJECT_INSTRUCTIONS.get(name).body_for(cls)
+    return body is not None and body.owner_class is cls
+
+
+def register_project_instruction_bodies(cls: "type[ProjectActions]", repo: str | None) -> None:
+    """Register every ``@instruction``-marked method declared ON *cls* as *repo*'s body.
+
+    ``vars(cls)``, not ``dir()``: an inherited, undecorated method is the
+    parent's body already, and registering it again under the subclass would
+    let a repo that overrides nothing collide with the first-party rules.
+    Idempotent for the base class so a test that re-imports this module, or
+    one whose isolation rolled the table back, can call it again.
+
+    TWO MARKED METHODS ON ONE CLASS CLAIMING ONE NAME IS REFUSED, before
+    anything is registered. A class holds at most one body per name, so the
+    second registration would be dropped by the idempotence check above and a
+    typo'd ``@instruction("install")`` on a second method would simply never
+    run -- the failure mode the fixed walk shape exists to make impossible.
+    The scan is a separate pass so the refusal does not depend on ``vars()``
+    order, and so a duplicate is refused even when the first body is already
+    in the table from an earlier call.
+    """
+    marked: "list[tuple[str, ProjectInstructionMark]]" = []
+    claimed: dict[str, str] = {}
+    for attr, value in vars(cls).items():
+        mark = getattr(value, MARK_ATTR, None)
+        if mark is None:
+            continue
+        if mark.name in claimed:
+            raise ProjectInstructionError(
+                f"{cls.__name__} declares project instruction {mark.name!r} twice, on "
+                f"{claimed[mark.name]}() and {attr}() -- a class has at most one body per "
+                "name; rename one of them, or drop the duplicate decorator"
+            )
+        claimed[mark.name] = attr
+        marked.append((attr, mark))
+    for attr, mark in marked:
+        if _already_registered(mark.name, cls):
+            continue
+        register_project_instruction_body(cls, attr, mark, repo=repo)
+
+
+register_project_instruction_bodies(ProjectActions, None)
+
+
 def register_project_actions(cls: "type[ProjectActions]") -> "type[ProjectActions]":
     """Register *cls* as the calling repo's actions; usable as a decorator.
 
@@ -447,6 +672,14 @@ def register_project_actions(cls: "type[ProjectActions]") -> "type[ProjectAction
     ``bootstrap()`` sets around it. A second registration from the SAME repo
     fails loud; different repos each registering their own class is the
     intended composition, not a collision.
+
+    Also registers *cls*'s marked methods (see :func:`register_project_instruction_bodies`)
+    as this repo's project-instruction bodies -- a repo that overrides
+    ``install`` or declares a new project instruction of its own gets both from
+    one decorator. The table's own rules apply here: a walk shape is fixed by
+    whichever repo declared the name first, and an override of a first-party
+    instruction must carry an options class that inherits the first-party one
+    -- either raises :exc:`~otto.instructions.ProjectInstructionError`.
 
     Returns *cls* unchanged so it can be used as a decorator.
 
@@ -462,6 +695,7 @@ def register_project_actions(cls: "type[ProjectActions]") -> "type[ProjectAction
             "attributes the class to its repo."
         )
     PROJECT_ACTIONS.register(repo_name, cls, origin=cls.__module__)
+    register_project_instruction_bodies(cls, repo_name)
     return cls
 
 

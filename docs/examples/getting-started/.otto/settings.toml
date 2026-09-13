@@ -9,7 +9,12 @@ version = "0.1.0"
 
 # doc: begin libs
 libs = ["libs"]
-init = ["gs_example"]
+init = [
+    "gs_example",           # frames, parsers, proxies, session setups
+    "gs_example.products",  # the product provider
+    "gs_example.dev_tools", # the dev-tool provider
+    "gs_example.actions",   # this repo's ProjectActions
+]
 # doc: end libs
 
 # doc: begin lab-sources

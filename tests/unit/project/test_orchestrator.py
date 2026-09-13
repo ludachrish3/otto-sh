@@ -59,8 +59,13 @@ from otto.project import (
     PROJECT_ACTIONS,
     Cleanliness,
     CleanlinessKind,
+    CleanupOptions,
+    GetLogsOptions,
+    InstallOptions,
     InstallState,
+    InstallToolsOptions,
     ProjectActions,
+    UninstallOptions,
     orchestrator,
 )
 from otto.project.orchestrator import InactiveRequiredDependencyError
@@ -224,24 +229,28 @@ def _recording_actions(events, flags, questions=None, failing=None, state=None, 
                 return Result(Status.Failed, msg=f"{verb} refused")
             return Result(Status.Success)
 
-        async def install(self):
+        async def install(self, opts):
+            del opts
             return await self._note("install")
 
-        async def uninstall(self, get_product_logs=True):
-            return await self._note("uninstall", get_product_logs=get_product_logs)
+        async def uninstall(self, opts):
+            return await self._note("uninstall", product_logs=opts.product_logs)
 
-        async def cleanup(self, get_product_logs=True):
-            return await self._note("cleanup", get_product_logs=get_product_logs)
+        async def cleanup(self, opts):
+            return await self._note("cleanup", product_logs=opts.product_logs)
 
-        async def get_logs(self, product=True, require_product_logs=False):
+        async def get_logs(self, opts):
             return await self._note(
-                "get_logs", product=product, require_product_logs=require_product_logs
+                "get_logs",
+                product_logs=opts.product_logs,
+                require_product_logs=opts.require_product_logs,
             )
 
-        async def install_tools(self, dev=True, toolchain=False):
-            return await self._note("install_tools", dev=dev, toolchain=toolchain)
+        async def install_tools(self, opts):
+            return await self._note("install_tools", dev=opts.dev, toolchain=opts.toolchain)
 
-        async def status(self):
+        async def status(self, opts):
+            del opts
             questions.append((self.repo.name, "status"))
             if isinstance(state, dict):
                 return state[self.repo.name]
@@ -522,8 +531,8 @@ async def test_uninstall_does_not_mutate_the_cached_repo_order(monkeypatch):
 @pytest.mark.asyncio
 async def test_uninstall_forwards_get_product_logs_to_every_repo(monkeypatch):
     lab = _wire(monkeypatch, repos=["base", "app"])
-    await project.uninstall(get_product_logs=False)
-    assert [f[2] for f in lab.flags] == [{"get_product_logs": False}] * 2
+    await project.uninstall(UninstallOptions(product_logs=False))
+    assert [f[2] for f in lab.flags] == [{"product_logs": False}] * 2
 
 
 # ── the single debug sweep ───────────────────────────────────────────────
@@ -546,7 +555,7 @@ async def test_debug_sweep_runs_once_per_host_after_all_uninstalls(monkeypatch):
 @pytest.mark.asyncio
 async def test_uninstall_get_debug_logs_false_skips_the_sweep(monkeypatch):
     lab = _wire(monkeypatch, repos=["app"], hosts=1)
-    await project.uninstall(get_debug_logs=False)
+    await project.uninstall(UninstallOptions(debug_logs=False))
     assert "get_debug_logs" not in _verbs(lab.events)
 
 
@@ -641,7 +650,7 @@ async def test_cleanup_get_debug_logs_false_still_removes_the_toolchain(monkeypa
     # Kills: hanging the host-global removal off the debug-log flag — two
     # unrelated host-global steps that happen to sit next to each other.
     lab = _wire(monkeypatch, repos=["app"], hosts=1)
-    assert (await project.cleanup(get_debug_logs=False)).is_ok
+    assert (await project.cleanup(CleanupOptions(debug_logs=False))).is_ok
     assert _verbs(lab.events) == [
         "cleanup",
         "remove_toolchain_tools",
@@ -653,8 +662,8 @@ async def test_cleanup_get_debug_logs_false_still_removes_the_toolchain(monkeypa
 @pytest.mark.asyncio
 async def test_cleanup_forwards_get_product_logs(monkeypatch):
     lab = _wire(monkeypatch, repos=["app"])
-    await project.cleanup(get_product_logs=False)
-    assert lab.flags == [("app", "cleanup", {"get_product_logs": False})]
+    await project.cleanup(CleanupOptions(product_logs=False))
+    assert lab.flags == [("app", "cleanup", {"product_logs": False})]
 
 
 # ── cleanup: the lab's own infrastructure ────────────────────────────────
@@ -840,7 +849,7 @@ async def test_cleanup_reports_a_host_the_tunnel_reap_could_not_reach(monkeypatc
 @pytest.mark.asyncio
 async def test_cleanup_no_reset_impairments_skips_only_that_step(monkeypatch):
     lab = _wire(monkeypatch, repos=["app"], hosts=1)
-    assert (await project.cleanup(reset_impairments=False)).is_ok
+    assert (await project.cleanup(CleanupOptions(reset_impairments=False))).is_ok
     assert "repair_all" not in _verbs(lab.events)
     assert ("lab", "remove_all_tunnels") in lab.events
 
@@ -848,7 +857,7 @@ async def test_cleanup_no_reset_impairments_skips_only_that_step(monkeypatch):
 @pytest.mark.asyncio
 async def test_cleanup_no_remove_tunnels_skips_only_that_step(monkeypatch):
     lab = _wire(monkeypatch, repos=["app"], hosts=1)
-    assert (await project.cleanup(remove_tunnels=False)).is_ok
+    assert (await project.cleanup(CleanupOptions(remove_tunnels=False))).is_ok
     assert "remove_all_tunnels" not in _verbs(lab.events)
     assert ("lab", "repair_all") in lab.events
 
@@ -927,7 +936,7 @@ async def test_cleanup_dry_run_preview_of_the_tunnel_reap_is_not_a_reap(monkeypa
         hosts=0,
         reap=RemovedReport([], {}, [], [], plan=DryRunPlan(["scan 0 has_bash host(s)"], ["what"])),
     )
-    result = await project.cleanup(reset_impairments=False)
+    result = await project.cleanup(CleanupOptions(reset_impairments=False))
     assert result.status is Status.NotRun
     assert "dry run" in result.msg
 
@@ -955,15 +964,15 @@ async def test_get_logs_is_best_effort_across_repos(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_logs_debug_false_skips_the_sweep(monkeypatch):
     lab = _wire(monkeypatch, repos=["app"], hosts=1)
-    assert (await project.get_logs(debug=False)).is_ok
+    assert (await project.get_logs(GetLogsOptions(debug_logs=False))).is_ok
     assert _verbs(lab.events) == ["get_logs"]
 
 
 @pytest.mark.asyncio
 async def test_get_logs_forwards_require_product_logs(monkeypatch):
     lab = _wire(monkeypatch, repos=["app"])
-    await project.get_logs(require_product_logs=True)
-    assert lab.flags == [("app", "get_logs", {"product": True, "require_product_logs": True})]
+    await project.get_logs(GetLogsOptions(require_product_logs=True))
+    assert lab.flags == [("app", "get_logs", {"product_logs": True, "require_product_logs": True})]
 
 
 @pytest.mark.asyncio
@@ -971,7 +980,7 @@ async def test_get_logs_require_product_logs_with_product_false_is_refused(monke
     # Kills: leaning on the per-repo refusal, which never fires in a lab with
     # no repos — the requirement would be parsed and silently unenforceable.
     lab = _wire(monkeypatch, repos=[], hosts=1)
-    result = await project.get_logs(product=False, require_product_logs=True)
+    result = await project.get_logs(GetLogsOptions(product_logs=False, require_product_logs=True))
     assert not result.is_ok
     assert "require_product_logs" in result.msg
     assert lab.events == []  # nothing ran, including the debug sweep
@@ -996,8 +1005,9 @@ async def test_install_tools_default_leaves_the_toolchain_alone(monkeypatch):
     lab = _wire(monkeypatch, repos=["app"], hosts=1)
     assert (await project.install_tools()).is_ok
     assert _verbs(lab.events) == ["install_tools"]
-    # toolchain=False is the repo's own default, never forwarded: the toolchain
-    # is host-global, so no repo is ever ASKED to place it.
+    # toolchain=False is the default the operator did not change; the flag
+    # rides along on the options instance, but the toolchain is host-global, so
+    # otto's own body never acts on it.
     assert lab.flags == [("app", "install_tools", {"dev": True, "toolchain": False})]
 
 
@@ -1007,7 +1017,7 @@ async def test_install_tools_toolchain_runs_the_host_global_sweep(monkeypatch):
     # host, shared by every owner), so if the orchestrator does not sweep,
     # ``install_tools(toolchain=True)`` is a silent end-to-end no-op.
     lab = _wire(monkeypatch, repos=["app"], hosts=2)
-    assert (await project.install_tools(toolchain=True)).is_ok
+    assert (await project.install_tools(InstallToolsOptions(toolchain=True))).is_ok
     assert _verbs(lab.events) == [
         "install_tools",
         "install_toolchain_tools",
@@ -1018,10 +1028,11 @@ async def test_install_tools_toolchain_runs_the_host_global_sweep(monkeypatch):
 @pytest.mark.asyncio
 async def test_install_tools_dev_false_toolchain_true_still_sweeps(monkeypatch):
     lab = _wire(monkeypatch, repos=["app"], hosts=1)
-    assert (await project.install_tools(dev=False, toolchain=True)).is_ok
-    # The repo is still not asked for toolchain work — the sweep below IS the
-    # toolchain half, and asking both would place it twice.
-    assert lab.flags == [("app", "install_tools", {"dev": False, "toolchain": False})]
+    assert (await project.install_tools(InstallToolsOptions(dev=False, toolchain=True))).is_ok
+    # --toolchain reaches the repo's own options instance — a subclass with
+    # toolchain work of its own has somewhere to hang it — while the
+    # host-global sweep below stays the orchestrator's, performed once.
+    assert lab.flags == [("app", "install_tools", {"dev": False, "toolchain": True})]
     assert ("h0", "install_toolchain_tools") in lab.events
 
 
@@ -1029,7 +1040,7 @@ async def test_install_tools_dev_false_toolchain_true_still_sweeps(monkeypatch):
 async def test_install_tools_reports_a_failed_toolchain_sweep(monkeypatch):
     lab = _wire(monkeypatch, repos=["app"], hosts=1)
     lab.hosts[0].script("install_toolchain_tools", Result(Status.Failed, msg="no space"))
-    result = await project.install_tools(toolchain=True)
+    result = await project.install_tools(InstallToolsOptions(toolchain=True))
     assert not result.is_ok
     assert "h0" in result.msg
     assert "no space" in result.msg
@@ -1040,7 +1051,7 @@ async def test_install_tools_failed_dev_walk_never_starts_the_toolchain(monkeypa
     # Fail-fast, mirroring the host verb: the toolchain is not placed on top of
     # tooling that is known to be missing.
     lab = _wire(monkeypatch, repos=["app"], hosts=1, failing=("app", "install_tools"))
-    result = await project.install_tools(toolchain=True)
+    result = await project.install_tools(InstallToolsOptions(toolchain=True))
     assert not result.is_ok
     assert "install_toolchain_tools" not in _verbs(lab.events)
 
@@ -1052,7 +1063,8 @@ def _state_actions(state):
     """A registered subclass that answers *state* — an opinion, held without products."""
 
     class _Scripted(ProjectActions):
-        async def status(self):
+        async def status(self, opts):
+            del opts
             return state
 
     return _Scripted
@@ -1661,7 +1673,7 @@ async def test_ensure_installed_already_installed_is_a_skip_not_a_fresh_install(
 @pytest.mark.asyncio
 async def test_ensure_installed_recover_partial_false_skips_the_uninstall(monkeypatch):
     lab = _wire(monkeypatch, repos=["app"], state=InstallState.PARTIAL)
-    await project.ensure_installed(recover_partial=False)
+    await project.ensure_installed(InstallOptions(recover_partial=False))
     assert _verbs(lab.events) == ["install"]
 
 
@@ -1708,11 +1720,11 @@ async def test_ensure_clean_cleans_only_a_dirty_lab(monkeypatch):
 async def test_install_ensure_flag_delegates_to_the_converge(monkeypatch):
     # The CLI's ``install --ensure`` is this argument, not a second code path.
     lab = _wire(monkeypatch, repos=["app"], state=InstallState.PARTIAL)
-    await project.install(ensure=True)
+    await project.install(InstallOptions(ensure=True))
     assert _verbs(lab.events) == ["uninstall", "install"]
 
     lab = _wire(monkeypatch, repos=["app"], state=InstallState.PARTIAL)
-    await project.install(ensure=True, recover_partial=False)
+    await project.install(InstallOptions(ensure=True, recover_partial=False))
     assert _verbs(lab.events) == ["install"]
 
     # …and without it, install is the plain walk: no status is consulted, so a
@@ -2494,9 +2506,12 @@ class TestTheRefusalIsBuildUpOnly:
 
         assert bed.events == []
 
-    @pytest.mark.parametrize("verb", ["uninstall", "cleanup", "get_logs"])
+    @pytest.mark.parametrize(
+        ("verb", "walk"),
+        [("uninstall", "uninstall"), ("cleanup", "cleanup"), ("get_logs", "get-logs")],
+    )
     @pytest.mark.asyncio
-    async def test_a_teardown_or_reading_verb_completes(self, monkeypatch, verb, caplog):
+    async def test_a_teardown_or_reading_verb_completes(self, monkeypatch, verb, walk, caplog):
         """It runs, it succeeds, and it still SAYS what it found.
 
         The message is asserted here rather than in a class of its own because
@@ -2513,7 +2528,7 @@ class TestTheRefusalIsBuildUpOnly:
         said = _said(caplog)
         assert f"repo 'repo4' requires '{_PROVIDER}'" in said
         assert "not applicable to the loaded lab(s) [unix_alt]" in said
-        assert f"continuing, because {verb} does not build repo4 on top of it" in said
+        assert f"continuing, because {walk} does not build repo4 on top of it" in said
         assert f"--exclude-projects={_PROVIDER_NORM}" in said
 
     @pytest.mark.asyncio
@@ -3053,3 +3068,257 @@ def test_orchestrator_functions_are_reachable_from_the_package():
         "ensure_clean",
     ):
         assert callable(getattr(project, name)), name
+
+
+# ── per-repo options: one source, one options class per body ─────────────
+
+
+class TestPerRepoOptions:
+    """Each body is built its OWN options class from the shared source."""
+
+    @pytest.fixture
+    def two_repo_lab(self, monkeypatch):
+        """Wire a two-repo lab (``a`` then ``b`` in walk order) around the given classes.
+
+        The classes arrive already registered by ``@register_project_actions``
+        -- that decorator is what attributes their instruction bodies to a repo
+        -- so this only re-registers them under the repo names this file's
+        doubles use, and points the orchestrator's lookups at them.
+        """
+
+        def wire(**classes):
+            for label, cls in classes.items():
+                PROJECT_ACTIONS.register(label.lower(), cls, overwrite=True, origin="test")
+            ctx = _FakeCtx([])
+            _wire_lab(monkeypatch, ["a", "b"], ctx)
+            return ctx
+
+        return wire
+
+    @pytest.mark.asyncio
+    async def test_kwargs_source_hands_each_repo_its_declared_class(self, two_repo_lab):
+        # Kills: one options instance built once and handed to every body. Repo
+        # ``a`` declared a field of its own, so the flag the operator typed has
+        # to reach IT -- while repo ``b``, which declared nothing, must still
+        # get otto's own class rather than its neighbour's.
+        from typing import Annotated
+
+        import typer
+
+        from otto import options
+        from otto.cli.run import instruction
+        from otto.project import ProjectActions, register_project_actions
+        from otto.project import actions as mod
+        from otto.project.orchestrator import run_project_instruction
+        from otto.registry import registering_repo
+
+        mod.register_project_instruction_bodies(ProjectActions, None)
+        seen: "dict[str, object]" = {}
+
+        @options
+        class AInstall(InstallOptions):
+            variant: Annotated[str, typer.Option(help="v")] = "field"
+
+        with registering_repo("a"):
+
+            @register_project_actions
+            class A(ProjectActions):
+                @instruction(options=AInstall)
+                async def install(self, opts: AInstall):
+                    seen["a"] = opts
+                    return Result(Status.Success)
+
+        with registering_repo("b"):
+
+            @register_project_actions
+            class B(ProjectActions):
+                async def install(self, opts):
+                    seen["b"] = opts
+                    return Result(Status.Success)
+
+        two_repo_lab(A=A, B=B)
+
+        result = await run_project_instruction(
+            "install", {"ensure": False, "recover_partial": True, "variant": "debug"}
+        )
+
+        assert result.is_ok
+        assert type(seen["a"]) is AInstall
+        assert seen["a"].variant == "debug"
+        assert type(seen["b"]) is InstallOptions
+
+    @pytest.mark.asyncio
+    async def test_a_repo_added_instruction_walks_and_combines(self, two_repo_lab):
+        """A name otto never declared gets the same walk, order and combiner."""
+        from otto.cli.run import instruction
+        from otto.project import ProjectActions, register_project_actions
+        from otto.project.orchestrator import run_project_instruction
+        from otto.registry import registering_repo
+
+        order: "list[str]" = []
+
+        with registering_repo("a"):
+
+            @register_project_actions
+            class A(ProjectActions):
+                # The FIRST declaration fixes the walk shape; b's omits it and
+                # must inherit it, which is what makes the order below a fact
+                # about the table rather than about two agreeing decorators.
+                @instruction(walk="reverse")
+                async def deploy(self):
+                    order.append("a")
+                    return Result(Status.Success)
+
+        with registering_repo("b"):
+
+            @register_project_actions
+            class B(ProjectActions):
+                @instruction()
+                async def deploy(self):
+                    order.append("b")
+                    return Result(Status.Success)
+
+        two_repo_lab(A=A, B=B)
+
+        result = await run_project_instruction("deploy", {})
+
+        assert order == ["b", "a"]
+        assert result.is_ok
+
+    @pytest.mark.asyncio
+    async def test_first_failure_names_the_repo_and_stops_a_forward_walk(self, two_repo_lab):
+        """``install``'s shape: fail-fast, with the repo named in the message."""
+        from otto.project import ProjectActions, register_project_actions
+        from otto.project.orchestrator import run_project_instruction
+        from otto.registry import registering_repo
+
+        ran: "list[str]" = []
+
+        with registering_repo("a"):
+
+            @register_project_actions
+            class A(ProjectActions):
+                async def install(self, opts):
+                    del opts
+                    ran.append("a")
+                    return Result(Status.Failed, msg="boom")
+
+        with registering_repo("b"):
+
+            @register_project_actions
+            class B(ProjectActions):
+                async def install(self, opts):
+                    del opts
+                    ran.append("b")
+                    return Result(Status.Success)
+
+        two_repo_lab(A=A, B=B)
+
+        result = await run_project_instruction("install", {})
+
+        assert result.msg == "install failed in repo 'a': boom"
+        assert ran == ["a"]
+
+    @pytest.mark.asyncio
+    async def test_continue_on_failure_walks_every_repo_and_reports_the_first(self, two_repo_lab):
+        """``uninstall``'s shape: reversed, best-effort, first failure reported."""
+        from otto.project import ProjectActions, register_project_actions
+        from otto.project.orchestrator import run_project_instruction
+        from otto.registry import registering_repo
+
+        ran: "list[str]" = []
+
+        with registering_repo("a"):
+
+            @register_project_actions
+            class A(ProjectActions):
+                async def uninstall(self, opts):
+                    del opts
+                    ran.append("a")
+                    return Result(Status.Success)
+
+        with registering_repo("b"):
+
+            @register_project_actions
+            class B(ProjectActions):
+                async def uninstall(self, opts):
+                    del opts
+                    ran.append("b")
+                    return Result(Status.Failed, msg="stuck")
+
+        two_repo_lab(A=A, B=B)
+
+        result = await run_project_instruction("uninstall", {"debug_logs": False})
+
+        assert ran == ["b", "a"]
+        assert result.msg == "uninstall failed in repo 'b': stuck"
+
+    @pytest.mark.asyncio
+    async def test_a_non_result_body_with_no_combiner_is_not_judged(self, two_repo_lab):
+        """The default combiner reads ``is_ok`` off a Result and off nothing else.
+
+        A repo may declare an instruction whose bodies answer in a vocabulary of
+        their own -- a state, a count, a row -- and declare no ``combine_results``
+        for it. Reading ``is_ok`` off such a value would raise ``AttributeError``
+        out of the orchestrator on the one declaration shape that never asked
+        for a verdict.
+        """
+        from otto.cli.run import instruction
+        from otto.project import ProjectActions, register_project_actions
+        from otto.project.orchestrator import run_project_instruction
+        from otto.registry import registering_repo
+
+        ran: "list[str]" = []
+
+        with registering_repo("a"):
+
+            @register_project_actions
+            class A(ProjectActions):
+                @instruction()
+                async def survey(self):
+                    ran.append("a")
+                    return "a is fine"
+
+        with registering_repo("b"):
+
+            @register_project_actions
+            class B(ProjectActions):
+                @instruction()
+                async def survey(self):
+                    ran.append("b")
+                    return "b is fine"
+
+        two_repo_lab(A=A, B=B)
+
+        result = await run_project_instruction("survey", {})
+
+        assert ran == ["a", "b"]
+        assert result.status is Status.Success
+
+    @pytest.mark.asyncio
+    async def test_the_six_entries_are_resolved_on_the_module_at_call_time(self, monkeypatch):
+        """Kills a ``_ENTRIES`` of function OBJECTS frozen at import.
+
+        The next layer's tests drive the published commands and monkeypatch
+        these very names; a dispatcher holding the original objects would keep
+        running them while every other caller ran the double.
+        """
+        from otto.params import OptionsSource
+        from otto.project.orchestrator import run_project_instruction
+
+        seen: "list[OptionsSource]" = []
+
+        async def _recorder(source):
+            seen.append(source)
+            return Result(Status.Success)
+
+        monkeypatch.setattr(orchestrator, "install", _recorder)
+
+        result = await run_project_instruction(
+            "install", {"ensure": True, "recover_partial": False}
+        )
+
+        assert result.is_ok
+        assert len(seen) == 1
+        assert isinstance(seen[0], OptionsSource)
+        assert seen[0].build(InstallOptions) == InstallOptions(ensure=True, recover_partial=False)

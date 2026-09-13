@@ -1,0 +1,4 @@
+instructions
+============
+
+.. automodule:: otto.instructions

@@ -87,7 +87,9 @@ the bed's, where a command needs one — so what you read is what runs.
 :maxdepth: 1
 
 defining-hosts/index
+defining-products-and-tools
 customizations
+customizing-project-instructions
 boards-of-interest
 reservations
 ```

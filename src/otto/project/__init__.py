@@ -17,6 +17,12 @@ from .actions import PROJECT_ACTIONS as PROJECT_ACTIONS
 from .actions import ProjectActions as ProjectActions
 from .actions import actions_for as actions_for
 from .actions import register_project_actions as register_project_actions
+from .options import CleanupOptions as CleanupOptions
+from .options import GetLogsOptions as GetLogsOptions
+from .options import InstallOptions as InstallOptions
+from .options import InstallToolsOptions as InstallToolsOptions
+from .options import StatusOptions as StatusOptions
+from .options import UninstallOptions as UninstallOptions
 from .orchestrator import cleanliness as cleanliness
 from .orchestrator import cleanup as cleanup
 from .orchestrator import ensure_clean as ensure_clean
@@ -36,3 +42,4 @@ from .state import CleanlinessReport as CleanlinessReport
 from .state import InstallState as InstallState
 from .state import ProjectStatus as ProjectStatus
 from .state import RepoScope as RepoScope
+from .state import combine_install_states as combine_install_states

@@ -270,3 +270,24 @@ class CleanlinessReport:
         if Cleanliness.UNKNOWN in states:
             return Cleanliness.UNKNOWN
         return Cleanliness.CLEAN
+
+
+def combine_install_states(results: "dict[str, InstallState]") -> InstallState:
+    """Fold each counted repo's state into the lab's: the ``status`` combiner.
+
+    Zero counted repos is UNINSTALLED, not a vacuous INSTALLED. All INSTALLED
+    is INSTALLED, all UNINSTALLED is UNINSTALLED, anything mixed -- or any
+    PARTIAL -- is PARTIAL.
+
+    THE CHECK ORDER IS LOAD-BEARING: ``all()`` is vacuously true over an empty
+    sequence, so whichever of the two ``all()`` arms is asked first is the
+    answer for a lab with no counted repos. UNINSTALLED first IS the zero-repo
+    rule -- swapping the arms leaves every other case unchanged and silently
+    reports an empty lab as fully installed.
+    """
+    states = list(results.values())
+    if all(state is InstallState.UNINSTALLED for state in states):
+        return InstallState.UNINSTALLED
+    if all(state is InstallState.INSTALLED for state in states):
+        return InstallState.INSTALLED
+    return InstallState.PARTIAL

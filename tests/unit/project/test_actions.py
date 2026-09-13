@@ -22,9 +22,15 @@ from otto.project import (
     CleanlinessItem,
     CleanlinessKind,
     CleanlinessReport,
+    CleanupOptions,
+    GetLogsOptions,
+    InstallOptions,
     InstallState,
+    InstallToolsOptions,
     ProjectActions,
     ProjectStatus,
+    StatusOptions,
+    UninstallOptions,
     actions_for,
     register_project_actions,
 )
@@ -200,7 +206,7 @@ async def test_default_install_dispatches_owner_scoped_to_all_hosts():
     # Kills: forgetting the owner filter — repo A's actions would install
     # repo B's products (the exact cross-repo bleed the design forbids).
     ctx, hosts = _fake_ctx(n=2)
-    result = await _actions(ctx).install()
+    result = await _actions(ctx).install(InstallOptions())
     assert result.is_ok
     for h in hosts:
         assert h.calls == [("install", {"owner": "acme"})]
@@ -220,7 +226,7 @@ async def test_every_project_walk_is_bound_to_its_own_repos_universe():
     ctx, _ = _fake_ctx(n=1)
     actions = _actions(ctx)
 
-    assert (await actions.install()).is_ok
+    assert (await actions.install(InstallOptions())).is_ok
     assert actions.owns_products is False
     assert ctx.scope_owners == ["acme", "acme"]
 
@@ -229,7 +235,7 @@ async def test_every_project_walk_is_bound_to_its_own_repos_universe():
 async def test_default_install_reduces_first_host_failure():
     ctx, hosts = _fake_ctx(n=2)
     hosts[1].script("install", _fail("no space"))
-    result = await _actions(ctx).install()
+    result = await _actions(ctx).install(InstallOptions())
     assert not result.is_ok
     assert result.status is Status.Failed  # the host's own status, not a generic one
     assert hosts[1].id in result.msg  # kills: dropping WHICH host failed
@@ -242,7 +248,7 @@ async def test_install_reduces_a_captured_host_exception():
     # understands Results would treat a crashed host as a pass.
     ctx, hosts = _fake_ctx(n=2)
     hosts[0].script("install", OSError("ssh died"))
-    result = await _actions(ctx).install()
+    result = await _actions(ctx).install(InstallOptions())
     assert not result.is_ok
     assert "h0" in result.msg
     assert "ssh died" in result.msg
@@ -258,7 +264,7 @@ async def test_uninstall_hardwires_debug_logs_off():
     # overwriting the last). Kills: forwarding get_debug_logs, or omitting it
     # and inheriting the host default of True.
     ctx, hosts = _fake_ctx(n=1)
-    await _actions(ctx).uninstall()
+    await _actions(ctx).uninstall(UninstallOptions())
     assert hosts[0].calls == [
         ("uninstall", {"get_product_logs": True, "get_debug_logs": False, "owner": "acme"}),
     ]
@@ -267,7 +273,7 @@ async def test_uninstall_hardwires_debug_logs_off():
 @pytest.mark.asyncio
 async def test_uninstall_forwards_get_product_logs_false():
     ctx, hosts = _fake_ctx(n=1)
-    await _actions(ctx).uninstall(get_product_logs=False)
+    await _actions(ctx).uninstall(UninstallOptions(product_logs=False))
     assert hosts[0].calls[0][1]["get_product_logs"] is False
 
 
@@ -285,7 +291,7 @@ async def test_cleanup_uninstalls_then_removes_owner_scoped_dev_tools():
     mine = _FakeItem("probe", "acme")
     theirs = _FakeItem("their-probe", "other")
     ctx, hosts = _fake_ctx(n=1, dev_tools=[mine, theirs])
-    result = await _actions(ctx).cleanup()
+    result = await _actions(ctx).cleanup(CleanupOptions())
     assert result.is_ok
     assert hosts[0].calls == [
         ("uninstall", {"get_product_logs": True, "get_debug_logs": False, "owner": "acme"}),
@@ -297,13 +303,13 @@ async def test_cleanup_uninstalls_then_removes_owner_scoped_dev_tools():
 
 @pytest.mark.asyncio
 async def test_cleanup_forwards_get_product_logs_to_the_uninstall_half():
-    # Kills: `await self.uninstall()` with the flag dropped on the floor.
+    # Kills: `await self.uninstall(UninstallOptions())` with the flag dropped on the floor.
     # `cleanup` is `uninstall` plus the tooling, so a caller that asked to skip
     # the log haul asked cleanup's uninstall half to skip it too — and hard-
     # wiring True passes every other cleanup test in this file, all of which
     # take the default.
     ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
-    result = await _actions(ctx).cleanup(get_product_logs=False)
+    result = await _actions(ctx).cleanup(CleanupOptions(product_logs=False))
     assert result.is_ok
     assert hosts[0].calls == [
         ("uninstall", {"get_product_logs": False, "get_debug_logs": False, "owner": "acme"}),
@@ -315,7 +321,7 @@ async def test_cleanup_forwards_get_product_logs_to_the_uninstall_half():
 async def test_cleanup_reports_a_failed_dev_tool_removal():
     ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
     hosts[0].script("uninstall_dev_tools", _fail("busy"))
-    result = await _actions(ctx).cleanup()
+    result = await _actions(ctx).cleanup(CleanupOptions())
     assert not result.is_ok
     assert "h0" in result.msg
     assert "busy" in result.msg
@@ -326,10 +332,143 @@ async def test_cleanup_still_removes_dev_tools_after_a_failed_uninstall():
     # Best-effort teardown: a stranded product must not strand the tooling too.
     ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
     hosts[0].script("uninstall", _fail("busy"))
-    result = await _actions(ctx).cleanup()
+    result = await _actions(ctx).cleanup(CleanupOptions())
     assert not result.is_ok
     assert "busy" in result.msg  # the FIRST failure is what is reported
     assert hosts[0].calls[-1] == ("uninstall_dev_tools", {"owner": "acme"})
+
+
+@pytest.mark.asyncio
+async def test_cleanup_hands_a_repo_override_an_instance_of_its_own_class():
+    """``cleanup``'s product half honours a repo's ``uninstall``, with the repo's class.
+
+    THE HEADLINE USE CASE IS THE TRIGGER: a repo adds a flag to one of the
+    six. ``cleanup``'s product half is ``self.uninstall(...)``, which resolves
+    through the MRO to the repo's body -- and used to hand it an instance of
+    OTTO's class, so the first read of the repo's own field raised
+    ``AttributeError`` out of ``otto run cleanup`` and out of every
+    ``ensure("clean")`` marker. The instance is rebuilt as the registered
+    body's class now.
+
+    Two claims, and the second is the one a name-matching rebuild would get
+    wrong: the repo's own ``soft`` takes its DEFAULT, and ``product_logs``
+    ARRIVES -- ``cleanup``'s caller asked to skip the log haul and the
+    override has to hear it, which it does because the field is shared by
+    declaring class.
+
+    Kills: handing over the base instance (``AttributeError`` on ``soft``),
+    and building the repo's class from defaults only (``product_logs`` comes
+    back True).
+    """
+    from typing import Annotated
+
+    import typer
+
+    from otto import options
+    from otto.cli.run import instruction
+    from otto.project import actions as mod
+
+    mod.register_project_instruction_bodies(ProjectActions, None)
+    seen = []
+
+    @options
+    class SoftUninstall(UninstallOptions):
+        soft: Annotated[bool, typer.Option(help="Quiesce before teardown.")] = True
+
+    with registering_repo("softy"):
+
+        @register_project_actions
+        class Softy(ProjectActions):
+            @instruction(options=SoftUninstall)
+            async def uninstall(self, opts: SoftUninstall):
+                seen.append((type(opts).__name__, opts.soft, opts.product_logs))
+                return await super().uninstall(opts)
+
+    ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
+    result = await _actions(ctx, cls=Softy).cleanup(CleanupOptions(product_logs=False))
+
+    assert result.is_ok
+    assert seen == [("SoftUninstall", True, False)]
+    assert hosts[0].calls == [
+        ("uninstall", {"get_product_logs": False, "get_debug_logs": False, "owner": "acme"}),
+        ("uninstall_dev_tools", {"owner": "acme"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_refuses_an_uninstall_override_with_a_required_field():
+    """A field with NO default cannot be built from otto's class, so ``cleanup`` refuses.
+
+    The one shape the rebuild cannot serve. ``cleanup`` holds a
+    ``CleanupOptions``; a required field on the repo's ``uninstall`` class was
+    never asked for on ``otto run cleanup``'s command line and has no default
+    to fall back on, so there is no value to pass and no way to invent one.
+
+    REFUSED BY NAME, up front, rather than left to the constructor: a pydantic
+    options class would raise ``ValidationError`` (rendered as a CLI
+    ``BadParameter``) and a plain dataclass a bare ``TypeError``, and neither
+    mentions ``cleanup`` -- which is the only place the repo can fix it.
+    """
+    from typing import Annotated
+
+    import typer
+
+    from otto import options
+    from otto.cli.run import instruction
+    from otto.instructions import ProjectInstructionError
+    from otto.project import actions as mod
+
+    mod.register_project_instruction_bodies(ProjectActions, None)
+    ran = []
+
+    @options(kw_only=True)
+    class DrainUninstall(UninstallOptions):
+        drain: Annotated[bool, typer.Option(help="Drain before teardown.")]
+
+    with registering_repo("drainer"):
+
+        @register_project_actions
+        class Drainer(ProjectActions):
+            @instruction(options=DrainUninstall)
+            async def uninstall(self, opts: DrainUninstall):
+                ran.append(opts.drain)
+                return await super().uninstall(opts)
+
+    ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
+    with pytest.raises(ProjectInstructionError) as caught:
+        await _actions(ctx, cls=Drainer).cleanup(CleanupOptions())
+
+    message = str(caught.value)
+    assert "drain" in message
+    assert "DrainUninstall" in message
+    assert "cleanup" in message  # names the method the repo must override too
+    assert ran == []
+    assert hosts[0].calls == []  # refused BEFORE the teardown started
+
+
+@pytest.mark.asyncio
+async def test_cleanup_over_an_unregistered_subclass_falls_back_to_the_base_options():
+    """No registered body for this class means nothing better to build than otto's own.
+
+    A subclass used WITHOUT ``@register_project_actions`` -- a test double, or
+    a class driven directly -- has no body in the table, so ``body_for`` lands
+    on otto's, whose options class is the one ``cleanup`` already holds. The
+    fallback is what keeps such a class working rather than raising on a
+    lookup that was never going to find anything.
+    """
+    seen = []
+
+    class Unregistered(ProjectActions):
+        async def uninstall(self, opts):
+            seen.append(type(opts).__name__)
+            return await super().uninstall(opts)
+
+    ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
+    result = await _actions(ctx, cls=Unregistered).cleanup(CleanupOptions(product_logs=False))
+
+    assert result.is_ok
+    assert seen == ["UninstallOptions"]
+    assert hosts[0].calls[0][1]["get_product_logs"] is False
 
 
 @pytest.mark.asyncio
@@ -354,8 +493,8 @@ async def test_dev_tool_walks_dispatch_through_the_host_instance():
 
     host = _OverridingHost("h0", dev_tools=[_FakeItem("probe", "acme")])
     actions = _actions(_FakeCtx([host]))
-    assert (await actions.install_tools()).is_ok
-    assert (await actions.cleanup()).is_ok
+    assert (await actions.install_tools(InstallToolsOptions())).is_ok
+    assert (await actions.cleanup(CleanupOptions())).is_ok
     assert ("overridden-install", {"owner": "acme"}) in host.calls
     assert ("overridden-uninstall", {"owner": "acme"}) in host.calls
 
@@ -372,7 +511,7 @@ async def test_install_tools_dispatches_the_owner_scoped_dev_tool_install():
     mine = _FakeItem("probe", "acme")
     theirs = _FakeItem("their-probe", "other")
     ctx, hosts = _fake_ctx(n=2, dev_tools=[mine, theirs])
-    result = await _actions(ctx).install_tools()
+    result = await _actions(ctx).install_tools(InstallToolsOptions())
     assert result.is_ok
     for h in hosts:
         assert h.calls == [("install_dev_tools", {"owner": "acme"})]
@@ -387,7 +526,7 @@ async def test_install_tools_reports_a_failed_dev_tool_install_naming_the_host()
     # owes is reporting that failure WITH the host that produced it.
     ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
     hosts[0].script("install_dev_tools", _fail("exec format error"))
-    result = await _actions(ctx).install_tools()
+    result = await _actions(ctx).install_tools(InstallToolsOptions())
     assert not result.is_ok
     assert "h0" in result.msg
     assert "exec format error" in result.msg
@@ -397,7 +536,7 @@ async def test_install_tools_reports_a_failed_dev_tool_install_naming_the_host()
 async def test_install_tools_dev_false_touches_nothing():
     mine = _FakeItem("probe", "acme")
     ctx, hosts = _fake_ctx(n=1, dev_tools=[mine])
-    assert (await _actions(ctx).install_tools(dev=False)).is_ok
+    assert (await _actions(ctx).install_tools(InstallToolsOptions(dev=False))).is_ok
     assert hosts[0].calls == []
     assert mine.calls == []
 
@@ -410,7 +549,7 @@ async def test_install_tools_toolchain_is_a_repo_level_noop_by_design():
     # DECLARED contract of this seam, not an oversight a reader has to guess at.
     mine = _FakeItem("probe", "acme")
     ctx, hosts = _fake_ctx(n=1, dev_tools=[mine])
-    result = await _actions(ctx).install_tools(dev=False, toolchain=True)
+    result = await _actions(ctx).install_tools(InstallToolsOptions(dev=False, toolchain=True))
     assert result.is_ok
     assert hosts[0].calls == []
     assert mine.calls == []
@@ -429,7 +568,7 @@ async def test_install_tools_toolchain_true_does_not_swallow_the_dev_walk():
     # to install either way).
     mine = _FakeItem("probe", "acme")
     ctx, hosts = _fake_ctx(n=1, dev_tools=[mine])
-    result = await _actions(ctx).install_tools(dev=True, toolchain=True)
+    result = await _actions(ctx).install_tools(InstallToolsOptions(dev=True, toolchain=True))
     assert result.is_ok
     assert hosts[0].calls == [("install_dev_tools", {"owner": "acme"})]
 
@@ -440,7 +579,7 @@ async def test_install_tools_toolchain_true_does_not_swallow_the_dev_walk():
 @pytest.mark.asyncio
 async def test_get_logs_dispatches_owner_scoped_product_haul():
     ctx, hosts = _fake_ctx(n=2)
-    result = await _actions(ctx).get_logs()
+    result = await _actions(ctx).get_logs(GetLogsOptions())
     assert result.is_ok
     for h in hosts:
         assert h.calls == [("get_product_logs", {"owner": "acme"})]
@@ -451,7 +590,7 @@ async def test_get_logs_product_false_gathers_nothing():
     # There is no debug half here on purpose (host debug logs belong to no
     # repo), so product=False leaves this action with nothing to do.
     ctx, hosts = _fake_ctx(n=1)
-    assert (await _actions(ctx).get_logs(product=False)).is_ok
+    assert (await _actions(ctx).get_logs(GetLogsOptions(product_logs=False))).is_ok
     assert hosts[0].calls == []
 
 
@@ -483,7 +622,7 @@ async def test_get_logs_require_product_logs_fails_when_an_owning_host_retrieved
             ),
         ]
     )
-    result = await _actions(ctx).get_logs(require_product_logs=True)
+    result = await _actions(ctx).get_logs(GetLogsOptions(require_product_logs=True))
     assert not result.is_ok
     assert "h1" in result.msg
     assert "h0" not in result.msg  # the host that DID deliver is not accused
@@ -503,12 +642,12 @@ async def test_get_logs_require_product_logs_only_asks_hosts_this_repo_owns(tmp_
         log_dir=_log_dir(tmp_path, "bare", delivered=False),
     )
     actions = _actions(_FakeCtx([owner_host, bare_host]))
-    assert (await actions.get_logs(require_product_logs=True)).is_ok
+    assert (await actions.get_logs(GetLogsOptions(require_product_logs=True))).is_ok
 
     # …and the OWNING host delivering nothing is still a failure that names it,
     # so the narrowed walk cannot degrade into no walk at all.
     (mine / "product" / "app.log").unlink()
-    result = await actions.get_logs(require_product_logs=True)
+    result = await actions.get_logs(GetLogsOptions(require_product_logs=True))
     assert not result.is_ok
     assert "h0" in result.msg
 
@@ -521,7 +660,7 @@ async def test_get_logs_require_product_logs_is_satisfied_by_a_haul(tmp_path):
         log_dir=_log_dir(tmp_path, "logs", delivered=True),
     )
     ctx = _FakeCtx([host])
-    assert (await _actions(ctx).get_logs(require_product_logs=True)).is_ok
+    assert (await _actions(ctx).get_logs(GetLogsOptions(require_product_logs=True))).is_ok
 
 
 @pytest.mark.asyncio
@@ -529,7 +668,9 @@ async def test_get_logs_require_product_logs_with_product_false_is_refused():
     # A requirement that cannot be met is refused, not ignored: the haul it
     # requires is the step being skipped.
     ctx, hosts = _fake_ctx(n=1)
-    result = await _actions(ctx).get_logs(product=False, require_product_logs=True)
+    result = await _actions(ctx).get_logs(
+        GetLogsOptions(product_logs=False, require_product_logs=True)
+    )
     assert not result.is_ok
     assert "require_product_logs" in result.msg
     assert hosts[0].calls == []
@@ -546,7 +687,7 @@ async def test_get_logs_requirement_is_not_checked_after_a_failed_haul(tmp_path)
         log_dir=_log_dir(tmp_path, "logs", delivered=False),
     )
     host.script("get_product_logs", _fail("transfer refused"))
-    result = await _actions(_FakeCtx([host])).get_logs(require_product_logs=True)
+    result = await _actions(_FakeCtx([host])).get_logs(GetLogsOptions(require_product_logs=True))
     assert not result.is_ok
     assert "transfer refused" in result.msg
 
@@ -566,7 +707,7 @@ async def test_status_tristate():
         ([False, False], InstallState.UNINSTALLED),
     ]:
         ctx, _ = _ctx_with_products("acme", installed_flags)
-        state = await _actions(ctx).status()
+        state = await _actions(ctx).status(StatusOptions())
         assert state is expected, installed_flags
 
 
@@ -576,7 +717,7 @@ async def test_status_is_partial_across_hosts_not_only_within_one():
     # is_installed() reduction would call this INSTALLED-somewhere or clean.
     a = _FakeHost("h0", products=[_FakeItem("p", "acme", installed=True)])
     b = _FakeHost("h1", products=[_FakeItem("p", "acme", installed=False)])
-    state = await _actions(_FakeCtx([a, b])).status()
+    state = await _actions(_FakeCtx([a, b])).status(StatusOptions())
     assert state is InstallState.PARTIAL
 
 
@@ -585,7 +726,7 @@ async def test_status_ignores_another_repos_products():
     # Kills: counting the whole fleet's products — another repo's half-install
     # would drag this repo to PARTIAL and its full install would fake ours.
     ctx, _ = _ctx_with_products("acme", [True, True], other_flags=[False, False])
-    assert await _actions(ctx).status() is InstallState.INSTALLED
+    assert await _actions(ctx).status(StatusOptions()) is InstallState.INSTALLED
 
 
 @pytest.mark.asyncio
@@ -593,7 +734,7 @@ async def test_status_with_no_owned_products_is_uninstalled():
     # Mirrors Host.is_installed's empty-products rule: nothing that could be
     # installed is not vacuously "installed".
     ctx, _ = _ctx_with_products("acme", [], other_flags=[True])
-    assert await _actions(ctx).status() is InstallState.UNINSTALLED
+    assert await _actions(ctx).status(StatusOptions()) is InstallState.UNINSTALLED
 
 
 @pytest.mark.asyncio
@@ -618,11 +759,98 @@ async def test_is_uninstalled_reads_status_rather_than_counting_again():
     # own product walk would ignore that override entirely and answer for a
     # fleet the repo has already said not to read.
     class _Opinionated(ProjectActions):
-        async def status(self):
+        async def status(self, opts):
             return InstallState.UNINSTALLED
 
     ctx, _ = _ctx_with_products("acme", [True, True])
     assert await _actions(ctx, cls=_Opinionated).is_uninstalled() is True
+
+
+@pytest.mark.asyncio
+async def test_is_uninstalled_hands_a_repo_override_an_instance_of_its_own_class():
+    """The probe honours a repo's ``status``, with the repo's own options class.
+
+    The same seam as :meth:`cleanup`'s product half, and the same failure it
+    had: ``self.status(StatusOptions())`` resolves through the MRO to the
+    repo's body, so handing over otto's instance raised ``AttributeError`` on
+    the first field the repo declared. The instance is rebuilt as the
+    registered body's class now, and the repo's own field takes its default --
+    there is no ``--full`` equivalent for it to inherit, because
+    ``is_uninstalled`` holds a bare ``StatusOptions``.
+
+    Kills: handing over the base instance (``AttributeError`` on ``deep``).
+    """
+    from typing import Annotated
+
+    import typer
+
+    from otto import options
+    from otto.cli.run import instruction
+    from otto.project import actions as mod
+
+    mod.register_project_instruction_bodies(ProjectActions, None)
+    seen = []
+
+    @options
+    class DeepStatus(StatusOptions):
+        deep: Annotated[bool, typer.Option(help="Probe the device, not the file.")] = True
+
+    with registering_repo("prober"):
+
+        @register_project_actions
+        class Prober(ProjectActions):
+            @instruction(options=DeepStatus)
+            async def status(self, opts: DeepStatus):
+                seen.append((type(opts).__name__, opts.deep))
+                return InstallState.UNINSTALLED
+
+    ctx, _ = _ctx_with_products("acme", [True, True])
+    assert await _actions(ctx, cls=Prober).is_uninstalled() is True
+    assert seen == [("DeepStatus", True)]
+
+
+@pytest.mark.asyncio
+async def test_is_uninstalled_refuses_a_status_override_with_a_required_field():
+    """No default, nothing to build it from, so the probe refuses by name.
+
+    ``is_uninstalled`` takes no arguments at all, so a required field on the
+    repo's ``status`` class has no possible source. Such a repo overrides
+    ``is_uninstalled`` itself -- which the message says.
+    """
+    from typing import Annotated
+
+    import typer
+
+    from otto import options
+    from otto.cli.run import instruction
+    from otto.instructions import ProjectInstructionError
+    from otto.project import actions as mod
+
+    mod.register_project_instruction_bodies(ProjectActions, None)
+    ran = []
+
+    @options(kw_only=True)
+    class DeepStatus(StatusOptions):
+        deep: Annotated[bool, typer.Option(help="Probe the device, not the file.")]
+
+    with registering_repo("prober"):
+
+        @register_project_actions
+        class Prober(ProjectActions):
+            @instruction(options=DeepStatus)
+            async def status(self, opts: DeepStatus):
+                ran.append(opts.deep)
+                return InstallState.UNINSTALLED
+
+    ctx, _ = _ctx_with_products("acme", [True, True])
+    with pytest.raises(ProjectInstructionError) as caught:
+        await _actions(ctx, cls=Prober).is_uninstalled()
+
+    message = str(caught.value)
+    assert "deep" in message
+    assert "DeepStatus" in message
+    assert "is_uninstalled" in message
+    assert ran == []
 
 
 def test_no_is_installed_boolean_on_project_actions():
@@ -824,3 +1052,210 @@ def test_project_status_defaults_to_an_empty_per_repo_map():
     status = ProjectStatus(overall=InstallState.UNINSTALLED)
     assert status.repos == {}
     assert ProjectStatus(overall=InstallState.PARTIAL, repos={"acme": InstallState.PARTIAL}).repos
+
+
+# ── project-instruction body registration ───────────────────────────────
+
+
+class TestBodyRegistration:
+    """Importing the module registers otto's six; registering a subclass adds its bodies."""
+
+    def test_the_base_class_registered_all_six(self) -> None:
+        from otto.instructions import PROJECT_INSTRUCTIONS
+        from otto.project import actions as mod
+
+        # isolation may have rolled the table back
+        mod.register_project_instruction_bodies(ProjectActions, None)
+        names = {"install", "uninstall", "cleanup", "get-logs", "install-tools", "status"}
+        assert names <= set(PROJECT_INSTRUCTIONS.names())
+        for name in names:
+            body = PROJECT_INSTRUCTIONS.get(name).body_for(ProjectActions)
+            assert body is not None
+            assert body.repo is None
+
+    def test_import_time_call_is_what_actually_registers_the_six(self) -> None:
+        """Pins the MODULE-LEVEL ``register_project_instruction_bodies(...)`` call.
+
+        Every other test in this class calls ``register_project_instruction_bodies``
+        itself before asserting, which would still pass with that module-level
+        line deleted. A fresh subprocess import exercises the line the way
+        production does -- nothing else in this process has already registered
+        otto's six -- so a subprocess that never calls the function directly is
+        the one witness that the import alone did the registering.
+
+        A subprocess rather than ``importlib.reload``: reloading this module
+        in-process rebinds its ``ProjectActions`` to a NEW class object that
+        ``otto.project``'s own re-export (bound once, at package-import time)
+        would never see again, splitting the class's identity for the rest of
+        the test session. A fresh interpreter has no such history to corrupt.
+        """
+        import subprocess
+        import sys
+
+        script = (
+            "import otto.project.actions as mod\n"
+            "from otto.instructions import PROJECT_INSTRUCTIONS\n"
+            "names = ['install', 'uninstall', 'cleanup', 'get-logs', 'install-tools', 'status']\n"
+            "ok = all(\n"
+            "    (b := PROJECT_INSTRUCTIONS.get(n).body_for(mod.ProjectActions)) is not None\n"
+            "    and b.owner_class is mod.ProjectActions\n"
+            "    and b.repo is None\n"
+            "    for n in names\n"
+            ")\n"
+            "print('OK' if ok else 'FAIL')\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        assert result.stdout.strip() == "OK", result.stderr
+
+    def test_a_registered_subclass_adds_its_override_and_its_new_instruction(self) -> None:
+        from typing import Annotated
+
+        import typer
+
+        from otto import options
+        from otto.cli.run import instruction
+        from otto.instructions import PROJECT_INSTRUCTIONS
+        from otto.project import InstallOptions
+        from otto.project import actions as mod
+        from otto.registry import registering_repo
+
+        mod.register_project_instruction_bodies(ProjectActions, None)
+
+        @options
+        class WidgetInstall(InstallOptions):
+            variant: Annotated[str, typer.Option(help="v")] = "field"
+
+        @options
+        class DeployOpts:
+            dry: Annotated[bool, typer.Option(help="d")] = False
+
+        with registering_repo("widget"):
+
+            @register_project_actions
+            class Widget(ProjectActions):
+                @instruction(options=WidgetInstall)
+                async def install(self, opts: WidgetInstall):
+                    return await super().install(opts)
+
+                @instruction(options=DeployOpts, walk="reverse")
+                async def deploy(self, opts: DeployOpts):
+                    return Result(Status.Success)
+
+        install = PROJECT_INSTRUCTIONS.get("install")
+        assert install.body_for(Widget).options_cls is WidgetInstall
+        assert install.body_for(Widget).repo == "widget"
+        deploy = PROJECT_INSTRUCTIONS.get("deploy")
+        assert deploy.spec.walk == "reverse"
+        assert deploy.spec.declared_by == "widget"
+
+    def test_an_override_with_foreign_options_is_refused_at_registration(self) -> None:
+        from typing import Annotated
+
+        import typer
+
+        from otto import options
+        from otto.cli.run import instruction
+        from otto.instructions import ProjectInstructionError
+        from otto.project import actions as mod
+        from otto.registry import registering_repo
+
+        mod.register_project_instruction_bodies(ProjectActions, None)
+
+        @options
+        class Foreign:
+            ensure: Annotated[bool, typer.Option(help="e")] = False
+
+        with (
+            registering_repo("widget"),
+            pytest.raises(ProjectInstructionError, match="InstallOptions"),
+        ):
+
+            @register_project_actions
+            class Widget(ProjectActions):
+                @instruction(options=Foreign)
+                async def install(self, opts: Foreign):
+                    return Result(Status.Success)
+
+    def test_two_methods_on_one_class_claiming_one_name_are_refused(self) -> None:
+        """A class holds ONE body per name, so the second declaration cannot be silent.
+
+        The idempotence check that lets this module be re-imported also made a
+        duplicate invisible: the second marked method matched the name already
+        registered for the class and was skipped, so a typo'd
+        ``@instruction("deploy")`` on a second method simply never ran. The
+        refusal names the class, the name and BOTH methods, because "declared
+        twice" without the second site is a grep the reader has to run.
+        """
+        from typing import Annotated
+
+        import typer
+
+        from otto import options
+        from otto.cli.run import instruction
+        from otto.instructions import ProjectInstructionError
+        from otto.project import actions as mod
+        from otto.registry import registering_repo
+
+        mod.register_project_instruction_bodies(ProjectActions, None)
+
+        @options
+        class DeployOpts:
+            dry: Annotated[bool, typer.Option(help="d")] = False
+
+        with (
+            registering_repo("widget"),
+            pytest.raises(ProjectInstructionError, match=r"'deploy' twice") as caught,
+        ):
+
+            @register_project_actions
+            class Widget(ProjectActions):
+                @instruction("deploy", options=DeployOpts, walk="forward")
+                async def deploy(self, opts: DeployOpts):
+                    return Result(Status.Success)
+
+                @instruction("deploy", options=DeployOpts, walk="forward")
+                async def deploy_again(self, opts: DeployOpts):
+                    return Result(Status.Success)
+
+        message = str(caught.value)
+        assert "Widget" in message
+        assert "deploy()" in message
+        assert "deploy_again()" in message
+
+    def test_a_duplicate_is_refused_before_anything_is_registered(self) -> None:
+        """The scan is a pass of its own, so a refused class leaves no half-published name."""
+        from typing import Annotated
+
+        import typer
+
+        from otto import options
+        from otto.cli.run import instruction
+        from otto.instructions import PROJECT_INSTRUCTIONS, ProjectInstructionError
+        from otto.project import actions as mod
+        from otto.registry import registering_repo
+
+        mod.register_project_instruction_bodies(ProjectActions, None)
+
+        @options
+        class DeployOpts:
+            dry: Annotated[bool, typer.Option(help="d")] = False
+
+        with registering_repo("widget"), pytest.raises(ProjectInstructionError):
+
+            @register_project_actions
+            class Widget(ProjectActions):
+                @instruction("deploy", options=DeployOpts, walk="forward")
+                async def deploy(self, opts: DeployOpts):
+                    return Result(Status.Success)
+
+                @instruction("deploy", options=DeployOpts, walk="forward")
+                async def deploy_again(self, opts: DeployOpts):
+                    return Result(Status.Success)
+
+        assert "deploy" not in set(PROJECT_INSTRUCTIONS.names())

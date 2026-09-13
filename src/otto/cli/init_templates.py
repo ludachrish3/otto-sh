@@ -534,20 +534,34 @@ logger = logging.getLogger(__name__)
 
 # `install`, `uninstall`, `cleanup`, `get-logs`, `install-tools` and `status`
 # already exist — otto registers them for every lab, over your registered
-# products. Do NOT define instructions with those names here: they are refused
-# at startup. To change what they do for this repo, subclass ProjectActions and
-# register it from this module:
+# products. They are PROJECT INSTRUCTIONS: one body per repo, walked in
+# dependency order. Do NOT define standalone instructions with those names
+# here: they are refused at startup. To change what one does for this repo —
+# or to give it a flag of its own — subclass ProjectActions and register it
+# from this module; the options class MUST inherit otto's for that name:
 #
-#     from otto.project import ProjectActions, register_project_actions
+#     from otto.project import (
+#         InstallOptions,
+#         ProjectActions,
+#         register_project_actions,
+#     )
+#
+#     @options
+#     class _Install(InstallOptions):
+#         variant: Annotated[
+#             str, typer.Option(help="Firmware variant.")
+#         ] = "field"
 #
 #     @register_project_actions
 #     class RepoActions(ProjectActions):
-#         async def install(self):
-#             ...                       # your work
-#             return await super().install()
+#         @instruction(options=_Install)
+#         async def install(self, opts: _Install):
+#             ...                       # your work, opts.variant in hand
+#             return await super().install(opts)
 #
-# One override point, so `otto run install`, a script, a suite, and an
-# ensure("installed") marker all pick it up. See docs/guide/cli/run/defaults.md.
+# One override point, so `otto run install --variant`, a script, a suite, and
+# an ensure("installed") marker all pick it up.
+# See docs/guide/cli/run/defaults.md.
 
 
 @options

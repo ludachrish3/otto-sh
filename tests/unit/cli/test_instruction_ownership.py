@@ -26,13 +26,13 @@ because the snapshot is taken at this test's setup and restored at its
 teardown. Whatever was already in the registry AT setup is inside that
 snapshot and stays — so a first-party ``install`` registered earlier on this
 xdist worker (by whatever ran ``bootstrap()`` or imported
-``otto.project.instructions`` outside a per-test snapshot — issue #283 names
+``otto.project.actions`` outside a per-test snapshot — issue #283 names
 an earlier test's bootstrap; the exact path was not observed) leaks IN, and a
 bare ``INSTRUCTIONS.register("install", ...)`` here collides on it
 (ordering-dependent, hence flaky). The test that needs a
 first-party name therefore OWNS it first — ``_own_first_party`` drops the
 inherited entry before installing this module's, exactly the way
-``tests/unit/cli/test_default_instructions.py`` rolls its own
+``tests/unit/cli/test_project_instruction_commands.py`` rolls its own
 ``_clear_first_party`` — and the fixture's teardown restore puts the inherited
 one back.
 """
@@ -82,7 +82,7 @@ def _own_first_party(name: str) -> None:
     """Install first-party *name* as THIS module's entry, whatever this process already holds.
 
     The leak-IN case the module docstring describes: an earlier test on this
-    worker may have left the real ``otto.project.instructions`` registration
+    worker may have left the real ``otto.project.actions`` registration
     of *name* inside our isolation snapshot, and registering over it raises.
     Dropping it first is safe because ``_isolate_registries`` restores the
     snapshot — inherited entry included — at teardown.
@@ -292,9 +292,9 @@ class TestRefusal:
     def test_owning_a_first_party_name_survives_an_inherited_registration(self) -> None:
         """Issue #283, injected rather than waited for: the real first-party
         ``install`` is already registered when the test starts (as it is on any
-        worker that imported ``otto.project.instructions`` earlier), and owning
+        worker that imported ``otto.project.actions`` earlier), and owning
         the name must still succeed — and must not be a silent no-op that
-        leaves the INHERITED entry (owner ``otto.project.instructions``, not
+        leaves the INHERITED entry (owner ``otto.project.actions``, not
         this module) as the one under test.
 
         The simulated inherited entry is installed over whatever this worker
@@ -308,10 +308,10 @@ class TestRefusal:
             InstructionEntry(
                 name="install",
                 sub_app=typer.Typer(),
-                module="otto.project.instructions",
+                module="otto.project.actions",
                 registered_by=None,
             ),
-            origin="otto.project.instructions",
+            origin="otto.project.actions",
         )
         _own_first_party("install")
         assert INSTRUCTIONS.get("install").module == "m"

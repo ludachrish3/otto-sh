@@ -495,7 +495,7 @@ class TestCollectCurrentCommands:
         ``otto.instructions``: deleting a module that merely re-exports
         ``INSTRUCTIONS`` leaves the registry object, and its contents, exactly
         where they were. What made it pass was collection ORDER. Run alone, or
-        after tests that never bootstrap, ``otto.project.instructions`` had not
+        after tests that never bootstrap, ``otto.project.actions`` had not
         been imported and the registry really was empty; run after anything that
         calls ``bootstrap()`` — ``tests/unit/config/test_scope.py`` is one — the
         six first-party instructions are registered as an import side effect and

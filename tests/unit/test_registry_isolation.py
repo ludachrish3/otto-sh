@@ -249,7 +249,7 @@ def test_a_registry_that_first_appeared_mid_test_is_not_left_polluted() -> None:
 def test_a_late_registrys_own_import_time_entries_survive() -> None:
     """otto's own import-time registrations are the new baseline — never dropped.
 
-    Once ``otto.project.instructions`` (say) is imported, its six first-party
+    Once ``otto.project.actions`` (say) is imported, its six first-party
     entries ARE the process's state: the module stays in ``sys.modules``, so a
     re-import is a no-op and anything dropped here could never be re-registered.
     Clearing them would leave otto missing its own defaults for every later

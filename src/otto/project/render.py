@@ -1,40 +1,18 @@
-"""First-party default instructions: thin wrappers over :mod:`otto.project`.
+"""How ``otto run status`` prints: the per-repo table, the --full sections, the exit-code answer."""
 
-``otto run install`` and its five siblings are ORDINARY INSTRUCTIONS -- the
-same decorator a repo uses, the same lifecycle bridge, the same generated
-``--help`` -- whose entire body is a forward to
-:mod:`otto.project.orchestrator`. Bootstrap imports this module before any
-repo's init runs, so every lab has them.
+from typing import TYPE_CHECKING
 
-NEVER AN OVERRIDE POINT. A repo customizes lab behavior by registering a
-:class:`~otto.project.actions.ProjectActions` subclass; these wrappers, a
-suite's ``ensure`` marker steps, and anything else that calls the orchestrator
-all pick that change up for free. A repo that tries to claim one of these names is
-refused at registration instead (:func:`otto.cli.run.instruction`), because two
-code paths to "install the lab" is exactly the split-brain the project layer
-exists to prevent.
-
-So every body below is dispatch and nothing else -- flag names in, orchestrator
-keywords out. A wrapper thick enough to have a bug of its own belongs in the
-orchestrator, where the marker's steps reach it too.
-"""
-
-from typing import TYPE_CHECKING, Annotated
-
-import typer
-
-from ..cli.run import instruction
 from ..result import Result
 from ..utils import Status
-from . import orchestrator
 from .state import Cleanliness, CleanlinessKind, InstallState
 
 if TYPE_CHECKING:
     from rich.table import Table
 
-    from .state import CleanlinessReport, RepoScope
+    from ..params import OptionsSource
+    from .state import CleanlinessReport, ProjectStatus, RepoScope
 
-_STATE_ANSWERS: "dict[InstallState, Result]" = {
+STATE_ANSWERS: "dict[InstallState, Result]" = {
     InstallState.INSTALLED: Result(Status.Success, value="lab is installed"),
     InstallState.UNINSTALLED: Result(Status.Failed, msg="lab is uninstalled"),
     InstallState.PARTIAL: Result(
@@ -95,144 +73,22 @@ because it deliberately does not touch the exit code.
 """
 
 
-@instruction()
-async def install(
-    ensure: Annotated[
-        bool, typer.Option(help="Converge: check state first, recover a partial install.")
-    ] = False,
-    recover_partial: Annotated[
-        bool, typer.Option(help="With --ensure: uninstall a PARTIAL lab before installing fresh.")
-    ] = True,
-) -> Result:
-    """Install every repo's products on the lab, dependencies first.
-
-    Plain, this is fail-fast: the first repo that will not install stops the
-    walk, because a dependent stacked on a dependency known to be missing
-    produces a lab nobody can reason about.
-
-    --ensure converges instead: the lab's current state is read and only the
-    missing work is done, which is what a suite's ensure("installed") marker
-    does before a test. --no-recover-partial then keeps a PARTIAL lab's
-    remnants in place rather than tearing them down first.
-    """
-    return await orchestrator.install(ensure=ensure, recover_partial=recover_partial)
-
-
-@instruction()
-async def uninstall(
-    product_logs: Annotated[
-        bool, typer.Option(help="Haul each repo's product logs off before that repo comes down.")
-    ] = True,
-    debug_logs: Annotated[
-        bool, typer.Option(help="Sweep every host's debug logs once, after every repo is down.")
-    ] = True,
-) -> Result:
-    """Uninstall every repo's products, dependents first.
-
-    Best-effort, unlike the install: every repo is attempted and the first
-    failure is what is reported, because a repo that will not come down must
-    not strand the ones behind it.
-    """
-    return await orchestrator.uninstall(get_product_logs=product_logs, get_debug_logs=debug_logs)
-
-
-@instruction()
-async def cleanup(
-    product_logs: Annotated[
-        bool, typer.Option(help="Haul each repo's product logs off before that repo comes down.")
-    ] = True,
-    debug_logs: Annotated[
-        bool, typer.Option(help="Sweep every host's debug logs once, after every repo is down.")
-    ] = True,
-    reset_impairments: Annotated[
-        bool, typer.Option(help="Repair every lab link, clearing otto's netem impairments.")
-    ] = True,
-    remove_tunnels: Annotated[
-        bool, typer.Option(help="Reap every otto tunnel in the lab -- the very last step.")
-    ] = True,
-) -> Result:
-    """Uninstall every repo, remove its dev tools, and clear what the lab is left wearing.
-
-    Strictly more than uninstall: each repo also gives up its own dev tools,
-    the host-global toolchain tools come off, and the lab's own leftovers --
-    netem impairments and otto tunnels -- come down after them. Those last two
-    belong to no repo, and the tunnel reap is last of all because a tunnel can
-    be the access path the rest of the cleanup is running over.
-    """
-    return await orchestrator.cleanup(
-        get_product_logs=product_logs,
-        get_debug_logs=debug_logs,
-        reset_impairments=reset_impairments,
-        remove_tunnels=remove_tunnels,
-    )
-
-
-@instruction("get-logs")
-async def get_logs(
-    product_logs: Annotated[bool, typer.Option(help="Gather every repo's product logs.")] = True,
-    debug_logs: Annotated[bool, typer.Option(help="Sweep every host's debug logs once.")] = True,
-    require_product_logs: Annotated[
-        bool, typer.Option(help="Fail when a product that declares logs surrendered none.")
-    ] = False,
-) -> Result:
-    """Gather logs from the lab without changing it.
-
-    Product logs are owner-scoped and hauled per repo; the debug sweep is
-    host-level and happens once. --require-product-logs turns an empty haul
-    into a failure, for a run whose whole purpose was the logs.
-    """
-    return await orchestrator.get_logs(
-        product=product_logs, debug=debug_logs, require_product_logs=require_product_logs
-    )
-
-
-@instruction()
-async def install_tools(
-    dev: Annotated[bool, typer.Option(help="Install each repo's own dev tools.")] = True,
-    toolchain: Annotated[
-        bool, typer.Option(help="Also place each host's shared toolchain tools.")
-    ] = False,
-) -> Result:
-    """Install the lab's tooling: each repo's dev tools, optionally the toolchains.
-
-    The toolchain half is off by default and host-global when asked for: one
-    toolchain is shared by every owner on a host, so it is placed once rather
-    than per repo.
-    """
-    return await orchestrator.install_tools(dev=dev, toolchain=toolchain)
-
-
-@instruction()
-async def status(
-    full: Annotated[
-        bool,
-        typer.Option(help="Also report cleanliness: dev tools, toolchains, impairments, tunnels."),
-    ] = False,
-) -> Result:
-    """Report each repo's install state, and the lab's.
+async def render_status(report: "ProjectStatus", source: "OptionsSource") -> Result:
+    """Print *report* and return the Result whose exit code IS the answer.
 
     THE EXIT CODE IS THE ANSWER, so a script branches on it without parsing
-    the table: 0 fully installed, 1 fully uninstalled, 2 partial. Three codes
-    rather than a boolean for the same reason InstallState has three members
-    -- a half-installed lab and a clean one need different handling, and
-    reporting them alike is how remnants get installed over.
-
-    A repo with nothing to say about its install state (no products anywhere,
-    no registered actions) is absent from the table rather than listed with a
-    made-up state.
-
-    --full adds the lab's OTHER axis: what cleanup would still find on it --
-    dev tools, toolchain tools, netem impairments, otto tunnels -- row by row,
-    marking anything that could not be read rather than guessing at it. It
-    costs a link read per link and a process scan per host, which is why it is
-    a flag; it does NOT touch the exit code, which keeps meaning install state
-    and nothing else, so a fully installed but filthy lab still exits 0.
+    the table: 0 fully installed, 1 fully uninstalled, 2 partial. ``--full``
+    adds the lab's other axis -- what cleanup would still find -- and never
+    touches the exit code, which keeps meaning install state alone.
     """
     from rich import print as rprint
     from rich.table import Table
     from rich.text import Text
 
-    report = await orchestrator.status()
+    from . import orchestrator  # function-scope: the orchestrator imports this module's caller
+    from .options import StatusOptions
+
+    full = source.build(StatusOptions).full
     skipped = [(name, row) for name, row in report.scoping.items() if not row.usable]
     if report.repos or skipped:
         table = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
@@ -249,7 +105,7 @@ async def status(
     if full:
         _print_scoping(report.scoping)
         _print_cleanliness(await orchestrator.cleanliness())
-    return _STATE_ANSWERS[report.overall]
+    return STATE_ANSWERS[report.overall]
 
 
 def _skipped_cell(row: "RepoScope") -> str:

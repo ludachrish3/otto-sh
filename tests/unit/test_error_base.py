@@ -68,6 +68,7 @@ from otto.host.login_proxy import LoginProxyError
 from otto.host.recursive_transfer import ListingError
 from otto.host.transfer.nc import NcPortSharedError
 from otto.host.transport import HopTransportTornDownError
+from otto.instructions import ProjectInstructionError
 from otto.inventory import InventoryError, InventoryKeyError
 from otto.labs.errors import LabNotFoundError, LabRepositoryError
 from otto.lifecycle import SyncPhaseInterrupt
@@ -79,6 +80,7 @@ from otto.link.manage import (
 from otto.monitor.archive_edit import ArchiveLockedError
 from otto.monitor.db import UnsupportedDBError
 from otto.monitor.event_ops import EventValidationError
+from otto.project.commands import OptionsCollisionError
 from otto.project.orchestrator import InactiveRequiredDependencyError
 from otto.reservations.check import MissingReservationError, ReservationBackendError
 from otto.result import CommandNotRunError
@@ -96,6 +98,8 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (DependencyError, Exception),
     (ProjectScopeError, Exception),
     (InactiveRequiredDependencyError, Exception),
+    (ProjectInstructionError, Exception),
+    (OptionsCollisionError, Exception),
     (EmptySelectionError, ValueError),
     (BackendUnavailableError, RuntimeError),
     (EnvExistsError, RuntimeError),
@@ -171,6 +175,14 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         # "these declarations cannot work together" failures are otto's own
         # concept, never a ValueError a caller was already catching.
         InactiveRequiredDependencyError,
+        # A project instruction DECLARED in a way the table refuses, and
+        # two repos declaring the same flag from different classes. Both
+        # are the same project-layer "these declarations cannot work
+        # together" concept as the two above, raised while otto builds
+        # its own command table -- never a ValueError a caller could
+        # already have been catching.
+        ProjectInstructionError,
+        OptionsCollisionError,
         LabContextError,
         LabRepositoryError,
         LabNotFoundError,

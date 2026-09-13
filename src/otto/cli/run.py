@@ -7,17 +7,26 @@ from typing import (
     Annotated,
     Any,
     ParamSpec,
+    get_type_hints,
 )
 
 import typer
 from rich import print as rprint
 from rich.table import Table
 
-from ..instructions import FIRST_PARTY_INSTRUCTIONS, INSTRUCTIONS, InstructionEntry
+from ..instructions import (
+    FIRST_PARTY_INSTRUCTIONS,
+    INSTRUCTIONS,
+    MARK_ATTR,
+    PROJECT_INSTRUCTIONS,
+    InstructionEntry,
+    ProjectInstructionMark,
+)
 from ..registry import get_registering_repo
 from .invoke import make_registry_group, prepare_command_target
 
 if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
     from rich.panel import Panel
 
 P = ParamSpec("P")
@@ -41,8 +50,9 @@ def first_party_instructions_panel() -> "Panel | None":
 
     Attribution is by MODULE, exactly like ``Repo.get_instructions_panel``'s
     ``init``-prefix match, so every instruction lands in exactly one panel:
-    otto's defaults live in ``otto.project.instructions`` and a repo's live
-    under its own init modules. Matching on the first-party NAMES instead would
+    otto's defaults are published by ``otto.project.commands`` under
+    ``otto.project.actions`` and a repo's live under its own init modules.
+    Matching on the first-party NAMES instead would
     put a repo's instruction in otto's panel the day one slips past the
     decorator's guard -- hiding the very collision the guard exists to shout
     about.
@@ -124,8 +134,21 @@ def main(
 _Handler = Callable[P, Coroutine[Any, Any, Any]]
 
 
+def _declares_self(func: Callable[..., Any]) -> bool:
+    """Whether *func* is written as a method: its first parameter is ``self``."""
+    params = list(inspect.signature(func).parameters)
+    return bool(params) and params[0] == "self"
+
+
 def instruction(
-    *args: Any, options: type | None = None, **kwargs: Any
+    *args: Any,
+    options: "type[DataclassInstance] | None" = None,
+    walk: str | None = None,
+    continue_on_failure: bool | None = None,
+    require_dependencies: bool | None = None,
+    combine_results: "Callable[[dict[str, Any]], Any] | None" = None,
+    render: "Callable[[Any, Any], Any] | None" = None,
+    **kwargs: Any,
 ) -> Callable[[_Handler[P]], _Handler[P]]:
     """Register an async function as an ``otto run`` subcommand.
 
@@ -183,6 +206,16 @@ def instruction(
     The *same* dataclass may be inherited by a suite's inner ``Options``
     class, giving both ``otto test`` and ``otto run`` subcommands a
     uniform set of repo-wide flags.
+
+    ON A ``ProjectActions`` METHOD (first parameter ``self``) this registers
+    nothing: it stamps a :class:`~otto.instructions.ProjectInstructionMark`
+    on the function and hands it back. ``register_project_actions`` reads the
+    marks when the class is attributed to its repo, and
+    ``otto.project.commands`` publishes one merged command per name once every
+    repo has spoken. The five walk-shape keywords (``walk``,
+    ``continue_on_failure``, ``require_dependencies``, ``combine_results``,
+    ``render``) are legal only there; only the ones passed explicitly are
+    recorded, so a later declaration inherits the first one's values.
     """
 
     def decorator(func: _Handler[P]) -> _Handler[P]:
@@ -206,20 +239,59 @@ def instruction(
                 "should itself be `async def` and await it."
             )
 
+        shape = {
+            k: v
+            for k, v in [
+                ("walk", walk),
+                ("continue_on_failure", continue_on_failure),
+                ("require_dependencies", require_dependencies),
+                ("combine_results", combine_results),
+                ("render", render),
+            ]
+            if v is not None
+        }
+        func_name = getattr(func, "__name__", repr(func))
+        explicit_name = args[0] if args and isinstance(args[0], str) else kwargs.get("name")
+        cmd_name = explicit_name or typer.main.get_command_name(func_name)
+        if _declares_self(func):
+            if options is not None and not any(
+                hint is options for hint in get_type_hints(func, include_extras=True).values()
+            ):
+                raise TypeError(
+                    f"instruction {func_name!r} declares options={options.__name__} "
+                    f"but has no parameter annotated as {options.__name__}"
+                )
+            # An explicit help= wins over the docstring, and the six use it:
+            # a project instruction's METHOD docstring describes what ONE
+            # repo's body does, while the published command walks every repo,
+            # so the summary a user reads in `--help` is not the summary the
+            # body's author is writing. The docstring is left untouched -- it
+            # is still what a reader of the class sees.
+            doc = inspect.getdoc(func)
+            summary = kwargs.get("help") or (doc.splitlines()[0] if doc else None)
+            setattr(
+                func,
+                MARK_ATTR,
+                ProjectInstructionMark(
+                    name=cmd_name,
+                    options_cls=options,
+                    shape=shape,
+                    help=summary,
+                ),
+            )
+            return func
+        if shape:
+            raise TypeError(
+                f"instruction {func_name!r}: {', '.join(shape)} apply only to a "
+                "ProjectActions method (a project instruction), not to a standalone instruction"
+            )
+
         # No self-wrapping: the registered async handler runs under the command
         # lifecycle via the leaf-invoke wrapper's coroutine bridge
         # (cli/invoke._wrap_invoke) when `otto run <name>` dispatches it.
         target = prepare_command_target(func, options)
         app = typer.Typer()
         new_instruction = app.command(*args, **kwargs)(target)
-
-        # Mirror Typer's own name derivation (typer.main.get_command_name):
-        # explicit name (positional or name= kwarg) wins, else the function
-        # name with underscores replaced with dashes. Getting this wrong
-        # would silently break `otto run <name>` for existing callers.
-        func_name = getattr(func, "__name__", repr(func))
-        explicit_name = args[0] if args and isinstance(args[0], str) else kwargs.get("name")
-        cmd_name = explicit_name or typer.main.get_command_name(func_name)
 
         # A repo may not claim a first-party name. Overriding lab behavior
         # happens in ProjectActions -- which `otto run install` AND an
@@ -237,16 +309,25 @@ def instruction(
         # THIS GUARD COVERS THE DECORATOR AND NOTHING ELSE. A repo that builds
         # an InstructionEntry and calls INSTRUCTIONS.register() itself never
         # reaches this line. What stops it there is bootstrap's ORDER —
-        # otto.project.instructions is imported before any repo init, so the
-        # six names are already taken and the registry refuses the second
-        # registration — with the registry's generic "already registered",
-        # which is exactly the message this guard exists to improve on. The
-        # order is load-bearing on that route, not belt-and-braces.
+        # otto.project.commands publishes every project instruction AFTER
+        # the repo loop, so the registry refuses whichever of the two lands
+        # second — with its generic "already registered", which is exactly the
+        # message this guard exists to improve on. The publish's own
+        # republish-only-my-own rule is what keeps that refusal, rather than
+        # overwriting the repo's entry.
+        #
+        # The guard now covers every project instruction, not only the
+        # original six: PROJECT_INSTRUCTIONS is populated by
+        # otto.project.actions at import (bootstrap imports it before any
+        # repo init), and FIRST_PARTY_INSTRUCTIONS keeps the guard honest in
+        # a process that never imported it.
         repo_name = get_registering_repo()
-        if repo_name is not None and cmd_name in FIRST_PARTY_INSTRUCTIONS:
+        if repo_name is not None and (
+            cmd_name in FIRST_PARTY_INSTRUCTIONS or cmd_name in PROJECT_INSTRUCTIONS
+        ):
             raise ValueError(
                 f"repo {repo_name!r} defines instruction {cmd_name!r}, which is a "
-                "first-party default. Override lab behavior by registering a "
+                "project instruction. Override lab behavior by declaring the method on a "
                 "ProjectActions subclass instead (see docs/guide/cli/run/defaults.md), "
                 "or rename the instruction."
             )

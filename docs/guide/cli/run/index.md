@@ -14,11 +14,13 @@ CLI options.
 
 Six of them — `install`, `uninstall`, `cleanup`, `get-logs`, `install-tools`
 and `status` — ship with otto and work in any lab whose repos have declared
-products, with no code of your own.  They are ordinary instructions over the
-`otto.project` library, listed in their own panel by
-`otto run --list-instructions`.  A repo customizes what they do by registering
-a `ProjectActions` subclass, never by defining an instruction of the same name
-(which is refused at startup).  See {doc}`defaults`.
+products, with no code of your own.  They are **project instructions**: one
+name with one walk across the lab's repos and one body per repo, declared on
+`otto.project`'s `ProjectActions` and listed in their own panel by
+`otto run --list-instructions`.  A repo customizes what they do — and adds
+flags of its own — by declaring the method on a registered `ProjectActions`
+subclass, never by defining a standalone instruction of the same name (which is
+refused at startup).  See {doc}`defaults`.
 
 ## Running instructions
 
@@ -89,7 +91,7 @@ otto run --list-instructions
 Each instruction defines its own options via Typer annotations.  Use
 `otto run <instruction> --help` to see them.
 
-The six first-party instructions (`install`, `uninstall`, `cleanup`,
+The six first-party project instructions (`install`, `uninstall`, `cleanup`,
 `get-logs`, `install-tools`, `status`) walk each repo's
 {ref}`fleet of interest <project-scope>` rather than the whole loaded lab.  A
 repo whose declaration admits no host in this run — no loaded lab applies to

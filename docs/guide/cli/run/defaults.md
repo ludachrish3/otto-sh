@@ -1,15 +1,19 @@
 # Default lab actions
 
 Every repo with products gets a working `otto run install` — and `uninstall`,
-`cleanup`, `get-logs`, `install-tools` and `status` — for free. Otto registers
-those six instructions itself, before any repo's init module is imported, so a
-lab that has only declared its products can already be installed, torn down,
-and asked what state it is in.
+`cleanup`, `get-logs`, `install-tools` and `status` — for free. Otto declares
+those six itself, before any repo's init module is imported, so a lab that has
+only declared its products can already be installed, torn down, and asked what
+state it is in.
 
-Nothing about them is special-cased: they are ordinary instructions, registered
-through the same `@instruction()` decorator any repo uses, whose whole body is a
-call into the `otto.project` library. `otto run --list-instructions` shows them
-in their own panel, attributed to otto rather than to a repo.
+They are **project instructions**: an `@instruction(...)` declared on a
+`ProjectActions` method rather than on a free function, which gives one name a
+fixed walk across the lab's repos and **one body per repo**. Otto's six are
+declared exactly the way a repo declares its own — the same decorator, the same
+table — so nothing about them is special-cased, and a repo extends the
+interface by the mechanism otto used to write it.
+`otto run --list-instructions` shows them in their own panel, attributed to
+otto rather than to a repo.
 
 ## The four surfaces, and the one override point
 
@@ -24,14 +28,16 @@ the same code:
 | A test marker | `@pytest.mark.ensure("installed")` on the class or test |
 
 ```{important}
-**Instructions and ensure markers are never override points.** A repo customizes
-lab behavior by registering a `ProjectActions` subclass — never by defining its
-own instruction named `install`. If the *instruction* could be overridden, then
-`otto run install` and an `ensure("installed")` marker would run different code,
-and the lab a test converges would not be the lab you installed by hand.
+**A standalone instruction is never an override point.** A repo customizes lab
+behavior by declaring the method on a registered `ProjectActions` subclass —
+never by defining a standalone instruction of its own named `install`. If a
+standalone instruction could claim the name, then `otto run install` and an
+`ensure("installed")` marker would run different code, and the lab a test
+converges would not be the lab you installed by hand.
 ```
 
-A repo that tries to claim one of the six names is refused at registration; see
+A standalone instruction that tries to claim a project instruction's name — any
+of them, not only otto's six — is refused at registration; see
 [The collision error](../../../library/writing-instructions.md#the-collision-error).
 
 ## Zero effort: one repo, one command
@@ -66,7 +72,7 @@ by two repos, one repo's `install` can never touch the other's products.
 
 The other five follow the same shape:
 
-| Instruction | Options (default) | Walk |
+| Instruction | First-party flags (default) | Walk |
 | ----------- | ----------------- | ---- |
 | `install` | `--ensure` (off), `--recover-partial` (on, meaningful with `--ensure`) | dependencies first, fail-fast |
 | `uninstall` | `--product-logs` (on), `--debug-logs` (on) | dependents first, best-effort |
@@ -75,7 +81,10 @@ The other five follow the same shape:
 | `install-tools` | `--dev` (on), `--toolchain` (off) | dependencies first, fail-fast |
 | `status` | `--full` (off) | reads only; changes nothing |
 
-Every one of those is a `--flag / --no-flag` pair, as usual.
+Every one of those is a `--flag / --no-flag` pair, as usual. A repo adds its own
+flags to any of these by overriding the body — see [Your repo's flags on a
+default](#your-repos-flags-on-a-default) — and `--help` shows the union across
+every configured repo.
 
 `cleanup` is strictly more than `uninstall`: each repo also gives up its own dev
 tools, the host-global toolchain tools come off, and the lab's own leftovers go
@@ -84,6 +93,77 @@ with them — netem impairments are reset and every otto tunnel is reaped. See
 those last two do and do not touch. `--ensure` turns `install` into a converge —
 the lab's current state is read and only the missing work is done — which is
 what an `ensure` marker's steps do before a test.
+
+## Your repo's flags on a default
+
+A repo changes what one of the six does — and what it takes on the command
+line — by declaring that method on its `ProjectActions` subclass, with an
+options class of its own:
+
+```{literalinclude} ../../../examples/getting-started/libs/gs_example/actions.py
+:language: python
+:start-after: "# doc: begin actions"
+:end-before: "# doc: end actions"
+```
+
+`otto run install` now carries `--ensure`, `--recover-partial` **and**
+`--variant`, and the body above receives all three on its own class.
+
+Three rules govern that:
+
+- **The options class must inherit the first-party class for that name.**
+  `InstallOptions`,
+  `UninstallOptions`,
+  `CleanupOptions`,
+  `GetLogsOptions`,
+  `InstallToolsOptions` and
+  `StatusOptions` are exported from
+  `otto.project` for exactly this. An override whose class does not inherit
+  the right one is refused at registration, naming the repo, the instruction
+  and the class it must inherit — because otherwise one repo overriding
+  `install` would take `--ensure` off the command for everyone, and
+  `super().install(opts)` would have no field to read.
+- **Each body receives its own class**, constructed from the parsed flags its
+  class declares and validated by pydantic. A body never sees another repo's
+  fields, so its type annotation is exact.
+- **The lab-wide steps read the same instance.** `--debug-logs`,
+  `--reset-impairments` and `--remove-tunnels` are fields on otto's options
+  class, so a repo's `CleanupOpts(CleanupOptions)` carries them by
+  inheritance and the orchestrator reads them off the repo's instance. The CLI
+  and a converge cannot disagree about them.
+
+Two of otto's bodies call another one — `cleanup`'s product half calls
+`uninstall`, and `is_uninstalled()` probes `status` — and **your override is
+what runs**, handed an instance of your own options class. Otto rebuilds the
+instance it was holding as that class by the same declaring-class rule: fields
+you share with otto's class arrive (`otto run cleanup --no-product-logs`
+reaches your `uninstall` body's `product_logs`), and the fields you added take
+their defaults.
+
+A field you added with **no default** is the one shape that cannot work:
+`cleanup` holds a `CleanupOptions` and `is_uninstalled()` holds nothing at all,
+so there is no value to pass and none to fall back on. Otto refuses it by name
+— the class, the field and the method to override — rather than letting the
+constructor fail in its own vocabulary. Give the field a default, or override
+`cleanup` / `is_uninstalled` as well and call your own body from there.
+
+An override supplies `options=` and a body; it does **not** restate the walk
+shape. Those five keywords are fixed by the *first* declaration of a name — for
+the six, by otto, before any repo is imported — and a repo restating one fails
+at init naming the keyword:
+
+| Keyword | What it fixes |
+| ------- | ------------- |
+| `walk` | `"forward"` (a dependency before its dependents) or `"reverse"` (the order a teardown wants). |
+| `continue_on_failure` | `True` attempts every repo and reports the first failure seen; `False` stops the walk at the first failing repo. |
+| `require_dependencies` | `True` refuses to start when a kept repo's required dependency was dropped by the loaded lab; `False` walks whatever is present. |
+| `combine_results` | Folds `{repo name: that body's return}` into the instruction's single return value; the default reports the first failure with the repo name stamped into the message. |
+| `render` | Turns that combined value into what the command prints and exits on; `None` leaves the leaf's ordinary handling in place. |
+
+A repo declaring a name otto has never heard of *is* the first declaration, so
+it sets all five, and a second repo declaring the same name inherits them. See
+[Project instructions](../../../library/writing-instructions.md#project-instructions)
+for the declaration in full.
 
 (fleet-of-interest)=
 
@@ -167,14 +247,15 @@ deliberate — one project's scoping must not veto another project's run.
 
 - **The driving project** — the first `OTTO_SUT_DIRS` entry, whose run this is
   — applying to none of the loaded labs, or applying but targeting no host in
-  them, **aborts** at every project-layer verb. The error names the loaded
+  them, **aborts** at every project instruction. The error names the loaded
   labs, the declared patterns, and the `settings.toml` to edit; the two cases
   get different messages, because "load a different lab" and "widen
-  `host_patterns`" are different fixes. The abort happens at the verb, not at
-  startup, so `otto host <id> <verb>` still works while you fix it.
+  `host_patterns`" are different fixes. The abort happens at the instruction,
+  not at startup, so `otto host <id> <verb>` still works while you fix it.
 - **A dependency** whose declaration admits no host here is **skipped**,
-  loudly — one `WARNING` per verb. Either shape can be the reason, and each
-  gets the text its own fix needs. No loaded lab applies to it:
+  loudly — one `WARNING` per project instruction. Either shape can be the
+  reason, and each gets the text its own fix needs. No loaded lab applies to
+  it:
 
   ```text
   repo 'sensors' is not applicable to the loaded lab(s) [floor] (lab_patterns:
@@ -289,6 +370,58 @@ cross-repo subclassing — you cannot subclass a class that may be absent, and a
 
 Ordering beyond dependency order is not configurable, and the orchestrator
 itself is not overrideable: a repo customizes by overriding its own actions.
+
+### One command, every repo's flags
+
+`otto run <name>` shows the **union** of the fields every registered body's
+options class declares — every configured repo's, active in this run or not, so
+that `--help` and the completion cache do not change shape with `-I`/`-E` or
+with the loaded lab. A value passed for a repo the run skips is accepted and
+unused.
+
+A project instruction is **not** refused the way an inactive repo's standalone
+instruction is. A standalone instruction has one owning repo, so switching that
+repo off (`-E`) refuses the command; a project instruction has one body per
+repo and no single owner, so it stays runnable. With every declaring repo
+inactive, `otto run deploy` lists as usual, walks nothing, logs one skip
+warning per skipped repo, and exits 0.
+
+Per field name, across the bodies of one instruction:
+
+- **Same declaring class on every side** — one flag. Its value is delivered to
+  every body whose class carries that field. Two repos both inheriting
+  `--ensure` from `InstallOptions` is this case, which is why the first-party
+  flags stay single however many repos override the body.
+- **Different declaring classes** — a bootstrap error naming the instruction,
+  the field and the repos on each side, with the fix: *share one base class, in
+  a required dependency or a library package, or rename the field.* Two repos
+  that each wrote `lab_env: str` collide even when the type and default match;
+  a flag whose meaning depends on which repo reads it is not something to
+  resolve silently.
+- **One repo, two instructions, the same field** — no conflict at all. They are
+  separate commands.
+
+The failure is the whole invocation, not the repo: a flag set the user cannot
+see is not something to degrade around.
+
+**On the command line the flag NAME is the key.** A parsed flag set is flat —
+one value per name — and `--ensure` reuses `install`'s parsed flags for the two
+instructions it delegates to: the `status` probe it starts with, and the
+`uninstall` it runs to recover a partial install. So a repo that spells the
+same field name on two of its OWN instructions' options classes — legal, since
+they are separate commands — will see the value it passed for `install`
+delivered to that `uninstall` or `status` body as well. Give a field the same
+name on two of your own instructions only when it means the same thing. A
+converge driven from a suite's options does not have this property: that path
+matches by declaring class, not by name.
+
+**Where a shared base lives.** In a repo the sharing repos **require**, or in a
+library package — never in an optional repo. Bootstrap imports every configured
+repo's init, so an optional repo that is merely inactive still works; but one
+absent from the workspace is not importable, and the repo whose init dies on
+that import drops out of the run. A repo should not be lost over where a flag
+was defined. Options modules are leaves — `typer` and `otto.options` — so
+following ownership down the dependency graph can never cycle.
 
 ## Where the logs land
 

@@ -175,7 +175,7 @@ SURFACES: list[Surface] = [
     # THE COMPOSITION ROOT IS ON THE PATH OF EVERY REAL INVOCATION, and until
     # this surface existed nothing measured it: every surface above resolves a
     # dispatch target through the root group WITHOUT calling `bootstrap()`, so
-    # when bootstrap grew an import (it now imports `otto.project.instructions`
+    # when bootstrap grew an import (it now imports `otto.project.actions`
     # to register the first-party `otto run` verbs, which pulls otto.project
     # and its dependents) the guard measured none of it and stayed green.
     #

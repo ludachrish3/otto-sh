@@ -45,6 +45,12 @@ from otto.host.lab_info import LabInfo
 from otto.host.product import Product, apply_product_providers, register_product_provider
 from otto.host.toolchain import Toolchain
 from otto.logger.mode import LogMode
+from otto.project import (
+    CleanupOptions,
+    GetLogsOptions,
+    InstallToolsOptions,
+    UninstallOptions,
+)
 from otto.registry import registering_repo
 from otto.result import CommandResult, Result
 from otto.utils import Status
@@ -245,19 +251,27 @@ _WALKED_VERBS = [
     (
         "uninstall",
         Result(Status.Success),
-        lambda: project.uninstall(get_product_logs=False, get_debug_logs=False),
+        lambda: project.uninstall(UninstallOptions(product_logs=False, debug_logs=False)),
     ),
-    ("get_product_logs", Result(Status.Success), lambda: project.get_logs(debug=False)),
-    ("get_debug_logs", Result(Status.Success), lambda: project.get_logs(product=False)),
+    (
+        "get_product_logs",
+        Result(Status.Success),
+        lambda: project.get_logs(GetLogsOptions(debug_logs=False)),
+    ),
+    (
+        "get_debug_logs",
+        Result(Status.Success),
+        lambda: project.get_logs(GetLogsOptions(product_logs=False)),
+    ),
     (
         "install_toolchain_tools",
         Result(Status.Success),
-        lambda: project.install_tools(dev=False, toolchain=True),
+        lambda: project.install_tools(InstallToolsOptions(dev=False, toolchain=True)),
     ),
     (
         "remove_toolchain_tools",
         Result(Status.Success),
-        lambda: project.cleanup(get_product_logs=False, get_debug_logs=False),
+        lambda: project.cleanup(CleanupOptions(product_logs=False, debug_logs=False)),
     ),
     ("toolchain_tools_absent", True, project.is_clean),
 ]
@@ -315,7 +329,7 @@ async def test_two_repos_stamped_at_ingest_tear_down_in_reverse_dependency_order
         "app-svc@h1": "app",
     }
 
-    result = await project.uninstall(get_product_logs=False)
+    result = await project.uninstall(UninstallOptions(product_logs=False))
 
     assert result.is_ok, result.msg
     for host in hosts:
@@ -427,7 +441,7 @@ async def test_a_starved_dependency_strands_no_host_global_step_of_a_teardown(
     events = []
     _starved_lab(monkeypatch, tmp_path, events)
 
-    result = await project.uninstall(get_product_logs=False)
+    result = await project.uninstall(UninstallOptions(product_logs=False))
 
     assert result.is_ok, result.msg
     assert [e for _, e in events if e.startswith("uninstall")] == ["uninstall:app-svc@h1"]

@@ -32,9 +32,12 @@ and where its lab data lives:
 ```
 
 And where the project's own code lives: `libs` puts it on the import path,
-`init` names the module otto imports as it loads — here
-`libs/gs_example/__init__.py`, where the later pages register a command
-frame, parsers, a login proxy and a reservation backend:
+and `init` lists every module otto imports as it loads. The first is the
+`libs/gs_example/` package itself, where the later pages register a command
+frame, parsers, a login proxy and a reservation backend; the three beside it
+are the modules {doc}`../defining-products-and-tools` and
+{doc}`../customizing-project-instructions` add — the project's products, its
+dev tools, and its `ProjectActions`:
 
 ```{literalinclude} ../../examples/getting-started/.otto/settings.toml
 :language: toml

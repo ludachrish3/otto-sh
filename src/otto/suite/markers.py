@@ -14,7 +14,7 @@ ENSURE_VERBS: dict[str, str] = {
 }
 """Converge step → the ``otto.project`` function that performs it.
 
-The functions are the same ones ``otto run <verb> --ensure`` calls, so a
+These are the same functions ``otto run <name> --ensure`` calls, so a
 marker and the command cannot diverge on what a state means.
 """
 

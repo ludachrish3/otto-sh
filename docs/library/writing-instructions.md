@@ -299,7 +299,8 @@ field — that import is what attributes the class to its repo:
 # pylib/widget_instructions/__init__.py  (listed in .otto/settings.toml [init])
 from pathlib import Path
 
-from otto.project import ProjectActions, register_project_actions
+from otto.cli.run import instruction
+from otto.project import InstallOptions, ProjectActions, register_project_actions
 from otto.result import Result
 from otto import Status
 
@@ -308,11 +309,12 @@ from otto import Status
 class WidgetActions(ProjectActions):
     """Widget's lab lifecycle: the defaults, plus a license every host needs."""
 
-    async def install(self) -> Result:
+    @instruction(options=InstallOptions)
+    async def install(self, opts: InstallOptions) -> Result:
         pushed = await self._push_license()
         if not pushed.is_ok:
             return pushed
-        return await super().install()
+        return await super().install(opts)
 
     async def _push_license(self) -> Result:
         for host in self.ctx.all_hosts():
@@ -321,6 +323,12 @@ class WidgetActions(ProjectActions):
                 return result
         return Result(Status.Success)
 ```
+
+`install` is a **project instruction**, so the override is a decorated method
+and it carries an options class — otto's own here, since this repo adds no flag
+of its own. [Project instructions](#project-instructions) below is the full
+declaration; `options=` and what a repo may and may not restate are its
+subject.
 
 Two things that example relies on:
 
@@ -385,6 +393,19 @@ functions the CLI uses, so a marker and `otto run install --ensure` cannot
 diverge. The marker's full semantics are in
 {doc}`writing-suites`; the bullets below are what each step does.
 
+**Where a body's options come from under `otto test`.** There are no
+project-instruction flags on `otto test`, so the fixture builds each repo's
+options class itself: a field takes the suite's value when the suite's
+`Options` class and the repo's options class inherit it from the **same
+declaring class**, every other field takes its default, and pydantic validates
+the instance — so a bad default fails the test naming the field rather than
+installing something odd. Matching by declaring class, not by name, is what
+keeps an unrelated suite field that merely spells `variant` from leaking into
+an install, and it is the same rule the CLI uses to decide that two repos share
+one flag. A repo that wants a test to steer its install promotes the field into
+the base its suites already inherit — the one piece of explicit inheritance
+anybody writes.
+
 - **Function-scoped**: the guarantee is per test *case*. When the state already
   holds, the cost is one probe of it — but not the same probe for all three.
   `installed` and `uninstalled` ask `status()`, which counts the
@@ -430,24 +451,111 @@ diverge. The marker's full semantics are in
   ({class}`~otto.errors.EnsureStateError`), rather than quietly removing it from
   the run.
 
+## Project instructions
+
+Everything above this section is a **standalone instruction**: `@instruction`
+on a free function, one body, belonging to one repo, its own `otto run`
+subcommand. A **project instruction** is the other kind — `@instruction` on a
+`ProjectActions` method. One name, one walk across the lab's repos, and one
+body *per repo*; `otto run <name>` runs every applicable repo's body in
+dependency order.
+
+otto's six defaults — `install`, `uninstall`, `cleanup`, `get-logs`,
+`install-tools` and `status` — are project instructions otto declares on
+`ProjectActions` itself, before any repo's init module is imported. A repo
+overrides one, or adds a project instruction of its own, by the same decorator:
+
+```python
+from typing import Annotated
+
+import typer
+
+from otto import Status, options
+from otto.cli.run import instruction
+from otto.project import InstallOptions, ProjectActions, register_project_actions
+from otto.result import Result
+
+
+@options
+class WidgetInstallOpts(InstallOptions):  # MUST inherit the first-party class
+    variant: Annotated[str, typer.Option(help="Firmware variant.")] = "field"
+
+
+@options
+class DeployOpts:  # a new name has no first-party base to inherit
+    build: Annotated[str, typer.Option(help="Build to deploy.")] = "latest"
+
+
+@register_project_actions
+class WidgetActions(ProjectActions):
+    @instruction(options=WidgetInstallOpts)  # overrides a first-party body
+    async def install(self, opts: WidgetInstallOpts) -> Result:
+        """Install widget's products, pinning the firmware variant."""
+        return await super().install(opts)
+
+    @instruction(
+        options=DeployOpts,
+        walk="forward",
+        continue_on_failure=False,
+        require_dependencies=True,
+        help="Deploy every repo's build, dependencies first.",
+    )
+    async def deploy(self, opts: DeployOpts) -> Result:
+        """Deploy widget's build."""
+        ...  # your work, opts.build in hand
+        return Result(Status.Success)
+```
+
+What the decorator on a method does differently:
+
+- It registers into the **project-instruction table** under the name, instead
+  of building a standalone Typer command. On a free function it behaves exactly
+  as it always has.
+- The body is repo-scoped through `self.ctx` and `self.repo`, so nothing is
+  handed to it beyond its options.
+- The walk-shape keywords — `walk`, `continue_on_failure`,
+  `require_dependencies`, `combine_results` and `render` — are fixed by the
+  **first** declaration of the name. otto's six are fixed before a repo can
+  speak; a repo restating one of them fails at init, naming the keyword. A repo
+  declaring a new name sets them, and the next repo to declare that name
+  inherits them. Each keyword's meaning is tabulated under [Your repo's flags on
+  a default](../guide/cli/run/defaults.md#your-repos-flags-on-a-default).
+- An override of a first-party name **must** pass an `options=` class that
+  inherits the first-party class for that name
+  (`InstallOptions` and its five siblings, all
+  exported from `otto.project`); registration refuses anything else, so the
+  first-party flags can never disappear from the command and `super()` can
+  always read its own fields. A repo's own new name has no base and declares
+  freely.
+
+`otto run <name>` exposes the union of every registered body's fields, and each
+body receives its own class. Which fields merge into one flag, what a
+cross-repo collision looks like, and where a shared base class belongs are in
+[One command, every repo's flags](../guide/cli/run/defaults.md#one-command-every-repos-flags).
+
 ## The collision error
 
-A repo instruction may not take one of the six first-party names. Otto refuses
-it while that repo's init modules are being imported:
+A **standalone** instruction may not take a project instruction's name — any of
+them, otto's six and a repo's own alike. Otto refuses it while that repo's init
+modules are being imported:
 
 ```text
-repo 'widget' defines instruction 'install', which is a first-party default.
-Override lab behavior by registering a ProjectActions subclass instead (see
-docs/guide/cli/run/defaults.md), or rename the instruction.
+repo 'widget' defines instruction 'install', which is a project instruction.
+Override lab behavior by declaring the method on a ProjectActions subclass
+instead (see docs/guide/cli/run/defaults.md), or rename the instruction.
 ```
+
+A **method** declaration of the same name is the sanctioned override and passes;
+it is the shape the section above shows.
 
 If you are upgrading a repo that already has an `install` instruction, the
 migration is one of two moves:
 
-1. **It really is your repo's install.** Move its body into a
-   `ProjectActions.install` override, as above, and delete the instruction.
-   Every surface — the command, scripts, suites, the `installed` ensure step
-   — picks the change up at once.
+1. **It really is your repo's install.** Declare it as a method with
+   `@instruction(options=...)` on your `ProjectActions` subclass, inheriting
+   `InstallOptions`, and delete the standalone
+   instruction. Every surface — the command, scripts, suites, the `installed`
+   ensure step — picks the change up at once.
 2. **It is unrelated** (`install` meaning something else entirely). Rename it;
    `otto run install-firmware` collides with nothing.
 

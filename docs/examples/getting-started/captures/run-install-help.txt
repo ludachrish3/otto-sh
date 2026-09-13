@@ -1,0 +1,28 @@
+$ otto run install --help
+                                                __  __                                              
+                                         ____  / /_/ /_____                                         
+                                        / __ \/ __/ __/ __ \                                        
+                                       / /_/ / /_/ /_/ /_/ /                                        
+                                       \____/\__/\__/\____/                                         
+                                                                                                    
+                                                                                                    
+ Usage: otto run install [OPTIONS]                                                                  
+                                                                                                    
+ Install every repo's products, dependencies first, stopping at the first failure.                  
+                                                                                                    
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
+│ --ensure                  --no-ensure                    Converge: check state first, recover a  │
+│                                                          partial install.                        │
+│                                                          [default: no-ensure]                    │
+│ --recover-partial         --no-recover-partial           With --ensure: uninstall a PARTIAL lab  │
+│                                                          before installing fresh.                │
+│                                                          [default: recover-partial]              │
+│ --variant                                         <str>  Agent build variant to install.         │
+│                                                          [default: field]                        │
+│ --install-completion                                     Install completion for the current      │
+│                                                          shell.                                  │
+│ --show-completion                                        Show completion for the current shell,  │
+│                                                          to copy it or customize the             │
+│                                                          installation.                           │
+│ --help                -h                                 Show this message and exit.             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

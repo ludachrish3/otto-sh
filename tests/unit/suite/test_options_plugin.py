@@ -25,6 +25,7 @@ import otto.project  # noqa: F401 — see above
 from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.errors import EnsureStateError
+from otto.params import OptionsSource
 from otto.result import CommandNotRunError, Result
 from otto.suite.plugin import OttoPlugin
 from otto.suite.run import ASYNCIO_LOOP_ARGS
@@ -157,22 +158,23 @@ CONVERGE_FUNCTIONS = ("ensure_installed", "ensure_uninstalled", "ensure_clean")
 
 
 def _stub(calls: list[tuple], name: str, outcome: Any) -> Callable[..., Any]:
-    """One converge stand-in: records the CALL and its loop, then returns/raises *outcome*.
+    """One converge stand-in: records the CALL's source and loop, then returns/raises *outcome*.
 
-    The recorded entry is ``(name, args, kwargs)`` — the arguments included,
-    not swallowed by an unexamined ``*args``. The marker calls its converge
-    function with NOTHING, taking the orchestrator's own defaults, and that is
-    the documented behaviour of all three (``installed`` "a PARTIAL lab is
-    uninstalled first, then installed fresh" IS ``recover_partial=True``). A
-    stub that recorded only the name would let the plugin quietly pass
-    ``recover_partial=False`` — a real behaviour change no assertion on the
-    NAME alone can see.
+    The recorded entry is ``(name, source)`` — the one positional argument the
+    marker's converge receives, not swallowed by an unexamined ``*args``. What
+    must not silently change is the SOURCE, not the mere presence of an
+    argument: the marker builds an ``OptionsSource`` over the suite's options
+    and passes it as the converge's sole positional argument, so a stub that
+    recorded only the name would let the plugin quietly pass the wrong
+    source — an instance source pointed at the wrong object, or one built
+    from ``None`` when a real suite instance was available — with no
+    assertion able to see it.
     """
 
-    async def _fake(*args: Any, **kwargs: Any) -> Any:
+    async def _fake(source: Any = None) -> Any:
         from otto.suite.pytest_plugin import OttoOptionsPlugin
 
-        calls.append((name, args, kwargs))
+        calls.append((name, source))
         OttoOptionsPlugin._converge_loop = asyncio.get_running_loop()
         if isinstance(outcome, BaseException):
             raise outcome
@@ -181,9 +183,15 @@ def _stub(calls: list[tuple], name: str, outcome: Any) -> Callable[..., Any]:
     return _fake
 
 
-def _called(*function_names: str) -> list[tuple]:
-    """The expected ``calls`` record: each converge function, in order, with no arguments."""
-    return [(name, (), {}) for name in function_names]
+def _called(*function_names: str, suite_options: Any = None) -> list[tuple]:
+    """The expected ``calls`` record: each converge function, in order, with the SAME source.
+
+    ``suite_options`` is the raw value the ``suite_options`` fixture resolved
+    to (or ``None``); the expectation is built the same way the plugin builds
+    it — ``OptionsSource.from_instance`` — so a test only has to name the
+    instance, not reconstruct the source by hand.
+    """
+    return [(name, OptionsSource.from_instance(suite_options)) for name in function_names]
 
 
 def _stub_ensures(monkeypatch: pytest.MonkeyPatch, calls: list[tuple], outcome: Any) -> list[tuple]:
@@ -204,21 +212,56 @@ def _stub_ensures(monkeypatch: pytest.MonkeyPatch, calls: list[tuple], outcome: 
     return calls
 
 
-def _marker_request(args: tuple | None) -> MagicMock:
-    """A FixtureRequest double whose node carries an ``ensure`` marker with *args* (or none)."""
+def _marker_request(
+    args: tuple | None,
+    suite_options: Any = None,
+    *,
+    lookup_error: bool = False,
+    fail_error: bool = False,
+) -> MagicMock:
+    """A FixtureRequest double whose node carries an ``ensure`` marker with *args* (or none).
+
+    ``getfixturevalue("suite_options")`` is wired explicitly, not left as an
+    auto-mock attribute — an unwired ``MagicMock`` would return another
+    ``MagicMock``, which happens to satisfy ``isinstance`` checks and hides
+    both real branches of the caller's handling. By default it returns
+    *suite_options*; ``lookup_error=True`` makes it raise
+    ``pytest.FixtureLookupError`` (the shape of a non-suite, ``ensure``-marked
+    test with no ``suite_options`` fixture in scope); ``fail_error=True``
+    makes it raise ``pytest.fail.Exception`` (the shape of a suite whose
+    ``Options`` class has required fields — see ``OttoOptionsPlugin.
+    suite_options``'s own ``pytest.fail`` call).
+    """
     request = MagicMock()
     request.node.get_closest_marker.return_value = (
         None if args is None else MagicMock(args=args, kwargs={})
     )
+
+    def _getfixturevalue(name: str) -> Any:
+        assert name == "suite_options"
+        if lookup_error:
+            raise pytest.FixtureLookupError(name, request)
+        if fail_error:
+            pytest.fail("suite has required options", pytrace=False)
+        return suite_options
+
+    request.getfixturevalue.side_effect = _getfixturevalue
     return request
 
 
-def _run_ensure(args: tuple | None) -> Any:
+def _run_ensure(
+    args: tuple | None,
+    suite_options: Any = None,
+    *,
+    lookup_error: bool = False,
+    fail_error: bool = False,
+) -> Any:
     """Drive ``_otto_ensure``'s body on a throwaway loop for a marker with *args*."""
     from otto.suite.pytest_plugin import OttoOptionsPlugin
 
     plugin = OttoOptionsPlugin(None)
-    return asyncio.run(OttoOptionsPlugin._otto_ensure.__wrapped__(plugin, _marker_request(args)))
+    request = _marker_request(args, suite_options, lookup_error=lookup_error, fail_error=fail_error)
+    return asyncio.run(OttoOptionsPlugin._otto_ensure.__wrapped__(plugin, request))
 
 
 _OUTCOMES = (EnsureStateError, CommandNotRunError, pytest.skip.Exception)
@@ -245,12 +288,49 @@ def _drive_and_catch(args: tuple | None) -> BaseException | None:
 @pytest.mark.parametrize(
     ("step", "function"), list(zip(ENSURE_STEPS, CONVERGE_FUNCTIONS, strict=True))
 )
-def test_each_step_awaits_its_own_converge_function_once_with_no_arguments(
+def test_each_step_awaits_its_own_converge_function_once_with_the_suite_options_source(
     step: str, function: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
     _run_ensure((step,))
     assert calls == _called(function)
+
+
+def test_the_suite_options_fixture_value_becomes_the_converge_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When ``suite_options`` resolves, the converge receives ``OptionsSource(instance=<that
+    value>)`` — the real instance, not a stand-in ``MagicMock`` an unwired double would hand it.
+    """
+    calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    marker = object()
+    _run_ensure(("installed",), marker)
+    assert calls == _called("ensure_installed", suite_options=marker)
+
+
+def test_a_missing_suite_options_fixture_converges_with_no_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-suite ``ensure``-marked test has no ``suite_options`` fixture in scope — that is a
+    ``pytest.FixtureLookupError``, not an error condition — and the converge still runs, sourced
+    from ``OptionsSource(instance=None)``: defaults, not a crash.
+    """
+    calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    _run_ensure(("installed",), lookup_error=True)
+    assert calls == _called("ensure_installed", suite_options=None)
+
+
+def test_a_failed_suite_options_build_is_not_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A suite whose ``Options`` class has REQUIRED fields fails ``suite_options`` at setup with
+    ``pytest.fail`` (see ``OttoOptionsPlugin.suite_options``), not ``FixtureLookupError``.
+    ``_otto_ensure`` must not catch this: converging from defaults instead would silently install
+    the wrong thing under a selection run that never instantiates the suite. The failure must
+    propagate unchanged, and the converge must never run.
+    """
+    calls = _stub_ensures(monkeypatch, [], Result(Status.Success, msg="converged"))
+    with pytest.raises(pytest.fail.Exception):
+        _run_ensure(("installed",), fail_error=True)
+    assert calls == []
 
 
 def test_a_path_runs_its_steps_in_the_written_order(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -361,7 +441,7 @@ def test_closest_marker_replaces_the_whole_path(
     )
     assert result.ret == pytest.ExitCode.OK
     result.assert_outcomes(passed=3)
-    assert sorted(name for name, _, _ in calls) == ["ensure_clean", "ensure_installed"]
+    assert sorted(name for name, _ in calls) == ["ensure_clean", "ensure_installed"]
 
 
 @pytest.mark.parametrize(

@@ -225,7 +225,7 @@ path = "otto.filesystem"
 
 [[modules]]
 path = "otto.instructions"
-depends_on = ["otto.registry"]
+depends_on = ["otto.registry", "otto.errors"]
 
 [[modules]]
 path = "otto.host"
@@ -380,9 +380,9 @@ path = "otto.project"
 # otto.project` must stay cheap, and a module-scope import of either would join
 # the config<->context and host<->context cycles.
 #
-# otto.cli is ONE FILE's edge and points UP, deliberately: project/instructions.py
-# imports `@instruction` to register the six first-party `otto run` verbs. They
-# are ordinary instructions, so they register through the ordinary decorator --
+# otto.cli is ONE FILE's edge and points UP, deliberately: project/actions.py
+# imports `@instruction` to mark the six first-party `otto run` verbs. They
+# are ordinary instructions, so they declare through the ordinary decorator --
 # the alternative (a second, CLI-side registration path for otto's own verbs)
 # would be a private seam nobody else can use, to avoid an edge that costs
 # little. It is not free, and this comment used to say it was: otto.cli does
@@ -445,6 +445,8 @@ depends_on = [
     "otto.tunnel",
     "otto.errors",
     "otto.models",
+    "otto.instructions",
+    "otto.params",
 ]
 
 [[modules]]
@@ -478,7 +480,7 @@ path = "otto.suite"
 # otto.suite -> otto.project — the one loop in the header's inventory that is
 # not a mutually-importing pair, and the reason the header counts loops
 # separately from pairs. It is not a runtime cycle:
-# only project/instructions.py reaches otto.cli (for the `@instruction`
+# only project/actions.py reaches otto.cli (for the `@instruction`
 # decorator), and nothing in otto.suite imports it. Retiring it means giving
 # instruction registration a home that is not otto.cli, which is the same fix
 # the config<->cli DEBT edge needs and belongs with it, not here.

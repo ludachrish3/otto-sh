@@ -280,21 +280,23 @@ def bootstrap() -> BootstrapResult:
 
     resolution = resolve_dependencies(repos)
     errors.extend(resolution.errors)
-    # First-party default instructions (install/uninstall/cleanup/get-logs/
-    # install-tools/status) register before any repo's init runs. Not contained
-    # like the per-repo imports below: this is otto's own module, so a failure
-    # here is a bug in otto, not a repo's, and framing it as one repo's
-    # containable error would hide it.
+    # otto's six project instructions (install/uninstall/cleanup/get-logs/
+    # install-tools/status) are DECLARED before any repo's init runs: importing
+    # `otto.project.actions` fills PROJECT_INSTRUCTIONS, which fixes each
+    # name's walk shape and is what the decorator's collision guard reads when
+    # a repo tries to claim one of those names. Their COMMANDS are published
+    # after the loop instead (see below), because the merged flag set is only
+    # known once every repo has declared its own bodies.
+    #
+    # Not contained like the per-repo imports below: this is otto's own module,
+    # so a failure here is a bug in otto, not a repo's, and framing it as one
+    # repo's containable error would hide it.
     #
     # The decorator's collision guard keys on the registering-repo marker, so
     # for a repo using `@instruction` this ordering is belt-and-braces: the
-    # guard fires whichever import ran first. It is the MECHANISM for the
-    # routes the decorator never sees -- a repo that registers an
-    # InstructionEntry with INSTRUCTIONS.register() directly is refused here
-    # only because the first-party names are already taken by the line below,
-    # and then by the registry's generic "already registered" rather than the
-    # guard's "register a ProjectActions subclass instead". A repo init module
-    # that reads INSTRUCTIONS should also see the full first-party set.
+    # guard fires whichever import ran first. A repo init module that reads
+    # INSTRUCTIONS still sees no project-instruction commands at init time --
+    # they do not exist yet -- but PROJECT_INSTRUCTIONS already names them all.
     _in_progress = BootstrapResult(
         env=env,
         repos=repos,
@@ -303,7 +305,7 @@ def bootstrap() -> BootstrapResult:
         ordered_repos=resolution.ordered,
     )
     try:
-        importlib.import_module("otto.project.instructions")
+        importlib.import_module("otto.project.actions")
         for repo in resolution.ordered:
             repo.add_libs_to_pythonpath()
             with registering_repo(repo.name):
@@ -321,6 +323,16 @@ def bootstrap() -> BootstrapResult:
                         if not is_containable(e):
                             raise
                         errors.append(BootstrapError(repo.sut_dir, test_file.name, e))
+        # Every repo has spoken: publish one merged `otto run` command per
+        # project instruction. Not contained -- a cross-repo options collision
+        # is a declared conflict the user must resolve, not one repo's breakage.
+        #
+        # By NAME, like the declaration import above, and for the same reason:
+        # otto.bootstrap does not declare a dependency on otto.project (see
+        # tach.toml), which is what keeps the project layer's edge up into
+        # otto.cli from closing a loop through bootstrap as well. The attribute
+        # is read off the module at call time, so a caller may substitute it.
+        importlib.import_module("otto.project.commands").publish_project_instructions()
         # Only now are the provider registries populated, so only now can D2 ask
         # what each repo registered. It raises rather than joining `errors`: the
         # contained failures above are "one repo's file is broken, the rest still

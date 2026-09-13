@@ -86,19 +86,23 @@ def _raise_unless_converged(result: "Result", step: str) -> None:
         raise EnsureStateError(f"ensure {step} failed: {result.msg}")
 
 
-async def _converge(step: str) -> None:
+async def _converge(step: str, suite_options: Any | None) -> None:
     """Run one ``ensure`` step through the same ``otto.project`` function.
 
-    This is the function ``otto run <verb> --ensure`` calls, so a marker and
-    the command cannot diverge. The function is looked up on the package at
-    call time (not imported at module scope): ``otto.project`` is the seam
-    every other caller uses, and resolving late is what lets a test double
-    stand in for it.
+    This is the function ``otto run <name> --ensure`` calls, so a marker and
+    the command cannot diverge -- and the suite's options are the source each
+    repo's body is built from, by declaring class: a suite that inherits the
+    base its repo's install options inherit steers that install; anything
+    else takes defaults. The function is looked up on the package at call
+    time (not imported at module scope): ``otto.project`` is the seam every
+    other caller uses, and resolving late is what lets a test double stand in
+    for it.
     """
     from .. import project
+    from ..params import OptionsSource
 
     converge = getattr(project, ENSURE_VERBS[step])
-    _raise_unless_converged(await converge(), step)
+    _raise_unless_converged(await converge(OptionsSource.from_instance(suite_options)), step)
 
 
 class OttoOptionsPlugin:
@@ -284,9 +288,24 @@ class OttoOptionsPlugin:
         converge opens host connections and a connection is bound to the loop
         that opened it. ``get_closest_marker`` is what makes the closest node
         win outright (test, then class, then module); nothing merges.
+
+        ``suite_options`` may be simply absent (``pytest.FixtureLookupError``
+        — a non-suite, ``ensure``-marked test has no such fixture in scope),
+        which this catches and treats as "no instance source" (defaults).
+        It is deliberately NOT caught if ``suite_options`` itself raises
+        ``pytest.fail`` — the ``OttoOptionsPlugin.suite_options`` fixture does
+        that when the suite's ``Options`` class has required fields under a
+        selection run that never supplied them. Converging from defaults in
+        that case would silently install the wrong thing, so a required-
+        options suite fails an ``ensure``-marked test at setup instead, with
+        the existing "run `otto test <Suite> ...`" hint.
         """
         marker = request.node.get_closest_marker("ensure")
         if marker is None:
             return
+        try:
+            suite_options = request.getfixturevalue("suite_options")
+        except pytest.FixtureLookupError:
+            suite_options = None
         for step in ensure_path(marker.args):
-            await _converge(step)
+            await _converge(step, suite_options)

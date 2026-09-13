@@ -14,6 +14,8 @@ API Reference
    context
    lifecycle
    project
+   instructions
+   params
    link
    tunnel
    logger

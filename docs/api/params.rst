@@ -1,0 +1,4 @@
+params
+======
+
+.. automodule:: otto.params

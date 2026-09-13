@@ -21,10 +21,14 @@ the **fleet of interest**, not the lab, and a walk that would iterate
 nothing refuses loudly rather than silently doing nothing. The same
 computation, without a connection; `GS_EXAMPLE` is a `pathlib.Path` to the
 example project, and a reader substitutes their own. The `sys.path` line and
-`import_init_modules()` are scaffolding: the project's `libs` directory has to
-be importable, and `test1`'s login proxy ({doc}`customizations`) has to be
-registered before any lab containing `test1` will load. A real `otto` run does
-both at startup:
+the `import_init_modules()` block are scaffolding: the project's `libs`
+directory has to be importable, and `test1`'s login proxy
+({doc}`customizations`) has to be registered before any lab containing `test1`
+will load. The `registering_repo` block around the import is what attributes
+each registration to this repo — the project's products, dev tools and
+`ProjectActions` ({doc}`customizing-project-instructions`) are registered by
+that import too, and a class has to know whose it is. A real `otto` run does
+all of it at startup:
 
 ```{doctest}
 >>> import sys
@@ -32,8 +36,10 @@ both at startup:
 >>> from otto.config.lab import load_lab
 >>> from otto.config.repo import Repo
 >>> from otto.config.scope import resolve_scopes, scoped_ids
+>>> from otto.registry import registering_repo
 >>> repo = Repo(sut_dir=GS_EXAMPLE)
->>> repo.import_init_modules()
+>>> with registering_repo(repo.name):
+...     repo.import_init_modules()
 >>> lab = load_lab("busybox", search_paths=[GS_EXAMPLE / "lab_data"])
 >>> sorted(lab.hosts)
 ['bb1161_qemu', 'bb1211_qemu', 'bb1281_qemu', 'bb1310_qemu', 'bb1350_qemu', 'local', 'test1']

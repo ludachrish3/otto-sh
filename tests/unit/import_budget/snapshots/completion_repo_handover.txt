@@ -118,8 +118,10 @@ otto.models.settings
 otto.params
 otto.project
 otto.project.actions
-otto.project.instructions
+otto.project.commands
+otto.project.options
 otto.project.orchestrator
+otto.project.render
 otto.project.state
 otto.registry
 otto.result

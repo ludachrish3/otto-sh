@@ -365,6 +365,10 @@ _EXTERNAL_DOC_LINKS = {
     # (models/settings.py) uses ``Field(ge=0, le=100)``, rendering as
     # ``Annotated[float, Ge(0), Le(100)]`` — two metadata args, so each
     # constraint class becomes a py:class xref attempt.
+    # _typeshed.DataclassInstance is a stub-only protocol (it exists in
+    # typeshed, never at runtime), so no inventory can serve it; it is the
+    # annotation on ``otto.params.options_params``'s options-class parameter.
+    "DataclassInstance": "https://github.com/python/typeshed/blob/main/stdlib/_typeshed/__init__.pyi",
     "annotated_types.Ge": "https://github.com/annotated-types/annotated-types#gt-ge-lt-le",
     "annotated_types.Le": "https://github.com/annotated-types/annotated-types#gt-ge-lt-le",
 }

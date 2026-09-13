@@ -12,6 +12,12 @@ mkdir = ["{tmp}/acme"]
 argv = ["{otto}", "init", "--all", "--name", "acme", "--path", "{tmp}/acme"]
 
 [[capture]]
+id = "run-install-help"
+labless = true
+project = "getting-started"
+argv = ["{otto}", "run", "install", "--help"]
+
+[[capture]]
 id = "probe-test1"
 labless = false
 project = "getting-started"

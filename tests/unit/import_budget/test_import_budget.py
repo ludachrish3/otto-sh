@@ -783,7 +783,7 @@ def test_completion_handover_io_does_not_scale_with_corpus_size():
     by construction. ``completion_repo_handover`` is the other side of the
     same TAB: a `live` site the shim hands over on, which falls through to
     the unchanged full CLI path — the one that resolves ``tunnel remove``'s
-    own module tree (spec `otto.cli.tunnel`, `otto.tunnel`, project/instructions)
+    own module tree (spec `otto.cli.tunnel`, `otto.tunnel`, project/commands)
     and DOES walk the generated repo to discover it. A corpus-size regression
     on that walk is exactly the kind of thing the shim's cheapness on the warm
     path would otherwise let slip past unnoticed, so it needs its own pin.

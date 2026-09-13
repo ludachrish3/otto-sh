@@ -702,3 +702,131 @@ class TestInstructionSeamGuard:
         result = self._dispatch(app, ["--help"])
         assert result.exit_code == 0, result.output
         assert "_seam_help_sync" in result.output
+
+
+class TestInstructionOnAMethod:
+    """``@instruction`` on a ProjectActions method stamps a mark and registers nothing."""
+
+    def test_stamps_a_mark_with_only_the_explicit_shape(self) -> None:
+        from typing import Annotated
+
+        import typer
+
+        from otto import options
+        from otto.cli.run import instruction
+        from otto.instructions import INSTRUCTIONS, MARK_ATTR, PROJECT_INSTRUCTIONS
+
+        @options
+        class Opts:
+            flag: Annotated[bool, typer.Option(help="f")] = False
+
+        # A name otto never declares: `otto.project.actions` registers its own
+        # bodies at import, so a method named `install` here would be asserted
+        # absent from a table that legitimately holds otto's own entry.
+        class Actions:
+            @instruction(options=Opts, walk="reverse", continue_on_failure=True)
+            async def provision(self, opts: Opts):
+                """Provision it.
+
+                More words.
+                """
+
+        mark = getattr(Actions.provision, MARK_ATTR)
+        assert mark.name == "provision"
+        assert mark.options_cls is Opts
+        assert mark.shape == {"walk": "reverse", "continue_on_failure": True}
+        assert mark.help == "Provision it."
+        assert "provision" not in INSTRUCTIONS
+        assert "provision" not in PROJECT_INSTRUCTIONS
+
+    def test_explicit_help_wins_over_the_docstring(self) -> None:
+        """A project instruction's `--help` summary is the lab-wide one, not the body's.
+
+        The method docstring describes what ONE repo's body does; the published
+        command walks every repo. So `help=` overrides it -- and must not
+        rewrite the docstring, which is still what a reader of the class sees.
+        """
+        from otto.cli.run import instruction
+        from otto.instructions import MARK_ATTR
+
+        class Actions:
+            @instruction(help="Lab-wide.")
+            async def provision(self):
+                """Provision this repo's own products."""
+
+        assert getattr(Actions.provision, MARK_ATTR).help == "Lab-wide."
+        assert Actions.provision.__doc__ == "Provision this repo's own products."
+
+    def test_explicit_name_wins_and_underscores_dash(self) -> None:
+        from otto.cli.run import instruction
+        from otto.instructions import MARK_ATTR
+
+        class Actions:
+            @instruction()
+            async def get_logs(self):
+                pass
+
+            @instruction("custom-name")
+            async def whatever(self):
+                pass
+
+        assert getattr(Actions.get_logs, MARK_ATTR).name == "get-logs"
+        assert getattr(Actions.whatever, MARK_ATTR).name == "custom-name"
+
+    def test_sync_method_is_refused(self) -> None:
+        from otto.cli.run import instruction
+
+        with pytest.raises(TypeError, match="async def"):
+
+            class Actions:
+                @instruction()
+                def install(self):
+                    pass
+
+    def test_options_without_an_annotated_parameter_is_refused(self) -> None:
+        from typing import Annotated
+
+        import typer
+
+        from otto import options
+        from otto.cli.run import instruction
+
+        @options
+        class Opts:
+            flag: Annotated[bool, typer.Option(help="f")] = False
+
+        with pytest.raises(TypeError, match="no parameter annotated as Opts"):
+
+            class Actions:
+                @instruction(options=Opts)
+                async def install(self, other: int = 0):
+                    pass
+
+    def test_shape_keywords_on_a_free_function_are_refused(self) -> None:
+        from otto.cli.run import instruction
+
+        with pytest.raises(TypeError, match="walk"):
+
+            @instruction(walk="reverse")
+            async def deploy():
+                pass
+
+    def test_free_function_on_a_registered_project_instruction_name_is_refused(self) -> None:
+        from otto.cli.run import instruction
+        from otto.instructions import ProjectInstructionMark, register_project_instruction_body
+        from otto.registry import registering_repo
+
+        class Base:
+            async def deploy(self, opts): ...
+
+        register_project_instruction_body(
+            Base, "deploy", ProjectInstructionMark("deploy", None, {}, None), repo="a"
+        )
+        with (
+            registering_repo("b"),
+            pytest.raises(ValueError, match=r"'deploy'.*project instruction"),
+        ):
+
+            @instruction()
+            async def deploy():
+                pass
