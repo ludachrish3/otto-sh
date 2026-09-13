@@ -989,9 +989,13 @@ class MonitorServer:
         not see the connection die). Used by test harnesses and Ctrl+C paths;
         prefer ``stop()`` when clients should finish cleanly.
 
-        The listening sockets are closed *first* so no new connection is
-        accepted, then open transports are aborted. A single abort pass is not
-        enough: uvicorn registers a connection in its protocol's
+        Accepting stops *first*, the listening sockets are closed one loop turn
+        later, and only then are open transports aborted. The turn in between
+        lets a connection asyncio has already accepted finish building its
+        transport against a still-open listener; closing immediately would
+        leave it half-built, unregistered and holding its fd (issues #319 and
+        #320). A single abort pass is not enough either: uvicorn registers a
+        connection in its protocol's
         ``connection_made``, which asyncio *defers* onto the loop via
         ``call_soon``. So a socket already accepted at the OS level when the
         listeners close can finish registering a live transport *after* the
@@ -1020,10 +1024,28 @@ class MonitorServer:
                 if passes_left > 0:
                     loop.call_soon(_abort_open_transports, passes_left - 1)
 
-            def _stop_accepting_and_abort() -> None:
-                for listener in getattr(server, "servers", []):
+            listeners = list(getattr(server, "servers", []))
+
+            def _close_listeners_and_abort() -> None:
+                for listener in listeners:
                     listener.close()
                 _abort_open_transports(_FORCE_STOP_ABORT_PASSES)
 
-            loop.call_soon_threadsafe(_stop_accepting_and_abort)
+            def _stop_accepting() -> None:
+                # Stop accepting *without* closing yet. asyncio accepts in a
+                # selector callback but builds the transport in a task that
+                # steps on the next turn, and that constructor asserts the
+                # listener is still open (Server._attach). Closing here would
+                # leave every accept already in flight half-built: no
+                # connection_made, so never registered, so never aborted, and
+                # holding its fd until GC (issues #319/#320). Removing the
+                # readers cancels any accept callback still queued this turn,
+                # so by the next turn the set of build tasks is fixed and they
+                # all run ahead of the close scheduled here.
+                for listener in listeners:
+                    for sock in listener.sockets:
+                        loop.remove_reader(sock.fileno())
+                loop.call_soon(_close_listeners_and_abort)
+
+            loop.call_soon_threadsafe(_stop_accepting)
         self.stop()

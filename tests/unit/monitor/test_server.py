@@ -672,6 +672,7 @@ def test_force_stop_aborts_connection_registered_after_first_pass() -> None:
             self._loop = loop
             self._on_close = on_close
             self.closed = False
+            self.sockets = []  # nothing to stop reading from; asyncio.Server's shape
 
         def close(self):
             self.closed = True
@@ -705,6 +706,83 @@ def test_force_stop_aborts_connection_registered_after_first_pass() -> None:
     assert listener.closed is True
     assert early.transport.aborted is True
     assert late.transport.aborted is True, "late-registered connection was never aborted"
+
+
+def test_force_stop_completes_every_accepted_connection_before_closing_the_listener() -> None:
+    """A connection accepted before ``force_stop`` must reach ``connection_made``.
+
+    Regression for issue #319 (and the trigger of #320). asyncio accepts in a
+    selector callback but builds the transport in a *task* that steps on the
+    next turn, and ``_SelectorTransport.__init__`` calls ``Server._attach()``,
+    which asserts the listener is still open. So if ``force_stop`` closes the
+    listener between the accept and that step, the constructor raises part-way
+    through: the protocol never gets ``connection_made`` (uvicorn registers a
+    connection there, so nothing can ever abort it) and the half-built
+    transport dies holding the accepted fd, firing the ``ResourceWarning``
+    pair that fails the bookend lanes.
+
+    The ordering is driven by hand with a real loop: the client is connected
+    before the loop turns (so the accept is already pending in the selector),
+    and ``force_stop`` runs from a callback on that same turn. Its stop
+    callback then lands *ahead* of the build task on the following turn, which
+    is the race exactly as it occurs under load. ``force_stop`` must stop
+    accepting without invalidating an accept already in flight.
+    """
+    import types
+
+    loop = asyncio.new_event_loop()
+    created: list[asyncio.Protocol] = []
+    made: list[asyncio.Protocol] = []
+    lost: list[asyncio.Protocol] = []
+    connections: set[asyncio.Protocol] = set()
+
+    class Registering(asyncio.Protocol):
+        """Registers itself in connection_made, as uvicorn's protocols do."""
+
+        def __init__(self) -> None:
+            created.append(self)
+
+        def connection_made(self, transport: asyncio.BaseTransport) -> None:
+            self.transport = transport
+            made.append(self)
+            connections.add(self)
+
+        def connection_lost(self, exc: Exception | None) -> None:
+            lost.append(self)
+            connections.discard(self)
+
+    listener = loop.run_until_complete(loop.create_server(Registering, "127.0.0.1", 0))
+    port = listener.sockets[0].getsockname()[1]
+    fake_server = types.SimpleNamespace(
+        force_exit=False,
+        should_exit=False,
+        server_state=types.SimpleNamespace(connections=connections),
+        servers=[listener],
+    )
+    server = MonitorServer.__new__(MonitorServer)
+    server._server = fake_server
+    server._loop = loop
+
+    # The handshake completes in the kernel: the listener is readable before the
+    # loop's next select, so the accept callback joins the same batch as this.
+    client = socket.create_connection(("127.0.0.1", port))
+    try:
+        loop.call_soon(server.force_stop)
+        loop.run_until_complete(asyncio.sleep(0.2))
+
+        assert fake_server.should_exit is True  # self.stop() ran
+        assert not listener.is_serving()
+        assert len(created) == 1, "the pending accept should have produced exactly one protocol"
+        assert made == created, (
+            "a connection accepted before force_stop never reached connection_made: "
+            "its transport was built against an already-closed listener (#319/#320)"
+        )
+        assert lost == made, "the registered connection was never aborted"
+    finally:
+        client.close()
+        listener.close()
+        loop.run_until_complete(asyncio.sleep(0))
+        loop.close()
 
 
 class TestDashboardRoute:

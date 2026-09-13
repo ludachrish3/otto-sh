@@ -67,6 +67,11 @@ def _never_constructed(loop: asyncio.AbstractEventLoop, transport: "Any") -> boo
     transport that holds the accepted fd yet never finished construction, and
     is therefore absent from that registry. Issue #320.
 
+    ``MonitorServer.force_stop`` no longer produces one (it stops accepting a
+    turn before it closes the listeners; issue #319), but uvicorn's own graceful
+    shutdown closes them the same way asyncio's ``Server.close()`` always has,
+    so the reap keeps this guard.
+
     Such a transport must never be ``abort()``ed: its protocol never received
     ``connection_made`` (that ``call_soon`` is in the subclass constructor,
     past the raise) and its server never recorded the matching ``_attach()``,
