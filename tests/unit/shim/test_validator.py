@@ -72,12 +72,26 @@ def test_inspect_shim_on_an_absent_cache_names_the_plain_reason(tmp_path):
 
 def test_a_fresh_entry_validates_by_stat_then_by_marker(workspace):
     _, cache = workspace
-    now = time.time()
-    assert sc.validate_keys(cache, _data(cache), "names", now) == "stat"
+    data = _data(cache)
     marker = cache.parent / sc.MARKER_FILENAMES["names"]
-    assert marker.is_file()
-    assert sc.validate_keys(cache, _data(cache), "names", now + 30) == "marker"
-    assert sc.validate_keys(cache, _data(cache), "names", now + 61) == "stat"
+    assert not marker.exists()
+    assert sc.validate_keys(cache, data, "names", time.time()) == "stat"
+    # The stat pass stamped the marker with the REAL clock, no earlier than the cache.
+    cache_ns = cache.stat().st_mtime_ns
+    assert marker.stat().st_mtime_ns >= cache_ns
+    # Probe the window from a stamp the test OWNS, never from a `now` taken before
+    # the touch: that hid a 1s margin, and a runner stall past it kept the marker
+    # fresh at "+61". Whole seconds make the boundary float-exact; 1000s past the
+    # cache file catches a window measured from the cache instead of the marker.
+    # The offsets are literals: the window is a spec'd minute, and probing at
+    # `stamp + sc.WINDOW_SECONDS` would follow a wrong constant.
+    stamp_ns = (cache_ns // 10**9 + 1000) * 10**9
+    os.utime(marker, ns=(stamp_ns, stamp_ns))
+    stamp = stamp_ns / 10**9
+    assert sc.validate_keys(cache, data, "names", stamp + 30) == "marker"
+    assert marker.stat().st_mtime_ns == stamp_ns  # a marker-path TAB does not renew the window
+    assert sc.validate_keys(cache, data, "names", stamp + 60) == "stat"  # one minute, exactly
+    assert marker.stat().st_mtime_ns != stamp_ns  # the stat pass re-touched it
 
 
 def test_tests_site_checks_both_key_sets_and_both_markers(workspace):
