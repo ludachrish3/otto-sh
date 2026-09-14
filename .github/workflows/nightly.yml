@@ -22,6 +22,13 @@ name: Nightly
 # decided per run and a per-push gate could fail an unrelated PR on
 # pre-existing breakage in a cell nothing had drawn before.
 #
+# Also runs the next-Python canary (`python-canary` below): a ratchet that
+# probes how far the interpreter AFTER the supported ceiling gets — install,
+# import, collect, test — and reds only when that changes. It belongs here
+# and not in ci.yml for the same reason as the sampled lane: its answer moves
+# on PyPI's clock (a wheel lands upstream) rather than on this repo's commits,
+# so a per-push run would repeat one answer forty times a day.
+#
 # Deterministic gates (lint-python, typecheck-python, check-ts, docs) are
 # deliberately NOT duplicated here — they run on every push in ci.yml and
 # produce the same result each time, so a nightly rerun adds no signal. What
@@ -424,6 +431,108 @@ jobs:
       - name: Verify every pin against busybox.net's current bytes
         run: make busybox-drift
 
+  # The next-Python canary. NOT a matrix entry and NOT expected to pass:
+  # PYTHON_VERSIONS in noxfile.py is the supported window, and this job probes
+  # the interpreter one past its ceiling so the day it CAN join the window is
+  # noticed rather than discovered. Five rungs, each a superset of the last,
+  # run in order until one fails:
+  #
+  #   1  runtime dependencies install   (published wheels, or sdists that build)
+  #   2  the dev group installs too     (tooling gaps kept apart from runtime ones)
+  #   3  otto imports                   (`otto --version`; deprecations-as-errors)
+  #   4  the hostless suite collects    (every test module + conftest imports, -n0)
+  #   5  the hostless session passes    (nox tests_hostless via --extra-python;
+  #                                      the interior bundle, since the new
+  #                                      version is not a bookend until promoted)
+  #
+  # The verdict is a RATCHET against CANARY_EXPECTED_RUNG, the rung this repo
+  # currently expects the canary to reach. Reaching exactly that rung is green.
+  # Reaching a HIGHER one is red: the ecosystem moved, bump the constant (and
+  # at rung 5, promote the version into PYTHON_VERSIONS and retire this job).
+  # Reaching a LOWER one is red too: something regressed — a wheel pulled, a
+  # dependency raising its floor — and silently resetting the climb is exactly
+  # what a plain allowed-to-fail job would do. `continue-on-error` is
+  # deliberately absent: both reds are the signal, and both open an issue via
+  # report-failure. The step summary carries how far it got and what stopped it.
+  #
+  # Every rung installs with --frozen: the lock is universal over
+  # requires-python, so it already covers the canary interpreter and nothing
+  # here should re-resolve. The rung commands run pytest/nox directly rather
+  # than through a Makefile lane on purpose — the Makefile targets are the
+  # SUPPORTED matrix's gates, and this job is asking whether a version could
+  # join that matrix, not gating it.
+  python-canary:
+    name: Next-Python canary (expected-rung ratchet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # The interpreter one past PYTHON_VERSIONS' ceiling in noxfile.py.
+      CANARY_PYTHON: "3.15"
+      # The rung the canary is EXPECTED to reach today. 0 = not even the
+      # runtime dependencies install (2026-09-13: pyyaml 6.0.3 publishes no
+      # cp315 wheel and its sdist build segfaulted on 3.15.0b1). Bump it when
+      # this job reds with "climbed"; a red "regressed" is a real regression.
+      CANARY_EXPECTED_RUNG: "0"
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ env.CANARY_PYTHON }}
+        run: uv python install "$CANARY_PYTHON"
+
+      - name: Climb the rungs and compare with the expected one
+        run: |
+          set -u
+          reached=0
+          echo "## Next-Python canary: $CANARY_PYTHON" >> "$GITHUB_STEP_SUMMARY"
+
+          # rung <n> <label> <command...>: run it, record the rung on success,
+          # append the log tail to the step summary on failure.
+          rung() {
+            n=$1; label=$2; shift 2
+            echo "::group::rung $n — $label"
+            if "$@" > "rung$n.log" 2>&1; then
+              reached=$n
+              echo "rung $n PASS — $label" | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "::endgroup::"
+              return 0
+            fi
+            cat "rung$n.log"
+            echo "::endgroup::"
+            {
+              echo "rung $n FAIL — $label"
+              echo
+              echo '```'
+              tail -n 30 "rung$n.log"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            return 1
+          }
+
+          hostless_marker='not integration and not embedded and not stability and not browser and not busybox and not conformance'
+
+          rung 1 "runtime dependencies install"             uv sync --frozen --no-default-groups --no-install-project --python "$CANARY_PYTHON" &&
+          rung 2 "the dev group installs too"             uv sync --frozen --group dev --python "$CANARY_PYTHON" &&
+          rung 3 "otto imports"             uv run --frozen otto --version &&
+          rung 4 "the hostless suite collects"             uv run --frozen pytest --collect-only -q -n0 -p no:cacheprovider               tests/unit tests/e2e -m "$hostless_marker" &&
+          rung 5 "the hostless session passes"             uv run --frozen nox -s "tests_hostless-$CANARY_PYTHON" --extra-python "$CANARY_PYTHON"
+
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "**Reached rung $reached; expected rung $CANARY_EXPECTED_RUNG.**" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$reached" -gt "$CANARY_EXPECTED_RUNG" ]; then
+            echo "::error::Python $CANARY_PYTHON climbed to rung $reached (expected $CANARY_EXPECTED_RUNG): bump CANARY_EXPECTED_RUNG in nightly.yml; at rung 5, promote it into PYTHON_VERSIONS and retire this job"
+            exit 1
+          fi
+          if [ "$reached" -lt "$CANARY_EXPECTED_RUNG" ]; then
+            echo "::error::Python $CANARY_PYTHON regressed to rung $reached (expected $CANARY_EXPECTED_RUNG): see the step summary for what stopped it"
+            exit 1
+          fi
+          echo "Python $CANARY_PYTHON still stops at rung $reached, as expected."
+
   report-failure:
     name: Open issue on failure
     needs:
@@ -435,6 +544,7 @@ jobs:
         chaos-docker,
         conformance-hermetic,
         busybox-upstream-drift,
+        python-canary,
       ]
     if: failure()
     runs-on: ubuntu-latest
@@ -444,15 +554,15 @@ jobs:
       - name: Write issue body
         run: |
           {
-            echo "The nightly run failed (stability, unit matrix, dashboard browser e2e, the tier-2/tier-3 chaos suites, host-contract conformance, and/or BusyBox upstream drift)."
+            echo "The nightly run failed (stability, unit matrix, dashboard browser e2e, the tier-2/tier-3 chaos suites, host-contract conformance, BusyBox upstream drift, and/or the next-Python canary moving off its expected rung)."
             echo
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
             echo "Check the matrix logs for the failing job (stability-matrix /"
             echo "unit-matrix / dashboard / chaos-tier2 / chaos-docker /"
-            echo "conformance-hermetic / busybox-upstream-drift), the Python"
-            echo "version or browser, and the pytest-repeat iteration that"
+            echo "conformance-hermetic / busybox-upstream-drift / python-canary),"
+            echo "the Python version or browser, and the pytest-repeat iteration that"
             echo "tripped the failure. A conformance-hermetic failure names the"
             echo "cell it drew in the test id; reproduce it with the"
             echo "--randomly-seed=N printed in that job's own pytest header."
@@ -468,6 +578,13 @@ jobs:
             echo "the applet set is unchanged, then update busybox_pins.json in"
             echo "a reviewed commit. An unreachable busybox.net does NOT fail"
             echo "this job; it is annotated as a warning on a green run."
+            echo
+            echo "**python-canary is not a test failure either.** It is red when"
+            echo "the next Python's climb stops on a rung other than"
+            echo "CANARY_EXPECTED_RUNG: higher means the ecosystem moved (bump"
+            echo "the constant; at rung 5 promote the version), lower means a"
+            echo "wheel was pulled or a floor was raised. The job's step summary"
+            echo "records the rung reached and what stopped the climb."
           } > issue-body.md
 
       - name: Create issue from file
