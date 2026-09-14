@@ -386,16 +386,25 @@ token.
 | --- | ------- |
 | `url` | Base URL of the instance. A trailing slash is normalised away, so two spellings are one inventory. |
 | `token_env` | Name of the environment variable holding the API token; default `NETBOX_TOKEN`. The token itself never sits in a settings file. |
-| `verify` | Passed to the HTTP client: `false` disables TLS verification, a string is a CA bundle path and must be **absolute** (`~` expands). |
 | `filter` | A NetBox device filter, forwarded verbatim (`{ site = "lab-a" }`). No filter means every device. |
 | `ip_source` | Where the management address comes from: `"primary_ip4"` (default), `"oob_ip"`, or `"cf:<custom field>"`. |
 | `custom_fields` | Record field → NetBox custom-field name. Each mapped field **joins** `supplies`. |
 | `extra_custom_fields` | A list of custom-field names to carry through opaquely in `extra`. They are not record fields and never join `supplies`. |
 | `timeout` | Seconds one request to NetBox may take; default `30`, and it must be a positive number. It bounds an instance that has gone *unreachable* — without it the kernel's TCP connect timeout (around two minutes) does, and it does so **before** the stale snapshot below is served. |
 
-A relative `verify` path is refused rather than anchored: an `[inventory]` table
-is committed, and a relative path there would resolve against whatever
-directory otto happened to be run from.
+otto verifies the NetBox instance's certificate against the **operating
+system's certificate store** — the same trust a browser on that machine has —
+and against nothing else: there is no bundle-path key and no way to switch
+verification off. An inventory error ending in `SSLError: …` therefore means
+the operating system does not trust the instance. Install your organisation's
+CA (or, for a self-signed instance, its own certificate) in the OS store with
+the same steps a dashboard viewer uses — see [each viewer trusts the
+CA](../cli/monitor/serving.md#creating-the-certificates) — and the error goes
+away with no settings change. On Linux without root, set `SSL_CERT_FILE` to
+the certificate (or `SSL_CERT_DIR` to a hashed directory); these are
+OpenSSL's own overrides and `curl`, `git` and otto all honour them — on
+macOS and Windows the platform store is the only source, so the CA must be
+installed there.
 
 The token is read at the **first fetch**, not at construction. A repo that
 declares a netbox table can therefore still run every verb that does not need

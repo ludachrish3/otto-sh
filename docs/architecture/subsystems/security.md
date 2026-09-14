@@ -68,6 +68,23 @@ doesn't resolve is a hard exit, not a fall back to plain HTTP. A security
 feature that silently downgrades on failure is worse than not having it,
 because it fails exactly when someone is relying on it.
 
+### Client-side trust
+
+Where otto is the TLS **client** — today, the NetBox inventory backend — it
+verifies against the operating system's certificate store via `truststore`,
+and against nothing else. There is deliberately no per-backend bundle path
+and no verify-off switch: a lab with an internal CA installs it once at the
+OS level, and a system-store browser (Firefox keeps its own instead — see
+the serving guide), `curl`, `git` and otto then agree on what is trusted. A
+second trust list inside otto would be one more
+place for that decision to drift, and an off switch in a committed settings
+file is a downgrade the whole team inherits. The context is built per HTTP
+adapter rather than injected process-wide, because `otto monitor` serves TLS
+in the same process and `truststore`'s global injection is client-only. The
+operational side — what an `SSLError` means and how to fix it without
+touching settings — is in the
+[inventory guide](../../guide/configuration/inventory.md#the-netbox-backend).
+
 ### Certificate scoping
 
 TLS needs three artifacts, and the design keeps each at the scope it
@@ -75,7 +92,7 @@ actually belongs to rather than collapsing them into one:
 
 | Artifact | Scope | Why |
 | --- | --- | --- |
-| CA certificate + key | Team-wide, created once | A viewer trusts the CA once; every future leaf cert issued under it is covered with no re-distribution. |
+| CA certificate + key | Team-wide: your organisation's CA, or one a team owner creates once | A viewer trusts the CA once; every future leaf cert issued under it is covered with no re-distribution. |
 | Server (leaf) cert + key | Per-machine | SANs bind a leaf cert to one machine's addresses; a repo is cloned onto many machines with different IPs, so no single leaf cert could cover them all. |
 | `[monitor]` settings entry | Per-repo, committed | Shared team-wide, so it points at a conventional per-user path (`~/.otto/tls/…`) rather than a machine-specific one — identical text resolves differently per user, and the key itself never enters the repo. |
 
@@ -105,3 +122,5 @@ syntax.
 - {mod}`otto.cli.monitor` — `_resolve_monitor_tls`, which resolves the
   declaration across every configured repo and turns a missing cert/key
   file or a multi-repo disagreement into a hard exit
+- {mod}`otto.inventory.netbox` — `_mount_timeout`, the one adapter that
+  carries both the request timeout and the OS-store `truststore` context

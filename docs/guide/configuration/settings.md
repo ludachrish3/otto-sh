@@ -190,7 +190,7 @@ init
   registered name — `"json"` and `"netbox"` ship with otto) and `cache_ttl`
   (`"0"`, or `<n>m` / `<n>h` / `<n>d`; default `"24h"`).  Every other key
   belongs to the selected backend: `path` (required) and `supplies` for
-  `json`; `url`, `token_env`, `verify`, `filter`, `ip_source`,
+  `json`; `url`, `token_env`, `filter`, `ip_source`,
   `custom_fields`, `extra_custom_fields` and `timeout` (seconds per request,
   default `30`) for `netbox`.  A relative `path` anchors to the repo root,
   like every other settings path.  See {doc}`inventory` for the full

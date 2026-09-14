@@ -48,7 +48,7 @@ TLS needs three artifacts, and each one has a different owner and scope:
 
 | Artifact | Scope | Lives where | Committed? |
 | --- | --- | --- | --- |
-| **CA certificate + CA key** | Team-wide, created once by a team owner | CA key: restricted (owner's machine or secrets store). CA cert: distributed freely | CA cert may be committed (it's public); CA key **never** |
+| **CA certificate + CA key** | Team-wide: your organisation's CA, or one a team owner creates once | CA key: restricted (owner's machine or secrets store). CA cert: distributed freely | CA cert may be committed (it's public); CA key **never** |
 | **Server (leaf) cert + key** | Per-machine — one per machine that runs `otto monitor`, because the SANs bind it to that machine's addresses | `~/.otto/tls/` on the server machine, key `chmod 600` | **Never** |
 | **`[monitor]` settings entry** | Per-repo, committed, shared by the team | `.otto/settings.toml` | Yes — which is why it points at the conventional `~/.otto/tls/` path, identical for every user |
 
@@ -65,8 +65,17 @@ Why not the other scopes:
 
 ## Creating the certificates
 
-**Step 1 — team owner creates the CA (once per team).** Keep
-`otto-lab-ca.key` restricted; distribute `otto-lab-ca.crt` to everyone.
+**Step 1 — obtain a CA.** The common case: your organisation already runs a
+CA, and every machine in the lab already trusts it. Then there is nothing to
+create here — ask that CA for the leaf certificate in step 3 and skip step 2,
+because viewers' browsers, `otto`'s own NetBox client and everything else on
+the machine trust it already. See [The NetBox
+backend](../../configuration/inventory.md#the-netbox-backend): a CA trusted
+once on a machine covers both the dashboard it views and the inventory it
+fetches.
+
+A team with no PKI creates its own CA once. Keep `otto-lab-ca.key`
+restricted; distribute `otto-lab-ca.crt` to everyone.
 
 ```sh
 openssl req -x509 -newkey rsa:4096 -sha256 -days 1825 -nodes \

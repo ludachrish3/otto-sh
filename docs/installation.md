@@ -504,6 +504,7 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 | `starlette` | 0.52.1 | ASGI request types used directly by the monitor server |
 | `telnetlib3` | 4.0.1 | Async Telnet client for telnet-based hosts |
 | `tomli` | 2.4.0 | TOML parser for `.otto/settings.toml` |
+| `truststore` | 0.10 | Verifies the `netbox` inventory backend's TLS against the OS certificate store |
 | `typer` | 0.26 | CLI framework (builds `otto run`, `otto test`, etc.) |
 | `typing-extensions` | 4.12.0 | Backport of `typing.override` (PEP 698) for Python < 3.12 |
 | `uvicorn` | 0.42.0 | ASGI server for the monitor dashboard |

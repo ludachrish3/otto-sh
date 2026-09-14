@@ -84,6 +84,13 @@ dependencies = [
     "starlette>=0.52.1",
     "telnetlib3>=4.0.1",
     "tomli>=2.4.0",
+    # `otto.inventory.netbox` builds a `truststore.SSLContext` so the NetBox
+    # client verifies against the OPERATING SYSTEM's certificate store — the
+    # same trust a browser on the machine uses — instead of requests' bundled
+    # certifi roots, which ignore an internal CA. Imported lazily, inside the
+    # fetch, like pynetbox itself. Already resolved transitively (docs
+    # tooling); declared because we import it directly.
+    "truststore>=0.10",
     "typer>=0.26",
     # `override` (PEP 698) lives in `typing` only from 3.12; our floor is 3.10,
     # so it is imported from typing_extensions. Already resolved transitively

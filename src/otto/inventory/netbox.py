@@ -83,29 +83,6 @@ def _checked_timeout(timeout: float) -> float:
     return float(timeout)
 
 
-def _checked_verify(verify: "bool | str") -> "bool | str":
-    """Return *verify* ready for ``requests``, refusing a relative CA bundle path.
-
-    ``verify`` is the one argument that can name a file, and an ``[inventory]``
-    table is COMMITTED: a relative path there resolves against whatever
-    directory otto was run from, not the repo the table lives in — the same
-    class of bug the settings-path anchoring rule exists for. It is refused
-    rather than anchored to ``repo_dir``, because
-    :meth:`~otto.inventory.config.CompiledInventory.same_as` deliberately
-    ignores ``anchor_dir``: anchoring it would make two repos with identical
-    tables silently share whichever repo declared first.
-    """
-    if not isinstance(verify, str):
-        return verify
-    expanded = Path(verify).expanduser()
-    if not expanded.is_absolute():
-        raise ValueError(
-            f"verify must be an absolute path to a CA bundle (or true/false); got {verify!r} "
-            "— a relative path resolves against the process working directory, not the repo"
-        )
-    return str(expanded)
-
-
 class NetBoxInventory:
     """Inventory over the devices a NetBox filter selects.
 
@@ -125,11 +102,6 @@ class NetBoxInventory:
         Name of the environment variable holding the API token. The token
         itself never sits in a settings file; the variable is read at the first
         fetch, not at construction.
-    verify : bool | str
-        Passed to ``requests``: ``False`` disables TLS verification, a string
-        is a CA bundle path and must be ABSOLUTE (``~`` is expanded) — a
-        relative one in a committed settings file would resolve against
-        whatever directory otto happened to be run from.
     filter : dict[str, Any] | None
         NetBox device filter, forwarded verbatim (``{"site": "lab-a"}``). No
         filter means every device.
@@ -172,7 +144,6 @@ class NetBoxInventory:
         *,
         url: str,
         token_env: str = "NETBOX_TOKEN",  # noqa: S107 — the NAME of the variable, not a token
-        verify: bool | str = True,
         filter: "dict[str, Any] | None" = None,  # noqa: A002 — the NetBox term
         ip_source: str = "primary_ip4",
         custom_fields: "dict[str, str] | None" = None,
@@ -227,7 +198,6 @@ class NetBoxInventory:
                 f"extra_custom_fields names {clash[0]!r}, which this backend already puts in "
                 f"record.extra from the device itself (reserved: {sorted(_RESERVED_EXTRA_KEYS)})"
             )
-        self.verify = _checked_verify(verify)
         self.timeout = _checked_timeout(timeout)
         # Normalised once, here: `label`, every error message and the snapshot
         # cache's slug all read `self.url`, so a trailing slash must not be
@@ -270,7 +240,7 @@ class NetBoxInventory:
         return token
 
     def _mount_timeout(self, session: Any) -> None:
-        """Give every request *session* sends this backend's timeout.
+        """Give every request *session* sends this backend's timeout and OS-store trust.
 
         AN ADAPTER, NOT A CALL ARGUMENT, because pynetbox owns the calls: it
         issues ``http_session.get(...)`` with no ``timeout`` and offers no
@@ -282,15 +252,83 @@ class NetBoxInventory:
         keyword arguments would never fire, and the bound would silently not
         exist.
 
-        ``requests`` is imported here for the same reason ``pynetbox`` is: it
-        is pynetbox's own HTTP client, it arrives with it, and nothing outside
-        a fetch should pay to import either.
+        The same adapter carries TLS trust, and there is exactly one source of
+        it: the operating system's certificate store, via ``truststore`` —
+        the trust a browser on this machine already has, so an internal CA
+        installed once serves NetBox, the dashboard viewer and otto alike.
+        requests' default is its bundled certifi roots, which know nothing of
+        an internal CA; that is why a ``verify`` override used to exist here
+        and why it no longer does. Two things keep the OS store the ONLY
+        source: the context is handed to urllib3 per adapter (never
+        ``truststore.inject_into_ssl()``, which swaps ``ssl.SSLContext``
+        process-wide and is client-only — ``otto monitor`` serves TLS in this
+        same process), and ``cert_verify`` never assigns ``ca_certs``, which
+        is how stock requests would pour certifi INTO the context and hide a
+        missing root behind a silent union.
+
+        ``requests`` and ``truststore`` are imported here for the same reason
+        ``pynetbox`` is: nothing outside a fetch should pay to import them.
+
+        A proxied request carries the same context too: ``HTTPAdapter``
+        builds a SEPARATE pool manager for proxied connections, in
+        ``proxy_manager_for``, which does not inherit ``init_poolmanager``'s
+        ``connection_pool_kw`` — left alone, a proxied HTTPS fetch (requests
+        honours ``HTTPS_PROXY`` from the environment by default) would fall
+        back to urllib3's own near-default context instead of the OS store.
+        This covers the CONNECT hop's own destination only: an ``https://``
+        proxy URL (TLS to the proxy itself, before the tunnel opens) is still
+        wrapped with urllib3's default context, since ``proxy_ssl_context``
+        is never set here — "one source of trust" is a claim about NetBox's
+        certificate, not about the proxy's.
+
+        ``requests``' environment-driven trust override is neutralised for
+        the same one-source reason: with ``trust_env`` on (the default),
+        ``Session.merge_environment_settings`` rewrites a bare
+        ``verify=True`` into whatever path ``REQUESTS_CA_BUNDLE`` or
+        ``CURL_CA_BUNDLE`` names, and urllib3 would load that file INTO this
+        same shared context — a second trust source arriving through the
+        back door ``cert_verify`` already closes at the front. ``send``
+        below pins ``verify=True`` for every ``https`` request regardless of
+        what ``merge_environment_settings`` computed, so those two variables
+        no longer reach the connection. ``SSL_CERT_FILE`` (OpenSSL's own
+        default-trust-file override, which truststore's Linux backend reads
+        at socket-wrap time) is the supported escape hatch for a
+        locally-trusted CA on Linux; macOS and Windows have no equivalent
+        because truststore reads the platform store there instead of OpenSSL
+        defaults.
         """
+        import ssl
+
         from requests.adapters import HTTPAdapter
+        from truststore import SSLContext as _OsTrustContext
 
         default = self.timeout
+        os_trust = _OsTrustContext(ssl.PROTOCOL_TLS_CLIENT)
 
         class _TimeoutAdapter(HTTPAdapter):
+            @override
+            def init_poolmanager(
+                self,
+                connections: int,
+                maxsize: int,
+                block: bool = False,
+                **pool_kwargs: Any,
+            ) -> None:
+                pool_kwargs["ssl_context"] = os_trust
+                super().init_poolmanager(connections, maxsize, block, **pool_kwargs)
+
+            @override
+            def proxy_manager_for(self, proxy: str, **proxy_kwargs: Any) -> Any:
+                proxy_kwargs["ssl_context"] = os_trust
+                return super().proxy_manager_for(proxy, **proxy_kwargs)
+
+            @override
+            def cert_verify(self, conn: Any, url: str, verify: "bool | str", cert: Any) -> None:
+                if url.lower().startswith("https"):
+                    conn.cert_reqs = "CERT_REQUIRED"
+                    return
+                super().cert_verify(conn, url, verify, cert)
+
             # The full signature rather than ``**kwargs``: ``HTTPAdapter.send``
             # declares six parameters, and an override that narrowed them would
             # be a Liskov violation the type checker refuses.
@@ -304,6 +342,14 @@ class NetBoxInventory:
                 cert: Any = None,
                 proxies: Any = None,
             ) -> Any:
+                # requests' Session.merge_environment_settings rewrites a bare
+                # verify=True into REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE when
+                # trust_env is on (the default) — pin verify=True for every
+                # https request so that rewrite never reaches urllib3 as a
+                # second ca_certs source poured into the shared OS-store
+                # context.
+                if request.url is not None and request.url.lower().startswith("https"):
+                    verify = True
                 return super().send(
                     request,
                     stream=stream,
@@ -327,7 +373,6 @@ class NetBoxInventory:
         api = None
         try:
             api = pynetbox.api(self.url, token=token)
-            api.http_session.verify = self.verify
             # Before any request: an unreachable NetBox must be bounded on the
             # very first one, which is the only one a down instance ever sees.
             self._mount_timeout(api.http_session)

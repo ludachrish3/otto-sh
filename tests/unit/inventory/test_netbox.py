@@ -4,6 +4,7 @@ Every match= below is anchored on the phrase the guard exists for, never on a
 bare word a repr or a locals dump could satisfy.
 """
 
+import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -341,50 +342,103 @@ def test_an_unknown_kwarg_names_the_settings_file_and_the_backend(tmp_path):
 # -- round 1: the wire-shape seam ------------------------------------------
 
 
-def test_a_relative_ca_bundle_path_is_refused_at_construction():
-    # An [inventory] table is COMMITTED; a relative path in one resolves
-    # against whatever directory otto was run from, not the repo.
-    with pytest.raises(
-        ValueError,
-        match=(
-            r"verify must be an absolute path to a CA bundle \(or true/false\); "
-            r"got 'certs/ca\.pem' — a relative path resolves against the process working "
-            r"directory, not the repo"
-        ),
-    ):
-        NetBoxInventory(url=DEAD, verify="certs/ca.pem")
+def test_verify_is_no_longer_an_argument():
+    # One source of trust — the OS store. A bundle path or an off switch in a
+    # COMMITTED settings table is exactly the proliferation the spec removes,
+    # and the constructor must not quietly grow it back.
+    with pytest.raises(TypeError, match="verify"):
+        NetBoxInventory(url=DEAD, verify=False)  # type: ignore[call-arg]
 
 
-def test_an_absolute_ca_bundle_path_is_kept_and_a_tilde_is_expanded(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    assert NetBoxInventory(url=DEAD, verify=str(tmp_path / "ca.pem")).verify == str(
-        tmp_path / "ca.pem"
+def test_the_mounted_adapter_trusts_the_os_store_and_never_loads_certifi():
+    """Spec §3: the truststore context decides; requests must not pour certifi into it.
+
+    Stock ``HTTPAdapter.cert_verify`` with ``verify=True`` assigns certifi's
+    bundle to ``conn.ca_certs``, which urllib3 then loads INTO the supplied
+    context — a silent union of OS store + certifi that hides a missing root.
+    The override leaves ``ca_certs`` / ``ca_cert_dir`` alone and only requires
+    a certificate. Plain ``http`` keeps the stock behaviour (nothing to verify).
+    """
+    from types import SimpleNamespace
+
+    import requests
+    import truststore
+
+    session = requests.Session()
+    NetBoxInventory(url=DEAD)._mount_timeout(session)
+    adapter = session.get_adapter("https://netbox.example/")
+    assert session.get_adapter("http://netbox.example/") is adapter  # one adapter, both schemes
+    assert isinstance(adapter.poolmanager.connection_pool_kw["ssl_context"], truststore.SSLContext)
+
+    # A proxied connection gets its own pool manager (HTTPAdapter.proxy_manager_for
+    # does not inherit init_poolmanager's connection_pool_kw) — it must carry the
+    # SAME OS-store context, not fall back to urllib3's own default.
+    proxy_manager = adapter.proxy_manager_for("http://proxy.example:3128")
+    assert (
+        proxy_manager.connection_pool_kw["ssl_context"]
+        is adapter.poolmanager.connection_pool_kw["ssl_context"]
     )
-    assert NetBoxInventory(url=DEAD, verify="~/ca.pem").verify == str(tmp_path / "ca.pem")
-    assert NetBoxInventory(url=DEAD, verify=False).verify is False
+
+    conn = SimpleNamespace(cert_reqs=None, ca_certs=None, ca_cert_dir=None)
+    adapter.cert_verify(conn, "https://netbox.example/api/", verify=True, cert=None)
+    assert conn.cert_reqs == "CERT_REQUIRED"
+    assert conn.ca_certs is None
+    assert conn.ca_cert_dir is None
+
+    plain = SimpleNamespace(cert_reqs=None, ca_certs=None, ca_cert_dir=None)
+    adapter.cert_verify(plain, "http://netbox.example/api/", verify=True, cert=None)
+    assert plain.cert_reqs == "CERT_NONE"
 
 
-def test_verify_true_refuses_a_certificate_no_trust_store_knows(tmp_path):
-    # The stub speaks real TLS with a self-signed certificate, so `verify` has
-    # something to actually verify — over plain HTTP the setting is inert and
-    # deleting it entirely would leave every other test green.
+def test_a_certificate_the_os_store_does_not_know_is_refused(tmp_path, monkeypatch):
+    # The stub speaks real TLS with a self-signed certificate, so there is
+    # something to actually verify — over plain HTTP the trust path is inert
+    # and deleting it entirely would leave every other test green.
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
     # Not combinable: the inner match= reads `stub.base`, which only the outer
     # `with` binds.
     with NetBoxStub([device(1, "d1")], tls=self_signed_cert(tmp_path)) as stub:  # noqa: SIM117
-        with pytest.raises(InventoryError, match=f"netbox inventory {stub.base}"):
+        with pytest.raises(InventoryError, match=f"netbox inventory {stub.base}: SSLError"):
             _inv(stub).list_keys()
 
 
-@pytest.mark.filterwarnings("ignore::urllib3.exceptions.InsecureRequestWarning")
-def test_verify_false_accepts_it(tmp_path):
-    with NetBoxStub([device(1, "d1")], tls=self_signed_cert(tmp_path)) as stub:
-        assert _inv(stub, verify=False).list_keys() == ["d1"]
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="SSL_CERT_FILE is an OpenSSL override; truststore reads the platform store"
+    " on macOS/Windows",
+)
+def test_a_certificate_the_os_store_trusts_is_accepted(tmp_path, monkeypatch):
+    """The guard that the OS-store path is REAL.
 
-
-def test_verify_with_the_certificate_as_the_ca_bundle_accepts_it(tmp_path):
+    ``SSL_CERT_FILE`` is OpenSSL's own override of the default trust file;
+    truststore reads the defaults at socket-wrap time, so setting it here,
+    before the fetch, is what "install the CA in the OS store" looks like
+    inside a test. With certifi still in play this same fetch fails — that is
+    the whole discriminator.
+    """
     certfile, keyfile = self_signed_cert(tmp_path)
+    monkeypatch.setenv("SSL_CERT_FILE", str(certfile))
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
     with NetBoxStub([device(1, "d1")], tls=(certfile, keyfile)) as stub:
-        assert _inv(stub, verify=str(certfile)).list_keys() == ["d1"]
+        assert _inv(stub).list_keys() == ["d1"]
+
+
+def test_a_requests_ca_bundle_from_the_environment_is_not_a_second_trust_source(
+    tmp_path, monkeypatch
+):
+    # requests' Session.merge_environment_settings turns verify=True into the
+    # REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE path when trust_env is on (the
+    # default), and urllib3 would load that file INTO the shared truststore
+    # context — a silent union with a second trust list. The send override
+    # pins verify=True for https so the OS store stays the only source.
+    certfile, keyfile = self_signed_cert(tmp_path)
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(certfile))
+    with NetBoxStub([device(1, "d1")], tls=(certfile, keyfile)) as stub:  # noqa: SIM117
+        with pytest.raises(InventoryError, match=f"netbox inventory {stub.base}: SSLError"):
+            _inv(stub).list_keys()
 
 
 def test_a_device_missing_a_field_names_the_device_and_the_url():

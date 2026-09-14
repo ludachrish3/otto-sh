@@ -11,8 +11,8 @@ Binds ``127.0.0.1`` on port 0 (the kernel picks a free port) and serves from a
 daemon thread the context manager shuts down — no real network, no port
 collision between xdist workers, no thread left running past the test. Pass
 ``tls=(certfile, keyfile)`` (see :func:`self_signed_cert`) to serve HTTPS with
-a certificate no system trust store knows, which is what gives ``verify=``
-something real to be checked against.
+a certificate no operating-system trust store knows, which is what gives the
+client's OS-store verification something real to be checked against.
 """
 
 import datetime
@@ -37,10 +37,10 @@ def self_signed_cert(directory):
     """Write a self-signed cert/key for 127.0.0.1 into *directory*; return both paths.
 
     Self-signed and valid for the loopback IP, so it is simultaneously a
-    server certificate no default trust store accepts (what ``verify=True``
-    must reject) and a usable one-certificate CA bundle (what
-    ``verify="<path>"`` must accept). EC rather than RSA purely for keygen
-    speed — this runs per test.
+    server certificate no default trust store accepts (what the client must
+    reject) and a usable one-certificate trust file (what ``SSL_CERT_FILE``
+    pointing at it must accept). EC rather than RSA purely for keygen speed —
+    this runs per test.
     """
     directory = Path(directory)
     key = ec.generate_private_key(ec.SECP256R1())
