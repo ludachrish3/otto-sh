@@ -67,7 +67,7 @@ class _FakeHop:
 
 def _manager(points: ChaosPoints) -> ConnectionManager:
     """A REAL ConnectionManager (the chain under test) over instrumented fakes."""
-    mgr = ConnectionManager(ip="10.0.0.1", creds=[], user="u", term="ssh", name="box")
+    mgr = ConnectionManager(ip="10.0.0.1", creds=[], term="ssh", name="box")
     mgr._sftp_conn = _FakeSftp(points)
     mgr._ssh_conn = _FakeSsh(points)
     mgr._ftp_conn = _FakeFtp(points)
@@ -180,7 +180,7 @@ class _FakeUserSftp:
 
 @pytest.mark.asyncio
 async def test_close_drains_per_user_connections():
-    mgr = ConnectionManager(ip="10.0.0.1", creds=[], user="u", term="ssh", name="box")
+    mgr = ConnectionManager(ip="10.0.0.1", creds=[], term="ssh", name="box")
     user_ssh = _FakeUserSsh()
     user_sftp = _FakeUserSftp()
     mgr._user_ssh_conns["postgres"] = user_ssh

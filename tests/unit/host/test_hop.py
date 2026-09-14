@@ -92,7 +92,6 @@ class TestConnectionManagerTunnel:
         cm = ConnectionManager(
             ip="10.0.0.1",
             creds=[Cred(login="user", password="pass")],
-            user=None,
             term="ssh",
             name="test",
         )
@@ -103,7 +102,6 @@ class TestConnectionManagerTunnel:
         cm = ConnectionManager(
             ip="10.0.0.1",
             creds=[Cred(login="user", password="pass")],
-            user=None,
             term="ssh",
             name="test",
             hop=SshHopTransport(factory),
@@ -117,7 +115,6 @@ class TestConnectionManagerTunnel:
         cm = ConnectionManager(
             ip="10.0.0.1",
             creds=[Cred(login="user", password="pass")],
-            user=None,
             term="ssh",
             name="test",
             hop=SshHopTransport(factory),
@@ -134,7 +131,6 @@ class TestConnectionManagerTunnel:
         cm = ConnectionManager(
             ip="10.0.0.1",
             creds=[Cred(login="user", password="pass")],
-            user=None,
             term="ssh",
             name="test",
             hop=SshHopTransport(factory),
@@ -158,7 +154,6 @@ class TestConnectionManagerTunnel:
         cm = ConnectionManager(
             ip="10.0.0.1",
             creds=[Cred(login="user", password="pass")],
-            user=None,
             term="ssh",
             name="test",
         )
@@ -186,7 +181,6 @@ class TestConnectionManagerTunnel:
         cm = ConnectionManager(
             ip="10.0.0.1",
             creds=[Cred(login="user", password="pass")],
-            user=None,
             term="telnet",
             name="test",
             hop=SshHopTransport(factory),
@@ -203,6 +197,49 @@ class TestConnectionManagerTunnel:
             assert call_args.kwargs["password"] == "pass"
             assert call_args.kwargs["connect_port"] == 54321
             mock_tunnel.forward_local_port.assert_awaited_once_with("localhost", 0, "10.0.0.1", 23)
+
+    @pytest.mark.asyncio
+    async def test_hop_auth_resolves_against_ssh_regardless_of_the_hop_hosts_own_term(self):
+        """A hop is always an SSH tunnel (spec 2026-09-13 cred-scope §4): the
+        hop host's tunnel must authenticate with its ssh-scoped cred even
+        though the hop host's own active term is telnet."""
+        from otto.config.lab import Lab
+
+        seen: dict[str, object] = {}
+
+        async def fake_connect(ip, *, username, password, **kw):
+            seen["auth"] = (username, password)
+            return MagicMock(spec=SSHClientConnection)
+
+        with patch("asyncssh.connect", fake_connect):
+            jumpbox = UnixHost(
+                ip="10.10.0.1",
+                element=Element("jumpbox"),
+                creds=[
+                    Cred(login="root", password="tn", protocols=["telnet"]),
+                    Cred(login="ops", password="ops-pw", protocols=["ssh"]),
+                ],
+                term="telnet",
+                log=LogMode.QUIET,
+            )
+            target = UnixHost(
+                ip="10.10.0.2",
+                element=Element("target"),
+                creds=[Cred(login="user", password="pass")],
+                hop="jumpbox",
+                log=LogMode.QUIET,
+            )
+
+            transport = target._connections._hop
+            assert transport is not None
+
+            lab = Lab(name="hop_auth_test")
+            lab.add_host(jumpbox)
+            lab.add_host(target)
+
+            await transport.get_tunnel()
+
+        assert seen["auth"] == ("ops", "ops-pw")
 
     @pytest.mark.asyncio
     async def test_a_named_telnet_session_dials_the_forward_not_the_devices_own_address(self):
@@ -237,7 +274,6 @@ class TestConnectionManagerTunnel:
         cm = ConnectionManager(
             ip="127.0.0.1",
             creds=[Cred(login="root", password="otto")],
-            user=None,
             term="telnet",
             name="bb1350",
             hop=SshHopTransport(AsyncMock(return_value=mock_tunnel)),
@@ -290,7 +326,6 @@ class TestConnectionManagerTunnel:
         cm = ConnectionManager(
             ip="10.0.0.1",
             creds=[Cred(login="user", password="pass")],
-            user=None,
             term="telnet",
             name="test",
             hop=SshHopTransport(AsyncMock(return_value=mock_tunnel)),
@@ -323,7 +358,6 @@ class TestConnectionManagerTunnel:
         cm = ConnectionManager(
             ip="10.0.0.1",
             creds=[Cred(login="user", password="pass")],
-            user=None,
             term="ssh",
             name="test",
             hop=hop,
@@ -348,7 +382,6 @@ class TestConnectionManagerTunnel:
         cm = ConnectionManager(
             ip="10.0.0.1",
             creds=[Cred(login="user", password="pass")],
-            user=None,
             term="ssh",
             name="test",
             hop=SshHopTransport(factory),
@@ -362,7 +395,6 @@ class TestConnectionManagerTunnel:
         cm = ConnectionManager(
             ip="10.0.0.1",
             creds=[Cred(login="user", password="pass")],
-            user=None,
             term="ssh",
             name="test",
         )
@@ -450,7 +482,6 @@ class TestTunnelCleanup:
         cm = ConnectionManager(
             ip="10.0.0.1",
             creds=[Cred(login="user", password="pass")],
-            user=None,
             term="ssh",
             name="test",
             hop=SshHopTransport(factory),
@@ -475,7 +506,6 @@ class TestTunnelCleanup:
         cm = ConnectionManager(
             ip="10.0.0.1",
             creds=[Cred(login="user", password="pass")],
-            user=None,
             term="ssh",
             name="test",
             hop=SshHopTransport(factory),

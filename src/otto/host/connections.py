@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 from typing_extensions import override
 
 from ..registry import Registry, caller_module
-from .login_proxy import Cred, LoginProxyError, resolve_chain
+from .login_proxy import Cred, LoginProxyError, default_login, resolve_chain
 from .options import FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from .telnet import TelnetClient
 
@@ -70,7 +70,6 @@ class TermContext:
 
     ip: str
     creds: list[Cred]
-    user: str | None
     term: str
     name: str
     hop: "HopTransport | None" = None
@@ -81,6 +80,9 @@ class TermContext:
 
 
 logger = logging.getLogger(__name__)
+
+LOGINLESS = Cred(login="", password="")
+"""The auth a transport uses when no cred applies — today's ``('', '')`` as a ``Cred``."""
 
 
 @contextlib.contextmanager
@@ -215,7 +217,7 @@ class ConnectionManager:
     doubles without monkeypatching library functions::
 
         class FakeConnections(ConnectionManager):
-            def __init__(self, ip, creds, user, term, name):
+            def __init__(self, ip, creds, term, name):
                 self._ssh_conn = AsyncMock(spec=SSHClientConnection)
                 self._sftp_conn = None
                 self._ftp_conn = None
@@ -235,7 +237,6 @@ class ConnectionManager:
         self,
         ip: str,
         creds: list[Cred],
-        user: str | None,
         term: str,
         name: str,
         hop: "HopTransport | None" = None,
@@ -246,7 +247,6 @@ class ConnectionManager:
     ) -> None:
         self._ip = ip
         self._creds = creds
-        self._user = user
         self._term = term
         self._name = name
         self._hop = hop
@@ -290,7 +290,6 @@ class ConnectionManager:
         return cls(
             ip=ctx.ip,
             creds=ctx.creds,
-            user=ctx.user,
             term=ctx.term,
             name=ctx.name,
             hop=ctx.hop,
@@ -305,34 +304,55 @@ class ConnectionManager:
         """Expose the stored ``TelnetOptions`` so custom callers honor the same configuration."""
         return self._telnet_options
 
+    def login_target_for(self, protocol: str) -> str:
+        """Return the login *protocol* authenticates as (spec 2026-09-13 cred-scope §3.2).
+
+        First entry that applies, else ``""``.
+        """
+        return default_login(self._creds, protocol)
+
     @property
     def login_target(self) -> str:
-        """The login the session should end up as (host.user or first entry)."""
-        if self._user is not None:
-            return self._user
-        return self._creds[0].login if self._creds else ""
+        """The login the session should end up as — the active term's pick."""
+        return self.login_target_for(self._term)
+
+    def transport_cred_for(self, protocol: str) -> Cred | None:
+        """Resolve the TRANSPORT cred for *protocol* — the pick's directly-loginable end.
+
+        The pick's via-chain resolves to the cred with no proxy; a protocol
+        with a shell replays the hops post-handshake, ftp uses the direct end
+        as-is. ``None`` when no cred applies to *protocol* (no creds, or only
+        creds scoped elsewhere) — callers substitute :data:`LOGINLESS`.
+        """
+        target = self.login_target_for(protocol)
+        if not target:
+            return None
+        direct, _ = resolve_chain(self._creds, target, protocol)
+        return direct
 
     @property
     # DEBT(no-tuple-return): a (user, password) pair; wants a frozen dataclass.
     # ast-grep-ignore: no-tuple-return
     def credentials(self) -> tuple[str, str | None]:
-        """(username, password) for TRANSPORT auth — the resolved direct cred.
+        """(username, password) for the active term's TRANSPORT auth.
 
         For a proxied ``login_target`` this is the via-chain's directly
         loginable end; the hops are applied post-handshake (see
-        ``proxy_hops``). ``('', '')`` when no creds are configured.
+        ``proxy_hops``). ``('', '')`` when no cred applies to the term.
         """
-        if not self._creds:
-            return ("", "")
-        direct, _ = resolve_chain(self._creds, self.login_target)
-        return direct.login, direct.password
+        cred = self.transport_cred_for(self._term)
+        return ("", "") if cred is None else (cred.login, cred.password)
 
     @property
     def proxy_hops(self) -> list[Cred]:
-        """Proxied creds to apply after the marker handshake, outermost first."""
-        if not self._creds:
+        """Proxied creds to apply after the marker handshake, outermost first.
+
+        ``[]`` when no cred applies to the term — there is no chain to replay.
+        """
+        target = self.login_target
+        if not target:
             return []
-        _, hops = resolve_chain(self._creds, self.login_target)
+        _, hops = resolve_chain(self._creds, target, self._term)
         return hops
 
     @property
@@ -393,15 +413,15 @@ class ConnectionManager:
         async with self._ssh_lock:
             if self._ssh_conn is not None:
                 return self._ssh_conn
-            user, password = self.credentials
+            cred = self.transport_cred_for("ssh") or LOGINLESS
             logger.debug(f"Connecting to {self._name} via SSH")
             tunnel = None
             if self._hop is not None:
                 tunnel = await self._ensure_tunnel()
             conn = await ssh_connect(
                 self._ip,
-                username=user,
-                password=password,
+                username=cred.login,
+                password=cred.password,
                 tunnel=tunnel,
                 **self._ssh_options._kwargs(),  # noqa: SLF001 — intra-package access to SshOptions._kwargs
             )
@@ -425,7 +445,7 @@ class ConnectionManager:
             return sftp
 
     def _direct_cred_for(self, user: str) -> Cred:
-        """Resolve the cred to authenticate a transport as *user* — zero hops or refuse.
+        """Resolve the cred to authenticate an SSH transport as *user* — zero hops or refuse.
 
         ``resolve_chain`` answers both halves: an unknown login raises its own
         loud error; a known login reachable only through proxy hops refuses
@@ -433,7 +453,7 @@ class ConnectionManager:
         (spec 2026-09-01 §2.4) — ``login(user=...)``/``as_user`` CAN, and the
         message says so.
         """
-        direct, hops = resolve_chain(self._creds, user)
+        direct, hops = resolve_chain(self._creds, user, "ssh")
         if hops or direct.login != user:
             raise LoginProxyError(
                 f"{self._name}: user {user!r} has no directly-loginable cred "
@@ -498,7 +518,7 @@ class ConnectionManager:
         async with self._ftp_lock:
             if self._ftp_conn is not None:
                 return self._ftp_conn
-            user, password = self.credentials
+            cred = self.transport_cred_for("ftp") or LOGINLESS
             ftp_port = self._ftp_options.port
             client_kwargs = self._ftp_options._client_kwargs()  # noqa: SLF001 — intra-package access to FtpOptions._client_kwargs
             if self._hop is not None:
@@ -514,7 +534,37 @@ class ConnectionManager:
                 client = aioftp.Client(**client_kwargs)
                 logger.debug(f"Connecting to {self._name} via FTP")
                 await client.connect(self._ip, ftp_port)
-            await client.login(user, password or "")
+            try:
+                await client.login(cred.login, cred.password or "")
+            except BaseException as err:
+                # A rejected login (bad password, a scoped cred that doesn't
+                # match) still leaves a connected control socket. Mirror
+                # telnet's teardown-on-any-exception below: an unclosed
+                # client here is a transport GC'd at some later, unrelated
+                # point, whose ResourceWarning pytest's ``[unraisable]``
+                # plugin escalates onto whatever test happens to be running
+                # then (the same xdist-flake symptom ``close()`` guards
+                # against for ssh/telnet).
+                # aioftp.Client.close() is synchronous (0.28) — no await;
+                # test_ftp_closes_the_client_when_login_is_refused pins this.
+                with contextlib.suppress(Exception):
+                    client.close()
+                if isinstance(err, aioftp.errors.StatusCodeError):
+                    # A refused login is otto's to explain, not aioftp's.
+                    # aioftp's own message is "Waiting for ('230',) but got
+                    # ('530',) ['Login incorrect']" -- which names no host, no
+                    # login and not the protocol, on the one failure a scoped
+                    # cred makes likely (spec 2026-09-13 cred-scope §3.2: ftp
+                    # picks its own entry, so the account that was refused is
+                    # NOT necessarily the one the lab reads as the host's).
+                    # The password is never named; the received status code is,
+                    # because 530 (refused) and 421 (service unavailable) are a
+                    # wrong cred and a wrong server, and the fix differs.
+                    codes = ", ".join(str(c) for c in err.received_codes)
+                    raise LoginProxyError(
+                        f"{self._name}: ftp login refused for {cred.login!r} ({codes})"
+                    ) from err
+                raise
             self._ftp_conn = client
             logger.debug(f"FTP connected to {self._name}")
             return client
@@ -579,13 +629,13 @@ class ConnectionManager:
             if self._telnet_conn is not None:
                 return self._telnet_conn
 
-            user, password = self.credentials
+            cred = self.transport_cred_for("telnet") or LOGINLESS
             target = await self.telnet_target()
             logger.debug(f"Connecting to {self._name} via telnet")
             client = TelnetClient(
                 target.host,
-                user=user,
-                password=password or "",
+                user=cred.login,
+                password=cred.password or "",
                 options=self._telnet_options,
                 connect_port=target.port,
             )
@@ -764,10 +814,16 @@ class _UserConnections:
 
 @dataclass(frozen=True)
 class TermBackend:
-    """A registered term backend: the manager class + the host families it serves."""
+    """A registered term backend: the manager class, the families it serves, whether it logs in."""
 
     cls: type[ConnectionManager]
     host_families: frozenset[str]
+    authenticates: bool
+    """Whether this term performs its own login with a cred (spec 2026-09-13 cred-scope §2.1).
+
+    ``ssh`` and ``telnet`` do. A term that never authenticates (a raw serial
+    console) declares ``False`` and cannot be named as a cred's scope.
+    """
 
 
 TERM_BACKENDS: Registry[TermBackend] = Registry(
@@ -780,6 +836,7 @@ def register_term_backend(
     cls: type[ConnectionManager],
     *,
     host_families: frozenset[str],
+    authenticates: bool,
     overwrite: bool = False,
 ) -> None:
     """Make a custom connection backend available to lab data under *name*.
@@ -796,6 +853,11 @@ def register_term_backend(
     family it does not serve (e.g. ``ssh`` on an embedded host); an empty
     *host_families* could never validate on any host, so it is rejected here.
 
+    *authenticates* states whether this term logs in with a cred; it decides
+    whether a cred may be scoped to this term (spec 2026-09-13 cred-scope
+    §2.1). Required, like *host_families*, so the declaration is stated rather
+    than inferred; a non-bool is refused.
+
     *overwrite* replaces an existing registration under *name* deliberately
     (e.g. a built-in); by default a duplicate name raises.
     """
@@ -805,9 +867,14 @@ def register_term_backend(
             f"a term backend must declare at least one host family "
             f"(e.g. frozenset({{'unix'}}))."
         )
+    if not isinstance(authenticates, bool):
+        raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see host_families above)
+            f"register_term_backend({name!r}): authenticates must be a bool "
+            f"(True when the term logs in with a cred, as ssh and telnet do)."
+        )
     TERM_BACKENDS.register(
         name,
-        TermBackend(cls=cls, host_families=host_families),
+        TermBackend(cls=cls, host_families=host_families, authenticates=authenticates),
         overwrite=overwrite,
         origin=caller_module(),
     )
@@ -829,9 +896,14 @@ def _register_builtin_term_backends() -> None:
     Ensures first-party and third-party registrations travel the same code (mirrors
     ``os_profile._register_builtin_host_classes``).
     """
-    register_term_backend("ssh", ConnectionManager, host_families=frozenset({"unix"}))
     register_term_backend(
-        "telnet", ConnectionManager, host_families=frozenset({"unix", "embedded"})
+        "ssh", ConnectionManager, host_families=frozenset({"unix"}), authenticates=True
+    )
+    register_term_backend(
+        "telnet",
+        ConnectionManager,
+        host_families=frozenset({"unix", "embedded"}),
+        authenticates=True,
     )
 
 

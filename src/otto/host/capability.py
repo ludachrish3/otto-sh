@@ -89,3 +89,19 @@ def select_option_defaults(
                 if isinstance(val, dict):
                     effective.setdefault(key, {}).update(val)
     return effective
+
+
+def authenticating_protocols() -> list[str]:
+    """Sorted names of every registered term/transfer backend that logs in with a cred.
+
+    The ONE place otto computes the vocabulary a cred's ``protocols`` scope may
+    use (spec 2026-09-13 cred-scope §2.1): the host-spec validator, its error
+    message and the docs all read this. Function-local imports keep this
+    module off the registries' import graph, as the spec validators do.
+    """
+    from .connections import TERM_BACKENDS  # off the startup graph on purpose
+    from .transfer.registry import TRANSFER_BACKENDS
+
+    terms = [name for name, backend in TERM_BACKENDS.items() if backend.authenticates]
+    transfers = [name for name, cls in TRANSFER_BACKENDS.items() if cls.authenticates]
+    return sorted({*terms, *transfers})

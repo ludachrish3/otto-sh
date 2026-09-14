@@ -87,10 +87,32 @@ def test_a_non_list_value_names_its_key():
 
 
 def test_a_duplicate_login_within_one_key_is_refused():
-    with pytest.raises(CredsError, match="key 'k': duplicate cred login 'root'"):
+    with pytest.raises(CredsError, match=r"key 'k': duplicate cred entries: \['root'\]"):
         parse_creds_document(
             {"k": [{"login": "root"}, {"login": "root", "password": "x"}]}, source="s"
         )
+
+
+def test_same_login_may_repeat_under_one_key_with_different_scopes(tmp_path):
+    store = _store(
+        tmp_path,
+        {
+            "k": [
+                {"login": "admin", "password": "u"},
+                {"login": "admin", "password": "f", "protocols": ["ftp"]},
+            ]
+        },
+    )
+    assert [c.protocols for c in store.lookup("k")] == [[], ["ftp"]]
+
+
+def test_a_login_and_scope_repeated_under_one_key_is_refused(tmp_path):
+    store = _store(
+        tmp_path,
+        {"k": [{"login": "admin", "protocols": ["ftp"]}, {"login": "admin", "protocols": ["ftp"]}]},
+    )
+    with pytest.raises(CredsError, match=r"duplicate cred entries.*admin \[ftp\]"):
+        store.lookup("k")
 
 
 def test_fingerprint_tracks_the_file_and_survives_its_absence(tmp_path):

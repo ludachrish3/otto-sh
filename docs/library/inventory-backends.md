@@ -105,11 +105,12 @@ backends, term/transfer backends and host classes — see
 
 `[creds]` is a **core** table, not a backend's: otto wraps the selected
 inventory in {class}`~otto.inventory.creds.CredsOverlay`, which merges the
-configured creds store's entries UNDER the record's, by login, and the lab
-file's over both ({ref}`credentials-layered`). A backend therefore never has
-to see a password — leave `creds` out of your records and the store supplies
-them — but it may carry them when the source of record genuinely holds them;
-the record then overrides the store for the logins it names. A backend whose
+configured creds store's entries UNDER the record's, by identity — login plus
+scope ({ref}`cred-protocols`) — and the lab file's over both
+({ref}`credentials-layered`). A backend therefore never has to see a
+password — leave `creds` out of your records and the store supplies them — but
+it may carry them when the source of record genuinely holds them; the record
+then overrides the store for the logins it names. A backend whose
 `supplies` includes `creds` is never snapshot-cached (below). Writing a store
 of your own is {doc}`creds-backends`.
 

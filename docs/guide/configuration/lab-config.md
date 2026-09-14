@@ -241,7 +241,7 @@ host field — the third reservation level, beside the
 | Field | Type | Description |
 |-------|------|-------------|
 | `ip` | string | IP address or DNS name otto will connect to. |
-| `creds` | array of objects | Ordered list of `{"login": ..., "password": ...}` entries (the first is the default login unless `user` pins another one).  At least one entry required for Unix hosts; optional for embedded hosts (RTOS telnet shells typically have no login step).  An entry may also carry `proxy`/`via`/`params` to describe a login-proxy hop.  On a **referenced** host the list is optional and layers over the inventory's and the creds store's entries by login; its order is the login order (see {ref}`credentials-layered`). |
+| `creds` | array of objects | Ordered list of `{"login": ..., "password": ...}` entries — a protocol logs in as the first entry that applies to it ({ref}`cred-protocols`).  At least one entry required for Unix hosts; optional for embedded hosts (RTOS telnet shells typically have no login step).  An entry may also carry `proxy`/`via`/`params` to describe a login-proxy hop, or `protocols` to scope it to the services it is for.  On a **referenced** host the list is optional and layers over the inventory's and the creds store's entries by identity (login plus `protocols` scope); its order is the login order (see {ref}`credentials-layered`). |
 
 ### Common optional
 
@@ -251,7 +251,6 @@ host field — the third reservation level, beside the
 | `metadata` | object | Opaque user data — the sanctioned home for custom fields, so `extra="forbid"` never has to give way.  Otto never reads it.  Surfaces as `host.metadata`; the element's as `host.element.metadata`; the lab's as `host.lab_info.metadata`. |
 | `resources` | array of strings | This host's own reservation identifiers — a slot.  Combined with the element's and the lab's; see {doc}`../cli/reservation/index`.  Defaults to empty. |
 | `board` | string | Board type, included in the host id when set. |
-| `user` | string | Pin a specific user from `creds`.  Defaults to the first entry. |
 | `term` | string | Terminal protocol lab pin — must be in the host's `valid_terms` menu.  Product `[host_preferences]` and CLI `--term` can override; see the precedence chain below. |
 | `transfer` | string | File-transfer protocol lab pin — must be in the host's `valid_transfers` menu.  Product `[host_preferences]` and CLI `--transfer` can override; see the precedence chain below. |
 | `impairer` | string | Link-impairment backend lab pin — must be in the host's `valid_impairers` menu (Unix hosts only).  Product `[host_preferences]` can override.  See {doc}`../cli/link/index`. |

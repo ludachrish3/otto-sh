@@ -187,6 +187,17 @@ class TestCreds:
         assert password == "vagrant"
         await h.close()
 
+    def test_cred_lookup_prefers_the_active_terms_scope(self):
+        creds = [
+            Cred(login="admin", password="unix-pw"),
+            Cred(login="admin", password="tn-pw", protocols=["telnet"]),
+        ]
+        host = UnixHost(ip="10.0.0.1", element=Element("lab"), creds=creds, term="telnet")
+        assert host.cred("admin").password == "tn-pw"
+        assert host._sudo_password() == "tn-pw"
+        assert host.default_cred is not None
+        assert host.default_cred.login == "admin"
+
 
 # ---------------------------------------------------------------------------
 # userland
@@ -2184,7 +2195,6 @@ async def test_host_current_user_reads_default_session():
         ip="10.0.0.1",
         element=Element("box"),
         creds=[Cred(login="admin", password="secret")],
-        user="admin",
         log=LogMode.QUIET,
     )
     transport = MagicMock(spec=ShellSession)
@@ -2205,7 +2215,6 @@ async def test_unix_switch_user_updates_host_current_user():
         ip="10.0.0.1",
         element=Element("box"),
         creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
-        user="admin",
         log=LogMode.QUIET,
     )
     transport = MagicMock(spec=ShellSession)
@@ -2232,7 +2241,6 @@ def _unix_host():
         ip="10.0.0.1",
         element=Element("box"),
         creds=[Cred(login="admin", password="secret")],
-        user="admin",
         log=LogMode.QUIET,
     )
 

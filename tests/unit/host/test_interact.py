@@ -655,7 +655,6 @@ class TestUnixHostLoginUser:
                 Cred(login="other", password="op"),
                 Cred(login="admin", password="ap"),
             ],
-            user="other",  # login_target -> "other"; connection authenticates as "other"
             term="ssh",
             log=LogMode.QUIET,
         )
@@ -714,7 +713,6 @@ class TestUnixHostLoginUser:
                 Cred(login="other", password="op"),
                 Cred(login="admin", password="ap"),
             ],
-            user="other",
             term="telnet",
             log=LogMode.QUIET,
         )

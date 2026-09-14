@@ -12,7 +12,7 @@ What this module proves, end to end against the real bed, using a CUSTOM
 ``sudo-su-shell`` login proxy (registered here — see below):
 
 - direct auth as ``mysql`` is denied (only the proxy path works);
-- proxied session *establishment* (``user='mysql'`` → default session runs
+- proxied session *establishment* (the mysql cred sequenced first → default session runs
   as mysql);
 - ``switch_user`` / ``as_user`` roundtrip (become mysql, then restore);
 - ``exec`` routing through the proxied pool (Task 8);
@@ -133,16 +133,22 @@ _MYSQL_CREDS: list[dict[str, str]] = [
 ]
 
 
-def _mysql_host_dict(ip: str, element: str, **overrides: object) -> dict[str, object]:
+def _mysql_host_dict(
+    ip: str, element: str, *, login: str = "vagrant", **overrides: object
+) -> dict[str, object]:
     """Build an inline host dict carrying the mysql proxied cred.
+
+    *login* is the account the session must land on: the pick is list order
+    (spec 2026-09-13 cred-scope §3.2), so that entry is sequenced first.
 
     Fresh per call (no shared mutable state) and never written to any file —
     validated in-process by :func:`create_host_from_dict`, where the
     ``sudo-su-shell`` proxy IS registered (see module scope, above).
     """
+    creds = sorted((dict(c) for c in _MYSQL_CREDS), key=lambda c: c["login"] != login)
     data: dict[str, object] = {
         "ip": ip,
-        "creds": [dict(c) for c in _MYSQL_CREDS],
+        "creds": creds,
     }
     data.update(overrides)
     return data
@@ -223,16 +229,16 @@ async def test_direct_ssh_as_mysql_is_denied(leased_host: tuple[str, str]) -> No
 
 
 # ---------------------------------------------------------------------------
-# Test 2: proxied default session (host.user='mysql')
+# Test 2: proxied default session (the mysql cred leads the list)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_proxied_default_session(leased_host: tuple[str, str]) -> None:
-    """A host configured with ``user='mysql'`` must land its default session on mysql."""
+    """A host whose first cred is ``mysql`` must land its default session on mysql."""
     element, ip = leased_host
     host = create_host_from_dict(
-        _mysql_host_dict(ip, element, user="mysql"), element=Element(element)
+        _mysql_host_dict(ip, element, login="mysql"), element=Element(element)
     )
     try:
         result = (await host.run("whoami")).only
@@ -278,7 +284,7 @@ async def test_exec_runs_as_proxied_user(leased_host: tuple[str, str]) -> None:
     """``exec`` on a proxied-user host must route through the proxied pool session."""
     element, ip = leased_host
     host = create_host_from_dict(
-        _mysql_host_dict(ip, element, user="mysql"), element=Element(element)
+        _mysql_host_dict(ip, element, login="mysql"), element=Element(element)
     )
     try:
         result = await host.exec("whoami")
@@ -298,7 +304,7 @@ async def test_nc_put_owned_by_proxied_user(leased_host: tuple[str, str], tmp_pa
     """A file ``put`` via ``nc`` to a proxied-user host must land owned by that user."""
     element, ip = leased_host
     host = create_host_from_dict(
-        _mysql_host_dict(ip, element, user="mysql", transfer="nc"), element=Element(element)
+        _mysql_host_dict(ip, element, login="mysql", transfer="nc"), element=Element(element)
     )
 
     remote_dir = f"/tmp/otto_lp_{uuid.uuid4().hex}"

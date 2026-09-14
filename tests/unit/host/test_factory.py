@@ -77,7 +77,6 @@ class TestCreateHostFromDict:
         """Test that optional fields are handled correctly."""
         host_data = {
             "ip": "10.10.200.11",
-            "user": "vagrant",
             "creds": [{"login": "vagrant", "password": "vagrant"}],
             "board": "qemu",
             "slot": 0,

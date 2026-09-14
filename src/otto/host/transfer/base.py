@@ -343,6 +343,16 @@ class BaseFileTransfer(ABC):
     rejected at registration.
     """
 
+    authenticates: ClassVar[bool] = False
+    """
+    Whether this backend performs its OWN login with a cred (spec 2026-09-13
+    cred-scope §2.1). ``ftp`` does: it opens a control channel and sends a
+    login. ``scp``/``sftp``/``shell``/``nc``/``console`` ride a term session
+    and inherit its identity, so they leave the default. Only an
+    authenticating backend's name is a valid ``protocols`` scope on a cred;
+    ``register_transfer_backend`` refuses a non-bool declaration.
+    """
+
     supports_mode: bool = False
     """Whether this backend can apply a permission ``mode`` after a put.
 

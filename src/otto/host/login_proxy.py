@@ -17,7 +17,7 @@ import shlex
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from ..errors import OttoError
 from ..logger.mode import LogMode
@@ -54,6 +54,16 @@ class Cred:
     environment-inheriting ``su <login>``. A custom proxy is free to give that
     key its own meaning; nothing outside the proxy that receives these params
     interprets them.
+    """
+
+    protocols: list[str] = field(default_factory=list)
+    """Protocols this cred is FOR (spec 2026-09-13 cred-scope §3.1).
+
+    Empty means unscoped: the cred applies to every protocol, which is every
+    cred written before scope existed. Non-empty names self-authenticating
+    backends (``ssh``, ``telnet``, ``ftp``); the host spec validates the names.
+    A scoped cred wins its protocol's default pick (:func:`default_login`)
+    and takes part in the cred's identity (:func:`cred_identity`).
     """
 
 
@@ -273,40 +283,139 @@ async def _su_proxy(io: ProxyIO, ctx: ProxyContext) -> None:
 register_login_proxy("su", _su_proxy, prompt=_SU_PROMPT)
 
 
-def _default_direct(creds: list[Cred]) -> Cred | None:
+def cred_identity(login: str, protocols: list[str]) -> str:
+    """Build the display identity of a cred: ``login``, or ``login [p1, p2]`` when scoped.
+
+    The key every duplicate check and the three-layer merge use (spec
+    2026-09-13 cred-scope §3.2), so an error names exactly the string the key
+    was built from. Scope is sorted: ``["telnet", "ssh"]`` and ``["ssh",
+    "telnet"]`` are one identity.
+    """
+    if not protocols:
+        return login
+    return f"{login} [{', '.join(sorted(protocols))}]"
+
+
+def _default_direct(creds: list[Cred], protocol: str | None) -> Cred | None:
+    """Pick the first proxy-less cred a via-less chain may start from.
+
+    With *protocol*, the first proxy-less cred scoped to it wins, else the
+    first proxy-less unscoped cred — a cred scoped elsewhere is never a
+    candidate. Without one, the first proxy-less unscoped cred, else the
+    first proxy-less cred of any scope: the unconditional fallback a
+    via-less chain always had, for a list with no unscoped entry at all.
+    """
+    if protocol is not None:
+        scoped = next((c for c in creds if c.proxy is None and protocol in c.protocols), None)
+        if scoped is not None:
+            return scoped
+        return next((c for c in creds if c.proxy is None and not c.protocols), None)
+    unscoped = next((c for c in creds if c.proxy is None and not c.protocols), None)
+    if unscoped is not None:
+        return unscoped
     return next((c for c in creds if c.proxy is None), None)
 
 
-def cred_for(creds: list[Cred], login: str) -> Cred | None:
-    """Look up a cred entry by login (None when absent)."""
+def cred_for(creds: list[Cred], login: str, protocol: str | None = None) -> Cred | None:
+    """Look up a cred by login (None when absent).
+
+    With *protocol*, the entry scoped to it wins over the unscoped entry with
+    the same login, and an entry scoped elsewhere is never returned. Without
+    one, the unscoped entry with that login, else the first match in list
+    order — the form used only where no protocol is in play; on a list with
+    no scoped entries (every cred written before scope existed) it is the
+    same first-match-by-login it always was.
+    """
+    if protocol is not None:
+        scoped = next((c for c in creds if c.login == login and protocol in c.protocols), None)
+        if scoped is not None:
+            return scoped
+        return next((c for c in creds if c.login == login and not c.protocols), None)
+    unscoped = next((c for c in creds if c.login == login and not c.protocols), None)
+    if unscoped is not None:
+        return unscoped
     return next((c for c in creds if c.login == login), None)
+
+
+class HasVia(Protocol):
+    """What ``via_cred`` needs of an entry: ``Cred`` and ``CredSpec`` both satisfy it."""
+
+    @property
+    def login(self) -> str:
+        """The account name."""
+        ...
+
+    @property
+    def via(self) -> str | None:
+        """Login of the account to switch from, or None."""
+        ...
+
+    @property
+    def protocols(self) -> list[str]:
+        """Protocols this entry is scoped to, or ``[]`` when unscoped."""
+        ...
+
+
+_E = TypeVar("_E", bound=HasVia)
+
+
+def via_cred(creds: list[_E], cred: HasVia) -> _E | None:
+    """Resolve *cred*'s ``via``: same scope first, else the unscoped entry with that login.
+
+    Spec 2026-09-13 cred-scope §3.3.
+    """
+    same = next(
+        (c for c in creds if c.login == cred.via and sorted(c.protocols) == sorted(cred.protocols)),
+        None,
+    )
+    if same is not None:
+        return same
+    return next((c for c in creds if c.login == cred.via and not c.protocols), None)
+
+
+def default_login(creds: list[Cred], protocol: str) -> str:
+    """Return the login *protocol* authenticates as (spec 2026-09-13 cred-scope §3.2).
+
+    The first cred in list order that applies to *protocol* — unscoped, or
+    scoped to it. ``""`` when none does (an empty list, or every entry scoped
+    elsewhere): the loginless value the connection manager already
+    understands. Order is the author's whole statement; there is no pin.
+    """
+    for c in creds:
+        if not c.protocols or protocol in c.protocols:
+            return c.login
+    return ""
 
 
 # DEBT(no-tuple-return): target credential plus hop chain.
 # ast-grep-ignore: no-tuple-return
-def resolve_chain(creds: list[Cred], target_login: str) -> tuple[Cred, list[Cred]]:
+def resolve_chain(
+    creds: list[Cred], target_login: str, protocol: str | None = None
+) -> tuple[Cred, list[Cred]]:
     """Resolve the direct-auth cred and the hop list for *target_login*.
 
     Returns ``(direct, hops)`` where *direct* is the cred to authenticate
     the transport as and *hops* are the proxied creds to apply afterwards,
-    outermost (first to run) first. Spec validation guarantees termination;
-    the ``seen`` set is a runtime backstop against hand-built cred lists.
+    outermost (first to run) first. *protocol* selects among same-login
+    creds of different scope (spec 2026-09-13 cred-scope §3.3); ``None``
+    keeps the by-login lookup. Spec validation guarantees termination; the
+    ``seen`` set is a runtime backstop against hand-built cred lists.
     """
-    cred = cred_for(creds, target_login)
+    cred = cred_for(creds, target_login, protocol)
     if cred is None:
-        known = ", ".join(c.login for c in creds) or "<none>"
+        known = ", ".join(cred_identity(c.login, c.protocols) for c in creds) or "<none>"
         raise LoginProxyError(f"unknown login {target_login!r}; creds define: {known}")
     hops: list[Cred] = []
-    seen = {cred.login}
+    seen = {cred_identity(cred.login, cred.protocols)}
     while cred.proxy is not None:
         hops.append(cred)
-        nxt = cred_for(creds, cred.via) if cred.via is not None else _default_direct(creds)
-        if nxt is None or nxt.login in seen:
+        nxt = via_cred(creds, cred) if cred.via is not None else _default_direct(creds, protocol)
+        if nxt is None or cred_identity(nxt.login, nxt.protocols) in seen:
             raise LoginProxyError(
                 f"cred {cred.login!r}: cannot resolve a directly-loginable "
                 f"via-chain (missing or cyclic 'via')"
             )
-        seen.add(nxt.login)
+        seen.add(cred_identity(nxt.login, nxt.protocols))
         cred = nxt
     return cred, list(reversed(hops))
 
@@ -625,6 +734,7 @@ async def perform_switch(
     current_user: str,
     host_id: str,
     history_prefix: str = "",
+    protocol: str | None = None,
 ) -> list[Cred]:
     """Become *user* from *current_user*; return the hops applied, in order.
 
@@ -637,8 +747,17 @@ async def perform_switch(
     overridable.
     A cred whose ``via`` differs from *current_user* first switches to the
     via account (recursively), so ``as_user`` can undo hop-by-hop.
+
+    *protocol* is the session's own protocol (its term), and selects among
+    same-login creds of different scope (spec 2026-09-13 cred-scope §3.3) for
+    BOTH lookups here — the target and the via account. A switch happens
+    inside a term session, so the password that answers its prompt is the one
+    scoped to that term; without it a ``root`` with a telnet-scoped password
+    would be sent the unix one, and the undo (which does pass the term) would
+    disagree with the forward path it is supposed to mirror. ``None`` keeps
+    the by-login lookup, for the term-less hosts this engine also serves.
     """
-    cred = cred_for(creds, user) if user else None
+    cred = cred_for(creds, user, protocol) if user else None
     if cred is None:
         cred = Cred(login=user)
     if password is not None:
@@ -647,10 +766,10 @@ async def perform_switch(
     applied: list[Cred] = []
     if cred.via is not None and cred.via != current_user:
         applied += await perform_switch(
-            io, creds, cred.via, None, current_user, host_id, history_prefix
+            io, creds, cred.via, None, current_user, host_id, history_prefix, protocol
         )
         current_user = applied[-1].login
-    via = cred_for(creds, current_user) or Cred(login=current_user)
+    via = cred_for(creds, current_user, protocol) or Cred(login=current_user)
     await run_proxy(io, cred, via=via, host_id=host_id, history_prefix=history_prefix)
     applied.append(cred)
     return applied

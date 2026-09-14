@@ -282,11 +282,13 @@ required `login` and four optional fields:
 | `proxy` | string | Name of a registered login proxy (see {doc}`../../library/extending-backends`) that drives the steps to *become* this login, after authenticating as `via`. Omit for a directly-loginable account — a proxy-less entry still uses the built-in `"su"` proxy when `switch_user`/`as_user` switches to it. |
 | `via` | string | The `login` of another entry in this same list to authenticate as first. Only valid alongside `proxy`. Omit to default to the first proxy-less (directly-loginable) entry. |
 | `params` | object | Free-form data handed to the proxy callable (e.g. a container name, a service name). Otto interprets only two keys, and only in the built-in `"su"` proxy: `login_shell` (default `true`) and `expect_prompt` — see below. |
+| `protocols` | list of strings | The protocols this entry is **for** — names of self-authenticating backends: `ssh`, `telnet`, `ftp` (a custom backend that declares `authenticates` joins the list). Omit for an entry that applies to every protocol. See {ref}`cred-protocols`. |
 
 On a host that references the inventory, this list is optional and is the
 **highest** of three creds layers — it overrides the inventory record's and
-the creds store's entries for the logins it names, field by field, and its
-order is the login order. A login-only entry is a placeholder whose fields
+the creds store's entries for the identities (login plus `protocols` scope)
+it names, field by field, and its order is the login order. A login-only
+entry is a placeholder whose fields
 come from below. See {ref}`credentials-layered`.
 
 The built-in `"su"` proxy switches with `su - <login>`, a **login shell**: the
@@ -316,8 +318,8 @@ key; setting it to `true` forces otto to wait for the prompt again:
  "params": {"expect_prompt": true}}
 ```
 
-**The first entry is the default login** — the user otto authenticates as
-unless `user` names a different entry:
+**The first entry is the default login** — the login otto authenticates as,
+unless a protocol has its own scoped cred (see below):
 
 ```json
 "creds": [
@@ -327,18 +329,73 @@ unless `user` names a different entry:
 ]
 ```
 
-Here otto logs in as `admin` by default. Setting `"user": "mysql"` on the
-host entry (or calling `switch_user("mysql")` at runtime) authenticates as
-`admin` first, then runs the `mysql-su` proxy to become `mysql`.
+Here otto logs in as `admin` by default. Calling `switch_user("mysql")` at
+runtime authenticates as `admin` first, then runs the `mysql-su` proxy to
+become `mysql`. A different default is a different first entry: to make
+`mysql` the session identity, move that entry to the front of the list. There
+is no separate field for it — a lab file that still sets `user` fails to load
+with a message saying so.
 
-Validated at load, alongside the usual schema checks: every `login` is
-unique; `via`/`params` are only allowed alongside `proxy`; `via` must name
-another entry in the same list, never itself; a chain of `via` links must
-terminate at a proxy-less entry (a cycle is rejected at load, not discovered
-mid-connection); and `proxy` names are checked against the live login-proxy
-registry the same way `term`/`transfer` selectors are checked against theirs
-— an unregistered name fails loud, listing what's registered, instead of
-failing later mid-connection.
+(cred-protocols)=
+
+### Scoping a cred to a protocol
+
+Some devices keep separate account tables per service — a small handmade FTP
+daemon whose logins the unix side has never heard of. Name the protocols such a
+cred is for, and list it ahead of the general entries:
+
+```json
+"creds": [
+    {"login": "ftpuser", "password": "s3cret", "protocols": ["ftp"]},
+    {"login": "admin", "password": "hunter2"}
+]
+```
+
+Each protocol that logs in on its own (`ssh`, `telnet`, `ftp`) picks its login
+by one rule: **the first entry in `creds` that applies to it** — an unscoped
+entry applies to every protocol, a scoped one only to the protocols it names.
+Here ssh and telnet log in as `admin` and ftp as `ftpuser`. A term's login is
+the session identity, so ssh and telnet each take their own first applicable
+entry the same way ftp does. Transfers that ride a term session — `scp`,
+`sftp`, `shell`, `nc` — inherit that session's identity, so they cannot be
+named as a scope.
+
+Unscoped creds stay usable over every protocol; a scoped cred only changes the
+default. The same login may appear twice with different scopes — `admin` with
+the unix password, and `admin` scoped to `ftp` with the FTP one — because an
+entry's identity is its login **plus** its scope; the duplicate rule and the
+layered merge ({ref}`credentials-layered`) both key on that pair. A scoped
+entry may carry `proxy`/`via`/`params` like any other; `via` resolves to the
+entry with that login in the same scope, else the unscoped one.
+
+Because order decides, a cred scoped to one protocol and placed after an
+unscoped entry is never anyone's default — the unscoped entry is still first.
+Once one entry in a list is scoped, scope the rest too, so every protocol's
+default is stated rather than left to depend on position:
+
+```json
+"creds": [
+  {"login": "ftpuser", "password": "…", "protocols": ["ftp"]},
+  {"login": "admin",   "password": "…", "protocols": ["ssh", "telnet"]}
+]
+```
+
+This is guidance, not a load rule — a mixed list of scoped and unscoped
+entries stays legal.
+
+Validated at load, alongside the usual schema checks: every entry's identity
+(login plus `protocols` scope) is unique; `via`/`params` are only allowed
+alongside `proxy`; `via` must name another entry in the same list, never
+itself; a chain of `via` links must terminate at a proxy-less entry (a cycle
+is rejected at load, not discovered mid-connection); `proxy` names are
+checked against the live login-proxy registry the same way `term`/`transfer`
+selectors are checked against theirs — an unregistered name fails loud,
+listing what's registered, instead of failing later mid-connection; at least
+one entry applies to the host's term, so the term never connects as nobody —
+for the term the file declares. A `--term` override onto a term nothing
+applies to is loginless and fails at the far end naming the host. And a
+`user` key is refused with a message pointing here — the field is gone,
+order `creds` instead.
 
 ### Ownership when a login is proxied
 
@@ -351,7 +408,10 @@ uniform, because not every transfer protocol rides a shell:
 - `scp` / `sftp` / `ftp` authenticate at the transport layer directly as the
   resolved *direct* (`via`) cred — they cannot replay proxy steps, since they
   are not interactive shells — so a file they put lands owned by the **via**
-  user, not the proxied target.
+  user, not the proxied target. Whose pick that is depends on the transfer:
+  `scp` and `sftp` ride the **ssh** pick even under a telnet term (they are
+  ssh transports), while `ftp` uses the **ftp** pick, which is the one a
+  scoped cred changes ({ref}`cred-protocols`).
 
 Pick `nc` (`"transfer": "nc"`, or include it in `valid_transfers`) when a
 proxied host's file ownership needs to match the target account rather than

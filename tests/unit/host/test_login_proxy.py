@@ -11,6 +11,9 @@ from otto.host.login_proxy import (
     Cred,
     LoginProxyError,
     _resync_shell,
+    cred_for,
+    cred_identity,
+    default_login,
     perform_switch,
     register_login_proxy,
     resolve_chain,
@@ -107,6 +110,9 @@ class RecorderIO:
 
 ADMIN = Cred(login="admin", password="hunter2")
 MYSQL = Cred(login="mysql", password="sqlpw", proxy="su", via="admin")
+# Same login as the telnet-scoped cred the protocol-threading tests pair it
+# with, so the scope is the only thing that can choose between them.
+ADMIN_UNIX = Cred(login="admin", password="unix-pw")
 
 
 def test_resolve_chain_direct():
@@ -411,6 +417,45 @@ async def test_perform_switch_recurses_through_via():
     meaningful = _without_resync(io.sent)
     assert meaningful[0][0] == "su - admin\n"  # via first
     assert meaningful[2][0] == "su - mysql\n"  # then the proxy
+
+
+@pytest.mark.asyncio
+async def test_perform_switch_resolves_the_target_under_the_given_protocol():
+    """One login, two scopes: the term decides which password answers `su`.
+
+    A switch happens inside a term session, so `admin` with a telnet-scoped
+    password must be sent THAT password over telnet. Without the protocol the
+    lookup returns the unscoped entry and the unix password is typed at the
+    telnet session's prompt -- a failed switch, and a password sent to a
+    prompt it does not open.
+    """
+    tn_admin = Cred(login="admin", password="tn-pw", protocols=["telnet"])
+    io = RecorderIO(replies=["Password:"])
+    await perform_switch(
+        io,
+        [ADMIN_UNIX, tn_admin],
+        user="admin",
+        password=None,
+        current_user="operator",
+        host_id="h1",
+        protocol="telnet",
+    )
+    assert io.sent[1] == ("tn-pw\n", LogMode.NEVER)
+
+
+@pytest.mark.asyncio
+async def test_perform_switch_without_a_protocol_keeps_the_by_login_lookup():
+    tn_admin = Cred(login="admin", password="tn-pw", protocols=["telnet"])
+    io = RecorderIO(replies=["Password:"])
+    await perform_switch(
+        io,
+        [ADMIN_UNIX, tn_admin],
+        user="admin",
+        password=None,
+        current_user="operator",
+        host_id="h1",
+    )
+    assert io.sent[1] == ("unix-pw\n", LogMode.NEVER)
 
 
 @pytest.mark.asyncio
@@ -763,3 +808,107 @@ async def test_a_slow_prompt_is_waited_for_rather_than_probed_over():
         f"the password: {io.wrote_into_startup_window}"
     )
     assert sum(1 for t in io.sent if t.strip() == "sqlpw") == 1, "password not sent exactly once"
+
+
+# ---------------------------------------------------------------------------
+# Per-protocol scope (spec 2026-09-13 cred-scope §3)
+# ---------------------------------------------------------------------------
+
+UNIX_ADMIN = Cred(login="admin", password="unix-pw")
+UNIX_MYSQL = Cred(login="mysql", password=None, proxy="su", via="admin")
+FTP_ADMIN = Cred(login="admin", password="ftp-pw", protocols=["ftp"])
+FTP_USER = Cred(login="ftpuser", password="ftp-only", protocols=["ftp"])
+TELNET_ROOT = Cred(login="root", password="tn", protocols=["telnet"])
+
+
+def test_cred_defaults_to_unscoped_list():
+    assert Cred(login="x").protocols == []
+    assert isinstance(Cred(login="x").protocols, list)
+
+
+def test_cred_identity_is_login_when_unscoped_and_login_plus_sorted_scope_otherwise():
+    assert cred_identity("admin", []) == "admin"
+    assert cred_identity("admin", ["ftp"]) == "admin [ftp]"
+    assert cred_identity("root", ["telnet", "ssh"]) == "root [ssh, telnet]"
+
+
+class TestDefaultLogin:
+    def test_first_entry_wins_with_no_scope(self):
+        assert default_login([UNIX_ADMIN, UNIX_MYSQL], "ssh") == "admin"
+        assert default_login([UNIX_ADMIN, UNIX_MYSQL], "ftp") == "admin"
+
+    def test_scoped_entry_ahead_of_an_unscoped_one_wins_its_protocol_only(self):
+        assert default_login([FTP_USER, UNIX_ADMIN], "ftp") == "ftpuser"
+        assert default_login([FTP_USER, UNIX_ADMIN], "ssh") == "admin"
+
+    def test_scoped_entry_behind_an_unscoped_one_is_never_the_default(self):
+        assert default_login([UNIX_ADMIN, FTP_USER], "ftp") == "admin"
+        assert default_login([UNIX_ADMIN, FTP_USER], "ssh") == "admin"
+
+    def test_a_protocol_nothing_applies_to_is_loginless(self):
+        assert default_login([], "ssh") == ""
+        assert default_login([FTP_USER], "ssh") == ""
+        assert default_login([FTP_USER, TELNET_ROOT], "ssh") == ""
+
+    def test_order_decides_between_two_entries_that_both_apply(self):
+        assert default_login([TELNET_ROOT, UNIX_ADMIN], "telnet") == "root"
+        assert default_login([UNIX_ADMIN, TELNET_ROOT], "telnet") == "admin"
+
+    def test_cred_for_resolves_a_same_login_pair_per_protocol(self):
+        # The pick is a LOGIN, and this pair spells it the same way twice, so
+        # which of the two creds (and so which password) that login stands for
+        # is the scope-aware lookup's answer, not the order rule's.
+        creds = [FTP_ADMIN, UNIX_ADMIN]
+        assert cred_for(creds, "admin", protocol="ftp") is FTP_ADMIN
+        assert cred_for(creds, "admin", protocol="ssh") is UNIX_ADMIN
+
+
+class TestScopeAwareLookup:
+    def test_cred_for_without_a_protocol_prefers_the_unscoped_entry_then_first_match(self):
+        assert cred_for([FTP_ADMIN, UNIX_ADMIN], "admin") is UNIX_ADMIN
+        assert cred_for([FTP_ADMIN], "admin") is FTP_ADMIN
+        assert cred_for([UNIX_ADMIN], "ghost") is None
+
+    def test_cred_for_with_a_protocol_prefers_the_scoped_entry_then_the_unscoped(self):
+        assert cred_for([UNIX_ADMIN, FTP_ADMIN], "admin", protocol="ftp") is FTP_ADMIN
+        assert cred_for([UNIX_ADMIN, FTP_ADMIN], "admin", protocol="telnet") is UNIX_ADMIN
+        assert cred_for([FTP_ADMIN], "admin", protocol="telnet") is None
+
+    def test_via_resolves_same_scope_first_then_unscoped(self):
+        tn_admin = Cred(login="admin", password="tn-pw", protocols=["telnet"])
+        tn_root = Cred(login="root", proxy="su", via="admin", protocols=["telnet"])
+        direct, hops = resolve_chain([UNIX_ADMIN, tn_admin, tn_root], "root", protocol="telnet")
+        assert direct is tn_admin
+        assert hops == [tn_root]
+        # No same-scope admin: falls to the unscoped one.
+        direct, _ = resolve_chain([UNIX_ADMIN, tn_root], "root", protocol="telnet")
+        assert direct is UNIX_ADMIN
+
+    def test_via_existing_only_in_a_foreign_scope_fails_loud(self):
+        tn_root = Cred(login="root", proxy="su", via="admin", protocols=["telnet"])
+        with pytest.raises(LoginProxyError, match="missing or cyclic 'via'"):
+            resolve_chain([FTP_ADMIN, tn_root], "root", protocol="telnet")
+
+    def test_a_proxied_cred_scoped_to_ftp_resolves_to_its_direct_end(self):
+        ftp_svc = Cred(login="svc", proxy="su", via="admin", protocols=["ftp"])
+        direct, hops = resolve_chain([UNIX_ADMIN, ftp_svc], "svc", protocol="ftp")
+        assert direct is UNIX_ADMIN
+        assert hops == [ftp_svc]
+
+    def test_default_direct_prefers_a_candidate_for_the_protocol(self):
+        # via omitted: the chain starts from the first proxy-less CANDIDATE, scoped first.
+        tn_admin = Cred(login="tadmin", password="tn", protocols=["telnet"])
+        tn_root = Cred(login="root", proxy="su", protocols=["telnet"])
+        direct, _ = resolve_chain([UNIX_ADMIN, tn_admin, tn_root], "root", protocol="telnet")
+        assert direct is tn_admin
+        direct, _ = resolve_chain([UNIX_ADMIN, tn_root], "root", protocol="telnet")
+        assert direct is UNIX_ADMIN
+
+    def test_default_direct_without_a_protocol_falls_back_to_any_proxyless_cred(self):
+        # No protocol and no unscoped proxy-less cred: the old unconditional
+        # fallback still applies rather than leaving the chain unresolved.
+        ftpadmin = Cred(login="ftpadmin", password="x", protocols=["ftp"])
+        root = Cred(login="root", proxy="su", protocols=["ftp"])
+        direct, hops = resolve_chain([ftpadmin, root], "root")
+        assert direct is ftpadmin
+        assert hops == [root]

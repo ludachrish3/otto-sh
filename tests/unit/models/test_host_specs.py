@@ -11,6 +11,7 @@ from otto.host.embedded_filesystem import NoFileSystem
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.factory import create_host_from_dict
 from otto.host.interface import Interface
+from otto.host.login_proxy import via_cred
 from otto.host.options import TelnetOptions
 from otto.host.os_profile import HOST_CLASSES
 from otto.host.toolchain import Toolchain
@@ -19,6 +20,7 @@ from otto.link import LinkImpairer, register_impairer
 from otto.logger.mode import LogMode
 from otto.models.host import (
     HOST_SPEC_RUNTIME_PAIRS,
+    CredSpec,
     EmbeddedHostSpec,
     HostSpec,
     ToolchainSpec,
@@ -408,7 +410,6 @@ def test_unix_to_host_matches_factory():
         "metadata",
         "name",
         "hop",
-        "user",
     ):
         assert getattr(spec_host, attr) == getattr(factory_host, attr), attr
     assert spec_host.ssh_options.port == factory_host.ssh_options.port == 2200
@@ -743,7 +744,7 @@ class TestCredSpec:
             _cred_spec({"admin": "pw"})
 
     def test_creds_duplicate_login_rejected(self):
-        with pytest.raises(ValidationError, match="duplicate"):
+        with pytest.raises(ValidationError, match="duplicate cred entries"):
             _cred_spec([{"login": "a", "password": "x"}, {"login": "a", "password": "y"}])
 
     def test_creds_via_requires_proxy(self):
@@ -777,13 +778,121 @@ class TestCredSpec:
                 ]
             )
 
-    def test_user_must_be_listed_login(self):
-        with pytest.raises(ValidationError, match="user"):
-            _cred_spec([{"login": "a", "password": "x"}], user="ghost")
+    def test_a_user_key_is_refused_with_the_migration_message(self):
+        with pytest.raises(ValidationError, match=r"user was removed: order creds instead"):
+            _cred_spec([{"login": "a", "password": "x"}], user="a")
+
+    def test_the_user_migration_message_itself_never_echoes_the_value(self):
+        with pytest.raises(ValidationError, match=r"user was removed") as e:
+            _cred_spec([{"login": "a", "password": "x"}], user="hunter2-looking-value")
+        assert "hunter2" not in e.value.errors(include_input=False)[0]["msg"]
 
     def test_creds_required_on_unix_host(self):
         with pytest.raises(ValidationError, match=r"creds\s+Field required"):
             UnixHostSpec.model_validate(CRED_BASE)
+
+    def test_creds_protocols_roundtrip_and_default_to_unscoped(self):
+        spec = _cred_spec(
+            [
+                {"login": "admin", "password": "pw"},
+                {"login": "ftpuser", "password": "fp", "protocols": ["ftp"]},
+            ]
+        )
+        creds = spec.to_host(element=Element("lab")).creds
+        assert creds[0].protocols == []
+        assert creds[1].protocols == ["ftp"]
+        assert isinstance(creds[1].protocols, list)
+
+    def test_via_cred_resolves_directly_on_credspec_objects(self):
+        # Proves the HasVia Protocol is satisfied structurally by CredSpec,
+        # not just Cred: via_cred is shared logic (spec cred-scope §3.3).
+        admin_spec = CredSpec(login="admin", password="pw")
+        root_spec = CredSpec(login="root", proxy="su", via="admin", protocols=["telnet"])
+        assert via_cred([admin_spec, root_spec], root_spec) is admin_spec
+
+    def test_creds_protocols_must_name_an_authenticating_backend(self):
+        with pytest.raises(
+            ValidationError, match=r"'nope' is not an authenticating protocol.*ftp, ssh, telnet"
+        ):
+            _cred_spec([{"login": "a", "password": "x", "protocols": ["nope"]}])
+
+    def test_creds_protocols_refuses_a_riding_transfer(self):
+        """scp inherits ssh's identity; scoping to it would be a statement with no effect."""
+        with pytest.raises(ValidationError, match=r"'scp' is not an authenticating protocol"):
+            _cred_spec([{"login": "a", "password": "x", "protocols": ["scp"]}])
+
+    def test_creds_same_login_different_scope_is_two_creds(self):
+        spec = _cred_spec(
+            [
+                {"login": "admin", "password": "unix"},
+                {"login": "admin", "password": "ftp-pw", "protocols": ["ftp"]},
+            ]
+        )
+        assert [c.password for c in spec.creds] == ["unix", "ftp-pw"]
+
+    def test_creds_duplicate_login_and_scope_rejected_by_identity(self):
+        with pytest.raises(ValidationError, match=r"duplicate cred entries: \['admin \[ftp\]'\]"):
+            _cred_spec(
+                [
+                    {"login": "admin", "password": "x", "protocols": ["ftp"]},
+                    {"login": "admin", "password": "y", "protocols": ["ftp"]},
+                ]
+            )
+
+    def test_creds_via_may_name_a_same_scope_login(self):
+        spec = _cred_spec(
+            [
+                {"login": "admin", "password": "x", "protocols": ["telnet"]},
+                {"login": "root", "proxy": "su", "via": "admin", "protocols": ["telnet"]},
+            ],
+            term="telnet",
+        )
+        assert spec.creds[1].via == "admin"
+
+    def test_creds_via_naming_only_a_foreign_scope_login_is_unknown(self):
+        with pytest.raises(ValidationError, match=r"cred 'root': unknown 'via' 'admin'"):
+            _cred_spec(
+                [
+                    {"login": "admin", "password": "x", "protocols": ["ftp"]},
+                    {"login": "root", "proxy": "su", "via": "admin", "protocols": ["telnet"]},
+                ],
+                term="telnet",
+            )
+
+    def test_every_cred_scoped_away_from_the_term_is_rejected(self):
+        """A host whose term can authenticate as nobody fails at load, not at connect."""
+        with pytest.raises(
+            ValidationError,
+            match=r"no cred can log in over term 'ssh': every cred is scoped elsewhere "
+            r"\(admin \[telnet\]\)",
+        ):
+            _cred_spec([{"login": "admin", "password": "x", "protocols": ["telnet"]}])
+
+    def test_a_chain_that_terminates_only_in_a_foreign_scope_is_rejected(self):
+        """`root` is unscoped, so ssh and telnet pick it too — and there it has no direct end.
+
+        The chain resolves for ftp alone (`ftpuser` is the only proxy-less
+        entry and it is ftp-scoped); over the term it terminates nowhere,
+        which used to load fine and raise mid-connection.
+        """
+        with pytest.raises(ValidationError, match=r"unresolvable via-chain"):
+            _cred_spec(
+                [
+                    {"login": "root", "proxy": "su"},
+                    {"login": "ftpuser", "password": "y", "protocols": ["ftp"]},
+                ]
+            )
+
+    def test_a_scoped_chain_is_resolved_under_every_protocol_it_is_scoped_to(self):
+        """Scoped to ftp AND telnet, resolvable for ftp only: the telnet half is the defect."""
+        with pytest.raises(ValidationError, match=r"unresolvable via-chain over 'telnet'"):
+            _cred_spec(
+                [
+                    {"login": "ftpadmin", "password": "x", "protocols": ["ftp"]},
+                    {"login": "root", "proxy": "su", "protocols": ["ftp", "telnet"]},
+                ],
+                term="telnet",
+            )
 
 
 class TestInterfaceSpec:

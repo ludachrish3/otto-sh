@@ -64,6 +64,8 @@ class FtpFileTransfer(UnixFileTransfer):
 
     host_families = frozenset({"unix"})
 
+    authenticates = True
+
     progress_granularity = ProgressGranularity(put=_FTP_BLOCK_SIZE, get=_FTP_BLOCK_SIZE)
 
     def __init__(

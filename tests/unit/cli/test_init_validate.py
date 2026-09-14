@@ -163,12 +163,33 @@ def test_a_referenced_hosts_store_password_never_reaches_the_report(tmp_path: Pa
     # The referenced host stays referenced (no inline "creds") and gains one
     # field no host spec registers — a model-level failure, not a merge one.
     lab_file.write_text(
-        lab_file.read_text().replace('"os_type": "unix"', '"os_type": "unix", "user": "ghost"')
+        lab_file.read_text().replace('"os_type": "unix"', '"os_type": "unix", "usr": "ghost"')
     )
     result = _invoke(["--all", "--path", str(tmp_path)])
     assert result.exit_code == 1
     assert "SECRET_XYZ" not in result.output
-    assert "user" in result.output  # the finding still names the offending field
+    assert "usr" in result.output  # the finding still names the offending field
+
+
+def test_an_old_labs_user_key_reports_the_migration_without_leaking(tmp_path: Path) -> None:
+    """``otto init --validate`` is where a lab written before the pin was dropped lands.
+
+    Spec 2026-09-13 cred-scope §5.1: the doctor must print the migration that
+    names the fix, not a bare unknown-field finding — and must still hide the
+    referenced store's password, which the refused dict's ``input_value``
+    carries exactly as in the sibling test above.
+    """
+    _scaffold_all(tmp_path)
+    creds_file = tmp_path / "lab_data" / "creds.json"
+    creds_file.write_text(creds_file.read_text().replace("CHANGE_ME", "SECRET_XYZ"))
+    lab_file = tmp_path / "lab_data" / "lab.json"
+    lab_file.write_text(
+        lab_file.read_text().replace('"os_type": "unix"', '"os_type": "unix", "user": "ghost"')
+    )
+    result = _invoke(["--all", "--path", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "user was removed" in result.output
+    assert "SECRET_XYZ" not in result.output
 
 
 def test_valid_repo_reports_all_ok_and_exits_zero(tmp_path: Path) -> None:

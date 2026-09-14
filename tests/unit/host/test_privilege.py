@@ -142,7 +142,6 @@ async def test_switch_user_records_current_user():
         ip="10.0.0.1",
         element=Element("box"),
         creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
-        user="admin",
         log=LogMode.QUIET,
     )
     host._session_mgr = _mock_session_mgr()
@@ -158,7 +157,6 @@ async def test_as_user_restores_previous_user():
         ip="10.0.0.1",
         element=Element("box"),
         creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
-        user="admin",
         log=LogMode.QUIET,
     )
     mgr = _mock_session_mgr(user="admin")
@@ -231,7 +229,6 @@ async def test_unix_run_sudo_wraps_and_injects_password_expect():
         ip="10.0.0.1",
         element=Element("box"),
         creds=[Cred(login="admin", password="secret")],
-        user="admin",
         log=LogMode.QUIET,
     )
     captured, fake = _capture_run_one(host)
@@ -264,7 +261,6 @@ async def test_sudo_preserves_caller_expects():
         ip="10.0.0.1",
         element=Element("box"),
         creds=[Cred(login="admin", password="secret")],
-        user="admin",
         log=LogMode.QUIET,
     )
     captured, fake = _capture_run_one(host)
@@ -286,7 +282,6 @@ async def test_switch_user_sends_su_and_password():
         ip="10.0.0.1",
         element=Element("box"),
         creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
-        user="admin",
         log=LogMode.NORMAL,  # NORMAL host so the su exchange's per-command modes pass through
     )
     host._session_mgr = _mock_session_mgr()
@@ -303,7 +298,6 @@ async def test_switch_user_default_is_root_no_user_arg():
         ip="10.0.0.1",
         element=Element("box"),
         creds=[Cred(login="admin", password="secret")],
-        user="admin",
         log=LogMode.NORMAL,
     )
     host._session_mgr = _mock_session_mgr(prompts=False)
@@ -329,7 +323,6 @@ async def test_as_user_switches_then_exits():
         ip="10.0.0.1",
         element=Element("box"),
         creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
-        user="admin",
         log=LogMode.QUIET,
     )
     host._session_mgr = _mock_session_mgr()
@@ -368,7 +361,6 @@ async def test_switch_user_password_not_logged(caplog):
         ip="10.0.0.1",
         element=Element("box"),
         creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
-        user="admin",
         log=LogMode.NORMAL,
     )
 
@@ -405,7 +397,6 @@ async def test_switch_user_quotes_special_char_username():
         ip="10.0.0.1",
         element=Element("box"),
         creds=[Cred(login="admin", password="secret")],
-        user="admin",
         log=LogMode.QUIET,
     )
     # Replace the session manager with a mock to capture what was sent.
@@ -449,7 +440,6 @@ async def test_as_user_multi_hop_undoes_in_reverse():
         ip="10.0.0.1",
         element=Element("box"),
         creds=_MULTI_HOP_CREDS,
-        user="root",
         log=LogMode.QUIET,
     )
     mgr = _mock_session_mgr(user="root")
@@ -480,7 +470,6 @@ async def test_switch_user_from_via_user_runs_only_final_hop():
         ip="10.0.0.1",
         element=Element("box"),
         creds=_MULTI_HOP_CREDS,
-        user="root",
         log=LogMode.QUIET,
     )
     mgr = _mock_session_mgr(user="admin")  # already at mysql's `via` user
@@ -546,7 +535,6 @@ async def test_sudo_password_reflects_current_user_after_switch():
         ip="10.0.0.1",
         element=Element("box"),
         creds=[Cred(login="admin", password="adminpw"), Cred(login="root", password="rootpw")],
-        user="admin",
         log=LogMode.NORMAL,
     )
 
@@ -613,7 +601,6 @@ async def test_as_user_undo_via_ordering_observable_host():
         ip="10.0.0.1",
         element=Element("box"),
         creds=_fake_undo_chain("task6-fake-undo-host"),
-        user="root",
         log=LogMode.QUIET,
     )
     # This proxy drives a `become`/`leave` wrapper rather than `su`, so the
@@ -638,6 +625,56 @@ async def test_as_user_undo_via_ordering_observable_host():
 
 
 @pytest.mark.asyncio
+async def test_as_user_resolves_the_via_cred_under_the_terms_scope_both_ways():
+    """Forward and undo must resolve one login's cred the SAME way (cred-scope 3.3).
+
+    `root` exists twice here -- unscoped, and scoped to telnet with its own
+    password -- which is the shape a device with a separate console account
+    table has. The undo loop already looked the via account up under the
+    host's term; the forward path did not, so a switch typed the unix
+    password going in and the telnet one coming out. Both directions are
+    asserted here, because either one alone passes with the bug half-fixed.
+    """
+    from otto.host.unix_host import UnixHost
+
+    forward: list[tuple[str, str, str | None]] = []
+    undone: list[tuple[str, str, str | None]] = []
+
+    async def fake_fn(io, ctx):
+        forward.append((ctx.target.login, ctx.via.login, ctx.via.password))
+        await io.send(f"become {ctx.target.login}\n")
+
+    async def fake_undo(io, ctx):
+        undone.append((ctx.target.login, ctx.via.login, ctx.via.password))
+        await io.send("leave\n")
+
+    register_login_proxy("cred-scope-term-via", fake_fn, undo=fake_undo, overwrite=True)
+
+    creds = [
+        Cred(login="root", password="unix-rootpw"),
+        Cred(login="root", password="tn-rootpw", protocols=["telnet"]),
+        Cred(login="admin", password="adminpw", proxy="cred-scope-term-via", via="root"),
+    ]
+    host = UnixHost(
+        ip="10.0.0.1",
+        element=Element("box"),
+        creds=creds,
+        term="telnet",
+        log=LogMode.QUIET,
+    )
+    host._session_mgr = _mock_session_mgr(
+        user="root",
+        switch_re=re.compile(r"^\s*become\b(.*)$", re.MULTILINE),
+        exit_re=re.compile(r"^\s*leave\s*$", re.MULTILINE),
+    )
+
+    async with host.as_user("admin"):
+        assert forward == [("admin", "root", "tn-rootpw")]
+
+    assert undone == [("admin", "root", "tn-rootpw")]
+
+
+@pytest.mark.asyncio
 async def test_as_user_undo_survives_cancellation():
     """A cancellation landing while the undo chain runs must not strand the
     session as the switched user: every hop still unwinds and current_user
@@ -648,7 +685,6 @@ async def test_as_user_undo_survives_cancellation():
         ip="10.0.0.1",
         element=Element("box"),
         creds=_MULTI_HOP_CREDS,
-        user="root",
         log=LogMode.QUIET,
     )
     mgr = _mock_session_mgr(user="root")
@@ -757,7 +793,6 @@ def _host_wired_to(userland: Userland | None, creds: list[Cred] | None = None):
         ip="10.0.0.1",
         element=Element("box"),
         creds=_ADMIN_AND_ROOT if creds is None else creds,
-        user="admin",
         log=LogMode.QUIET,
     )
 
@@ -1145,7 +1180,6 @@ async def test_a_refusal_is_not_swallowed_into_a_successful_reboot():
         ip="10.0.0.1",
         element=Element("box"),
         creds=[Cred(login="admin", password="secret")],
-        user="admin",
         log=LogMode.QUIET,
     )
     issued: list[str] = []

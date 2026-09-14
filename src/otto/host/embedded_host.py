@@ -234,7 +234,6 @@ class EmbeddedHost(RemoteHost):
         self._connections = factory(
             ip=self.ip,
             creds=self.creds,
-            user=self.user,
             term=self.term,
             name=self.name,
             hop=hop_transport,

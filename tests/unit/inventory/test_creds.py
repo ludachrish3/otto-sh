@@ -140,7 +140,7 @@ def test_a_duplicate_login_in_the_record_layer_names_the_key(tmp_path):
     inner = FakeInventory({"k": {"ip": "10.0.0.1", "creds": [{"login": "u"}, {"login": "u"}]}})
     with pytest.raises(
         InventoryError,
-        match=r"duplicate cred login 'u' in the inventory record layer \(inventory key 'k'\)",
+        match=r"duplicate cred entry 'u' in the inventory record layer \(inventory key 'k'\)",
     ):
         CredsOverlay(inner, store=_store(tmp_path, {})).lookup("k")
 

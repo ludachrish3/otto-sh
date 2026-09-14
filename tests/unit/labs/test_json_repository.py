@@ -861,7 +861,11 @@ def test_a_referenced_hosts_store_password_never_reaches_the_error_text(tmp_path
         JsonFileLabRepository([tmp_path]).load_lab("l", inventory=overlay)
     message = str(exc_info.value)
     assert "SECRET_XYZ" not in message
-    assert "user" in message  # the finding still names the offending field
+    # A model-level before-validator has an empty ``loc``, so the finding is
+    # the migration message rather than a field name -- and asserting on the
+    # migration is what discriminates: "user" alone appears in that text no
+    # matter which key was injected.
+    assert "user was removed" in message
 
 
 def test_provider_failure_is_wrapped_with_the_entry_that_caused_it(

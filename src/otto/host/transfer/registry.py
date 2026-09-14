@@ -52,6 +52,12 @@ def register_transfer_backend(
             f"a transfer backend must declare what it promises the progress bar "
             f"(e.g. ProgressGranularity(put=8192, get=8192))."
         )
+    if not isinstance(getattr(cls, "authenticates", None), bool):
+        raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see host_families above)
+            f"register_transfer_backend({name!r}): cls.authenticates must be a bool; "
+            f"declare True only for a backend that performs its own login "
+            f"(ftp does; scp/sftp/nc/shell ride the term session)."
+        )
     TRANSFER_BACKENDS.register(name, cls, overwrite=overwrite, origin=caller_module())
 
 

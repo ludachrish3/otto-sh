@@ -335,8 +335,9 @@ inventory backend:
 
 - Every entry is the same `creds` object a lab file spells — `login`
   (required), `password`, and optionally the route fields `proxy`, `via`,
-  `params` ({doc}`host-sources` has the field reference). A login may not
-  repeat under one key.
+  `params`, and the scope field `protocols` ({doc}`host-sources` has the
+  field reference). An entry's login and `protocols` scope may not repeat
+  under one key ({ref}`cred-protocols`).
 - Keep the file outside every repository, or at mode `0600`. The doctor warns
   when it is group- or world-readable, and when it is named but missing.
 - The store is read on the first lookup, like everything else here, so a lab
@@ -349,8 +350,9 @@ in `supplies`. What happens then is the merge of [Three files, one key, one
 order](#three-files-one-key-one-order), applied twice:
 
 1. **Store → record.** The record's `creds`, if it states any, layer over the
-   store's by login. A record may carry creds beside a configured store; it
-   overrides the store's fields for the logins it names.
+   store's by identity — login plus `protocols` scope. A record may carry
+   creds beside a configured store; it overrides the store's fields for the
+   logins it names.
 2. **Record → lab file.** The host entry's inline `creds`, if any, layer over
    the result the same way, and the entry's order becomes the list's order.
 
@@ -362,14 +364,19 @@ adds a route no store could know. Had the lab file listed only the route,
 `root` would have come first and been the default login; that is the lab
 file's call, which is why its order wins.
 
+Scope is part of the key, never a field the layers compose: a store entry
+`admin` scoped to `ftp` overlays only a lab entry with that same login and
+scope, and sits beside an unscoped `admin` as a second entry
+({ref}`cred-protocols`).
+
 Two errors the merge itself raises, each naming the layer and the inventory
-key: a login repeated within one layer, and an entry with no `login`. A
-composed entry the cred rules refuse (`via` or `params` without `proxy`) is
-caught one step later, where that entry is next validated: at the
-store-to-record step the overlay names the inventory key and both layers; at
-the record-to-lab-file step it surfaces from the host spec, naming the lab
-file, the element, the host and the cred. A `proxy` no loaded `init` module
-registers fails the same way, naming the cred.
+key: an entry whose login and scope repeat within one layer, and an entry
+with no `login`. A composed entry the cred rules refuse (`via` or `params`
+without `proxy`) is caught one step later, where that entry is next
+validated: at the store-to-record step the overlay names the inventory key
+and both layers; at the record-to-lab-file step it surfaces from the host
+spec, naming the lab file, the element, the host and the cred. A `proxy` no
+loaded `init` module registers fails the same way, naming the cred.
 
 Other stores plug into the same seam: {doc}`../../library/creds-backends` is
 the contract and the conformance helper. NetBox holds no credentials, so a

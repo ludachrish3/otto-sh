@@ -46,7 +46,7 @@ def test_an_empty_layer_on_either_side_is_the_other_layer():
 def test_a_login_repeated_within_one_layer_names_the_layer_and_the_key():
     with pytest.raises(
         InventoryError,
-        match=r"duplicate cred login 'u' in the lab file layer \(inventory key 'k'\)",
+        match=r"duplicate cred entry 'u' in the lab file layer \(inventory key 'k'\)",
     ) as exc:
         merge_creds(
             [],
@@ -60,7 +60,7 @@ def test_a_login_repeated_within_one_layer_names_the_layer_and_the_key():
 def test_a_login_repeated_within_the_lower_layer_also_names_the_layer_and_the_key():
     with pytest.raises(
         InventoryError,
-        match=r"duplicate cred login 'u' in the creds store layer \(inventory key 'k'\)",
+        match=r"duplicate cred entry 'u' in the creds store layer \(inventory key 'k'\)",
     ):
         merge_creds([{"login": "u"}, {"login": "u"}], [], key="k", lower_name="creds store")
 
@@ -84,3 +84,66 @@ def test_inputs_are_not_mutated():
     assert lower == [{"login": "u", "password": "p"}, {"login": "only-lower", "password": "q"}]
     assert higher == [{"login": "u", "proxy": "su", "via": None}]
     assert all(m is not e for m in merged for e in lower + higher)
+
+
+def test_same_login_different_scope_are_two_entries_that_never_merge():
+    lower = [{"login": "admin", "password": "unix"}]
+    higher = [{"login": "admin", "password": "ftp-pw", "protocols": ["ftp"]}]
+    assert merge_creds(lower, higher) == [
+        {"login": "admin", "password": "ftp-pw", "protocols": ["ftp"]},
+        {"login": "admin", "password": "unix"},
+    ]
+
+
+def test_a_matching_login_and_scope_composes_field_by_field_higher_wins():
+    lower = [{"login": "admin", "password": "old", "protocols": ["ftp"]}]
+    higher = [{"login": "admin", "protocols": ["ftp"]}]
+    assert merge_creds(lower, higher) == [
+        {"login": "admin", "password": "old", "protocols": ["ftp"]}
+    ]
+    higher = [{"login": "admin", "password": "new", "protocols": ["ftp"]}]
+    assert merge_creds(lower, higher) == [
+        {"login": "admin", "password": "new", "protocols": ["ftp"]}
+    ]
+
+
+def test_scope_order_does_not_change_identity():
+    lower = [{"login": "root", "password": "p", "protocols": ["ssh", "telnet"]}]
+    higher = [{"login": "root", "protocols": ["telnet", "ssh"]}]
+    assert len(merge_creds(lower, higher)) == 1
+
+
+def test_a_login_and_scope_repeated_within_one_layer_names_the_identity():
+    with pytest.raises(
+        InventoryError,
+        match=r"duplicate cred entry 'u \[ftp\]' in the lab file layer \(inventory key 'k'\)",
+    ) as exc:
+        merge_creds(
+            [],
+            [
+                {"login": "u", "protocols": ["ftp"]},
+                {"login": "u", "protocols": ["ftp"], "password": "x"},
+            ],
+            key="k",
+            higher_name="lab file",
+        )
+    assert "x" not in str(exc.value)
+
+
+def test_a_non_list_protocols_names_the_field_not_the_value():
+    with pytest.raises(
+        InventoryError, match=r"'protocols' must be a list of strings.*creds store layer"
+    ) as exc:
+        merge_creds([{"login": "u", "protocols": "ftp"}], [], lower_name="creds store")
+    assert "ftp" not in str(exc.value)
+    with pytest.raises(
+        InventoryError, match=r"'protocols' must be a list of strings.*creds store layer"
+    ):
+        merge_creds([{"login": "u", "protocols": ""}], [], lower_name="creds store")
+
+
+def test_a_protocols_list_with_a_non_string_names_the_field_not_the_value():
+    with pytest.raises(
+        InventoryError, match=r"'protocols' must be a list of strings.*creds store layer"
+    ):
+        merge_creds([{"login": "u", "protocols": [1]}], [], lower_name="creds store")

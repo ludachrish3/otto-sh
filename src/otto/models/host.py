@@ -16,14 +16,26 @@ from pydantic import BeforeValidator, Field, field_validator, model_validator
 from typing_extensions import override
 
 from ..host.binary_loader import build_binary_loader
-from ..host.capability import IMPAIRER_RESOLVER, TERM_RESOLVER, TRANSFER_RESOLVER
+from ..host.capability import (
+    IMPAIRER_RESOLVER,
+    TERM_RESOLVER,
+    TRANSFER_RESOLVER,
+    authenticating_protocols,
+)
 from ..host.command_frame import FRAME_CLASSES, BashFrame, build_command_frame
 from ..host.connections import TERM_BACKENDS
 from ..host.element import Element
 from ..host.embedded_filesystem import FILESYSTEM_CLASSES, build_filesystem
 from ..host.embedded_host import EmbeddedHost
 from ..host.interface import Interface
-from ..host.login_proxy import LOGIN_PROXIES, Cred, LoginProxyError, resolve_chain
+from ..host.login_proxy import (
+    LOGIN_PROXIES,
+    Cred,
+    LoginProxyError,
+    cred_identity,
+    resolve_chain,
+    via_cred,
+)
 from ..host.remote_host import RemoteHost
 from ..host.toolchain import Toolchain, ToolchainTool
 from ..host.transfer import TRANSFER_BACKENDS
@@ -182,7 +194,6 @@ _COMMON_PLAIN_FIELDS = (
     "os_version",
     "hw_version",
     "sw_version",
-    "user",
     "board",
     "slot",
     "site",
@@ -266,6 +277,7 @@ class CredSpec(OttoModel):
     proxy: str | None = None
     via: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
+    protocols: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _proxy_field_rules(self) -> "CredSpec":
@@ -275,6 +287,14 @@ class CredSpec(OttoModel):
             raise ValueError(f"cred {self.login!r}: 'via' cannot reference itself")
         return self
 
+    @property
+    def identity(self) -> str:
+        """``login``, or ``login [scope]`` when scoped.
+
+        See :func:`otto.host.login_proxy.cred_identity`.
+        """
+        return cred_identity(self.login, self.protocols)
+
     def to_cred(self) -> Cred:
         """Build the runtime ``Cred`` dataclass from the validated fields."""
         return Cred(
@@ -283,6 +303,7 @@ class CredSpec(OttoModel):
             proxy=self.proxy,
             via=self.via,
             params=dict(self.params),
+            protocols=list(self.protocols),
         )
 
 
@@ -323,7 +344,6 @@ class HostSpec(OttoModel):
     may still hand it over by mapping a custom field, but no backend supplies it
     by default (``otto.inventory.netbox.NATIVE_SUPPLIES``)."""
 
-    user: str | None = None
     board: str | None = None
     slot: int | None = None
     site: IntOrStr | None = None
@@ -395,6 +415,27 @@ class HostSpec(OttoModel):
         """
         if isinstance(data, dict):
             return {k: v for k, v in data.items() if not (isinstance(k, str) and k.startswith("_"))}
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_user_pin(cls, data: object) -> object:
+        """Refuse a ``user`` key, naming the fix (spec 2026-09-13 cred-scope §5.1).
+
+        ``user`` chose the default login back when ``creds`` was a
+        ``{login: password}`` map; with an ordered list a protocol logs in as
+        the first entry that applies to it, so the pin has nothing left to say.
+        Caught here rather than left to ``extra='forbid'`` so an old lab file
+        fails with the migration instead of a bare unknown-field error. The
+        message never echoes the value; pydantic's own ``input_value`` repr
+        still can, so boundary readers render through
+        ``compact_validation_error`` (see otto.models.base).
+        """
+        if isinstance(data, dict) and "user" in data:
+            raise ValueError(
+                "user was removed: order creds instead; a protocol logs in as "
+                "the first entry that applies to it. See the host sources guide."
+            )
         return data
 
     @field_validator("creds", mode="before")
@@ -496,29 +537,108 @@ class HostSpec(OttoModel):
 
     @model_validator(mode="after")
     def _validate_cred_entries(self) -> "HostSpec":
-        logins = [c.login for c in self.creds]
-        dupes = {n for n in logins if logins.count(n) > 1}
-        if dupes:
-            raise ValueError(f"duplicate cred logins: {sorted(dupes)}")
-        by = set(logins)
+        # The vocabulary walks two backend registries, and nothing below needs
+        # it when no entry is scoped -- which is every lab written before scope
+        # existed, so the common path does not pay for the question.
+        vocabulary = authenticating_protocols() if any(c.protocols for c in self.creds) else []
         for c in self.creds:
-            if c.via is not None and c.via not in by:
+            for p in c.protocols:
+                if p not in vocabulary:
+                    raise ValueError(
+                        f"cred {c.login!r}: {p!r} is not an authenticating protocol; "
+                        f"a cred may be scoped to: {', '.join(vocabulary)}"
+                    )
+        identities = [c.identity for c in self.creds]
+        dupes = {n for n in identities if identities.count(n) > 1}
+        if dupes:
+            raise ValueError(f"duplicate cred entries: {sorted(dupes)}")
+        runtime = [c.to_cred() for c in self.creds]
+        for c in self.creds:
+            if c.via is not None and via_cred(self.creds, c) is None:
                 raise ValueError(f"cred {c.login!r}: unknown 'via' {c.via!r}")
             if c.proxy is not None and c.proxy not in LOGIN_PROXIES:
                 known = ", ".join(sorted(LOGIN_PROXIES.names()))
                 raise ValueError(
                     f"cred {c.login!r}: {c.proxy!r} is not a registered login proxy. Known: {known}"
                 )
-        runtime = [c.to_cred() for c in self.creds]
+        self._validate_term_has_a_candidate()
         for c in runtime:
             if c.proxy is not None:
+                # One try per cred, around the whole per-protocol walk rather
+                # than inside it: the first protocol that cannot resolve is
+                # the error, and `protocol` still names it in the handler.
+                protocol = None
                 try:
-                    resolve_chain(runtime, c.login)
+                    for protocol in self._pick_protocols(c, vocabulary):
+                        resolve_chain(runtime, c.login, protocol)
                 except LoginProxyError as e:
-                    raise ValueError(f"cred {c.login!r}: unresolvable via-chain: {e}") from None
-        if self.user is not None and self.creds and self.user not in by:
-            raise ValueError(f"user {self.user!r} is not a cred login: {sorted(by)}")
+                    over = "" if protocol is None else f" over {protocol!r}"
+                    raise ValueError(
+                        f"cred {c.login!r}: unresolvable via-chain{over}: {e}"
+                    ) from None
         return self
+
+    def _validate_term_has_a_candidate(self) -> None:
+        """At least one cred must be able to log the host's term in.
+
+        Spec 2026-09-13 cred-scope §3.2: a protocol's candidates are the creds
+        scoped to it plus the unscoped ones. Scope every entry elsewhere and
+        the term has nothing to authenticate as — the pick returns the
+        loginless ``""`` and the host connects as nobody, which on ssh is a
+        refusal at the far end and on telnet is a session that never reaches a
+        prompt. Cheaper and far clearer at load, naming what IS there.
+
+        Skipped when ``creds`` is empty: an embedded console host with no
+        login step is loginless on purpose (the unix family already requires a
+        non-empty list), and when the host declares no term at all.
+        """
+        term = self._effective_term()
+        if not self.creds or term is None:
+            return
+        if any(not c.protocols or term in c.protocols for c in self.creds):
+            return
+        identities = ", ".join(c.identity for c in self.creds)
+        raise ValueError(
+            f"no cred can log in over term {term!r}: every cred is scoped elsewhere ({identities})"
+        )
+
+    def _pick_protocols(self, cred: Cred, vocabulary: list[str]) -> list[str | None]:
+        """Protocols *cred* can be the pick for — its chain must resolve under each.
+
+        A scoped cred is only ever picked for the protocols it names. An
+        unscoped one is a candidate for every self-authenticating protocol this
+        host can actually use (its term menu and transfer menu, intersected
+        with the vocabulary), because ``_default_direct`` answers differently
+        per protocol: a chain that terminates at an ftp-scoped cred terminates
+        for ftp and for nothing else.
+
+        ``[None]`` when no entry is scoped at all — with no scoped creds the
+        per-protocol lookup and the protocol-less one are the same walk, so
+        asking once is asking everything, and today's check is preserved
+        verbatim for every unscoped lab.
+        """
+        if cred.protocols:
+            return list(cred.protocols)
+        if not vocabulary:
+            return [None]
+        menu = {*getattr(self, "valid_terms", []), *getattr(self, "valid_transfers", [])}
+        for pin in (getattr(self, "term", None), getattr(self, "transfer", None)):
+            if pin is not None:
+                menu.add(pin)
+        surface = sorted(menu & set(vocabulary))
+        return list(surface) or [None]
+
+    def _effective_term(self) -> str | None:
+        """Return the term the host will use.
+
+        The pin, else the first menu entry, else None (embedded hosts
+        without a menu).
+        """
+        term = getattr(self, "term", None)
+        if term is not None:
+            return term
+        menu = getattr(self, "valid_terms", None)
+        return menu[0] if menu else None
 
     @model_validator(mode="after")
     def _validate_landing_rules(self) -> "HostSpec":

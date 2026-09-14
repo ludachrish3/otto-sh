@@ -52,7 +52,9 @@ class TestRegistry:
         class CustomTerm(ConnectionManager):
             pass
 
-        register_term_backend("myterm", CustomTerm, host_families=frozenset({"unix"}))
+        register_term_backend(
+            "myterm", CustomTerm, host_families=frozenset({"unix"}), authenticates=True
+        )
         assert build_term_backend("myterm") is CustomTerm
         assert conn_mod.TERM_BACKENDS.get("myterm").host_families == frozenset({"unix"})
 
@@ -61,7 +63,36 @@ class TestRegistry:
             pass
 
         with pytest.raises(ValueError, match="host_families is empty"):
-            register_term_backend("bad", CustomTerm, host_families=frozenset())
+            register_term_backend("bad", CustomTerm, host_families=frozenset(), authenticates=True)
+
+    def test_built_in_terms_authenticate(self):
+        assert conn_mod.TERM_BACKENDS.get("ssh").authenticates is True
+        assert conn_mod.TERM_BACKENDS.get("telnet").authenticates is True
+
+    def test_register_records_authenticates(self):
+        class Quiet(ConnectionManager):
+            pass
+
+        register_term_backend(
+            "quiet", Quiet, host_families=frozenset({"unix"}), authenticates=False
+        )
+        assert conn_mod.TERM_BACKENDS.get("quiet").authenticates is False
+
+    def test_register_rejects_a_non_bool_authenticates(self):
+        class Bad(ConnectionManager):
+            pass
+
+        with pytest.raises(ValueError, match="authenticates must be a bool"):
+            register_term_backend(
+                "bad-auth", Bad, host_families=frozenset({"unix"}), authenticates="yes"
+            )
+
+    def test_register_requires_authenticates(self):
+        class Bad(ConnectionManager):
+            pass
+
+        with pytest.raises(TypeError, match="authenticates"):
+            register_term_backend("bad-missing", Bad, host_families=frozenset({"unix"}))
 
 
 class TestCreate:
@@ -69,7 +100,6 @@ class TestCreate:
         ctx = TermContext(
             ip="10.0.0.5",
             creds=[Cred(login="root", password="x")],
-            user="root",
             term="ssh",
             name="h1",
         )

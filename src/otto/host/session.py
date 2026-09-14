@@ -1513,7 +1513,7 @@ class HostSession:
             await mon.close()
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 — wide session-handle API: each arg is one thing the manager already resolved (creds, identity, history payload, frame, term)
         self,
         name: str,
         session: ShellSession,
@@ -1525,6 +1525,8 @@ class HostSession:
         history_prefix: str = "",
         target_frame: "CommandFrame | None" = None,
         establishing: bool = False,
+        *,
+        term: "str | None" = None,
     ) -> None:
         self._name = name
         self._session = session
@@ -1545,6 +1547,12 @@ class HostSession:
         # closing a session the manager is mid-way through establishing.
         self._target_frame = target_frame
         self._establishing = establishing
+        # The protocol this session speaks, so its switch_user/as_user resolve
+        # a target (and its via account) under the term's scope -- a login
+        # with a term-scoped password gets that password, both switching in
+        # and unwinding (spec 2026-09-13 cred-scope 3.3). None on a session
+        # whose manager has no term concept, which keeps the by-login lookup.
+        self._term = term
 
     @property
     def alive(self) -> bool:
@@ -1603,6 +1611,7 @@ class HostSession:
             self.current_user,
             self._host_id,
             self._history_prefix,
+            protocol=self._term,
         )
         self._session.current_user = applied[-1].login or "root"
 
@@ -1631,7 +1640,14 @@ class HostSession:
             self._refuse_elevation("as_user", user)
         prev = self.current_user
         applied = await perform_switch(
-            self, self._creds, user, password, prev, self._host_id, self._history_prefix
+            self,
+            self._creds,
+            user,
+            password,
+            prev,
+            self._host_id,
+            self._history_prefix,
+            protocol=self._term,
         )
         self._session.current_user = applied[-1].login or "root"
         # Narrowed local: `self._creds` re-widens to `list[Cred] | None` once
@@ -1646,10 +1662,12 @@ class HostSession:
             async def _undo() -> None:
                 for i, hop in enumerate(reversed(applied)):
                     via_login = applied[-i - 2].login if i + 1 < len(applied) else prev
-                    # Full via cred (password/params intact), mirroring the
-                    # forward path — keeps forward/undo symmetric for custom
-                    # undo callables.
-                    via = cred_for(creds, via_login) or Cred(login=via_login)
+                    # Full via cred (password/params intact) under this
+                    # session's own term, mirroring the forward path — keeps
+                    # forward/undo symmetric for custom undo callables, and a
+                    # term-scoped cred cannot answer the two directions with
+                    # different passwords for one login.
+                    via = cred_for(creds, via_login, self._term) or Cred(login=via_login)
                     await run_undo(self, hop, via, self._host_id, self._history_prefix)
                 self._session.current_user = prev
 
@@ -2330,8 +2348,10 @@ class SessionManager:
         Each hop's ``via`` is the previous hop's login — or, for the first
         hop, the resolved direct cred's login (the account the transport
         actually authenticated as). The via login is resolved to its FULL
-        cred (``cred_for(self._creds, via_login) or Cred(login=via_login)``),
-        symmetric with ``perform_switch`` and its undo path: no
+        cred under the manager's TERM (``cred_for(self._creds, via_login,
+        term) or Cred(login=via_login)``) — the term picks among same-login
+        creds of different scope, so this is the same cred
+        ``perform_switch`` and its undo path resolve for that account: no
         registered proxy reads ``ctx.via.password`` today (the built-in
         ``su`` ignores ``via`` entirely), but a future custom proxy that
         needs the via account's password gets it rather than a silent None.
@@ -2347,9 +2367,10 @@ class SessionManager:
         creds = getattr(self._connections, "credentials", None)
         via_login = creds[0] if creds else ""
         switch_creds = self._creds or []
+        term = getattr(self._connections, "term", None)
         io = _SessionProxyIO(session, self._log_command, self._log_output)
         for hop in hops:
-            via = cred_for(switch_creds, via_login) or Cred(login=via_login)
+            via = cred_for(switch_creds, via_login, term) or Cred(login=via_login)
             await run_proxy(
                 io, hop, via=via, host_id=self._host_id, history_prefix=self._history_prefix()
             )
@@ -2394,6 +2415,7 @@ class SessionManager:
             history_prefix=self._history_prefix(),
             target_frame=target,
             establishing=True,
+            term=getattr(self._connections, "term", None),
         )
         ctx = SetupContext(
             host_id=self._host_id,
@@ -2964,6 +2986,9 @@ class SessionManager:
                 creds=self._creds,
                 host_id=self._host_id,
                 history_prefix=self._history_prefix(),
+                # getattr: a test double standing in for the connection
+                # manager need not carry a term.
+                term=getattr(self._connections, "term", None),
             )
             self._named_sessions[name] = host_session
             return host_session

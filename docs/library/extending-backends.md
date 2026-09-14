@@ -101,6 +101,22 @@ reads its own class attribute freely — `sftp` passes
 `self.progress_granularity.put` / `.get` straight to asyncssh as `block_size`,
 which is what makes its promise true by construction.
 
+## `authenticates` — whether the backend logs in with a cred
+
+A backend states whether it performs its **own** login. For a transfer backend
+this is the class attribute {class}`~otto.host.transfer.BaseFileTransfer`'s
+`authenticates` (default `False`); for a term backend it is the required
+`authenticates` keyword on
+{func}`~otto.host.connections.register_term_backend`, beside `host_families`.
+`ssh`, `telnet` and `ftp` declare `True`; `scp`, `sftp`, `nc`, `shell` and
+`console` ride a term session and inherit its identity, so they stay `False`.
+
+The declaration has one consumer: a cred's `protocols` scope
+({ref}`cred-protocols`) may only name an authenticating backend, because
+scoping a cred to a protocol that never logs in would be a statement with no
+effect. Both registration functions refuse a non-bool, so the vocabulary is
+always stated, never guessed.
+
 ## The `create(ctx)` construction contract
 
 Both seams construct through a uniform classmethod. The host assembles a frozen
@@ -234,9 +250,12 @@ term's applicable families are passed as a **required** keyword argument to
 transfer backend does:
 
 ```python
-register_term_backend("my_term", MyTerm, host_families=frozenset({"unix"}))
-# host_families is required (no default) — omitting it raises TypeError
+register_term_backend("my_term", MyTerm, host_families=frozenset({"unix"}), authenticates=True)
+# host_families and authenticates are required (no default) — omitting either raises TypeError
 ```
+
+`TermContext` no longer carries `user`; a backend that needs the session
+identity asks the manager it builds for `login_target_for(ctx.term)`.
 
 ### Proving it
 

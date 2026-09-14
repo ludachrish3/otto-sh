@@ -25,7 +25,7 @@ import pytest
 
 from otto.host.connections import teardown_step
 from otto.host.host import Host
-from otto.host.login_proxy import Cred
+from otto.host.login_proxy import Cred, LoginProxyError
 from otto.host.session import ShellSession
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
@@ -365,11 +365,13 @@ class TestCredentials:
         """Verify the non-default (test) user can log in and run commands."""
         data = host_data("test2")
         second_user = data["creds"][1]["login"]
+        # The pick is list order, so the second cred leads here to be the
+        # default login (spec 2026-09-13 cred-scope §3.2).
+        reordered = [data["creds"][1], *data["creds"][:1], *data["creds"][2:]]
         host = UnixHost(
             ip=data["ip"],
-            user=second_user,
             element=element_for("test2"),
-            creds=[Cred(**c) for c in data["creds"]],
+            creds=[Cred(**c) for c in reordered],
             board=data.get("board"),
         )
         try:
@@ -396,7 +398,6 @@ class TestCredentials:
         user = data["creds"][0]["login"]
         host = UnixHost(
             ip=data["ip"],
-            user=user,
             element=element_for("test1"),
             creds=[Cred(login=user, password="definitely-the-wrong-password")],
             board=data.get("board"),
@@ -412,6 +413,66 @@ class TestCredentials:
             assert elapsed < 15
         finally:
             await host.close()
+
+    @pytest.mark.asyncio
+    async def test_ftp_scoped_cred_is_what_ftp_logs_in_with(self, tmp_path):
+        """Scope is per protocol on a real server: ftp's pick is the scoped entry, ssh's is not.
+
+        No bed host has private FTP accounts, so the pair is the same unix login
+        scoped to ftp: with the right password the transfer works; with a wrong
+        one the ftp login is refused with an error naming the login and ftp,
+        while ssh on the same host still answers — which proves the wrong
+        password reached ftp and only ftp.
+        """
+        data = host_data("test2")
+        unix = data["creds"][0]
+        good = UnixHost(
+            ip=data["ip"],
+            element=element_for("test2"),
+            creds=[
+                Cred(**unix),
+                Cred(login=unix["login"], password=unix["password"], protocols=["ftp"]),
+            ],
+            board=data.get("board"),
+            term="ssh",
+            transfer="ftp",
+        )
+        try:
+            src = tmp_path / "scoped_ftp.txt"
+            src.write_text("scoped")
+            res = await transfer_with_retry(lambda: good.put([src], Path("/tmp")))
+            assert res.status == Status.Success, f"FTP put with the scoped cred failed: {res.msg}"
+            await good.run("rm -f /tmp/scoped_ftp.txt")
+        finally:
+            await good.close()
+
+        bad = UnixHost(
+            ip=data["ip"],
+            element=element_for("test2"),
+            creds=[
+                Cred(**unix),
+                Cred(login=unix["login"], password="not-the-ftp-password", protocols=["ftp"]),
+            ],
+            board=data.get("board"),
+            term="ssh",
+            transfer="ftp",
+        )
+        try:
+            assert "ping" in (await bad.run("echo ping")).only.value  # ssh: the unscoped cred
+            # A rejected login raises rather than returning a failed Result:
+            # the connection manager turns aioftp's StatusCodeError into an
+            # otto error naming the host, the LOGIN ftp picked and the status
+            # code (never the password), because with scope in play the
+            # account that was refused need not be the host's own.
+            with pytest.raises(LoginProxyError, match=rf"ftp login refused for {unix['login']!r}"):
+                await bad.put([src], Path("/tmp"))
+            with pytest.raises(LoginProxyError) as caught:
+                await bad.put([src], Path("/tmp"))
+            assert "not-the-ftp-password" not in str(caught.value), (
+                "the refused password must never reach the error text"
+            )
+        finally:
+            await bad.close()
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +521,6 @@ class TestUserAuthenticates:
         )
         host = UnixHost(
             ip=data["ip"],
-            user=default_login,
             element=element_for("test2"),
             creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),

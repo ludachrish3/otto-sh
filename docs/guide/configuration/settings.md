@@ -199,10 +199,11 @@ init
 \[creds\]
 : Optional table selecting the **creds store** — credentials by inventory key,
   the lowest of the three creds layers (lab file over inventory record over
-  store, by login). Same two homes and the same override-and-agree rule as
-  `[inventory]`, resolved independently of it; requires an inventory to be
-  keyed against. `backend` is otto's (`"json"` ships with otto); the `json`
-  store takes `path`, anchored to the repo root. See {doc}`inventory`.
+  store, by identity — login plus scope, see {ref}`cred-protocols`). Same two
+  homes and the same override-and-agree rule as `[inventory]`, resolved
+  independently of it; requires an inventory to be keyed against. `backend` is
+  otto's (`"json"` ships with otto); the `json` store takes `path`, anchored to
+  the repo root. See {doc}`inventory`.
 
 \[logging.levels\]
 : Optional table setting the per-library noise floor — which third-party

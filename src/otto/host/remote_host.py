@@ -40,6 +40,7 @@ from typing_extensions import override
 from ..logger.mode import LogMode
 from ..result import CommandResult
 from ..utils import Status
+from .connections import LOGINLESS
 from .host import BaseHost, is_dry_run
 from .login_proxy import Cred
 from .options import TelnetOptions
@@ -138,18 +139,15 @@ class RemoteHost(BaseHost):
 
     creds: list[Cred] = field(default_factory=list)
     """Login credentials for this host — one :class:`~otto.host.login_proxy.Cred`
-    entry per account, in priority order (the first entry is the default
-    login when ``user`` is unset). A proxied entry (``Cred.proxy`` set)
-    cannot be reached by direct authentication;
+    entry per account, in list order: a protocol logs in as the first entry
+    that applies to it (unscoped, or scoped to that protocol). A proxied entry
+    (``Cred.proxy`` set) cannot be reached by direct authentication;
     :meth:`~otto.host.unix_host.UnixHost.cred` /
     :attr:`~otto.host.unix_host.UnixHost.default_cred` and the
     connection-layer chain resolution
     (:func:`~otto.host.login_proxy.resolve_chain`) handle that. Optional on
     a console family whose shell has no login step (a stock Zephyr target);
     :class:`~otto.host.unix_host.UnixHost` makes it required."""
-
-    user: str | None = None
-    """User with which to log in, or None to use the first entry in ``creds``."""
 
     board: str | None = field(default=None, repr=False)
     """Board type name, or None."""
@@ -677,17 +675,18 @@ class RemoteHost(BaseHost):
                     outer._parent = hop_host._build_hop_transport()  # noqa: SLF001 — intra-package access to RemoteHost._build_hop_transport
                 parent_tunnel = await outer._parent.get_tunnel(_visited=visited)  # noqa: SLF001 — intra-package access to SshHopTransport._parent
 
-            # Same login_target/direct-cred resolution the hop host's own
-            # ConnectionManager uses for its transport auth — a proxied
-            # login_target resolves to its via-chain's directly-loginable
-            # end (the proxy hops themselves are applied post-handshake by
-            # the hop host's own session, not here).
-            user, password = hop_host._connections.credentials  # noqa: SLF001 — intra-package access to RemoteHost._connections for hop-auth resolution
+            # A hop is always an SSH tunnel, so it resolves against ssh
+            # (spec 2026-09-13 cred-scope §4) regardless of the hop host's
+            # own active term — a proxied ssh pick resolves to its
+            # via-chain's directly-loginable end (the proxy hops themselves
+            # are applied post-handshake by the hop host's own session, not
+            # here).
+            cred = hop_host._connections.transport_cred_for("ssh") or LOGINLESS  # noqa: SLF001 — intra-package access to RemoteHost._connections for hop-auth resolution
             logger.debug(f"Opening SSH tunnel through {hop_id} for {host_name}")
             return await _ssh_connect(
                 hop_host.ip,
-                username=user,
-                password=password,
+                username=cred.login,
+                password=cred.password,
                 known_hosts=None,
                 tunnel=parent_tunnel,
             )

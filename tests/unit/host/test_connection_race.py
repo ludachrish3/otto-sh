@@ -70,7 +70,6 @@ async def test_concurrent_ssh_opens_one_connection(monkeypatch):
     cm = ConnectionManager(
         ip="1.2.3.4",
         creds=[Cred(login="u", password="p")],
-        user=None,
         term="ssh",
         name="t",
         ssh_options=SshOptions(),
@@ -121,7 +120,6 @@ async def test_concurrent_sftp_opens_one_client(monkeypatch):
     cm = ConnectionManager(
         ip="1.2.3.4",
         creds=[Cred(login="u", password="p")],
-        user=None,
         term="ssh",
         name="t",
         sftp_options=SftpOptions(),
@@ -157,7 +155,6 @@ async def test_concurrent_ftp_opens_one_client(monkeypatch):
     cm = ConnectionManager(
         ip="1.2.3.4",
         creds=[Cred(login="u", password="p")],
-        user=None,
         term="ssh",
         name="t",
         ftp_options=FtpOptions(),
@@ -194,7 +191,6 @@ async def test_concurrent_telnet_opens_one_client(monkeypatch):
     cm = ConnectionManager(
         ip="1.2.3.4",
         creds=[Cred(login="u", password="p")],
-        user=None,
         term="telnet",
         name="t",
         telnet_options=TelnetOptions(),

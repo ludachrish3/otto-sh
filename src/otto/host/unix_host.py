@@ -87,7 +87,7 @@ from .host import (
     is_dry_run,
 )
 from .interact import run_ssh_login, run_telnet_login
-from .login_proxy import Cred, LoginProxyError, cred_for, resolve_chain
+from .login_proxy import Cred, LoginProxyError, cred_for, cred_identity, resolve_chain
 from .options import (
     FtpOptions,
     NcOptions,
@@ -357,7 +357,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     @override
     def _sudo_password(self) -> str | None:
         """Return the current user's password, used for ``sudo -S``."""
-        c = cred_for(self.creds, self.current_user)
+        c = cred_for(self.creds, self.current_user, self.term)
         return c.password if c else None
 
     @override
@@ -393,17 +393,23 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         return self._userland_cache
 
     def cred(self, login: str) -> Cred:
-        """Return the cred entry for *login*; loud lookup listing known logins."""
-        found = cred_for(self.creds, login)
+        """Return *login*'s cred as the active term sees it; loud lookup listing known logins."""
+        found = cred_for(self.creds, login, self.term)
         if found is None:
-            known = ", ".join(c.login for c in self.creds) or "<none>"
+            known = ", ".join(cred_identity(c.login, c.protocols) for c in self.creds) or "<none>"
             raise LoginProxyError(f"{self.name}: no cred for login {login!r}. Known: {known}")
         return found
 
     @property
     def default_cred(self) -> Cred | None:
-        """First cred entry — the default login user."""
-        return self.creds[0] if self.creds else None
+        """Return the cred the active term logs in as (spec 2026-09-13 cred-scope §3.2).
+
+        ``None`` with no creds at all, and also when the non-empty list has
+        nothing that applies to the active term.
+        """
+        if not self.creds:
+            return None
+        return cred_for(self.creds, self._connections.login_target, self.term)
 
     def __post_init__(self) -> None:
 
@@ -492,7 +498,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         term_ctx = TermContext(
             ip=self.ip,
             creds=self.creds,
-            user=self.user,
             term=self.term,
             name=self.name,
             hop=hop_transport,
@@ -625,7 +630,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         rather than silently proxying from the wrong account.
         """
         target = user if user is not None else self._connections.login_target
-        direct, hops = resolve_chain(self.creds, target)
+        direct, hops = resolve_chain(self.creds, target, self.term)
 
         if self.term == "ssh":
             via_login, _ = self._connections.credentials

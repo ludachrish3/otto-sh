@@ -5,7 +5,7 @@ proxied paths work at all) — this module re-runs the same shapes of
 assertion under ``pytest-repeat`` (``--count``) via ``make stability-unix``
 to flush intermittent flakiness in:
 
-- proxied session *establishment* (``user="mysql"``);
+- proxied session *establishment* (the mysql cred sequenced first);
 - ``as_user`` switch/undo roundtrip (soaks
   ``otto.host.login_proxy._resync_shell``, the post-transition tty-flush
   resync fix — see the e2e module's docstring NOTE for the history);
@@ -106,16 +106,22 @@ _MYSQL_CREDS: list[dict[str, str]] = [
 ]
 
 
-def _mysql_host_dict(ip: str, element: str, **overrides: object) -> dict[str, object]:
+def _mysql_host_dict(
+    ip: str, element: str, *, login: str = "vagrant", **overrides: object
+) -> dict[str, object]:
     """Build an inline host dict carrying the mysql proxied cred.
+
+    *login* is the account the session must land on: the pick is list order
+    (spec 2026-09-13 cred-scope §3.2), so that entry is sequenced first.
 
     Fresh per call (no shared mutable state) and never written to any file —
     validated in-process by :func:`create_host_from_dict`, where the
     ``sudo-su-shell`` proxy IS registered (see module scope, above).
     """
+    creds = sorted((dict(c) for c in _MYSQL_CREDS), key=lambda c: c["login"] != login)
     data: dict[str, object] = {
         "ip": ip,
-        "creds": [dict(c) for c in _MYSQL_CREDS],
+        "creds": creds,
     }
     data.update(overrides)
     return data
@@ -159,7 +165,8 @@ async def proxied_host(request, tmp_path_factory):
     with lease_unix_host(lock_dir, _UNIX_POOL) as element:
         ip = host_data(element)["ip"]
         host = create_host_from_dict(
-            _mysql_host_dict(ip, element, user="mysql", transfer=transfer), element=Element(element)
+            _mysql_host_dict(ip, element, login="mysql", transfer=transfer),
+            element=Element(element),
         )
         try:
             yield host
@@ -175,13 +182,13 @@ _TRANSFERS = pytest.mark.parametrize(
 
 
 # ---------------------------------------------------------------------------
-# 1. Proxied session establishment (soaks `user="mysql"` -> default session)
+# 1. Proxied session establishment (soaks a mysql-first cred list -> default session)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_proxied_command_roundtrip(leased_host: tuple[str, str]) -> None:
-    """A ``user="mysql"`` host must land its default session on mysql, repeatedly.
+    """A host whose first cred is mysql must land its default session on mysql, repeatedly.
 
     Proves the proxied session establishes cleanly under repetition (the
     ``--count`` soak), not just once: ``whoami`` must resolve to ``mysql``
@@ -189,7 +196,7 @@ async def test_proxied_command_roundtrip(leased_host: tuple[str, str]) -> None:
     """
     element, ip = leased_host
     host = create_host_from_dict(
-        _mysql_host_dict(ip, element, user="mysql"), element=Element(element)
+        _mysql_host_dict(ip, element, login="mysql"), element=Element(element)
     )
     try:
         whoami = (await host.run("whoami")).only
@@ -325,7 +332,7 @@ async def test_proxied_exec_fanout(leased_host: tuple[str, str]) -> None:
     """
     element, ip = leased_host
     host = create_host_from_dict(
-        _mysql_host_dict(ip, element, user="mysql"), element=Element(element)
+        _mysql_host_dict(ip, element, login="mysql"), element=Element(element)
     )
     try:
         N = 8  # noqa: N806 — single-letter math dimension

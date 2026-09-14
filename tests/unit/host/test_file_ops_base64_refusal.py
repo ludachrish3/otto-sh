@@ -172,7 +172,7 @@ class _Host(UnixHost):
 
 
 def _host(device: _Device, host_id: str = "bb-1") -> _Host:
-    host = _Host(ip="10.0.0.9", element=Element(host_id), creds=[], user="admin", log=LogMode.QUIET)
+    host = _Host(ip="10.0.0.9", element=Element(host_id), creds=[], log=LogMode.QUIET)
     host.device = device
     return host
 

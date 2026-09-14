@@ -260,7 +260,7 @@ def test_a_merge_error_names_the_lab_file_layer_and_the_key():
     inv = FakeInventory({"k": _REC})
     with pytest.raises(
         InventoryError,
-        match=r"duplicate cred login 'u' in the lab file layer \(inventory key 'k'\)",
+        match=r"duplicate cred entry 'u' in the lab file layer \(inventory key 'k'\)",
     ):
         resolve_host_entry({"inventory": "k", "creds": [{"login": "u"}, {"login": "u"}]}, inv, _DUT)
 

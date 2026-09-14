@@ -149,6 +149,21 @@ class TestRegistry:
                 if getattr(declared, arm) is None:
                     assert declared.note.strip(), f"{name}.{arm} is None with no note"
 
+    def test_built_in_transfers_declare_whether_they_authenticate(self):
+        assert build_transfer_backend("ftp").authenticates is True
+        for name in ("scp", "sftp", "nc", "shell", "console", "tftp"):
+            assert build_transfer_backend(name).authenticates is False, name
+
+    def test_register_rejects_a_non_bool_authenticates(self):
+        """A truthy string is not a declaration -- the refusal checks the TYPE."""
+
+        class Stringy(NcFileTransfer):
+            host_families = frozenset({"unix"})
+            authenticates = "yes"  # not a bool
+
+        with pytest.raises(ValueError, match="authenticates must be a bool"):
+            register_transfer_backend("stringy", Stringy)
+
 
 class TestCreate:
     def test_create_constructs_ncfiletransfer(self):

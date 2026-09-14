@@ -1,10 +1,11 @@
-"""The creds overlay and the by-login merge (spec 2026-09-06 creds-store §5.4, §6.1)."""
+"""The creds overlay and the by-identity merge (spec 2026-09-06 creds-store §5.4, §6.1)."""
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
+from ..host.login_proxy import cred_identity
 from ..models.base import compact_validation_error
 from ..models.host import CredSpec
 from ..models.inventory import InventoryRecord
@@ -28,25 +29,28 @@ def merge_creds(
     lower_name: str = "lower",
     higher_name: str = "higher",
 ) -> list[dict[str, Any]]:
-    """Compose two cred layers by login (spec 2026-09-06 creds-store §6.1).
+    """Compose two cred layers by identity (spec 2026-09-06 creds-store §6.1).
 
-    Matching is by ``login`` only. A login in both layers gets
+    Matching is by identity — ``login`` plus scope
+    (:func:`~otto.host.login_proxy.cred_identity`), so ``protocols`` is part
+    of the key and is never composed. An identity in both layers gets
     ``{**lower_stated, **higher_stated}`` — the higher layer overrides a
     field it states and cannot remove one (``None`` states nothing). The
-    result is sequenced HIGHER FIRST: every *higher* login in its own order,
-    then every *lower*-only login in its own order — the lab file, the one
-    layer written with otto's default-login rule in mind, decides the order
-    (spec §3 statement 3).
+    result is sequenced HIGHER FIRST: every *higher* identity in its own
+    order, then every *lower*-only identity in its own order — the lab
+    file, the one layer written with otto's default-login rule in mind,
+    decides the order (spec §3 statement 3).
 
     Plain dicts in, plain dicts out — the join's currency. Raises
     :class:`~otto.inventory.errors.InventoryError` for an entry with no
-    non-empty string ``login`` and for a login repeated within ONE layer; the
-    message names the layer and *key*, and lists an entry's field NAMES only,
-    because a value here may be a password.
+    non-empty string ``login``, for a non-``list``-of-``str`` ``protocols``,
+    and for an identity repeated within ONE layer; the message names the
+    layer and *key*, and lists an entry's field NAMES only (or the identity,
+    for a duplicate), because a value here may be a password.
     """
     where = f" (inventory key {key!r})" if key is not None else ""
 
-    def _by_login(layer: list[dict[str, Any]], name: str) -> dict[str, dict[str, Any]]:
+    def _by_identity(layer: list[dict[str, Any]], name: str) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
         for entry in layer:
             login = entry.get("login") if isinstance(entry, dict) else None
@@ -55,15 +59,26 @@ def merge_creds(
                 raise InventoryError(
                     f"cred entry without a 'login' string in the {name} layer{where}: {fields}"
                 )
-            if login in out:
-                raise InventoryError(f"duplicate cred login {login!r} in the {name} layer{where}")
-            out[login] = _stated(entry)
+            protocols = entry.get("protocols")
+            if protocols is None:
+                protocols = []
+            if not isinstance(protocols, list) or not all(isinstance(p, str) for p in protocols):
+                raise InventoryError(
+                    f"cred {login!r}: 'protocols' must be a list of strings "
+                    f"in the {name} layer{where}"
+                )
+            identity = cred_identity(login, protocols)
+            if identity in out:
+                raise InventoryError(
+                    f"duplicate cred entry {identity!r} in the {name} layer{where}"
+                )
+            out[identity] = _stated(entry)
         return out
 
-    low = _by_login(lower, lower_name)
-    high = _by_login(higher, higher_name)
-    merged = [{**low.get(login, {}), **fields} for login, fields in high.items()]
-    merged.extend(fields for login, fields in low.items() if login not in high)
+    low = _by_identity(lower, lower_name)
+    high = _by_identity(higher, higher_name)
+    merged = [{**low.get(identity, {}), **fields} for identity, fields in high.items()]
+    merged.extend(fields for identity, fields in low.items() if identity not in high)
     return merged
 
 

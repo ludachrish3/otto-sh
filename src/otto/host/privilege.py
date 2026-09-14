@@ -148,7 +148,10 @@ class PosixPrivilege(UserlandHost):
         :exc:`~otto.host.errors.UnsupportedOnUserlandError`. Use ``as_user``
         for anything needing a real chain.
         """
-        cred = cred_for(self._switch_creds(), _SU_TARGET)
+        # getattr, not self.term: this mixin also backs LocalHost and
+        # DockerContainerHost, neither of which has a term concept at all —
+        # None there reproduces the untargeted lookup exactly as before.
+        cred = cred_for(self._switch_creds(), _SU_TARGET, getattr(self, "term", None))
         return cred.password if cred else None
 
     async def _prepare_elevation(self) -> None:
@@ -312,6 +315,9 @@ class PosixPrivilege(UserlandHost):
             self._session_mgr.current_user,  # ty: ignore[unresolved-attribute]
             getattr(self, "name", ""),
             self._history_prefix(),
+            # getattr, not self.term: see _su_password's note above -- this
+            # mixin also backs term-less hosts (LocalHost, DockerContainerHost).
+            protocol=getattr(self, "term", None),
         )
         self._session_mgr._set_current_user(applied[-1].login or "root")  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
 
@@ -348,6 +354,7 @@ class PosixPrivilege(UserlandHost):
             prev,
             getattr(self, "name", ""),
             self._history_prefix(),
+            protocol=getattr(self, "term", None),
         )
         self._session_mgr._set_current_user(applied[-1].login or "root")  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
         try:
@@ -373,10 +380,14 @@ class PosixPrivilege(UserlandHost):
         creds = self._switch_creds()
         for i, hop in enumerate(reversed(applied)):
             via_login = applied[-i - 2].login if i + 1 < len(applied) else prev
-            # Look up the full via cred (password/params intact), mirroring
-            # perform_switch's forward path — so a custom undo that needs
-            # the via user's password sees it, and forward/undo stay symmetric.
-            via = cred_for(creds, via_login) or Cred(login=via_login)
+            # Look up the full via cred (password/params intact) under the
+            # SAME term perform_switch resolved the forward path with — so a
+            # custom undo that needs the via user's password sees it, and a
+            # term-scoped cred cannot give the two directions different
+            # passwords for one login.
+            # getattr, not self.term: see _su_password's note above — this
+            # mixin also backs term-less hosts (LocalHost, DockerContainerHost).
+            via = cred_for(creds, via_login, getattr(self, "term", None)) or Cred(login=via_login)
             await run_undo(
                 _HostProxyIO(self), hop, via, getattr(self, "name", ""), self._history_prefix()
             )

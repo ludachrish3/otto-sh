@@ -30,8 +30,9 @@ def parse_creds_document(data: object, *, source: str) -> dict[str, list[CredSpe
 
     Errors name *source*, the key, the index and the field.
 
-    Two logins may not repeat under one key: the by-login merge (spec §6.1)
-    could only resolve that by choosing, which is the one thing it never does.
+    Two entries of one identity (login plus scope) may not repeat under one
+    key: the by-identity merge (spec §6.1) could only resolve that by
+    choosing, which is the one thing it never does.
     """
     if not isinstance(data, dict):
         raise CredsError(f"{source}: must be a JSON object mapping inventory key -> creds list")
@@ -42,10 +43,10 @@ def parse_creds_document(data: object, *, source: str) -> dict[str, list[CredSpe
         if not isinstance(entries, list):
             raise CredsError(f"{source}: key {key!r}: expected a list of creds")
         creds = [_validated(source, key, idx, entry) for idx, entry in enumerate(entries)]
-        logins = [c.login for c in creds]
-        dupes = sorted({login for login in logins if logins.count(login) > 1})
+        identities = [c.identity for c in creds]
+        dupes = sorted({i for i in identities if identities.count(i) > 1})
         if dupes:
-            raise CredsError(f"{source}: key {key!r}: duplicate cred login {dupes[0]!r}")
+            raise CredsError(f"{source}: key {key!r}: duplicate cred entries: {dupes}")
         out[key] = creds
     return out
 
