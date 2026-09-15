@@ -14,6 +14,9 @@ for which cred the login tier tries for a protocol (`default_login(creds,
 protocol)`, §3.2 there), and `2026-08-20-busybox-bed-and-tier-migration-design.md`
 (shipped) — the five BusyBox guests behind test1 are this spec's live
 unix-behind-a-hop targets.
+**Amended 2026-09-15** (Rulings 20-22, during implementation): §3's `closed`
+and `not-checkable` reasons, §7's declared-port dial, §11's bed expectations.
+Each amendment is marked in place.
 **Surface:** the `otto host <id> probe` verb (`@cli_exposed`, today the
 userland recon on posix-shell hosts, `UserlandHost.probe`). The root
 `--dry-run --probe` flag and its connection-only contract
@@ -96,7 +99,12 @@ One `ProtocolVerdict` per **(protocol, port)** checked:
   - **service-mismatch** — the port answered, but not with the expected
     service (the wrong-service-squatting guard);
   - **closed** — the dial was refused, or the inventory shows nothing bound
-    on that port;
+    on that port. **Amendment (Ruling 20).** Behind a hop nothing of otto's
+    touches the socket — the connect is a direct-tcpip forward the hop
+    performs — so a refusal arrives as a channel otto's client could not open
+    (`OPEN_CONNECT_FAILED`) and reads `connection refused (via hop)`. It is
+    `closed`, never `login-failed`: no login was refused, and `login-failed`
+    is an answer that drifts and pins;
   - **listening** — **Amendment.** A socket is bound on port N for this
     protocol's transport, and no authoritative check exists or ran. It is an
     *unknown* like `timeout` and `no-session`: it never feeds the drift
@@ -107,6 +115,10 @@ One `ProtocolVerdict` per **(protocol, port)** checked:
   - **not-checkable** — no honest check exists; reason stated. Shrinks to:
     tftp (§5.2), Docker containers (§9), a protocol no cred applies to
     (§3.2), snmp without pysnmp (§5.1), and a hop with no dial tool (§10).
+    **Amendment (Ruling 20).** Two more, both the hop declining to open the
+    channel rather than a condition at the target: a hop that forbids port
+    forwarding (`OPEN_ADMINISTRATIVELY_PROHIBITED`), stated as such, and any
+    other channel-open code, stated on the code's own reason text.
 - `tier` — which tier produced the verdict: `login` / `session` /
   `userland` / `inventory` / `dial`;
 - `vantage` — where the observation was made from (`controller`,
@@ -359,7 +371,17 @@ New module `src/otto/host/protocol_survey.py` owns the engine:
    host's family, plus snmp.
 2. **Login tier, declared ports** — one login per candidate term and ftp
    on its declared port, bounded by the family's connect timeout, failures
-   isolated. If no term logs in at all, every session-dependent candidate
+   isolated. **Amendment (Ruling 21).** Every declared ftp and non-own-term
+   port is dialed from the host's own vantage FIRST: a `closed`, `timeout` or
+   `not-checkable` dial is that candidate's row and no login is tried on it.
+   The login classifier reads a failure on the premise that something is
+   listening, which for a declared port nothing had established — through a
+   hop the local end of the forward succeeds and the EOF behind it reads as a
+   refused password, fabricating `login-failed` for a port with no service.
+   It is also lockout hygiene: a refused login is never retried, and never
+   attempted on a dead port. The host's OWN term is not pre-dialed — `host.run`
+   proves that session and is stronger evidence than a dial — and snmp is not
+   dialed at all, being UDP with the §5.1 GET as its check. If no term logs in at all, every session-dependent candidate
    reports **no-session** with the terms tried, the inventory does not run,
    and step 3 is skipped; the declared-port dials of step 5 still run.
 3. **Session tier** — over the first successful term session: the userland
@@ -510,11 +532,22 @@ prints the report.
   degradation to `not-checkable`) pinned by unit tests with scripted hop
   userlands. Their permanently dead, undeclared ssh stays the drift table's
   standing true-negative.
-- **e2e (bed).** A unix bed host reports its real menu with no pin; a
-  fixture host whose `ssh_options.port` deliberately points at a dead port
-  produces the drift row and the `ssh_options` pin fragment; the Zephyr bed
-  exercises the sweep from the hop with telnet found, 22 `closed` on a 4.4
-  guest and 22 `timeout` on a 3.7 guest (§8's known defect); the snmp
+- **e2e (bed).** **Amendment (Ruling 22):** the three expectations below
+  replace what this bullet asked for first, each refuted by the live bed for a
+  reason the spec's own text gives. A unix bed host reports its real menu with
+  exactly one drift row and one pin line — `shell` is the carrying session, so
+  the session tier states it `supported` on every host whose own term opens,
+  and no lab menu names it: §6's working-but-undeclared rule fires by the book
+  (it will do so on every unix host, not just this one). A fixture host whose
+  **`ftp_options.port`** deliberately points at a dead port produces the drift
+  row and the `ftp_options` pin fragment — not `ssh_options`, because a wrong
+  own-term port kills the session the inventory and discovery ride on, so that
+  example can produce no pin at all. The Zephyr bed exercises the sweep from
+  the hop with telnet found, and the 4.4-`closed`/3.7-`timeout` differential is
+  read at the **dial tier on a swept alternate port (2323)**: the sweep keeps
+  no verdict and no listener entry for a non-open non-console port, so that
+  difference is unobservable in the survey's rows and is asserted on the dial
+  the sweep itself uses, with the 4.4 guest as the positive control. The snmp
   check runs against whichever bed host serves an agent and is the first
   thing dropped if it proves flaky (Chris's call, recorded in session).
   Docker budget untouched (house rule).
