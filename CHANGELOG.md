@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-09-15
+
+### Added
+
+- **BREAKING** **host**: otto host <id> probe surveys every protocol on every family
+- **tls**: otto.tls — the OS trust store for any HTTPS client
+- **BREAKING** **host**: per-protocol credential scope; the host-level user pin is gone
+- **BREAKING** **inventory**: verify NetBox against the OS trust store; remove [inventory] verify
+
+
+### Documentation
+
+- **spec**: the survey dials a declared port before any login; hop channel refusals; bed shapes
+- **spec**: host probe protocol survey — in-session inventory, port discovery, options pins
+- **spec**: otto.tls — mTLS stays out of scope as a feature, not as behaviour
+- **spec**: per-protocol credential scope
+- **specs**: otto.tls — the OS trust store for every HTTPS client
+- **specs**: system trust store design
+
+
+### Fixed
+
+- **shim**: do not trust a completion marker dated in the future
+
+
+### Maintenance
+
+- **matrix**: re-measure the bed support matrix
+
+
 ## [0.13.0] - 2026-09-13
 
 ### Added
@@ -1772,7 +1802,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/ludachrish3/otto-sh/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/ludachrish3/otto-sh/compare/v0.12.2...v0.13.0
 [0.12.2]: https://github.com/ludachrish3/otto-sh/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/ludachrish3/otto-sh/compare/v0.12.0...v0.12.1
