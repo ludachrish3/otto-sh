@@ -22,9 +22,10 @@ data owns "what command to run"):
   falls back to default styling (:func:`resolve_snmp_metric`) so a host can add
   a bare OID with zero code and still get a chart.
 
-The pysnmp dependency is imported lazily inside :meth:`SnmpClient.get` so this
-module imports cleanly without it, and unit tests can mock at the ``get``
-boundary rather than against pysnmp internals.
+The pysnmp dependency is imported lazily inside :mod:`otto.snmp`, a leaf both
+this package and ``otto.host`` depend on, so this module imports cleanly
+without it, and unit tests can mock at the ``get`` boundary rather than
+against pysnmp internals.
 """
 
 import logging
@@ -415,63 +416,29 @@ class SnmpClient:
         """
         if not oids:
             return {}
+        from ..snmp import snmp_get
 
-        # Lazy import so this module loads without pysnmp and unit tests can
-        # mock this method without the dependency installed.
-        from pysnmp.hlapi.v1arch.asyncio import (  # type: ignore[import-untyped]
-            CommunityData,
-            ObjectIdentity,
-            ObjectType,
-            SnmpDispatcher,
-            UdpTransportTarget,
-            get_cmd,
-        )
-
-        mp_model = 1 if self.version == "2c" else 0
         result: dict[str, float | None] = {oid: None for oid in oids}  # noqa: C420 — dict.fromkeys infers dict[str, Any | None], tripping ty's unsound-assignment; the comprehension types cleanly
-
-        # One dispatcher per GET; close it in finally so the UDP socket isn't
-        # leaked (otherwise it lingers until GC and trips ResourceWarning).
-        dispatcher = SnmpDispatcher()
-        try:
-            transport = await UdpTransportTarget.create(
-                (self.address, self.port),
-                timeout=self.timeout,
-                retries=self.retries,
-            )
-            error_indication, error_status, _error_index, var_binds = await get_cmd(
-                dispatcher,
-                CommunityData(self.community, mpModel=mp_model),
-                transport,
-                *(ObjectType(ObjectIdentity(oid)) for oid in oids),
-            )
-        except Exception as exc:  # noqa: BLE001 — SNMP client raises heterogeneous errors; all map to warning + empty result
-            logger.warning("SNMP GET to %s:%d failed: %s", self.address, self.port, exc)
+        got = await snmp_get(
+            self.address,
+            self.port,
+            self.community,
+            self.version,
+            oids,
+            timeout=self.timeout,
+            retries=self.retries,
+        )
+        if got.outcome == "silence":
+            logger.warning("SNMP GET to %s:%d failed: %s", self.address, self.port, got.detail)
             return result
-        finally:
-            dispatcher.close()
-
-        if error_indication:
-            logger.warning("SNMP error from %s:%d: %s", self.address, self.port, error_indication)
+        if got.outcome == "error-indication":
+            logger.warning("SNMP error from %s:%d: %s", self.address, self.port, got.detail)
             return result
-        if error_status:
-            logger.warning(
-                "SNMP error-status from %s:%d: %s",
-                self.address,
-                self.port,
-                error_status.prettyPrint(),
-            )
+        if got.outcome == "error-status":
+            logger.warning("SNMP error-status from %s:%d: %s", self.address, self.port, got.detail)
             return result
-
-        for var_bind in var_binds:
-            oid_obj, value = var_bind
-            oid_str = str(oid_obj)
-            numeric = _coerce_numeric(value)
-            # pysnmp may return the OID with or without a trailing instance .0;
-            # match back to the requested key when possible.
-            key = oid_str if oid_str in result else _match_requested(oid_str, result)
-            if key is not None:
-                result[key] = numeric
+        for oid, value in got.values.items():
+            result[oid] = _coerce_numeric(value)
         return result
 
 
@@ -502,11 +469,3 @@ def _coerce_numeric(value: object) -> float | None:
         return float(int(value))
     except (TypeError, ValueError):
         return None
-
-
-def _match_requested(oid_str: str, requested: dict[str, float | None]) -> str | None:
-    """Map a returned OID back to a requested key, tolerating a trailing ``.0``."""
-    for key in requested:
-        if key == oid_str or key.rstrip(".0") == oid_str.rstrip(".0"):
-            return key
-    return None

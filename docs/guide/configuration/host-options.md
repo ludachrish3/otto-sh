@@ -72,6 +72,10 @@ connect timeout:
 }
 ```
 
+`otto host <id> probe` reports whether this port answers and, when the
+service listens elsewhere, prints the fragment to paste here — see
+{doc}`../cli/host/capabilities/protocols`.
+
 Anything supported by ``asyncssh.connect()`` but not surfaced as a
 curated field is reachable via ``extra``, which is forwarded verbatim:
 
@@ -133,6 +137,10 @@ to have otto install a SIGWINCH handler that sends NAWS updates on
 every local terminal resize — remote TUIs (``vi``, ``top``, ``less``)
 then reflow like they do under SSH.  It defaults to off so that
 automated runs produce deterministic output.
+
+`otto host <id> probe` reports whether this port answers and, when the
+service listens elsewhere, prints the fragment to paste here — see
+{doc}`../cli/host/capabilities/protocols`.
 
 **Embedded / UART-backed consoles** — four extra fields matter when the
 telnet endpoint is a QEMU ``-serial telnet:`` bridge rather than a Unix
@@ -198,6 +206,10 @@ transfer a single file without descending; ``preserve`` carries mtime/atime/mode
 ``connection_timeout`` (handshake), ``path_timeout`` (list/stat),
 ``read_speed_limit`` / ``write_speed_limit`` (bytes/sec caps, ``null`` =
 unlimited), and ``passive_commands`` (default ``["epsv", "pasv"]``).
+
+`otto host <id> probe` reports whether this port answers and, when the
+service listens elsewhere, prints the fragment to paste here — see
+{doc}`../cli/host/capabilities/protocols`.
 
 Netcat has additional options and auto-detection strategies — see {doc}`../cli/host/netcat`.
 
@@ -353,6 +365,10 @@ block ({class}`~otto.host.options.SnmpOptions`) instead of (or alongside) the
 are under [SNMP monitoring](lab-config.md#snmp-monitoring) in the lab schema;
 see {doc}`../cli/monitor/metrics` for what ``otto monitor`` does with the
 readings.
+
+`otto host <id> probe` reports whether this port answers and, when the
+service listens elsewhere, prints the fragment to paste here — see
+{doc}`../cli/host/capabilities/protocols`.
 
 (per-host-toolchain)=
 

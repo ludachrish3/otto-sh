@@ -161,33 +161,36 @@ async def _report(userland: "Userland | None") -> list[str]:
     return result.value
 
 
-def _pin_text(lines: list[str]) -> str:
+def _pin_text(lines: list) -> str:
     """The printed pin, from its key to the end -- what a user would select."""
+    lines = [line for line in lines if isinstance(line, str)]
     start = next((i for i, line in enumerate(lines) if line.startswith('"userland_options"')), None)
     assert start is not None, "no pasteable pin in the output:\n" + "\n".join(lines)
     return "\n".join(lines[start:])
 
 
-def _pinned(lines: list[str]) -> dict[str, str]:
+def _pinned(lines: list) -> dict[str, str]:
     """Parse the printed pin the way pasting it into ``lab.json`` would.
 
     Wrapped in braces rather than stripped of its key, because the key and the
     nesting are half of what is under test: this parses only if what was
     printed is a well-formed member of a JSON object.
     """
+    lines = [line for line in lines if isinstance(line, str)]
     parsed = json.loads("{" + _pin_text(lines) + "}")
     assert list(parsed) == ["userland_options"], f"unexpected top-level keys: {list(parsed)}"
     return parsed["userland_options"]
 
 
-def _rows(lines: list[str]) -> dict[str, tuple[str, str]]:
-    """``{capability: (value, source)}`` from the printed table."""
-    out: dict[str, tuple[str, str]] = {}
-    for line in lines:
-        parts = line.split()
-        if len(parts) == 3 and parts[2] in _SOURCES:
-            out[parts[0]] = (parts[1], parts[2])
-    return out
+def _rows(lines: list) -> dict[str, tuple[str, str]]:
+    """``{capability: (value, source)}`` read from the Rich table in the report."""
+    from rich.table import Table
+
+    table = next(item for item in lines if isinstance(item, Table))
+    names = [str(c) for c in table.columns[0]._cells]
+    values = [str(c) for c in table.columns[1]._cells]
+    sources = [str(c) for c in table.columns[2]._cells]
+    return {n: (v, s) for n, v, s in zip(names, values, sources, strict=True)}
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +288,7 @@ async def test_a_host_that_settled_nothing_prints_no_pin_and_says_why():
     one.
     """
     lines = await _report(_userland(raises=OSError("channel refused")))
-    text = "\n".join(lines)
+    text = "\n".join(line for line in lines if isinstance(line, str))
 
     assert '"userland_options"' not in text, f"an empty pin was printed anyway:\n{text}"
     assert f"{_RESOLVE_BUDGET_S:.0f}s" in text, "the budget is not named as a reason"
@@ -379,20 +382,32 @@ async def test_a_declared_applet_reads_as_declared_and_a_measured_one_reaches_th
 
 
 @pytest.mark.asyncio
-async def test_a_host_with_no_userland_says_so_instead_of_printing_an_empty_pin():
+async def test_a_host_with_no_userland_says_so_instead_of_printing_an_empty_pin(monkeypatch):
     """``_userland()`` answering ``None`` is a recorded hole, so the command names it.
 
-    ``LocalHost`` and ``DockerContainerHost`` never build a resolver. The
+    ``LocalHost``, ``DockerContainerHost`` and ``EmbeddedHost`` never build a
+    resolver -- :func:`test_the_no_resolver_paragraph_is_about_the_host_being_probed`
+    holds that list and checks the paragraph reads correctly for each. The
     silent renderings are both worse than saying so: a crash blames the user's
     command for a property of the host class, and an empty pin is
     indistinguishable from a device that refused every probe. The class name
     has to be in the output, because "nothing here" with no subject is the
     mysterious version of the same message.
+
+    The survey seam is stubbed out because the section under test is the
+    userland one: a real local survey opens a session and runs an inventory,
+    which would make this a slow test of somebody else's subject.
     """
+    from otto.host.survey.engine import Survey
+
+    async def no_survey(host, *, user=None, scan_ports=None):
+        return Survey()
+
+    monkeypatch.setattr("otto.host.survey.run_survey", no_survey)
     result = await LocalHost().probe()
 
     assert result.is_ok, "a recorded hole is an answer, not a failure of the command"
-    text = "\n".join(result.value)
+    text = "\n".join(line for line in result.value if isinstance(line, str))
     assert "LocalHost" in text, f"the host class is not named:\n{text}"
     assert '"userland_options"' not in text, f"an empty pin was offered anyway:\n{text}"
 
@@ -425,30 +440,193 @@ async def test_dry_run_reports_nothing_rather_than_a_fabricated_pin(monkeypatch)
     assert device.calls == [], f"a dry run reached the device: {device.calls}"
 
 
+def test_the_no_resolver_paragraph_is_about_the_host_being_probed():
+    """It is printed for three unrelated families now, so it may name only the rule.
+
+    ``EmbeddedHost`` joined ``LocalHost`` and ``DockerContainerHost`` here when
+    the verb reached every family, and the paragraph used to end by explaining
+    that "neither LocalHost nor DockerContainerHost carries a
+    ``userland_options`` field" -- a true sentence about two other machines,
+    shown to somebody probing an RTOS. Every family that answers ``None`` from
+    ``_userland()`` reads the same text, so the only class it may name as the
+    SUBJECT is the one passed in.
+
+    ``UnixHost`` is exempt from that rule and named on purpose: it is the one
+    class that overrides the hook, which is what makes the rule legible rather
+    than arbitrary. The guard checks that the list of families that answer
+    ``None`` really is these three, so a fourth family added later fails here
+    rather than quietly inheriting a paragraph nobody re-read.
+    """
+    from otto.host.docker_host import DockerContainerHost
+    from otto.host.embedded_host import EmbeddedHost
+    from otto.host.unix_host import UnixHost
+    from otto.host.userland import _no_resolver_report
+
+    families = [LocalHost, DockerContainerHost, EmbeddedHost]
+    for cls in families:
+        assert cls._userland is UserlandHost._userland, (
+            f"{cls.__name__} overrides the hook now; re-read the no-resolver paragraph"
+        )
+    assert UnixHost._userland is not UserlandHost._userland, (
+        "UnixHost stopped being the contrast the paragraph names"
+    )
+
+    names = [cls.__name__ for cls in families]
+    for name in names:
+        text = "\n".join(_no_resolver_report(name))
+        assert name in text, f"the host being probed is not named:\n{text}"
+        for other in names:
+            if other != name:
+                assert other not in text, f"probing {name} explains a property of {other}:\n{text}"
+        assert "survey" in text, (
+            f"the paragraph does not say the protocol survey still runs:\n{text}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Wiring
 # ---------------------------------------------------------------------------
 
 
-def test_the_verb_reaches_every_posix_host_and_no_other():
-    """Scoped by where the ``_userland()`` hook lives, which is the honest boundary.
+def test_the_verb_reaches_every_family():
+    """Every family carries ``probe`` now: the survey has an answer for each.
 
-    ``@cli_exposed`` on the mixin gives the verb to exactly the classes that
-    answer the hook -- including the two that answer ``None``, which is what
-    makes the no-resolver message reachable rather than dead prose.
-    ``EmbeddedHost`` does not inherit the mixin and must not offer a verb whose
-    every answer would be "not applicable".
+    Scoped by where the ``_userland()`` hook lives, which used to be the
+    honest boundary and no longer is. The userland section is one section of
+    this verb's output; the protocol survey is the other, and it answers for
+    the embedded family too (spec 2026-09-14 host-probe-protocol-survey §9).
+    So :class:`~otto.host.embedded_host.EmbeddedHost` inherits the mixin now,
+    and its userland section is the same no-resolver paragraph
+    ``LocalHost`` and ``DockerContainerHost`` already print -- a case to
+    state, not a reason to withhold the verb.
 
     ``output_dir=False`` because the verb writes nothing: it is a read-only
     reading like ``lsmod`` and ``exists``, and a per-invocation output
     directory for it would be an empty one per run.
+    ``dry_run_preview=False`` because a dry run must stop at the CLI seam
+    rather than run the body: the survey dials.
     """
     from otto.cli.expose import collect_exposed_methods
     from otto.host.docker_host import DockerContainerHost
     from otto.host.embedded_host import EmbeddedHost
     from otto.host.unix_host import UnixHost
 
-    for cls in (UnixHost, LocalHost, DockerContainerHost):
+    for cls in (UnixHost, LocalHost, DockerContainerHost, EmbeddedHost):
         assert collect_exposed_methods(cls).get("probe") == "probe", cls.__name__
-    assert "probe" not in collect_exposed_methods(EmbeddedHost)
     assert UserlandHost.probe.__cli_output_dir__ is False
+    assert UserlandHost.probe.__cli_dry_run_preview__ is False
+
+
+@pytest.mark.asyncio
+async def test_the_survey_section_follows_the_userland_section(monkeypatch):
+    """Mutation: drop the survey call and the report ends at the userland pin."""
+    from rich.table import Table
+
+    from otto.host.survey.engine import Survey
+
+    seen = {}
+
+    async def fake_run_survey(host, *, user=None, scan_ports=None):
+        seen["args"] = (user, scan_ports)
+        return Survey()
+
+    monkeypatch.setattr("otto.host.survey.run_survey", fake_run_survey)
+    host = _ScriptedHost(_userland(retcode=0))
+    result = await host.probe(user=None, scan_ports="2323")
+
+    assert result.status is Status.Success
+    assert seen["args"] == (None, "2323"), "the verb did not thread its own options through"
+    tables = [item for item in result.value if isinstance(item, Table)]
+    assert [t.title for t in tables] == ["userland", "protocols"]
+
+
+@pytest.mark.asyncio
+async def test_bad_scan_ports_is_an_error_before_any_contact():
+    """A malformed sweep list is the user's typo, answered without spending a round trip."""
+    device = _Device(retcode=0)
+    host = _ScriptedHost(Userland(UserlandOptions(), device))
+    result = await host.probe(scan_ports="30-20")
+
+    assert result.status is Status.Error
+    assert result.msg.startswith("--scan-ports: "), result.msg
+    assert device.calls == [], f"a rejected option still reached the device: {device.calls}"
+
+
+@pytest.mark.asyncio
+async def test_user_on_a_family_without_a_session_identity_is_refused_by_the_standard_message():
+    """Mutation: skip the refusal and an embedded probe tries to switch a console user.
+
+    The message is ``BaseHost.switch_user``'s own text, not a second spelling:
+    a family that cannot switch users refuses ``--user`` the same way
+    wherever the option is offered.
+    """
+    from otto.host.command_frame import ZephyrFrame
+    from otto.host.element import Element
+    from otto.host.embedded_host import EmbeddedHost
+
+    host = EmbeddedHost(
+        ip="192.0.2.1",
+        element=Element("zephyr37_fat"),
+        log=LogMode.QUIET,
+        command_frame=ZephyrFrame(),
+    )
+    result = await host.probe(user="root")
+
+    assert result.status is Status.Error
+    assert result.msg == "su/switch_user is not supported on 'EmbeddedHost'"
+
+
+@pytest.mark.asyncio
+async def test_a_bad_scan_ports_outranks_the_user_refusal(monkeypatch):
+    """Mutation: swap the two checks and a user with BOTH options wrong is told the wrong one.
+
+    Order is the whole content of this pin. ``EmbeddedHost`` refuses ``--user``
+    (``SessionIdentity.none``) AND is handed a reversed range, so it is the one
+    call that can tell the two checks apart -- every other ``probe`` call in
+    this file trips at most one of them. The parse is first because it is the
+    cheaper, more specific complaint: a reversed range is a typo the user can
+    fix, while the ``--user`` refusal is a property of the family that will
+    still be there afterwards.
+    """
+    from otto.host.command_frame import ZephyrFrame
+    from otto.host.element import Element
+    from otto.host.embedded_host import EmbeddedHost
+
+    entered = []
+
+    async def counting_run_survey(host, *, user=None, scan_ports=None):
+        entered.append((user, scan_ports))
+        raise AssertionError("the survey ran on a refused option pair")
+
+    monkeypatch.setattr("otto.host.survey.run_survey", counting_run_survey)
+    host = EmbeddedHost(
+        ip="192.0.2.1",
+        element=Element("zephyr37_fat"),
+        log=LogMode.QUIET,
+        command_frame=ZephyrFrame(),
+    )
+    result = await host.probe(user="root", scan_ports="30-20")
+
+    assert result.status is Status.Error
+    assert result.msg.startswith("--scan-ports: "), (
+        f"the family refusal outranked the option parse: {result.msg!r}"
+    )
+    assert entered == [], "a refused option pair still reached the survey"
+
+
+@pytest.mark.asyncio
+async def test_dry_run_still_contacts_nothing_and_skips(monkeypatch):
+    """The dry-run branch is first, so neither option is parsed and nothing is dialed."""
+    monkeypatch.setattr("otto.host.userland.is_dry_run", lambda: True)
+    called = []
+
+    async def boom(*a, **k):
+        called.append(1)
+        raise AssertionError("contacted")
+
+    monkeypatch.setattr("otto.host.survey.run_survey", boom)
+    host = _ScriptedHost(_userland(retcode=0))
+    result = await host.probe(user="root", scan_ports="garbage")
+
+    assert result.status is Status.Skipped
+    assert called == [], "a dry run ran the survey"

@@ -1,0 +1,6 @@
+OTTO_TOOL=netstat
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
+tcp        0      0 0.0.0.0:23              0.0.0.0:*               LISTEN      88/telnetd
+tcp        0      0 0.0.0.0:2323            0.0.0.0:*               LISTEN      91/busybox
+udp        0      0 0.0.0.0:69              0.0.0.0:*                           95/udpsvd

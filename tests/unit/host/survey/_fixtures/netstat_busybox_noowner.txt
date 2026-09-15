@@ -1,0 +1,6 @@
+OTTO_TOOL=netstat
+netstat: showing only processes with your user ID
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
+tcp        0      0 0.0.0.0:23              0.0.0.0:*               LISTEN      -
+udp        0      0 0.0.0.0:69              0.0.0.0:*                           -

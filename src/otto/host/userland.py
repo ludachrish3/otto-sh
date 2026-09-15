@@ -150,7 +150,7 @@ import re
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
@@ -158,6 +158,12 @@ from ..utils import Status, cli_exposed
 from .errors import UnsupportedOnUserlandError
 from .host import is_dry_run
 from .options import UserlandOptions
+
+if TYPE_CHECKING:
+    from rich.table import Table
+    from rich.text import Text
+
+    from .host import BaseHost
 
 _logger = logging.getLogger(__name__)
 
@@ -1258,7 +1264,7 @@ _SOURCE_LEGEND = (
 )
 
 
-def _probe_report(userland: "Userland") -> "list[str]":
+def _probe_report(userland: "Userland") -> "list[str | Table]":
     """Lay out the resolved capabilities, then the pin, as :meth:`UserlandHost.probe` prints them.
 
     Two audiences in one output, in the order they are useful: the table says
@@ -1268,18 +1274,19 @@ def _probe_report(userland: "Userland") -> "list[str]":
     the legend between them is what makes that difference actionable rather
     than mysterious.
     """
+    from rich import box
+    from rich.table import Table
+    from rich.text import Text
+
     rows = _capability_rows(userland)
     pin = userland.as_lab_json()
     assumed = [n for n, _, s in rows if s == "assumed"]
-    name_w = max(len("capability"), *(len(n) for n, _, _ in rows))
-    value_w = max(len("value"), *(len(v) for _, v, _ in rows))
-    lines = [
-        f"{'capability':<{name_w}}  {'value':<{value_w}}  source",
-        *(f"{n:<{name_w}}  {v:<{value_w}}  {s}" for n, v, s in rows),
-        "",
-        _SOURCE_LEGEND,
-        "",
-    ]
+    table = Table(title="userland", box=box.ROUNDED)
+    for column in ("capability", "value", "source"):
+        table.add_column(column)
+    for n, v, s in rows:
+        table.add_row(Text(n), Text(v), Text(s))
+    lines: list[str | Table] = [table, "", _SOURCE_LEGEND, ""]
     if not pin:
         lines.append(
             f"Nothing settled, so there is nothing to pin: all {len(rows)} values above are "
@@ -1321,6 +1328,18 @@ def _no_resolver_report(host_class: str) -> "list[str]":
     the host class, and an empty pin is indistinguishable from a device that
     refused every probe. Naming it makes a recorded gap legible at the one
     moment someone is asking about it.
+
+    CLASS-AGNOSTIC BELOW THE FIRST LINE, and that is a requirement rather than
+    a style. Three families reach this now -- ``LocalHost``,
+    ``DockerContainerHost`` and ``EmbeddedHost`` -- so a sentence written about
+    any one of them would be explaining a sibling's property to somebody
+    probing a different machine. ``host_class`` names the subject once, at the
+    top; every sentence after it states the rule that puts any of the three
+    here. ``UnixHost`` is named because it is the contrast that makes the rule
+    legible -- it is the one class that overrides the hook -- not because it is
+    the host being probed.
+    ``tests/unit/host/test_userland_probe.py::test_the_no_resolver_paragraph_is_about_the_host_being_probed``
+    holds that list and fails when a fourth family joins it.
     """
     return [
         (
@@ -1334,8 +1353,13 @@ def _no_resolver_report(host_class: str) -> "list[str]":
             "it. What follows from that is written where the hook lives -- `UserlandHost` in "
             "`otto.host.userland` -- and was measured rather than assumed: elevation here "
             "keeps building today's `sudo`, `refuse_if_base64_is_absent` declines to refuse, "
-            "and neither LocalHost nor DockerContainerHost carries a `userland_options` field "
-            "to pin an answer into anyway."
+            "and no host class that answers None carries a `userland_options` field to pin an "
+            "answer into anyway."
+        ),
+        "",
+        (
+            "The protocol survey below still runs: what this host serves, and on which port, "
+            "is measured from the outside and does not depend on a userland resolver."
         ),
     ]
 
@@ -1435,10 +1459,14 @@ class UserlandHost:
     rather than on :class:`~otto.host.unix_host.UnixHost`. ``@cli_exposed``
     scopes a verb by the class that defines it, so putting it on the hook's own
     class gives ``otto host <id> probe`` to exactly the hosts that answer the
-    hook -- INCLUDING the two that answer ``None``. That is the point rather
-    than a side effect: the paragraph above is a recorded hole, and a verb that
-    was simply absent on those two classes would leave a user asking about the
-    userland with no way to be told there is none.
+    hook -- INCLUDING the three that answer ``None`` (``LocalHost``,
+    ``DockerContainerHost`` and ``EmbeddedHost``; only
+    :class:`~otto.host.unix_host.UnixHost` overrides it). That is the point
+    rather than a side effect: the paragraph above is a recorded hole, and a
+    verb that was simply absent on those three classes would leave a user
+    asking about the userland with no way to be told there is none -- and
+    would withhold the protocol survey, which needs no resolver at all, from
+    the one family that has nothing else to report.
 
     ``__slots__ = ()`` so it keeps composing with the ``@dataclass(slots=True)``
     hosts, exactly as the two mixins that inherit it do.
@@ -1450,9 +1478,13 @@ class UserlandHost:
         """Return this host's resolved userland capabilities, or None when it has none."""
         return None
 
+    def userland(self) -> "Userland | None":
+        """Return the resolver the probe verb and the protocol survey share, or ``None``."""
+        return self._userland()
+
     @cli_exposed(output_dir=False)
-    async def probe(self) -> Result:
-        """Resolve this host's userland capabilities and print the pin that skips them.
+    async def probe(self, user: "str | None" = None, scan_ports: "str | None" = None) -> Result:
+        """Resolve this host's userland capabilities and survey the protocols it serves.
 
         RECON ONCE, THEN PIN -- that is the whole point, and it is why the
         pasteable payload is the product here rather than a footnote to a
@@ -1464,8 +1496,8 @@ class UserlandHost:
         was reachable only by reading a DEBUG log line, which is a poor place
         to keep the one output a user is meant to copy.
 
-        ``value`` is the report's lines (``list[str]``), which the CLI renderer
-        prints one per line. Ok in every arm, deliberately: the three
+        ``value`` is the report (``list[str | Table | Text]``), which the CLI
+        renderer prints item by item. Ok in every arm, deliberately: the three
         interesting outcomes -- a full table, a partial one, and a host with no
         resolver at all -- are all ANSWERS, and none of them is this command
         failing. A non-zero exit on the last two would make a sweep across a
@@ -1479,17 +1511,60 @@ class UserlandHost:
         the ``_userland()`` hook would read as that hook's public face while
         returning something else entirely.
 
-        Inherited by every posix-shell host, including the two that answer
+        Inherited by every host family, including the three that answer
         ``None`` -- see ``_no_resolver_report`` for why that is a case to
         state rather than a case to hide.
+
+        THE PROTOCOL SURVEY FOLLOWS THE USERLAND SECTION: every registered
+        term/transfer protocol the family serves, on the port it really
+        listens on, discovered from inside the session or by a bounded sweep
+        (spec 2026-09-14 host-probe-protocol-survey). ``user`` opens the
+        session as that login (no sudo/su wrapping); ``scan_ports`` adds ports
+        or ``a-b`` ranges to the sweep. Both are refused before any contact
+        when they cannot apply, which is why the two checks sit above the
+        resolver round rather than inside the survey: a typo in an option is
+        the user's to fix and must not cost a probe round on a slow device.
+
+        ``value`` carries Rich tables interleaved with plain lines, which the
+        CLI renderer prints item by item. The pin block stays plain text so it
+        is still selectable and pasteable.
         """
         if is_dry_run():
             return Result(Status.Skipped, value=_dry_run_report())
+        from .capability_grid import SessionIdentity
+        from .survey import run_survey, survey_report
+        from .survey.sweep import parse_scan_ports
+
+        try:
+            parse_scan_ports(scan_ports)
+        except ValueError as exc:
+            return Result(Status.Error, msg=str(exc))
+        # `getattr` rather than `self.capabilities`: the mixin is public, and a
+        # third-party host that composes it without a capability grid must get
+        # the verb rather than an AttributeError. No grid means no family that
+        # refuses `user=`, so the option passes through.
+        capabilities = getattr(self, "capabilities", None)
+        refuses_user = capabilities is not None and (
+            capabilities.session_identity is SessionIdentity.none
+        )
+        if user is not None and refuses_user:
+            msg = f"su/switch_user is not supported on '{type(self).__name__}'"
+            return Result(Status.Error, msg=msg)
         userland = self._userland()
         if userland is None:
-            return Result(Status.Success, value=_no_resolver_report(type(self).__name__))
-        await userland.resolve()
-        return Result(Status.Success, value=_probe_report(userland))
+            lines: "list[str | Table]" = list(_no_resolver_report(type(self).__name__))
+        else:
+            await userland.resolve()
+            lines = _probe_report(userland)
+        # One cast for both calls: the mixin is structurally a host to the
+        # survey (it reads `valid_terms`/`valid_transfers` and opens a
+        # session), but nothing in the hierarchy makes that a static fact --
+        # `UserlandHost` deliberately does not inherit `BaseHost`, so that the
+        # two sibling mixins can compose it.
+        as_host = cast("BaseHost", self)
+        survey = await run_survey(as_host, user=user, scan_ports=scan_ports)
+        value: "list[str | Table | Text]" = [*lines, "", *survey_report(as_host, survey)]
+        return Result(Status.Success, value=value)
 
 
 # ===========================================================================

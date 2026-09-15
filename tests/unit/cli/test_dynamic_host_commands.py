@@ -444,6 +444,29 @@ def test_host_verbs_synthesize_user_flag(monkeypatch):
             assert "--as-user" not in r.output, (host_id, verb)
 
 
+def test_probe_renders_user_and_scan_ports_options(monkeypatch):
+    """The two bare params synthesise as options on every family that carries the verb.
+
+    Spec 2026-09-14 host-probe-protocol-survey §9. ``EmbeddedHost`` is the
+    interesting half: it inherits the verb from the userland mixin now, so a
+    regression that dropped the mixin from its bases would show here as a
+    missing subcommand rather than as a silently narrower survey.
+
+    COLUMNS is pinned wide for the reason given on the test above: at the
+    default 80 a long option can be truncated for display, which would make
+    an ``in`` check fail against an option that really is there.
+    """
+    from otto.host.embedded_host import EmbeddedHost
+
+    monkeypatch.setenv("COLUMNS", "300")
+    app = _make_app(monkeypatch, {"u1": UnixHost, "z1": EmbeddedHost})
+    for host_id in ("u1", "z1"):
+        r = CliRunner().invoke(app, [host_id, "probe", "--help"])
+        assert r.exit_code == 0, (host_id, r.output)
+        assert "--user" in r.output, (host_id, r.output)
+        assert "--scan-ports" in r.output, (host_id, r.output)
+
+
 def test_run_cli_binding_markers():
     """build_cli_binding resolves the @cli_exposed markers on BaseHost.run.
 

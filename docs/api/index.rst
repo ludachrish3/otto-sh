@@ -31,4 +31,5 @@ API Reference
    examples
    result
    errors
+   snmp
    utils

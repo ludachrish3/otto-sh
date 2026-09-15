@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from ..config.repo import Repo
     from ..context import OttoContext
     from ..registry import Registry
+    from ..result import Result
     from .registry import CommandSpec
 
 
@@ -1458,6 +1459,72 @@ def _render_dry_run_decline(value: Any) -> None:
     rprint(f"[magenta]{escape(DRY_RUN_DECLINE)}{detail}[/magenta]")
 
 
+def _has_rich_renderable(items: "list[Any]") -> bool:
+    """Whether *items* carries a ``Table`` or ``Text`` renderable.
+
+    Narrows the bare-list fallback below: a plain ``list[str]`` (``otto host
+    <id> ls``, ``glob``) must keep printing as the one pre-existing pretty
+    object, not one line per string — only a list actually carrying a Rich
+    renderable needs the per-item path.
+    """
+    from rich.table import Table
+    from rich.text import Text
+
+    return any(isinstance(item, (Table, Text)) for item in items)
+
+
+def _rprint_each(items: "list[Any]") -> None:
+    """Print one item per line: a Table/Text renders itself, a str prints plain.
+
+    Handing a whole list to a single ``rprint()`` call pretty-prints it as one
+    Python object instead of rendering each item — the hazard this exists to
+    avoid, shared by a ``Result`` payload list and a plain list return alike.
+    """
+    from rich import print as rprint
+
+    for item in items:
+        rprint(item)
+
+
+def _render_ok_result(value: "Result", success: "str | None") -> None:
+    """Render a successful ``Result``: the success message, or its payload."""
+    from rich import print as rprint
+
+    from ..result import CommandResult, Results
+
+    if isinstance(value, (CommandResult, Results)):
+        return  # command output already streamed during execution
+    if success:
+        rprint(f"[green]{success}[/green]")
+        return
+    payload = _payload_or_decline(value)
+    if isinstance(payload, dict):
+        for src, entry in payload.items():
+            rprint(f"{src} -> {_payload_or_decline(entry)}")
+    elif isinstance(payload, list):
+        _rprint_each(payload)
+    elif payload is not None:
+        rprint(payload)
+
+
+def _render_failed_result(value: "Result") -> None:
+    """Print a failed ``Result``'s message(s) and raise its exit code."""
+    from ..result import Result, Results
+
+    if value.msg:
+        print_error(value.msg)
+    payload = _payload_or_decline(value)
+    if isinstance(payload, dict):
+        for entry in payload.values():
+            if isinstance(entry, Result) and not entry.is_ok and entry.msg:
+                print_error(entry.msg)
+    elif isinstance(value, Results):
+        for entry in value:
+            if not entry.is_ok and entry.msg:
+                print_error(entry.msg)
+    raise typer.Exit(value.exit_code)
+
+
 def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
     """Render a leaf command's return value and signal failure via exit code.
 
@@ -1476,48 +1543,26 @@ def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
     """
     from rich import print as rprint
 
-    from ..result import CommandResult, Result, Results
+    from ..result import Result
     from ..utils import Status
-
-    success = policy.success if policy else None
 
     if isinstance(value, Result):
         if value.status is Status.NotRun:
             _render_dry_run_decline(value)
             return
-        is_command = isinstance(value, (CommandResult, Results))
         if value.is_ok:
-            if is_command:
-                pass  # command output already streamed during execution
-            elif success:
-                rprint(f"[green]{success}[/green]")
-            else:
-                payload = _payload_or_decline(value)
-                if isinstance(payload, dict):
-                    for src, entry in payload.items():
-                        rprint(f"{src} -> {_payload_or_decline(entry)}")
-                elif isinstance(payload, list):
-                    for item in payload:
-                        rprint(item)
-                elif payload is not None:
-                    rprint(payload)
+            _render_ok_result(value, policy.success if policy else None)
             return
-        if value.msg:
-            print_error(value.msg)
-        payload = _payload_or_decline(value)
-        if isinstance(payload, dict):
-            for entry in payload.values():
-                if isinstance(entry, Result) and not entry.is_ok and entry.msg:
-                    print_error(entry.msg)
-        elif isinstance(value, Results):
-            for entry in value:
-                if not entry.is_ok and entry.msg:
-                    print_error(entry.msg)
-        raise typer.Exit(value.exit_code)
+        _render_failed_result(value)
+        return
 
     if value is None:
         if policy is not None and policy.none_message is not None:
             rprint(f"[green]{policy.none_message}[/green]")
+        return
+
+    if isinstance(value, list) and _has_rich_renderable(value):
+        _rprint_each(value)
         return
 
     rprint(value)  # documented third-party plain-value fallback, exit 0

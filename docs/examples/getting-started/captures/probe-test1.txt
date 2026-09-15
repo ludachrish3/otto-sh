@@ -1,20 +1,48 @@
 $ otto --lab unix host test1 probe
 INFO     fleet of interest: 0 of 4 lab hosts (1 repo(s), 1 excluded)                                
 INFO     @test1   | export APP_ENV=lab                                                              
-capability       value      source
-applet_base64    present    probed
-applet_nc        present    probed
-applet_poweroff  present    probed
-applet_scp       present    probed
-applet_shutdown  present    probed
-applet_uudecode  absent     probed
-applet_uuencode  absent     probed
-base64_flag      -d         probed
-checksum         md5sum     probed
-elevation        sudo       probed
-shell_dialect    bash       probed
-stat_size        stat       probed
-timeout_style    coreutils  probed
+INFO     @test1   | export APP_ENV=lab                                                              
+INFO     @test1   | python3 -u -i                                                                   
+INFO     @test1 > |                                                                                 
+         @test1 > | vagrant@test1:~$ Python 3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0] on    
+         linux                                                                                      
+         @test1 > | Type "help", "copyright", "credits" or "license" for more information.          
+         @test1 > | >>>                                                                             
+INFO     @test1   | open('/tmp/otto-gs-provisioned', 'w').write('ok')                               
+INFO     @test1 > | 2                                                                               
+         @test1 > | >>>                                                                             
+INFO     @test1   | exit()                                                                          
+INFO     Connected to <Peer 10.10.200.11 23>                                                        
+INFO     @test1   | export APP_ENV=lab                                                              
+INFO     @test1   | python3 -u -i                                                                   
+INFO     @test1 > |                                                                                 
+         @test1 > | vagrant@test1:~$ Python 3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0] on    
+         linux                                                                                      
+         @test1 > | Type "help", "copyright", "credits" or "license" for more information.          
+         @test1 > | >>>                                                                             
+INFO     @test1   | open('/tmp/otto-gs-provisioned', 'w').write('ok')                               
+INFO     @test1 > | 2                                                                               
+         @test1 > | >>>                                                                             
+INFO     @test1   | exit()                                                                          
+INFO     Connection closed to <Peer 10.10.200.11 23>                                                
+                userland                
+╭─────────────────┬───────────┬────────╮
+│ capability      │ value     │ source │
+├─────────────────┼───────────┼────────┤
+│ applet_base64   │ present   │ probed │
+│ applet_nc       │ present   │ probed │
+│ applet_poweroff │ present   │ probed │
+│ applet_scp      │ present   │ probed │
+│ applet_shutdown │ present   │ probed │
+│ applet_uudecode │ absent    │ probed │
+│ applet_uuencode │ absent    │ probed │
+│ base64_flag     │ -d        │ probed │
+│ checksum        │ md5sum    │ probed │
+│ elevation       │ sudo      │ probed │
+│ shell_dialect   │ bash      │ probed │
+│ stat_size       │ stat      │ probed │
+│ timeout_style   │ coreutils │ probed │
+╰─────────────────┴───────────┴────────╯
 
 declared = already pinned in this host's userland_options, and never re-probed. probed = the device 
 answered, so this one is worth pinning. assumed = otto could not ask, so the value is only what otto
@@ -39,3 +67,32 @@ device issues no probe at all:
   "stat_size": "stat",
   "timeout_style": "coreutils"
 }
+
+                                             protocols                                              
+╭──────────┬──────────┬──────┬───────────┬───────────┬─────────────┬───────────────────────────────╮
+│ protocol │ kind     │ port │ state     │ tier      │ vantage     │ detail                        │
+├──────────┼──────────┼──────┼───────────┼───────────┼─────────────┼───────────────────────────────┤
+│ ssh      │ term     │ 22   │ supported │ login     │ controller  │ login 'vagrant': session      │
+│          │          │      │           │           │             │ opened                        │
+│ telnet   │ term     │ 23   │ supported │ login     │ controller  │ login 'vagrant': session      │
+│          │          │      │           │           │             │ opened                        │
+│ ftp      │ transfer │ 21   │ supported │ login     │ controller  │ login 'vagrant': 230 logged   │
+│          │          │      │           │           │             │ in                            │
+│ nc       │ transfer │ 22   │ supported │ userland  │ session:ssh │ nc applet present             │
+│ scp      │ transfer │ 22   │ supported │ userland  │ session:ssh │ scp applet present            │
+│ sftp     │ transfer │ 22   │ supported │ session   │ session:ssh │ subsystem opened              │
+│ shell    │ transfer │ 22   │ supported │ session   │ session:ssh │ the carrying session          │
+│ snmp     │ monitor  │ 161  │ closed    │ inventory │ session:ssh │ nothing bound on :161         │
+│          │          │      │           │           │             │ (inventory: ss, elevated)     │
+╰──────────┴──────────┴──────┴───────────┴───────────┴─────────────┴───────────────────────────────╯
+not applicable to this family: console, tftp
+7 loopback-only listeners not shown
+other listeners: 68/udp systemd-network, 546/udp systemd-network
+                              drift                               
+╭──────────┬──────────┬────────────────────────┬─────────────────╮
+│ protocol │ kind     │ drift                  │ detail          │
+├──────────┼──────────┼────────────────────────┼─────────────────┤
+│ shell    │ transfer │ working-but-undeclared │ supported on 22 │
+╰──────────┴──────────┴────────────────────────┴─────────────────╯
+
+valid_transfers = ["ftp", "nc", "scp", "sftp", "shell"]

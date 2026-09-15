@@ -15,8 +15,9 @@ so the round never happens again.
 otto host <id> probe
 ```
 
-It resolves the capabilities and prints two things. First a reading of every
-capability with its value **and its source**:
+It resolves the capabilities and prints two things, then the same call's
+{doc}`protocol survey <protocols>` right after them. First a reading of
+every capability with its value **and its source**:
 
 ```text
 capability       value      source
@@ -57,7 +58,7 @@ reading above the payload is where those values are visible, labelled for what
 they are. A host that could answer nothing therefore prints an empty pin and
 says why, rather than offering thirteen guesses.
 
-`LocalHost` and `DockerContainerHost` build no capability resolver at all, so
+`LocalHost`, `DockerContainerHost`, and `EmbeddedHost` build no capability resolver at all, so
 `probe` on those reports that hole plainly instead of printing a pin. That is
 recorded rather than accidental — see
 {class}`~otto.host.userland.UserlandHost` for what giving them one would cost.

@@ -357,6 +357,16 @@ class RemoteHost(BaseHost):
     ####################
 
     @property
+    def connections(self) -> "ConnectionManager":
+        """The manager behind this host's sessions.
+
+        In-package readers -- the protocol survey opens throwaway transports
+        through a copy's manager -- use this; nothing outside the host package
+        should need it.
+        """
+        return self._connections
+
+    @property
     def _connected(self) -> bool:
         """Whether the host has any current connections or live sessions."""
         return self._session_mgr.has_live_sessions or self._connections.connected
@@ -586,6 +596,33 @@ class RemoteHost(BaseHost):
     #  Hop transport
     ####################
 
+    def hop_host(self) -> "RemoteHost | None":
+        """Return the hop's host object, or ``None`` when this host has no hop.
+
+        Resolved from this host's own lab back-reference, else the active
+        context's lab -- the lookup the tunnel factory performs, shared so
+        the protocol survey observes from the same hop.
+        """
+        if self.hop is None:
+            return None
+        lab = self._lab
+        if lab is None:
+            from ..context import try_get_context
+
+            ctx = try_get_context()
+            lab = ctx.lab if ctx is not None else None
+        if lab is None:
+            raise RuntimeError(
+                f"Host {self.name!r} cannot resolve hop {self.hop!r}: the host has no lab "
+                f"back-reference and there is no active OttoContext. Add the host to a Lab "
+                f"(Lab.add_host) or run within `otto.open_context(...)`."
+            )
+        if self.hop not in lab.hosts:
+            raise KeyError(
+                f"hop {self.hop!r} not in lab {lab.name!r}; available: {sorted(lab.hosts)}"
+            )
+        return cast("RemoteHost", lab.hosts[self.hop])
+
     def _build_hop_transport(self) -> "SshHopTransport":
         """Build an ``SshHopTransport`` for reaching this host through its hop.
 
@@ -639,27 +676,7 @@ class RemoteHost(BaseHost):
                 raise ValueError(f"Circular hop detected: {hop_id!r} already in chain {visited}")
             visited.add(hop_id)
 
-            lab = self._lab
-            if lab is None:
-                # Standalone host (not added to a Lab): resolve the hop target
-                # from the active OttoContext's lab, where it lives. (Hosts loaded
-                # via the JSON loader / get_host carry their own _lab; this path
-                # supports directly-constructed hosts per the library "FD model".)
-                from ..context import try_get_context
-
-                _ctx = try_get_context()
-                lab = _ctx.lab if _ctx is not None else None
-            if lab is None:
-                raise RuntimeError(
-                    f"Host {host_name!r} cannot resolve hop {hop_id!r}: the host has no lab "
-                    f"back-reference and there is no active OttoContext. Add the host to a Lab "
-                    f"(Lab.add_host) or run within `otto.open_context(...)`."
-                )
-            if hop_id not in lab.hosts:
-                raise KeyError(
-                    f"hop {hop_id!r} not in lab {lab.name!r}; available: {sorted(lab.hosts)}"
-                )
-            hop_host = cast("RemoteHost", lab.hosts[hop_id])
+            hop_host = cast("RemoteHost", self.hop_host())
 
             parent_tunnel = None
             if hop_host.hop:

@@ -238,6 +238,7 @@ depends_on = [
     "otto.docker",
     "otto.console",
     "otto.result",
+    "otto.snmp",
     "otto.utils",
     # DEBT: half of the host<->context cycle — interact imports try_get_context
     # at module scope (context.py:178 documents the workaround).
@@ -361,7 +362,7 @@ path = "otto.monitor"
 # otto.utils: server.py's internal uvicorn wait runs through wait_for_async
 # (gate G6 — the one sanctioned poll spelling); utils is a foundational leaf
 # monitor already reached transitively via otto.host.
-depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "otto.link", "otto.filesystem", "otto.registry", "otto.logger", "otto.console", "otto.errors", "otto.utils"]
+depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "otto.snmp", "otto.link", "otto.filesystem", "otto.registry", "otto.logger", "otto.console", "otto.errors", "otto.utils"]
 
 [[modules]]
 path = "otto.params"
@@ -459,6 +460,13 @@ path = "otto.registry"
 [[modules]]
 path = "otto.reservations"
 depends_on = ["otto.registry", "otto.utils", "otto.models", "otto.config", "otto.errors"]
+
+[[modules]]
+path = "otto.snmp"
+# A leaf: the one pysnmp GET, returning a raw outcome. otto.host (the probe
+# survey) and otto.monitor (the collector) both depend on it; the monitor
+# depends on the host, so the GET could not live in either without a cycle.
+# pysnmp is function-local, so importing this costs only the stdlib.
 
 [[modules]]
 path = "otto.result"

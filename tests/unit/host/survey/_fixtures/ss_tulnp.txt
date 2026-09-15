@@ -1,0 +1,9 @@
+OTTO_TOOL=ss
+Netid State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process
+udp   UNCONN 0      0            0.0.0.0:161        0.0.0.0:*     users:(("snmpd",pid=700,fd=8))
+udp   UNCONN 0      0          127.0.0.1:323        0.0.0.0:*     users:(("chronyd",pid=650,fd=5))
+tcp   LISTEN 0      128          0.0.0.0:22         0.0.0.0:*     users:(("sshd",pid=812,fd=3))
+tcp   LISTEN 0      128          0.0.0.0:2222       0.0.0.0:*     users:(("sshd",pid=813,fd=3))
+tcp   LISTEN 0      32                 *:21               *:*     users:(("vsftpd",pid=900,fd=3))
+tcp   LISTEN 0      511        127.0.0.1:80         0.0.0.0:*     users:(("nginx",pid=1000,fd=6))
+tcp   LISTEN 0      128             [::]:22            [::]:*     users:(("sshd",pid=812,fd=4))

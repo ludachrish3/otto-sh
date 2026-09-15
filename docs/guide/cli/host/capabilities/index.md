@@ -14,7 +14,7 @@ is for and how to use it.
 | Dev tools & toolchain tools | `install-tools`, `install-dev-tools`, `uninstall-dev-tools`, `install-toolchain-tools`, `remove-toolchain-tools` | `toolchain_tools_absent` |
 | Remote file operations | `exists`, `ls`, `glob`, `mkdir`, `rm`, `cp`, `mv`, `read-file`, `write-file` | — |
 | Kernel modules | `lsmod`, `load`, `unload` | — |
-| Userland capabilities | `probe` | — |
+| Userland capabilities & protocol survey | `probe` | — |
 | Privilege elevation | — | `run(sudo=True)`, `as_user`, `switch_user`, `current_user` |
 
 
@@ -32,5 +32,6 @@ dev-tools
 files
 modules
 userland
+protocols
 privilege
 ```

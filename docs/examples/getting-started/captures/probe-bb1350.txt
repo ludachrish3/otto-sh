@@ -1,19 +1,37 @@
 $ otto --lab busybox host bb1350_qemu probe
 INFO     fleet of interest: 5 of 7 lab hosts (1 repo(s), 0 excluded)                                
-capability       value      source
-applet_base64    present    declared
-applet_nc        present    declared
-applet_poweroff  present    declared
-applet_scp       absent     declared
-applet_shutdown  absent     declared
-applet_uudecode  present    declared
-applet_uuencode  present    declared
-base64_flag      -d         declared
-checksum         md5sum     declared
-elevation        su         declared
-shell_dialect    ash        declared
-stat_size        stat       declared
-timeout_style    coreutils  declared
+INFO     @test1   | export APP_ENV=lab                                                              
+INFO     @test1   | export APP_ENV=lab                                                              
+INFO     @test1   | python3 -u -i                                                                   
+INFO     @test1 > |                                                                                 
+         @test1 > | vagrant@test1:~$ Python 3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0] on    
+         linux                                                                                      
+         @test1 > | Type "help", "copyright", "credits" or "license" for more information.          
+         @test1 > | >>>                                                                             
+INFO     @test1   | open('/tmp/otto-gs-provisioned', 'w').write('ok')                               
+INFO     @test1 > | 2                                                                               
+         @test1 > | >>>                                                                             
+INFO     @test1   | exit()                                                                          
+INFO     Connected to <Peer 127.0.0.1 <port>>                                                        
+INFO     Connection closed to <Peer 127.0.0.1 <port>>                                                
+                 userland                 
+╭─────────────────┬───────────┬──────────╮
+│ capability      │ value     │ source   │
+├─────────────────┼───────────┼──────────┤
+│ applet_base64   │ present   │ declared │
+│ applet_nc       │ present   │ declared │
+│ applet_poweroff │ present   │ declared │
+│ applet_scp      │ absent    │ declared │
+│ applet_shutdown │ absent    │ declared │
+│ applet_uudecode │ present   │ declared │
+│ applet_uuencode │ present   │ declared │
+│ base64_flag     │ -d        │ declared │
+│ checksum        │ md5sum    │ declared │
+│ elevation       │ su        │ declared │
+│ shell_dialect   │ ash       │ declared │
+│ stat_size       │ stat      │ declared │
+│ timeout_style   │ coreutils │ declared │
+╰─────────────────┴───────────┴──────────╯
 
 declared = already pinned in this host's userland_options, and never re-probed. probed = the device 
 answered, so this one is worth pinning. assumed = otto could not ask, so the value is only what otto
@@ -38,3 +56,29 @@ probe. This is the pin in force:
   "stat_size": "stat",
   "timeout_style": "coreutils"
 }
+
+                                             protocols                                              
+╭──────────┬──────────┬──────┬──────────────────┬───────────┬────────────────┬─────────────────────╮
+│ protocol │ kind     │ port │ state            │ tier      │ vantage        │ detail              │
+├──────────┼──────────┼──────┼──────────────────┼───────────┼────────────────┼─────────────────────┤
+│ ssh      │ term     │ 22   │ closed           │ inventory │ session:telnet │ nothing bound on    │
+│          │          │      │                  │           │                │ :22 (inventory:     │
+│          │          │      │                  │           │                │ netstat, elevated)  │
+│ telnet   │ term     │ 23   │ supported        │ login     │ hop:test1      │ login 'root':       │
+│          │          │      │                  │           │                │ session opened      │
+│ ftp      │ transfer │ 21   │ closed           │ inventory │ session:telnet │ nothing bound on    │
+│          │          │      │                  │           │                │ :21 (inventory:     │
+│          │          │      │                  │           │                │ netstat, elevated)  │
+│ nc       │ transfer │ 23   │ supported        │ userland  │ session:telnet │ nc applet present   │
+│ scp      │ transfer │ 22   │ service-mismatch │ userland  │ session:telnet │ scp binary absent   │
+│          │          │      │                  │           │                │ on the host         │
+│ sftp     │ transfer │ 22   │ no-session       │ session   │ session:telnet │ needs ssh; the      │
+│          │          │      │                  │           │                │ session is telnet   │
+│ shell    │ transfer │ 23   │ supported        │ session   │ session:telnet │ the carrying        │
+│          │          │      │                  │           │                │ session             │
+│ snmp     │ monitor  │ 161  │ not-checkable    │ dial      │ hop:test1      │ snmp needs a        │
+│          │          │      │                  │           │                │ declared relay      │
+│          │          │      │                  │           │                │ endpoint behind a   │
+│          │          │      │                  │           │                │ hop                 │
+╰──────────┴──────────┴──────┴──────────────────┴───────────┴────────────────┴─────────────────────╯
+not applicable to this family: console, tftp

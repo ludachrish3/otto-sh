@@ -72,6 +72,10 @@ labless = false
 project = "getting-started"
 timeout = 300
 argv = ["{otto}", "--lab", "busybox", "host", "bb1350_qemu", "probe"]
+# The protocol survey's login tier opens a telnet session through the test1
+# hop to reach the guest, and that hop's local forwarded port is ephemeral --
+# same nondeterminism the zephyr27-run rule below masks.
+redact = [["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"]]
 
 [[capture]]
 id = "as-root-test1"

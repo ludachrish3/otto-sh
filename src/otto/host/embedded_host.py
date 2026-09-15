@@ -83,6 +83,7 @@ from .transfer import (
     build_transfer_backend,
     make_rich_progress_handler,
 )
+from .userland import UserlandHost
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ _EMBEDDED_INIT_TIMEOUT = 15.0
 
 
 @dataclass(slots=True, kw_only=True)
-class EmbeddedHost(RemoteHost):
+class EmbeddedHost(UserlandHost, RemoteHost):
     """OS-agnostic bare-metal / RTOS host reached over telnet.
 
     :class:`EmbeddedHost` carries no OS-specific defaults. A ``command_frame``
@@ -106,6 +107,13 @@ class EmbeddedHost(RemoteHost):
     Every field this class shares with the unix family lives on
     :class:`~otto.host.remote_host.RemoteHost`; what follows is the embedded
     family's own, plus the value-policy overrides below.
+
+    It composes :class:`~otto.host.userland.UserlandHost` for the ``probe``
+    verb alone (the mixin's ``__slots__ = ()`` keeps it compatible with
+    ``@dataclass(slots=True)``). The userland hook keeps the mixin's ``None``
+    answer -- an RTOS has no GNU userland to resolve -- so the userland
+    section of ``otto host <id> probe`` states exactly that, and the protocol
+    survey below it does the work for this family.
     """
 
     capabilities = HostCapabilities(

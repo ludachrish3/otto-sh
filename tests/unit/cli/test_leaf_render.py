@@ -86,6 +86,60 @@ def test_plain_value_is_printed_with_exit_zero():
     assert "third" in r.output
 
 
+def test_bare_string_list_still_prints_as_one_pretty_object():
+    """A plain ``list[str]`` still renders as one pretty object, unlike a list with a renderable.
+
+    Pins the pre-image (commit 1a84b2ee) output for a leaf like ``otto host
+    <id> ls``/``glob`` (``src/otto/host/file_ops.py``): a list with no Rich
+    renderable goes through the single ``rprint()`` fallback below, not one
+    line per string. Companion to
+    :func:`test_rich_renderables_in_a_verb_list_render_as_themselves`, which
+    pins the OTHER branch — this one must go red if the renderable-aware
+    branch is ever widened back to firing on every list.
+    """
+    app = typer.Typer(name="files-tool")
+
+    @app.command()
+    async def files() -> list:
+        return ["a.txt", "b.txt"]
+
+    r = DispatchRunner().invoke(app, [])
+    assert r.exit_code == 0, r.output
+    assert r.output == "['a.txt', 'b.txt']\n"
+
+
+def test_rich_renderables_in_a_verb_list_render_as_themselves():
+    """A Table and a Text interleaved with strings print in order, brackets intact.
+
+    Spec: 2026-09-14 probe survey, §9. Companion to
+    :func:`test_bare_string_list_still_prints_as_one_pretty_object`: this
+    list carries a renderable, so it takes the per-item branch instead.
+    """
+    from rich import box
+    from rich.table import Table
+    from rich.text import Text
+
+    app = typer.Typer(name="table-tool")
+
+    @app.command()
+    async def rows() -> list:
+        t = Table(box=box.ROUNDED)
+        t.add_column("protocol")
+        t.add_row(Text("ssh"))
+        return ["before", t, Text("login 'admin [ssh]'"), "after"]
+
+    r = DispatchRunner().invoke(app, [])
+    assert r.exit_code == 0, r.output
+    before, protocol, brackets, after = (
+        r.output.index("before"),
+        r.output.index("protocol"),
+        r.output.index("[ssh]"),
+        r.output.index("after"),
+    )
+    assert before < protocol < brackets < after
+    assert "╭" in r.output
+
+
 def test_none_return_is_silent_by_default():
     """Every first-party leaf returns None — the seam MUST NOT print for it.
 

@@ -18,10 +18,13 @@ import pytest
 import pytest_asyncio
 
 from otto.config.env import SUT_DIRS_ENV_VAR
+from otto.config.lab import Lab
+from otto.context import OttoContext, _active, set_context
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
-from tests._fixtures.labdata import element_for, flatten_lab_doc, lab_data_path
+from otto.logger.mode import LogMode
+from tests._fixtures.labdata import element_for, flatten_lab_doc, host_data, lab_data_path
 from tests._fixtures.paths import default_sut_dir
 from tests.conftest import BUSYBOX_BED_GROUP, BUSYBOX_PARAM_TOKENS
 
@@ -413,3 +416,61 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
         f"fails when the grouping stops working.",
         pytrace=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# One hop host per test, on the test's own event loop
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def hop_on_this_loop(request):
+    """Give the lab a hop host built inside THIS test's event loop.
+
+    A survey of a hopped host observes FROM the hop: it resolves the hop
+    through the lab and dials over that host object's own session. Both bed
+    directories install their lab once per MODULE, so the hop keeps the
+    session the first test opened — and an asyncio session belongs to the loop
+    that opened it. From the second test on, every dial would raise
+    ``got Future attached to a different loop`` inside ``dial_via_hop`` and
+    come back ``not-checkable``: not a network condition but otto's own caller
+    lifecycle, and quiet enough to leave a bed module green while it dials
+    nothing at all. Rebuilding the hop per test keeps every dial on its own
+    loop.
+
+    Deliberately a test fixture and not an engine repair: one ``otto host <id>
+    probe`` is one loop, so no product path reaches this, and a hop object the
+    LAB owns silently re-opening a session would hide genuine misuse.
+
+    The requesting module names its hop in a module-level ``HOP_ID``. There is
+    no default: installing a single-host lab for the wrong hop makes every
+    dial read ``hop <id> not resolvable``, a not-checkable that looks like a
+    hop condition rather than the test bug it is.
+
+    Request it BEFORE the host fixture in the signature, so it is finalised
+    after that host's own teardown.
+    """
+    hop_id = getattr(request.module, "HOP_ID", None)
+    if hop_id is None:
+        pytest.fail(
+            f"{request.module.__name__} requests `hop_on_this_loop` but sets no module-level "
+            f"HOP_ID naming the hop its hosts are reached through.",
+            pytrace=False,
+        )
+    snapshot = _active.get()
+    data = host_data(hop_id)
+    hop = UnixHost(
+        ip=data["ip"],
+        element=element_for(hop_id),
+        creds=[Cred(**c) for c in data["creds"]],
+        is_virtual=data.get("is_virtual", False),
+        log=LogMode.QUIET,
+    )
+    lab = Lab(name="hop_on_this_loop")
+    lab.add_host(hop)
+    set_context(OttoContext(lab=lab))
+    try:
+        yield hop
+    finally:
+        await hop.close()
+        _active.set(snapshot)

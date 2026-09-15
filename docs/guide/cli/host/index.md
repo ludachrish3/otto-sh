@@ -92,7 +92,7 @@ your own is {doc}`../../../library/cli-exposed-verbs`.
 | `mv` | Move/rename a path on the host |
 | `read-file` | Print a file's text contents |
 | `write-file` | Write text to a file on the host |
-| `probe` | Report the host's userland capabilities and print the `userland_options` pin |
+| `probe` | Report the host's userland capabilities and its protocol survey; print the pins to paste |
 
 ## Listing hosts
 
