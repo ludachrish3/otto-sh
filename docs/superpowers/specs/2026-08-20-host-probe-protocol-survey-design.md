@@ -1,7 +1,7 @@
 # Host Probe Protocol Survey — Design
 
 **Date:** 2026-08-20
-**Status:** Approved design, pre-implementation
+**Status:** Superseded 2026-09-14 by `2026-09-14-host-probe-protocol-survey-design.md` (never implemented; that document is complete on its own).
 **Surface:** the `otto host <id> probe` verb (`@cli_exposed`, today BusyBox
 userland recon on posix-shell hosts). The root `--dry-run --probe` flag and its
 connection-only contract (`docs/superpowers/specs/2026-08-15-dry-run-contract-design.md`
