@@ -70,7 +70,8 @@ because it fails exactly when someone is relying on it.
 
 ### Client-side trust
 
-Where otto is the TLS **client** — today, the NetBox inventory backend — it
+Where otto is the TLS **client** — the NetBox inventory backend, and any
+backend that builds its session with {mod}`otto.tls` — it
 verifies against the operating system's certificate store via `truststore`,
 and against nothing else. There is deliberately no per-backend bundle path
 and no verify-off switch: a lab with an internal CA installs it once at the
@@ -84,6 +85,8 @@ in the same process and `truststore`'s global injection is client-only. The
 operational side — what an `SSLError` means and how to fix it without
 touching settings — is in the
 [inventory guide](../../guide/configuration/inventory.md#the-netbox-backend).
+The helper a backend author calls is described in the
+[HTTPS clients guide](../../library/https-clients.md).
 
 ### Certificate scoping
 
@@ -122,5 +125,6 @@ syntax.
 - {mod}`otto.cli.monitor` — `_resolve_monitor_tls`, which resolves the
   declaration across every configured repo and turns a missing cert/key
   file or a multi-repo disagreement into a hard exit
-- {mod}`otto.inventory.netbox` — `_mount_timeout`, the one adapter that
-  carries both the request timeout and the OS-store `truststore` context
+- {mod}`otto.tls` — `os_trust_session`, the one adapter that carries both
+  the request timeout and the OS-store `truststore` context; the NetBox
+  backend hands pynetbox that session

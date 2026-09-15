@@ -161,6 +161,9 @@ otto.testing:assert_inventory_conforms
 otto.testing:assert_lab_repository_conforms
 otto.testing:assert_reservation_backend_conforms
 otto.testing:assert_transfer_backend_conforms
+otto.tls:DEFAULT_TIMEOUT_SECONDS
+otto.tls:os_trust_context
+otto.tls:os_trust_session
 otto.tunnel:TunnelCarrier
 otto.tunnel:add_tunnel
 otto.tunnel:discover_tunnels

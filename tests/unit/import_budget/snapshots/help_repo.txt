@@ -179,6 +179,7 @@ otto.suite.markers
 otto.suite.register
 otto.suite.run
 otto.suite.selection
+otto.tls
 otto.tunnel
 otto.tunnel.carrier
 otto.tunnel.discovery

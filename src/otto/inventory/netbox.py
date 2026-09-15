@@ -28,10 +28,10 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
-from typing_extensions import override
 
 from ..models.base import compact_validation_error
 from ..models.inventory import FILLABLE_INVENTORY_FIELDS, INVENTORY_KEY_FIELDS, InventoryRecord
+from ..tls import DEFAULT_TIMEOUT_SECONDS, _checked_timeout, os_trust_session
 from .errors import InventoryError, InventoryKeyError
 from .protocol import check_supplies
 
@@ -54,33 +54,6 @@ custom field can hold.
 
 _RESERVED_EXTRA_KEYS: frozenset[str] = frozenset({"id", "serial", "asset_tag", "status", "tags"})
 """What this backend itself puts in ``record.extra``; an opt-in name may not shadow one."""
-
-DEFAULT_TIMEOUT_SECONDS = 30.0
-"""Seconds one NetBox request may take before it is given up on (spec §9.2).
-
-Generous rather than snappy: a filtered fetch over a large instance is a real
-query, and the point of the bound is not speed. It is that an UNREACHABLE host
-— the exact case §9.5's stale snapshot exists to cover — otherwise blocks a
-lab-bound command for the kernel's TCP connect timeout (~2 minutes on Linux)
-BEFORE the snapshot is served, and blocks again on the completion writer's
-re-resolution afterwards.
-"""
-
-
-def _checked_timeout(timeout: float) -> float:
-    """Return *timeout* as a positive float, refusing anything else.
-
-    A plain ``ValueError``, this module's house style for a rejected argument,
-    which :func:`~otto.inventory.config.construct_inventory` wraps naming the
-    settings file and the backend.
-
-    ``bool`` is refused explicitly because it is an ``int`` subclass:
-    ``timeout = true`` in a TOML table would otherwise quietly mean one
-    second.
-    """
-    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
-        raise ValueError(f"timeout must be a positive number of seconds, got {timeout!r}")
-    return float(timeout)
 
 
 class NetBoxInventory:
@@ -119,10 +92,11 @@ class NetBoxInventory:
         puts there.
     timeout : float
         Seconds one HTTP request to NetBox may take, default
-        :data:`DEFAULT_TIMEOUT_SECONDS`. Must be a positive number. Applied to
-        every request the fetch makes, through an HTTP adapter mounted on
-        pynetbox's session — pynetbox issues the calls itself and offers no
-        seam to pass a timeout through.
+        :data:`otto.tls.DEFAULT_TIMEOUT_SECONDS`. Must be a positive number.
+        Applied to every request the fetch makes through the session
+        :func:`otto.tls.os_trust_session` builds — pynetbox issues the calls
+        itself and offers no seam to pass a timeout through, so the bound
+        and the OS-store trust both ride on the session it is handed.
 
     Attributes
     ----------
@@ -239,133 +213,6 @@ class NetBoxInventory:
             )
         return token
 
-    def _mount_timeout(self, session: Any) -> None:
-        """Give every request *session* sends this backend's timeout and OS-store trust.
-
-        AN ADAPTER, NOT A CALL ARGUMENT, because pynetbox owns the calls: it
-        issues ``http_session.get(...)`` with no ``timeout`` and offers no
-        seam to pass one through. The adapter is the only place left.
-
-        It REPLACES a ``timeout`` that is already ``None`` rather than setting
-        a default, because requests' ``Session.send`` passes ``timeout=None``
-        EXPLICITLY when the caller named none — a ``setdefault`` on the
-        keyword arguments would never fire, and the bound would silently not
-        exist.
-
-        The same adapter carries TLS trust, and there is exactly one source of
-        it: the operating system's certificate store, via ``truststore`` —
-        the trust a browser on this machine already has, so an internal CA
-        installed once serves NetBox, the dashboard viewer and otto alike.
-        requests' default is its bundled certifi roots, which know nothing of
-        an internal CA; that is why a ``verify`` override used to exist here
-        and why it no longer does. Two things keep the OS store the ONLY
-        source: the context is handed to urllib3 per adapter (never
-        ``truststore.inject_into_ssl()``, which swaps ``ssl.SSLContext``
-        process-wide and is client-only — ``otto monitor`` serves TLS in this
-        same process), and ``cert_verify`` never assigns ``ca_certs``, which
-        is how stock requests would pour certifi INTO the context and hide a
-        missing root behind a silent union.
-
-        ``requests`` and ``truststore`` are imported here for the same reason
-        ``pynetbox`` is: nothing outside a fetch should pay to import them.
-
-        A proxied request carries the same context too: ``HTTPAdapter``
-        builds a SEPARATE pool manager for proxied connections, in
-        ``proxy_manager_for``, which does not inherit ``init_poolmanager``'s
-        ``connection_pool_kw`` — left alone, a proxied HTTPS fetch (requests
-        honours ``HTTPS_PROXY`` from the environment by default) would fall
-        back to urllib3's own near-default context instead of the OS store.
-        This covers the CONNECT hop's own destination only: an ``https://``
-        proxy URL (TLS to the proxy itself, before the tunnel opens) is still
-        wrapped with urllib3's default context, since ``proxy_ssl_context``
-        is never set here — "one source of trust" is a claim about NetBox's
-        certificate, not about the proxy's.
-
-        ``requests``' environment-driven trust override is neutralised for
-        the same one-source reason: with ``trust_env`` on (the default),
-        ``Session.merge_environment_settings`` rewrites a bare
-        ``verify=True`` into whatever path ``REQUESTS_CA_BUNDLE`` or
-        ``CURL_CA_BUNDLE`` names, and urllib3 would load that file INTO this
-        same shared context — a second trust source arriving through the
-        back door ``cert_verify`` already closes at the front. ``send``
-        below pins ``verify=True`` for every ``https`` request regardless of
-        what ``merge_environment_settings`` computed, so those two variables
-        no longer reach the connection. ``SSL_CERT_FILE`` (OpenSSL's own
-        default-trust-file override, which truststore's Linux backend reads
-        at socket-wrap time) is the supported escape hatch for a
-        locally-trusted CA on Linux; macOS and Windows have no equivalent
-        because truststore reads the platform store there instead of OpenSSL
-        defaults.
-        """
-        import ssl
-
-        from requests.adapters import HTTPAdapter
-        from truststore import SSLContext as _OsTrustContext
-
-        default = self.timeout
-        os_trust = _OsTrustContext(ssl.PROTOCOL_TLS_CLIENT)
-
-        class _TimeoutAdapter(HTTPAdapter):
-            @override
-            def init_poolmanager(
-                self,
-                connections: int,
-                maxsize: int,
-                block: bool = False,
-                **pool_kwargs: Any,
-            ) -> None:
-                pool_kwargs["ssl_context"] = os_trust
-                super().init_poolmanager(connections, maxsize, block, **pool_kwargs)
-
-            @override
-            def proxy_manager_for(self, proxy: str, **proxy_kwargs: Any) -> Any:
-                proxy_kwargs["ssl_context"] = os_trust
-                return super().proxy_manager_for(proxy, **proxy_kwargs)
-
-            @override
-            def cert_verify(self, conn: Any, url: str, verify: "bool | str", cert: Any) -> None:
-                if url.lower().startswith("https"):
-                    conn.cert_reqs = "CERT_REQUIRED"
-                    return
-                super().cert_verify(conn, url, verify, cert)
-
-            # The full signature rather than ``**kwargs``: ``HTTPAdapter.send``
-            # declares six parameters, and an override that narrowed them would
-            # be a Liskov violation the type checker refuses.
-            @override
-            def send(
-                self,
-                request: Any,
-                stream: bool = False,
-                timeout: Any = None,
-                verify: "bool | str" = True,
-                cert: Any = None,
-                proxies: Any = None,
-            ) -> Any:
-                # requests' Session.merge_environment_settings rewrites a bare
-                # verify=True into REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE when
-                # trust_env is on (the default) — pin verify=True for every
-                # https request so that rewrite never reaches urllib3 as a
-                # second ca_certs source poured into the shared OS-store
-                # context.
-                if request.url is not None and request.url.lower().startswith("https"):
-                    verify = True
-                return super().send(
-                    request,
-                    stream=stream,
-                    timeout=default if timeout is None else timeout,
-                    verify=verify,
-                    cert=cert,
-                    proxies=proxies,
-                )
-
-        adapter = _TimeoutAdapter()
-        # Both schemes: pynetbox mounts one adapter per scheme, and a redirect
-        # from http to https (or a `url` written either way) must not escape
-        # the bound.
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-
     def _fetch(self) -> "dict[str, InventoryRecord]":
         token = self._token()
         import pynetbox  # lazy: no other verb pays for it (spec §16)
@@ -375,7 +222,11 @@ class NetBoxInventory:
             api = pynetbox.api(self.url, token=token)
             # Before any request: an unreachable NetBox must be bounded on the
             # very first one, which is the only one a down instance ever sees.
-            self._mount_timeout(api.http_session)
+            # pynetbox builds a plain requests.Session in its constructor and
+            # documents http_session as the seam to supply one; otto.tls owns
+            # what that session trusts and how long a request may take.
+            api.http_session.close()
+            api.http_session = os_trust_session(timeout=self.timeout)
             endpoint = api.dcim.devices
             devices = list(endpoint.filter(**self.filter) if self.filter else endpoint.all())
         # Broad on purpose: pynetbox raises its own RequestError, and requests'

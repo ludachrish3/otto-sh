@@ -86,7 +86,12 @@ Otto constructs it as `MyVaultStore(repo_dir=<declaring directory>,
 url="https://vault.example", mount="lab")` — every key in the table except
 `backend` becomes a keyword argument, and `repo_dir` is the directory the
 declaration came from (the repository root for a project table, `~/.otto`
-for the user file). Reject a kwarg you do not understand with a `TypeError`
+for the user file).
+
+For an HTTPS vault signed by an internal CA, build the client with
+{func}`otto.tls.os_trust_session` — see {doc}`https-clients`.
+
+Reject a kwarg you do not understand with a `TypeError`
 or `ValueError`: otto wraps it into an error naming the settings file and the
 backend.
 

@@ -82,7 +82,13 @@ cache_ttl = "24h"
 Otto constructs it as
 `MyInventory(repo_dir=<declaring directory>, url="https://cmdb.example.com")` —
 every key in the table except otto's own (`backend`, `cache_ttl`) becomes a
-keyword argument. `repo_dir` is always passed, and it is **the
+keyword argument.
+
+For an HTTPS CMDB signed by an internal CA, build the client with
+{func}`otto.tls.os_trust_session`, the same session otto's own NetBox
+backend uses — see {doc}`https-clients`.
+
+`repo_dir` is always passed, and it is **the
 directory the declaration came from**: the repository root for a project
 `[inventory]` override, and `~/.otto` — otto's home — for the user settings
 file, which is where most declarations live. Anchor your own relative

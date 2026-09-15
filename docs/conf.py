@@ -164,6 +164,7 @@ intersphinx_mapping = {
     "asyncssh": ("https://asyncssh.readthedocs.io/en/stable", str(_INV / "asyncssh.inv")),
     "pytest": ("https://docs.pytest.org/en/stable", str(_INV / "pytest.inv")),
     "telnetlib3": ("https://telnetlib3.readthedocs.io/en/latest", str(_INV / "telnetlib3.inv")),
+    "requests": ("https://requests.readthedocs.io/en/latest", str(_INV / "requests.inv")),
 }
 
 # -- short-name type resolver -------------------------------------------------

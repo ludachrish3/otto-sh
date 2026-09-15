@@ -125,6 +125,7 @@ otto.project.render
 otto.project.state
 otto.registry
 otto.result
+otto.tls
 otto.tunnel
 otto.tunnel.carrier
 otto.tunnel.discovery

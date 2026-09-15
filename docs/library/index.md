@@ -505,6 +505,7 @@ lab-source-backends
 reservation-backends
 inventory-backends
 creds-backends
+https-clients
 custom-parsers
 ```
 

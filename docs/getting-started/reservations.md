@@ -88,6 +88,10 @@ and not on that one
 :end-before: "# doc: end team-backend"
 ```
 
+When that API is HTTPS, {func}`otto.tls.os_trust_session` gives you a
+client that trusts the CA your organisation installed on the machine, with
+no `verify=` anywhere — see {doc}`../library/https-clients`.
+
 Registered by name from the `init` module, then selected by that name:
 
 ```{literalinclude} ../examples/getting-started/libs/gs_example/__init__.py

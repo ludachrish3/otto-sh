@@ -111,5 +111,6 @@ otto.models.settings
 otto.params
 otto.registry
 otto.result
+otto.tls
 otto.utils
 otto.version

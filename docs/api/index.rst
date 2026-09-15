@@ -25,6 +25,7 @@ API Reference
    reservations
    labs
    inventory
+   tls
    creds
    testing
    examples

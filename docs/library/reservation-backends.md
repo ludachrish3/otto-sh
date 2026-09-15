@@ -246,6 +246,10 @@ See {doc}`Extension points <../architecture/subsystems/extension-points>` for
 the registry machinery behind this and every other seam otto can be extended
 at.
 
+When that `url` is HTTPS behind an internal CA, build the client with
+{func}`otto.tls.os_trust_session` so it trusts the certificate store the
+machine already has — see {doc}`https-clients`.
+
 ## Verify your backend
 
 Otto ships a conformance helper that checks a backend against the full contract

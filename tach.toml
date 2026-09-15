@@ -276,6 +276,9 @@ path = "otto.inventory"
 # is only imported once a `[creds]` table is actually declared — so a lab
 # with no store configured never pays for the package at all. One-way:
 # otto.creds never imports otto.inventory (see its own module note).
+# otto.tls (spec 2026-09-14 os-trust-http-helper): the NetBox session's OS-store
+# trust and request-timeout bound. Module-level import; otto.tls itself is a
+# stdlib-only leaf at import time.
 depends_on = [
     "otto.config",
     "otto.creds",
@@ -283,6 +286,7 @@ depends_on = [
     "otto.host",
     "otto.models",
     "otto.registry",
+    "otto.tls",
     "otto.utils",
 ]
 
@@ -503,6 +507,13 @@ path = "otto.testing"
 # Cannot invert layering or create a cycle: otto.result depends only on
 # otto.errors, a zero-import leaf, and otto.host already depends on it.
 depends_on = ["otto.config", "otto.context", "otto.creds", "otto.inventory", "otto.labs", "otto.models", "otto.reservations", "otto.host", "otto.result", "otto.suite"]
+
+[[modules]]
+path = "otto.tls"
+# A leaf: the OS trust store and the request-timeout bound for any HTTPS
+# client. Imports only the stdlib at module level; requests, truststore and
+# typing_extensions are function-local. otto.inventory (NetBox) is its first
+# consumer; a user's reservation/creds/inventory backend is the second.
 
 [[modules]]
 path = "otto.tunnel"

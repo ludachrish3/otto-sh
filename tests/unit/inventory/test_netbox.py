@@ -214,59 +214,6 @@ def test_url_must_be_non_empty():
         NetBoxInventory(url="")
 
 
-def test_every_request_a_fetch_makes_carries_the_configured_timeout(monkeypatch):
-    """An UNREACHABLE NetBox must not hold a lab-bound command for the kernel's TCP timeout.
-
-    pynetbox issues ``http_session.get(...)`` with no ``timeout``, and
-    requests' ``Session.send`` then passes ``timeout=None`` EXPLICITLY — so
-    the bound has to come from an adapter that OVERWRITES a ``None`` that is
-    already there. A ``setdefault`` would never fire, and that is exactly what
-    this reads: the ``timeout`` the base adapter is handed on every request of
-    a real fetch, which a ``setdefault`` leaves as ``None``.
-
-    Observed at the adapter seam rather than by elapsed wall time. The earlier
-    form of this test asserted ``elapsed < 0.9`` against a stub that slept 1s
-    — a wall-clock discriminator in a plain unit test, which xdist load can
-    counterfeit as a false red (the ``serial_timing`` class); the seam says the
-    same thing deterministically.
-    """
-    from requests.adapters import HTTPAdapter
-
-    seen: list = []
-    real_send = HTTPAdapter.send
-
-    def spy(self, request, **kw):
-        seen.append(kw.get("timeout"))
-        return real_send(self, request, **kw)
-
-    monkeypatch.setattr(HTTPAdapter, "send", spy)
-    with NetBoxStub([device(1, "d1")]) as stub:
-        _inv(stub, timeout=0.2).list_keys()
-    assert seen, "the fetch made no request through the mounted adapter"
-    assert all(t == 0.2 for t in seen), f"unbounded request(s) in the fetch: {seen}"
-
-
-def test_an_explicit_timeout_on_a_request_is_not_overridden(monkeypatch):
-    """The adapter fills in a MISSING bound; it does not clobber one a caller set."""
-    from requests import Session
-    from requests.adapters import HTTPAdapter
-
-    seen: list = []
-    real_send = HTTPAdapter.send
-
-    def spy(self, request, **kw):
-        seen.append(kw.get("timeout"))
-        return real_send(self, request, **kw)
-
-    monkeypatch.setattr(HTTPAdapter, "send", spy)
-    with NetBoxStub([device(1, "d1")]) as stub:
-        session = Session()
-        _inv(stub, timeout=0.2)._mount_timeout(session)
-        session.get(stub.base + "/api/dcim/devices/", timeout=7.5)
-        session.get(stub.base + "/api/dcim/devices/")
-    assert seen == [7.5, 0.2]
-
-
 def test_the_default_timeout_is_thirty_seconds():
     """Generous, because a filtered fetch over a large instance is a real query."""
     assert NetBoxInventory(url=DEAD).timeout == 30.0
@@ -350,46 +297,6 @@ def test_verify_is_no_longer_an_argument():
         NetBoxInventory(url=DEAD, verify=False)  # type: ignore[call-arg]
 
 
-def test_the_mounted_adapter_trusts_the_os_store_and_never_loads_certifi():
-    """Spec §3: the truststore context decides; requests must not pour certifi into it.
-
-    Stock ``HTTPAdapter.cert_verify`` with ``verify=True`` assigns certifi's
-    bundle to ``conn.ca_certs``, which urllib3 then loads INTO the supplied
-    context — a silent union of OS store + certifi that hides a missing root.
-    The override leaves ``ca_certs`` / ``ca_cert_dir`` alone and only requires
-    a certificate. Plain ``http`` keeps the stock behaviour (nothing to verify).
-    """
-    from types import SimpleNamespace
-
-    import requests
-    import truststore
-
-    session = requests.Session()
-    NetBoxInventory(url=DEAD)._mount_timeout(session)
-    adapter = session.get_adapter("https://netbox.example/")
-    assert session.get_adapter("http://netbox.example/") is adapter  # one adapter, both schemes
-    assert isinstance(adapter.poolmanager.connection_pool_kw["ssl_context"], truststore.SSLContext)
-
-    # A proxied connection gets its own pool manager (HTTPAdapter.proxy_manager_for
-    # does not inherit init_poolmanager's connection_pool_kw) — it must carry the
-    # SAME OS-store context, not fall back to urllib3's own default.
-    proxy_manager = adapter.proxy_manager_for("http://proxy.example:3128")
-    assert (
-        proxy_manager.connection_pool_kw["ssl_context"]
-        is adapter.poolmanager.connection_pool_kw["ssl_context"]
-    )
-
-    conn = SimpleNamespace(cert_reqs=None, ca_certs=None, ca_cert_dir=None)
-    adapter.cert_verify(conn, "https://netbox.example/api/", verify=True, cert=None)
-    assert conn.cert_reqs == "CERT_REQUIRED"
-    assert conn.ca_certs is None
-    assert conn.ca_cert_dir is None
-
-    plain = SimpleNamespace(cert_reqs=None, ca_certs=None, ca_cert_dir=None)
-    adapter.cert_verify(plain, "http://netbox.example/api/", verify=True, cert=None)
-    assert plain.cert_reqs == "CERT_NONE"
-
-
 def test_a_certificate_the_os_store_does_not_know_is_refused(tmp_path, monkeypatch):
     # The stub speaks real TLS with a self-signed certificate, so there is
     # something to actually verify — over plain HTTP the trust path is inert
@@ -424,21 +331,43 @@ def test_a_certificate_the_os_store_trusts_is_accepted(tmp_path, monkeypatch):
         assert _inv(stub).list_keys() == ["d1"]
 
 
-def test_a_requests_ca_bundle_from_the_environment_is_not_a_second_trust_source(
-    tmp_path, monkeypatch
-):
-    # requests' Session.merge_environment_settings turns verify=True into the
-    # REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE path when trust_env is on (the
-    # default), and urllib3 would load that file INTO the shared truststore
-    # context — a silent union with a second trust list. The send override
-    # pins verify=True for https so the OS store stays the only source.
-    certfile, keyfile = self_signed_cert(tmp_path)
-    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
-    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
-    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(certfile))
-    with NetBoxStub([device(1, "d1")], tls=(certfile, keyfile)) as stub:  # noqa: SIM117
-        with pytest.raises(InventoryError, match=f"netbox inventory {stub.base}: SSLError"):
-            _inv(stub).list_keys()
+def test_the_fetch_uses_the_shared_os_trust_session(monkeypatch):
+    """Trust and the timeout bound come from ``otto.tls``, not a private copy here.
+
+    Observed at the one seam the backend owns: the session it hands pynetbox,
+    AND that the configured timeout actually reaches every request the
+    backend sends through it — the factory argument alone would pass even if
+    the value were dropped on the way to ``HTTPAdapter.send``.
+    """
+    from requests.adapters import HTTPAdapter
+
+    import otto.inventory.netbox as netbox_module
+    from otto import tls
+
+    handed: list = []
+    real_factory = tls.os_trust_session
+
+    def spy(*, timeout):
+        session = real_factory(timeout=timeout)
+        handed.append((timeout, session))
+        return session
+
+    monkeypatch.setattr(netbox_module, "os_trust_session", spy)
+
+    timeouts_seen: list = []
+    real_send = HTTPAdapter.send
+
+    def send_spy(self, request, **kwargs):
+        timeouts_seen.append(kwargs["timeout"])
+        return real_send(self, request, **kwargs)
+
+    monkeypatch.setattr(HTTPAdapter, "send", send_spy)
+
+    with NetBoxStub([device(1, "d1")]) as stub:
+        assert _inv(stub, timeout=0.3).list_keys() == ["d1"]
+    assert [t for t, _ in handed] == [0.3]
+    assert timeouts_seen, "no request was observed through HTTPAdapter.send"
+    assert all(t == 0.3 for t in timeouts_seen)
 
 
 def test_a_device_missing_a_field_names_the_device_and_the_url():

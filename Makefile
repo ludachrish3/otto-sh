@@ -1404,6 +1404,7 @@ docs-inventories:
 	@curl -sSL --retry 3 -o docs/_inventories/asyncssh.inv   https://asyncssh.readthedocs.io/en/stable/objects.inv
 	@curl -sSL --retry 3 -o docs/_inventories/pytest.inv     https://docs.pytest.org/en/stable/objects.inv
 	@curl -sSL --retry 3 -o docs/_inventories/telnetlib3.inv https://telnetlib3.readthedocs.io/en/latest/objects.inv
+	@curl -sSL --retry 3 -o docs/_inventories/requests.inv   https://requests.readthedocs.io/en/latest/objects.inv
 
 # -E (fresh env, no stale doctrees) + -a (write all) make a local build match
 # CI's clean build, so incremental state can't mask or invent a warning.
