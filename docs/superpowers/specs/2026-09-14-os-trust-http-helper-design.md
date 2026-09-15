@@ -38,8 +38,12 @@ the shared code rather than the owner of a private copy.
   untouched. The store reaches the dashboard through the certificate an
   organisation CA issues it, which viewers and otto's clients then trust
   because that CA is installed at the OS level.
-- Client certificates (mTLS), `truststore.inject_into_ssl()`, any new
-  settings key, any support for otto releases before this one.
+- Client certificates (mTLS) as a feature: no settings key, no argument, no
+  docs recipe. A `cert=` the caller passes to requests is presented exactly
+  as stock requests presents it, independent of the requests version; it is
+  loaded into the session's shared context and persists for that session.
+- `truststore.inject_into_ssl()`, any new settings key, any support for otto
+  releases before this one.
 - Wiring HTTP into the reservation, creds or inventory protocols. otto never
   makes a backend's HTTP calls; this is an opt-in helper the backend imports.
 
