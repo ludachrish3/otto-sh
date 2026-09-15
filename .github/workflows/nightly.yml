@@ -468,11 +468,11 @@ jobs:
     env:
       # The interpreter one past PYTHON_VERSIONS' ceiling in noxfile.py.
       CANARY_PYTHON: "3.15"
-      # The rung the canary is EXPECTED to reach today. 0 = not even the
-      # runtime dependencies install (2026-09-13: pyyaml 6.0.3 publishes no
-      # cp315 wheel and its sdist build segfaulted on 3.15.0b1). Bump it when
+      # The rung the canary is EXPECTED to reach today. 4 = the hostless
+      # suite collects, but its session does not pass yet (2026-09-15, on
+      # 3.15.0rc2: the import-budget guard has no 3.15 goldens). Bump it when
       # this job reds with "climbed"; a red "regressed" is a real regression.
-      CANARY_EXPECTED_RUNG: "0"
+      CANARY_EXPECTED_RUNG: "4"
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -519,7 +519,11 @@ jobs:
           rung 2 "the dev group installs too"             uv sync --frozen --group dev --python "$CANARY_PYTHON" &&
           rung 3 "otto imports"             uv run --frozen otto --version &&
           rung 4 "the hostless suite collects"             uv run --frozen pytest --collect-only -q -n0 -p no:cacheprovider               tests/unit tests/e2e -m "$hostless_marker" &&
-          rung 5 "the hostless session passes"             uv run --frozen nox -s "tests_hostless-$CANARY_PYTHON" --extra-python "$CANARY_PYTHON"
+          rung 5 "the hostless session passes"             uv run --frozen nox -s "tests_hostless-$CANARY_PYTHON" --extra-python "$CANARY_PYTHON" ||
+          # `|| true` is load-bearing: the step shell is `bash -e`, and errexit
+          # ignores a failure anywhere in an && list EXCEPT its final command.
+          # Without it a failing rung 5 exits here, before the verdict below.
+          true
 
           echo >> "$GITHUB_STEP_SUMMARY"
           echo "**Reached rung $reached; expected rung $CANARY_EXPECTED_RUNG.**" >> "$GITHUB_STEP_SUMMARY"
