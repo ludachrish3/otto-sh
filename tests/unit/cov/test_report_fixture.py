@@ -9,6 +9,7 @@ is what pins the resulting DOM.
 
 import json
 
+from otto.coverage.store.model import CoverageStore
 from tests._fixtures._report_fixture import build_fixture_report
 
 
@@ -199,3 +200,16 @@ def test_line_pct_counts_pin_utils_c_below_main_c(tmp_path):
         "asserted_per_tier": {"system": 0, "unit": 0, "manual": 0, "bench": 0},
         "asserted_only": 0,
     }
+
+
+def test_fixture_functions_cover_both_pill_states(tmp_path):
+    report_dir = build_fixture_report(tmp_path)
+    store = CoverageStore.load(report_dir / "store.json")
+    by_name = {fn.name: fn for fr in store.files() for fn in fr.functions.values()}
+    assert by_name["checked_add"].start_line == 3
+    assert by_name["checked_add"].end_line == 8
+    assert by_name["checked_add"].hits.is_hit()
+    assert by_name["main"].start_line == 10
+    assert by_name["double_it"].hits.is_hit()
+    assert not by_name["never_called"].hits.is_hit()
+    assert not by_name["untested"].hits.is_hit()

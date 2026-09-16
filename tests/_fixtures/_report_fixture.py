@@ -24,6 +24,12 @@ stale line with no live hits) and one aging, dirty-remapped ``manual`` run
 ``s-stale``/``s-aging``) the SPA's file-page row precedence renders is
 reachable from this one fixture.
 
+Compiler-reported functions (lcov FN/FNDA): main.c carries ``checked_add``
+(hit by system and unit tiers) and ``main`` (hit by system tier only), and
+utils.c carries ``double_it`` (hit by unit tier), ``never_called``, and
+``untested`` (both unhit), so the palette's pill states and the "@" list's
+alphabetical sort order both have coverage and uncovered examples to render.
+
 Per-ticket attribution (Task 13): two commit-message-attributed tickets,
 distinct from ``RunRecord.ticket`` above (a different axis — see design §1).
 ``PROJ-204`` owns main.c's ``checked_add()`` body through the stale brace
@@ -242,6 +248,12 @@ def build_fixture_report(base_dir: Path) -> Path:
     asserted_line = main_rec.get_or_create_line(2)
     asserted_line.hits.add("bench", 1)
     asserted_line.asserted = {"bench": [0]}
+    # Compiler-reported functions (lcov FN/FNDA): one hit by two tiers, one
+    # hit by system only — the palette's @-mode pill renders both states.
+    main_rec.get_or_create_function("checked_add", start_line=3, end_line=8).hits.counts.update(
+        {"system": 4, "unit": 12}
+    )
+    main_rec.get_or_create_function("main", start_line=10, end_line=13).hits.add("system", 4)
     store.merge_file(main_rec)
 
     # -- utils.c -----------------------------------------------------------
@@ -262,6 +274,11 @@ def build_fixture_report(base_dir: Path) -> Path:
     # main.c, and carries no tracker `url` (PROJ-204 does), exercising
     # TicketIdCell's plain-text render variant.
     utils_rec.lines[2].ticket = ["PROJ-9"]
+    utils_rec.get_or_create_function("double_it", start_line=1, end_line=3).hits.add("unit", 6)
+    # Two never-hit functions: the palette's uncovered pill and the "@" list's
+    # sort order (alphabetical, not by coverage) both need more than one.
+    utils_rec.get_or_create_function("never_called", start_line=5, end_line=7)
+    utils_rec.get_or_create_function("untested", start_line=9, end_line=11)
     store.merge_file(utils_rec)
 
     store.tickets["PROJ-204"] = TicketRecord(
@@ -289,4 +306,5 @@ def build_fixture_report(base_dir: Path) -> Path:
 
     report_dir = base_dir / "report"
     SpaRenderer(report_dir, project_name="otto example product", prefix=base_dir).render(store)
+    store.save(report_dir / "store.json")
     return report_dir

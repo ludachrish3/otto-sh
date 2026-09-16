@@ -7,7 +7,7 @@ Format summary::
 
     TN:<test name>
     SF:<source file path>
-    FN:<line>,<function name>
+    FN:<start>[,<end>],<function name>
     FNDA:<count>,<function name>
     DA:<line>,<count>[,<checksum>]
     BRDA:<line>,<block>,<branch>,<taken>   taken='-' means never reached
@@ -16,16 +16,53 @@ Format summary::
 """
 
 import logging
+import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..store.model import (
     BranchHits,
     CoverageStore,
     FileRecord,
+    FunctionRecord,
 )
 from .paths import PathRemapper
 
 logger = logging.getLogger(__name__)
+
+_FN_END_PREFIX = re.compile(r"(\d+),")
+
+
+@dataclass
+class FunctionHit:
+    """One ``FNDA:`` record: hit count for a named function."""
+
+    count: int
+    name: str
+
+
+def parse_fn_record(body: str) -> FunctionRecord:
+    """Parse the text after ``FN:``.
+
+    lcov 1.x writes ``<start>,<name>``; lcov ≥ 2.0 writes ``<start>,<end>,<name>``.
+    A C++ name can itself contain commas (``std::pair<int, char> make(int,
+    char)``), so this splits positionally from the left and never on every
+    comma: ``start`` up to the first comma; an ``<end>`` only when the remainder
+    starts with digits followed by a comma; everything after is the name.
+    """
+    start_text, _, rest = body.partition(",")
+    end: int | None = None
+    matched = _FN_END_PREFIX.match(rest)
+    if matched is not None:
+        end = int(matched.group(1))
+        rest = rest[matched.end() :]
+    return FunctionRecord(name=rest, start_line=int(start_text), end_line=end)
+
+
+def parse_fnda_record(body: str) -> FunctionHit:
+    """Parse the text after ``FNDA:`` — ``<count>,<name>``, split once."""
+    count_text, _, name = body.partition(",")
+    return FunctionHit(count=int(count_text), name=name)
 
 
 class LCOVLoader:
@@ -74,6 +111,23 @@ class LCOVLoader:
                         logger.warning("Unmapped path, using raw: %s", raw_path)
                         resolved = Path(raw_path)
                     current_file = self.store.get_or_create_file(resolved)
+
+                elif line.startswith("FNDA:") and current_file is not None:
+                    hit = parse_fnda_record(line[5:])
+                    fn = current_file.functions.get(hit.name)
+                    if fn is None:
+                        logger.warning(
+                            "FNDA for %s in %s has no FN record; keeping its count at line 0",
+                            hit.name,
+                            current_file.path,
+                        )
+                        fn = current_file.get_or_create_function(hit.name)
+                    fn.hits.add(tier, hit.count)
+
+                elif line.startswith("FN:") and current_file is not None:
+                    parsed = parse_fn_record(line[3:])
+                    if parsed.name not in current_file.functions:
+                        current_file.functions[parsed.name] = parsed
 
                 elif line.startswith("DA:") and current_file is not None:
                     parts = line[3:].split(",")

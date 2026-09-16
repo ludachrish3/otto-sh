@@ -671,6 +671,15 @@ describe("DirectoryPage", () => {
       expect(screen.getByTestId("ticket-chip")).toBeTruthy();
     });
 
+    // Task 12: AppShell now always mounts SearchPalette alongside
+    // DirectoryPage, and the palette runs its own ticket-scoping load of
+    // the same chunk (spec §3.3, independent of whether the palette is ever
+    // opened) — so a single mount now costs two calls (DirectoryPage's own
+    // effect + the palette's), not one. What this test actually guards —
+    // DirectoryPage's own effect, keyed on the chunk name, doesn't re-fetch
+    // when only the directory segments change while the same ticket stays
+    // pinned — still holds: the count after the rerender must equal the
+    // count right after mount.
     it("loads the chunk exactly once even as segments change while the same ticket stays pinned", async () => {
       const spy = vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(makeTicketChunk());
       const index = buildTicketIndex();
@@ -678,12 +687,13 @@ describe("DirectoryPage", () => {
       window.location.hash = "#/coverage?ticket=PROJ-1";
       const { rerender } = renderPage({ index, segments: [] });
       await screen.findByTestId("tree-row-file:src/main.c");
+      expect(spy).toHaveBeenCalledTimes(2); // DirectoryPage + AppShell's SearchPalette
 
       window.location.hash = "#/coverage/src?ticket=PROJ-1";
       rerender(<DirectoryPage index={index} segments={["src"]} />);
       await waitFor(() => expect(screen.getByTestId("tree-row-file:src/main.c")).toBeTruthy());
 
-      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledTimes(2);
     });
   });
 });

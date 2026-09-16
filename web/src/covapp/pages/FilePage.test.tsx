@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as dataModule from "../data";
 import { _resetForTests, StampMismatchError } from "../data";
+import { MATCH_HIGHLIGHT_NAME } from "../matchHighlight";
 import { emptyStats, makeIndex, Providers } from "../testUtils";
 import type { FileChunk, FileNode, IndexPayload, RunJson } from "../types";
 import {
@@ -1069,6 +1070,142 @@ describe("FilePage", () => {
       expect(row.textContent).toContain("1/3");
       expect(screen.getByTestId("focus-chip")).toBeTruthy();
       expect(screen.getByTestId("ticket-chip")).toBeTruthy();
+    });
+  });
+
+  describe("?lines= follows hash changes on the same file", () => {
+    it("moves the highlighted row when only the query changes", async () => {
+      const chunk: FileChunk = {
+        stamp: "stamp-1",
+        chunk: "a_b.c",
+        path: "a/b.c",
+        source: "one\ntwo\nthree\n",
+        lines: {},
+        excluded: [],
+      };
+      vi.spyOn(dataModule, "loadFileChunk").mockResolvedValue(chunk);
+      const index = makeIndex();
+      window.__OTTO_COV__ = index;
+      window.location.hash = "#/coverage/a/b.c?lines=1";
+      const node: FileNode = { name: "b.c", path: "a/b.c", chunk: "a_b.c", stats: emptyStats() };
+      renderPage({ index, segments: ["a", "b.c"], node });
+      expect((await screen.findByTestId("code-row-1")).getAttribute("data-highlighted")).toBe(
+        "true",
+      );
+
+      window.location.hash = "#/coverage/a/b.c?lines=3";
+      fireEvent(window, new HashChangeEvent("hashchange"));
+      await waitFor(() => {
+        expect(screen.getByTestId("code-row-3").getAttribute("data-highlighted")).toBe("true");
+        expect(screen.getByTestId("code-row-1").getAttribute("data-highlighted")).toBeNull();
+      });
+    });
+
+    it("keeps the highlight identity (no re-scroll) when a hash change doesn't touch ?lines=", async () => {
+      const chunk: FileChunk = {
+        stamp: "stamp-1",
+        chunk: "a_b.c",
+        path: "a/b.c",
+        source: "one\ntwo\nthree\n",
+        lines: {},
+        excluded: [],
+      };
+      vi.spyOn(dataModule, "loadFileChunk").mockResolvedValue(chunk);
+      const index = makeIndex();
+      window.__OTTO_COV__ = index;
+      window.location.hash = "#/coverage/a/b.c?lines=1";
+      const node: FileNode = { name: "b.c", path: "a/b.c", chunk: "a_b.c", stats: emptyStats() };
+      // jsdom (pinned this project) has no `scrollIntoView` at all — see
+      // FilePage.tsx's scroll-effect doc comment; assigned directly (not
+      // `vi.spyOn`, which requires the method to already exist).
+      const scrollSpy = vi.fn();
+      Element.prototype.scrollIntoView = scrollSpy;
+      try {
+        renderPage({ index, segments: ["a", "b.c"], node });
+        expect((await screen.findByTestId("code-row-1")).getAttribute("data-highlighted")).toBe(
+          "true",
+        );
+        await waitFor(() => expect(scrollSpy).toHaveBeenCalledTimes(1));
+
+        window.location.hash = "#/coverage/a/b.c?lines=1&ctx=1";
+        fireEvent(window, new HashChangeEvent("hashchange"));
+        await waitFor(() => {
+          expect(screen.getByTestId("code-row-1").getAttribute("data-highlighted")).toBe("true");
+        });
+        expect(scrollSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      }
+    });
+  });
+
+  describe("?q= match marking", () => {
+    const chunk: FileChunk = {
+      stamp: "stamp-1",
+      chunk: "a_b.c",
+      path: "a/b.c",
+      source: "mutex_lock(a);\nother();\nmutex_lock(b);\n",
+      lines: {
+        "1": { hits: { system: 1 }, branches: [], state: null },
+        "3": { hits: {}, branches: [], state: null },
+      },
+      excluded: [],
+    };
+    const node: FileNode = { name: "b.c", path: "a/b.c", chunk: "a_b.c", stats: emptyStats() };
+
+    it("marks every matched row and reports the count to the app bar pill", async () => {
+      vi.spyOn(dataModule, "loadFileChunk").mockResolvedValue(chunk);
+      const index = makeIndex();
+      window.__OTTO_COV__ = index;
+      window.location.hash = "#/coverage/a/b.c?lines=1&q=mutex";
+      renderPage({ index, segments: ["a", "b.c"], node });
+      expect((await screen.findByTestId("code-row-1")).getAttribute("data-match")).toBe("true");
+      expect(screen.getByTestId("code-row-2").getAttribute("data-match")).toBeNull();
+      expect(screen.getByTestId("code-row-3").getAttribute("data-match")).toBe("true");
+      expect(screen.getByTestId("search-pill").textContent).toContain("mutex");
+      expect(screen.getByTestId("search-pill").textContent).toContain("2 matches");
+    });
+
+    it("unc=1 keeps only uncovered rows; the pill's clear removes q/re/unc and keeps lines", async () => {
+      vi.spyOn(dataModule, "loadFileChunk").mockResolvedValue(chunk);
+      const index = makeIndex();
+      window.__OTTO_COV__ = index;
+      window.location.hash = "#/coverage/a/b.c?lines=3&q=mutex&re=1&unc=1";
+      renderPage({ index, segments: ["a", "b.c"], node });
+      expect((await screen.findByTestId("code-row-3")).getAttribute("data-match")).toBe("true");
+      expect(screen.getByTestId("code-row-1").getAttribute("data-match")).toBeNull();
+
+      fireEvent.click(screen.getByTestId("search-pill-clear"));
+      await waitFor(() => {
+        expect(window.location.hash).toBe("#/coverage/a/b.c?lines=3");
+        expect(screen.queryByTestId("search-pill")).toBeNull();
+      });
+    });
+
+    it("registers the paint effect's highlight and clears it when the pill is cleared", async () => {
+      vi.spyOn(dataModule, "loadFileChunk").mockResolvedValue(chunk);
+      const index = makeIndex();
+      window.__OTTO_COV__ = index;
+      window.location.hash = "#/coverage/a/b.c?lines=1&q=mutex";
+
+      class FakeHighlight {
+        ranges: Range[] = [];
+        add(range: Range): void {
+          this.ranges.push(range);
+        }
+      }
+      const registry = new Map<string, unknown>();
+      vi.stubGlobal("Highlight", FakeHighlight);
+      vi.stubGlobal("CSS", { escape: (s: string) => s, highlights: registry });
+
+      renderPage({ index, segments: ["a", "b.c"], node });
+      expect((await screen.findByTestId("code-row-1")).getAttribute("data-match")).toBe("true");
+      await waitFor(() => expect(registry.has(MATCH_HIGHLIGHT_NAME)).toBe(true));
+      const painted = registry.get(MATCH_HIGHLIGHT_NAME) as FakeHighlight;
+      expect(painted.ranges).toHaveLength(2);
+
+      fireEvent.click(screen.getByTestId("search-pill-clear"));
+      await waitFor(() => expect(registry.has(MATCH_HIGHLIGHT_NAME)).toBe(false));
     });
   });
 });

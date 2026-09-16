@@ -90,3 +90,14 @@ def test_theme_toggle_still_works_under_csp(page: Page, csp_server: CspReportSer
     assert "dark-mode" in page.evaluate("document.documentElement.className")
     bg_after = page.evaluate("getComputedStyle(document.body).backgroundColor")
     assert bg_after != bg_before
+
+
+def test_search_chunks_load_under_csp(page: Page, csp_server: CspReportServer) -> None:
+    """The two singleton chunks are classic scripts like every other chunk;
+    a violation would surface as a `Refused to ...` console error."""
+    _goto(page, csp_server, "/coverage")
+    page.keyboard.press("Control+K")
+    page.get_by_role("searchbox").fill("checked_add")
+    expect(page.get_by_test_id("search-result-0")).to_be_visible()
+    page.get_by_role("searchbox").fill("@double")
+    expect(page.get_by_test_id("search-result-0")).to_contain_text("double_it")

@@ -1,13 +1,15 @@
-// Deliberately minimal (spec §12.4 defers bindings): lists exactly the three
+// Deliberately minimal (spec §12.4 defers bindings): lists exactly the four
 // bindings in `BINDINGS` below, which is everything covapp binds — "?"
-// (AppShell's app-wide handler), "/" (TicketSearch's SEARCH_BINDING) and Esc.
-// Modal scaffolding mirrors web/src/ui/CommandMenu.tsx's react-aria stack
-// (ModalOverlay + Modal + Dialog), simplified — no autocomplete/menu, just a
-// static list. Escape closes via ModalOverlay's built-in dismiss-on-Escape
-// behavior (same as CommandMenu's palette).
+// (AppShell's app-wide handler), Ctrl K/⌘K (AppShell's palette binding), "/"
+// (TicketSearch's SEARCH_BINDING) and Esc. Modal scaffolding mirrors
+// web/src/ui/CommandMenu.tsx's react-aria stack (ModalOverlay + Modal +
+// Dialog), simplified — no autocomplete/menu, just a static list. Escape
+// closes via ModalOverlay's built-in dismiss-on-Escape behavior (same as
+// CommandMenu's palette).
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
 
 import { Kbd } from "../../ui/Kbd";
+import { formatBinding, PALETTE_BINDING } from "../../ui/shortcuts";
 
 interface Binding {
   keys: string;
@@ -15,6 +17,9 @@ interface Binding {
 }
 
 const BINDINGS: Binding[] = [
+  // AppShell binds this via ui/shortcuts' PALETTE_BINDING (⌘K on mac, Ctrl K
+  // elsewhere), the same binding the monitor's command menu uses.
+  { keys: formatBinding(PALETTE_BINDING), description: "Search code and functions" },
   { keys: "?", description: "Open this dialog" },
   { keys: "Esc", description: "Close this dialog" },
   // TicketSearch binds this via ui/shortcuts' SEARCH_BINDING, the same

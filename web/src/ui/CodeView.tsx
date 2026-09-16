@@ -76,6 +76,10 @@ export interface CodeLine {
    * (never `"false"`), so a plain attribute-presence check is enough for
    * callers to detect it either way. */
   highlighted?: boolean;
+  /** Whether this row holds a `?q=` search match — rendered as
+   * `data-match="true"`, omitted otherwise (same presence contract as
+   * `highlighted`). */
+  matched?: boolean;
 }
 
 export interface CodeViewProps {
@@ -205,6 +209,7 @@ export function CodeView({
               <div
                 data-testid={`code-row-${line.number}`}
                 data-highlighted={line.highlighted ? "true" : undefined}
+                data-match={line.matched ? "true" : undefined}
                 className={cx(ROW_BASE, line.rowClass)}
                 style={{ gridTemplateColumns: gridTemplate, ...line.style }}
               >

@@ -1,4 +1,4 @@
-import { SearchMd } from "@untitledui/icons";
+import { SearchLg, SearchMd } from "@untitledui/icons";
 import type { HTMLAttributes } from "react";
 
 // Adapters between `@untitledui/icons` and the vendored Untitled UI
@@ -34,4 +34,10 @@ import type { HTMLAttributes } from "react";
 /** `SearchMd`, usable as a vendored component's `icon`. */
 export function SearchIcon({ className }: HTMLAttributes<HTMLOrSVGElement>) {
   return <SearchMd className={className} />;
+}
+
+/** `SearchLg`, usable as a vendored component's `icon` — same adapter as
+ * `SearchIcon` above, for the palette's larger-size field icon. */
+export function SearchLgIcon({ className }: HTMLAttributes<HTMLOrSVGElement>) {
+  return <SearchLg className={className} />;
 }

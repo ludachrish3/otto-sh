@@ -68,7 +68,7 @@
         "useUniqueElementIds": {
           "level": "error",
           "options": {
-            "excludedComponents": ["Item", "Tab", "KeyRow"]
+            "excludedComponents": ["Item", "Tab", "KeyRow", "ButtonGroupItem"]
           }
         },
         "noUnresolvedImports": "off",

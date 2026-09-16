@@ -23,6 +23,7 @@ source-exclusion scan) without importing from it.
 
 import json
 import logging
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,22 @@ OTTO_COV_DATA_FORMAT: int = 2
 """``IndexPayload["format"]`` / ``FileChunk["stamp"]``-adjacent format marker.
 
 Bump alongside the TypeScript ``EXPECTED_DATA_FORMAT`` constant, or never."""
+
+SEARCH_STATE_CHARS: dict[str, str] = {
+    "-": "none",
+    "c": "covered",
+    "u": "uncovered",
+    "x": "excluded",
+    "s": "stale",
+    "a": "aging",
+}
+"""One character per source line in ``cov_data/search.js`` (spec §6.2).
+
+Mirrored by ``STATE_CHARS`` in ``web/src/covapp/search.ts`` and pinned by the
+covapp contract table. ``-`` is a line with no record and no exclusion."""
+
+SEARCH_CHUNK_WARN_BYTES: int = 16 * 1024 * 1024
+"""Above this, the renderer warns that ``search.js`` should be sharded (spec §6.4)."""
 
 # Pretty labels for the conventional tier names. Tiers without an entry
 # here render with their raw name title-cased.
@@ -81,6 +98,86 @@ def _display_path(record: FileRecord, prefix: Path | None) -> str:
         except ValueError:
             return str(record.path)
     return str(record.path)
+
+
+def line_states(fr: FileRecord, line_count: int) -> str:
+    """Build the ``states`` string for one file: ``SEARCH_STATE_CHARS`` keys, one per line.
+
+    Exactly *line_count* characters; records numbered past EOF are dropped.
+    Excluded wins over any record on the same line (the reporter's filter
+    stage already deleted that record).
+    """
+    chars: list[str] = []
+    for lineno in range(1, line_count + 1):
+        if lineno in fr.excluded_lines:
+            chars.append("x")
+            continue
+        lr = fr.lines.get(lineno)
+        if lr is None:
+            chars.append("-")
+        elif lr.state == "stale":
+            chars.append("s")
+        elif lr.state == "aging":
+            chars.append("a")
+        elif lr.hits.is_hit():
+            chars.append("c")
+        else:
+            chars.append("u")
+    return "".join(chars)
+
+
+def iter_tree_files(node: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Walk a finalized tree depth-first: a dir's subdirs (sorted) before its files (sorted).
+
+    This is the order ``search.js`` lists files in, so palette groups and the
+    directory tree agree by construction.
+    """
+    for child in node["dirs"]:
+        yield from iter_tree_files(child)
+    yield from node["files"]
+
+
+def build_search_payload(
+    tree: dict[str, Any],
+    records: dict[str, FileRecord],
+    sources: dict[str, str],
+    stamp: str,
+) -> dict[str, Any]:
+    """Build the ``cov_data/search.js`` payload. *records*/*sources* are keyed by chunk id."""
+    files: list[dict[str, Any]] = []
+    for node in iter_tree_files(tree):
+        chunk = node["chunk"]
+        text = sources[chunk]
+        files.append(
+            {
+                "chunk": chunk,
+                "path": node["path"],
+                "text": text,
+                "states": line_states(records[chunk], text.count("\n") + 1),
+            }
+        )
+    return {"stamp": stamp, "files": files}
+
+
+def build_symbols_payload(store: CoverageStore, prefix: Path | None, stamp: str) -> dict[str, Any]:
+    """Build the ``cov_data/symbols.js`` payload: every function, sorted by name, path, line."""
+    functions: list[dict[str, Any]] = []
+    for fr in store.files():
+        chunk = mangle_path(fr.path)
+        path = _display_path(fr, prefix)
+        functions.extend(
+            {
+                "name": fn.name,
+                "chunk": chunk,
+                "path": path,
+                "line": fn.start_line,
+                "end": fn.end_line,
+                "hits": fn.hits.to_dict(),
+            }
+            for fn in fr.functions.values()
+        )
+    functions.sort(key=lambda f: (f["name"], f["path"], f["line"]))
+    return {"stamp": stamp, "functions": functions}
 
 
 def _resolve_tier_colors(store: CoverageStore, tier_order: list[str]) -> dict[str, str]:
@@ -549,13 +646,24 @@ def emit_chunks(
     missing-line detail (deferred off ``index.js`` — see
     ``_build_ticket_summaries``); the ``tickets`` directory is skipped
     entirely when the store has no ticket data.
+
+    Also writes ``cov_data/search.js`` (a report-wide text index: every
+    file's source plus its ``line_states`` string, in tree order) and
+    ``cov_data/symbols.js`` (every ``FileRecord.functions`` entry, sorted by
+    name/path/line), both for the on-demand search palette. Each file's
+    source is read exactly once, in the per-file-chunk loop, and reused to
+    build the search chunk rather than re-read from disk.
     """
     cov_data_dir = output_dir / "cov_data"
     files_dir = cov_data_dir / "files"
     files_dir.mkdir(parents=True, exist_ok=True)
 
+    records: dict[str, FileRecord] = {}
+    sources: dict[str, str] = {}
     for fr in store.files():
         chunk = _build_file_chunk(fr, prefix, stamp)
+        records[chunk["chunk"]] = fr
+        sources[chunk["chunk"]] = chunk["source"]
         out = files_dir / f"{chunk['chunk']}.js"
         out.write_text(f"window.__OTTO_COV_FILE__({json.dumps(chunk)});\n")
 
@@ -571,4 +679,21 @@ def emit_chunks(
             )
 
     payload = build_index_payload(store, project_name=project_name, prefix=prefix, stamp=stamp)
+
+    search_text = (
+        f"window.__OTTO_COV_SEARCH__("
+        f"{json.dumps(build_search_payload(payload['tree'], records, sources, stamp))});\n"
+    )
+    (cov_data_dir / "search.js").write_text(search_text)
+    if len(search_text.encode()) > SEARCH_CHUNK_WARN_BYTES:
+        logger.warning(
+            "cov_data/search.js is %d bytes, over the %d-byte sizing rule; "
+            "shard it by top-level directory (coverage search spec §6.4)",
+            len(search_text.encode()),
+            SEARCH_CHUNK_WARN_BYTES,
+        )
+    (cov_data_dir / "symbols.js").write_text(
+        f"window.__OTTO_COV_SYMBOLS__({json.dumps(build_symbols_payload(store, prefix, stamp))});\n"
+    )
+
     (cov_data_dir / "index.js").write_text(f"window.__OTTO_COV__ = {json.dumps(payload)};\n")

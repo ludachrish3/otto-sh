@@ -100,3 +100,13 @@ body {
   background: color-mix(in srgb, var(--state-aging) 15%, transparent);
   border-left-color: var(--state-aging);
 }
+
+/* `?q=` search matches (covapp/matchHighlight.ts). The span paint uses the
+   CSS Custom Highlight API; the row marker is the always-on fallback tint
+   so a browser without `CSS.highlights` still shows WHICH rows matched. */
+[data-match="true"] .cv-src {
+  background: color-mix(in srgb, var(--color-brand-500) 8%, transparent);
+}
+::highlight(otto-search) {
+  background-color: color-mix(in srgb, var(--color-brand-500) 35%, transparent);
+}

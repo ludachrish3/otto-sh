@@ -36,7 +36,15 @@ function classicScript(): Plugin {
 export default defineConfig({
   plugins: [react(), tailwindcss(), classicScript()],
   base: "./",
-  resolve: { alias: { "@": resolve(import.meta.dirname, "./src") } },
+  resolve: {
+    alias: {
+      "@": resolve(import.meta.dirname, "./src"),
+      // Mirror of vite.config.ts: the vendored EmptyState imports the
+      // ~220 kB file-icon set for a slot nothing renders — see
+      // src/ui/fileIconStub.tsx for why it is aliased rather than edited.
+      "@untitledui/file-icons": resolve(import.meta.dirname, "./src/ui/fileIconStub.tsx"),
+    },
+  },
   build: {
     outDir: "../src/otto/_webassets/covapp",
     emptyOutDir: true,

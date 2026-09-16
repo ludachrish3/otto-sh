@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/knip/schema.json",
-  "entry": ["src/covapp/main.tsx"],
+  "entry": ["src/covapp/main.tsx", "src/ui/fileIconStub.tsx"],
   "project": ["src/**/*.{ts,tsx}"],
   "ignore": [
     "src/components/**",

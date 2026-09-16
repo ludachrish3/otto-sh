@@ -2,7 +2,7 @@
 
 import pytest
 
-from otto.coverage.merge.lcov_loader import LCOVLoader
+from otto.coverage.merge.lcov_loader import LCOVLoader, parse_fn_record, parse_fnda_record
 from otto.coverage.merge.paths import PathMapping, PathRemapper
 from otto.coverage.store.model import CoverageStore
 
@@ -127,3 +127,65 @@ class TestLCOVLoader:
         assert fr.lines[1].run_hits == {run_id: 3}
         assert fr.lines[2].run_hits == {}  # zero-count line: no run credit
         assert fr.lines[1].hits.for_tier("unit") == 3
+
+
+class TestFunctionRecords:
+    def test_parse_fn_two_field_form(self):
+        fn = parse_fn_record("4,checked_add")
+        assert (fn.start_line, fn.end_line, fn.name) == (4, None, "checked_add")
+
+    def test_parse_fn_three_field_form_lcov2(self):
+        fn = parse_fn_record("4,9,checked_add")
+        assert (fn.start_line, fn.end_line, fn.name) == (4, 9, "checked_add")
+
+    def test_parse_fn_keeps_commas_inside_a_cpp_name(self):
+        fn = parse_fn_record("12,std::pair<int, char> make(int, char)")
+        assert fn.start_line == 12
+        assert fn.end_line is None
+        assert fn.name == "std::pair<int, char> make(int, char)"
+
+    def test_parse_fn_numeric_name_is_not_mistaken_for_an_end_line(self):
+        fn = parse_fn_record("4,123")
+        assert (fn.start_line, fn.end_line, fn.name) == (4, None, "123")
+
+    def test_parse_fnda_splits_once(self):
+        hit = parse_fnda_record("7,std::pair<int, char> make(int, char)")
+        assert hit.count == 7
+        assert hit.name == "std::pair<int, char> make(int, char)"
+
+    def test_load_records_functions_per_tier(self, source_tree, tmp_path):
+        info = tmp_path / "fn.info"
+        info.write_text(
+            f"TN:\nSF:{source_tree}/src/foo.c\n"
+            "FN:1,foo\nFN:3,bar\nFNDA:5,foo\nFNDA:0,bar\nDA:1,5\nDA:3,0\nend_of_record\n"
+        )
+        store = CoverageStore()
+        LCOVLoader(store, PathRemapper([])).load(info, "system")
+        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        assert foo.functions["foo"].start_line == 1
+        assert foo.functions["foo"].hits.for_tier("system") == 5
+        assert foo.functions["bar"].hits.for_tier("system") == 0
+        assert foo.functions["bar"].hits.is_hit() is False
+
+    def test_two_loads_merge_function_hits_across_tiers(self, source_tree, tmp_path):
+        a = tmp_path / "a.info"
+        a.write_text(f"TN:\nSF:{source_tree}/src/foo.c\nFN:1,foo\nFNDA:2,foo\nend_of_record\n")
+        b = tmp_path / "b.info"
+        b.write_text(f"TN:\nSF:{source_tree}/src/foo.c\nFN:1,foo\nFNDA:3,foo\nend_of_record\n")
+        store = CoverageStore()
+        loader = LCOVLoader(store, PathRemapper([]))
+        loader.load(a, "system")
+        loader.load(b, "unit")
+        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        assert foo.functions["foo"].hits.to_dict() == {"system": 2, "unit": 3}
+
+    def test_orphan_fnda_is_kept_at_line_zero_with_a_warning(self, source_tree, tmp_path, caplog):
+        info = tmp_path / "orphan.info"
+        info.write_text(f"TN:\nSF:{source_tree}/src/foo.c\nFNDA:4,ghost\nend_of_record\n")
+        store = CoverageStore()
+        with caplog.at_level("WARNING", logger="otto.coverage.merge.lcov_loader"):
+            LCOVLoader(store, PathRemapper([])).load(info, "system")
+        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        assert foo.functions["ghost"].start_line == 0
+        assert foo.functions["ghost"].hits.for_tier("system") == 4
+        assert any("ghost" in r.message and "FN" in r.message for r in caplog.records)

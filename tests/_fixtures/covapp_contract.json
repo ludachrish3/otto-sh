@@ -23,7 +23,9 @@
   "chunk_callbacks": {
     "index": "__OTTO_COV__",
     "file": "__OTTO_COV_FILE__",
-    "ticket": "__OTTO_COV_TICKET__"
+    "ticket": "__OTTO_COV_TICKET__",
+    "search": "__OTTO_COV_SEARCH__",
+    "symbols": "__OTTO_COV_SYMBOLS__"
   },
   "ticket_summary_keys": [
     "asserted",
@@ -163,7 +165,9 @@
   "cov_data_layout": {
     "index": "index.js",
     "files_dir": "files",
-    "tickets_dir": "tickets"
+    "tickets_dir": "tickets",
+    "search": "search.js",
+    "symbols": "symbols.js"
   },
   "tester_keys": [
     "email",
@@ -183,5 +187,10 @@
   "line_states": [
     "aging",
     "stale"
-  ]
+  ],
+  "search_chunk_keys": ["files", "stamp"],
+  "search_file_keys": ["chunk", "path", "states", "text"],
+  "search_state_chars": {"-": "none", "c": "covered", "u": "uncovered", "x": "excluded", "s": "stale", "a": "aging"},
+  "symbols_chunk_keys": ["functions", "stamp"],
+  "function_json_keys": ["chunk", "end", "hits", "line", "name", "path"]
 }

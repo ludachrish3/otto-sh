@@ -245,14 +245,50 @@ export interface FileChunk {
   excluded: number[];
 }
 
+/** One file inside `cov_data/search.js` (`window.__OTTO_COV_SEARCH__`). */
+export interface SearchFile {
+  chunk: string;
+  path: string;
+  /** Full source text, identical to the file chunk's `source`. */
+  text: string;
+  /** One char per line (`STATE_CHARS` in search.ts); char i describes line i+1. */
+  states: string;
+}
+
+export interface SearchChunk {
+  stamp: string;
+  /** Tree order: each directory's subdirectories (sorted) before its files (sorted). */
+  files: SearchFile[];
+}
+
+/** One compiler-reported function (`cov_data/symbols.js`, `window.__OTTO_COV_SYMBOLS__`). */
+export interface FunctionEntry {
+  name: string;
+  chunk: string;
+  path: string;
+  /** `FN:` start line; 0 for an `FNDA`-only orphan. */
+  line: number;
+  /** `FN:` end line from lcov ≥ 2.0, else null. */
+  end: number | null;
+  hits: Record<string, number>;
+}
+
+export interface SymbolsChunk {
+  stamp: string;
+  /** Sorted by name, then path, then line. */
+  functions: FunctionEntry[];
+}
+
 // The classic-script globals the emitted JS assigns/calls (index, per-file
-// chunks, per-ticket chunks). Declared here (not in data.ts) so every
-// consumer of these wire types picks up the same ambient `Window`
-// augmentation without a second import.
+// chunks, per-ticket chunks, and singleton search/symbols chunks). Declared
+// here (not in data.ts) so every consumer of these wire types picks up the
+// same ambient `Window` augmentation without a second import.
 declare global {
   interface Window {
     __OTTO_COV__?: IndexPayload;
     __OTTO_COV_FILE__?: (chunk: FileChunk) => void;
     __OTTO_COV_TICKET__?: (id: string, chunk: TicketChunk) => void;
+    __OTTO_COV_SEARCH__?: (chunk: SearchChunk) => void;
+    __OTTO_COV_SYMBOLS__?: (chunk: SymbolsChunk) => void;
   }
 }

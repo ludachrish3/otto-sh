@@ -31,6 +31,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
+      // Mirror of vite.covapp.config.ts: the vendored EmptyState imports the
+      // ~220 kB file-icon set for a slot nothing renders — see
+      // src/ui/fileIconStub.tsx for why it is aliased rather than edited.
+      "@untitledui/file-icons": path.resolve(import.meta.dirname, "./src/ui/fileIconStub.tsx"),
     },
   },
   build: {

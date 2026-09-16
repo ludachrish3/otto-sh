@@ -78,6 +78,7 @@ ARTIFACTS = [
     "coverage-runs.png",
     "coverage-tickets.png",
     "coverage-ticket-context.png",
+    "coverage-search.png",
 ]
 
 _VIEWPORT = {"width": 1280, "height": 720}
@@ -203,6 +204,28 @@ def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright im
         # bottom of the viewport rather than screenshotting mid-fade.
         page.locator('[data-testid="toast"]').first.wait_for(state="detached")
         page.screenshot(path=OUT_DIR / "coverage-ticket-context.png", full_page=True)
+
+        # Clear the pinned ticket before the next shot — this capture reuses
+        # one page across every screenshot, and a plain navigation whose
+        # hash drops a previously pinned ticket does not clear the pin: it
+        # REASSERTS it into the new URL unless the entry is a recognized
+        # Back/Forward one (focus.tsx's `onHashChange`, the "landing"
+        # reassert branch). Only the explicit clear control actually drops
+        # it, so without this click utils.c's row would stay hidden below.
+        page.locator('[data-testid="ticket-clear"]').click()
+        page.wait_for_selector('[data-testid="tree-row-file:product/utils.c"]')
+        # Let the "Ticket pin cleared" toast clear the viewport too, same as
+        # the pin toast above, so it doesn't linger into the next shot.
+        page.locator('[data-testid="toast"]').first.wait_for(state="detached")
+
+        # Search palette — opened from the directory page, mid-query, so the
+        # shot shows grouped results, both chips, and the total-count footer.
+        page.goto(base_uri + "#/coverage/product")
+        page.wait_for_selector('[data-testid="tree-row-file:product/utils.c"]')
+        page.keyboard.press("Control+K")
+        page.get_by_role("searchbox").fill("checked_add")
+        page.wait_for_selector('[data-testid="search-result-0"]')
+        page.screenshot(path=OUT_DIR / "coverage-search.png", full_page=False)
 
         page.close()
 

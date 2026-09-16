@@ -11,10 +11,12 @@ import {
   dataGuard,
   getIndex,
   loadFileChunk,
+  loadSearchChunk,
+  loadSymbolsChunk,
   loadTicketChunk,
   StampMismatchError,
 } from "./data";
-import type { FileChunk, IndexPayload, TicketChunk } from "./types";
+import type { FileChunk, IndexPayload, SearchChunk, SymbolsChunk, TicketChunk } from "./types";
 import { EXPECTED_DATA_FORMAT } from "./types";
 
 function emptyStats() {
@@ -286,5 +288,71 @@ describe("loadTicketChunk", () => {
 
     await expect(first).resolves.toEqual(chunk);
     await expect(second).resolves.toEqual(chunk);
+  });
+});
+
+function makeSearchChunk(overrides: Partial<SearchChunk> = {}): SearchChunk {
+  return {
+    stamp: "stamp-1",
+    files: [{ chunk: "a_b.c", path: "a/b.c", text: "int main() {}\n", states: "c-" }],
+    ...overrides,
+  };
+}
+
+function makeSymbolsChunk(overrides: Partial<SymbolsChunk> = {}): SymbolsChunk {
+  return {
+    stamp: "stamp-1",
+    functions: [
+      { name: "main", chunk: "a_b.c", path: "a/b.c", line: 1, end: null, hits: { unit: 1 } },
+    ],
+    ...overrides,
+  };
+}
+
+describe("loadSearchChunk / loadSymbolsChunk", () => {
+  it("inject the singleton scripts and resolve via their callbacks", async () => {
+    window.__OTTO_COV__ = makeIndex();
+    const appendSpy = vi.spyOn(document.head, "appendChild");
+
+    const search = loadSearchChunk();
+    const symbols = loadSymbolsChunk();
+    const srcs = appendSpy.mock.calls.map((c) => (c[0] as HTMLScriptElement).getAttribute("src"));
+    expect(srcs).toEqual(["./cov_data/search.js", "./cov_data/symbols.js"]);
+
+    window.__OTTO_COV_SEARCH__?.(makeSearchChunk());
+    window.__OTTO_COV_SYMBOLS__?.(makeSymbolsChunk());
+    await expect(search).resolves.toEqual(makeSearchChunk());
+    await expect(symbols).resolves.toEqual(makeSymbolsChunk());
+  });
+
+  it("dedupe an in-flight load and cache a resolved one", async () => {
+    window.__OTTO_COV__ = makeIndex();
+    const appendSpy = vi.spyOn(document.head, "appendChild");
+
+    const first = loadSearchChunk();
+    const second = loadSearchChunk();
+    expect(appendSpy).toHaveBeenCalledTimes(1);
+    window.__OTTO_COV_SEARCH__?.(makeSearchChunk());
+    await expect(first).resolves.toEqual(makeSearchChunk());
+    await expect(second).resolves.toEqual(makeSearchChunk());
+
+    await loadSearchChunk();
+    expect(appendSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reject with StampMismatchError on a stale stamp, and a plain Error on script failure", async () => {
+    window.__OTTO_COV__ = makeIndex({ stamp: "current" });
+    const appendSpy = vi.spyOn(document.head, "appendChild");
+
+    const stale = loadSymbolsChunk();
+    window.__OTTO_COV_SYMBOLS__?.(makeSymbolsChunk({ stamp: "old" }));
+    await expect(stale).rejects.toBeInstanceOf(StampMismatchError);
+
+    _resetForTests();
+    const failing = loadSearchChunk();
+    const script = appendSpy.mock.calls.at(-1)?.[0] as HTMLScriptElement;
+    script.onerror?.(new Event("error"));
+    await expect(failing).rejects.toBeInstanceOf(Error);
+    await expect(failing).rejects.not.toBeInstanceOf(StampMismatchError);
   });
 });

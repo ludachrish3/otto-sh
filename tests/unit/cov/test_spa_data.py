@@ -4,14 +4,26 @@ import json
 import re
 from pathlib import Path
 
+from otto.coverage.renderer import spa_data
 from otto.coverage.renderer.spa_data import (
     OTTO_COV_DATA_FORMAT,
+    SEARCH_CHUNK_WARN_BYTES,
     build_index_payload,
+    build_search_payload,
+    build_symbols_payload,
     emit_chunks,
+    iter_tree_files,
+    line_states,
     make_stamp,
     mangle_path,
 )
-from otto.coverage.store.model import CoverageStore, OverrideRecord, Thresholds, TicketRecord
+from otto.coverage.store.model import (
+    CoverageStore,
+    FileRecord,
+    OverrideRecord,
+    Thresholds,
+    TicketRecord,
+)
 
 
 def _write(tmp_path: Path, name: str, text: str) -> Path:
@@ -684,3 +696,94 @@ class TestOverrideProvenance:
         assert by_id["PROJ-2"]["asserted"] == {"bench": 1}
         summed = sum(by_id[t]["asserted"]["bench"] for t in ("PROJ-1", "PROJ-2"))
         assert summed == 2
+
+
+class TestLineStates:
+    def _record(self, tmp_path: Path) -> FileRecord:
+        rec = FileRecord(path=tmp_path / "s.c")
+        rec.get_or_create_line(2).hits.add("system", 1)  # covered
+        rec.get_or_create_line(3)  # uncovered
+        rec.get_or_create_line(4).state = "stale"
+        rec.get_or_create_line(5).state = "aging"
+        rec.get_or_create_line(6).hits.add("system", 9)
+        rec.excluded_lines = {6}  # excluded beats a record
+        rec.get_or_create_line(40)  # past EOF: dropped
+        return rec
+
+    def test_every_state_char_and_exact_length(self, tmp_path):
+        assert line_states(self._record(tmp_path), 7) == "-cusax-"
+
+    def test_length_is_the_line_count_not_the_highest_record(self, tmp_path):
+        assert len(line_states(self._record(tmp_path), 3)) == 3
+
+
+class TestTreeOrder:
+    def test_iter_tree_files_walks_dirs_before_files_in_sorted_order(self, tmp_path):
+        store = CoverageStore(tier_order=["system"])
+        for rel in ("z.c", "b/y.c", "b/a/x.c", "a/w.c"):
+            store.get_or_create_file(_write(tmp_path, rel, "int v;\n"))
+        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        assert [f["path"] for f in iter_tree_files(payload["tree"])] == [
+            "a/w.c",
+            "b/a/x.c",
+            "b/y.c",
+            "z.c",
+        ]
+
+
+class TestSearchAndSymbolsPayloads:
+    def test_search_payload_follows_tree_order_and_carries_states(self, tmp_path):
+        store = CoverageStore(tier_order=["system"])
+        second = store.get_or_create_file(_write(tmp_path, "b.c", "int b;\nint c;\n"))
+        second.get_or_create_line(1).hits.add("system", 1)
+        first = store.get_or_create_file(_write(tmp_path, "a.c", "int a;\n"))
+        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        records = {mangle_path(fr.path): fr for fr in store.files()}
+        sources = {chunk: fr.path.read_text() for chunk, fr in records.items()}
+        search = build_search_payload(payload["tree"], records, sources, "S")
+        assert search["stamp"] == "S"
+        assert [f["path"] for f in search["files"]] == ["a.c", "b.c"]
+        b = search["files"][1]
+        assert b["chunk"] == mangle_path(second.path)
+        assert b["text"] == "int b;\nint c;\n"
+        assert b["states"] == "c--"
+        assert search["files"][0]["chunk"] == mangle_path(first.path)
+        assert search["files"][0]["states"] == "--"
+
+    def test_symbols_payload_sorted_by_name_path_line(self, tmp_path):
+        store = CoverageStore(tier_order=["unit"])
+        fa = store.get_or_create_file(_write(tmp_path, "a.c", ""))
+        fb = store.get_or_create_file(_write(tmp_path, "b.c", ""))
+        fb.get_or_create_function("init", start_line=5, end_line=9).hits.add("unit", 2)
+        fa.get_or_create_function("init", start_line=7)
+        fa.get_or_create_function("alpha", start_line=1)
+        symbols = build_symbols_payload(store, prefix=tmp_path, stamp="S")
+        assert [(f["name"], f["path"], f["line"]) for f in symbols["functions"]] == [
+            ("alpha", "a.c", 1),
+            ("init", "a.c", 7),
+            ("init", "b.c", 5),
+        ]
+        assert symbols["functions"][2] == {
+            "name": "init",
+            "chunk": mangle_path(fb.path),
+            "path": "b.c",
+            "line": 5,
+            "end": 9,
+            "hits": {"unit": 2},
+        }
+
+    def test_emit_chunks_writes_both_files_once_and_warns_past_the_size_rule(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        store = CoverageStore(tier_order=["system"])
+        store.get_or_create_file(_write(tmp_path, "a.c", "int a;\n"))
+        out = tmp_path / "report"
+        monkeypatch.setattr(spa_data, "SEARCH_CHUNK_WARN_BYTES", 10)
+        with caplog.at_level("WARNING", logger="otto.coverage.renderer.spa_data"):
+            emit_chunks(store, out, project_name="P", prefix=tmp_path, stamp="S")
+        search_text = (out / "cov_data" / "search.js").read_text()
+        symbols_text = (out / "cov_data" / "symbols.js").read_text()
+        assert search_text.startswith("window.__OTTO_COV_SEARCH__(")
+        assert symbols_text.startswith("window.__OTTO_COV_SYMBOLS__(")
+        assert any("search.js" in r.message for r in caplog.records)
+        assert SEARCH_CHUNK_WARN_BYTES == 16 * 1024 * 1024

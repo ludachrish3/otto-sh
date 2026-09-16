@@ -10,6 +10,7 @@ from otto.coverage.store.model import (
     BranchHits,
     CoverageStore,
     FileRecord,
+    FunctionRecord,
     LineHits,
     LineRecord,
     OverrideRecord,
@@ -639,3 +640,92 @@ def test_branch_excluded_lines_round_trip(tmp_path):
     assert json.loads(path.read_text())["files"][0]["branch_excluded_lines"] == [2, 7]
     (reloaded,) = list(CoverageStore.load(path).files())
     assert reloaded.branch_excluded_lines == {2, 7}
+
+
+class TestFunctions:
+    def test_function_record_roundtrips_through_store_json(self, tmp_path):
+        store = CoverageStore(tier_order=["system"])
+        rec = store.get_or_create_file(Path("/x/f.c"))
+        fn = rec.get_or_create_function("checked_add", start_line=4, end_line=9)
+        fn.hits.add("system", 3)
+        path = tmp_path / "store.json"
+        store.save(path)
+
+        reloaded = CoverageStore.load(path)
+        (frec,) = list(reloaded.files())
+        assert frec.functions["checked_add"].start_line == 4
+        assert frec.functions["checked_add"].end_line == 9
+        assert frec.functions["checked_add"].hits.for_tier("system") == 3
+
+    def test_load_tolerates_absent_functions_key(self, tmp_path):
+        """A v7 store.json written before functions existed loads with none."""
+        store_json = tmp_path / "store.json"
+        store_json.write_text(
+            json.dumps(
+                {
+                    "format": 7,
+                    "tier_order": ["system"],
+                    "files": [{"path": "/x/f.c", "lines": {}}],
+                }
+            )
+        )
+        (frec,) = list(CoverageStore.load(store_json).files())
+        assert frec.functions == {}
+
+    def test_load_registers_tiers_seen_only_on_functions(self, tmp_path):
+        store_json = tmp_path / "store.json"
+        store_json.write_text(
+            json.dumps(
+                {
+                    "format": 7,
+                    "tier_order": [],
+                    "files": [
+                        {
+                            "path": "/x/f.c",
+                            "lines": {},
+                            "functions": [
+                                {
+                                    "name": "f",
+                                    "start_line": 1,
+                                    "end_line": None,
+                                    "hits": {"bench": 2},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            )
+        )
+        assert "bench" in CoverageStore.load(store_json).tier_order
+
+    def test_merge_adds_function_hits_and_keeps_first_seen_lines(self):
+        first = FunctionRecord(name="f", start_line=4, end_line=9, hits=LineHits({"system": 1}))
+        second = FunctionRecord(name="f", start_line=40, end_line=None, hits=LineHits({"unit": 5}))
+        first.merge(second)
+        assert first.start_line == 4
+        assert first.end_line == 9
+        assert first.hits.to_dict() == {"system": 1, "unit": 5}
+
+    def test_file_merge_clones_unknown_functions_without_aliasing(self):
+        a = FileRecord(path=Path("/x/f.c"))
+        b = FileRecord(path=Path("/x/f.c"))
+        b.get_or_create_function("g", start_line=2).hits.add("unit", 1)
+        a.merge(b)
+        b.functions["g"].hits.add("unit", 10)
+        assert a.functions["g"].hits.for_tier("unit") == 1
+
+        # A second merge of the SAME name goes through the known-name branch:
+        # hits add up, the first-seen lines survive.
+        c = FileRecord(path=Path("/x/f.c"))
+        c.get_or_create_function("g", start_line=99).hits.add("unit", 4)
+        a.merge(c)
+        assert a.functions["g"].start_line == 2
+        assert a.functions["g"].hits.for_tier("unit") == 5
+
+    def test_to_dict_orders_functions_by_start_line_then_name(self):
+        rec = FileRecord(path=Path("/x/f.c"))
+        rec.get_or_create_function("zeta", start_line=10)
+        rec.get_or_create_function("alpha", start_line=10)
+        rec.get_or_create_function("main", start_line=1)
+        names = [f["name"] for f in rec.to_dict()["functions"]]
+        assert names == ["main", "alpha", "zeta"]

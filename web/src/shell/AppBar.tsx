@@ -50,7 +50,7 @@ export function AppBar() {
             shortcuts on the EmptyState screen per spec) — showing this
             trigger earlier would queue an openPalette() with nothing
             listening, then spring the palette open the moment data loads. */}
-        {hasData && <SearchTrigger />}
+        {hasData && <SearchTrigger onOpen={openPalette} />}
       </div>
       <div className="flex items-center gap-2">
         {mode === "live" && hasData && <MarkControl />}

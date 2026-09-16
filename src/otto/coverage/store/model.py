@@ -54,7 +54,8 @@ Version 7 adds the exclusion-filter surface: a per-file
 while the line itself still counts), and — more importantly — changes what
 the file means: excluded lines are now DELETED from ``lines`` rather than
 merely annotated, so every percentage in the file already has them out of
-the denominator.
+the denominator. Version 7 also carries an additive, optional ``files[].functions``
+list (2026-09); absent keys load as no functions, so no bump.
 There is no migration shim: a file that does not declare this exact
 version fails loud in :meth:`CoverageStore.load` with a message telling
 the caller to regenerate it, rather than silently mis-reading
@@ -186,6 +187,34 @@ class BranchHits:
             "branch": self.branch,
             "hits": self.hits.to_dict(),
             "reachable": dict(self.reachable),
+        }
+
+
+@dataclass
+class FunctionRecord:
+    """One compiler-reported function: lcov ``FN:`` (start/end line) and ``FNDA:`` (hits).
+
+    Keyed by name in :attr:`FileRecord.functions`. ``end_line`` is ``None`` for
+    tracefiles from lcov < 2.0, which emit only the start line.
+    """
+
+    name: str
+    start_line: int
+    end_line: int | None = None
+    hits: LineHits = field(default_factory=LineHits)
+
+    def merge(self, other: "FunctionRecord") -> None:
+        """Additive on hits; the first-seen start/end lines win."""
+        assert self.name == other.name  # noqa: S101 — internal invariant: callers only merge same-named functions
+        self.hits.merge(other.hits)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable dict representation of this function record."""
+        return {
+            "name": self.name,
+            "start_line": self.start_line,
+            "end_line": self.end_line,
+            "hits": self.hits.to_dict(),
         }
 
 
@@ -378,11 +407,29 @@ class FileRecord:
     records, that being the only thing knowable before it clears them.
     """
 
+    functions: dict[str, FunctionRecord] = field(default_factory=dict)
+    """Compiler-reported functions by name (lcov ``FN:``/``FNDA:``).
+
+    Additive on the on-disk ``store.json`` (``"functions"``; absent on stores
+    written before it existed and tolerated by :meth:`CoverageStore.load`),
+    which is why ``STORE_FORMAT_VERSION`` did not move for it.
+    """
+
     def get_or_create_line(self, line_number: int) -> LineRecord:
         """Return the :class:`LineRecord` for *line_number*, creating it if absent."""
         if line_number not in self.lines:
             self.lines[line_number] = LineRecord(line_number=line_number)
         return self.lines[line_number]
+
+    def get_or_create_function(
+        self, name: str, start_line: int = 0, end_line: int | None = None
+    ) -> FunctionRecord:
+        """Return the :class:`FunctionRecord` for *name*, creating it if absent."""
+        fn = self.functions.get(name)
+        if fn is None:
+            fn = FunctionRecord(name=name, start_line=start_line, end_line=end_line)
+            self.functions[name] = fn
+        return fn
 
     def merge(self, other: "FileRecord") -> None:
         """Merge *other* into this file record, combining per-line hits and branches."""
@@ -397,6 +444,17 @@ class FileRecord:
                 clone = LineRecord(line_number=lineno)
                 clone.merge(other_line)
                 self.lines[lineno] = clone
+        for name, other_fn in other.functions.items():
+            mine = self.functions.get(name)
+            if mine is None:
+                self.functions[name] = FunctionRecord(
+                    name=name,
+                    start_line=other_fn.start_line,
+                    end_line=other_fn.end_line,
+                    hits=LineHits(counts=dict(other_fn.hits.counts)),
+                )
+            else:
+                mine.merge(other_fn)
 
     def _all_branches(self) -> list[BranchHits]:
         return [b for lr in self.lines.values() for b in lr.branches]
@@ -457,6 +515,10 @@ class FileRecord:
             "lines": {str(lineno): self._line_to_dict(rec) for lineno, rec in self.lines.items()},
             "excluded_lines": sorted(self.excluded_lines),
             "branch_excluded_lines": sorted(self.branch_excluded_lines),
+            "functions": [
+                fn.to_dict()
+                for fn in sorted(self.functions.values(), key=lambda f: (f.start_line, f.name))
+            ],
         }
 
 
@@ -731,5 +793,12 @@ class CoverageStore:
                         store.register_tier(tier)
                     for tier in b.reachable:
                         store.register_tier(tier)
+            for fnd in fd.get("functions") or []:
+                fn = record.get_or_create_function(
+                    fnd["name"], start_line=int(fnd["start_line"]), end_line=fnd.get("end_line")
+                )
+                fn.hits = LineHits(counts=dict(fnd.get("hits") or {}))
+                for tier in fn.hits.counts:
+                    store.register_tier(tier)
             store.merge_file(record)
         return store

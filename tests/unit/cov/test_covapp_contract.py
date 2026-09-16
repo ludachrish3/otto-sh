@@ -24,6 +24,7 @@ from otto.coverage.attribution import NO_TICKET, UNCOMMITTED_TICKET
 from otto.coverage.colors import STATE_COLORS
 from otto.coverage.renderer.spa_data import (
     OTTO_COV_DATA_FORMAT,
+    SEARCH_STATE_CHARS,
     build_index_payload,
     emit_chunks,
 )
@@ -329,3 +330,47 @@ def test_line_state_domain_matches_the_contract(tmp_path):
     line = next(iter(chunk["lines"].values()))
     assert line["state"] is not None, "positive control: emit a non-null state"
     assert line["state"] in CONTRACT["line_states"]
+
+
+def _emit_all(tmp_path: Path) -> Path:
+    out = tmp_path / "report"
+    out.mkdir()
+    store = _ticket_store(tmp_path)
+    (tmp_path / "a.c").write_text("int a;\nint b;\n")
+    record = next(iter(store.files()))
+    record.get_or_create_function("a", start_line=1).hits.add("unit", 1)
+    emit_chunks(store, out, project_name="P", prefix=tmp_path, stamp="S")
+    return out
+
+
+def _unwrap_call(text: str, callback: str) -> dict:
+    assert text.startswith(f"window.{callback}(")
+    assert text.endswith(");\n")
+    return json.loads(text[len(f"window.{callback}(") : -3])
+
+
+def test_emitted_search_chunk_keys_match_the_contract(tmp_path):
+    out = _emit_all(tmp_path)
+    text = (out / "cov_data" / "search.js").read_text()
+    chunk = _unwrap_call(text, CONTRACT["chunk_callbacks"]["search"])
+    assert sorted(chunk) == CONTRACT["search_chunk_keys"]
+    assert sorted(chunk["files"][0]) == CONTRACT["search_file_keys"]
+
+
+def test_emitted_symbols_chunk_keys_match_the_contract(tmp_path):
+    out = _emit_all(tmp_path)
+    text = (out / "cov_data" / "symbols.js").read_text()
+    chunk = _unwrap_call(text, CONTRACT["chunk_callbacks"]["symbols"])
+    assert sorted(chunk) == CONTRACT["symbols_chunk_keys"]
+    assert sorted(chunk["functions"][0]) == CONTRACT["function_json_keys"]
+
+
+def test_search_state_chars_match_the_contract():
+    assert CONTRACT["search_state_chars"] == SEARCH_STATE_CHARS
+
+
+def test_cov_data_layout_names_the_search_and_symbols_files(tmp_path):
+    out = _emit_all(tmp_path)
+    layout = CONTRACT["cov_data_layout"]
+    assert (out / "cov_data" / layout["search"]).exists()
+    assert (out / "cov_data" / layout["symbols"]).exists()

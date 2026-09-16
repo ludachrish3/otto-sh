@@ -1,13 +1,15 @@
-// Boot layer for the covapp classic-script data lane. Two classic
-// scripts feed this module: covapp.html loads `cov_data/index.js`
+// Boot layer for the covapp classic-script data lane. Four classic-script
+// lanes feed this module: covapp.html loads `cov_data/index.js`
 // (`window.__OTTO_COV__ = {...}`) BEFORE the app bundle so getIndex()/
-// dataGuard() never race a script tag; per-file chunks arrive later, on
-// navigation, via a `<script src="./cov_data/files/<chunk>.js">` this
-// module injects itself — the chunk calls `window.__OTTO_COV_FILE__({...})`
-// once it executes, which resolves whichever loadFileChunk() call is
-// waiting on that chunk id.
+// dataGuard() never race a script tag; per-file chunks, per-ticket chunks,
+// and two singleton chunks (search index and function table) arrive later, on
+// demand, via `<script src="./cov_data/...">` this module injects itself —
+// each chunk calls its corresponding callback (`window.__OTTO_COV_FILE__`,
+// `window.__OTTO_COV_TICKET__`, `window.__OTTO_COV_SEARCH__`, or
+// `window.__OTTO_COV_SYMBOLS__`) once it executes, which resolves whichever
+// loader call is waiting on that chunk.
 
-import type { FileChunk, IndexPayload, TicketChunk } from "./types";
+import type { FileChunk, IndexPayload, SearchChunk, SymbolsChunk, TicketChunk } from "./types";
 import { EXPECTED_DATA_FORMAT } from "./types";
 
 export type DataGuardResult = "ok" | "missing" | "format";
@@ -207,14 +209,80 @@ export function loadTicketChunk(chunk: string): Promise<TicketChunk> {
   });
 }
 
+// --- Singleton chunks (search index, symbols) ------------------------------
+// One file each per report, no chunk id — so one pending list and one
+// cached value per lane instead of the keyed maps above. Same stamp guard,
+// same in-flight dedupe, same rejection shapes.
+
+interface SingletonLane<T extends { stamp: string }> {
+  src: string;
+  label: string;
+  cached: T | null;
+  waiters: { resolve: (chunk: T) => void; reject: (err: Error) => void }[] | null;
+}
+
+function makeLane<T extends { stamp: string }>(src: string, label: string): SingletonLane<T> {
+  return { src, label, cached: null, waiters: null };
+}
+
+function deliverSingleton<T extends { stamp: string }>(lane: SingletonLane<T>, chunk: T): void {
+  const waiters = lane.waiters;
+  if (!waiters) return; // stray/late callback nobody is waiting on — drop it
+  lane.waiters = null;
+  const index = getIndex();
+  if (index === null || chunk.stamp !== index.stamp) {
+    const err = new StampMismatchError(lane.label);
+    for (const waiter of waiters) waiter.reject(err);
+    return;
+  }
+  lane.cached = chunk;
+  for (const waiter of waiters) waiter.resolve(chunk);
+}
+
+function loadSingleton<T extends { stamp: string }>(lane: SingletonLane<T>): Promise<T> {
+  if (lane.cached) return Promise.resolve(lane.cached);
+  return new Promise<T>((resolve, reject) => {
+    if (lane.waiters) {
+      lane.waiters.push({ resolve, reject });
+      return;
+    }
+    lane.waiters = [{ resolve, reject }];
+    const script = document.createElement("script");
+    script.src = lane.src;
+    script.onerror = () => {
+      const list = lane.waiters ?? [];
+      lane.waiters = null;
+      const err = new Error(`failed to load ${lane.label} chunk`);
+      for (const waiter of list) waiter.reject(err);
+    };
+    document.head.appendChild(script);
+  });
+}
+
+let searchLane = makeLane<SearchChunk>("./cov_data/search.js", "search");
+let symbolsLane = makeLane<SymbolsChunk>("./cov_data/symbols.js", "symbols");
+window.__OTTO_COV_SEARCH__ = (chunk: SearchChunk) => deliverSingleton(searchLane, chunk);
+window.__OTTO_COV_SYMBOLS__ = (chunk: SymbolsChunk) => deliverSingleton(symbolsLane, chunk);
+
+/** The report-wide text index (`cov_data/search.js`), loaded on first use. */
+export function loadSearchChunk(): Promise<SearchChunk> {
+  return loadSingleton(searchLane);
+}
+
+/** The function table (`cov_data/symbols.js`), loaded on first use. */
+export function loadSymbolsChunk(): Promise<SymbolsChunk> {
+  return loadSingleton(symbolsLane);
+}
+
 /** Test seam: clear pending waiters + the resolved-chunk cache between
- * tests (both the file-chunk lane and the ticket-chunk lane). Does not
- * un-register either `window.__OTTO_COV_FILE__`/`window.__OTTO_COV_TICKET__`
- * callback — that registration is idempotent and harmless to leave in
- * place. */
+ * tests (all four chunk lanes: files, tickets, search, symbols). Does not
+ * un-register any callbacks — all registration is idempotent and harmless to
+ * leave in place. */
 export function _resetForTests(): void {
   pending = new Map();
   cache = new Map();
   ticketPending = new Map();
   ticketCache = new Map();
+  searchLane = makeLane<SearchChunk>("./cov_data/search.js", "search");
+  symbolsLane = makeLane<SymbolsChunk>("./cov_data/symbols.js", "symbols");
 }

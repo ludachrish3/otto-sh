@@ -5,7 +5,7 @@
 // on mount — the tree's rolled-up `Stats` (what DirectoryPage reads) has no
 // per-line granularity, only the chunk does.
 import { ChevronDown, File02 } from "@untitledui/icons";
-import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { type CodeLine, CodeView, type GutterCol } from "@/ui/CodeView";
 import { cx } from "@/utils/cx";
@@ -22,7 +22,10 @@ import {
   lineHasMemberHit,
   withHideAssertedSuffix,
 } from "../format";
+import { hashQueryOf, useHash } from "../hashState";
 import { highlightLines, langForPath } from "../highlight";
+import { clearMatches, paintMatches } from "../matchHighlight";
+import { compileQuery, matchesInLines, statesFromChunk } from "../search";
 import { ticketFileRow } from "../tickets";
 import type { BranchJson, FileChunk, FileNode, IndexPayload, LineJson } from "../types";
 import { GuardScreen } from "./GuardScreen";
@@ -472,8 +475,11 @@ const LINES_PARAM = /^(\d+)(?:-(\d+))?$/;
  * ignored (returns `null`) rather than thrown — these links arrive from
  * outside this component, not from data this app itself validated. Exported
  * for direct unit testing, same pattern as `rowClassFor` above. */
-export function parseLinesRange(totalLines: number): LineRange | null {
-  const raw = parseHashQuery().get("lines");
+export function parseLinesRange(
+  totalLines: number,
+  params: URLSearchParams = parseHashQuery(),
+): LineRange | null {
+  const raw = params.get("lines");
   if (raw === null) return null;
   const match = LINES_PARAM.exec(raw);
   if (!match) return null;
@@ -498,14 +504,6 @@ export interface FilePageProps {
 export function FilePage({ index, segments, node }: FilePageProps) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [openLines, setOpenLines] = useState<Set<number>>(new Set());
-  // `?lines=` deep-link target — re-parsed per chunk load (below), never a
-  // lazy `useState` initializer: this same `FilePage` instance
-  // persists across a directory-tree navigation from one file to another
-  // (App.tsx's wildcard route re-renders it with a new `node` rather than
-  // remounting, exactly why the load effect below already keys on
-  // `node.chunk` for `state`/`openLines`), so a value computed only once at
-  // first-ever mount would go stale on the very next file.
-  const [highlight, setHighlight] = useState<LineRange | null>(null);
   const { focus, ticket, hideAsserted } = useFocus();
   // Independently re-resolved against THIS page's own `index` prop, same
   // defensive pattern AppShell.tsx/DirectoryPage.tsx use — a focus label
@@ -517,11 +515,52 @@ export function FilePage({ index, segments, node }: FilePageProps) {
   // lookup needed, unlike `focusedContext` above (which derives display
   // fields `focus`, a bare label string, doesn't carry).
 
+  const hash = useHash();
+  // Derived, not stored: re-parsed on every hash change (a same-file
+  // `?lines=` navigation never remounts this page) and bounds-checked
+  // against the loaded chunk's real line count. `parseLinesRange` returns a
+  // fresh object every call, so a hash change that never touched `?lines=`
+  // (e.g. toggling the search pill) still produces a new `highlight`
+  // identity here — the scroll effect below sidesteps that by keying on the
+  // resolved bounds (`highlight?.start`/`.end`, both primitives) instead of
+  // on `highlight` itself, rather than this memo trying to preserve
+  // reference equality (which would mean writing a ref during render).
+  const highlight = useMemo(
+    () =>
+      state.status === "ready"
+        ? parseLinesRange(state.chunk.source.split("\n").length, hashQueryOf(hash))
+        : null,
+    [hash, state],
+  );
+
+  // `?q=` (+ `re=1`, `unc=1`) — the palette's link state. Recomputed with
+  // the same engine the palette ran, over this chunk alone.
+  const searchQuery = hashQueryOf(hash).get("q");
+  const matchSpans = useMemo(() => {
+    if (state.status !== "ready" || searchQuery === null || searchQuery.length === 0) return null;
+    const params = hashQueryOf(hash);
+    const compiled = compileQuery(searchQuery, params.get("re") === "1");
+    if (compiled.re === undefined) return new Map<number, [number, number][]>();
+    const rows = matchesInLines(
+      state.chunk.source.split("\n"),
+      compiled.re,
+      statesFromChunk(state.chunk),
+      params.get("unc") === "1",
+    );
+    return new Map(rows.map((r) => [r.line, r.spans]));
+  }, [hash, state, searchQuery]);
+
+  const cardRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (matchSpans === null || cardRef.current === null) return;
+    paintMatches(cardRef.current, matchSpans);
+    return () => clearMatches();
+  }, [matchSpans]);
+
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
     setOpenLines(new Set());
-    setHighlight(null);
     loadFileChunk(node.chunk)
       // `loadedChunk`, not `chunk`: the render body below destructures its own
       // `chunk` out of `state`, and these two are a lifecycle apart — this one
@@ -530,11 +569,6 @@ export function FilePage({ index, segments, node }: FilePageProps) {
         const htmlLines = await highlightLines(loadedChunk.source, langForPath(loadedChunk.path));
         if (cancelled) return;
         setState({ status: "ready", chunk: loadedChunk, htmlLines });
-        // Bounds-checking `?lines=` needs the file's real line count, which
-        // only exists once the chunk has resolved — see `parseLinesRange`'s
-        // doc comment for why an out-of-bounds bound is ignored rather than
-        // clamped.
-        setHighlight(parseLinesRange(loadedChunk.source.split("\n").length));
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -549,20 +583,33 @@ export function FilePage({ index, segments, node }: FilePageProps) {
   }, [node.chunk]);
 
   // Scrolls the FIRST highlighted row into view, once per resolved
-  // `?lines=` target (design §6.2). `?.` guards jsdom, which has
-  // no `scrollIntoView` implementation at all under this project's pinned
-  // version (throws "is not a function") rather than a harmless no-op —
-  // every other DOM method this codebase calls under test tolerates jsdom's
-  // gaps; this is the first real caller of this particular one. Queries the
-  // DOM directly by testid rather than threading a ref through `CodeView`
-  // (which renders the actual row divs) — `CodeView` has no other reason to
-  // expose row nodes to its caller, and this runs at most once per file
-  // load, not on a hot path.
+  // `?lines=` target (design §6.2) — runs whenever the highlight's START
+  // LINE changes, not on every hash write. `highlight` is a fresh object on
+  // every hash change (`parseLinesRange` always allocates), including one
+  // that leaves `?lines=` untouched (e.g. clearing the search pill), so
+  // keying this effect on `highlight` itself would re-fire — and re-scroll
+  // the user — on those too. Destructured into a `highlightStart` local
+  // (rather than reading `highlight.start` inside the effect body while
+  // depending on the split-out primitive) so the effect depends on exactly
+  // what it reads — the primitive bound, not the object's identity; a
+  // `highlightEnd` counterpart was dropped from the dependency list per
+  // Biome's `lint/correctness/useExhaustiveDependencies` ("This hook
+  // specifies more dependencies than necessary: highlightEnd") — the body
+  // never reads the range's end, only its start row, so depending on end
+  // too would be dishonest. `?.` guards jsdom, which has no `scrollIntoView`
+  // implementation at all under this project's pinned version (throws "is
+  // not a function") rather than a harmless no-op — every other DOM method
+  // this codebase calls under test tolerates jsdom's gaps; this is the
+  // first real caller of this particular one. Queries the DOM directly by
+  // testid rather than threading a ref through `CodeView` (which renders
+  // the actual row divs) — `CodeView` has no other reason to expose row
+  // nodes to its caller.
+  const highlightStart = highlight?.start;
   useEffect(() => {
-    if (!highlight) return;
-    const row = document.querySelector<HTMLElement>(`[data-testid="code-row-${highlight.start}"]`);
+    if (highlightStart === undefined) return;
+    const row = document.querySelector<HTMLElement>(`[data-testid="code-row-${highlightStart}"]`);
     row?.scrollIntoView?.({ block: "center" });
-  }, [highlight]);
+  }, [highlightStart]);
 
   function onToggleLine(lineNo: number): void {
     setOpenLines((prev) => {
@@ -616,6 +663,7 @@ export function FilePage({ index, segments, node }: FilePageProps) {
       style: dimStyleFor(rowClass, index, dimmed),
       ticketGutter: buildTicketGutter(lineNo, line, index),
       highlighted: highlight !== null && lineNo >= highlight.start && lineNo <= highlight.end,
+      matched: matchSpans?.has(lineNo) ?? false,
     };
   });
 
@@ -728,8 +776,14 @@ export function FilePage({ index, segments, node }: FilePageProps) {
           context: Boolean(focusedContext),
         }),
       }}
+      searchHit={
+        searchQuery !== null && matchSpans !== null
+          ? { query: searchQuery, count: matchSpans.size }
+          : null
+      }
     >
       <div
+        ref={cardRef}
         data-testid="code-card"
         // `overflow-clip`, not `overflow-hidden`: `overflow-hidden` creates a
         // scroll container (a "scrollport"), and CodeView's `sticky top-0`

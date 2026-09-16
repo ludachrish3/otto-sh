@@ -24,14 +24,18 @@ import type {
   DirNode,
   FileChunk,
   FileNode,
+  FunctionEntry,
   IndexPayload,
   LineJson,
   LineStatBucket,
   OverrideJson,
   RunContrib,
   RunJson,
+  SearchChunk,
+  SearchFile,
   StatBucket,
   Stats,
+  SymbolsChunk,
   Tester,
   Thresholds,
   TicketChunk,
@@ -50,7 +54,7 @@ const contract = JSON.parse(
    * are the whole API between the emitted classic scripts and this bundle,
    * so a contract file that dropped one should fail HERE, at the type, not
    * as an `undefined` key silently asserted against `typeof … === "function"`. */
-  chunk_callbacks: { index: string; file: string; ticket: string };
+  chunk_callbacks: { index: string; file: string; ticket: string; search: string; symbols: string };
   ticket_summary_keys: string[];
   ticket_totals_keys: string[];
   ticket_chunk_keys: string[];
@@ -72,9 +76,20 @@ const contract = JSON.parse(
   branch_json_keys: string[];
   stats_flags_keys: string[];
   line_states: string[];
+  search_chunk_keys: string[];
+  search_file_keys: string[];
+  search_state_chars: Record<string, string>;
+  symbols_chunk_keys: string[];
+  function_json_keys: string[];
   /** Spelled out for the same reason as `chunk_callbacks`: these are the
    * paths `data.ts` and `covapp.html` fetch by hand. */
-  cov_data_layout: { index: string; files_dir: string; tickets_dir: string };
+  cov_data_layout: {
+    index: string;
+    files_dir: string;
+    tickets_dir: string;
+    search: string;
+    symbols: string;
+  };
 };
 
 // `Record<keyof X, true>` is the compiler half of this guard: adding a field
@@ -117,12 +132,33 @@ const TICKET_CHUNK_FILE_KEYS: Record<keyof TicketChunk["files"][number], true> =
   asserted_only: true,
 };
 
+const SEARCH_CHUNK_KEYS: Record<keyof SearchChunk, true> = { stamp: true, files: true };
+const SEARCH_FILE_KEYS: Record<keyof SearchFile, true> = {
+  chunk: true,
+  path: true,
+  text: true,
+  states: true,
+};
+const SYMBOLS_CHUNK_KEYS: Record<keyof SymbolsChunk, true> = { stamp: true, functions: true };
+const FUNCTION_JSON_KEYS: Record<keyof FunctionEntry, true> = {
+  name: true,
+  chunk: true,
+  path: true,
+  line: true,
+  end: true,
+  hits: true,
+};
+
 describe("covapp ticket + callback contract (shared with the Python emitter)", () => {
   it.each([
     ["TicketSummary", TICKET_SUMMARY_KEYS, contract.ticket_summary_keys],
     ["TicketTotals", TICKET_TOTALS_KEYS, contract.ticket_totals_keys],
     ["TicketChunk", TICKET_CHUNK_KEYS, contract.ticket_chunk_keys],
     ["TicketChunk.files[]", TICKET_CHUNK_FILE_KEYS, contract.ticket_chunk_file_keys],
+    ["SearchChunk", SEARCH_CHUNK_KEYS, contract.search_chunk_keys],
+    ["SearchFile", SEARCH_FILE_KEYS, contract.search_file_keys],
+    ["SymbolsChunk", SYMBOLS_CHUNK_KEYS, contract.symbols_chunk_keys],
+    ["FunctionEntry", FUNCTION_JSON_KEYS, contract.function_json_keys],
   ])("%s declares exactly the contract's keys", (_name, declared, expected) => {
     expect(Object.keys(declared).sort()).toEqual([...expected].sort());
   });
@@ -153,6 +189,8 @@ describe("covapp ticket + callback contract (shared with the Python emitter)", (
     const w = window as unknown as Record<string, unknown>;
     expect(typeof w[contract.chunk_callbacks.file]).toBe("function");
     expect(typeof w[contract.chunk_callbacks.ticket]).toBe("function");
+    expect(typeof w[contract.chunk_callbacks.search]).toBe("function");
+    expect(typeof w[contract.chunk_callbacks.symbols]).toBe("function");
   });
 
   it("reads the index payload from the contract's window property", async () => {
@@ -175,6 +213,25 @@ describe("covapp ticket + callback contract (shared with the Python emitter)", (
       if (saved === undefined) delete w[contract.chunk_callbacks.index];
       else w[contract.chunk_callbacks.index] = saved;
     }
+  });
+
+  it("search state chars mirror the Python emitter's", async () => {
+    const { STATE_CHARS } = await import("./search");
+    expect(STATE_CHARS).toEqual(contract.search_state_chars);
+  });
+
+  it("loads the search and symbols chunks from the contract's cov_data layout", async () => {
+    const { loadSearchChunk, loadSymbolsChunk, _resetForTests } = await import("./data");
+    _resetForTests();
+    const appendSpy = vi.spyOn(document.head, "appendChild");
+    void loadSearchChunk();
+    void loadSymbolsChunk();
+    const srcs = appendSpy.mock.calls.map((c) => (c[0] as HTMLScriptElement).getAttribute("src"));
+    expect(srcs).toEqual([
+      `./cov_data/${contract.cov_data_layout.search}`,
+      `./cov_data/${contract.cov_data_layout.symbols}`,
+    ]);
+    _resetForTests();
   });
 });
 

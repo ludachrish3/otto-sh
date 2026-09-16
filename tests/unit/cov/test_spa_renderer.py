@@ -110,6 +110,15 @@ class TestEmptyStoreReport:
         assert payload["tree"]["files"] == []
         assert (out / "index.html").exists()
 
+    def test_render_writes_the_search_and_symbols_chunks(self, tmp_path, hermetic_covapp_bundle):
+        src = _write(tmp_path, "a.c", "int a;\n")
+        store = CoverageStore(tier_order=["system"])
+        store.get_or_create_file(src).get_or_create_line(1).hits.add("system", 1)
+        out = tmp_path / "report"
+        SpaRenderer(out).render(store)
+        assert (out / "cov_data" / "search.js").exists()
+        assert (out / "cov_data" / "symbols.js").exists()
+
 
 class TestPrefixAndChunkNaming:
     def test_prefix_strips_display_path_but_chunk_name_uses_full_path(self, tmp_path):

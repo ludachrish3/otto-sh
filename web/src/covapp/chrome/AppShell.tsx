@@ -11,7 +11,7 @@
 // dataGuard() === "ok", so a non-null payload is always available here, and
 // every page gluing AppShell in would otherwise have to thread the same
 // getIndex() read through as props for no benefit.
-import { Check, Command, DotsVertical, Moon01, Sun } from "@untitledui/icons";
+import { Check, Command, DotsVertical, Moon01, Sun, XClose } from "@untitledui/icons";
 import { type ReactNode, useEffect, useState } from "react";
 
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
@@ -19,10 +19,13 @@ import { Dropdown } from "@/components/base/dropdown/dropdown";
 import { loadTheme, saveTheme, type Theme } from "@/theme";
 import { cx } from "@/utils/cx";
 import { Breadcrumbs, type Crumb } from "../../ui/Breadcrumbs";
+import { SearchTrigger } from "../../ui/SearchTrigger";
+import { matchesBinding, PALETTE_BINDING } from "../../ui/shortcuts";
 import { groupContexts } from "../contexts";
 import { getIndex } from "../data";
-import { useFocus } from "../focus";
+import { setHashQuery, useFocus } from "../focus";
 import type { IndexPayload } from "../types";
+import { SearchPalette } from "./SearchPalette";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { StatsCard, type StatsCardProps } from "./StatsCard";
 import { TicketSearch } from "./TicketSearch";
@@ -32,6 +35,9 @@ export interface AppShellProps {
   title: ReactNode;
   meta: ReactNode;
   stats: StatsCardProps | null;
+  /** `?q=` (+ `re=1`/`unc=1`) summary the file page reports for the app-bar
+   * pill — `null`/`undefined` when no search is active. */
+  searchHit?: { query: string; count: number } | null | undefined;
   children: ReactNode;
 }
 
@@ -249,11 +255,12 @@ function BranchPill({ tone }: { tone: "high" | "low" | "na" }) {
   );
 }
 
-export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps) {
+export function AppShell({ crumbs, title, meta, stats, searchHit, children }: AppShellProps) {
   const index = getIndex();
   const { focus, setFocus, ticket, setTicket, hideAsserted, setHideAsserted } = useFocus();
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   // Wired here (not ShortcutsDialog) because it's the app-wide "?" binding,
   // not something scoped to the dialog itself.
@@ -267,6 +274,18 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  // Ctrl+K/⌘K toggles the palette — a local listener (the TicketSearch
+  // pattern), not useGlobalShortcuts: covapp has no command registry.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!matchesBinding(event, PALETTE_BINDING)) return;
+      event.preventDefault();
+      setPaletteOpen((open) => !open);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
   function toggleTheme() {
@@ -354,6 +373,37 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
           )}
         </div>
         <div className="flex items-center gap-2">
+          {searchHit && (
+            <span
+              data-testid="search-pill"
+              className="inline-flex max-w-52 items-center gap-1.5 rounded-full border
+                border-fg-brand-primary_alt bg-brand-primary_alt px-2.5 py-1 text-xs font-medium
+                text-brand-secondary"
+            >
+              <span title={searchHit.query} className="truncate font-mono">
+                {searchHit.query}
+              </span>
+              <span>
+                · {searchHit.count} {searchHit.count === 1 ? "match" : "matches"}
+              </span>
+              <button
+                type="button"
+                data-testid="search-pill-clear"
+                aria-label="Clear search highlight"
+                title="Clear search highlight"
+                onClick={() =>
+                  setHashQuery((p) => {
+                    p.delete("q");
+                    p.delete("re");
+                    p.delete("unc");
+                  })
+                }
+                className="shrink-0 opacity-70 outline-none hover:opacity-100"
+              >
+                <XClose aria-hidden className="size-3" />
+              </button>
+            </span>
+          )}
           {focus !== null && (
             <FocusChip
               label={focus}
@@ -371,6 +421,7 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
             size="sm"
             onClick={toggleTheme}
           />
+          <SearchTrigger onOpen={() => setPaletteOpen(true)} />
           {tickets.length > 0 && (
             <TicketSearch tickets={tickets} ticket={ticket} onPin={setTicket} />
           )}
@@ -517,6 +568,9 @@ export function AppShell({ crumbs, title, meta, stats, children }: AppShellProps
       </div>
 
       <ShortcutsDialog isOpen={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      {index && (
+        <SearchPalette index={index} open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      )}
     </div>
   );
 }

@@ -192,6 +192,24 @@ configure.
   ![Annotated source view: winner-take-all row tinting, branch pills, and
   per-line run drilldowns](../../../_static/generated/coverage-file.png)
 
+- **Code search** — press <kbd>Ctrl</kbd>+<kbd>K</kbd> (<kbd>⌘</kbd>+<kbd>K</kbd> on
+  macOS) or click the search box in the app bar on any page. Substring
+  search over every source file in the report, grouped by file, with a
+  **Regex** chip (JavaScript syntax) and an **Uncovered only** chip that
+  keeps just the lines no tier ever hit — both off by default, both
+  remembered. A query with no uppercase letter is case-insensitive; any
+  uppercase letter makes it exact. Type `@name` to jump to a function
+  definition instead (from the compiler's own `FN:` records; C++ names
+  appear as `lcov` emitted them). <kbd>Enter</kbd> opens the file with the
+  line scrolled into view and every match painted; <kbd>Ctrl</kbd>+<kbd>Enter</kbd>
+  keeps the palette open so you can step through results. The query rides
+  along in the link (`?q=`), so a hit is shareable, and a pinned ticket
+  narrows the search to the files it touched.
+
+  ![The search palette over the fixture report: matches grouped by file,
+  the Regex and Uncovered-only chips, and the total-count
+  footer](../../../_static/generated/coverage-search.png)
+
 - **Runs & contexts page** (`#/runs`) — one row per run (see
   {ref}`coverage-runs`); multi-host runs show host pills with an
   expandable per-host lines breakdown, filterable by tier and free-text
@@ -241,9 +259,10 @@ configure.
   hidden](../../../_static/generated/coverage-ticket-context.png)
 
 `store.json` is written alongside the report with the same data —
-validity states, colors, runs, tickets, and each file's excluded lines
-included — as the explicit data contract for tooling built on top of
-a report without touching the pipeline. `tickets.json` (see
+validity states, colors, runs, tickets, each file's excluded lines, and
+its functions with per-tier hits included — as the explicit data contract
+for tooling built on top of a report without touching the pipeline.
+`tickets.json` (see
 {ref}`coverage-tickets-json`) is a separate, public export built for
 consumers otto does not control.
 

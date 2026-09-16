@@ -4,10 +4,11 @@
 // ShortcutsDialog. AppShell reads tier/state legend data straight off
 // window.__OTTO_COV__ (getIndex()) rather than via props — the same fixture
 // technique data.test.ts uses.
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as dataModule from "../data";
 import { makeIndex, makeRun, Providers } from "../testUtils";
 import type { IndexPayload } from "../types";
 import { AppShell } from "./AppShell";
@@ -496,5 +497,41 @@ describe("AppShell: overrides badge + hide-asserted toggle (Task 11)", () => {
 
     await user.click(screen.getByTestId("appbar-menu"));
     expect(screen.queryByTestId("toggle-hide-asserted")).toBeNull(); // gone once cleared
+  });
+});
+
+describe("search palette wiring", () => {
+  beforeEach(() => {
+    vi.spyOn(dataModule, "loadSearchChunk").mockResolvedValue({ stamp: "stamp-1", files: [] });
+    vi.spyOn(dataModule, "loadSymbolsChunk").mockResolvedValue({ stamp: "stamp-1", functions: [] });
+  });
+
+  it("Ctrl+K toggles the palette (jsdom is non-mac), and the trigger opens it", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    expect(screen.queryByTestId("search-palette")).toBeNull();
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    expect(await screen.findByTestId("search-palette")).toBeTruthy();
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    await waitFor(() => expect(screen.queryByTestId("search-palette")).toBeNull());
+    await user.click(screen.getByTestId("search-trigger"));
+    expect(await screen.findByTestId("search-palette")).toBeTruthy();
+  });
+
+  it("Escape closes the palette", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    await screen.findByTestId("search-palette");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByTestId("search-palette")).toBeNull());
+  });
+
+  it("the shortcuts dialog lists the palette binding", async () => {
+    renderShell();
+    fireEvent.keyDown(window, { key: "?" });
+    const dialog = await screen.findByTestId("shortcuts-dialog");
+    expect(dialog.textContent).toContain("Search code and functions");
+    expect(dialog.textContent).toContain("Ctrl K");
   });
 });
