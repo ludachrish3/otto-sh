@@ -464,17 +464,29 @@ jobs:
   python-canary:
     name: Next-Python canary (expected-rung ratchet)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The climb reaches `make conformance`, wrapped at the Makefile's
+    # PYTEST_TIMEOUT, and runs every other nightly lane's tests besides — so
+    # this bound is well above the sum, and above the wrap plus setup that
+    # tests/unit/test_declared_harness_bounds.py pins.
+    timeout-minutes: 60
     env:
       # The interpreter one past PYTHON_VERSIONS' ceiling in noxfile.py.
       CANARY_PYTHON: "3.15"
-      # The rung the canary is EXPECTED to reach today. 4 = the hostless
-      # suite collects, but its session does not pass yet (2026-09-15, on
-      # 3.15.0rc2: the import-budget guard has no 3.15 goldens). Bump it when
+      # The rung the canary is EXPECTED to reach today. 5 = every hostless
+      # test passes except the import budget (2026-09-15, on 3.15.0rc2: the
+      # budget has no 3.15 goldens, and CPython 3.15 leaves its own
+      # `_missing_stdlib_info` out of sys.stdlib_module_names, so the guard
+      # charges it to otto -- see #333). Rungs 6-9 have never run on 3.15;
+      # the first nightly after this lands says where they stop. Bump it when
       # this job reds with "climbed"; a red "regressed" is a real regression.
-      CANARY_EXPECTED_RUNG: "4"
+      CANARY_EXPECTED_RUNG: "5"
     steps:
       - uses: actions/checkout@v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .nvmrc
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.0.1
@@ -484,23 +496,32 @@ jobs:
       - name: Set up Python ${{ env.CANARY_PYTHON }}
         run: uv python install "$CANARY_PYTHON"
 
+      # Both chaos rungs drive a real loopback sshd, as their own nightly jobs
+      # do. Installed here rather than in a rung: it says nothing about 3.15.
+      - name: Ensure sshd is available
+        run: command -v sshd || { sudo apt-get update && sudo apt-get install -y openssh-server; }
+
       - name: Climb the rungs and compare with the expected one
         run: |
           set -u
           reached=0
+          climbing=1
           echo "## Next-Python canary: $CANARY_PYTHON" >> "$GITHUB_STEP_SUMMARY"
 
           # rung <n> <label> <command...>: run it, record the rung on success,
-          # append the log tail to the step summary on failure.
+          # append the log tail to the step summary on failure. `reached`
+          # advances only while nothing has failed yet, so it stays the highest
+          # CONSECUTIVE rung even though every test rung below runs.
           rung() {
             n=$1; label=$2; shift 2
             echo "::group::rung $n — $label"
             if "$@" > "rung$n.log" 2>&1; then
-              reached=$n
+              if [ "$climbing" -eq 1 ]; then reached=$n; fi
               echo "rung $n PASS — $label" | tee -a "$GITHUB_STEP_SUMMARY"
               echo "::endgroup::"
               return 0
             fi
+            climbing=0
             cat "rung$n.log"
             echo "::endgroup::"
             {
@@ -514,21 +535,60 @@ jobs:
           }
 
           hostless_marker='not integration and not embedded and not stability and not browser and not busybox and not conformance'
+          # Mirrors noxfile.py's DASHBOARD_MARKER_EXPR. The nox `dashboard`
+          # session is pinned to PRIMARY_PYTHON, so this rung cannot go through
+          # it and spells the same selection itself.
+          dashboard_marker='browser and not soak'
 
-          rung 1 "runtime dependencies install"             uv sync --frozen --no-default-groups --no-install-project --python "$CANARY_PYTHON" &&
-          rung 2 "the dev group installs too"             uv sync --frozen --group dev --python "$CANARY_PYTHON" &&
-          rung 3 "otto imports"             uv run --frozen otto --version &&
-          rung 4 "the hostless suite collects"             uv run --frozen pytest --collect-only -q -n0 -p no:cacheprovider               tests/unit tests/e2e -m "$hostless_marker" &&
-          rung 5 "the hostless session passes"             uv run --frozen nox -s "tests_hostless-$CANARY_PYTHON" --extra-python "$CANARY_PYTHON" ||
-          # `|| true` is load-bearing: the step shell is `bash -e`, and errexit
-          # ignores a failure anywhere in an && list EXCEPT its final command.
-          # Without it a failing rung 5 exits here, before the verdict below.
-          true
+          # Lanes that take more than one command, as functions, so `rung` can
+          # run each as a single command and log it as one rung.
+          canary_web() {
+            # A real MonitorServer refuses to start without a built dashboard,
+            # and the browser suites drive the built bundles.
+            [ -f src/otto/_webassets/monitor/dist/index.html ] || make web
+          }
+          canary_chaos() {
+            canary_web &&
+            uv run --frozen pytest tests/integration/chaos -p no:cacheprovider --no-cov &&
+            OTTO_CHAOS_DOCKER=loopback uv run --frozen pytest tests/e2e/chaos/test_docker_chaos.py -p no:cacheprovider --no-cov
+          }
+          canary_dashboard() {
+            canary_web &&
+            scripts/ci_drop_unused_apt_sources.sh &&
+            uv run --frozen --group dev playwright install --with-deps chromium &&
+            OTTO_BROWSER_SHARD=1 uv run --frozen pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m "$dashboard_marker" --browser chromium -p no:cacheprovider --no-cov
+          }
+          canary_conformance() {
+            make busybox-cache && make conformance
+          }
+
+          # THE PREREQUISITE RUNGS. Nothing below can run without them, so a
+          # failure here stops the climb. The `|| true` on the `if` is load
+          # bearing: the step shell is `bash -e`, and errexit ignores a failure
+          # anywhere in an && list EXCEPT its final command -- without it a
+          # failing last rung exits here, before the verdict below.
+          if rung 1 "runtime dependencies install" uv sync --frozen --no-default-groups --no-install-project --python "$CANARY_PYTHON" &&
+             rung 2 "the dev group installs too" uv sync --frozen --group dev --python "$CANARY_PYTHON" &&
+             rung 3 "otto imports" uv run --frozen otto --version &&
+             rung 4 "the hostless suite collects" uv run --frozen pytest --collect-only -q -n0 -p no:cacheprovider tests/unit tests/e2e -m "$hostless_marker"; then
+            # THE TEST RUNGS, cheapest first, and every one runs even after a
+            # failure: one nightly then names every lane 3.15 breaks rather
+            # than only the first. The budget is last by design -- its goldens
+            # are per-interpreter and are regenerated once 3.15 is final, so it
+            # must not hide a product failure behind a snapshot that was never
+            # taken (#333).
+            rung 5 "the hostless session passes (budget aside)" uv run --frozen nox -s "tests_hostless-$CANARY_PYTHON" --extra-python "$CANARY_PYTHON" -- --ignore=tests/unit/import_budget || true
+            rung 6 "the concurrency soak passes" make stability-unit COUNT=10 || true
+            rung 7 "the chaos suites pass" canary_chaos || true
+            rung 8 "the dashboard browser suite passes" canary_dashboard || true
+            rung 9 "host-contract conformance passes" canary_conformance || true
+            rung 10 "the import budget holds" uv run --frozen pytest tests/unit/import_budget -p no:cacheprovider --no-cov || true
+          fi
 
           echo >> "$GITHUB_STEP_SUMMARY"
           echo "**Reached rung $reached; expected rung $CANARY_EXPECTED_RUNG.**" >> "$GITHUB_STEP_SUMMARY"
           if [ "$reached" -gt "$CANARY_EXPECTED_RUNG" ]; then
-            echo "::error::Python $CANARY_PYTHON climbed to rung $reached (expected $CANARY_EXPECTED_RUNG): bump CANARY_EXPECTED_RUNG in nightly.yml; at rung 5, promote it into PYTHON_VERSIONS and retire this job"
+            echo "::error::Python $CANARY_PYTHON climbed to rung $reached (expected $CANARY_EXPECTED_RUNG): bump CANARY_EXPECTED_RUNG in nightly.yml (and tick the checklist on #333); at rung 10, promote it into PYTHON_VERSIONS and retire this job"
             exit 1
           fi
           if [ "$reached" -lt "$CANARY_EXPECTED_RUNG" ]; then
