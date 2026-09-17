@@ -859,20 +859,37 @@ GATED_IO_COUNTERS = ("listdir", "open_fixture", "open_home", "scandir")
 Not ``open``. The whole-process open total drifts with the environment rather
 than with otto — bytecode-cache state and the installed distribution set, both
 measured, both explained at :data:`_CHILD_IO_PREAMBLE` — so an exact golden on
-it would be a check that fails for reasons outside the change. These four do
-not drift: the two ``os.*`` counters observe otto's own directory work,
-``open_fixture`` observes its file reads inside the workspace under
-measurement, and ``open_home`` the half of those that land in the user's home
-— the term that dominates when ``$HOME`` is on a network filesystem, and the
-one a fixture total cannot be read back apart into.
+it would be a check that fails for reasons outside the change. Of these four,
+``scandir`` observes otto's own corpus walk, ``open_fixture`` its file reads
+inside the workspace under measurement, and ``open_home`` the half of those
+that land in the user's home — the term that dominates when ``$HOME`` is on a
+network filesystem, and the one a fixture total cannot be read back apart into.
+
+``listdir`` is gated here but is NOT scoped: the audit hook counts every
+``os.listdir`` in the child, the interpreter's own ``sys.path`` walking
+included. A golden is one measurement against a file under one interpreter, so
+it earns its keep there; comparing two measurements against EACH OTHER is a
+different claim, and :data:`REPEATABLE_IO_COUNTERS` is the set that makes it.
+"""
+
+
+REPEATABLE_IO_COUNTERS = ("open_fixture", "open_home", "scandir")
+"""The gated counters two measurements of one surface must agree on EXACTLY.
+
+:data:`GATED_IO_COUNTERS` minus every counter the audit hook tallies
+whole-process and unscoped. ``open`` left the repeat comparison for that reason
+(issue #321); ``listdir`` meets the same criterion and reddened the same
+comparison one counter over (issue #343: 59 then 60 on CPython 3.11, with the
+per-surface goldens green on every lane). What remains is either path-scoped
+by the hook or otto's own walk.
 """
 
 
 def gated_io(io: dict[str, int]) -> dict[str, int]:
     """Return only the counters this harness OWNS, out of a child's full ``io``.
 
-    The one place the distinction is made, because it is the distinction that
-    keeps every comparison honest — a golden's, and a repeat measurement's. The
+    The one place the distinction is made for a golden; a repeat measurement
+    compares the narrower :func:`repeatable_io`. The
     dropped counter is ``open``: a whole-process open TOTAL is a fact about the
     machine's bytecode cache as much as about otto, and that cache is shared,
     mutable, cross-process state sitting outside both defences
@@ -881,6 +898,15 @@ def gated_io(io: dict[str, int]) -> dict[str, int]:
     full ``io`` dicts is how that reached CI as a flake (issue #321).
     """
     return {name: io[name] for name in GATED_IO_COUNTERS}
+
+
+def repeatable_io(io: dict[str, int]) -> dict[str, int]:
+    """Return the counters a REPEAT measurement must reproduce, out of a child's ``io``.
+
+    Narrower than :func:`gated_io`: see :data:`REPEATABLE_IO_COUNTERS` for why
+    ``listdir`` is golden-gated yet not repeat-gated.
+    """
+    return {name: io[name] for name in REPEATABLE_IO_COUNTERS}
 
 
 def interpreter_tag() -> str:

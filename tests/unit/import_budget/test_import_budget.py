@@ -478,8 +478,10 @@ def test_a_warm_surface_is_seeded_and_repeats_identically(tmp_path):
     The two surfaces have the same shape and therefore byte-identical
     generated corpora; only the seed differs.
 
-    REPEATABILITY IS ASSERTED OVER ``gated_io``, NOT THE WHOLE ``io`` DICT.
-    Comparing the whole dict is what made this test flaky (issue #321): the
+    REPEATABILITY IS ASSERTED OVER ``repeatable_io``, NOT THE WHOLE ``io`` DICT.
+    Comparing the whole dict is what made this test flaky (issue #321), and
+    comparing ``gated_io`` made it flaky again on ``listdir`` (issue #343),
+    which the audit hook counts just as unscoped as ``open``. The
     whole-process ``open`` total counts every open ATTEMPT in the child, which
     the import machinery dominates, and a module whose ``.pyc`` is missing
     costs TWO of them (the probe fires the audit event before it fails, then
@@ -494,7 +496,7 @@ def test_a_warm_surface_is_seeded_and_repeats_identically(tmp_path):
     measurements are taken either side of a child that writes bytecode, with
     ``PYTHONPYCACHEPREFIX`` pointing the cache at ``tmp_path`` — so the real
     trees are never touched, and the injection is total rather than whatever
-    this machine happens to have cached already. A gated counter must not move;
+    this machine happens to have cached already. A repeatable counter must not move;
     the ``open`` total MUST, or the injection has quietly stopped biting and
     the independence being asserted is no longer being tested at all.
     """
@@ -517,9 +519,9 @@ def test_a_warm_surface_is_seeded_and_repeats_identically(tmp_path):
     harness.measure_surface(redirect_bytecode_cache(harness.surface_by_key("import_otto")))
     second = harness.measure_surface(warm)["io"]
 
-    assert harness.gated_io(first) == harness.gated_io(second), (
+    assert harness.repeatable_io(first) == harness.repeatable_io(second), (
         f"repeat warm measurements disagree on the counters this harness owns: "
-        f"{harness.gated_io(first)} vs {harness.gated_io(second)}"
+        f"{harness.repeatable_io(first)} vs {harness.repeatable_io(second)}"
     )
     assert first["open"] != second["open"], (
         f"the bytecode-cache injection did not bite ({first['open']} both times), so this "
@@ -534,6 +536,23 @@ def test_a_warm_surface_is_seeded_and_repeats_identically(tmp_path):
     assert first["scandir"] < cold["scandir"], (
         f"the seed run left nothing behind: warm {first} vs cold {cold}"
     )
+
+
+def test_repeat_comparison_excludes_every_unscoped_counter():
+    """Only scoped (or otto-owned) counters may be asserted equal across two runs.
+
+    The audit hook tallies ``open`` and ``listdir`` for the WHOLE child process,
+    import machinery included, so both move with state no surface owns. Dropping
+    one of them from the repeat comparison while keeping the other is exactly
+    how #321's fix left #343 behind; this pins the classification as a check
+    instead of a docstring claim.
+    """
+    unscoped = {"open", "listdir"}
+    assert set(harness.REPEATABLE_IO_COUNTERS) <= set(harness.GATED_IO_COUNTERS)
+    assert not unscoped & set(harness.REPEATABLE_IO_COUNTERS)
+    assert set(harness.GATED_IO_COUNTERS) - unscoped == set(harness.REPEATABLE_IO_COUNTERS)
+    io = {"open": 1, "listdir": 2, "open_fixture": 3, "open_home": 4, "scandir": 5}
+    assert harness.repeatable_io(io) == {"open_fixture": 3, "open_home": 4, "scandir": 5}
 
 
 def test_cap_exemption_covers_exactly_the_repo_bearing_surfaces():
