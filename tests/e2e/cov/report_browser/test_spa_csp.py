@@ -96,7 +96,9 @@ def test_search_chunks_load_under_csp(page: Page, csp_server: CspReportServer) -
     """The two singleton chunks are classic scripts like every other chunk;
     a violation would surface as a `Refused to ...` console error."""
     _goto(page, csp_server, "/coverage")
+    expect(page.get_by_test_id("tree-row-dir:product")).to_be_visible()
     page.keyboard.press("Control+K")
+    expect(page.get_by_test_id("search-palette")).to_be_visible()
     page.get_by_role("searchbox").fill("checked_add")
     expect(page.get_by_test_id("search-result-0")).to_be_visible()
     page.get_by_role("searchbox").fill("@double")

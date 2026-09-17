@@ -6,6 +6,7 @@
 // technique data.test.ts uses.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { type ReactNode, useLayoutEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as dataModule from "../data";
@@ -39,6 +40,48 @@ function renderShell(children = <div>child content</div>) {
     <AppShell crumbs={[{ label: "acme-fw" }]} title="acme-fw" meta="42 files" stats={null}>
       {children}
     </AppShell>,
+    { wrapper: Providers },
+  );
+}
+
+/** Fires one keydown from its OWN `useLayoutEffect`, at MOUNT. Layout
+ * effects run in post-order (children before parent), siblings in order, so
+ * a `<Probe>` rendered as `<AppShell>`'s SIBLING (never nested inside it —
+ * see `renderShellSibling`) runs after the shell's commit, before paint and
+ * before any passive effect (`useEffect`) anywhere in the tree — a
+ * deterministic probe for "is AppShell's listener attached yet": present
+ * only if AppShell registers it in a layout effect too, absent if it's
+ * still in a `useEffect`. */
+function KeydownProbe({
+  target,
+  init,
+}: {
+  target: "document" | "window";
+  init: KeyboardEventInit;
+}) {
+  // Dispatch at most once, even if StrictMode or a prop change re-runs the effect.
+  const fired = useRef(false);
+  useLayoutEffect(() => {
+    if (fired.current) return;
+    fired.current = true;
+    (target === "document" ? document : window).dispatchEvent(new KeyboardEvent("keydown", init));
+  }, [target, init]);
+  return null;
+}
+
+/** `renderShell`'s sibling-tree counterpart, for `KeydownProbe` — the probe
+ * MUST NOT be `children` (AppShell's own descendant): React runs a child's
+ * layout effects before its parent's, which would fire the probe's keydown
+ * BEFORE AppShell's own listener-registering effect, the opposite of what
+ * these tests need to prove. */
+function renderShellSibling(probe: ReactNode, children = <div>child content</div>) {
+  return render(
+    <>
+      <AppShell crumbs={[{ label: "acme-fw" }]} title="acme-fw" meta="42 files" stats={null}>
+        {children}
+      </AppShell>
+      {probe}
+    </>,
     { wrapper: Providers },
   );
 }
@@ -133,6 +176,11 @@ describe("AppShell", () => {
     const input = screen.getByTestId("text-input");
     fireEvent.keyDown(input, { key: "?" });
     expect(screen.queryByTestId("shortcuts-dialog")).toBeNull();
+  });
+
+  it("the '?' listener is live before ANY passive effect could run — attached in the commit that paints the shell", () => {
+    renderShellSibling(<KeydownProbe target="window" init={{ key: "?", bubbles: true }} />);
+    expect(screen.getByTestId("shortcuts-dialog")).toBeTruthy();
   });
 
   it("coverage-key rows render at full opacity, not the vendored disabled dimming", async () => {
@@ -353,6 +401,12 @@ describe("AppShell", () => {
       expect(document.activeElement).toBe(ticketSearchInput());
     });
 
+    it("the '/' listener is live before ANY passive effect could run — attached in the commit that paints the shell", () => {
+      document.body.focus();
+      renderShellSibling(<KeydownProbe target="document" init={{ key: "/", bubbles: true }} />);
+      expect(document.activeElement).toBe(ticketSearchInput());
+    });
+
     it('"/" typed inside a text field stays a literal slash', async () => {
       // The shared shouldSuppressSlash guard: the shortcut must never eat a
       // character the user is actually typing.
@@ -515,6 +569,20 @@ describe("search palette wiring", () => {
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     await waitFor(() => expect(screen.queryByTestId("search-palette")).toBeNull());
     await user.click(screen.getByTestId("search-trigger"));
+    expect(await screen.findByTestId("search-palette")).toBeTruthy();
+  });
+
+  it("the Ctrl+K listener is live before ANY passive effect could run — attached in the commit that paints the shell", async () => {
+    // The palette itself opens synchronously (the probe's whole point). This
+    // describe's mocked `loadSearchChunk`/`loadSymbolsChunk` promises
+    // (`beforeEach`) resolve AFTER the synchronous test body returns, and
+    // SearchPalette's own effect then calls setData from that resolution,
+    // outside any act() — which the console guard (vitest.setup.ts) would
+    // fail the test over. `async` + `findBy*` (not a bare `getBy*`) so its
+    // async act() wrapping absorbs that update instead.
+    renderShellSibling(
+      <KeydownProbe target="document" init={{ key: "k", ctrlKey: true, bubbles: true }} />,
+    );
     expect(await screen.findByTestId("search-palette")).toBeTruthy();
   });
 

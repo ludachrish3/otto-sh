@@ -3,7 +3,7 @@
 // footer, current-file-first grouping, ticket scoping, Enter vs Ctrl+Enter.
 // The field is queried by role: the vendored InputBase owns where a
 // data-testid lands, the accessible name is what reaches the <input>.
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -279,19 +279,53 @@ describe("SearchPalette", () => {
     expect(row.getAttribute("data-target")).toBe("#/coverage/product/main.c");
   });
 
-  it("Ctrl+Enter navigates and stays open; Enter navigates and closes; a click navigates and closes", async () => {
+  // `fireEvent`, not `userEvent`, with no `await` between a trigger and its
+  // assertions: a queued-task hashchange (the bug `go()` used to have)
+  // wouldn't have fired yet at this point, while a synchronous one already
+  // has — `userEvent`'s own internal awaits would give it time to catch up
+  // regardless of which code path ran, masking exactly this bug. Each step
+  // navigates to a DIFFERENT target than the one before it — `navigateHash`
+  // no-ops a same-hash re-navigation, so a repeated target wouldn't
+  // exercise the dispatch at all (`onClose` still fires either way; only
+  // the mock here, not real `open` state, so a "closed" palette stays
+  // queryable for the next step).
+  it("Ctrl+Enter navigates and stays open; a click navigates and closes; Enter (to a different target) navigates and closes", async () => {
     const user = userEvent.setup();
     const { onClose } = renderPalette();
-    await user.type(await field(), "checked_add");
+    const input = await field();
+    await user.type(input, "checked_add");
     await screen.findByTestId("search-result-1");
-    await user.keyboard("{Control>}{Enter}{/Control}");
-    expect(window.location.hash).toBe("#/coverage/product/main.c?lines=1&q=checked_add");
-    expect(onClose).not.toHaveBeenCalled();
-    await user.keyboard("{Enter}");
-    expect(onClose).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByTestId("search-result-1"));
-    expect(window.location.hash).toBe("#/coverage/product/utils.c?lines=2&q=checked_add");
-    expect(onClose).toHaveBeenCalledTimes(2);
+
+    let hashChanges = 0;
+    const onHashChange = () => {
+      hashChanges++;
+    };
+    window.addEventListener("hashchange", onHashChange);
+    try {
+      fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+      expect(hashChanges).toBe(1);
+      expect(window.location.hash).toBe("#/coverage/product/main.c?lines=1&q=checked_add");
+      expect(onClose).not.toHaveBeenCalled();
+
+      // The click path (`go(target, false)`): a detail-less synthetic click
+      // reads as a "virtual" press to react-aria's `usePress`, firing
+      // `onAction` inline — no pointerdown/pointerup pair needed.
+      fireEvent.click(screen.getByTestId("search-result-1"));
+      expect(hashChanges).toBe(2);
+      expect(window.location.hash).toBe("#/coverage/product/utils.c?lines=2&q=checked_add");
+      expect(onClose).toHaveBeenCalledTimes(1);
+
+      // The click above left row 1 (utils.c) virtually focused; ArrowUp
+      // back to row 0 (main.c) so this Enter is a genuine navigation
+      // rather than a same-hash repeat of the click's own target.
+      fireEvent.keyDown(input, { key: "ArrowUp" });
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(hashChanges).toBe(3);
+      expect(window.location.hash).toBe("#/coverage/product/main.c?lines=1&q=checked_add");
+      expect(onClose).toHaveBeenCalledTimes(2);
+    } finally {
+      window.removeEventListener("hashchange", onHashChange);
+    }
   });
 
   it("a pinned ticket scopes results to the files the ticket chunk names", async () => {

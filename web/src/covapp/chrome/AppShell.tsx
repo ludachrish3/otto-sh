@@ -12,7 +12,7 @@
 // every page gluing AppShell in would otherwise have to thread the same
 // getIndex() read through as props for no benefit.
 import { Check, Command, DotsVertical, Moon01, Sun, XClose } from "@untitledui/icons";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useLayoutEffect, useState } from "react";
 
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
@@ -264,7 +264,8 @@ export function AppShell({ crumbs, title, meta, stats, searchHit, children }: Ap
 
   // Wired here (not ShortcutsDialog) because it's the app-wide "?" binding,
   // not something scoped to the dialog itself.
-  useEffect(() => {
+  // `useLayoutEffect`: see the Ctrl+K listener below.
+  useLayoutEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "?") return;
       const target = event.target as HTMLElement | null;
@@ -278,7 +279,10 @@ export function AppShell({ crumbs, title, meta, stats, searchHit, children }: Ap
 
   // Ctrl+K/⌘K toggles the palette — a local listener (the TicketSearch
   // pattern), not useGlobalShortcuts: covapp has no command registry.
-  useEffect(() => {
+  // `useLayoutEffect`: the first render's passive effects run in a later
+  // task than its commit, so a `useEffect` listener could miss a key pressed
+  // once the shell is visible.
+  useLayoutEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (!matchesBinding(event, PALETTE_BINDING)) return;
       event.preventDefault();

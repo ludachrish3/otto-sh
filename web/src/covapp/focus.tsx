@@ -123,7 +123,8 @@ function replaceHash(next: string): void {
 /** Same shape as `replaceHash`, but via `history.pushState` (a new session-
  * history entry, `state: null` — the same as any fresh push per the
  * `isKnownEntry()` doc comment below) — for real in-app navigations
- * (`useHashLocation`'s plain, non-`replace` `navigate()`). A bare
+ * (`useHashLocation`'s plain, non-`replace` `navigate()`, and `navigateHash`
+ * below, for a caller outside that hook). A bare
  * `window.location.hash = next` assignment would ALSO push a new entry, but
  * per the HTML spec its `hashchange` fires as a QUEUED TASK, not
  * synchronously — verified empirically in this project's jsdom (a
@@ -226,6 +227,18 @@ export function replaceHashQuery(mutate: (params: URLSearchParams) => void): voi
   const qs = params.toString();
   const next = (path || "/") + (qs ? `?${qs}` : "");
   if (next !== rawHash()) replaceHash(next);
+}
+
+/** `pushHash` for a caller that isn't a Route of `useHashLocation`'s Router —
+ * `SearchPalette`'s tests render it with no `<Router>` ancestor at all, where
+ * wouter's `useLocation()` would silently resolve to a non-hash hook instead.
+ * No-ops (no push, no dispatch) when `target` already matches the current
+ * hash, as the native `location.hash` setter does for an already-encoded
+ * target. */
+export function navigateHash(target: string): void {
+  const normalized = target.startsWith("#") ? target.slice(1) : target;
+  if (normalized === rawHash()) return;
+  pushHash(normalized);
 }
 
 /** `<Router hook={...}>` (App.tsx) — a drop-in replacement for wouter's own

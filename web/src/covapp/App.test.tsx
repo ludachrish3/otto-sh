@@ -7,9 +7,11 @@
 // component with real chrome (app bar, crumbs, stats card) derived from
 // getIndex().
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
+import { _resetSessionQueryForTests } from "./chrome/SearchPalette";
 import * as dataModule from "./data";
 import { emptyStats, makeIndex as makeIndexBase } from "./testUtils";
 import type { FileChunk, IndexPayload } from "./types";
@@ -62,6 +64,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   dataModule._resetForTests();
+  _resetSessionQueryForTests();
   delete (window as { __OTTO_COV__?: IndexPayload }).__OTTO_COV__;
   window.location.hash = "";
   localStorage.clear();
@@ -208,5 +211,40 @@ describe("App (Task 3 chrome wiring)", () => {
     expect(window.location.hash).toBe("#/coverage/100%25.c");
     const heading = await screen.findByRole("heading", { level: 1 });
     expect(heading.textContent).toBe("100%.c");
+  });
+
+  // Regression, exercised through the FULL production wiring (App's real
+  // Router + AppShell + SearchPalette — the same shape as the "%" test
+  // above): SearchPalette's Enter navigation used to write `location.hash`
+  // directly, whose `hashchange` fires as a queued task, so a Ctrl+K
+  // pressed right after Enter landed on the OUTGOING page's still-mounted
+  // AppShell instead of the incoming one. No `await` between the
+  // navigating Enter and the following Ctrl+K — that gap is the whole
+  // point of the test.
+  it("Ctrl+K pressed immediately after Enter-navigating to a file opens the palette on the NEW page", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(dataModule, "loadSearchChunk").mockResolvedValue({
+      stamp: "stamp-1",
+      files: [{ chunk: "x.c", path: "x.c", text: "int x;\n", states: "c" }],
+    });
+    vi.spyOn(dataModule, "loadSymbolsChunk").mockResolvedValue({ stamp: "stamp-1", functions: [] });
+    // Never resolves — keeps FilePage in `loading`, so `file-loading`'s
+    // presence alone proves the route actually changed underneath.
+    vi.spyOn(dataModule, "loadFileChunk").mockReturnValue(new Promise<FileChunk>(() => {}));
+    window.location.hash = "#/coverage";
+    render(<App />);
+    expect(screen.getByTestId("directory-tree")).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const input = await screen.findByRole("searchbox", { name: "Search code, or @ for functions" });
+    await user.type(input, "int x");
+    const row = await screen.findByTestId("search-result-0");
+    expect(row.getAttribute("data-target")).toContain("/coverage/x.c");
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+
+    expect(screen.getByTestId("file-loading")).toBeTruthy();
+    expect(await screen.findByTestId("search-palette")).toBeTruthy();
   });
 });

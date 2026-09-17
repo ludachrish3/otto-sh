@@ -621,10 +621,27 @@ export function FilePage({ index, segments, node }: FilePageProps) {
   }
 
   if (state.status === "loading") {
+    // AppShell, not a bare placeholder: it owns the Ctrl+K/"?" listeners and
+    // the palette, so a keypress during the chunk load/highlight must still
+    // land. Same root element type as the ready branch below, so React keeps
+    // one AppShell instance (and an open palette) across the transition.
+    // No chunk yet, so no stats and no line counts in `meta`.
     return (
-      <div data-testid="file-loading" className="p-8 text-center text-sm text-tertiary">
-        Loading {node.name}…
-      </div>
+      <AppShell
+        crumbs={crumbsFor(index.project_name, segments)}
+        title={<span className="font-mono">{node.name}</span>}
+        meta={
+          <>
+            report generated <b>{index.generated_at}</b> · otto {index.otto_version}
+          </>
+        }
+        stats={null}
+        searchHit={null}
+      >
+        <div data-testid="file-loading" className="p-8 text-center text-sm text-tertiary">
+          Loading {node.name}…
+        </div>
+      </AppShell>
     );
   }
   if (state.status === "error") {

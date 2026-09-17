@@ -18,7 +18,7 @@ import { Tooltip } from "@/components/base/tooltip/tooltip";
 import { SearchLgIcon } from "@/ui/icons";
 
 import { loadSearchChunk, loadSymbolsChunk, loadTicketChunk, StampMismatchError } from "../data";
-import { useFocus } from "../focus";
+import { navigateHash, useFocus } from "../focus";
 import { encodePath } from "../format";
 import { coverageSegmentsOf, hashPathOf, useHash } from "../hashState";
 import { compileQuery, type FileMatches, searchFiles, searchFunctions } from "../search";
@@ -303,7 +303,10 @@ export function SearchPalette({
   }, [results, needle, regex, uncovered]);
 
   function go(target: string, keepOpen: boolean): void {
-    window.location.hash = target;
+    // Not `location.hash = target`: its `hashchange` is a queued task, and a
+    // Ctrl+K in that gap reaches the outgoing page's AppShell (each page
+    // mounts its own).
+    navigateHash(target);
     if (!keepOpen) onClose();
   }
 

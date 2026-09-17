@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { allowConsoleOutput } from "../../vitest.setup";
 import {
   FocusProvider,
+  navigateHash,
   parseHashQuery,
   replaceHashQuery,
   setHashQuery,
@@ -211,6 +212,44 @@ describe("useHashLocation (custom Router hook)", () => {
       result.current[1]("/coverage/other");
     });
     expect(window.location.hash).toBe("#/coverage/other");
+  });
+});
+
+describe("navigateHash", () => {
+  it("no-ops (no history entry, no hashchange) when the target already matches the current hash", () => {
+    window.location.hash = "#/coverage/product/main.c?lines=1";
+    const lengthBefore = window.history.length;
+    let hashChanges = 0;
+    const onHashChange = () => {
+      hashChanges++;
+    };
+    window.addEventListener("hashchange", onHashChange);
+    try {
+      navigateHash("#/coverage/product/main.c?lines=1");
+      expect(window.history.length).toBe(lengthBefore);
+      expect(hashChanges).toBe(0);
+      expect(window.location.hash).toBe("#/coverage/product/main.c?lines=1");
+    } finally {
+      window.removeEventListener("hashchange", onHashChange);
+    }
+  });
+
+  it("still pushes (and dispatches) when the target genuinely differs", () => {
+    window.location.hash = "#/coverage/product/main.c?lines=1";
+    const lengthBefore = window.history.length;
+    let hashChanges = 0;
+    const onHashChange = () => {
+      hashChanges++;
+    };
+    window.addEventListener("hashchange", onHashChange);
+    try {
+      navigateHash("#/coverage/product/main.c?lines=2");
+      expect(window.history.length).toBe(lengthBefore + 1);
+      expect(hashChanges).toBe(1);
+      expect(window.location.hash).toBe("#/coverage/product/main.c?lines=2");
+    } finally {
+      window.removeEventListener("hashchange", onHashChange);
+    }
   });
 });
 

@@ -10,7 +10,7 @@
 // disagree about what "/" means — but the listener is local rather than
 // `useGlobalShortcuts`, which is wired to the monitor's command registry and
 // zustand store that covapp deliberately does not carry.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Input } from "@/components/base/input/input";
 import { SearchIcon } from "@/ui/icons";
@@ -44,7 +44,8 @@ export function TicketSearch({
     return () => registerSearchInput(null);
   }, []);
 
-  useEffect(() => {
+  // `useLayoutEffect`: see AppShell.tsx's Ctrl+K listener.
+  useLayoutEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (!matchesBinding(e, SEARCH_BINDING)) return;
       // No overlay concept in covapp, so the second argument is always

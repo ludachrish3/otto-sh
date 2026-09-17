@@ -358,6 +358,29 @@ const NODE: FileNode = {
   stats: emptyStats(),
 };
 
+/** A second, distinct node — `node.chunk` differs from `NODE`'s, so
+ * rerendering `FilePage` with this one re-fires the load effect
+ * (`useEffect(..., [node.chunk])`), the same way navigating from one file
+ * to another does. */
+const NODE2: FileNode = {
+  name: "udp.c",
+  path: "src/net/udp.c",
+  chunk: "src_net_udp.c",
+  stats: emptyStats(),
+};
+
+/** A `loadFileChunk` result the test controls the timing of, instead of
+ * `mockChunkLoad`'s immediately-settled resolve/reject — lets a test hold
+ * the page in `status: "loading"` for as long as it needs before deciding
+ * the chunk arrives. */
+function deferredChunk() {
+  let resolve!: (chunk: FileChunk) => void;
+  const promise = new Promise<FileChunk>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 /** Spies on the real `loadFileChunk` export (not a module-level `vi.mock`,
  * so the last test in this file can leave it un-spied and exercise the
  * genuine script-injection path). */
@@ -385,6 +408,59 @@ describe("FilePage", () => {
     // copy the trailing-findBy pattern into a test that has no other assertion,
     // or the failure will talk about assertion counts rather than what broke.
     await screen.findByTestId("code-row-1");
+  });
+
+  // Pins the property the WebKit e2e test depends on: opening the palette
+  // while the file is still loading, then waiting out the chunk load, must
+  // not lose that open palette — the AppShell instance (and its state)
+  // has to be the SAME one before and after the loading->ready transition,
+  // not a fresh remount that happens to render identically.
+  it("an open palette survives the loading->ready transition", async () => {
+    vi.spyOn(dataModule, "loadSearchChunk").mockResolvedValue({ stamp: "stamp-1", files: [] });
+    vi.spyOn(dataModule, "loadSymbolsChunk").mockResolvedValue({ stamp: "stamp-1", functions: [] });
+    window.__OTTO_COV__ = makeFileIndex();
+    const chunk = deferredChunk();
+    vi.spyOn(dataModule, "loadFileChunk").mockReturnValue(chunk.promise);
+    renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
+
+    expect(screen.getByTestId("file-loading")).toBeTruthy();
+    expect(screen.getByTestId("app-bar")).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    expect(await screen.findByTestId("search-palette")).toBeTruthy();
+
+    chunk.resolve(makeChunk());
+    await screen.findByTestId("code-row-1");
+    expect(screen.getByTestId("search-palette")).toBeTruthy();
+  });
+
+  // Same property, exercised the way the app actually triggers it: an
+  // already-loaded file navigates to a different one (`node` changes,
+  // which re-fires the load effect and drops the page back into
+  // `loading`), and the palette — opened before that navigation — has to
+  // stay open through the second loading window too.
+  it("an open palette survives a file->file navigation (loaded -> loading -> loaded)", async () => {
+    vi.spyOn(dataModule, "loadSearchChunk").mockResolvedValue({ stamp: "stamp-1", files: [] });
+    vi.spyOn(dataModule, "loadSymbolsChunk").mockResolvedValue({ stamp: "stamp-1", functions: [] });
+    window.__OTTO_COV__ = makeFileIndex();
+    const spy = vi.spyOn(dataModule, "loadFileChunk").mockResolvedValueOnce(makeChunk());
+    const index = makeFileIndex();
+    const { rerender } = renderPage({ index, segments: ["src", "net", "tcp.c"], node: NODE });
+    await screen.findByTestId("code-row-1");
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    expect(await screen.findByTestId("search-palette")).toBeTruthy();
+
+    const nextChunk = deferredChunk();
+    spy.mockReturnValueOnce(nextChunk.promise);
+    rerender(<FilePage index={index} segments={["src", "net", "udp.c"]} node={NODE2} />);
+
+    expect(await screen.findByTestId("file-loading")).toBeTruthy();
+    expect(screen.getByTestId("search-palette")).toBeTruthy();
+
+    nextChunk.resolve(makeChunk({ chunk: "src_net_udp.c", path: "src/net/udp.c" }));
+    await screen.findByTestId("code-row-1");
+    expect(screen.getByTestId("search-palette")).toBeTruthy();
   });
 
   it("routes a StampMismatchError to the guard screen with the stamp-mismatch reason", async () => {
