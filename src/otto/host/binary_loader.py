@@ -14,6 +14,7 @@ from a ``.otto`` init module — the same extension hook
 :func:`otto.host.command_frame.register_command_frame` follows.
 """
 
+import re
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
@@ -58,6 +59,21 @@ class BinaryLoader(ABC):
         """Return True when an unload round's output shows *name* no longer resident."""
         ...
 
+    @abstractmethod
+    def list_command(self) -> str:
+        """Return the device command that lists resident binaries."""
+        ...
+
+    @abstractmethod
+    def is_loaded(self, name: str, output: str) -> bool:
+        """Return True when *output* (from :meth:`list_command`) shows *name* resident."""
+        ...
+
+    @abstractmethod
+    def call_command(self, name: str, fn: str) -> str:
+        """Return the device command that calls exported function *fn* of *name*."""
+        ...
+
 
 class LlextHexLoader(BinaryLoader):
     """Zephyr LLEXT shell loader: ``llext load_hex`` / ``llext unload``.
@@ -88,6 +104,24 @@ class LlextHexLoader(BinaryLoader):
     @override
     def is_fully_unloaded(self, output: str) -> bool:
         return "No such extension" in output
+
+    @override
+    def list_command(self) -> str:
+        return "llext list"
+
+    @override
+    def is_loaded(self, name: str, output: str) -> bool:
+        """Match *name* as a whole token, so ``cov_ext_two`` is not ``cov_ext``.
+
+        The shell prints one name per line today and may print a table
+        tomorrow; a token match reads both, where a substring test would
+        claim a longer extension's name as this one's.
+        """
+        return re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", output) is not None
+
+    @override
+    def call_command(self, name: str, fn: str) -> str:
+        return f"llext call_fn {name} {fn}"
 
 
 # Seeded empty here and populated by ``_register_builtin_loaders()`` at module

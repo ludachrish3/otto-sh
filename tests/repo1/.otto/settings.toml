@@ -15,6 +15,13 @@ init = [
     'repo1_monitor_uptime',
 ]
 
+# Declaring [[products]] makes repo1 a providing repo, and bootstrap refuses a
+# providing repo without a [project] scope. repo1 is the general-purpose fixture
+# SUT — every lab in ../_fixtures/lab_data is fair game — so match-all is
+# spelled out here; it is never a default that quietly widens a fleet.
+[project]
+lab_patterns = [".*"]
+
 [[lab.sources]]
 backend = "json"
 paths = [
@@ -51,8 +58,40 @@ command_frame = "zephyr"
 transfer = "console"
 max_filename_len = 32
 
+# The sample C product TestCoverageProduct deploys (product/, built by the
+# suite itself with --coverage). The entry earns its keep twice over: it names
+# `cov_dir`, the host-side GCOV_PREFIX directory the suite and the collector
+# have to agree on, and it is what the instrumentation scan reads to decide
+# whether coverage retrieval runs at all. `instrumented` is deliberately NOT
+# set, so the verdict comes from the built binary's own .gcda strings — a tree
+# with no build yet is honestly "unknown", not a claimed coverage build.
+#
+# `install` stays unset: the suite's fixture does the privileged `sudo mkdir` /
+# `chmod` that a bare `put` cannot, so otto only needs to know WHERE the
+# counters land, not how the binary gets there.
+#
+# The match names the three real unix-lab hosts, narrower than "every bare host
+# id": `test4` is the embedded lab's SSH hop, and a product hung on it would
+# make `--lab embedded` look like an instrumented fleet. Host ids are FULLY
+# matched, so the dotted `<parent>.<project>.<service>` container placeholders
+# are excluded as well.
+[[products]]
+name = "product"
+kind = "file"
+artifact = "product/product"
+dest_dir = "/opt/coverage_product"
+cov_dir = "/var/coverage/product"
+check = "test -x /opt/coverage_product/product"
+match = { id = "test[1-3]" }
+
 [coverage]
-gcda_remote_dir = "/var/coverage/product"
+# Which hosts contribute coverage: a host-id regex FULLY matched against each
+# id, mirroring the TestCoverageProduct suite's own `_REAL_HOSTS`. Bare
+# UnixHost ids only — the dotted `<parent>.<project>.<service>` ids of the
+# DockerContainerHost placeholders `register_declared_container_hosts`
+# synthesizes fail exec until `otto docker up` populates them, so they are no
+# more a coverage target than they are a test target.
+hosts = "[^.]+"
 
 [docker]
 registry_url = "docker.io"

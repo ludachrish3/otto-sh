@@ -35,7 +35,7 @@ end_of_record
 
 def test_load_rejects_old_format(tmp_path: Path) -> None:
     p = tmp_path / "capture.json"
-    p.write_text('{"schema": 1, "tier": "manual", "pin": "deadbeef"}')
+    p.write_text('{"schema": 2, "tier": "manual", "base_commit": "deadbeef"}')
     with pytest.raises(ValueError, match="re-capture"):
         Capture.load(p)
 
@@ -79,7 +79,7 @@ def test_parse_info(tmp_path: Path) -> None:
 def test_build_capture_clean(repo: Path, tmp_path: Path) -> None:
     info = _write_info(tmp_path, repo / "f.c")
     cap = build_capture(
-        info_path=info, tier="system", repo_root=repo, board="board1", labs=["lab1"]
+        info_path=info, tier="system", repo_root=repo, board="board1", product="app", labs=["lab1"]
     )
     assert cap.base_commit == head_commit(repo)
     assert cap.dirty_remap is False
@@ -93,7 +93,13 @@ def test_build_capture_dirty_remaps(repo: Path, tmp_path: Path) -> None:
     (repo / "f.c").write_text("printf();\nint a;\nint b;\nint c;\n")
     info = _write_info(tmp_path, repo / "f.c")  # DA lines are worktree coords
     cap = build_capture(
-        info_path=info, tier="manual", repo_root=repo, board="b", labs=["lab1"], ticket="T-1"
+        info_path=info,
+        tier="manual",
+        repo_root=repo,
+        board="b",
+        product="app",
+        labs=["lab1"],
+        ticket="T-1",
     )
     assert cap.dirty_remap is True
     # worktree line 1 (the printf) dropped; 2→1, 3→2
@@ -107,7 +113,13 @@ def test_build_capture_dirty_whitespace_only_keeps_all_lines(repo: Path, tmp_pat
     (repo / "f.c").write_text("    int a;\n\tint b;\n  int c;\n")
     info = _write_info(tmp_path, repo / "f.c")  # DA lines are worktree coords
     cap = build_capture(
-        info_path=info, tier="manual", repo_root=repo, board="b", labs=["lab1"], ticket="T-1"
+        info_path=info,
+        tier="manual",
+        repo_root=repo,
+        board="b",
+        product="app",
+        labs=["lab1"],
+        ticket="T-1",
     )
     assert cap.dirty_remap is True  # tree is dirty (byte-wise)
     assert cap.files["f.c"].lines == {1: 5, 2: 0, 3: 7}  # nothing dropped
@@ -131,7 +143,12 @@ def test_build_capture_nested_sut_dir(repo: Path, tmp_path: Path) -> None:
     info = _write_info(tmp_path, nested / "main.c")
     sut_dir = repo / "nested" / "sut"
     cap = build_capture(
-        info_path=info, tier="system", repo_root=sut_dir, board="board1", labs=["lab1"]
+        info_path=info,
+        tier="system",
+        repo_root=sut_dir,
+        board="board1",
+        product="app",
+        labs=["lab1"],
     )
 
     fc = cap.files["product/main.c"]
@@ -146,7 +163,9 @@ def test_untracked_file_skipped(
     info = tmp_path / "x.info"
     info.write_text(INFO.format(src=repo / "f.c") + INFO.format(src=repo / "untracked.c"))
     with caplog.at_level("WARNING"):
-        cap = build_capture(info_path=info, tier="system", repo_root=repo, board="b", labs=["lab1"])
+        cap = build_capture(
+            info_path=info, tier="system", repo_root=repo, board="b", product="app", labs=["lab1"]
+        )
     assert "untracked.c" not in cap.files
     assert "f.c" in cap.files
     assert cap.dirty_remap is True
@@ -161,7 +180,9 @@ def test_gitignored_file_skipped(repo: Path, tmp_path: Path) -> None:
 
     info = tmp_path / "x.info"
     info.write_text(INFO.format(src=repo / "f.c") + INFO.format(src=repo / "gen.c"))
-    cap = build_capture(info_path=info, tier="system", repo_root=repo, board="b", labs=["lab1"])
+    cap = build_capture(
+        info_path=info, tier="system", repo_root=repo, board="b", product="app", labs=["lab1"]
+    )
     assert "gen.c" not in cap.files
     assert "f.c" in cap.files
     assert cap.dirty_remap is False
@@ -169,14 +190,16 @@ def test_gitignored_file_skipped(repo: Path, tmp_path: Path) -> None:
 
 def test_roundtrip_and_strictness(repo: Path, tmp_path: Path) -> None:
     info = _write_info(tmp_path, repo / "f.c")
-    cap = build_capture(info_path=info, tier="system", repo_root=repo, board="b", labs=[])
+    cap = build_capture(
+        info_path=info, tier="system", repo_root=repo, board="b", product="app", labs=[]
+    )
     assert cap.files["f.c"].branches[3] == [(0, 0, 4), (0, 1, None)]
     out = tmp_path / "capture.json"
     cap.save(out)
     loaded = Capture.load(out)
     assert loaded == cap
     raw = json.loads(out.read_text())
-    assert raw["schema"] == 2
+    assert raw["schema"] == 3
     # never-reached branch ("-") must round-trip as JSON null, not 0.
     assert raw["files"]["f.c"]["branches"]["3"][1] == [0, 1, None]
     raw["surprise"] = True
@@ -194,6 +217,7 @@ def test_build_capture_annotates_display_name_and_roundtrips(repo: Path, tmp_pat
         tier="system",
         repo_root=repo,
         board="rack2-slot4-id",
+        product="app",
         labs=["lab1"],
         display_name="Rack 2 Slot 4",
     )
@@ -206,10 +230,30 @@ def test_build_capture_annotates_display_name_and_roundtrips(repo: Path, tmp_pat
 def test_capture_display_name_defaults_none_for_old_files(repo: Path, tmp_path: Path) -> None:
     # A capture serialized before the field existed must load with None.
     info = _write_info(tmp_path, repo / "f.c")
-    cap = build_capture(info_path=info, tier="system", repo_root=repo, board="b", labs=["lab1"])
+    cap = build_capture(
+        info_path=info, tier="system", repo_root=repo, board="b", product="app", labs=["lab1"]
+    )
     out = tmp_path / "cap.json"
     cap.save(out)
     raw = json.loads(out.read_text())
     raw.pop("display_name")
     out.write_text(json.dumps(raw))
     assert Capture.load(out).display_name is None
+
+
+def test_capture_requires_product(repo: Path, tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="product"):
+        Capture(tier="e2e", base_commit="x")  # no product
+
+
+def test_build_capture_annotates_product_and_roundtrips(repo: Path, tmp_path: Path) -> None:
+    info = tmp_path / "b.info"
+    info.write_text(INFO.format(src=repo / "f.c"))
+    cap = build_capture(
+        info_path=info, tier="e2e", repo_root=repo, board="h1", product="app", labs=["lab"]
+    )
+    assert cap.product == "app"
+    out = tmp_path / "capture.json"
+    cap.save(out)
+    assert json.loads(out.read_text())["schema"] == 3
+    assert Capture.load(out).product == "app"

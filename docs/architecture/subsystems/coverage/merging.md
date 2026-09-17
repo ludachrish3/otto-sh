@@ -122,15 +122,21 @@ written into per-line data. Two properties fall out of the code:
 
 **Supersede-on-recapture**
 (`otto.coverage.capture.supersede.select_manual_captures`) runs before
-folding: manual captures are deduplicated by `(tier, label, host)`, the
-newest `captured_at` wins, and a replaced capture drops out of the runs
-table entirely rather than having its credits accumulate alongside the
-newer one.
+folding: manual captures are deduplicated by
+`(tier, label, host, product)`, the newest `captured_at` wins, and a replaced
+capture drops out of the runs table entirely rather than having its credits
+accumulate alongside the newer one.
 
-The key is built in `_key` as `(tier, display_name or board, board)` — the
-label falls back to the board id when the capture carries no host display
-name, and the third component is the board id itself, which is the same
-value store v4 carries in `RunRecord.host`. "Newest" is a plain string
+The key is built in `_key` as
+`(tier, display_name or board, board, product)` — the label falls back to the
+board id when the capture carries no host display name, the third component
+is the board id itself, which is the same value store v4 carries in
+`RunRecord.host`, and the fourth is the capture's `product` (store v8). A
+host can carry several instrumented products, each producing its own
+capture; without `product` in the key the second would supersede the first
+and its coverage would vanish from the report — silently, because the
+reporter seeds its cross-source dedupe set from the committed manual
+captures, so the loser's cov-dir copy is skipped too. "Newest" is a plain string
 comparison on `captured_at`, which is sound because the stamp is a
 zero-padded UTC `%Y-%m-%dT%H:%M:%SZ` and therefore sorts lexicographically.
 Losers never reach `register_capture_run`, so they leave no row for the runs

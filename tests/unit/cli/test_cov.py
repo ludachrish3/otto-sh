@@ -26,6 +26,37 @@ from tests._fixtures.gitrepo import TmpGitRepo
 runner = CliRunner()
 
 
+def _product_double(name="app", *, instrumented=True):
+    """A stand-in :class:`otto.host.product.Product` with a known verdict.
+
+    ``otto cov get`` runs the local instrumentation scan over the coverage
+    hosts before it fetches anything, so every host double in this file needs
+    products it can read a verdict off.
+    """
+    product = MagicMock()
+    product.name = name
+    product.instrumented.return_value = instrumented
+    return product
+
+
+def _host_double(host_id="host1", *, products=("app",), cls=None, instrumented=True):
+    """A lab host double carrying instrumentation-scannable products."""
+    host = MagicMock()
+    host.id = host_id
+    host.name = host_id
+    host.products = [_product_double(p, instrumented=instrumented) for p in products]
+    if cls is not None:
+        host.__class__ = cls
+    return host
+
+
+def _embedded_board(host_id="board1", *, products=("app",), instrumented=True):
+    """An embedded host double: no filesystem to fetch, so no fetcher runs."""
+    from otto.host.embedded_host import EmbeddedHost
+
+    return _host_double(host_id, products=products, cls=EmbeddedHost, instrumented=instrumented)
+
+
 @pytest.fixture(autouse=True)
 def _suppress_loggers():
     """Prevent logger stream handlers from writing to CliRunner's
@@ -667,8 +698,8 @@ class TestCovReportCollectionModelErrors:
         """A [coverage] repo_root that is not a git repo can't run pinned-capture
         features; report names the cause + the git-less escape hatch, no traceback."""
         not_git = tmp_path / "notgit"
-        (not_git / "cov" / "board1").mkdir(parents=True)
-        (not_git / "cov" / "board1" / "capture.json").write_text("{}")
+        (not_git / "cov" / "board1" / "app").mkdir(parents=True)
+        (not_git / "cov" / "board1" / "app" / "capture.json").write_text("{}")
 
         with (
             patch.object(
@@ -993,15 +1024,60 @@ class TestCovGetValidation:
         assert "sys_a" in message
         assert "sys_b" in message
 
+    def test_get_with_no_instrumented_product_exits_1_showing_the_verdict_table(self, git_sut):
+        """``otto cov get`` is a forced-on retrieval: a lab whose products are
+        all uninstrumented is refused before anything is fetched, and the
+        per-product verdicts reach the console as the instrumentation table.
+
+        The logged line is the HEADLINE only. Everything below it in the
+        error's message is the same verdicts in plain text, and printing that
+        under the table would show the reader the same answer twice.
+        """
+        repo = self._repo({"hosts": ".*"}, sut_dir=git_sut)
+        board = _embedded_board("board1", products=("app",), instrumented=False)
+
+        with (
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.config.all_hosts", return_value=[board]),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["get", "-o", str(git_sut.parent / "get_out")])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        message = mock_err.call_args[0][0]
+        assert "no instrumented product" in message
+        assert "\n" not in message
+        assert "coverage instrumentation" in result.output
+        for cell in ("host", "product", "instrumented", "board1", "app", "no"):
+            assert cell in result.output
+
+    def test_get_refusal_table_names_the_override_for_an_unknown_verdict(self, git_sut):
+        """An `unknown` verdict is the one the reader can DO something about."""
+        repo = self._repo({"hosts": ".*"}, sut_dir=git_sut)
+        board = _embedded_board("board1", products=("app",), instrumented=None)
+
+        with (
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.config.all_hosts", return_value=[board]),
+            patch.object(cov_module.logger, "error"),
+        ):
+            result = runner.invoke(cov_app, ["get", "-o", str(git_sut.parent / "unknown_out")])
+        assert result.exit_code == 1
+        assert "unknown" in result.output
+        assert "Product.instrumented" in result.output
+        # The caption's `[[products]]` must survive rich's markup parser.
+        assert "[[products]]" in result.output
+
     def test_zero_counters_exits_1(self, monkeypatch, git_sut):
         repo = self._repo({"hosts": ".*"}, sut_dir=git_sut)
+        board = _embedded_board("board1")
 
-        async def fake_collect(cov_config, staging_root, pattern=None):
+        async def fake_collect(staging_root, pattern=None):
             return {}
 
         with (
             patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", lambda pattern=None, **kw: iter([])),
+            patch("otto.config.all_hosts", return_value=[board]),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=fake_collect,
@@ -1012,18 +1088,17 @@ class TestCovGetValidation:
         assert result.exit_code == 1
         assert "no .gcda" in mock_err.call_args[0][0]
 
-    def test_zero_counters_lists_searched_host_names(self, monkeypatch, git_sut):
-        """The zero-counter message names the hosts it searched, not just "no data"."""
+    def test_zero_counters_lists_searched_products(self, monkeypatch, git_sut):
+        """The zero-counter message names what it searched, not just "no data"."""
         repo = self._repo({"hosts": ".*"}, sut_dir=git_sut)
-        host1 = MagicMock()
-        host1.id = "zephyr37-fat"
+        board = _embedded_board("zephyr37-fat")
 
-        async def fake_collect(cov_config, staging_root, pattern=None):
+        async def fake_collect(staging_root, pattern=None):
             return {}
 
         with (
             patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", lambda pattern=None, **kw: iter([host1])),
+            patch("otto.config.all_hosts", return_value=[board]),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=fake_collect,
@@ -1037,18 +1112,19 @@ class TestCovGetValidation:
         assert "zephyr37-fat" in message
 
     def test_zero_counters_after_produce_captures_exits_1(self, tmp_path, git_sut):
-        """When produce_captures returns empty list despite non-empty host_dirs → error."""
+        """When produce_captures returns [] despite non-empty product_dirs → error."""
         repo = self._repo({"hosts": ".*"}, sut_dir=git_sut)
+        board = _embedded_board("board1")
 
-        async def fake_collect(cov_config, staging_root, pattern=None):
-            board = staging_root / "board1"
-            board.mkdir(parents=True, exist_ok=True)
-            (board / "x.gcda").write_bytes(b"")
-            return {"board1": board}
+        async def fake_collect(staging_root, pattern=None):
+            product_dir = staging_root / "board1" / "app"
+            product_dir.mkdir(parents=True, exist_ok=True)
+            (product_dir / "x.gcda").write_bytes(b"")
+            return {("board1", "app"): product_dir}
 
         with (
             patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", lambda pattern=None, **kw: iter([])),
+            patch("otto.config.all_hosts", return_value=[board]),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=fake_collect,
@@ -1061,18 +1137,19 @@ class TestCovGetValidation:
         assert "Traceback" not in result.output
         message = mock_err.call_args[0][0]
         assert "no .gcda" in message
-        assert "board1" in message
+        assert "board1:app" in message
 
     def test_non_git_repo_exits_1(self, tmp_path):
         not_a_repo = tmp_path / "not_a_repo"
         not_a_repo.mkdir()
         repo = self._repo({"hosts": ".*"}, sut_dir=not_a_repo)
+        board = _embedded_board("board1")
 
-        async def fake_collect(cov_config, staging_root, pattern=None):
-            board = staging_root / "board1"
-            board.mkdir(parents=True)
-            (board / "x.gcda").write_bytes(b"")
-            return {"board1": board}
+        async def fake_collect(staging_root, pattern=None):
+            product_dir = staging_root / "board1" / "app"
+            product_dir.mkdir(parents=True)
+            (product_dir / "x.gcda").write_bytes(b"")
+            return {("board1", "app"): product_dir}
 
         async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
             output.write_text(f"TN:\nSF:{not_a_repo / 'f.c'}\nDA:1,3\nend_of_record\n")
@@ -1080,7 +1157,7 @@ class TestCovGetValidation:
 
         with (
             patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", lambda pattern=None, **kw: iter([])),
+            patch("otto.config.all_hosts", return_value=[board]),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=fake_collect,
@@ -1214,11 +1291,13 @@ class TestCovGetSuccess:
 
     @staticmethod
     def _fake_collect_one_board():
-        async def fake_collect(cov_config, staging_root, pattern=None):
-            board = staging_root / "board1"
-            board.mkdir(parents=True)
-            (board / "x.gcda").write_bytes(b"")
-            return {"board1": board}
+        """Stand in for the embedded collector: one board, one product dir."""
+
+        async def fake_collect(staging_root, pattern=None):
+            product_dir = staging_root / "board1" / "app"
+            product_dir.mkdir(parents=True)
+            (product_dir / "x.gcda").write_bytes(b"")
+            return {("board1", "app"): product_dir}
 
         return fake_collect
 
@@ -1231,7 +1310,9 @@ class TestCovGetSuccess:
 
         cov_repo = self._repo_mock(repo, {"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
         monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
-        monkeypatch.setattr("otto.config.all_hosts", lambda pattern=None, **kw: iter([]))
+        monkeypatch.setattr(
+            "otto.config.all_hosts", lambda pattern=None, **kw: iter([_embedded_board()])
+        )
         monkeypatch.setattr(
             "otto.coverage.fetcher.embedded.collect_embedded_coverage",
             self._fake_collect_one_board(),
@@ -1247,7 +1328,7 @@ class TestCovGetSuccess:
             reset_context(token)
 
         assert result.exit_code == 0, result.output
-        assert (invocation_dir / "cov" / "board1" / "capture.json").is_file()
+        assert (invocation_dir / "cov" / "board1" / "app" / "capture.json").is_file()
 
     def test_get_without_output_dir_anywhere_exits_1(self, repo, monkeypatch):
         """No --output and no context output dir (e.g. a programmatic call
@@ -1258,7 +1339,9 @@ class TestCovGetSuccess:
 
         cov_repo = self._repo_mock(repo, {"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
         monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
-        monkeypatch.setattr("otto.config.all_hosts", lambda pattern=None, **kw: iter([]))
+        monkeypatch.setattr(
+            "otto.config.all_hosts", lambda pattern=None, **kw: iter([_embedded_board()])
+        )
 
         token = set_context(OttoContext(lab=Lab(name="t"), output_dir=None))
         try:
@@ -1283,7 +1366,9 @@ class TestCovGetSuccess:
         )
 
         monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
-        monkeypatch.setattr("otto.config.all_hosts", lambda pattern=None, **kw: iter([]))
+        monkeypatch.setattr(
+            "otto.config.all_hosts", lambda pattern=None, **kw: iter([_embedded_board()])
+        )
         monkeypatch.setattr(
             "otto.coverage.fetcher.embedded.collect_embedded_coverage",
             self._fake_collect_one_board(),
@@ -1311,7 +1396,7 @@ class TestCovGetSuccess:
         )
         assert result.exit_code == 0, result.output
 
-        capture_path = out_dir / "cov" / "board1" / "capture.json"
+        capture_path = out_dir / "cov" / "board1" / "app" / "capture.json"
         assert capture_path.is_file()
         cap = Capture.load(capture_path)
         assert cap.tier == "manual"
@@ -1329,7 +1414,9 @@ class TestCovGetSuccess:
         cov_repo = self._repo_mock(repo, {"hosts": ".*"})
 
         monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
-        monkeypatch.setattr("otto.config.all_hosts", lambda pattern=None, **kw: iter([]))
+        monkeypatch.setattr(
+            "otto.config.all_hosts", lambda pattern=None, **kw: iter([_embedded_board()])
+        )
         monkeypatch.setattr(
             "otto.coverage.fetcher.embedded.collect_embedded_coverage",
             self._fake_collect_one_board(),
@@ -1340,7 +1427,7 @@ class TestCovGetSuccess:
         result = runner.invoke(cov_app, ["get", "-o", str(out_dir)])
         assert result.exit_code == 0, result.output
 
-        capture_path = out_dir / "cov" / "board1" / "capture.json"
+        capture_path = out_dir / "cov" / "board1" / "app" / "capture.json"
         assert capture_path.is_file()
         cap = Capture.load(capture_path)
         assert cap.tier == "system"
@@ -1366,7 +1453,9 @@ class TestCovGetSuccess:
         cov_repo = self._repo_mock(repo, {"hosts": ".*"})
 
         monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
-        monkeypatch.setattr("otto.config.all_hosts", lambda pattern=None, **kw: iter([]))
+        monkeypatch.setattr(
+            "otto.config.all_hosts", lambda pattern=None, **kw: iter([_embedded_board()])
+        )
         monkeypatch.setattr(
             "otto.coverage.fetcher.embedded.collect_embedded_coverage",
             self._fake_collect_one_board(),
@@ -1381,32 +1470,27 @@ class TestCovGetSuccess:
         assert result.exit_code == 0, result.output
         assert resolve_spy.call_count == 1
 
-    def test_get_clean_calls_clean_remote_when_unix_hosts_fetched(
+    def test_get_clean_calls_clean_remote_when_fetch_hosts_fetched(
         self, tmp_path, repo, monkeypatch
     ):
         """``--clean`` zeroes remote counters via the same fetcher used to fetch."""
-        cov_repo = self._repo_mock(repo, {"hosts": ".*", "gcda_remote_dir": "/remote"})
-
-        unix_host = MagicMock()
-        unix_host.id = "host1"
-        unix_host.name = "host1"
-
         from otto.host import UnixHost
 
-        unix_host.__class__ = UnixHost
+        cov_repo = self._repo_mock(repo, {"hosts": ".*"})
+        unix_host = _host_double("host1", cls=UnixHost)
 
         out_dir = tmp_path / "get_out3"
         # _do_get resolves cov_dir = output_dir / "cov"; the mocked fetcher
-        # doesn't touch disk, so the board dir + meta parent must exist here.
-        board = out_dir / "cov" / "host1"
-        board.mkdir(parents=True)
-        (board / "x.gcda").write_bytes(b"")
+        # doesn't touch disk, so the product dir + meta parent must exist here.
+        product_dir = out_dir / "cov" / "host1" / "app"
+        product_dir.mkdir(parents=True)
+        (product_dir / "x.gcda").write_bytes(b"")
 
         fetcher_instance = MagicMock()
-        fetcher_instance.fetch_all = AsyncMock(return_value={"host1": board})
+        fetcher_instance.fetch_all = AsyncMock(return_value={("host1", "app"): product_dir})
         fetcher_instance.clean_remote = AsyncMock(return_value=None)
 
-        async def fake_embedded(cov_config, staging_root, pattern=None):
+        async def fake_embedded(staging_root, pattern=None):
             return {}
 
         with (
@@ -1422,37 +1506,33 @@ class TestCovGetSuccess:
             result = runner.invoke(cov_app, ["get", "-o", str(out_dir), "--clean"])
 
         assert result.exit_code == 0, result.output
-        fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
+        # Each product carries its own remote cov_dir now: clean_remote takes
+        # no directory argument, it walks the instrumented products itself.
+        fetcher_instance.clean_remote.assert_awaited_once_with()
 
-    def test_get_clean_scopes_clean_pattern_to_unix_hosts_only(self, tmp_path, repo, monkeypatch):
-        """Mixed lab: ``get --clean`` must zero only the Unix hosts, never the
-        embedded board — the post-fetch clean uses a second fetcher scoped to
-        the unix ids (clean_remote re-derives its own host set with no
+    def test_get_clean_scopes_clean_pattern_to_fetch_hosts_only(self, tmp_path, repo, monkeypatch):
+        """Mixed lab: ``get --clean`` must zero only the fetchable hosts, never
+        the embedded board — the post-fetch clean uses a second fetcher scoped
+        to the fetched ids (clean_remote re-derives its own host set with no
         EmbeddedHost guard, the exact bug already fixed for `cov clean`)."""
-        cov_repo = self._repo_mock(repo, {"hosts": ".*", "gcda_remote_dir": "/remote"})
-
         from otto.host import UnixHost
-        from otto.host.embedded_host import EmbeddedHost
 
-        unix_host = MagicMock()
-        unix_host.id = "zephyr37-llext"
-        unix_host.name = "zephyr37-llext"
-        unix_host.__class__ = UnixHost
-        embedded_host = MagicMock()
-        embedded_host.id = "zeph1"
-        embedded_host.name = "zeph1"
-        embedded_host.__class__ = EmbeddedHost
+        cov_repo = self._repo_mock(repo, {"hosts": ".*"})
+        unix_host = _host_double("zephyr37-llext", cls=UnixHost)
+        embedded_host = _embedded_board("zeph1")
 
         out_dir = tmp_path / "get_out_clean"
-        board = out_dir / "cov" / "zephyr37-llext"
-        board.mkdir(parents=True)
-        (board / "x.gcda").write_bytes(b"")
+        product_dir = out_dir / "cov" / "zephyr37-llext" / "app"
+        product_dir.mkdir(parents=True)
+        (product_dir / "x.gcda").write_bytes(b"")
 
         fetcher_instance = MagicMock()
-        fetcher_instance.fetch_all = AsyncMock(return_value={"zephyr37-llext": board})
+        fetcher_instance.fetch_all = AsyncMock(
+            return_value={("zephyr37-llext", "app"): product_dir}
+        )
         fetcher_instance.clean_remote = AsyncMock(return_value=None)
 
-        async def fake_embedded(cov_config, staging_root, pattern=None):
+        async def fake_embedded(staging_root, pattern=None):
             return {}
 
         with (
@@ -1467,8 +1547,8 @@ class TestCovGetSuccess:
             result = runner.invoke(cov_app, ["get", "-o", str(out_dir), "--clean"])
 
         assert result.exit_code == 0, result.output
-        fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
-        # The clean fetcher (second construction) is scoped to unix ids only.
+        fetcher_instance.clean_remote.assert_awaited_once_with()
+        # The clean fetcher (second construction) is scoped to fetched ids only.
         clean_pattern = mock_fetcher_cls.call_args_list[-1].kwargs["pattern"]
         assert clean_pattern.search("zephyr37-llext")
         assert not clean_pattern.search("zeph1")
@@ -1496,7 +1576,7 @@ class TestCovCleanValidation:
         assert "Traceback" not in result.output
         assert "coverage" in mock_err.call_args[0][0].lower()
 
-    def test_missing_gcda_remote_dir_exits_1(self):
+    def test_no_matching_hosts_exits_1(self):
         repo = self._repo({"hosts": ".*"})
         with (
             patch("otto.config.get_repos", return_value=[repo]),
@@ -1506,19 +1586,28 @@ class TestCovCleanValidation:
             result = runner.invoke(cov_app, ["clean"])
         assert result.exit_code == 1
         assert "Traceback" not in result.output
-        assert "gcda_remote_dir" in mock_err.call_args[0][0]
+        assert "fetchable" in mock_err.call_args[0][0]
 
-    def test_no_matching_hosts_exits_1(self):
-        repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
+    def test_only_unfetchable_hosts_says_so_rather_than_blaming_the_selector(self):
+        """The runner itself can match ``[coverage].hosts`` and is then dropped
+        as unfetchable — the message must say no *fetchable* host matched and
+        name the excluded families, not send the reader back to the regex."""
+        from otto.host.local_host import LocalHost
+
+        repo = self._repo({"hosts": ".*"})
+        runner_host = _host_double("otto-runner", cls=LocalHost)
         with (
             patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", lambda pattern=None, **kw: iter([])),
+            patch("otto.config.all_hosts", return_value=[runner_host]),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["clean"])
         assert result.exit_code == 1
         assert "Traceback" not in result.output
-        assert mock_err.called
+        message = mock_err.call_args[0][0]
+        assert "fetchable" in message
+        assert "runner" in message
+        assert "embedded" in message
 
     def test_empty_selection_from_the_hosts_pattern_is_framed(self):
         """A ``[coverage].hosts`` regex that selects nothing prints a line, not a traceback.
@@ -1535,7 +1624,7 @@ class TestCovCleanValidation:
             raise EmptySelectionError("sensor", 3)
             yield  # pragma: no cover — unreachable; makes this a generator function
 
-        repo = self._repo({"hosts": "sensor", "gcda_remote_dir": "/remote"})
+        repo = self._repo({"hosts": "sensor"})
         with (
             patch("otto.config.get_repos", return_value=[repo]),
             patch("otto.config.all_hosts", _raising_all_hosts),
@@ -1578,9 +1667,9 @@ class TestCovCleanSuccess:
         host.__class__ = EmbeddedHost
         return host
 
-    def test_clean_calls_clean_remote_with_configured_dir(self):
+    def test_clean_calls_clean_remote(self):
         """The required TDD case: stubbed fetcher, clean_remote invoked, exit 0."""
-        repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
+        repo = self._repo({"hosts": ".*"})
         unix_host = self._unix_host()
 
         fetcher_instance = MagicMock()
@@ -1594,10 +1683,10 @@ class TestCovCleanSuccess:
             result = runner.invoke(cov_app, ["clean"])
 
         assert result.exit_code == 0, result.output
-        fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
+        fetcher_instance.clean_remote.assert_awaited_once_with()
 
     def test_clean_embedded_only_logs_note_and_skips_clean_remote(self):
-        repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
+        repo = self._repo({"hosts": ".*"})
         embedded_host = self._embedded_host()
 
         with (
@@ -1615,7 +1704,7 @@ class TestCovCleanSuccess:
         )
 
     def test_clean_mixed_hosts_cleans_unix_and_notes_embedded(self):
-        repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
+        repo = self._repo({"hosts": ".*"})
         unix_host = self._unix_host()
         embedded_host = self._embedded_host()
 
@@ -1631,7 +1720,7 @@ class TestCovCleanSuccess:
             result = runner.invoke(cov_app, ["clean"])
 
         assert result.exit_code == 0, result.output
-        fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
+        fetcher_instance.clean_remote.assert_awaited_once_with()
         assert any(
             "embedded boards not cleaned" in str(c.args[0]) for c in mock_info.call_args_list
         )
@@ -1641,7 +1730,7 @@ class TestCovCleanSuccess:
         do_for_all_hosts() call re-matches against every lab host, with no
         EmbeddedHost guard) must only match the unix host, never the
         embedded one — even though both matched [coverage].hosts."""
-        repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
+        repo = self._repo({"hosts": ".*"})
         unix_host = self._unix_host("zephyr37-llext")
         embedded_host = self._embedded_host("zeph1")
 
@@ -1659,7 +1748,7 @@ class TestCovCleanSuccess:
             result = runner.invoke(cov_app, ["clean"])
 
         assert result.exit_code == 0, result.output
-        fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
+        fetcher_instance.clean_remote.assert_awaited_once_with()
 
         used_pattern = mock_fetcher_cls.call_args.kwargs["pattern"]
         assert used_pattern.search("zephyr37-llext")
@@ -1672,7 +1761,7 @@ class TestCovCleanSuccess:
         """A unix host id that is a prefix of another host's id (e.g.
         "zephyr37-fat" vs. "zephyr37-fat2") must not accidentally match the longer id
         through an unanchored regex search."""
-        repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
+        repo = self._repo({"hosts": ".*"})
         unix_host = self._unix_host("zephyr37-fat")
         other_host = self._embedded_host("zephyr37-fat2")
 

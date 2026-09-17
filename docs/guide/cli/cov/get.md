@@ -1,22 +1,19 @@
 # otto cov get
 
-`otto cov get` is the single retrieval command.  It fetches `.gcda`
-counters from every host matched by `[coverage].hosts` — Unix hosts
-over the network, embedded boards over the console — parses them with
-the discovered toolchain, and writes one `capture.json` per board
-(anchored to `base_commit`) plus debug artifacts (the raw `.gcda` and the
-`.info` tracefiles lcov captured from them) into the command's output
-directory:
+`otto cov get` is the single retrieval command.  It walks every host matched
+by `[coverage].hosts`, and on each one every **product** whose build is
+instrumented — Unix hosts over the network, embedded boards over the console.
+Each product's counters are discovered under its own `cov_dir`
+({doc}`../../configuration/declared-products-tools`), parsed with the
+discovered toolchain, and written as one `capture.json` per host per product
+(anchored to `base_commit`) plus debug artifacts — the raw `.gcda` and the
+`.info` tracefiles lcov captured from them — into
+`cov/<host_id>/<product>/` under the command's output directory
+({ref}`the run tree <run-tree>`).
 
-```text
-<output>/
-  cov/
-    <board_id>/
-      capture.json
-      *.gcda
-      board.info
-      board.resolved.info
-```
+Nothing instrumented anywhere is an error *before* any host is touched:
+detection is local, so the command refuses with every product's verdict
+rather than fetching nothing and calling it a coverage session.
 
 By default `otto cov get` targets the lab's sole `e2e`-kind tier and
 writes a capture that is **not** committed anywhere — it lives in the
@@ -38,13 +35,13 @@ otto cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--output, -o PATH` | Directory to write fetched coverage and per-board captures into | the command's standard per-invocation output directory |
+| `--output, -o PATH` | Directory to write fetched coverage and per-product captures into | the command's standard per-invocation output directory |
 | `--tier NAME` | Coverage tier to annotate onto each capture | the lab's sole `e2e`-kind tier (error if ambiguous or unknown, listing the configured tiers) |
 | `--ticket STR` | Ticket reference annotated onto each capture. **Required** when `--tier` resolves to a `manual`-kind tier | none |
 | `--note STR` | Free-text note annotated onto each capture (`manual`-kind tiers only) | none |
 | `--tester-name STR` | Tester name annotated onto each capture (`manual`-kind tiers only) | `getpass.getuser()` |
 | `--tester-email STR` | Tester email annotated onto each capture (`manual`-kind tiers only) | `git config user.email`, omitted entirely (not annotated empty) when unset |
-| `--clean` | Zero the fetched Unix hosts' remote `.gcda` counters after a successful retrieval — for use before starting a manual session | off |
+| `--clean` | Zero each fetched Unix product's remote `.gcda` counters (under its `cov_dir`) after a successful retrieval — for use before starting a manual session | off |
 
 `--ticket`, `--note`, `--tester-name`, and `--tester-email` are only
 meaningful for a `manual`-kind retrieval; passing them against an
@@ -79,14 +76,15 @@ stored.
 
 ## The capture file
 
-Each board's `capture.json` records line/branch hits in
+Each `capture.json` — one per host per product — records line/branch hits in
 committed-code coordinates, the commit they're anchored to, and — for
 a manual capture — the human metadata:
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "tier": "manual",
+  "product": "myproduct",
   "base_commit": "<commit sha>",
   "dirty_remap": true,
   "captured_at": "2026-07-02T18:40:00Z",

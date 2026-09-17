@@ -15,7 +15,7 @@
     "A drift on either side fails exactly one suite and names the divergent",
     "language. Same shape as the format_outage_cases.json precedent."
   ],
-  "data_format": 2,
+  "data_format": 3,
   "sentinel_ticket_ids": [
     "(no ticket)",
     "(uncommitted)"
@@ -69,6 +69,7 @@
     "generated_at",
     "otto_version",
     "overrides",
+    "products",
     "project_name",
     "run_contrib",
     "runs",
@@ -95,6 +96,7 @@
     "label",
     "labs",
     "note",
+    "product",
     "tester",
     "ticket",
     "tier"
@@ -114,8 +116,10 @@
   "stats_keys": [
     "branches",
     "ctx_lines",
+    "ctx_product_lines",
     "flags",
-    "lines"
+    "lines",
+    "product_lines"
   ],
   "line_stat_bucket_keys": [
     "asserted_only",

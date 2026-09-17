@@ -1,6 +1,11 @@
 """Typed coverage-pipeline errors carrying user-actionable messages."""
 
+from typing import TYPE_CHECKING
+
 from ..errors import OttoError
+
+if TYPE_CHECKING:  # pragma: no cover — typing only; see CoverageNotInstrumentedError
+    from .instrumentation import InstrumentationReport
 
 
 class CoverageToolVersionError(OttoError, RuntimeError):
@@ -32,18 +37,57 @@ class CoverageConfigError(OttoError, ValueError):
 
     Raised by ``otto.coverage.collect.collect_coverage`` before any fetch is
     attempted: with no ``[coverage]`` section there is nothing to resolve a
-    host selector, a ``gcda_remote_dir``, or a tier against.
+    host selector, a product's ``cov_dir``, or a tier against.
+
+    Also raised at capture and report time by
+    ``otto.coverage.tree.iter_product_dirs`` for a cov directory whose shape
+    is wrong — a host directory holding counters or a ``capture.json``
+    directly instead of the ``cov/<host>/<product>/`` tree this version of
+    otto stages — since that too is a configuration the pipeline cannot run
+    against, and there is no migration shim for it.
     """
 
 
-class NoCoverageDataError(OttoError, ValueError):
-    """No ``.gcda`` counters were retrieved from any matched host.
+class CoverageNotInstrumentedError(CoverageConfigError):
+    """Coverage was requested but no product on any coverage host is instrumented.
 
-    Raised by ``otto.coverage.collect.collect_coverage`` after the Unix-fetch
+    Raised before anything runs, with the full per-product verdict listing in
+    the message, so the run is never spent producing counters that do not
+    exist.
+
+    ``report`` carries the same verdicts as STRUCTURE
+    (``otto.coverage.instrumentation.InstrumentationReport``) so a console
+    caller can render them as the Rich table, while ``str(self)`` keeps the
+    plain listing a log file and a non-CLI caller can actually use. It
+    defaults to ``None``: every ``CoverageNotInstrumentedError("...")``
+    construction, its pickling, and its ``str()`` are unchanged by it.
+
+    The annotation is a string under :data:`typing.TYPE_CHECKING`, never a
+    runtime import: ``otto.coverage.errors`` sits on the ``cov`` and ``test``
+    import surfaces and ``otto.coverage.instrumentation`` pulls
+    ``rich.table``, so importing the producing module here for real would
+    widen exactly the edge the import budget exists to keep narrow.
+
+    Only *message* reaches ``BaseException.args``, so an unpickled copy reads
+    identically and carries ``report = None`` — the structure is a
+    same-process rendering aid, not part of the error's identity.
+    """
+
+    def __init__(self, message: str, report: "InstrumentationReport | None" = None) -> None:
+        """Record *report* (the per-product verdicts, or ``None``) beside *message*."""
+        super().__init__(message)
+        self.report = report
+
+
+class NoCoverageDataError(OttoError, ValueError):
+    """No ``.gcda`` counters were retrieved from any matched product.
+
+    Raised by ``otto.coverage.collect.collect_coverage`` after the remote-fetch
     and embedded-collection stages both complete with nothing to show for it
-    — every host the ``[coverage].hosts`` selector matched (or, with no
-    selector, every host in the lab) contributed no coverage data. The
-    message names the hosts that were searched.
+    — no instrumented product on any host the ``[coverage].hosts`` selector
+    matched (or, with no selector, any host in the lab) contributed coverage
+    data. The message names every ``host:product:cov_dir`` triple searched,
+    or says that no host carried an instrumented product at all.
     """
 
 

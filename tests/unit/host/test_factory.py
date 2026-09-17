@@ -956,7 +956,9 @@ class TestProductProviders:
 
         register_product_provider(
             lambda host: (
-                [SimpleNamespace(name="myapp", owner=None)] if host.os_type == "unix" else None
+                [SimpleNamespace(name="myapp", owner=None, cov_dir=None)]
+                if host.os_type == "unix"
+                else None
             )
         )
         host = create_host_from_dict(

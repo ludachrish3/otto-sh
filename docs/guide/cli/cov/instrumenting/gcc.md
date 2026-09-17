@@ -24,10 +24,29 @@ together and make the line table noticeably harder to read.
 ## Where counters land
 
 Each instrumented process writes its `.gcda` files on exit, by default next
-to the build's object files (the absolute path is baked in at compile time).
-Point `[coverage].gcda_remote_dir` in `.otto/settings.toml` at that
-directory so `otto cov get` knows where to fetch from — see
-{ref}`the configuration section <coverage-configuration>`.
+to the build's object files — the absolute path is baked in at compile time,
+and it is the *build machine's* path, which on a target usually does not
+exist. `GCOV_PREFIX` redirects those writes at run time, and the product's
+`cov_dir` is where that directory is declared, so `otto cov get` knows where
+to fetch from:
+
+```toml
+[[products]]
+name = "myproduct"
+kind = "file"
+artifact = "build/myproduct"
+dest_dir = "/opt/myproduct"          # where staging puts the artifact
+cov_dir = "/var/coverage/myproduct"
+install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 /opt/myproduct/myproduct &"
+```
+
+`GCOV_PREFIX_STRIP` drops that many leading components off the baked-in path
+before `GCOV_PREFIX` is prepended, which is what keeps the tree under
+`cov_dir` shallow rather than a deep replica of the build machine's layout.
+`cov_dir` defaults to `/tmp/<name>`, so two products on one host stay apart
+without being told to. See
+{doc}`../../../configuration/declared-products-tools` for the entry, and
+{ref}`the configuration section <coverage-configuration>` for the rest.
 
 ## Version matching
 

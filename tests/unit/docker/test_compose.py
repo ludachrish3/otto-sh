@@ -6,6 +6,7 @@ These mock the parent host's `exec`/`put` so no real docker is invoked.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import getpass
 import logging
 import re
@@ -15,12 +16,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from otto.config import scope as scope_mod
 from otto.config.lab import Lab
 from otto.config.repo import (
     DockerCompose,
     DockerUseCase,
     Repo,
 )
+from otto.config.scope import ProjectScopeConfig
+from otto.declared import DeclaredEntry
 from otto.docker.compose import (
     _resolve_parent,
     _safe_username,
@@ -38,13 +42,16 @@ from otto.docker.compose import (
     unregister_container_hosts,
     use_case_project,
 )
+from otto.host import product as product_mod
 from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
 from otto.host.errors import HostCommandError
 from otto.host.lab_info import LabInfo
 from otto.host.login_proxy import Cred
 from otto.host.mount import Mount
+from otto.host.product import FileProduct
 from otto.host.unix_host import UnixHost
+from otto.registry import registering_repo
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.sutrepo import make_sut_repo
@@ -155,6 +162,30 @@ def _make_lab() -> Lab:
     parent = _wire_parent_mock(_capable_host())
     lab.hosts[parent.id] = parent
     return lab
+
+
+class _IngestProduct(FileProduct):
+    """A concrete product a provider or a declared entry can hang on a container."""
+
+    async def install(self, host):
+        return Result(Status.Success)
+
+    async def uninstall(self, host):
+        return Result(Status.Success)
+
+    async def is_installed(self, host):
+        return True
+
+
+@contextlib.contextmanager
+def _product_provider(provider):
+    """Register *provider* in the real provider registry for the block only."""
+    saved = list(product_mod._PRODUCT_PROVIDERS)
+    product_mod.register_product_provider(provider)
+    try:
+        yield
+    finally:
+        product_mod._PRODUCT_PROVIDERS[:] = saved
 
 
 # ---------------------------------------------------------------------------
@@ -507,10 +538,14 @@ async def test_compose_up_constructs_expected_command(tmp_path):
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    hosts = await compose_up(repo, lab)
+    # Registered through the same ingest chokepoint a factory-built host runs,
+    # so a provider that recognizes the service reaches the container too.
+    with _product_provider(lambda h: [_IngestProduct(artifact=Path("/a"), name="api")]):
+        hosts = await compose_up(repo, lab)
     assert "api" in hosts
     assert hosts["api"].container_id == "abc123def456"
     assert hosts["api"].id in lab.hosts
+    assert [p.name for p in hosts["api"].products] == ["api"]
     # Verify a `docker compose -p ... -f ... up -d` was issued.
     up_cmds = [c for c in call_log if "compose" in c and "up -d" in c]
     assert len(up_cmds) == 1, call_log
@@ -1290,6 +1325,127 @@ def test_declared_container_inherits_its_parents_lab_not_the_composite(tmp_path)
     # container's write visible on its parent and on every sibling container.
     container.lab_info.metadata["k"] = 99
     assert parent.lab_info.metadata == {"k": 1}
+
+
+# ---------------------------------------------------------------------------
+# product / dev-tool ingest on container hosts (spec 2026-09-16 §13)
+# ---------------------------------------------------------------------------
+
+
+def test_placeholders_receive_product_ingest(tmp_path):
+    """Spec 2026-09-16 §13: a container host is a host — providers and
+    [[products]] see it. Kills: compose-built hosts skipping apply_providers."""
+    seen: list[str] = []
+
+    def provider(host):
+        seen.append(host.id)
+        if getattr(host, "service", "") != "api":
+            return None
+        return [_IngestProduct(artifact=Path("/a"), name="api")]
+
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    with _product_provider(provider):
+        register_declared_container_hosts(lab, [repo])
+
+    placeholder = lab.hosts["test3.repo1.api"]
+    assert [p.name for p in placeholder.products] == ["api"]
+    # The chokepoint's finishing pass ran, not just the provider loop.
+    assert placeholder.products[0].cov_dir == "/tmp/api"
+    # The provider judged the CONTAINER, by its own id — not its parent.
+    assert "test3.repo1.api" in seen
+
+
+def test_declared_product_entry_matches_a_container_host(tmp_path, monkeypatch):
+    """A `[[products]]` match table naming a container's id attaches there:
+    the declared seam runs at the same chokepoint the providers do."""
+    entry = DeclaredEntry(
+        name="api",
+        kind="toy",
+        seam="products",
+        owner="declrepo",
+        base_dir=Path("/repo"),
+        match={"id": "test3.repo1.api"},
+    )
+    product_mod.register_product_kind(
+        "toy", lambda e, host: _IngestProduct(artifact=Path("/a"), name=e.name)
+    )
+    monkeypatch.setattr(product_mod, "declared_for_host", lambda host, seam_attr: [entry])
+
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    register_declared_container_hosts(lab, [repo])
+
+    placeholder = lab.hosts["test3.repo1.api"]
+    assert [(p.name, p.owner, p.cov_dir) for p in placeholder.products] == [
+        ("api", "declrepo", "/tmp/api")
+    ]
+
+
+def test_container_host_refuses_a_product_whose_name_is_not_a_path_segment(tmp_path):
+    """The chokepoint's name validation covers containers too, and the refusal
+    names the container carrying the bad product — a run tree cannot nest."""
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+
+    with (
+        _product_provider(lambda h: [_IngestProduct(artifact=Path("/a"), name="bad/name")]),
+        pytest.raises(ValueError, match=re.escape("host test3.repo1.api: product name 'bad/name'")),
+    ):
+        register_declared_container_hosts(lab, [repo])
+
+
+def test_legacy_walk_placeholder_receives_product_ingest():
+    """The composes-only walk runs the chokepoint too.
+
+    Its own test, because a repo declaring `[[docker.use_cases]]` (what
+    `_make_repo` builds) takes the use-case branch INSTEAD — so every other
+    ingest test here exercises the sibling walk, and deleting this branch's
+    `apply_providers` call would leave them all green.
+    """
+    lab = _make_lab()
+    repo = _uc_repo("a", composes=[_core_compose()])  # no fragments: the legacy branch
+
+    with _product_provider(lambda h: [_IngestProduct(artifact=Path("/a"), name="api")]):
+        assert register_declared_container_hosts(lab, [repo]) == 1
+
+    placeholder = lab.hosts["test3.a.api"]
+    assert [p.name for p in placeholder.products] == ["api"]
+    assert placeholder.products[0].cov_dir == "/tmp/api"
+
+
+def test_ingest_runs_after_the_source_lab_stamp(tmp_path, monkeypatch):
+    """Ingest must run AFTER `source_lab` is stamped, or the §5 repo-targeting
+    gate cannot judge the container.
+
+    An UNSTAMPED host (`source_lab == ""`) takes `apply_product_providers`'
+    not-judged carve-out and admits every provider, so a call placed above the
+    stamp would silently hang another lab's products on this container. The
+    parent here comes from component "a" of a composite lab, and the two
+    providers are owned by repos declared for DIFFERENT labs: only the "a" one
+    may attach. Kills: ingest hoisted above the stamp at any of the three sites.
+    """
+    scopes = {
+        "bench": ProjectScopeConfig([re.compile("a")], [re.compile(".*")]),
+        "elsewhere": ProjectScopeConfig([re.compile("b")], [re.compile(".*")]),
+    }
+    monkeypatch.setattr(scope_mod, "scope_for_repo", scopes.get)
+
+    repo = _make_repo(tmp_path)
+    lab = _merged_lab_with_stamped_parent()  # parent.source_lab == "a", lab.name == "a+b"
+
+    with (
+        registering_repo("bench"),
+        _product_provider(lambda h: [_IngestProduct(artifact=Path("/a"), name="api")]),
+        registering_repo("elsewhere"),
+        _product_provider(lambda h: [_IngestProduct(artifact=Path("/a"), name="offlab")]),
+    ):
+        assert register_declared_container_hosts(lab, [repo]) == 1
+
+    placeholder = lab.hosts["test3.repo1.api"]
+    assert placeholder.source_lab == "a"
+    # "offlab" would be here too had the gate seen an unstamped host.
+    assert [p.name for p in placeholder.products] == ["api"]
 
 
 # ---------------------------------------------------------------------------

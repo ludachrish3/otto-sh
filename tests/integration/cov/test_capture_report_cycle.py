@@ -52,6 +52,7 @@ async def test_manual_survives_unrelated_commit_and_stales_on_edit(tmp_path: Pat
 
     cap = Capture(
         tier="manual",
+        product="app",
         base_commit=head_commit(repo),
         captured_at="2026-07-01T00:00:00Z",
         ticket="T-9",
@@ -102,6 +103,7 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
     def cap(ticket: str, lines: dict[int, int], display_name: str | None) -> Capture:
         return Capture(
             tier="manual",
+            product="app",
             base_commit=head_commit(repo),
             captured_at=f"2026-07-0{len(ticket)}T00:00:00Z",
             ticket=ticket,

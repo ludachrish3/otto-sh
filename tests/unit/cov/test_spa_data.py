@@ -138,6 +138,68 @@ class TestTreeRollupAndCtxLines:
         assert dir_b["stats"]["lines"]["hit"] == 1
 
 
+class TestProductDimension:
+    def _store(self, tmp_path):
+        store = CoverageStore(tier_order=["e2e"])
+        r_app = store.add_run(tier="e2e", label="nightly", board="h1", host="h1", product="app")
+        r_agent = store.add_run(tier="e2e", label="nightly", board="h1", host="h1", product="agent")
+        r_unit = store.add_run(tier="unit")  # unnamed
+        fr = store.get_or_create_file(tmp_path / "a.c")
+        l1 = fr.get_or_create_line(1)
+        l1.hits.add("e2e", 1)
+        l1.run_hits = {r_app: 1, r_agent: 1}
+        l2 = fr.get_or_create_line(2)
+        l2.hits.add("e2e", 1)
+        l2.run_hits = {r_app: 1}
+        l3 = fr.get_or_create_line(3)
+        l3.hits.add("unit", 1)
+        l3.run_hits = {r_unit: 1}
+        return store
+
+    def test_products_list_is_sorted_distinct_and_skips_unnamed(self, tmp_path):
+        payload = build_index_payload(
+            self._store(tmp_path), project_name="P", prefix=tmp_path, stamp="S"
+        )
+        assert payload["products"] == ["agent", "app"]
+
+    def test_product_lines_count_lines_hit_by_any_run_of_that_product(self, tmp_path):
+        payload = build_index_payload(
+            self._store(tmp_path), project_name="P", prefix=tmp_path, stamp="S"
+        )
+        stats = payload["tree"]["stats"]
+        assert stats["product_lines"] == {"app": 2, "agent": 1}
+        assert stats["ctx_product_lines"] == {"nightly": {"app": 2, "agent": 1}}
+        assert stats["ctx_lines"] == {"nightly": 2, "unit": 1}
+
+    def test_product_maps_sum_through_directory_rollup(self, tmp_path):
+        """A parent's product maps are the SUM of its children's, and the
+        rollup never aliases a child's map (mutating the parent must not
+        reach the file node)."""
+        store = self._store(tmp_path)
+        r_app = next(r.id for r in store.runs if r.product == "app")
+        nested = store.get_or_create_file(tmp_path / "sub" / "b.c")
+        line = nested.get_or_create_line(1)
+        line.hits.add("e2e", 1)
+        line.run_hits = {r_app: 1}
+        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        root = payload["tree"]
+        sub = next(d for d in root["dirs"] if d["name"] == "sub")
+        assert sub["stats"]["product_lines"] == {"app": 1}
+        assert sub["stats"]["ctx_product_lines"] == {"nightly": {"app": 1}}
+        assert root["stats"]["product_lines"] == {"app": 3, "agent": 1}
+        assert root["stats"]["ctx_product_lines"] == {"nightly": {"app": 3, "agent": 1}}
+        assert (
+            sub["files"][0]["stats"]["ctx_product_lines"] is not sub["stats"]["ctx_product_lines"]
+        )
+        assert (
+            sub["files"][0]["stats"]["ctx_product_lines"]["nightly"]
+            is not sub["stats"]["ctx_product_lines"]["nightly"]
+        )
+
+    def test_format_is_three(self):
+        assert OTTO_COV_DATA_FORMAT == 3
+
+
 class TestRunContrib:
     def test_lines_revoked_and_top_files_sorted_desc(self, tmp_path):
         x = _write(tmp_path, "a.c", "int a;\nint b;\n")

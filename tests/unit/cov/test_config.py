@@ -27,11 +27,8 @@ class TestHasCovConfig:
     def test_unrelated_keys_are_false(self) -> None:
         assert has_cov_config({"something_else": True}) is False
 
-    def test_gcda_remote_dir_is_true(self) -> None:
-        assert has_cov_config({"gcda_remote_dir": "/remote"}) is True
-
     def test_embedded_is_true(self) -> None:
-        assert has_cov_config({"embedded": {"extension": "cov_ext"}}) is True
+        assert has_cov_config({"embedded": {"build_dir": "build"}}) is True
 
     def test_tiers_is_true(self) -> None:
         assert has_cov_config({"tiers": {"unit": {"kind": "unit"}}}) is True
@@ -41,10 +38,7 @@ class TestHasCovConfig:
 
     def test_falsy_values_are_false(self) -> None:
         """An empty/falsy value under a known key still counts as unconfigured."""
-        assert (
-            has_cov_config({"gcda_remote_dir": "", "embedded": {}, "tiers": {}, "hosts": ""})
-            is False
-        )
+        assert has_cov_config({"embedded": {}, "tiers": {}, "hosts": ""}) is False
 
 
 class TestGetCovRepo:
@@ -60,7 +54,7 @@ class TestGetCovRepo:
 
     def test_repo_with_coverage_section_found(self) -> None:
         repo = MagicMock()
-        repo.settings = {"coverage": {"gcda_remote_dir": "/remote"}}
+        repo.settings = {"coverage": {"hosts": "/remote"}}
         assert get_cov_repo([repo]) is repo
 
     def test_first_matching_repo_wins(self) -> None:
@@ -92,7 +86,7 @@ class TestGetCovConfig:
         assert get_cov_config([repo]) == {}
 
     def test_returns_matching_repo_coverage_dict(self) -> None:
-        cov = {"gcda_remote_dir": "/remote", "hosts": "zephyr37-llext"}
+        cov = {"embedded": {}, "hosts": "zephyr37-llext"}
         repo = MagicMock()
         repo.settings = {"coverage": cov}
         assert get_cov_config([repo]) is cov

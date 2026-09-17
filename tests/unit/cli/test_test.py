@@ -548,11 +548,32 @@ def _capture_cov_ctx(cli_args: list[str]) -> tuple[int, dict, str]:
 
 
 class TestCovDirOption:
-    def test_no_flags_disables_coverage(self):
+    def test_no_flags_leaves_coverage_on_auto(self):
         exit_code, ctx_obj, output = _capture_cov_ctx([])
         assert exit_code == 0, f"output={output!r}"
-        assert ctx_obj["cov"] is False
+        # Neither --cov nor --no-cov: auto — the decision is the run's, taken
+        # from the lab's instrumentation (otto.suite.run.resolve_coverage).
+        assert ctx_obj["cov"] is None
         assert ctx_obj["cov_dir"] is None
+
+    def test_no_cov_forces_off(self):
+        exit_code, ctx_obj, output = _capture_cov_ctx(["--no-cov"])
+        assert exit_code == 0, f"output={output!r}"
+        assert ctx_obj["cov"] is False
+
+    def test_no_cov_with_cov_dir_is_a_usage_error(self, tmp_path):
+        exit_code, _ctx_obj, output = _capture_cov_ctx(
+            ["--no-cov", "--cov-dir", str(tmp_path / "c")]
+        )
+        assert exit_code == 2, f"output={output!r}"  # typer/click usage error
+        assert "--no-cov" in output
+        assert "--cov-dir" in output
+
+    def test_no_cov_with_cov_report_is_a_usage_error(self):
+        exit_code, _ctx_obj, output = _capture_cov_ctx(["--no-cov", "--cov-report"])
+        assert exit_code == 2, f"output={output!r}"  # typer/click usage error
+        assert "--no-cov" in output
+        assert "--cov-report" in output
 
     def test_cov_flag_only_uses_default_dir(self):
         exit_code, ctx_obj, output = _capture_cov_ctx(["--cov"])

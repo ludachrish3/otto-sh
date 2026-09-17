@@ -192,8 +192,9 @@ def test_conftest_chain_writes_no_ambient_env_at_collection(tree):
 
 def test_integration_sut_dirs_fixture_sets_scoped_and_restores(monkeypatch):
     """The sanctioned runtime replacement for the banned import-time write:
-    set at session start, gone (or restored) at session end — the property
-    that makes a fixture write hermetic where a module-scope write is not.
+    set at fixture setup, gone (or restored) at teardown — the property that
+    makes a fixture write hermetic where a module-scope write is not, and what
+    lets the integration tree bracket the env per TEST rather than per session.
     Drives the impl generator directly (the ``_impl`` pattern)."""
     from tests.integration.conftest import _default_sut_dirs_env_impl
 

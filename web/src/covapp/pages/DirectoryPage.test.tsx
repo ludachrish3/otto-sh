@@ -20,6 +20,7 @@ const RUNS: RunJson[] = [
     label: "router-a (system bed)",
     board: "stm32h7-rev3",
     host: "host-1",
+    product: "",
     labs: ["lab-1", "lab-2"],
     captured_at: "2026-07-21",
     tester: null,
@@ -35,6 +36,7 @@ const RUNS: RunJson[] = [
     label: "unit harvest",
     board: "host",
     host: "host-2",
+    product: "",
     labs: [],
     captured_at: "2026-07-22",
     tester: { name: "M. Reyes" },
@@ -58,6 +60,11 @@ function buildTree(): DirNode {
     branches: { total: 8, hit: 5, per_tier: { system: 3, unit: 4 } },
     flags: { stale: 2, aging: 1, excluded: 3 },
     ctx_lines: { "router-a (system bed)": 6 },
+    // Deliberately three DIFFERENT numbers (6 ctx-only, 8 product-only, 4
+    // for the pair) so a row reading the wrong map cannot coincidentally
+    // pass — the product-scope cases below key on exactly that.
+    product_lines: { app: 8 },
+    ctx_product_lines: { "router-a (system bed)": { app: 4 } },
   });
   const utilStats = emptyStats({
     lines: {
@@ -81,6 +88,8 @@ function buildTree(): DirNode {
     branches: { total: 10, hit: 7, per_tier: { system: 5, unit: 6 } },
     flags: { stale: 2, aging: 1, excluded: 3 },
     ctx_lines: { "router-a (system bed)": 11 },
+    product_lines: { app: 15 },
+    ctx_product_lines: { "router-a (system bed)": { app: 9 } },
   });
   return {
     name: "acme-fw",
@@ -326,6 +335,69 @@ describe("DirectoryPage", () => {
       const mainRow = screen.getByTestId("tree-row-file:src/main.c");
       expect(mainRow.children[1].textContent).toBe("0/20");
       expect(mainRow.children[2].textContent).toContain("0.0%");
+    });
+  });
+
+  // Per-product spec §10: a pinned product narrows the numerator exactly the
+  // way a focused context does, and composes with one.
+  describe("under a product pin", () => {
+    function renderProductPinned(query: string, segments: string[] = []) {
+      // Run 1 ("router-a (system bed)", tier system) is the only `app` run —
+      // run 2 stays productless, so the pin is a strict narrowing.
+      const index = buildIndex({
+        products: ["app"],
+        runs: RUNS.map((run) => (run.id === 1 ? { ...run, product: "app" } : run)),
+      });
+      window.__OTTO_COV__ = index;
+      window.location.hash = `#/coverage${
+        segments.length > 0 ? `/${segments.join("/")}` : ""
+      }?${query}`;
+      renderPage({ index, segments });
+      return index;
+    }
+
+    it("Lines/Line % come from product_lines; a tier-spanning scope DECLINES every tier cell", () => {
+      renderProductPinned("product=app");
+      const cells = screen.getByTestId("tree-row-file:src/main.c").children;
+      expect(cells[1].textContent).toBe("8/20"); // product_lines.app, NOT ctx_lines (6)
+      expect(cells[2].textContent).toContain("40.0%");
+      expect(cells[3].textContent).toBe("—"); // branch: not tracked per run
+      // A product's hits are spread across tiers this rollup cannot split
+      // back apart: "—" (no data), never a fabricated "0.0%" beside a Lines
+      // cell reading 8/20.
+      expect(cells[4].textContent).toBe("—"); // tier:system
+      expect(cells[5].textContent).toBe("—"); // tier:unit
+    });
+
+    it("a context ∧ product scope still mirrors its own tier column (0.0% elsewhere)", () => {
+      // The single-tier case is unchanged by the tier-spanning decline
+      // above: this scope belongs to exactly one tier, so that column has a
+      // real number to mirror.
+      renderProductPinned(`ctx=${encodeURIComponent("router-a (system bed)")}&product=app`);
+      const cells = screen.getByTestId("tree-row-file:src/main.c").children;
+      expect(cells[4].textContent).toContain("20.0%"); // tier:system — 4/20
+      expect(cells[5].textContent).toContain("0.0%"); // tier:unit
+    });
+
+    it("a context ∧ product pin reads ctx_product_lines and names both halves", () => {
+      renderProductPinned(`ctx=${encodeURIComponent("router-a (system bed)")}&product=app`, [
+        "src",
+      ]);
+      const cells = screen.getByTestId("tree-row-file:src/main.c").children;
+      expect(cells[1].textContent).toBe("4/20"); // the PAIR count, not 6 or 8
+
+      const card = screen.getByTestId("stats-card");
+      expect(card.textContent).toContain("focused: router-a (system bed) · app");
+      expect(card.textContent).toContain("Context · Product");
+      expect(screen.getByTestId("stats-row-ctx").textContent).toContain("9/25"); // src's pair count
+    });
+
+    it("the stats card heads its key column 'Product' and reads the node's product rollup", () => {
+      renderProductPinned("product=app", ["src"]);
+      const card = screen.getByTestId("stats-card");
+      expect(card.textContent).toContain("focused: app");
+      expect(card.textContent).toContain("Product");
+      expect(screen.getByTestId("stats-row-ctx").textContent).toContain("15/25");
     });
   });
 

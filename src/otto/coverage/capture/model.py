@@ -1,4 +1,4 @@
-"""The per-board ``capture.json`` artifact (spec §3).
+"""The per-(host, product) ``capture.json`` artifact (spec §3).
 
 A capture stores line/branch data in **committed-code coordinates**,
 anchored to the ``base_commit`` whose numbering they mean, with
@@ -17,9 +17,11 @@ from .remap import LineRemapper, parse_u0_hunks
 
 logger = logging.getLogger(__name__)
 
-CAPTURE_FORMAT_VERSION = 2
+CAPTURE_FORMAT_VERSION = 3
 """``capture.json`` schema version, bumped on breaking on-disk changes.
 
+Version 3 adds the required ``product`` field: a capture is one
+(host, product) pair's retrieval, staged under ``cov/<host>/<product>/``.
 Version 2 renames the git-anchor field from ``pin`` to ``base_commit``
 (JSON key and Python attribute alike) — clearer terminology for the
 commit whose line numbering a capture's coordinates mean. There is no
@@ -42,12 +44,13 @@ class CaptureFileCov(BaseModel):
 
 
 class Capture(BaseModel):
-    """One board's retrieval result — the universal capture artifact."""
+    """One (board, product) retrieval result — the universal capture artifact."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     schema_version: int = Field(default=CAPTURE_FORMAT_VERSION, alias="schema")
     tier: str
+    product: str
     base_commit: str
     dirty_remap: bool = False
     captured_at: str = ""
@@ -149,12 +152,13 @@ def _remap_file(
     return out_lines, out_branches
 
 
-def build_capture(
+def build_capture(  # noqa: PLR0913 — wide capture-construction API, one keyword per annotation
     *,
     info_path: Path,
     tier: str,
     repo_root: Path,
     board: str,
+    product: str,
     labs: list[str],
     tester: dict[str, str] | None = None,
     ticket: str | None = None,
@@ -165,6 +169,9 @@ def build_capture(
     """Build a :class:`Capture` anchored to ``base_commit`` from an lcov ``.info`` file.
 
     Args:
+        board: The staging-dir/host-id name the counters came from.
+        product: The product whose counters these are — the ``<product>``
+            segment of ``cov/<host>/<product>/``.
         display_name: Host display name to annotate onto the capture;
             ``board`` stays the staging-dir/host-id name.
     """
@@ -200,6 +207,7 @@ def build_capture(
     captured_at = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return Capture(
         tier=tier,
+        product=product,
         base_commit=base_commit,
         dirty_remap=dirty,
         captured_at=captured_at,

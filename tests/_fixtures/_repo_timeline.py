@@ -46,6 +46,7 @@ class RepoTimeline(TmpGitRepo):
         }
         cap = Capture(
             tier=tier,
+            product="app",
             base_commit=gitio.head_commit(self.root),
             captured_at=captured_at,
             board=host,

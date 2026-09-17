@@ -8,7 +8,9 @@ previous capture has already been retrieved:
 otto cov clean
 ```
 
-It targets the same host selection `otto cov get` fetches from, but
+It deletes the counters under each instrumented product's own `cov_dir`,
+one product at a time, so a product that is not a coverage build is left
+alone.  It targets the same host selection `otto cov get` fetches from, but
 **Unix hosts only**.  Embedded targets expose no counter-reset hook; when
 the lab has any embedded coverage hosts, the command logs a note and
 exits `0` rather than failing.  A lab with *only* embedded coverage hosts

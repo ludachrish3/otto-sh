@@ -3,12 +3,14 @@
 from dataclasses import dataclass
 from typing import Any
 
+from ..layout import validate_product_name
 from ..models.host import HostSpec
 
-# Imported for its registration side effect: the built-in "file" kind must be
-# in both kind registries before any declared entry builds. The factory is the
-# only build call site, so this import is the guarantee.
-from . import file_kind  # noqa: F401
+# Imported for their registration side effect: the built-in "file" kind must be
+# in both kind registries, and "llext" in the product registry, before any
+# declared entry builds. The factory is the only build call site, so these
+# imports are the guarantee.
+from . import file_kind, llext_kind  # noqa: F401
 from .capability import select_option_defaults, select_preferences
 from .dev_tool import apply_declared_dev_tools, apply_dev_tool_providers
 from .element import Element
@@ -20,7 +22,7 @@ from .os_profile import (
     get_os_profile,
     registered_profile_names,
 )
-from .product import apply_declared_products, apply_product_providers
+from .product import apply_declared_products, apply_product_providers, stamp_cov_dir
 from .remote_host import RemoteHost, make_host_id
 
 # Names of the option tables accepted on host dicts and in
@@ -217,11 +219,30 @@ def create_host_from_dict(
     # skips any code instance whose name a settings entry already claimed —
     # config wins, code is the fallback (spec 2026-09-01 §7). Both run after
     # the source_lab stamp above, because both gates read it.
+    apply_providers(host)
+    return host
+
+
+def apply_providers(host: "RemoteHost | Any") -> None:
+    """Attach declared + provider products and dev tools, then finish each product.
+
+    The single ingest chokepoint: declared entries first per seam (config
+    wins, code fills the gaps), then the product-only finishing pass — the
+    name must be a safe run-tree segment (:mod:`otto.layout`) and
+    ``cov_dir`` becomes concrete. Called by ``create_host_from_dict`` and by
+    the compose module for container hosts, so both families get the same
+    products.
+    """
     apply_declared_products(host)
     apply_product_providers(host)
     apply_declared_dev_tools(host)
     apply_dev_tool_providers(host)
-    return host
+    for product in host.products:
+        try:
+            validate_product_name(product.name)
+        except ValueError as e:
+            raise ValueError(f"host {host.id}: {e}") from e
+        stamp_cov_dir(product)
 
 
 def validate_host_dict(host_data: dict[str, Any]) -> None:

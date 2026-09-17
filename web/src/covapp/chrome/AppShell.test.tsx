@@ -427,6 +427,51 @@ describe("AppShell", () => {
       expect(screen.queryByTestId("ticket-search")).toBeNull();
     });
   });
+
+  // Task 15 (per-product spec §10): a FOURTH chip + ⋮ menu section, for the
+  // product pin. Same anatomy as `describe("ticket"` above (neutral dot, no
+  // tier colour — a product spans every tier), gated on the report actually
+  // carrying products: a unit-only report lists none, so it gets no section.
+  describe("product", () => {
+    it("renders the product chip when a product is pinned, and clears it", async () => {
+      window.__OTTO_COV__ = makeIndex({ products: ["app"] });
+      window.location.hash = "#/coverage?product=app";
+      renderShell();
+
+      const chip = await screen.findByTestId("product-chip");
+      expect(chip.textContent).toContain("app");
+
+      fireEvent.click(screen.getByTestId("product-clear"));
+      expect(screen.queryByTestId("product-chip")).toBeNull();
+    });
+
+    it("the ⋮ menu lists every product with All products first", async () => {
+      window.__OTTO_COV__ = makeIndex({ products: ["agent", "app"] });
+      renderShell();
+
+      fireEvent.click(screen.getByTestId("appbar-menu"));
+
+      const all = await screen.findByTestId("product-menu-all");
+      const agent = screen.getByTestId("product-menu-agent");
+      const app = screen.getByTestId("product-menu-app");
+      // "All products" precedes every per-product row.
+      expect(all.compareDocumentPosition(agent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(all.compareDocumentPosition(app) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("no product section when the report has no products", async () => {
+      window.__OTTO_COV__ = makeIndex({ products: [] });
+      renderShell();
+
+      fireEvent.click(screen.getByTestId("appbar-menu"));
+
+      // The shortcuts row proves the menu actually opened, so the absence
+      // below is a real absence — the same "menu opened, section missing"
+      // shape the overrides section's test uses.
+      expect(await screen.findByTestId("menu-shortcuts")).toBeTruthy();
+      expect(screen.queryByTestId("product-menu-all")).toBeNull();
+    });
+  });
 });
 
 // Task 11 (manual-overrides spec §6): the ⋮ menu's "Overrides" section (a

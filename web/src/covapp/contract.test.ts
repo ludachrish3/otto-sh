@@ -270,6 +270,7 @@ const INDEX_PAYLOAD_KEYS: Record<keyof IndexPayload, true> = {
   tree: true,
   tickets: true,
   tickets_totals: true,
+  products: true,
 };
 
 const RUN_JSON_KEYS: Record<keyof RunJson, true> = {
@@ -286,6 +287,7 @@ const RUN_JSON_KEYS: Record<keyof RunJson, true> = {
   base_commit: true,
   dirty_remap: true,
   aging: true,
+  product: true,
 };
 
 const OVERRIDE_JSON_KEYS: Record<keyof OverrideJson, true> = {
@@ -307,6 +309,8 @@ const STATS_KEYS: Record<keyof Stats, true> = {
   branches: true,
   flags: true,
   ctx_lines: true,
+  product_lines: true,
+  ctx_product_lines: true,
 };
 
 const STAT_BUCKET_KEYS: Record<keyof StatBucket, true> = {

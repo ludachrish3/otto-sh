@@ -7,7 +7,7 @@ one sanctioned place that derives them (from its own known location).
 ``ensure_custom_hosts_on_path`` makes the repo's shared ``custom_hosts`` package
 importable (the third-party-style frame package SUT repos depend on).
 ``default_sut_dir`` names the ``repo1`` fixture SUT; the integration tree's
-session fixture points ``OTTO_SUT_DIRS`` at it — at RUNTIME, never at conftest
+per-test fixture points ``OTTO_SUT_DIRS`` at it — at RUNTIME, never at conftest
 import time (G11: module-scope env writes are banned; the old
 ``ensure_sut_dirs()`` here was the live offender, re-injecting the variable
 after the root conftest's hermeticity strip).

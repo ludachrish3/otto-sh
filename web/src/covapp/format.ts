@@ -11,7 +11,7 @@
 // cover cleanly.
 import type { Crumb } from "../ui/Breadcrumbs";
 import type { TierStatRow } from "./chrome/StatsCard";
-import type { Context } from "./contexts";
+import { type FocusScope, scopeTreeLines } from "./contexts";
 import type { FileChunk, IndexPayload, LineJson, Stats } from "./types";
 
 /** Plain digit string — no thousands separators, no rounding. Counts here
@@ -102,22 +102,29 @@ export function tierRows(index: IndexPayload, stats: Stats, hideAsserted = false
   return rows;
 }
 
-/** StatsCard's focused-context variant (spec §4): a single
+/** StatsCard's focused-scope variant (spec §4, per-product §10): a single
  * `{key: "ctx"}` row in place of `tierRows`'s per-tier matrix — line =
- * `stats.ctx_lines[ctx.label]` (hit lines credited to this context, within
- * whatever tree node `stats` came from) over that node's line total;
- * branch/decision both `null` ("no data" — v4 doesn't store per-run branch
- * contribution, Global Constraints' documented data limitation). Used by
- * DirectoryPage.tsx and RunsPage.tsx (both read a tree `Stats`); FilePage.
- * tsx uses `focusedFileRow` instead (its coverable-line total/hit count
- * comes from the loaded `FileChunk`, not a tree node). */
-export function focusedTreeRow(index: IndexPayload, stats: Stats, ctx: Context): TierStatRow[] {
+ * `scopeTreeLines` (hit lines credited to this scope — a context, a
+ * product, or both — within whatever tree node `stats` came from) over that
+ * node's line total; branch/decision both `null` ("no data" — v4 doesn't
+ * store per-run branch contribution, Global Constraints' documented data
+ * limitation). Used by DirectoryPage.tsx and RunsPage.tsx (both read a tree
+ * `Stats`); FilePage.tsx uses `focusedFileRow` instead (its coverable-line
+ * total/hit count comes from the loaded `FileChunk`, not a tree node).
+ *
+ * No tier dot for a tier-spanning scope (`tier: ""`, a bare product): there
+ * is no one tier to colour it by, and `tier_colors[""]` is not a colour. */
+export function focusedTreeRow(
+  index: IndexPayload,
+  stats: Stats,
+  scope: FocusScope,
+): TierStatRow[] {
   return [
     {
       key: "ctx",
-      label: ctx.label,
-      dotColor: index.tier_colors[ctx.tier],
-      line: [stats.ctx_lines[ctx.label] ?? 0, stats.lines.total],
+      label: scope.label,
+      dotColor: scope.tier ? index.tier_colors[scope.tier] : undefined,
+      line: [scopeTreeLines(stats, scope), stats.lines.total],
       branch: null,
       decision: null,
     },
@@ -138,13 +145,19 @@ export function lineHasMemberHit(line: LineJson | undefined, memberRunIds: Set<n
 
 /** `focusedTreeRow`'s file-page counterpart: line hit/total computed
  * directly from the loaded `FileChunk` rather than a tree `Stats` — a line
- * counts as "hit" for this context iff `lineHasMemberHit` (the same
+ * counts as "hit" for this scope iff `lineHasMemberHit` (the same
  * per-run membership test `FilePage.tsx`'s row tinting uses), over the
  * same `lineTotal` `chunkTierRows` uses (every key in `chunk.lines`,
  * including past-EOF ones — the report emitter pins that those still
- * count). */
-export function focusedFileRow(index: IndexPayload, chunk: FileChunk, ctx: Context): TierStatRow[] {
-  const memberIds = new Set(ctx.runs.map((r) => r.id));
+ * count). Because the numerator is the scope's MEMBER RUNS, the composed
+ * ctx ∧ product case needs nothing extra here — `resolveScope` already
+ * intersected the run sets. Same tier-dot rule as `focusedTreeRow`. */
+export function focusedFileRow(
+  index: IndexPayload,
+  chunk: FileChunk,
+  scope: FocusScope,
+): TierStatRow[] {
+  const memberIds = new Set(scope.runs.map((r) => r.id));
   const lineTotal = Object.keys(chunk.lines).length;
   let hit = 0;
   for (const line of Object.values(chunk.lines)) {
@@ -153,8 +166,8 @@ export function focusedFileRow(index: IndexPayload, chunk: FileChunk, ctx: Conte
   return [
     {
       key: "ctx",
-      label: ctx.label,
-      dotColor: index.tier_colors[ctx.tier],
+      label: scope.label,
+      dotColor: scope.tier ? index.tier_colors[scope.tier] : undefined,
       line: [hit, lineTotal],
       branch: null,
       decision: null,
@@ -248,12 +261,27 @@ export function chunkTierRows(
  * and disagreed when a ticket and a context were BOTH active, one naming
  * "Ticket" and the other "Context" for the identical `PROJ-1 · manual`
  * cell (`ticketTreeRow`/`ticketFileRow` both label that row with both
- * halves). Naming both is the only header that describes it. */
-export function keyColumnLabel({ ticket, context }: { ticket: boolean; context: boolean }): string {
-  if (ticket && context) return "Ticket · Context";
-  if (ticket) return "Ticket";
-  if (context) return "Context";
-  return "Tier";
+ * halves). Naming both is the only header that describes it.
+ *
+ * A pinned product is a third, independent dimension (per-product spec
+ * §10), so the header is every active pin joined by the same " · " the row
+ * label itself uses — "Product", "Context · Product", "Ticket · Product",
+ * "Ticket · Context · Product" — and "Tier" only when nothing is pinned. */
+export function keyColumnLabel({
+  ticket,
+  context,
+  product,
+}: {
+  ticket: boolean;
+  context: boolean;
+  product: boolean;
+}): string {
+  const parts = [
+    ...(ticket ? ["Ticket"] : []),
+    ...(context ? ["Context"] : []),
+    ...(product ? ["Product"] : []),
+  ];
+  return parts.length > 0 ? parts.join(" · ") : "Tier";
 }
 
 /** Appends " · asserted hidden" to a StatsCard's `scope` string while

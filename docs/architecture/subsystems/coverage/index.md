@@ -14,7 +14,7 @@ digraph coverage {
     test [label="otto test --cov /\notto cov get\ninstrumented run or retrieval"];
     fetch [label="fetch\n.gcda from covered hosts\n(transfer on Unix,\nconsole extraction embedded)"];
     merge [label="merge\nmatch .gcda ↔ .gcno graph,\nremap sysroot paths,\nmerge hosts + runs (lcov)"];
-    capture [label="capture.json\nper board: parsed hits,\ngit-anchored coordinates"];
+    capture [label="capture.json\nper host per product: parsed hits,\ngit-anchored coordinates"];
     render [label="otto cov report\ncaptures + unit harvest\n+ manual store → HTML"];
     err [label="CoverageDataMismatchError\nstale build → instructions,\nnot a wrong report", shape=note, style=dashed];
 
@@ -26,17 +26,24 @@ digraph coverage {
 The stages (packages `otto.coverage.fetcher` → `merge` → `capture` →
 `renderer` → `reporter`):
 
-1. **Fetch** — pull `.gcda` data from each covered host after the run.
-   Fetchers are per-family: file transfer for Unix hosts, console extraction
-   for embedded targets. Which hosts are covered is *repo-declared* — the
-   `[coverage].hosts` regex in `settings.toml` — never inferred, so hop hosts
-   and uninstrumented beds can't sneak into a report.
+1. **Fetch** — pull `.gcda` data from each covered host's instrumented
+   **products** after the run, each from its own `cov_dir`, into
+   `cov/<host>/<product>/` ({ref}`the run tree <run-tree>`).
+   Fetchers are per-family: file transfer for Unix hosts and containers,
+   console extraction for embedded targets. Which hosts are covered is
+   *repo-declared* — the `[coverage].hosts` regex in `settings.toml` — never
+   inferred, so hop hosts and uninstrumented beds can't sneak into a report.
+   Which *products* on those hosts contribute is decided locally before
+   anything runs, by scanning each artifact for the compiler's coverage
+   markers (`otto.coverage.instrumentation`); that same verdict is what
+   turns retrieval on for a plain `otto test`.
 2. **Merge** — match counters to the build tree's `.gcno` graph and remap
    embedded/sysroot paths back to source paths, merging counters across hosts
    and runs (lcov semantics).
-3. **Capture** — freeze the merged result into a per-board `capture.json`:
-   parsed hits in committed-code coordinates, anchored to the repo's
-   `HEAD` (`base_commit`) and per-file blob SHAs.
+3. **Capture** — freeze the merged result into one `capture.json` per host
+   per product: parsed hits in committed-code coordinates, anchored to the
+   repo's `HEAD` (`base_commit`) and per-file blob SHAs, and tagged with the
+   product they came from.
 4. **Render / report** — `otto cov report` assembles every tier — e2e
    captures, a fresh unit-tier harvest, the committed manual store — into an
    HTML report plus summary tiers.
@@ -93,11 +100,13 @@ remotes.
 
 ## Where the code lives
 
-- `otto.coverage.fetcher` — pulls `.gcda` off covered hosts (file
-  transfer on Unix, console extraction on embedded)
+- `otto.coverage.fetcher` — pulls `.gcda` off covered hosts, per product
+  (file transfer on Unix and containers, console extraction on embedded)
+- `otto.coverage.instrumentation` — the local per-product instrumentation
+  scan and the `--cov`/auto/`--no-cov` decision table
 - `otto.coverage.merge` — pairs counters to the `.gcno` build graph and
   merges hosts and runs
-- `otto.coverage.capture` — freezes a merge into a per-board
+- `otto.coverage.capture` — freezes a merge into a per-(host, product)
   `capture.json`, anchored to `base_commit`
 - `otto.coverage.tiers` — resolves the declarative `[coverage.tiers]`
   table into precedence-ordered `TierConfig` values

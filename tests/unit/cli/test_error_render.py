@@ -5,10 +5,12 @@ perfect, and the damage happens in the renderer. So everything here asserts on
 CAPTURED OUTPUT through the real print path.
 """
 
+from types import SimpleNamespace
+
 import pytest
 import typer
 
-from otto.cli.invoke import fail, print_error
+from otto.cli.invoke import fail, print_error, render_instrumentation_refusal
 
 #: Bracket shapes that reach a user-facing message in practice. Rich reads
 #: `[word]` as a style tag and deletes it; numeric subscripts survive, which
@@ -88,3 +90,104 @@ def test_unescaped_rendering_really_does_eat_them() -> None:
     rendered = console.file.getvalue()
     for message in _EATEN_WITHOUT_ESCAPING:
         assert message not in rendered, f"rich no longer eats {message!r}"
+
+
+# ---------------------------------------------------------------------------
+# The coverage refusal: one user-facing line, plus the verdict TABLE
+# ---------------------------------------------------------------------------
+#
+# Same rule as everything above: asserted on CAPTURED OUTPUT through the real
+# print path. `InstrumentationReport.table()` returning a well-formed Table
+# proves nothing about what the reader sees -- the remedy caption ends in
+# "the [[products]] entry", and an unescaped render turns that into
+# "the [] entry", which is a live bug this file's whole premise is about.
+
+
+def _refusal(*verdicts, command="otto test --cov"):
+    """Raise and return the real refusal `decide_coverage` produces for *verdicts*.
+
+    Built through `decide_coverage` rather than by constructing the error
+    directly, so the `report=` hand-off this rendering depends on is part of
+    what every test below exercises.
+    """
+    from otto.coverage.errors import CoverageNotInstrumentedError
+    from otto.coverage.instrumentation import decide_coverage, detect
+
+    hosts = [
+        SimpleNamespace(
+            id=f"h{i}", products=[SimpleNamespace(name=f"p{i}", instrumented=lambda v=v: v)]
+        )
+        for i, v in enumerate(verdicts)
+    ]
+    try:
+        decide_coverage(True, detect(hosts), has_cov_config=True, command=command)
+    except CoverageNotInstrumentedError as e:
+        return e
+    raise AssertionError("decide_coverage did not refuse")  # pragma: no cover — guard
+
+
+def test_refusal_prints_the_table_and_returns_only_the_headline(capsys) -> None:
+    """The console gets ONE line plus the table; the listing is not repeated."""
+    error = _refusal(False, None)
+    headline = render_instrumentation_refusal(error)
+
+    assert headline == "otto test --cov: no instrumented product — coverage cannot be collected."
+    assert "\n" not in headline
+    out = capsys.readouterr().out
+    assert "coverage instrumentation" in out  # the title
+    for cell in ("host", "product", "instrumented", "h0", "p0", "no", "h1", "p1", "unknown"):
+        assert cell in out
+    # The plain `describe()` listing stays in the MESSAGE (the run log, a
+    # library caller) but must not also reach the console under the table.
+    assert "h0: p0" in str(error)
+    assert "h0: p0" not in out
+
+
+def test_refusal_caption_keeps_the_products_brackets(capsys) -> None:
+    """The remedy names `[[products]]`; rich must not eat it down to `[]`.
+
+    This is the bug the table had the moment anything rendered it: the caption
+    is the one place the fix is actionable, and "the [] entry" points the
+    reader at nothing.
+    """
+    render_instrumentation_refusal(_refusal(None))
+    out = capsys.readouterr().out
+    assert "[[products]]" in out
+    assert "the [] entry" not in out
+
+
+def test_refusal_caption_is_absent_when_no_verdict_is_unknown(capsys) -> None:
+    """The remedy is for `unknown`; a scanned-and-negative lab has nothing to override."""
+    render_instrumentation_refusal(_refusal(False))
+    out = capsys.readouterr().out
+    assert "coverage instrumentation" in out
+    assert "Product.instrumented" not in out
+
+
+def test_refusal_with_no_products_at_all_prints_no_table(capsys) -> None:
+    """An empty report has no rows to tabulate, so the whole message is the answer."""
+    error = _refusal(command="otto cov get")
+    headline = render_instrumentation_refusal(error)
+    assert headline == str(error)
+    assert "no products on any coverage host" in headline
+    assert capsys.readouterr().out == ""
+
+
+def test_any_other_error_is_returned_whole_and_prints_nothing(capsys) -> None:
+    """The helper is usable unconditionally in an error path."""
+    error = ValueError("expected list[str], got dict[str, int]")
+    assert render_instrumentation_refusal(error) == str(error)
+    assert capsys.readouterr().out == ""
+
+
+def test_the_boundary_composition_is_one_error_line_over_the_table(capsys) -> None:
+    """What `otto.cli.main.entry` actually prints: table first, then the line.
+
+    Pins the two halves TOGETHER, because the failure mode is a caller that
+    renders the table and then prints the whole multi-line message under it.
+    """
+    error = _refusal(False, None)
+    print_error(f"error: {render_instrumentation_refusal(error)}")
+    out = capsys.readouterr().out
+    assert out.index("coverage instrumentation") < out.index("error: otto test --cov")
+    assert out.count("coverage cannot be collected") == 1

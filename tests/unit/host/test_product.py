@@ -1,5 +1,6 @@
 """Unit tests for the Product lifecycle strategy and orchestration."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -279,3 +280,174 @@ async def test_install_propagates_the_products_result_whole():
     assert result is failing, "the product's result object, not a rebuild"
     assert result.exit_code == 7, "the command's retcode, not Status.Error.value (2)"
     assert result.command == "tar xzf app.tgz"
+
+
+# ---------------------------------------------------------------------------
+# cov_dir / debug_log_globs / instrumented  (spec 2026-09-16 §4)
+# ---------------------------------------------------------------------------
+
+from otto.host.product import (
+    INSTRUMENTATION_MARKERS,
+    cov_dir_of,
+    scan_for_instrumentation,
+    stamp_cov_dir,
+)
+
+
+def test_cov_dir_defaults_to_none_until_stamped():
+    p = _DummyFileProduct(artifact=Path("/builds/app.bin"), name="app")
+    assert p.cov_dir is None
+    assert cov_dir_of(p) == "/tmp/app"
+    stamp_cov_dir(p)
+    assert p.cov_dir == "/tmp/app"
+
+
+def test_stamp_cov_dir_keeps_an_explicit_value():
+    p = _DummyFileProduct(artifact=Path("/builds/app.bin"), name="app", cov_dir="/var/cov/app")
+    stamp_cov_dir(p)
+    assert p.cov_dir == "/var/cov/app"
+    assert cov_dir_of(p) == "/var/cov/app"
+
+
+def test_abc_defaults_are_immutable_and_unknown():
+    class _Bare(Product):
+        name = "bare"
+
+        async def stage(self, host):
+            return Result(Status.Success)
+
+        async def install(self, host):
+            return Result(Status.Success)
+
+        async def uninstall(self, host):
+            return Result(Status.Success)
+
+        async def is_installed(self, host):
+            return True
+
+    p = _Bare()
+    assert p.cov_dir is None
+    assert p.debug_log_globs == ()
+    assert p.instrumented() is None  # a code product must override to be detected
+
+
+@pytest.mark.parametrize("marker", INSTRUMENTATION_MARKERS)
+def test_scan_finds_each_marker_mid_file(tmp_path, marker):
+    f = tmp_path / "bin"
+    f.write_bytes(b"\x7fELF" + b"\0" * 100 + marker + b"\0" * 100)
+    assert scan_for_instrumentation(f) is True
+
+
+def test_scan_finds_a_marker_straddling_the_chunk_boundary(tmp_path):
+    f = tmp_path / "bin"
+    marker = b".gcda"
+    pad = (1 << 20) - 2  # the default chunk is 1 MiB; split the marker across it
+    f.write_bytes(b"\0" * pad + marker + b"\0" * 10)
+    assert scan_for_instrumentation(f) is True
+
+
+def test_scan_clean_file_is_false(tmp_path):
+    f = tmp_path / "bin"
+    f.write_bytes(b"\x7fELF" + b"nothing to see" * 50)
+    assert scan_for_instrumentation(f) is False
+
+
+def test_scan_directory_is_true_if_any_file_hits_else_unknown(tmp_path):
+    d = tmp_path / "bundle"
+    d.mkdir()
+    (d / "a").write_bytes(b"clean")
+    assert scan_for_instrumentation(d) is None
+    (d / "b").write_bytes(b"x__gcov_init")
+    assert scan_for_instrumentation(d) is True
+
+
+def test_scan_missing_path_is_unknown(tmp_path):
+    assert scan_for_instrumentation(tmp_path / "absent") is None
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
+def test_scan_unreadable_file_is_unknown_not_a_crash(tmp_path):
+    f = tmp_path / "locked"
+    f.write_bytes(b"x__gcov_init")
+    f.chmod(0o000)
+    try:
+        assert scan_for_instrumentation(f) is None
+    finally:
+        f.chmod(0o644)  # tmp_path cleanup needs read/write back
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
+def test_scan_directory_skips_an_unreadable_member(tmp_path):
+    d = tmp_path / "bundle"
+    d.mkdir()
+    locked = d / "locked"
+    locked.write_bytes(b"x__gcov_init")
+    locked.chmod(0o000)
+    (d / "clean").write_bytes(b"nothing here")
+    try:
+        assert scan_for_instrumentation(d) is None
+    finally:
+        locked.chmod(0o644)
+
+
+def test_fileproduct_instrumented_uses_the_scan(tmp_path):
+    hit = tmp_path / "hit"
+    hit.write_bytes(b"\0__llvm_gcov\0")
+    assert _DummyFileProduct(artifact=hit).instrumented() is True
+    clean = tmp_path / "clean"
+    clean.write_bytes(b"\0")
+    assert _DummyFileProduct(artifact=clean).instrumented() is False
+
+
+@pytest.mark.parametrize("override", [True, False])
+def test_fileproduct_instrumented_override_wins_over_the_scan(tmp_path, override):
+    """The override lives on the base, so every kind inherits one implementation."""
+    hit = tmp_path / "hit"
+    hit.write_bytes(b"\0__llvm_gcov\0")  # the scan would say True
+    p = _DummyFileProduct(artifact=hit, instrumented_override=override)
+    assert p.instrumented() is override
+
+
+@pytest.mark.asyncio
+async def test_product_get_debug_logs_hauls_globs_into_dest(tmp_path):
+    calls = []
+
+    class _Host:
+        async def glob(self, pattern):
+            return ["/var/log/app/a.log", "/var/log/app/b.log"]
+
+        async def get(self, paths, dest):
+            calls.append((paths, dest))
+            return Result(Status.Success)
+
+    p = _DummyFileProduct(
+        artifact=Path("/x"), name="app", debug_log_globs=["/var/log/app/*.log", "/etc/app.conf"]
+    )
+    result = await p.get_debug_logs(_Host(), tmp_path)
+    assert result.is_ok
+    assert calls == [
+        ([Path("/var/log/app/a.log"), Path("/var/log/app/b.log"), Path("/etc/app.conf")], tmp_path)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_product_get_debug_logs_glob_without_support_fails_loud(tmp_path):
+    class _NoGlob:
+        async def get(self, paths, dest):
+            return Result(Status.Success)
+
+    p = _DummyFileProduct(artifact=Path("/x"), name="app", debug_log_globs=["/logs/*.txt"])
+    result = await p.get_debug_logs(_NoGlob(), tmp_path)
+    assert not result.is_ok
+    assert "glob" in result.msg
+    assert "app" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_product_get_debug_logs_no_globs_is_success_without_a_get(tmp_path):
+    class _Host:
+        async def get(self, paths, dest):
+            raise AssertionError("get must not run for an empty list")
+
+    p = _DummyFileProduct(artifact=Path("/x"), name="app")
+    assert (await p.get_debug_logs(_Host(), tmp_path)).is_ok

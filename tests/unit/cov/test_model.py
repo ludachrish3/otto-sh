@@ -21,7 +21,7 @@ from otto.coverage.store.model import (
 
 def test_load_rejects_old_format(tmp_path):
     p = tmp_path / "store.json"
-    p.write_text('{"format": 1, "contexts": []}')
+    p.write_text('{"format": 7, "contexts": []}')
     with pytest.raises(ValueError, match="regenerate"):
         CoverageStore.load(p)
 
@@ -194,6 +194,7 @@ class TestCoverageStore:
 
     def test_save_load_roundtrip(self, tmp_path):
         store = CoverageStore(tier_order=["system", "unit"])
+        store.add_run(tier="system", board="h1", host="h1", product="app")
         fr = store.get_or_create_file(Path("/a.c"))
         lr = fr.get_or_create_line(1)
         lr.hits.add("system", 5)
@@ -214,6 +215,7 @@ class TestCoverageStore:
         assert loaded_lr.state == "stale"
         assert len(loaded_lr.branches) == 1
         assert loaded_lr.branches[0].is_reachable("system") is True
+        assert loaded.runs[0].product == "app"
 
     def test_merge_file(self):
         store = CoverageStore()
@@ -234,7 +236,7 @@ class TestCoverageStore:
         # A well-formed current-version file may still omit the optional "runs"/"tier_colors"
         # keys (e.g. a minimal hand-written fixture); load() must default them.
         minimal = {
-            "format": 7,
+            "format": 8,
             "tier_order": ["system"],
             "files": [
                 {
@@ -281,7 +283,7 @@ class TestCoverageStore:
         store_json.write_text(
             json.dumps(
                 {
-                    "format": 7,
+                    "format": 8,
                     "tier_order": ["system"],
                     "files": [{"path": "/x/f.c", "lines": {}}],
                 }
@@ -347,7 +349,7 @@ class TestRuns:
         path = tmp_path / "store.json"
         store.save(path)
         raw = json.loads(path.read_text())
-        assert raw["format"] == 7
+        assert raw["format"] == 8
         assert raw["runs"][0]["base_commit"] == "deadbeef"
         line5 = raw["files"][0]["lines"]["5"]
         assert line5["run"] == {"0": 4}
@@ -366,7 +368,7 @@ class TestRuns:
 
     def test_load_defaults_runs_when_absent(self, tmp_path):
         minimal = {
-            "format": 7,
+            "format": 8,
             "tier_order": ["system"],
             "files": [{"path": "/a.c", "lines": {"1": {"hits": {"system": 1}, "branches": []}}}],
         }
@@ -395,7 +397,7 @@ class TestStoreConfig:
         p = tmp_path / "store.json"
         store.save(p)
         raw = json.loads(p.read_text())
-        assert raw["format"] == 7
+        assert raw["format"] == 8
         assert raw["thresholds"] == {"high": 80.0, "medium": 70.0}
         assert raw["stat_types"] == ["line", "branch", "decision"]
 
@@ -409,7 +411,7 @@ class TestStoreConfig:
 
     def test_load_defaults_thresholds_when_absent(self, tmp_path) -> None:
         p = tmp_path / "store.json"
-        p.write_text('{"format": 7, "tier_order": ["system"], "files": []}')
+        p.write_text('{"format": 8, "tier_order": ["system"], "files": []}')
         loaded = CoverageStore.load(p)
         assert loaded.thresholds == Thresholds()
 
@@ -418,6 +420,15 @@ class TestStoreConfig:
         p.write_text('{"format": 3, "tier_order": [], "files": []}')
         with pytest.raises(ValueError, match="found v3"):
             CoverageStore.load(p)
+
+
+def test_run_record_product_defaults_empty_and_serialises():
+    store = CoverageStore(tier_order=["e2e"])
+    rid = store.add_run(tier="e2e", board="h1", host="h1", product="app")
+    assert store.runs[rid].product == "app"
+    assert store.runs[rid].to_dict()["product"] == "app"
+    assert store.add_run(tier="unit") == 1
+    assert store.runs[-1].product == ""
 
 
 class TestRunHost:
@@ -494,9 +505,16 @@ class TestLineTicketSlot:
         assert c.ticket == ["PROJ-2"]
 
 
-def test_format_is_seven():
-    """v7 deletes excluded lines from the data and adds per-file branch_excluded_lines."""
-    assert STORE_FORMAT_VERSION == 7
+def test_format_is_eight():
+    """v8 adds a per-run ``product`` — the ``<product>`` segment of cov/<host>/<product>/."""
+    assert STORE_FORMAT_VERSION == 8
+
+
+def test_v7_store_fails_loud(tmp_path):
+    """The v8 bump is real for on-disk data: a v7 store is refused, not read."""
+    (tmp_path / "store.json").write_text('{"format": 7}')
+    with pytest.raises(ValueError, match="v8 required"):
+        CoverageStore.load(tmp_path / "store.json")
 
 
 def test_line_ticket_defaults_to_empty_list():
@@ -542,7 +560,7 @@ def test_v4_store_is_rejected_loud(tmp_path):
     """A v4 store.json (pre-list ticket, no tickets table) fails loud, no migration."""
     path = tmp_path / "store.json"
     path.write_text(json.dumps({"format": 4, "files": [], "runs": []}))
-    with pytest.raises(ValueError, match="v7"):
+    with pytest.raises(ValueError, match="v8"):
         CoverageStore.load(path)
 
 
@@ -618,14 +636,14 @@ def test_line_merge_unions_asserted_ids_per_tier():
 
 def test_v5_store_fails_loud(tmp_path):
     (tmp_path / "store.json").write_text('{"format": 5}')
-    with pytest.raises(ValueError, match="v7 required"):
+    with pytest.raises(ValueError, match="v8 required"):
         CoverageStore.load(tmp_path / "store.json")
 
 
 def test_v6_store_fails_loud(tmp_path):
-    """The v7 bump is real for on-disk data: a v6 store is refused, not read."""
+    """A v6 store is refused, not read."""
     (tmp_path / "store.json").write_text('{"format": 6}')
-    with pytest.raises(ValueError, match="v7 required"):
+    with pytest.raises(ValueError, match="v8 required"):
         CoverageStore.load(tmp_path / "store.json")
 
 
@@ -663,7 +681,7 @@ class TestFunctions:
         store_json.write_text(
             json.dumps(
                 {
-                    "format": 7,
+                    "format": 8,
                     "tier_order": ["system"],
                     "files": [{"path": "/x/f.c", "lines": {}}],
                 }
@@ -677,7 +695,7 @@ class TestFunctions:
         store_json.write_text(
             json.dumps(
                 {
-                    "format": 7,
+                    "format": 8,
                     "tier_order": [],
                     "files": [
                         {

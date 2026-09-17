@@ -46,6 +46,7 @@ def _capture(repo: Path, captured_at: str = "2026-07-01T00:00:00Z") -> Capture:
         ticket="T-1",
         labs=["lab1"],
         board="b",
+        product="app",
         files={"f.c": CaptureFileCov(blob=blob_sha(repo, Path("f.c")), lines={1: 2, 3: 1})},
     )
 
@@ -137,6 +138,7 @@ def test_branch_reachability_applied(repo: Path) -> None:
         ticket="T-1",
         labs=["lab1"],
         board="b",
+        product="app",
         files={
             "f.c": CaptureFileCov(
                 blob=blob_sha(repo, Path("f.c")),
@@ -203,6 +205,7 @@ def test_later_capture_clears_stale_from_earlier(repo: Path) -> None:
         ticket="T-2",
         labs=["lab1"],
         board="b",
+        product="app",
         files={"f.c": CaptureFileCov(blob=blob_sha(repo, Path("f.c")), lines={3: 5})},
     )
 
@@ -280,11 +283,18 @@ def test_register_capture_run_falls_back_to_board(repo: Path) -> None:
 
 
 def test_register_capture_run_sets_host() -> None:
-    cap = Capture(tier="nightly", base_commit="deadbeef", board="rig-1", display_name="Rig One")
+    cap = Capture(
+        tier="nightly",
+        base_commit="deadbeef",
+        board="rig-1",
+        product="app",
+        display_name="Rig One",
+    )
     store = CoverageStore(tier_order=["nightly"])
     rid = register_capture_run(store, cap)
     run = store.runs[rid]
     assert run.host == "rig-1"
+    assert run.product == "app"
     assert run.label == "Rig One"
     assert run.board == "rig-1"
 

@@ -21,8 +21,7 @@ def test_legacy_keys_survive_typing() -> None:
     s = _settings(
         {
             "hosts": "cov_.*",
-            "gcda_remote_dir": "/tmp/gcda",
-            "embedded": {"extension": "cov_ext", "builds": {"3.7": {"build_dir": "b"}}},
+            "embedded": {"builds": {"3.7": {"build_dir": "b"}}},
         }
     )
     assert s.coverage.hosts == "cov_.*"

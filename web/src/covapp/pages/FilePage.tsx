@@ -11,7 +11,7 @@ import { type CodeLine, CodeView, type GutterCol } from "@/ui/CodeView";
 import { cx } from "@/utils/cx";
 
 import { AppShell } from "../chrome/AppShell";
-import { groupContexts } from "../contexts";
+import { resolveScope } from "../contexts";
 import { loadFileChunk, StampMismatchError } from "../data";
 import { parseHashQuery, useFocus } from "../focus";
 import {
@@ -53,13 +53,18 @@ export function rowClassFor(
 }
 
 /** `rowClassFor`'s under-focus counterpart (spec §4): excluded still
- * wins; otherwise a line tints by the FOCUSED CONTEXT's tier iff any of
+ * wins; otherwise a line tints by the FOCUSED SCOPE's tier iff any of
  * its member run ids recorded a hit (`lineHasMemberHit`, shared with
  * `focusedFileRow` in format.ts) — no aging/stale distinction here (those
  * are report-wide staleness flags, not per-context; the spec collapses
  * everything that isn't a member-run hit into plain "uncovered/neutral").
  * `""` (uncoverable) only when there's no `LineJson` at all, same as
- * `rowClassFor`. */
+ * `rowClassFor`.
+ *
+ * A tier-SPANNING scope (a bare product) passes `tier: ""`, so a member hit
+ * reads `t-` — still a hit row, tinted by `tierStyleFor`'s `currentColor`
+ * fallback rather than a tier colour, matching the neutral-dotted product
+ * chip in the app bar: a product has no tier colour of its own. */
 export function rowClassForFocus(
   line: LineJson | undefined,
   excluded: boolean,
@@ -504,16 +509,16 @@ export interface FilePageProps {
 export function FilePage({ index, segments, node }: FilePageProps) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [openLines, setOpenLines] = useState<Set<number>>(new Set());
-  const { focus, ticket, hideAsserted } = useFocus();
+  const { focus, ticket, hideAsserted, product } = useFocus();
   // Independently re-resolved against THIS page's own `index` prop, same
-  // defensive pattern AppShell.tsx/DirectoryPage.tsx use — a focus label
-  // that doesn't resolve here just renders unfocused instead of crashing.
-  const focusedContext = focus ? groupContexts(index).find((c) => c.label === focus) : undefined;
-  const memberRunIds = focusedContext ? new Set(focusedContext.runs.map((r) => r.id)) : undefined;
+  // defensive pattern AppShell.tsx/DirectoryPage.tsx use — a pin
+  // that doesn't resolve here just renders unscoped instead of crashing.
+  const scope = resolveScope(index, focus, product);
+  const memberRunIds = scope ? new Set(scope.runs.map((r) => r.id)) : undefined;
   // `ticket` is already validated against `index.tickets` by
   // `FocusProvider`/`resolveTicket` before it ever reaches here — no second
-  // lookup needed, unlike `focusedContext` above (which derives display
-  // fields `focus`, a bare label string, doesn't carry).
+  // lookup needed, unlike `scope` above (which derives display fields that
+  // `focus`/`product`, bare strings, don't carry).
 
   const hash = useHash();
   // Derived, not stored: re-parsed on every hash change (a same-file
@@ -661,8 +666,8 @@ export function FilePage({ index, segments, node }: FilePageProps) {
     const line = chunk.lines[String(lineNo)];
     const excluded = excludedSet.has(lineNo);
     const rowClass =
-      focusedContext && memberRunIds
-        ? rowClassForFocus(line, excluded, memberRunIds, focusedContext.tier)
+      scope && memberRunIds
+        ? rowClassForFocus(line, excluded, memberRunIds, scope.tier)
         : rowClassFor(lineForRowClass(line, hideAsserted), excluded, index.tier_order);
     // Dim (never hide) a line the pinned ticket doesn't own — orthogonal
     // to `rowClass`'s coverage-state tinting above, so an
@@ -673,8 +678,8 @@ export function FilePage({ index, segments, node }: FilePageProps) {
       html: htmlLines[i] ?? "",
       rowClass,
       cells:
-        focusedContext && memberRunIds
-          ? buildCellsFocused(lineNo, line, index, memberRunIds, focusedContext.tier)
+        scope && memberRunIds
+          ? buildCellsFocused(lineNo, line, index, memberRunIds, scope.tier)
           : buildCells(lineNo, line, index, hideAsserted),
       expandable: collectRunIds(line).size > 0 || Object.keys(line?.asserted ?? {}).length > 0,
       style: dimStyleFor(rowClass, index, dimmed),
@@ -709,15 +714,16 @@ export function FilePage({ index, segments, node }: FilePageProps) {
   // Ticket scoping composes with run focus: `ticketFileRow`
   // computes an exact owned/hit count directly from this file's own
   // per-line data (unlike DirectoryPage's tree, no placeholder counts are
-  // involved) — passing `focusedContext` when both are active makes the
+  // involved) — passing `scope` when both are active makes the
   // numerator "member-run hits WITHIN the ticket's owned lines" (the
   // spec's headline example: "PROJ-412's lines, as proven by the manual
-  // run"), never the ticket-only answer.
+  // run"), never the ticket-only answer. A product pin composes for free:
+  // `resolveScope` already reduced it to member runs.
   const statsRows =
     ticket !== null
-      ? ticketFileRow(index, chunk, ticket, focusedContext, hideAsserted)
-      : focusedContext
-        ? focusedFileRow(index, chunk, focusedContext)
+      ? ticketFileRow(index, chunk, ticket, scope, hideAsserted)
+      : scope
+        ? focusedFileRow(index, chunk, scope)
         : chunkTierRows(index, chunk, hideAsserted);
 
   const expandableNumbers = codeLines.filter((l) => l.expandable).map((l) => l.number);
@@ -776,10 +782,10 @@ export function FilePage({ index, segments, node }: FilePageProps) {
       }
       stats={{
         scope: withHideAssertedSuffix(
-          focusedContext
+          scope
             ? ticket !== null
-              ? `focused: ${focusedContext.label} · ticket: ${ticket}`
-              : `focused: ${focusedContext.label}`
+              ? `focused: ${scope.label} · ticket: ${ticket}`
+              : `focused: ${scope.label}`
             : ticket !== null
               ? `ticket: ${ticket}`
               : node.path,
@@ -788,9 +794,13 @@ export function FilePage({ index, segments, node }: FilePageProps) {
         title: "Coverage — this file",
         rows: statsRows,
         thresholds: index.thresholds,
+        // Read off the RESOLVED scope, never the raw pins — a pin that
+        // resolves to nothing here leaves the unscoped rows on screen, and
+        // the header must describe the rows actually rendered.
         keyColumnLabel: keyColumnLabel({
           ticket: ticket !== null,
-          context: Boolean(focusedContext),
+          context: scope?.ctxLabel != null,
+          product: scope?.product != null,
         }),
       }}
       searchHit={

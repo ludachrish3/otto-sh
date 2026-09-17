@@ -6,10 +6,11 @@ multi-tier HTML coverage reports.  Coverage tiers — `system` (e2e),
 `.otto/settings.toml`; three commands drive the workflow:
 
 1. **`otto cov get`** (also run implicitly by `otto test --cov`) —
-   fetches `.gcda` counters from the lab and writes a `capture.json`
-   per board, anchored to `base_commit`.
-2. **`otto cov clean`** — zeroes remote `.gcda` counters ahead of a
-   fresh collection session.
+   fetches `.gcda` counters from each instrumented **product** on each
+   coverage host and writes a `capture.json` per host per product,
+   anchored to `base_commit`.
+2. **`otto cov clean`** — zeroes each product's remote `.gcda` counters
+   ahead of a fresh collection session.
 3. **`otto cov report`** — assembles every tier's data (e2e captures,
    harvested unit counters, the committed manual store) into an HTML
    report.
@@ -41,8 +42,8 @@ otto cov report [OUTPUT_DIR...] [OPTIONS]
 
 | Subcommand | Description |
 | ---------- | ----------- |
-| `get` | Fetch `.gcda` counters from the lab and write one `capture.json` per board, anchored to `base_commit` (also run implicitly by `otto test --cov`) |
-| `clean` | Zero remote `.gcda` counters ahead of a fresh session (Unix coverage hosts only) |
+| `get` | Fetch `.gcda` counters from each coverage host's instrumented products and write one `capture.json` per host per product, anchored to `base_commit` (also run implicitly by `otto test --cov`) |
+| `clean` | Zero each product's remote `.gcda` counters ahead of a fresh session (Unix coverage hosts only) |
 | `report` | Assemble every tier — e2e captures, unit harvest, committed manual store — into an HTML report |
 
 ## Examples
@@ -79,7 +80,8 @@ On **remote hosts** (the machines running the instrumented product):
 
 - The product must be compiled with `gcc --coverage` or
   `clang --coverage` (both spell `-fprofile-arcs -ftest-coverage`).
-- `.gcda` files must be written to a known directory.
+- `.gcda` files must be written under the product's `cov_dir`, which is
+  what `GCOV_PREFIX` in its run or install command is for.
 
 For clang-built products the otto host additionally needs `llvm-cov`
 (the `llvm` package) — see {doc}`instrumenting/clang`.
@@ -102,15 +104,24 @@ version used to compile the product.
 (coverage-configuration)=
 ## Configuration
 
-Add a `[coverage]` section to your repo's `.otto/settings.toml`:
+Two things, in two places. **Where the counters live on a host** belongs to
+the product that writes them — its `cov_dir`, defaulting to `/tmp/<name>`
+(see {doc}`../../configuration/declared-products-tools`, and
+{doc}`../../../getting-started/coverage` for the walkthrough):
 
 ```toml
-[coverage]
-# Required: where .gcda files live on remote hosts
-gcda_remote_dir = "/var/coverage/myproduct"
+[[products]]
+name = "myproduct"
+kind = "file"
+artifact = "build/myproduct"
+dest_dir = "/opt/myproduct"          # where staging puts the artifact
+cov_dir = "/var/coverage/myproduct"
+install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 /opt/myproduct/myproduct &"
 ```
 
-This is the only *required* configuration.  The source root is
+**Everything lab-wide** belongs to a `[coverage]` table in the repo's
+`.otto/settings.toml`.  The table can be empty, but it has to exist: its
+presence is what says this repo collects coverage at all.  The source root is
 auto-detected by walking up from the current directory to find the
 `.otto/` directory.  Path mappings between build-host paths and local
 source paths are auto-discovered from the `.info` and `.gcno` files.
@@ -121,7 +132,6 @@ without otto having to guess which hosts emit `.gcda`:
 
 ```toml
 [coverage]
-gcda_remote_dir = "/var/coverage/myproduct"
 hosts = "device.*"
 ```
 

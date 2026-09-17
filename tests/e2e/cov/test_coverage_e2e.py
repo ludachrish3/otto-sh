@@ -40,14 +40,44 @@ from typing import ClassVar
 import pytest
 
 from otto import _webassets
+from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import CoverageStore, FileRecord
 from tests.e2e._otto_subprocess import REPO1, output_dirs, run_otto
 
 PRODUCT_DIR = REPO1 / "product"
 
+# repo1's `[[products]]` entry — the `<product>` segment of every run tree
+# below, and the name each capture.json records.
+PRODUCT = "product"
+
 # Every otto invocation in this module targets the unix lab (test1 /
 # test2 / test3) against the repo1 fixture SUT.
 _LAB = "unix"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def built_product():
+    """Build ``tests/repo1/product/product`` before any otto invocation.
+
+    ``product/product`` is git-ignored and normally built by the suite's own
+    class fixture — i.e. INSIDE the run. That is too late now: whether
+    coverage retrieval runs at all is decided by a local scan of the declared
+    artifact (``Product.instrumented()`` reads the binary's ``.gcda`` strings)
+    before a single host is contacted, so on a clean checkout the first
+    invocation would find no artifact, score "unknown", and refuse ``--cov``.
+
+    Building here — the same incremental ``make`` the suite runs, so unchanged
+    sources are a no-op — means the artifact scan decides on the REAL binary,
+    which is the property these tests exist to certify. It is deliberately not
+    papered over with ``instrumented = true`` in settings: that would assert
+    the verdict instead of measuring it.
+    """
+    subprocess.run(
+        ["make", "-C", str(PRODUCT_DIR), "all"],
+        check=True,
+        capture_output=True,
+    )
+    assert (PRODUCT_DIR / "product").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +181,16 @@ def coverage_run(tmp_path_factory):
     log_dir = _find_test_log_dir(xdir)
     cov_dir = log_dir / "cov"
     assert cov_dir.is_dir(), f"Expected {cov_dir} after coverage fetch"
+
+    # Two levels, not one: cov/<host>/<product>/. Every host carries exactly
+    # the one declared product, and each product dir holds the capture that
+    # anchors its counters at collection time.
+    for host_id in EXPECTED_HOST_IDS:
+        products = sorted(p.name for p in (cov_dir / host_id).iterdir())
+        assert products == [PRODUCT], f"{host_id} staged {products}, expected [{PRODUCT!r}]"
+        assert (cov_dir / host_id / PRODUCT / "capture.json").is_file(), (
+            f"no capture.json for {PRODUCT} on {host_id}"
+        )
 
     # Stage 2 — render the HTML report and persist the store JSON.
     _run_otto(
@@ -519,10 +559,25 @@ class TestCoverageIntegrity:
 EXPECTED_HOST_IDS = {"test1", "test2", "test3"}
 
 
+def _host_dirs(cov_dir: Path) -> list[Path]:
+    """The ``cov/<host_id>/`` directories, sorted."""
+    return sorted(d for d in cov_dir.iterdir() if d.is_dir())
+
+
+def _product_dirs(cov_dir: Path) -> list[Path]:
+    """The ``cov/<host_id>/<product>/`` directories, sorted."""
+    return [p for host_dir in _host_dirs(cov_dir) for p in sorted(host_dir.iterdir()) if p.is_dir()]
+
+
 @pytest.mark.integration
 @pytest.mark.xdist_group("coverage_e2e")
 class TestGcdaFetchStructure:
-    """Verify that the .gcda fetch creates the expected directory layout."""
+    """Verify that the .gcda fetch creates the expected directory layout.
+
+    The tree is two levels deep — ``cov/<host_id>/<product>/`` — because a
+    host can carry more than one product and each one's counters have to stay
+    separable all the way to the report.
+    """
 
     def test_cov_directory_exists(self, coverage_run):
         *_, cov_dir = coverage_run
@@ -535,33 +590,52 @@ class TestGcdaFetchStructure:
             f"Expected host dirs {EXPECTED_HOST_IDS}, found {actual_dirs}"
         )
 
-    def test_every_host_has_gcda_files(self, coverage_run):
+    def test_every_host_has_one_product_dir(self, coverage_run):
         *_, cov_dir = coverage_run
-        for host_dir in cov_dir.iterdir():
-            if not host_dir.is_dir():
-                continue
-            gcda_files = list(host_dir.glob("*.gcda"))
-            assert gcda_files, f"No .gcda files in {host_dir}"
+        for host_dir in _host_dirs(cov_dir):
+            products = sorted(p.name for p in host_dir.iterdir())
+            assert products == [PRODUCT], f"{host_dir.name} staged {products}"
+
+    def test_no_host_dir_holds_counters_directly(self, coverage_run):
+        """The one-level tree is gone: nothing lands beside the product dirs.
+
+        A ``.gcda`` (or a ``capture.json``) directly under a host dir is the
+        pre-product layout, which the reporter refuses by name rather than
+        misreading the host directory as a product.
+        """
+        *_, cov_dir = coverage_run
+        for host_dir in _host_dirs(cov_dir):
+            assert not list(host_dir.glob("*.gcda")), f"{host_dir} holds .gcda directly"
+            assert not (host_dir / "capture.json").exists()
+
+    def test_every_product_has_gcda_files(self, coverage_run):
+        *_, cov_dir = coverage_run
+        for product_dir in _product_dirs(cov_dir):
+            gcda_files = list(product_dir.glob("*.gcda"))
+            assert gcda_files, f"No .gcda files in {product_dir}"
 
     def test_gcda_files_are_nonempty(self, coverage_run):
         *_, cov_dir = coverage_run
-        for host_dir in cov_dir.iterdir():
-            if not host_dir.is_dir():
-                continue
-            for gcda in host_dir.glob("*.gcda"):
+        for product_dir in _product_dirs(cov_dir):
+            for gcda in product_dir.glob("*.gcda"):
                 assert gcda.stat().st_size > 0, f"{gcda} is empty"
 
-    def test_gcda_file_count_per_host(self, coverage_run):
-        """Each host should have exactly 2 .gcda files (main.c + math_ops.c)."""
+    def test_gcda_file_count_per_product(self, coverage_run):
+        """Each host's product should have exactly 2 .gcda (main.c + math_ops.c)."""
         *_, cov_dir = coverage_run
-        for host_dir in cov_dir.iterdir():
-            if not host_dir.is_dir():
-                continue
-            gcda_files = list(host_dir.glob("*.gcda"))
+        for product_dir in _product_dirs(cov_dir):
+            gcda_files = list(product_dir.glob("*.gcda"))
             assert len(gcda_files) == 2, (
-                f"Expected 2 .gcda files in {host_dir.name}, "
+                f"Expected 2 .gcda files in {product_dir.parent.name}/{product_dir.name}, "
                 f"found {len(gcda_files)}: {[f.name for f in gcda_files]}"
             )
+
+    def test_capture_names_its_product(self, coverage_run):
+        """capture.json (schema 3) records which product it came from."""
+        *_, cov_dir = coverage_run
+        for product_dir in _product_dirs(cov_dir):
+            capture = Capture.load(product_dir / "capture.json")
+            assert capture.product == product_dir.name
 
 
 # ---------------------------------------------------------------------------
@@ -570,25 +644,38 @@ class TestGcdaFetchStructure:
 
 
 @pytest.fixture(scope="module")
-def suite_run_exit_code(tmp_path_factory):
-    """Run ``otto test TestCoverageProduct`` as a subprocess.
+def auto_cov_run(tmp_path_factory):
+    """Run ``otto test TestCoverageProduct`` as a subprocess — NO ``--cov``.
 
     Verifies the real ``otto test`` invocation path (``run_suite``),
     catching class-lifecycle issues (e.g. missing event loops in
     class-scoped fixtures) that direct-call e2e tests would miss. Pinned to
     the same xdist group as the rest of this file so it doesn't race on VMs.
+
+    The absence of ``--cov`` is now load-bearing twice over: it is still the
+    plain-``otto test`` path, and it is the auto-on case — the hosts carry an
+    instrumented product and the repo declares ``[coverage]``, so retrieval
+    switches itself on. Returns ``(result, xdir)``.
     """
     tmp_dir = tmp_path_factory.mktemp("suite_runner")
     xdir = tmp_dir / "xdir"
     xdir.mkdir()
 
-    return run_otto(
+    result = run_otto(
         ["test", "TestCoverageProduct"],
         xdir=xdir,
         sut_dirs=REPO1,
         lab=_LAB,
         timeout=600,
     )
+    return result, xdir
+
+
+@pytest.fixture(scope="module")
+def suite_run_exit_code(auto_cov_run):
+    """The plain ``otto test`` run's CompletedProcess (see :func:`auto_cov_run`)."""
+    result, _xdir = auto_cov_run
+    return result
 
 
 @pytest.mark.integration
@@ -627,6 +714,91 @@ class TestSuiteRunnerIntegration:
                 f"{runner_path} exists on the RUNNER after a fleet deploy — "
                 f"a local/loopback host is participating in fleet operations again"
             )
+
+
+@pytest.mark.integration
+@pytest.mark.xdist_group("coverage_e2e")
+class TestCoverageSwitchesItselfOn:
+    """A plain ``otto test`` collects coverage when the fleet is instrumented.
+
+    Nobody typed ``--cov``. The hosts carry an instrumented product and repo1
+    declares a ``[coverage]`` table, so retrieval is on — the whole point of
+    the tri-state: ``--cov`` becomes a way to *force* a decision (and to fail
+    loudly when it cannot be honoured), not the only way to get coverage.
+    """
+
+    def test_auto_run_produces_the_per_product_tree(self, auto_cov_run):
+        result, xdir = auto_cov_run
+        assert result.returncode == 0, result.stdout[-3000:]
+        cov_dir = _find_test_log_dir(xdir) / "cov"
+        assert cov_dir.is_dir(), (
+            f"no cov/ dir after a plain `otto test` — retrieval did not switch "
+            f"itself on\n{result.stdout[-3000:]}"
+        )
+        for host_id in EXPECTED_HOST_IDS:
+            assert (cov_dir / host_id / PRODUCT / "capture.json").is_file(), (
+                f"no capture for {PRODUCT} on {host_id} under {cov_dir}"
+            )
+
+    def test_auto_run_says_so_in_the_log(self, auto_cov_run):
+        """The decision is announced, not silent — a run that starts fetching
+        from every host without saying why is the surprise this line avoids."""
+        _result, xdir = auto_cov_run
+        console = (_find_test_log_dir(xdir) / "console.log").read_text()
+        # Whitespace-collapsed: console.log is a faithful transcript, wrapping
+        # and all, and the phrase must not have to survive a column count.
+        assert "coverage retrieval on" in " ".join(console.split()), console[-3000:]
+
+
+@pytest.fixture(scope="module")
+def refusal(tmp_path_factory):
+    """``otto --lab embedded test --cov`` from repo1: a forced-on refusal.
+
+    repo1 declares its product only for the unix bed (``test[1-3]``), so the
+    same repo pointed at the ``embedded`` lab is a fleet otto has nothing to
+    collect from. Returns ``(result, xdir)``. Nothing is contacted — the
+    decision is taken before the first connection — so this costs no bed time.
+    """
+    tmp_dir = tmp_path_factory.mktemp("cov_refusal")
+    xdir = tmp_dir / "xdir"
+    xdir.mkdir()
+    result = run_otto(
+        ["test", "--cov", "TestCoverageProduct"],
+        xdir=xdir,
+        sut_dirs=REPO1,
+        lab="embedded",
+        timeout=120,
+    )
+    return result, xdir
+
+
+@pytest.mark.integration
+@pytest.mark.xdist_group("coverage_e2e")
+class TestForcedCovRefusesAnUninstrumentedFleet:
+    """``--cov`` against a lab with no instrumented product refuses up front.
+
+    Forced-on coverage is a request that must be answerable *now*: it fails
+    before the suite runs rather than running everything and discarding the
+    collection failure at the end.
+    """
+
+    def test_exits_non_zero_naming_the_reason(self, refusal):
+        result, _xdir = refusal
+        combined = result.stdout + result.stderr
+        # Rich hard-wraps the error panel at the terminal width, so the message
+        # arrives with newlines inside its sentences. Collapse whitespace before
+        # matching: asserting on the wrapped form would pin the console width.
+        flat = " ".join(combined.split())
+        assert result.returncode != 0, f"--cov was honoured on an uninstrumented lab:\n{combined}"
+        assert "no products on any coverage host" in flat, combined[-3000:]
+        assert "coverage cannot be collected" in flat, combined[-3000:]
+        assert "Traceback" not in combined, f"user saw a traceback:\n{combined}"
+
+    def test_creates_no_cov_dir(self, refusal):
+        """The refusal precedes every side effect — no staging root is made."""
+        _result, xdir = refusal
+        staged = [p for p in xdir.rglob("cov") if p.is_dir()]
+        assert not staged, f"a refused --cov run still created {staged}"
 
 
 @pytest.fixture(scope="module")
@@ -697,7 +869,7 @@ class TestPollutedBuildTree:
         # Work on a copy so the capture-bearing sibling test stays intact.
         legacy_dir = tmp_path / log_dir.name
         shutil.copytree(log_dir, legacy_dir)
-        for capture in legacy_dir.glob("cov/*/capture.json"):
+        for capture in legacy_dir.glob("cov/*/*/capture.json"):
             capture.unlink()
 
         result = run_otto(

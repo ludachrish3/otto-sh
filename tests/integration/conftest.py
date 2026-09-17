@@ -73,8 +73,8 @@ def _default_sut_dirs_env_impl():
     History: this was a module-scope ``ensure_sut_dirs()`` call justified by
     a "config reads OTTO_SUT_DIRS at import time" comment that stopped being
     true — every reader (``bootstrap()``/``OttoEnvSettings``, spawned otto
-    subprocesses) reads the env lazily at call time, which a session-start
-    write fully precedes. Import-time env writes are banned (G11): they run
+    subprocesses) reads the env lazily at call time, which a write made before
+    the reader runs fully precedes. Import-time env writes are banned (G11): they run
     behind the root conftest's hermeticity strip's back, invisible to
     monkeypatch and to any pin that never imports this tree's conftest —
     which is how this one went uncertified for a year. ``setdefault`` +
@@ -92,9 +92,64 @@ def _default_sut_dirs_env_impl():
         os.environ[SUT_DIRS_ENV_VAR] = prior
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(autouse=True)
 def _default_sut_dirs_env():
+    """FUNCTION-scoped: the SUT env belongs to the test that needs it, not to the worker.
+
+    It was session-scoped, and ``make coverage`` runs every tier in ONE xdist
+    session: the first integration test on a worker set
+    ``OTTO_SUT_DIRS=tests/repo1`` and left it set for the rest of that worker's
+    life. A unit test scheduled there afterwards that builds an ``OttoContext``
+    over a hand-made ``Lab`` resolves its project scopes through
+    ``get_ordered_repos()``, which bootstrapped repo1 out of that ambient env —
+    harmless only for as long as repo1 declared no ``[project]`` table. Once it
+    did, those unit tests raised ``ProjectScopeError`` (or a ``TypeError``
+    fullmatching a mock's ``source_lab``): 50 failures under ``make coverage``,
+    every one of the files green on its own.
+
+    Per test, the root conftest's ``_restore_bootstrap_state`` also drops
+    whatever repo1 the memo picked up while the test ran, so nothing this
+    fixture enables survives the test that asked for it. Autouse stays — every
+    test under this tree still gets the SUT — but the scope must never widen
+    back to one that outlives a test. A module-scoped fixture that needs the env
+    BEFORE function fixtures run asks :func:`sut_dirs_env_module` for it by name.
+    """
     yield from _default_sut_dirs_env_impl()
+
+
+@pytest.fixture(scope="module")
+def sut_dirs_env_module():
+    """``OTTO_SUT_DIRS`` for a MODULE-scoped fixture, which is set up before the
+    function-scoped autouse above can run.
+
+    Requested by name, never autouse, from the module-scoped fixtures in this
+    tree that reach otto's config themselves — ``test_docker_run_get_put.stack``
+    is the live case: its ``compose_up`` walks ``get_repos()``. The others take
+    a flock or hand-build a ``UnixHost``/``Lab``, neither of which reads the env
+    or bootstraps (``OttoContext.scopes`` is a lazy property), so they do not ask.
+
+    Brackets the bootstrap memo too. A module fixture primes it BEFORE the root
+    conftest's per-test ``_restore_bootstrap_state`` takes its snapshot, so
+    without this restore a repo1 discovered during module setup would outlive
+    the module on that worker — the same leak through a different door.
+    """
+    from otto import bootstrap
+
+    saved = (
+        bootstrap._discovered,
+        bootstrap._result,
+        bootstrap._in_progress,
+        bootstrap._completion_names,
+    )
+    try:
+        yield from _default_sut_dirs_env_impl()
+    finally:
+        (
+            bootstrap._discovered,
+            bootstrap._result,
+            bootstrap._in_progress,
+            bootstrap._completion_names,
+        ) = saved
 
 
 _LAB_DATA = lab_data_path()

@@ -20,7 +20,10 @@ def manual_store_dir(repo_root: Path) -> Path:
 def write_manual_capture(capture: Capture, repo_root: Path) -> Path:
     """Write a capture to the manual store and return its path."""
     captured_at_slug = capture.captured_at.replace("-", "").replace(":", "")
-    name = f"{captured_at_slug}-{_slug(capture.ticket or 'no-ticket')}-{_slug(capture.board)}.json"
+    name = (
+        f"{captured_at_slug}-{_slug(capture.ticket or 'no-ticket')}-{_slug(capture.board)}"
+        f"-{_slug(capture.product)}.json"
+    )
     path = manual_store_dir(repo_root) / name
     capture.save(path)
     return path

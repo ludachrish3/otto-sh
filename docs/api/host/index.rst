@@ -42,6 +42,7 @@ local and remote machines.
    product
    dev_tool
    file_kind
+   llext_kind
    power
    privilege
    file_ops

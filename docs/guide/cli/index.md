@@ -217,11 +217,58 @@ written there, and the path is printed at the end of the run
 - Hyphens in command names become underscores (`write-file` →
   `write_file`).
 
-Read-only commands create no directory: `otto cov`, `otto reservation`,
-`otto inventory`, `otto schema`, and `otto init` opt out entirely, as do
-read-only host verbs such as `ls`, `exists`, `read-file`, `is-installed`, and
-`is-uninstalled`.  Third-party commands control this with the `output_dir=`
+Read-only commands create no directory: `otto reservation`, `otto inventory`,
+`otto schema`, and `otto init` opt out entirely, as do `otto cov report` and
+`otto cov clean` and read-only host verbs such as `ls`, `exists`, `read-file`,
+`is-installed`, and `is-uninstalled`.  `otto cov get` is the exception in its
+group — it retrieves counters and stages them, so it takes the standard
+per-invocation directory like any other writing command (`--output/-o`
+overrides it).  Third-party commands control this with the `output_dir=`
 flag at registration — see {doc}`../../library/extending-cli`.
+
+(run-tree)=
+### Inside a run directory
+
+Everything a run writes that belongs to a *host* or to a *product* lands at
+one documented path.  The `logs/` and `cov/` subtrees below are the contract:
+the logs pipeline and the coverage pipeline build every one of those paths
+from the same module, `otto.layout`, which is why they are the same shape
+below `<kind>/<host_id>/`
+({doc}`../../architecture/utilities/logging`,
+{doc}`../../architecture/subsystems/coverage/index`):
+
+```text
+<run>/
+  logs/<host_id>/<product>/product/    each product's own get_logs output
+  logs/<host_id>/<product>/debug/      that product's debug_log_globs haul
+  logs/<host_id>/debug/                the host's own debug_log_globs haul
+  cov/<host_id>/<product>/             .gcda as fetched, board.info,
+                                       board.resolved.info, capture.json
+  cov_report/                          the rendered HTML report
+  <Suite>/<test_node>/                 one directory per test
+```
+
+- `<host_id>` is the host's otto id; `<product>` is the product's `name`.
+- A product's name must be a single path segment: no `/`, `\` or NUL inside
+  it, and not `.` or `..` — a dot *within* a name (`agent.v2`) is fine.
+  `debug` is **reserved**, because it names a sibling directory of the
+  product directories under `logs/<host_id>/`.  A bad name is refused when
+  settings or lab data load, never at first write.
+- **The two subtrees differ in when they appear.**  Log retrieval lays out
+  the host's `debug/` shell and each product's `product/` and `debug/`
+  shells before it calls any hook, so an empty `debug/` means "nothing
+  matched", not "nothing ran".  The coverage side is the opposite: a product's directory is
+  created only once counters are known to exist, and a failed transfer takes
+  the half-filled directory back out — so a missing `cov/<host_id>/<product>/`
+  is the honest record that nothing was retrieved.
+
+`cov_report/` and the per-test directories are the run dir's other tenants and
+do not come from `otto.layout`: the report renderer owns the first, and
+pytest's own naming owns the second — see {doc}`test/index`.
+
+`<run>` is the per-invocation output directory above, unless a caller passes
+an explicit destination (`dest=` on the log verbs, `--cov-dir` for coverage
+staging).
 
 ## The workspace home
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { groupContexts, searchHaystack } from "./contexts";
-import { makeIndex, makeRun } from "./testUtils";
+import { groupContexts, resolveScope, scopeTreeLines, searchHaystack } from "./contexts";
+import { emptyStats, makeIndex, makeRun } from "./testUtils";
 import type { IndexPayload, RunJson } from "./types";
 
 describe("groupContexts", () => {
@@ -195,6 +195,89 @@ describe("groupContexts", () => {
   it("returns [] for an empty runs list, without crashing", () => {
     const index = makeIndex({ runs: [], run_contrib: {} });
     expect(groupContexts(index)).toEqual([]);
+  });
+});
+
+// Per-product spec §10: a pinned product narrows the NUMERATOR the same way
+// a focused context does, and the two compose — `resolveScope` is the one
+// place that turns the two independent pins (`?ctx=`, `?product=`) into the
+// single `FocusScope` every page recomputes against.
+describe("resolveScope / scopeTreeLines", () => {
+  const index = makeIndex({
+    products: ["agent", "app"],
+    runs: [
+      makeRun({ id: 0, label: "nightly", product: "app", host: "h1" }),
+      makeRun({ id: 1, label: "nightly", product: "agent", host: "h1" }),
+      makeRun({ id: 2, label: "smoke", product: "app", host: "h2" }),
+    ],
+  });
+  const stats = emptyStats({
+    ctx_lines: { nightly: 5, smoke: 2 },
+    product_lines: { app: 6, agent: 1 },
+    ctx_product_lines: { nightly: { app: 4, agent: 1 }, smoke: { app: 2 } },
+  });
+
+  it("a bare product scope spans contexts and tiers", () => {
+    const scope = resolveScope(index, null, "app");
+    expect(scope).toMatchObject({ label: "app", tier: "", ctxLabel: null, product: "app" });
+    expect(scope?.runs.map((r) => r.id)).toEqual([0, 2]);
+    expect(scope && scopeTreeLines(stats, scope)).toBe(6);
+  });
+
+  it("ctx ∧ product intersects the run sets and reads the pair count", () => {
+    const scope = resolveScope(index, "nightly", "app");
+    expect(scope).toMatchObject({ label: "nightly · app", ctxLabel: "nightly", product: "app" });
+    expect(scope?.runs.map((r) => r.id)).toEqual([0]);
+    expect(scope && scopeTreeLines(stats, scope)).toBe(4);
+  });
+
+  it("a bare ctx scope is the Context itself", () => {
+    const scope = resolveScope(index, "nightly", null);
+    expect(scope?.runs.length).toBe(2);
+    expect(scope && scopeTreeLines(stats, scope)).toBe(5);
+  });
+
+  it("an empty intersection yields no scope", () => {
+    expect(resolveScope(index, "smoke", "agent")).toBeUndefined();
+  });
+
+  it("a product absent from index.products is ignored, falling back to the ctx scope", () => {
+    // `FocusProvider`/`resolveProduct` already validates `?product=` against
+    // `index.products` before it reaches a page; this is the defensive half,
+    // so an unknown name can never silently empty the numerator.
+    expect(resolveScope(index, "nightly", "ghost")).toMatchObject({
+      label: "nightly",
+      product: null,
+    });
+    expect(resolveScope(index, null, "ghost")).toBeUndefined();
+  });
+
+  it("a run with no product ('' — an unnamed unit run) never matches a product pin", () => {
+    const unnamed = makeIndex({
+      products: ["app"],
+      runs: [makeRun({ id: 7, label: "unit harvest", product: "" })],
+    });
+    expect(resolveScope(unnamed, null, "app")).toBeUndefined();
+  });
+
+  it("an unresolvable focus label yields no scope, product pinned or not", () => {
+    expect(resolveScope(index, "ghost-label", null)).toBeUndefined();
+    expect(resolveScope(index, "ghost-label", "app")).toBeUndefined();
+  });
+
+  it("resolves off a caller-supplied contexts list identically (RunsPage's one-grouping path)", () => {
+    const contexts = groupContexts(index);
+    expect(resolveScope(index, "nightly", "app", contexts)).toEqual(
+      resolveScope(index, "nightly", "app"),
+    );
+    expect(resolveScope(index, "nightly", null, contexts)).toEqual(contexts[0]);
+    expect(resolveScope(index, "ghost-label", null, contexts)).toBeUndefined();
+  });
+
+  it("hostDisplay appends the product and the haystack includes it", () => {
+    const ctx = groupContexts(index)[0];
+    expect(ctx.hosts.map(([h]) => h)).toEqual(["h1 · app", "h1 · agent"]);
+    expect(searchHaystack(ctx)).toContain("agent");
   });
 });
 

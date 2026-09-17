@@ -71,23 +71,25 @@ capture. Both halves are also callable directly:
 | Method | Behavior |
 |--------|----------|
 | `await host.get_logs(product=True, debug=True)` | Both halves; `require_product_logs=True` makes an empty product haul a failure. |
-| `await host.get_product_logs()` | Each product's `get_logs(host, dest)` hook (best-effort). |
+| `await host.get_product_logs()` | Each product's `get_logs(host, dest)` hook, then its `get_debug_logs(host, dest)` hook — its own `debug_log_globs` (both best-effort). |
 | `await host.get_debug_logs()` | Fetch the host's `debug_log_globs`. |
 
 Retrieving zero logs is success. Files land in a documented tree, keyed by host
-id the way the coverage pipeline keys its own output:
+id and then product the way the coverage pipeline keys its own output — see
+{ref}`the run tree <run-tree>`. `<run>` is the active command's output
+directory unless a caller passes `dest=`.
 
-```text
-<output-dir>/logs/<host-id>/product/…
-<output-dir>/logs/<host-id>/debug/…
-```
+A product carries a `debug_log_globs` of its own, hauled into that product's
+`debug/` subtree by `get_debug_logs` on the product; the host-level
+`debug_log_globs` below is swept once into `logs/<host_id>/debug/`.
 
-`<output-dir>` is the active command's output directory unless a caller passes
-`dest=`. `debug_log_globs` is a host field (settable per host class, per OS
-profile, and per host in `lab.json`) holding remote paths — a pattern entry is
-expanded on the device by `glob`, so a host family without that capability
+The host's own `debug_log_globs` is a host field (settable per host class, per
+OS profile, and per host in `lab.json`) holding remote paths — a pattern entry
+is expanded on the device by `glob`, so a host family without that capability
 (embedded, today) declares concrete paths or overrides `get_debug_logs`; a
-pattern there fails loudly rather than silently retrieving nothing.
+pattern there fails loudly rather than silently retrieving nothing. A
+product's own `debug_log_globs` (above) follows the same rules through the
+same helper, into that product's subtree instead of the host's.
 ## `install` options
 
 ```text

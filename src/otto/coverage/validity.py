@@ -34,6 +34,7 @@ def register_capture_run(store: CoverageStore, capture: Capture) -> int:
         label=capture.display_name or capture.board or None,
         board=capture.board,
         host=capture.board,
+        product=capture.product,
         labs=capture.labs,
         captured_at=capture.captured_at,
         tester=capture.tester,

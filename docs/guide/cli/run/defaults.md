@@ -425,21 +425,18 @@ following ownership down the dependency graph can never cycle.
 
 ## Where the logs land
 
-Retrieval writes into a documented tree, keyed by host id:
+Retrieval writes into a documented tree, keyed by host id and then product —
+{ref}`The run tree <run-tree>` has the shape, and it is a tested contract, not an
+implementation detail: an override that retrieves logs its own way should
+still land them there wherever a host attribution exists. `<run>` is the
+active command's output directory (see
+[Logging and artifacts](index.md#logging-and-artifacts)) unless a caller
+passes an explicit `dest=`.
 
-```text
-<output-dir>/logs/<host-id>/product/…
-<output-dir>/logs/<host-id>/debug/…
-```
-
-`<output-dir>` is the active command's output directory (see
-[Logging and artifacts](index.md#logging-and-artifacts)) unless a caller passes
-an explicit `dest=`. The shape is a tested contract, not an implementation
-detail — an override that retrieves logs its own way should still land them
-there wherever a host attribution exists.
-
-Product logs are owner-scoped and hauled per repo; debug logs are the host's
-and are swept once. `uninstall` and `cleanup` gather product logs **before**
+Product logs are owner-scoped and hauled per repo, each product into its own
+subtree; debug logs come in two flavours — a product's `debug_log_globs`
+land under that product, and the host's own are swept once into
+`logs/<host_id>/debug/`. `uninstall` and `cleanup` gather product logs **before**
 each repo's teardown and sweep debug logs **after** the last one. Retrieving
 zero logs is success — `--require-product-logs` is how a run whose whole
 purpose was the logs turns an empty haul into a failure, and it is asked only

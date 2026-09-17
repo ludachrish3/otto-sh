@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 import tomli
 
+from otto.coverage.capture.model import Capture
 from otto.logger.mode import LogMode
 from tests._fixtures.labdata import element_for
 from tests.e2e._otto_subprocess import PROJECT_ROOT, assert_output_dir, run_otto
@@ -40,24 +41,32 @@ REPO3 = PROJECT_ROOT / "tests" / "repo3"
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("zephyr37_llext")]
 
 
-def _embedded_cov_settings() -> dict:
-    """The ``[coverage.embedded]`` table from repo3's settings."""
-    settings = tomli.loads((REPO3 / ".otto" / "settings.toml").read_text())
-    return (settings.get("coverage") or {}).get("embedded") or {}
+def _repo3_settings() -> dict:
+    return tomli.loads((REPO3 / ".otto" / "settings.toml").read_text())
 
 
-def _extension_artifact() -> Path:
-    cfg = _embedded_cov_settings()
-    build_dir = cfg.get("build_dir")
-    ext = cfg.get("extension", "cov_ext")
-    if not build_dir:
+def _llext_products() -> list[dict]:
+    """repo3's ``kind = "llext"`` ``[[products]]`` entries, in declaration order."""
+    return [e for e in _repo3_settings().get("products", []) if e.get("kind") == "llext"]
+
+
+PRODUCT = "cov_ext"
+"""The declared product name — the ``<product>`` segment of the run tree, the
+name each capture records, and the extension the collector dumps."""
+
+
+def _extension_artifacts() -> list[Path]:
+    """Every declared LLEXT artifact, one per Zephyr version bed."""
+    entries = _llext_products()
+    if not entries:
         pytest.fail(
-            "[coverage.embedded].build_dir is not configured in "
-            "tests/repo3/.otto/settings.toml — this lane fails loud rather "
-            "than retiring behind a skip (G12): configure the build dir or "
-            "deselect the lane, don't hollow it."
+            "no [[products]] entry of kind 'llext' in tests/repo3/.otto/settings.toml "
+            "— this lane fails loud rather than retiring behind a skip (G12): declare "
+            "the coverage extension or deselect the lane, don't hollow it."
         )
-    return Path(build_dir) / "zephyr" / f"{ext}.stripped.llext"
+    names = {e["name"] for e in entries}
+    assert names == {PRODUCT}, f"expected one product name {PRODUCT!r}, got {sorted(names)}"
+    return [Path(e["artifact"]) for e in entries]
 
 
 @pytest.fixture
@@ -154,13 +163,17 @@ def _product_line_coverage(info_file: Path) -> tuple[int, int]:
 
 def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
     """`otto test --cov` + report against the live zephyr37_llext yields product coverage."""
-    artifact = _extension_artifact()
-    if not artifact.exists():
-        pytest.fail(
-            f"embedded-coverage product not built: {artifact} — build it per "
-            "tests/repo3/product/README.md; this lane fails loud rather than "
-            "skipping (G12), a skip here certified nothing."
-        )
+    # Every version's artifact must exist BEFORE otto starts, not just by the
+    # time the suite's build step has run: `--cov` now resolves on a local
+    # instrumentation scan of each declared artifact, and a missing file scans
+    # as "unknown" — which refuses the run rather than collecting nothing.
+    for artifact in _extension_artifacts():
+        if not artifact.exists():
+            pytest.fail(
+                f"embedded-coverage product not built: {artifact} — build it per "
+                "tests/repo3/product/README.md; this lane fails loud rather than "
+                "skipping (G12), a skip here certified nothing."
+            )
 
     report_dir = tmp_path / "report"
     cov_dir = tmp_path / "cov"
@@ -208,10 +221,17 @@ def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
 
     # The collector decoded a .gcda for the embedded host (cross-loop fix +
     # real hop transport), and the report rendered (cross-gcov lcov fix).
-    # Staged under the host id, which is the slug of element "zephyr37_llext" -> "zephyr37-llext".
-    gcda = cov_dir / "zephyr37-llext" / "cov_ext.c.gcda"
+    # Staged under <host>/<product>/: the host id is the slug of element
+    # "zephyr37_llext" -> "zephyr37-llext", the product is the [[products]]
+    # entry's name.
+    gcda = cov_dir / "zephyr37-llext" / PRODUCT / "cov_ext.c.gcda"
     assert gcda.exists(), f"no decoded .gcda staged for zephyr37-llext\n{result.stdout[-2000:]}"
     assert (report_dir / "index.html").exists(), "no HTML report rendered"
+
+    # The capture names the product it came from — the dimension the store and
+    # the report key their per-product rollups by (capture schema 3).
+    capture = Capture.load(cov_dir / "zephyr37-llext" / PRODUCT / "capture.json")
+    assert capture.product == PRODUCT, f"capture names product {capture.product!r}"
 
     # BOTH beds, not just the first. repo3's `[coverage] hosts` selector is
     # "zephyr(37|44)-llext" and its alternation is the whole point: the intent is
@@ -227,18 +247,25 @@ def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
         f"check `[coverage] hosts` in tests/repo3/.otto/settings.toml\n"
         f"{result.stdout[-2000:]}"
     )
-    assert (cov_dir / "zephyr44-llext" / "cov_ext.c.gcda").exists(), (
+    assert (cov_dir / "zephyr44-llext" / PRODUCT / "cov_ext.c.gcda").exists(), (
         "no decoded .gcda staged for the 4.4 bed zephyr44-llext"
     )
+    # One product name across both beds, from two same-named [[products]]
+    # entries with version-specific match tables: each board loaded its own
+    # artifact, and the tree still has a single `cov_ext` segment per host.
+    for host_id in staged:
+        assert sorted(p.name for p in (cov_dir / host_id).iterdir()) == [PRODUCT], (
+            f"{host_id} staged something other than a single {PRODUCT!r} product dir"
+        )
 
     # The product file is covered (the cross-gcov processed the .gcda + .gcno).
     # The collection model stages the per-host lcov capture next to the decoded
     # .gcda at collect time (board.info, plus a path-resolved variant); the
     # report's _work/ dir only holds cross-host lcov merge products, which a
     # store-loaded run like this one never writes.
-    info = cov_dir / "zephyr37-llext" / "board.resolved.info"
+    info = cov_dir / "zephyr37-llext" / PRODUCT / "board.resolved.info"
     if not info.exists():
-        info = cov_dir / "zephyr37-llext" / "board.info"
+        info = cov_dir / "zephyr37-llext" / PRODUCT / "board.info"
     assert info.exists(), f"no lcov .info staged for zephyr37-llext\n{result.stdout[-2000:]}"
     lh, lf = _product_line_coverage(info)
     assert lf > 0, f"cov_ext.c shows no covered lines ({lh}/{lf})"

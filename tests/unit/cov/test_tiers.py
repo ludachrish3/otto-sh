@@ -28,6 +28,26 @@ def test_load_sorted_by_precedence_with_default_colors() -> None:
     assert tiers[2].max_age_days == 180
 
 
+def test_unit_tier_products_table_is_carried_through():
+    tiers = load_tiers(
+        {
+            "tiers": {
+                "unit": {
+                    "kind": "unit",
+                    "precedence": 2,
+                    "harvest_dirs": ["build/tests"],
+                    "products": {"app": ["build/app-tests"], "agent": ["b/agent"]},
+                }
+            }
+        }
+    )
+    assert tiers[0].products == {
+        "app": [Path("build/app-tests")],
+        "agent": [Path("b/agent")],
+    }
+    assert tiers[0].harvest_dirs == [Path("build/tests")]
+
+
 def test_explicit_color_wins() -> None:
     cov = {"tiers": {"system": {"kind": "e2e", "precedence": 1, "color": "#112233"}}}
     assert load_tiers(cov)[0].color == "#112233"

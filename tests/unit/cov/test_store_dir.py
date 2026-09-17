@@ -22,6 +22,7 @@ def _capture(ticket: str = "PROJ-123") -> Capture:
         ticket=ticket,
         labs=["lab1"],
         board="Board One",
+        product="app",
         files={"f.c": CaptureFileCov(lines={1: 1})},
     )
 
@@ -29,7 +30,7 @@ def _capture(ticket: str = "PROJ-123") -> Capture:
 def test_write_and_load(tmp_path: Path) -> None:
     p = write_manual_capture(_capture(), tmp_path)
     assert p.parent == manual_store_dir(tmp_path)
-    assert p.name == "20260702T184000Z-proj-123-board-one.json"
+    assert p.name == "20260702T184000Z-proj-123-board-one-app.json"
     caps = load_manual_captures(tmp_path)
     assert len(caps) == 1
     assert caps[0].ticket == "PROJ-123"

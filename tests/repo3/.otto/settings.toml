@@ -17,6 +17,14 @@ init = [
     'custom_hosts',
 ]
 
+# Declaring [[products]] makes repo3 a providing repo, and bootstrap refuses a
+# providing repo without a [project] scope. The `match` tables below already
+# name the two coverage beds by id, so the scope is the match-all that keeps
+# repo3 usable against any lab that carries them; match-all is spelled out
+# because it is never a default.
+[project]
+lab_patterns = [".*"]
+
 # Embedded coverage bed. Full design: ../../../todo/embedded_coverage.md;
 # bring-up record: docs/feasibility.md.
 #
@@ -52,9 +60,40 @@ command_frame = "zephyr"
 transfer = "console"
 max_filename_len = 32
 
+# The instrumented LLEXT extension (product/) as a product, one entry per
+# Zephyr version. An `llext` product has no filesystem home: `install` IS the
+# `llext load_hex` + `call_after_load`, and `uninstall` is the unload — so the
+# TestEmbeddedCoverage suite drives the extension through the product rather
+# than spelling the loader commands itself, and the collector dumps it through
+# the same name.
+#
+# Two entries share one NAME on purpose. KindRegistry.build takes the first
+# entry per name whose `match` admits the host, so each board gets its own
+# version-matched artifact while everything downstream — the run tree's
+# `cov/<host>/cov_ext/` segment, the capture's `product` field, the dump
+# command — sees a single product called `cov_ext` on both beds.
+#
+# The artifacts are absolute paths on the dev VM where the product is built;
+# they must stay in step with [coverage.embedded].builds below, whose .gcno is
+# each board's report source root. The suite asserts that agreement rather than
+# trusting it.
+[[products]]
+name = "cov_ext"
+kind = "llext"
+artifact = "/home/vagrant/build/cov_ext_app/zephyr/cov_ext.stripped.llext"
+call_after_load = ["cov_init"]
+match = { id = "zephyr37-llext" }
+
+[[products]]
+name = "cov_ext"
+kind = "llext"
+artifact = "/home/vagrant/build/cov_ext_app_v4_4/zephyr/cov_ext.stripped.llext"
+call_after_load = ["cov_init"]
+match = { id = "zephyr44-llext" }
+
 [coverage]
-# Embedded coverage uses console transport, not a remote .gcda directory, so the
-# Unix `gcda_remote_dir` key does not apply. The embedded path instead drives
+# Embedded coverage uses console transport, not a remote .gcda directory, so a
+# product's `cov_dir` plays no part here. The embedded path instead drives
 # `llext call_fn cov_dump` over the console (EmbeddedGcdaCollector), decodes the
 # hex stream to .gcda on the host, and runs a cross-gcov (arm-zephyr-eabi-gcov)
 # discovered from the .gcno under [coverage.embedded].build_dir.
@@ -79,10 +118,10 @@ max_filename_len = 32
 hosts = "zephyr(37|44)-llext"
 
 [coverage.embedded]
-# LLEXT extension name — matches add_llext_target(cov_ext) in product/. otto
-# dumps each embedded host via `llext call_fn cov_ext cov_dump`.
-extension = "cov_ext"
-
+# The extension NAME is no longer declared here — it is the `[[products]]`
+# entry's `name` above, which is also the run tree's product segment and the
+# name the collector dumps through (`llext call_fn <product> <dump_fn>`).
+#
 # The cross-gcov is no longer named here — it is a per-host bed property declared
 # in lab data (each host's ``toolchain`` dict). See the embedded host entries in
 # lab_data/tech1/lab.json. (.gcno discovery remains the no-config fallback.)

@@ -13,6 +13,8 @@ function emptyStats(overrides: Partial<Stats> = {}): Stats {
     branches: { total: 0, hit: 0, per_tier: {} },
     flags: { stale: 0, aging: 0, excluded: 0 },
     ctx_lines: {},
+    product_lines: {},
+    ctx_product_lines: {},
     ...overrides,
   };
 }

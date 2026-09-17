@@ -155,7 +155,7 @@ either limit is reached first.
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Optional
 
 if TYPE_CHECKING:
     from rich.panel import Panel
@@ -281,6 +281,14 @@ def run_selection(ctx: typer.Context) -> None:
     them by their specific types (``UnknownSelectionError`` first, then
     ``NoTestsMatchedError``) keeps an unrelated pipeline ``ValueError`` from
     being misreported as a no-match — it propagates untouched.
+
+    ``CoverageNotInstrumentedError`` is deliberately NOT caught here. It has
+    no better sentence to offer from this adapter than the one it already
+    carries, and its per-product verdict table is rendered once, on the
+    top-level boundary in :mod:`otto.cli.main`
+    (:func:`~otto.cli.invoke.render_instrumentation_refusal`) — which is also
+    the only place that can cover ``otto test <Suite> --cov``, since a named
+    suite runs through the suite registry rather than through this function.
     """
     stored = ctx.meta.get(RUN_OPTIONS_KEY)
     opts = stored if isinstance(stored, RunOptions) else RunOptions()
@@ -475,12 +483,17 @@ def main(  # noqa: PLR0913 — CLI command params
         ),
     ] = "",
     cov: Annotated[
-        bool,
+        Optional[bool],  # noqa: UP045 — typer hard-asserts on `X | None` option annotations
         typer.Option(
-            "--cov",
-            help="Collect gcov coverage from remote hosts after the suite finishes.",
+            "--cov/--no-cov",
+            help=(
+                "Collect coverage from the lab's instrumented products after the suite "
+                "finishes. Default: auto — on when an instrumented product is detected "
+                "and [coverage] is configured. --cov forces it on (an error if nothing is "
+                "instrumented); --no-cov forces it off."
+            ),
         ),
-    ] = False,
+    ] = None,
     cov_dir: Annotated[
         Path | None,
         typer.Option(
@@ -693,6 +706,18 @@ def main(  # noqa: PLR0913 — CLI command params
 
     monitor_effective = monitor or monitor_output is not None or monitor_hosts is not None
 
+    # --cov/--no-cov is tri-state: None is auto (the run decides from the
+    # lab's instrumentation). Every destination flag implies coverage, so
+    # pairing one with an explicit --no-cov is a contradiction, not a
+    # precedence puzzle — refuse it by name rather than silently picking one.
+    implied_on = cov_dir is not None or cov_report_effective
+    if cov is False and implied_on:
+        raise typer.BadParameter(
+            "--no-cov cannot be combined with --cov-dir, --cov-report, --cov-report-dir or "
+            "--cov-tickets-json, which all imply coverage",
+            param_hint="--no-cov",
+        )
+
     ctx.meta[RUN_OPTIONS_KEY] = RunOptions(
         markers=markers,
         tests=tests,
@@ -702,7 +727,7 @@ def main(  # noqa: PLR0913 — CLI command params
         duration=duration,
         threshold=threshold,
         results=results,
-        cov=cov or cov_dir is not None or cov_report_effective,
+        cov=True if implied_on else cov,
         cov_dir=cov_dir,
         cov_clean=cov_clean,
         cov_report=cov_report_effective,

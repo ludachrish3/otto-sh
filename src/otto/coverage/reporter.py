@@ -18,7 +18,7 @@ marks the implicit *system* tier produced by merging the supplied
 Typical usage from the ``otto cov`` CLI command::
 
     reporter = CoverageReporter(
-        gcda_dirs=[run1 / "cov" / "host1", run1 / "cov" / "host2"],
+        gcda_dirs=[run1 / "cov" / "host1" / "app", run1 / "cov" / "host2" / "app"],
         source_root=Path("/home/me/myproduct"),
         output_dir=Path("./cov_report"),
         tiers=[("unit", Path("u.info")), ("system", None)],
@@ -42,6 +42,7 @@ from .merge.paths import (
     discover_path_mappings,
 )
 from .store.model import TIER_SYSTEM, CoverageStore, Thresholds, TicketRecord
+from .tree import iter_product_dirs
 
 if TYPE_CHECKING:
     from ..host.local_host import LocalHost
@@ -171,23 +172,35 @@ def read_cov_toolchains(cov_dirs: list[Path]) -> "dict[str, Toolchain]":
 
 
 def discover_gcda_dirs(cov_dirs: list[Path]) -> list[Path]:
-    """Collect all per-host .gcda directories from one or more cov/ directories.
+    """Collect all per-product .gcda directories from one or more cov/ directories.
 
-    Each *cov_dir* is expected to contain per-host subdirectories::
+    Each *cov_dir* is expected to hold one subdirectory per host, and one
+    subdirectory per product below that::
 
         cov_dir/
           host_id_1/
+            product_a/
+            product_b/
           host_id_2/
+            product_a/
 
     Returns:
-        List of per-host directories containing ``.gcda`` files.
+        List of per-product directories containing ``.gcda`` files.
+
+    Raises:
+        otto.coverage.errors.CoverageConfigError: If a host dir holds
+            coverage data directly (the pre-product one-level tree).
     """
     gcda_dirs: list[Path] = []
     for cov_dir in cov_dirs:
         if not cov_dir.is_dir():
             logger.warning("Coverage directory does not exist: %s", cov_dir)
             continue
-        gcda_dirs.extend(host_dir for host_dir in sorted(cov_dir.iterdir()) if host_dir.is_dir())
+        gcda_dirs.extend(
+            product_dir
+            for _host_id, _product, product_dir in iter_product_dirs(cov_dir)
+            if next(product_dir.rglob("*.gcda"), None) is not None
+        )
     return gcda_dirs
 
 
@@ -288,17 +301,22 @@ class CoverageReporter:
                 )
 
     def _per_host_gcno_dirs(self) -> list[Path]:
-        """Per-gcda-dir source root: the host's own root (by dir name) or ``source_root`` fallback.
+        """Per-gcda-dir source root: the host's own root or the ``source_root`` fallback.
 
-        Parallel to ``self.gcda_dirs``.
+        Parallel to ``self.gcda_dirs``.  Source roots are per host, so a
+        ``<cov>/<host>/<product>`` gcda dir looks its root up under the
+        *host* dir's name, not the product leaf's.
         """
-        return [self.source_roots.get(d.name, self.source_root) for d in self.gcda_dirs]
+        return [self.source_roots.get(d.parent.name, self.source_root) for d in self.gcda_dirs]
 
     def _resolve_toolchains(self) -> "list[Toolchain | None]":
         """Build a per-gcda-dir list of toolchains.
 
+        Toolchains are per host, so each ``<cov>/<host>/<product>`` gcda
+        dir resolves under its host dir's name.
+
         Resolution order for each directory:
-        1. Explicit toolchain from ``self.toolchains`` (matched by dir name)
+        1. Explicit toolchain from ``self.toolchains`` (matched by host dir name)
         2. Auto-discovery from ``.gcno`` files in the source root
         3. ``None`` (merger will use its own defaults)
         """
@@ -309,7 +327,7 @@ class CoverageReporter:
         fallback_computed = False
 
         for gcda_dir in self.gcda_dirs:
-            host_id = gcda_dir.name
+            host_id = gcda_dir.parent.name
             if host_id in self.toolchains:
                 result.append(self.toolchains[host_id])
                 continue
@@ -460,7 +478,7 @@ class CoverageReporter:
 
             all_manual_captures = self._manual_captures()
             manual_captures = select_manual_captures(all_manual_captures)
-            seen_runs: set[tuple[str, str, str, str]] = set()
+            seen_runs: set[tuple[str, str, str, str, str]] = set()
             for cap in all_manual_captures:
                 seen_runs.add(self._run_key(cap))
             self._load_captures(store, seen_runs)
@@ -534,12 +552,18 @@ class CoverageReporter:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _run_key(capture: "Capture") -> tuple[str, str, str, str]:
+    def _run_key(capture: "Capture") -> tuple[str, str, str, str, str]:
         """Dedupe key: one run-table entry per distinct capture across all capture sources."""
-        return (capture.tier, capture.base_commit, capture.board, capture.captured_at)
+        return (
+            capture.tier,
+            capture.base_commit,
+            capture.board,
+            capture.product,
+            capture.captured_at,
+        )
 
     def _load_captures(
-        self, store: CoverageStore, seen_runs: set[tuple[str, str, str, str]]
+        self, store: CoverageStore, seen_runs: set[tuple[str, str, str, str, str]]
     ) -> None:
         """Fold e2e board ``capture.json`` files in under a strict HEAD base_commit guard.
 
@@ -611,51 +635,79 @@ class CoverageReporter:
         work_dir: Path,
         loader: LCOVLoader,
     ) -> None:
-        """Capture + load each unit tier's ``harvest_dirs`` (its own gcda == gcno root).
+        """Capture + load each unit tier's ``harvest_dirs`` and ``products``.
 
-        Per spec §4, ``harvest_dirs`` entries are repo-relative: a relative
-        entry is resolved against :attr:`repo_root`, not the process CWD
-        (``otto cov report`` may run from anywhere). Absolute entries pass
-        through unchanged.
+        Per spec §4/§11, ``harvest_dirs``/``products`` entries are
+        repo-relative: a relative entry is resolved against
+        :attr:`repo_root`, not the process CWD (``otto cov report`` may run
+        from anywhere). Absolute entries pass through unchanged.
+
+        ``harvest_dirs`` folds into one unnamed run (``product=""``); each
+        entry in ``products`` gets its own run, named after the product, so
+        the report can distinguish per-product coverage.
         """
-        unit_tiers = [t for t in self.tier_configs if t.kind == "unit" and t.harvest_dirs]
+        unit_tiers = [
+            t for t in self.tier_configs if t.kind == "unit" and (t.harvest_dirs or t.products)
+        ]
         if not unit_tiers:
             return
         from .merge.merger import LcovMerger
 
         merger = LcovMerger(localhost)
         for tier in unit_tiers:
-            tier_run_id: int | None = None
-            for idx, raw_hdir in enumerate(tier.harvest_dirs):
-                hdir = (
-                    anchor_path(raw_hdir, self.repo_root)
-                    if self.repo_root is not None
-                    else raw_hdir.expanduser()
+            if tier.harvest_dirs:
+                await self._harvest_one(tier, "", tier.harvest_dirs, work_dir, merger, loader)
+            for product, hdirs in tier.products.items():
+                await self._harvest_one(tier, product, hdirs, work_dir, merger, loader)
+
+    async def _harvest_one(
+        self,
+        tier: "TierConfig",
+        product: str,
+        hdirs: list[Path],
+        work_dir: Path,
+        merger: "LcovMerger",
+        loader: LCOVLoader,
+    ) -> None:
+        """Capture + load one ``harvest_dirs``/``products`` entry's dirs into one run.
+
+        The run id is created lazily, on the first dir that actually holds
+        data — a tier/product whose every dir is missing or empty registers
+        no run at all.
+        """
+        label = f"{tier.name!r} product {product!r}" if product else f"{tier.name!r}"
+        run_id: int | None = None
+        for idx, raw_hdir in enumerate(hdirs):
+            hdir = (
+                anchor_path(raw_hdir, self.repo_root)
+                if self.repo_root is not None
+                else raw_hdir.expanduser()
+            )
+            if not hdir.is_dir():
+                logger.warning(
+                    "Unit tier %s: harvest dir does not exist: %s — skipping",
+                    label,
+                    hdir,
                 )
-                if not hdir.is_dir():
-                    logger.warning(
-                        "Unit tier %r: harvest dir does not exist: %s — skipping",
-                        tier.name,
-                        hdir,
-                    )
-                    continue
-                gcda_files = list(hdir.rglob("*.gcda"))
-                if not gcda_files:
-                    logger.warning(
-                        "Unit tier %r: harvest dir has no .gcda files: %s — skipping",
-                        tier.name,
-                        hdir,
-                    )
-                    continue
-                self._warn_if_stale_counters(tier.name, hdir, gcda_files)
-                info_out = work_dir / f"unit_{tier.name}_{idx}.info"
-                if tier_run_id is None:
-                    tier_run_id = loader.store.add_run(tier=tier.name)
-                await merger.capture(hdir, hdir, info_out)
-                loader.load(info_out, tier.name, run_id=tier_run_id)
+                continue
+            gcda_files = list(hdir.rglob("*.gcda"))
+            if not gcda_files:
+                logger.warning(
+                    "Unit tier %s: harvest dir has no .gcda files: %s — skipping",
+                    label,
+                    hdir,
+                )
+                continue
+            self._warn_if_stale_counters(label, hdir, gcda_files)
+            suffix = f"_{product}" if product else ""
+            info_out = work_dir / f"unit_{tier.name}{suffix}_{idx}.info"
+            if run_id is None:
+                run_id = loader.store.add_run(tier=tier.name, product=product)
+            await merger.capture(hdir, hdir, info_out)
+            loader.load(info_out, tier.name, run_id=run_id)
 
     @staticmethod
-    def _warn_if_stale_counters(tier_name: str, hdir: Path, gcda_files: list[Path]) -> None:
+    def _warn_if_stale_counters(label: str, hdir: Path, gcda_files: list[Path]) -> None:
         """Warn (but still load) when counters look older than the build notes."""
         gcno_files = list(hdir.rglob("*.gcno"))
         if not gcno_files:
@@ -664,9 +716,9 @@ class CoverageReporter:
         newest_gcno = max(p.stat().st_mtime for p in gcno_files)
         if newest_gcda < newest_gcno:
             logger.warning(
-                "Unit tier %r: newest .gcda under %s predates newest .gcno — "
+                "Unit tier %s: newest .gcda under %s predates newest .gcno — "
                 "counters may be stale (loading anyway).",
-                tier_name,
+                label,
                 hdir,
             )
 
@@ -706,7 +758,7 @@ class CoverageReporter:
         from .validity import apply_manual_capture, register_capture_run
 
         max_age_by_tier = {t.name: t.max_age_days for t in self.tier_configs}
-        seen: set[tuple[str, str, str, str]] = set()
+        seen: set[tuple[str, str, str, str, str]] = set()
         for capture in manual_captures:
             key = self._run_key(capture)
             if key in seen:
@@ -887,12 +939,13 @@ class CoverageReporter:
 
 
 def _partition_board_dirs(cov_dirs: list[Path]) -> tuple[list[Path], list[Path]]:
-    """Split each cov dir's board subdirs into (gcda dirs, capture.json paths).
+    """Split each cov dir's ``<host>/<product>`` dirs into (gcda dirs, capture.json paths).
 
-    A board dir holding a ``capture.json`` is an e2e capture already
+    A product dir holding a ``capture.json`` is an e2e capture already
     anchored to base_commit and loads via the capture path; every other
-    board dir keeps today's ``.gcda``-merge path (back-compat).  Mixed
-    cov dirs are supported.
+    product dir keeps the ``.gcda``-merge path.  Mixed cov dirs are
+    supported.  A host dir holding data directly (the pre-product
+    one-level tree) is refused by name, not misread as a product.
     """
     gcda_dirs: list[Path] = []
     capture_paths: list[Path] = []
@@ -900,14 +953,12 @@ def _partition_board_dirs(cov_dirs: list[Path]) -> tuple[list[Path], list[Path]]
         if not cov_dir.is_dir():
             logger.warning("Coverage directory does not exist: %s", cov_dir)
             continue
-        for board_dir in sorted(cov_dir.iterdir()):
-            if not board_dir.is_dir():
-                continue
-            capture_json = board_dir / "capture.json"
+        for _host_id, _product, product_dir in iter_product_dirs(cov_dir):
+            capture_json = product_dir / "capture.json"
             if capture_json.is_file():
                 capture_paths.append(capture_json)
             else:
-                gcda_dirs.append(board_dir)
+                gcda_dirs.append(product_dir)
     return gcda_dirs, capture_paths
 
 

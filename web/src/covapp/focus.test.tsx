@@ -64,7 +64,8 @@ function buildIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
 }
 
 function Consumer() {
-  const { focus, setFocus, ticket, setTicket, hideAsserted, setHideAsserted } = useFocus();
+  const { focus, setFocus, ticket, setTicket, hideAsserted, setHideAsserted, product, setProduct } =
+    useFocus();
   return (
     <div>
       <span data-testid="focus-value">{focus ?? "null"}</span>
@@ -86,6 +87,10 @@ function Consumer() {
       </button>
       <button type="button" data-testid="unpin" onClick={() => setTicket(null)}>
         unpin
+      </button>
+      <span data-testid="product-value">{product ?? "null"}</span>
+      <button type="button" data-testid="pin-product-app" onClick={() => setProduct("app")}>
+        pin app
       </button>
       <span data-testid="hide-asserted-value">{String(hideAsserted)}</span>
       <button type="button" data-testid="hide-asserted-on" onClick={() => setHideAsserted(true)}>
@@ -794,6 +799,55 @@ describe("useFocus / FocusProvider: hideAsserted (Task 11)", () => {
       });
       expect(screen.getByTestId("hide-asserted-value").textContent).toBe("true");
     });
+  });
+});
+
+// Task 15 (per-product spec §10): `?product=<name>` — a FOURTH, independent
+// pinned value sharing this same module's hash-query/localStorage machinery
+// (storage key "otto-cov:<stamp>:product", boot precedence query>storage,
+// unknown name treated as cleared), resolved against `index.products` — the
+// report's sorted, distinct, non-empty run products. It narrows the
+// NUMERATOR by product exactly as `ctx` narrows it by run label, so it must
+// compose with all three of the others: pinning/clearing it may never touch
+// their params or storage keys.
+describe("useFocus / FocusProvider: product", () => {
+  it("setProduct pins into the hash and storage", () => {
+    window.__OTTO_COV__ = buildIndex({ products: ["agent", "app"] });
+    window.location.hash = "#/coverage";
+    renderConsumer();
+
+    act(() => screen.getByTestId("pin-product-app").click());
+
+    expect(screen.getByTestId("product-value").textContent).toBe("app");
+    expect(window.location.hash).toBe("#/coverage?product=app");
+    expect(localStorage.getItem("otto-cov:stamp-1:product")).toBe("app");
+  });
+
+  it("an unknown product in the hash degrades to cleared", () => {
+    window.__OTTO_COV__ = buildIndex({ products: ["app"] });
+    window.location.hash = "#/coverage?product=ghost";
+    localStorage.setItem("otto-cov:stamp-1:product", "ghost");
+    renderConsumer();
+
+    expect(screen.getByTestId("product-value").textContent).toBe("null");
+    expect(window.location.hash).toBe("#/coverage");
+    expect(localStorage.getItem("otto-cov:stamp-1:product")).toBeNull();
+  });
+
+  it("pinning a product never touches ctx or ticket", () => {
+    window.__OTTO_COV__ = buildIndex({
+      products: ["app"],
+      runs: [makeRun({ id: 1, label: "nightly", tier: "system" })],
+    });
+    window.location.hash = "#/coverage?ctx=nightly&ticket=PROJ-1";
+    renderConsumer();
+
+    act(() => screen.getByTestId("pin-product-app").click());
+
+    const params = new URLSearchParams(window.location.hash.split("?")[1]);
+    expect(params.get("ctx")).toBe("nightly");
+    expect(params.get("ticket")).toBe("PROJ-1");
+    expect(params.get("product")).toBe("app");
   });
 });
 

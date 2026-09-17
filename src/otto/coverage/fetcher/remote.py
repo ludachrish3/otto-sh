@@ -1,118 +1,183 @@
-"""Fetch ``.gcda`` files from remote hosts using otto's file transfer.
+"""Fetch ``.gcda`` files from remote hosts, one product at a time.
 
-Uses :meth:`UnixHost.get() <otto.host.unix_host.UnixHost.get>`
-which supports SCP, SFTP, FTP, and netcat with progress tracking and
-multi-hop SSH chains.
+Every product on a coverage host names the directory it writes counters
+under (``Product.cov_dir``); the fetcher discovers ``.gcda`` there with
+``find`` and pulls them with the host's ``get`` (SCP, SFTP, FTP, netcat,
+``docker cp`` — whatever the family provides) into
+``<staging_root>/<host_id>/<product>/`` (:func:`otto.layout.cov_product_dir_in`),
+where *staging_root* is the already-resolved local cov dir.
 """
 
 import logging
 import re
+import shlex
+import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from ... import layout
 from ...config.fleet import do_for_all_hosts
 from ...utils import Status
 
 if TYPE_CHECKING:
-    from ...host.unix_host import UnixHost
+    from ...host.product import Product
 
 logger = logging.getLogger(__name__)
 
 
-async def _clean_one_host(
-    host: "UnixHost",
-    gcda_remote_dir: str,
-) -> None:
-    """Delete .gcda files on a single host, logging the outcome."""
-    label = host.id
-    result = await host.exec(
-        f"find {gcda_remote_dir} -name '*.gcda' -type f -delete",
-        timeout=60,
-    )
-    if result.status != Status.Success:
-        logger.warning(
-            "Failed to clean .gcda files on %s: %s",
-            label,
-            result.value,
-        )
-    else:
-        logger.info("Cleaned .gcda files on %s", label)
+def _find_cmd(cov_dir: str) -> str:
+    """``find <cov_dir> -name '*.gcda' -type f``, with *cov_dir* shell-quoted.
 
-
-async def _fetch_one_host(
-    host: "UnixHost",
-    gcda_remote_dir: str,
-    staging_root: Path,
-) -> Path | None:
-    """Discover and download .gcda files for a single host.
-
-    Returns the per-host staging directory on success, or ``None`` if
-    no files were found or the transfer failed.
+    The quoting is load-bearing on the clean path, which appends ``-delete``:
+    an unquoted ``/opt/My App/cov`` would reach ``find`` as TWO start points,
+    the second of them relative to the shell's cwd.
     """
-    # DockerContainerHost piggybacks on a parent and doesn't compile the
-    # SUT, so it never has its own .gcda files. EmbeddedHost (RTOS targets)
-    # likewise carries no toolchain. LocalHost is the built-in `local` host
-    # (the otto runner, not a remote SUT) — all_hosts() excludes it from fleet
-    # iteration so this branch shouldn't see one; the isinstance skip stays as
-    # defense-in-depth for callers that opt it in. Skip all three without
-    # creating an empty dest dir that would trip up downstream tools
-    # (e.g. lcov's ``geninfo`` errors out on empty dirs).
-    from ...host.docker_host import DockerContainerHost
+    return f"find {shlex.quote(cov_dir)} -name '*.gcda' -type f"
+
+
+def _skipped_family(host: Any) -> bool:
+    """Report whether *host* has no fetchable counters.
+
+    Local and embedded hosts have none: the runner is not a SUT, and an
+    embedded target has no filesystem (it dumps over the console instead —
+    see :mod:`otto.coverage.fetcher.embedded`). Container hosts are fetched
+    like any other Unix host: their ``exec`` is ``docker exec`` and their
+    ``get`` is ``docker cp``.
+    """
     from ...host.embedded_host import EmbeddedHost
     from ...host.local_host import LocalHost
 
-    if isinstance(host, (DockerContainerHost, EmbeddedHost, LocalHost)):
+    return isinstance(host, (LocalHost, EmbeddedHost))
+
+
+async def _clean_one_host(host: Any) -> None:
+    """Delete every instrumented product's ``.gcda`` on one host, logging each outcome."""
+    if _skipped_family(host):
+        return
+    from ...host.product import cov_dir_of
+    from ..instrumentation import instrumented_products
+
+    for product in instrumented_products(host):
+        # Before the command is built, not after: a name that is not a single
+        # safe path segment must never reach a host, least of all on the path
+        # that appends ``-delete``.
+        layout.validate_product_name(product.name)
+        cov_dir = cov_dir_of(product)
+        result = await host.exec(f"{_find_cmd(cov_dir)} -delete", timeout=60)
+        if result.status != Status.Success:
+            logger.warning(
+                "Failed to clean .gcda for %s on %s (%s): %s",
+                product.name,
+                host.id,
+                cov_dir,
+                result.value,
+            )
+        else:
+            logger.info("Cleaned .gcda for %s on %s (%s)", product.name, host.id, cov_dir)
+
+
+async def _fetch_one_product(host: Any, product: "Product", staging_root: Path) -> Path | None:
+    """Discover and download one product's ``.gcda`` from *host*.
+
+    Returns the product's staging dir, or ``None`` when nothing was found or
+    the transfer failed. The dir is created only once files are known to
+    exist, and removed again if the transfer then fails, so the staging tree
+    never holds empty leaves — lcov chokes on them, and the report walk
+    iterates ``<cov_dir>/<host>/<product>`` and would pick one up.
+
+    A failed ``find`` and an empty one are NOT the same event: the first is a
+    WARNING (the host could not be searched), the second is DEBUG, because an
+    instrumented product that a run never exercised producing no counters is
+    ordinary and would otherwise cry wolf on every collection.
+
+    Raises:
+        ValueError: *product* has a name that is not a single safe path
+            segment. Checked before any host command is issued.
+    """
+    from ...host.product import cov_dir_of
+
+    layout.validate_product_name(product.name)
+    cov_dir = cov_dir_of(product)
+    logger.info("Discovering .gcda for %s on %s:%s", product.name, host.id, cov_dir)
+    find_result = await host.exec(_find_cmd(cov_dir), timeout=60)
+    if find_result.status != Status.Success:
+        logger.warning(
+            "find failed for %s on %s at %s: %s",
+            product.name,
+            host.id,
+            cov_dir,
+            find_result.value,
+        )
         return None
-
-    label = host.id
-
-    logger.info("Discovering .gcda files on %s:%s", label, gcda_remote_dir)
-    find_result = await host.exec(
-        f"find {gcda_remote_dir} -name '*.gcda' -type f",
-        timeout=60,
-    )
-    if find_result.status != Status.Success or not find_result.value.strip():
-        logger.warning("No .gcda files found on %s at %s", label, gcda_remote_dir)
-        return None
-
     gcda_files = [
         Path(line.strip())
         for line in find_result.value.strip().splitlines()
         if line.strip().endswith(".gcda")
     ]
     if not gcda_files:
-        logger.warning("No .gcda files found on %s", label)
+        logger.debug("No .gcda files for %s on %s at %s", product.name, host.id, cov_dir)
         return None
-
-    # Only create the per-host dir once we know there are files — keeps
-    # the staging tree free of empty subdirs that downstream tools choke on.
-    dest = staging_root / label
+    dest = layout.cov_product_dir_in(staging_root, host.id, product.name)
     dest.mkdir(parents=True, exist_ok=True)
-
-    logger.info("Fetching .gcda files from %s", label)
-    get_result = await host.get(gcda_files, dest, show_progress=False)
+    logger.info("Fetching %d .gcda file(s) for %s from %s", len(gcda_files), product.name, host.id)
+    try:
+        get_result = await host.get(gcda_files, dest, show_progress=False)
+    except BaseException:
+        # A RAISED get (transport error, cancellation at a bed teardown) leaves
+        # the same half-populated leaf a returned failure does, and a later
+        # merge cannot tell a partial product from a complete one. Cleaned on
+        # the way out; BaseException so a cancelled fetch is not the one door
+        # that leaves debris. The exception is re-raised untouched.
+        shutil.rmtree(dest, ignore_errors=True)
+        raise
     if not get_result.is_ok:
-        logger.error("Failed to fetch .gcda files from %s: %s", label, get_result.msg)
+        logger.error(
+            "Failed to fetch .gcda for %s from %s (%s): %s",
+            product.name,
+            host.id,
+            cov_dir,
+            get_result.msg,
+        )
+        # rmtree, not rmdir: a partly-transferred product leaves files behind,
+        # and a half-populated leaf is worse than none. The HOST dir is left
+        # alone — whether it is now empty is the host-level walk's business.
+        shutil.rmtree(dest, ignore_errors=True)
         return None
-
     return dest
 
 
-class GcdaFetcher:
-    """Fetch ``.gcda`` files from the configured lab hosts into a local staging area.
+async def _fetch_one_host(host: Any, staging_root: Path) -> dict[str, Path] | None:
+    """Fetch every instrumented product on *host*; ``{product: dir}`` or ``None``."""
+    if _skipped_family(host):
+        return None
+    from ..instrumentation import instrumented_products
 
-    Each host gets its own subdirectory under *staging_root* so files
-    from different hosts never collide before the merge step::
+    products = instrumented_products(host)
+    if not products:
+        logger.info("No instrumented products on %s — no e2e coverage from it", host.id)
+        return None
+    fetched: dict[str, Path] = {}
+    for product in products:
+        dest = await _fetch_one_product(host, product, staging_root)
+        if dest is not None:
+            fetched[product.name] = dest
+    return fetched or None
+
+
+class GcdaFetcher:
+    """Fetch ``.gcda`` from the lab's coverage hosts into a per-host, per-product staging tree.
+
+    ::
 
         staging_root/
-            host1_ne/
-                foo.gcda
-                subdir/bar.gcda
-            host2_ne/
-                foo.gcda
+            host1/
+                app/foo.gcda
+                agent/bar.gcda
+            host2/
+                app/foo.gcda
 
-    Hosts are selected via :func:`~otto.config.fleet.all_hosts`,
-    optionally filtered by a compiled regex *pattern* matched against each host's ``id``.
+    Hosts come from :func:`~otto.config.fleet.all_hosts` (containers included),
+    optionally narrowed by *pattern* against each host's ``id``.
     """
 
     def __init__(
@@ -123,51 +188,41 @@ class GcdaFetcher:
         self.staging_root = staging_root
         self.pattern = pattern
 
-    async def fetch_all(self, gcda_remote_dir: str) -> dict[str, Path]:
-        """Fetch ``.gcda`` files from every matching host concurrently.
+    async def fetch_all(self) -> dict[tuple[str, str], Path]:
+        """Fetch from every matching host concurrently; ``{(host_id, product): dir}``.
 
-        Args:
-            gcda_remote_dir: Absolute path on each remote host where
-                ``.gcda`` files are located (e.g. ``/var/coverage/myproduct``).
-
-        Returns:
-            Mapping of host id → local staging directory containing its
-            fetched ``.gcda`` files.  Hosts with no files or failed
-            transfers are omitted from the result.
+        Hosts and products with no counters, and failed transfers, are omitted.
         """
         self.staging_root.mkdir(parents=True, exist_ok=True)
 
         fetch_results = await do_for_all_hosts(
             _fetch_one_host,
-            gcda_remote_dir,
             self.staging_root,
             pattern=self.pattern,
+            include_containers=True,
         )
 
-        results: dict[str, Path] = {}
+        results: dict[tuple[str, str], Path] = {}
         for host_id, value in fetch_results.items():
             if isinstance(value, BaseException):
                 logger.error("Failed to fetch from %s: %s", host_id, value)
                 continue
-            if value is not None:
-                results[host_id] = value
+            if value:
+                for product, dest in value.items():
+                    results[(host_id, product)] = dest
         return results
 
-    async def clean_remote(self, gcda_remote_dir: str) -> None:
-        """Delete ``.gcda`` files from every matching remote host concurrently.
+    async def clean_remote(self) -> None:
+        """Delete every instrumented product's ``.gcda`` on every matching host.
 
         Should be called **before** a test run to ensure clean coverage
         data, and optionally **after** collection to save disk space.
         """
         clean_results = await do_for_all_hosts(
             _clean_one_host,
-            gcda_remote_dir,
             pattern=self.pattern,
+            include_containers=True,
         )
         for host_id, result in clean_results.items():
             if isinstance(result, BaseException):
-                logger.warning(
-                    "Failed to clean .gcda files on %s: %s",
-                    host_id,
-                    result,
-                )
+                logger.warning("Failed to clean .gcda files on %s: %s", host_id, result)

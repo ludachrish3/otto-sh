@@ -565,6 +565,9 @@ class CoverageTierSpec(OttoModel):
     color: str | None = None
     harvest_dirs: list[Path] = Field(default_factory=list)
     max_age: str | None = None
+    products: dict[str, list[Path]] = Field(default_factory=dict)
+    """``unit``-kind only: named product views, each its own run record —
+    ``{"app": ["build/app-tests"]}``. Keys follow the product-name rule."""
 
     @field_validator("color")
     @classmethod
@@ -579,6 +582,21 @@ class CoverageTierSpec(OttoModel):
         if v is not None and _MAX_AGE_RE.match(v) is None:
             raise ValueError(f"max_age {v!r} must be '<days>d', e.g. '180d'")
         return v
+
+    @field_validator("products")
+    @classmethod
+    def _validate_products(cls, v: dict[str, list[Path]]) -> dict[str, list[Path]]:
+        from ..layout import validate_product_name
+
+        for name in v:
+            validate_product_name(name)
+        return v
+
+    @model_validator(mode="after")
+    def _products_need_unit_kind(self) -> "CoverageTierSpec":
+        if self.products and self.kind != "unit":
+            raise ValueError("`products` is only valid on a unit-kind tier")
+        return self
 
 
 def _compilable_pattern(v: str) -> str:
@@ -729,12 +747,13 @@ class CoverageOverridesSpec(OttoModel):
 class CoverageSettingsSpec(OttoModel):
     """Typed ``[coverage]`` table (was a free-form dict).
 
-    ``embedded`` stays a passthrough dict because its ``builds.<version>``
-    sub-tables carry dynamic version keys.
+    ``hosts`` selects which hosts contribute; *where* counters are written is
+    a property of each product (``[[products]].cov_dir``), never of this
+    table. ``embedded`` stays a passthrough dict because its
+    ``builds.<version>`` sub-tables carry dynamic version keys.
     """
 
     hosts: str | None = None
-    gcda_remote_dir: str = ""
     embedded: dict[str, Any] = Field(default_factory=dict)
     tiers: dict[str, CoverageTierSpec] = Field(default_factory=dict)
     exclusions: CoverageExclusionsSpec = CoverageExclusionsSpec()

@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from otto import layout
 from otto.config.lab import Lab
 from otto.context import OttoContext, ProjectContextView
 from otto.project import (
@@ -594,13 +595,20 @@ async def test_get_logs_product_false_gathers_nothing():
     assert hosts[0].calls == []
 
 
-def _log_dir(base, name, *, delivered):
-    """A host's log root, with ``product/`` populated or left empty."""
+def _log_dir(base, name, host_id, *, delivered, product="app"):
+    """A host's log root, with *product*'s log dir populated or left empty.
+
+    Built through :mod:`otto.layout` rather than by hand, so this double holds
+    the SAME run tree the host verb writes: the check under test reads
+    ``logs/<host>/<product>/product/``, and a double that kept the old shared
+    ``product/`` dir would pass a check that looks nowhere near it.
+    """
     root = base / name
-    (root / "product").mkdir(parents=True)
+    logs = layout.product_logs_dir(root, host_id, product)
+    logs.mkdir(parents=True)
     if delivered:
-        (root / "product" / "app.log").write_text("hi", encoding="utf-8")
-    return root
+        (logs / "app.log").write_text("hi", encoding="utf-8")
+    return layout.host_logs_dir(root, host_id)
 
 
 @pytest.mark.asyncio
@@ -613,12 +621,12 @@ async def test_get_logs_require_product_logs_fails_when_an_owning_host_retrieved
             _FakeHost(
                 "h0",
                 products=[_FakeItem("app", "acme")],
-                log_dir=_log_dir(tmp_path, "full", delivered=True),
+                log_dir=_log_dir(tmp_path, "full", "h0", delivered=True),
             ),
             _FakeHost(
                 "h1",
                 products=[_FakeItem("app", "acme")],
-                log_dir=_log_dir(tmp_path, "empty", delivered=False),
+                log_dir=_log_dir(tmp_path, "empty", "h1", delivered=False),
             ),
         ]
     )
@@ -634,19 +642,19 @@ async def test_get_logs_require_product_logs_only_asks_hosts_this_repo_owns(tmp_
     # on part of the fleet (firmware on the embedded target, say) can retrieve
     # everything it owns and still be failed — named after an innocent host it
     # never deploys to — which makes the flag unusable for that whole repo class.
-    mine = _log_dir(tmp_path, "mine", delivered=True)
+    mine = _log_dir(tmp_path, "mine", "h0", delivered=True)
     owner_host = _FakeHost("h0", products=[_FakeItem("app", "acme")], log_dir=mine)
     bare_host = _FakeHost(
         "h1",
         products=[_FakeItem("their-app", "other")],
-        log_dir=_log_dir(tmp_path, "bare", delivered=False),
+        log_dir=_log_dir(tmp_path, "bare", "h1", delivered=False, product="their-app"),
     )
     actions = _actions(_FakeCtx([owner_host, bare_host]))
     assert (await actions.get_logs(GetLogsOptions(require_product_logs=True))).is_ok
 
     # …and the OWNING host delivering nothing is still a failure that names it,
     # so the narrowed walk cannot degrade into no walk at all.
-    (mine / "product" / "app.log").unlink()
+    (mine / "app" / "product" / "app.log").unlink()
     result = await actions.get_logs(GetLogsOptions(require_product_logs=True))
     assert not result.is_ok
     assert "h0" in result.msg
@@ -657,7 +665,7 @@ async def test_get_logs_require_product_logs_is_satisfied_by_a_haul(tmp_path):
     host = _FakeHost(
         "h0",
         products=[_FakeItem("app", "acme")],
-        log_dir=_log_dir(tmp_path, "logs", delivered=True),
+        log_dir=_log_dir(tmp_path, "logs", "h0", delivered=True),
     )
     ctx = _FakeCtx([host])
     assert (await _actions(ctx).get_logs(GetLogsOptions(require_product_logs=True))).is_ok
@@ -684,7 +692,7 @@ async def test_get_logs_requirement_is_not_checked_after_a_failed_haul(tmp_path)
     host = _FakeHost(
         "h0",
         products=[_FakeItem("app", "acme")],
-        log_dir=_log_dir(tmp_path, "logs", delivered=False),
+        log_dir=_log_dir(tmp_path, "logs", "h0", delivered=False),
     )
     host.script("get_product_logs", _fail("transfer refused"))
     result = await _actions(_FakeCtx([host])).get_logs(GetLogsOptions(require_product_logs=True))

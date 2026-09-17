@@ -7,7 +7,7 @@
 /** `IndexPayload["format"]` / `FileChunk["stamp"]`-adjacent format marker.
  * Mirrors `OTTO_COV_DATA_FORMAT` in spa_data.py — bump both together or
  * never (Global Constraints). */
-export const EXPECTED_DATA_FORMAT = 2;
+export const EXPECTED_DATA_FORMAT = 3;
 
 export interface Thresholds {
   high: number;
@@ -34,6 +34,8 @@ export interface RunJson {
   label: string;
   board: string;
   host: string;
+  /** The <product> segment of cov/<host>/<product>/; "" for an unnamed unit run. */
+  product: string;
   labs: string[];
   captured_at: string;
   tester: Tester | null;
@@ -85,6 +87,10 @@ export interface Stats {
   };
   /** Hit-line counts per run label, within this node — powers the focus filter. */
   ctx_lines: Record<string, number>;
+  /** Hit-line counts per product, within this node — powers the product filter. */
+  product_lines: Record<string, number>;
+  /** Hit-line counts per (run label, product) pair — the ctx ∧ product composition. */
+  ctx_product_lines: Record<string, Record<string, number>>;
 }
 
 export interface FileNode {
@@ -124,6 +130,8 @@ export interface IndexPayload {
   thresholds: Thresholds;
   stat_types: string[];
   runs: RunJson[];
+  /** Sorted, distinct, non-empty run products. */
+  products: string[];
   /** Asserted manual-override entries (`store.overrides`, v6), sorted by
    * `id` — `LineJson.asserted` values are indexes into this table. */
   overrides: OverrideJson[];

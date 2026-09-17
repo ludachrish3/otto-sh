@@ -164,6 +164,33 @@ function TicketChip({ id, onClear }: { id: string; onClear: () => void }) {
   );
 }
 
+/** `TicketChip`'s product counterpart — same anatomy, and neutral-dotted for
+ * the same reason: a product spans every tier, so it has no tier colour of
+ * its own. */
+function ProductChip({ name, onClear }: { name: string; onClear: () => void }) {
+  return (
+    <span
+      data-testid="product-chip"
+      className="inline-flex max-w-52 items-center gap-1.5 rounded-full border
+        border-fg-brand-primary_alt bg-brand-primary_alt px-2.5 py-1 text-xs font-medium
+        text-brand-secondary"
+    >
+      <span aria-hidden className="size-2 shrink-0 rounded-sm bg-fg-quaternary" />
+      <span className="truncate font-mono">{name}</span>
+      <button
+        type="button"
+        data-testid="product-clear"
+        aria-label="Clear product pin"
+        title="Clear product pin"
+        onClick={onClear}
+        className="shrink-0 opacity-70 outline-none hover:opacity-100"
+      >
+        ✕
+      </button>
+    </span>
+  );
+}
+
 /** One row of the ⋮ menu's "Focus context" section — "All contexts" (no
  * `dotColor`, per `contexts-page.html`'s `buildMenuFocus`: even that row
  * gets a (neutral) dot, mirrored here via `bg-fg-quaternary`) or a
@@ -257,7 +284,8 @@ function BranchPill({ tone }: { tone: "high" | "low" | "na" }) {
 
 export function AppShell({ crumbs, title, meta, stats, searchHit, children }: AppShellProps) {
   const index = getIndex();
-  const { focus, setFocus, ticket, setTicket, hideAsserted, setHideAsserted } = useFocus();
+  const { focus, setFocus, ticket, setTicket, hideAsserted, setHideAsserted, product, setProduct } =
+    useFocus();
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -324,6 +352,12 @@ export function AppShell({ crumbs, title, meta, stats, searchHit, children }: Ap
   // (same "no data, no control" pattern `tickets.length > 0` above already
   // uses for `TicketSearch`).
   const overrides = index?.overrides ?? [];
+  // Per-product spec §10: the ⋮ menu's "Pin product" section, gated the same
+  // "no data, no control" way — a report whose runs carry no product (every
+  // run an unnamed unit run) emits `products: []`, so there is nothing to
+  // pin and the section stays absent rather than offering "All products"
+  // alone.
+  const products = index?.products ?? [];
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -416,6 +450,7 @@ export function AppShell({ crumbs, title, meta, stats, searchHit, children }: Ap
             />
           )}
           {ticket !== null && <TicketChip id={ticket} onClear={() => setTicket(null)} />}
+          {product !== null && <ProductChip name={product} onClear={() => setProduct(null)} />}
           <ButtonUtility
             aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
             tooltip={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
@@ -470,6 +505,28 @@ export function AppShell({ crumbs, title, meta, stats, searchHit, children }: Ap
                     />
                   ))}
                 </Dropdown.Section>
+                {products.length > 0 && (
+                  <Dropdown.Section>
+                    <Dropdown.SectionHeader className="px-2.5 pt-2 pb-1 text-xs font-medium text-quaternary">
+                      Pin product
+                    </Dropdown.SectionHeader>
+                    <FocusMenuItem
+                      active={product === null}
+                      label="All products"
+                      testId="product-menu-all"
+                      onAction={() => setProduct(null)}
+                    />
+                    {products.map((name) => (
+                      <FocusMenuItem
+                        key={name}
+                        active={product === name}
+                        label={name}
+                        testId={`product-menu-${name}`}
+                        onAction={() => setProduct(name)}
+                      />
+                    ))}
+                  </Dropdown.Section>
+                )}
                 {(overrides.length > 0 || hideAsserted) && (
                   // Manual-overrides spec §6: the row shows when the report
                   // carries at least one asserted entry — see `overrides`'

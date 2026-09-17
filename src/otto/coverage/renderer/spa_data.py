@@ -36,8 +36,11 @@ from ..ticket_export import group_ranges as _group_ranges
 
 logger = logging.getLogger(__name__)
 
-OTTO_COV_DATA_FORMAT: int = 2
+OTTO_COV_DATA_FORMAT: int = 3
 """``IndexPayload["format"]`` / ``FileChunk["stamp"]``-adjacent format marker.
+
+Version 3 adds the product dimension: ``products``, per-node
+``product_lines`` and ``ctx_product_lines``, and ``product`` on every run.
 
 Bump alongside the TypeScript ``EXPECTED_DATA_FORMAT`` constant, or never."""
 
@@ -223,6 +226,8 @@ def _empty_stats(tier_order: list[str]) -> dict[str, Any]:
         "branches": {"total": 0, "hit": 0, "per_tier": dict.fromkeys(tier_order, 0)},
         "flags": {"stale": 0, "aging": 0, "excluded": 0},
         "ctx_lines": {},
+        "product_lines": {},
+        "ctx_product_lines": {},
     }
 
 
@@ -246,6 +251,12 @@ def _add_stats(target: dict[str, Any], source: dict[str, Any]) -> None:
     target["flags"]["excluded"] += source["flags"]["excluded"]
     for label, n in source["ctx_lines"].items():
         target["ctx_lines"][label] = target["ctx_lines"].get(label, 0) + n
+    for product, n in source["product_lines"].items():
+        target["product_lines"][product] = target["product_lines"].get(product, 0) + n
+    for label, per_product in source["ctx_product_lines"].items():
+        bucket = target["ctx_product_lines"].setdefault(label, {})
+        for product, n in per_product.items():
+            bucket[product] = bucket.get(product, 0) + n
 
 
 def _file_stats(
@@ -285,16 +296,32 @@ def _file_stats(
     stats["flags"]["excluded"] = len(fr.excluded_lines)
 
     ctx: dict[str, int] = {}
+    products: dict[str, int] = {}
+    ctx_products: dict[str, dict[str, int]] = {}
     for lr in lines:
         labels: set[str] = set()
+        seen_products: set[str] = set()
+        pairs: set[tuple[str, str]] = set()
         for run_id, count in lr.run_hits.items():
-            if count > 0:
-                run = runs_by_id.get(run_id)
-                if run is not None:
-                    labels.add(run.label)
+            if count <= 0:
+                continue
+            run = runs_by_id.get(run_id)
+            if run is None:
+                continue
+            labels.add(run.label)
+            if run.product:
+                seen_products.add(run.product)
+                pairs.add((run.label, run.product))
         for label in labels:
             ctx[label] = ctx.get(label, 0) + 1
+        for product in seen_products:
+            products[product] = products.get(product, 0) + 1
+        for label, product in pairs:
+            bucket = ctx_products.setdefault(label, {})
+            bucket[product] = bucket.get(product, 0) + 1
     stats["ctx_lines"] = ctx
+    stats["product_lines"] = products
+    stats["ctx_product_lines"] = ctx_products
 
     return stats
 
@@ -584,6 +611,7 @@ def build_index_payload(
         "thresholds": store.thresholds.to_dict(),
         "stat_types": list(STAT_TYPES),
         "runs": [r.to_dict() for r in store.runs],
+        "products": sorted({r.product for r in store.runs if r.product}),
         "overrides": [o.to_dict() for o in sorted(store.overrides, key=lambda o: o.id)],
         "run_contrib": _build_run_contrib(store, prefix),
         "total_lines": tree["stats"]["lines"]["total"],

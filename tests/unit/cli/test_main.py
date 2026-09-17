@@ -983,3 +983,78 @@ class TestProjectSwitchWiring:
 
         assert result.exit_code == 2
         assert "repo-a" in result.output + result.stderr
+
+
+class TestEntryBoundaryRendersTheCoverageRefusal:
+    """`entry()`'s OttoError frame routes a refusal through the table renderer.
+
+    WHY A STRUCTURAL CHECK. The behaviour lives OUTSIDE `app()` -- the frame
+    wraps the `app()` call in `entry()`, after bootstrap -- so no `CliRunner`
+    invoke can reach it, and driving `entry()` for real would mean standing up
+    a workspace and a lab just to provoke one error path. What the reader
+    actually sees (the table, then one error line, with the plain listing not
+    repeated under it) is pinned on real captured output in
+    `tests/unit/cli/test_error_render.py`; this pins the one thing that file
+    cannot -- that the frame is WIRED to it.
+
+    It is honest about being a wiring check. It reddens when the call or its
+    import is removed or renamed, which is the regression it exists for
+    (`otto test <Suite> --cov` refusing with a bare line and no table, because
+    a named suite runs through the suite registry and reaches no leaf
+    handler); it cannot redden for a rendering bug, and does not claim to.
+    """
+
+    _HELPER = "render_instrumentation_refusal"
+
+    @staticmethod
+    def _entry_tree():
+        import ast
+        import inspect
+        import textwrap
+
+        from otto.cli import main as main_module
+
+        return ast.parse(textwrap.dedent(inspect.getsource(main_module.entry)))
+
+    def test_the_ottoerror_frame_renders_through_the_refusal_helper(self):
+        import ast
+
+        handlers = [
+            h
+            for node in ast.walk(self._entry_tree())
+            if isinstance(node, ast.Try)
+            for h in node.handlers
+            if isinstance(h.type, ast.Name) and h.type.id == "OttoError"
+        ]
+        assert handlers, "entry() no longer has an `except OttoError` frame to check"
+        called = {
+            node.func.id
+            for handler in handlers
+            for node in ast.walk(handler)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert self._HELPER in called, (
+            f"entry()'s OttoError frame no longer calls {self._HELPER}() -- "
+            "a coverage refusal would print its headline with no verdict table"
+        )
+        assert "print_error" in called
+
+    def test_the_helper_is_imported_inside_entry_and_still_exists(self):
+        """A frame that calls a name it never imported is a NameError at the boundary.
+
+        Both halves, because the import is function-local (the boundary is on
+        the import-budget surface) and nothing else in the module would catch
+        its loss.
+        """
+        import ast
+
+        imported = {
+            alias.name
+            for node in ast.walk(self._entry_tree())
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        }
+        assert self._HELPER in imported
+        from otto.cli import invoke
+
+        assert callable(getattr(invoke, self._HELPER, None))

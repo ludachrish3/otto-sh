@@ -44,7 +44,7 @@ def test3_lease(tmp_path_factory):
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def stack(test3_lease):
+async def stack(test3_lease, sut_dirs_env_module):
     """Bring up repo1's compose stack on test3 once per module, yield the api
     container host to all tests, then tear down. Module scope avoids paying
     ~10s of compose_up overhead for each of the 10+ tests in this file —
@@ -54,7 +54,12 @@ async def stack(test3_lease):
     ``loop_scope="module"`` matches the fixture scope so pytest-asyncio
     creates a module-scoped event loop that the fixture can outlive its
     creating test under (the default ``function`` loop_scope would close
-    after the first test and corrupt the cached SSH connection)."""
+    after the first test and corrupt the cached SSH connection).
+
+    ``sut_dirs_env_module`` because this fixture runs at MODULE scope, ahead of
+    the function-scoped ``_default_sut_dirs_env``: ``compose_up`` walks
+    ``get_repos()``, which needs the SUT env, and the module-scoped bracket also
+    keeps the bootstrap memo it primes from outliving this module."""
     parent = UnixHost(
         ip="10.10.200.13",
         element=Element("test3"),

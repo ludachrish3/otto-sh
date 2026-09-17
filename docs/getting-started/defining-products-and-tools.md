@@ -19,14 +19,22 @@ function otto runs once per host as it is ingested, which returns the products
 
 ## A product
 
-A product knows four things about itself: how to get onto a host, how to
-install, how to come off, and whether it is installed right now.
+A product knows how to get onto a host, how to install, how to come off,
+whether it is installed right now — and, for a coverage build, whether its
+artifact carries the compiler's instrumentation.
 
 ```{literalinclude} ../examples/getting-started/libs/gs_example/products.py
 :language: python
 :start-after: "# doc: begin product"
 :end-before: "# doc: end product"
 ```
+
+`cov_dir` is the one coverage-shaped thing a product declares: the host-side
+directory its instrumented build writes `.gcda` counters into, which is why
+`install` hands it to `GCOV_PREFIX`. Leave it out and it defaults to
+`/tmp/<name>`; either way `self.cov_dir` is concrete by the time a host
+carries the product, so composing a command out of it always works.
+{doc}`coverage` is the whole coverage walkthrough.
 
 The provider is keyed on `os_type`, an attribute of the host that knows
 nothing about products — which is the rule for providers generally: key on the

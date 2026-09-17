@@ -31,6 +31,7 @@ from typing import (
 
 from typing_extensions import Never, Self, override
 
+from .. import layout
 from ..logger.mode import LogMode, effective_mode
 from ..result import CommandNotRunError, CommandResult, NotRunResult, Result, Results
 from ..utils import (
@@ -49,6 +50,7 @@ from ..utils import (
 # add no edge to the host package's import graph beyond themselves.
 from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
+from .log_haul import haul_globs
 from .toolchain import Toolchain
 
 if TYPE_CHECKING:
@@ -439,6 +441,17 @@ def _log_tree_state(directory: "Path") -> "set[tuple[str, int, int, int]]":
                 )
             )
     return state
+
+
+def _keyed_log_state(product_dirs: "list[Path]") -> "set[tuple[str, tuple[str, int, int, int]]]":
+    """:func:`_log_tree_state` over several product dirs, keyed by product.
+
+    The key is each directory's PARENT name — the product — and not the
+    constant ``product`` leaf all of them end in, so two products that both
+    retrieved an ``app.log`` stay two distinct entries rather than collapsing
+    into one.
+    """
+    return {(d.parent.name, entry) for d in product_dirs for entry in _log_tree_state(d)}
 
 
 #: Help text for the ``concurrent`` option every family's ``put``/``get``
@@ -948,7 +961,7 @@ class Host(Protocol):
     async def get_product_logs(
         self, dest: "Path | None" = None, owner: str | None = None
     ) -> Result:
-        """Retrieve each product's logs into ``…/logs/<host-id>/product/``."""
+        """Retrieve each product's logs and debug logs into its own directories."""
         ...
 
     async def get_debug_logs(self, dest: "Path | None" = None) -> Result:
@@ -1974,9 +1987,10 @@ class BaseHost(ABC):
         """Local root for this host's retrieved logs: ``<base>/logs/<host-id>``.
 
         *base* is *dest* when given, else the active command's output
-        directory, else the CWD. The subtree below (``product/``, ``debug/``)
-        is a documented contract — the mirror of the coverage pipeline's
-        per-host-id keying — so consumers may read it by path.
+        directory, else the CWD. The subtree below is the run-tree contract in
+        :mod:`otto.layout` (``<product>/product/``, ``<product>/debug/``,
+        ``debug/``), the mirror of the coverage tree's keying, so consumers may
+        read it by path.
         """
         from ..context import try_get_context  # lazy — host must not import context at import time
 
@@ -1985,25 +1999,40 @@ class BaseHost(ABC):
             base = dest
         else:
             base = ctx.output_dir if ctx and ctx.output_dir else Path.cwd()
-        return base / "logs" / self.id
+        return layout.host_logs_dir(base, self.id)
+
+    def _log_base(self, dest: "Path | None") -> Path:
+        """Return the run dir :meth:`log_dest` resolved — what :mod:`otto.layout` keys from."""
+        return layout.run_dir_of(self.log_dest(dest))
 
     @cli_exposed
     async def get_product_logs(
         self, dest: "Path | None" = None, owner: str | None = None
     ) -> Result:
-        """Retrieve each product's logs into ``…/logs/<host-id>/product/``.
+        """Retrieve each product's logs and debug logs into its own directories.
 
-        Best-effort: every product's :meth:`~otto.host.product.Product.get_logs`
-        hook is called even after one fails, and the first failure is what
-        returns. The hook need not run anything on the host — an external
-        retrieval mechanism is equally welcome — it just has to land its files
-        under the directory it is handed.
+        ``…/logs/<host-id>/<product>/product/`` takes the product's
+        :meth:`~otto.host.product.Product.get_logs` hook and
+        ``…/logs/<host-id>/<product>/debug/`` its
+        :meth:`~otto.host.product.Product.get_debug_logs` haul — keyed by
+        product so two products that both write ``app.log`` cannot overwrite
+        each other. Best-effort: every product is asked, both halves, even
+        after one fails, and the first failure is what returns. The hooks need
+        not run anything on the host — an external retrieval mechanism is
+        equally welcome — they just have to land their files under the
+        directory they are handed.
         """
-        target = self.log_dest(dest) / "product"
-        target.mkdir(parents=True, exist_ok=True)
+        base = self._log_base(dest)
         first_failure: Result | None = None
         for product in self._owned_products(owner):
-            result = await product.get_logs(cast("Host", self), target)
+            logs_dir = layout.product_logs_dir(base, self.id, product.name)
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            result = await product.get_logs(cast("Host", self), logs_dir)
+            if not result.is_ok and first_failure is None:
+                first_failure = result
+            debug_dir = layout.product_debug_dir(base, self.id, product.name)
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            result = await product.get_debug_logs(cast("Host", self), debug_dir)
             if not result.is_ok and first_failure is None:
                 first_failure = result
         return first_failure if first_failure is not None else Result(Status.Success)
@@ -2020,29 +2049,9 @@ class BaseHost(ABC):
         skipped, because a skipped log set looks exactly like a host that had
         no logs.
         """
-        target = self.log_dest(dest) / "debug"
+        target = layout.host_debug_dir(self._log_base(dest), self.id)
         target.mkdir(parents=True, exist_ok=True)
-        paths: list[Path] = []
-        for entry in self.debug_log_globs:
-            if any(ch in entry for ch in "*?["):
-                glob = getattr(self, "glob", None)
-                if glob is None:
-                    return Result(
-                        Status.Error,
-                        msg=(
-                            f"debug_log_globs entry {entry!r} is a glob pattern, but "
-                            f"{type(self).__name__} has no glob support — declare "
-                            "concrete paths or override get_debug_logs."
-                        ),
-                    )
-                paths.extend(Path(p) for p in await glob(entry))
-            else:
-                paths.append(Path(entry))
-        if not paths:
-            # Not an empty get(): several transfer backends report a no-file
-            # transfer as a failure, and zero logs is success.
-            return Result(Status.Success)
-        return await self.get(paths, target)
+        return await haul_globs(self, self.debug_log_globs, target, who=f"host {self.id}")
 
     @cli_exposed
     async def get_logs(
@@ -2058,6 +2067,11 @@ class BaseHost(ABC):
         Zero retrieved logs is success; *require_product_logs* turns an empty
         product-log haul into a failure (there is deliberately no debug twin —
         no case was made for one, and symmetry alone does not buy a flag).
+
+        Best-effort across the two halves, like :meth:`uninstall`: a failed
+        product haul is recorded and the host-level debug sweep still runs,
+        because that sweep is frequently the set that explains the failure.
+        The first non-ok result seen is what returns.
 
         *require_product_logs* when product logs are not gathered is a
         contradiction and is refused up front rather than ignored: the flag
@@ -2075,23 +2089,49 @@ class BaseHost(ABC):
                     "Gather product logs, or drop the requirement."
                 ),
             )
+        first_failure: Result | None = None
+
+        def note(result: Result) -> None:
+            nonlocal first_failure
+            if not result.is_ok and first_failure is None:
+                first_failure = result
+
         if product:
-            product_dir = self.log_dest(dest) / "product"
-            # Snapshot BEFORE the haul: the requirement is about what THIS call
-            # retrieved, and a reused dest already holds an earlier haul's
-            # files. Skipped unless asked for — it is a directory walk.
-            before = _log_tree_state(product_dir) if require_product_logs else set()
-            result = await self.get_product_logs(dest=dest, owner=owner)
-            if not result.is_ok:
-                return result
-            if require_product_logs and _log_tree_state(product_dir) <= before:
-                return Result(
-                    Status.Error,
-                    msg=f"require_product_logs: no product logs retrieved from {self.id}",
+            product_dirs: list[Path] = []
+            before: set[tuple[str, tuple[str, int, int, int]]] = set()
+            if require_product_logs:
+                # Snapshot BEFORE the haul: the requirement is about what THIS
+                # call retrieved, and a reused dest already holds an earlier
+                # haul's files. BEHIND THE FLAG, both halves of it: this is an
+                # rglob-and-stat of every owned product's tree, and an ordinary
+                # get-logs has nothing to compare it against.
+                base = self._log_base(dest)
+                product_dirs = [
+                    layout.product_logs_dir(base, self.id, p.name)
+                    for p in self._owned_products(owner)
+                ]
+                before = _keyed_log_state(product_dirs)
+            note(await self.get_product_logs(dest=dest, owner=owner))
+            # A failed haul says WHY nothing arrived; a derived "no logs"
+            # verdict would only restate the symptom, so the second walk is
+            # skipped once something has already gone wrong.
+            if (
+                require_product_logs
+                and first_failure is None
+                and _keyed_log_state(product_dirs) <= before
+            ):
+                note(
+                    Result(
+                        Status.Error,
+                        msg=f"require_product_logs: no product logs retrieved from {self.id}",
+                    )
                 )
         if debug:
-            return await self.get_debug_logs(dest=dest)
-        return Result(Status.Success)
+            # NOT gated on the product half: the host's own debug set is often
+            # exactly what explains a product haul that failed, and losing it
+            # over that failure is the trade this surface exists to refuse.
+            note(await self.get_debug_logs(dest=dest))
+        return first_failure if first_failure is not None else Result(Status.Success)
 
     ####################
     #  Tools

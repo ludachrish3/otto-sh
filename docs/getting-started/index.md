@@ -88,6 +88,7 @@ the bed's, where a command needs one — so what you read is what runs.
 
 defining-hosts/index
 defining-products-and-tools
+coverage
 customizations
 customizing-project-instructions
 boards-of-interest

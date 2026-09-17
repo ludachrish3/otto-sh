@@ -85,8 +85,21 @@ keeps receiving records by propagation alongside otto's sinks. This is what
 lets postures 2 and 3 coexist with otto's own handlers rather than fighting
 them for root.
 
+## Retrieved logs are a different tree
+
+The three sinks above are what *otto* emits. Logs pulled off the hosts — a
+product's own `get_logs` output, a product's `debug_log_globs`, a host's
+`debug_log_globs` — are not records at all and never enter the queue; they
+are files, and they land under the run directory at paths keyed by host and
+then product. {ref}`The run tree <run-tree>` is the contract, and
+`otto.layout` is its single implementation: the coverage pipeline builds
+its own paths from the same module, which is what keeps the two trees the
+same shape below `<kind>/<host_id>/`.
+
 ## Where the code lives
 
+- `otto.layout` — the pure run-tree path builders and the product-name
+  rule, shared by the host layer and the coverage pipeline
 - {mod}`otto.logger.management` — `install_console`/`install_sinks` (root
   handler wiring, marked-handler ownership), the `QueueListener`, and
   time-boxed log rotation

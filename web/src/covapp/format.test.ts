@@ -7,7 +7,13 @@
 // One shared function now answers it, so the pages cannot drift again.
 import { describe, expect, it } from "vitest";
 
-import { chunkTierRows, keyColumnLabel, tierRows, withHideAssertedSuffix } from "./format";
+import {
+  chunkTierRows,
+  focusedTreeRow,
+  keyColumnLabel,
+  tierRows,
+  withHideAssertedSuffix,
+} from "./format";
 import { emptyStats, makeIndex } from "./testUtils";
 import type { FileChunk } from "./types";
 
@@ -15,19 +21,80 @@ describe("keyColumnLabel", () => {
   it("names both dimensions when a ticket and a context compose", () => {
     // The row's key cell is `${ticketId} · ${ctx.label}` (tickets.ts's
     // ticketTreeRow/ticketFileRow), so naming only one of them mislabels it.
-    expect(keyColumnLabel({ ticket: true, context: true })).toBe("Ticket · Context");
+    expect(keyColumnLabel({ ticket: true, context: true, product: false })).toBe(
+      "Ticket · Context",
+    );
   });
 
   it("names the ticket alone when only a ticket is pinned", () => {
-    expect(keyColumnLabel({ ticket: true, context: false })).toBe("Ticket");
+    expect(keyColumnLabel({ ticket: true, context: false, product: false })).toBe("Ticket");
   });
 
   it("names the context alone when only a run focus is active", () => {
-    expect(keyColumnLabel({ ticket: false, context: true })).toBe("Context");
+    expect(keyColumnLabel({ ticket: false, context: true, product: false })).toBe("Context");
   });
 
   it("falls back to the per-tier matrix header", () => {
-    expect(keyColumnLabel({ ticket: false, context: false })).toBe("Tier");
+    expect(keyColumnLabel({ ticket: false, context: false, product: false })).toBe("Tier");
+  });
+
+  // Per-product spec §10: the product is a THIRD independent dimension, so
+  // the header names every pin that is actually narrowing the row.
+  it("names the product alone when only a product is pinned", () => {
+    expect(keyColumnLabel({ ticket: false, context: false, product: true })).toBe("Product");
+  });
+
+  it("names a context ∧ product composition", () => {
+    expect(keyColumnLabel({ ticket: false, context: true, product: true })).toBe(
+      "Context · Product",
+    );
+  });
+
+  it("names a ticket ∧ product composition", () => {
+    expect(keyColumnLabel({ ticket: true, context: false, product: true })).toBe(
+      "Ticket · Product",
+    );
+  });
+
+  it("names all three when a ticket, a context and a product compose", () => {
+    expect(keyColumnLabel({ ticket: true, context: true, product: true })).toBe(
+      "Ticket · Context · Product",
+    );
+  });
+});
+
+describe("focusedTreeRow under a product scope", () => {
+  const index = makeIndex({ tier_colors: { system: "green" } });
+  const stats = emptyStats({
+    lines: { total: 20, hit: 12, per_tier: {}, asserted_per_tier: {}, asserted_only: 0 },
+    ctx_lines: { nightly: 5 },
+    product_lines: { app: 7 },
+    ctx_product_lines: { nightly: { app: 3 } },
+  });
+
+  it("a bare product scope reads product_lines and carries no tier dot", () => {
+    const [row] = focusedTreeRow(index, stats, {
+      label: "app",
+      tier: "",
+      runs: [],
+      ctxLabel: null,
+      product: "app",
+    });
+    expect(row.label).toBe("app");
+    expect(row.line).toEqual([7, 20]);
+    expect(row.dotColor).toBeUndefined();
+  });
+
+  it("a ctx ∧ product scope reads the pair count and keeps the context's tier dot", () => {
+    const [row] = focusedTreeRow(index, stats, {
+      label: "nightly · app",
+      tier: "system",
+      runs: [],
+      ctxLabel: "nightly",
+      product: "app",
+    });
+    expect(row.line).toEqual([3, 20]);
+    expect(row.dotColor).toBe("green");
   });
 });
 

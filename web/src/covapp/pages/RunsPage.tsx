@@ -28,7 +28,7 @@ import { SearchIcon } from "@/ui/icons";
 import { cx } from "@/utils/cx";
 
 import { AppShell } from "../chrome/AppShell";
-import { type Context, groupContexts, searchHaystack } from "../contexts";
+import { type Context, groupContexts, resolveScope, searchHaystack } from "../contexts";
 import { useFocus } from "../focus";
 import {
   encodePath,
@@ -428,18 +428,36 @@ export function RunsPage({ index }: RunsPageProps) {
   const [tier, setTier] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [expandedLabel, setExpandedLabel] = useState<string | null>(null);
-  const { focus, setFocus, hideAsserted } = useFocus();
+  const { focus, setFocus, hideAsserted, product, setProduct } = useFocus();
 
   const contexts = groupContexts(index);
-  const distinctHosts = new Set(contexts.flatMap((ctx) => ctx.hosts.map(([host]) => host))).size;
+  // Counted off the RUN records, not off `ctx.hosts`: those carry the pill
+  // text, which names the product too ("h1 · app"), so one host with two
+  // products read as two hosts in this header.
+  const distinctHosts = new Set(
+    contexts.flatMap((ctx) => ctx.runs.map((run) => run.host || run.board || "—")),
+  ).size;
   // Independently re-resolved against THIS page's own `index` prop, same
-  // defensive pattern every other focus-aware page uses.
-  const focusedContext = focus ? contexts.find((ctx) => ctx.label === focus) : undefined;
+  // defensive pattern every other focus-aware page uses — reusing the
+  // `contexts` grouping above rather than making `resolveScope` compute a
+  // second one per render.
+  const scope = resolveScope(index, focus, product, contexts);
 
   const q = query.trim().toLowerCase();
   const visible = contexts.filter((ctx) => {
     if (tier !== "all" && ctx.tier !== tier) return false;
     if (q !== "" && !searchHaystack(ctx).includes(q)) return false;
+    // A pinned product HIDES contexts it isn't in — this page lists run
+    // provenance, and a context with no run of that product contributes
+    // nothing to any number on screen. (Run focus deliberately leaves every
+    // row visible instead: it pins one of these rows, it doesn't filter
+    // them.) Keyed off the RESOLVED scope, never the raw pin: a pin this
+    // report can't honour (a hand-typed `?product=ghost`) leaves the card
+    // reading "all contexts", and it must leave the rows alone too rather
+    // than emptying the list under an unscoped card.
+    if (scope?.product != null && !ctx.runs.some((run) => run.product === scope.product)) {
+      return false;
+    }
     return true;
   });
 
@@ -459,15 +477,23 @@ export function RunsPage({ index }: RunsPageProps) {
         // that page does, or the two silently disagree about "whole repo"
         // coverage while the toggle is on.
         scope: withHideAssertedSuffix(
-          focusedContext ? `focused: ${focusedContext.label}` : "all contexts",
+          scope ? `focused: ${scope.label}` : "all contexts",
           hideAsserted,
         ),
         title: "Coverage — whole repo",
-        rows: focusedContext
-          ? focusedTreeRow(index, index.tree.stats, focusedContext)
+        rows: scope
+          ? focusedTreeRow(index, index.tree.stats, scope)
           : tierRows(index, index.tree.stats, hideAsserted),
         thresholds: index.thresholds,
-        keyColumnLabel: keyColumnLabel({ ticket: false, context: Boolean(focusedContext) }),
+        // Read off the RESOLVED scope, never the raw pins: a pin that
+        // resolves to nothing here (an unknown label, an empty ctx ∧
+        // product intersection) leaves the per-tier matrix on screen, and
+        // the header must describe the rows actually rendered.
+        keyColumnLabel: keyColumnLabel({
+          ticket: false,
+          context: scope?.ctxLabel != null,
+          product: scope?.product != null,
+        }),
       }}
     >
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -485,6 +511,35 @@ export function RunsPage({ index }: RunsPageProps) {
             {index.tier_labels[t] ?? t}
           </FilterChip>
         ))}
+        {/* Per-product spec §10. Gated the same "no data, no control" way
+            the ⋮ menu's product section is (AppShell.tsx): a report whose
+            runs carry no product emits `products: []`, and then this row —
+            separator included — is absent rather than offering a lone "All
+            products". Unlike the tier chips (local `useState`), these drive
+            the REPORT-WIDE pin, so the app-bar chip and every other page
+            follow along. */}
+        {index.products.length > 0 && (
+          <>
+            <span className="mx-1 h-4 w-px bg-border-secondary" aria-hidden />
+            <FilterChip
+              active={product === null}
+              onClick={() => setProduct(null)}
+              testId="product-chip-all"
+            >
+              All products
+            </FilterChip>
+            {index.products.map((name) => (
+              <FilterChip
+                key={name}
+                active={product === name}
+                onClick={() => setProduct(name)}
+                testId={`product-chip-${name}`}
+              >
+                {name}
+              </FilterChip>
+            ))}
+          </>
+        )}
         {/* Untitled UI's `Input` doesn't forward a `data-testid` it's given
             onto the `<input>` it renders internally (see
             src/pages/SubjectPage.tsx's `log-filter-*` for the same gap) —

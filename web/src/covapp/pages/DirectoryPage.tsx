@@ -13,7 +13,7 @@ import { type TreeColumn, TreeView } from "@/ui/TreeView";
 
 import { AppShell } from "../chrome/AppShell";
 import { PctCell } from "../chrome/PctCell";
-import { groupContexts } from "../contexts";
+import { type FocusScope, resolveScope, scopeTreeLines } from "../contexts";
 import { loadTicketChunk, StampMismatchError } from "../data";
 import { useFocus, useHashLocation } from "../focus";
 import {
@@ -168,17 +168,20 @@ function NaCell() {
   return <span className="text-quaternary">—</span>;
 }
 
-/** `focusedLabel`/`focusedTier`: when a context is focused, every
- * row recomputes from `stats.ctx_lines[focusedLabel]` instead of the
- * node's overall hit/total — Lines and Line % (with its minibar, same
- * `PctCell`) show the focused count; the focused context's OWN tier column
- * mirrors that same value, every other tier column reads 0 (a context
- * belongs to exactly one tier, so those columns have nothing of their own
- * to show, but read as a real "0.0%" rather than a blank/na cell — spec-
- * pinned); Branch % becomes `NaCell` ("—", no bar — branch isn't tracked
- * per-run at all). Flags stay node-wide (not context-scoped) either way.
+/** `scope`/`focusedTier`: when a context and/or a product is pinned, every
+ * row recomputes from `scopeTreeLines(stats, scope)` instead of the node's
+ * overall hit/total — Lines and Line % (with its minibar, same `PctCell`)
+ * show the scoped count; the scope's OWN tier column mirrors that same
+ * value, every other tier column reads 0 (a context belongs to exactly one
+ * tier, so those columns have nothing of their own to show, but read as a
+ * real "0.0%" rather than a blank/na cell — spec-pinned). A tier-SPANNING
+ * scope (a bare product, `tier: ""`) has no column of its own at all, and
+ * DECLINES every tier cell (`NaCell`) rather than printing a fabricated
+ * 0.0% for tiers its hits are in fact spread across. Branch % becomes
+ * `NaCell` ("—", no bar — branch isn't tracked per-run at all). Flags stay
+ * node-wide (not scope-scoped) either way.
  *
- * `ticketActive`: when a ticket is pinned and NO context is focused, `row`'s
+ * `ticketActive`: when a ticket is pinned and NO scope is active, `row`'s
  * `stats` is already the TICKET-SCOPED one (the caller builds `roots` from
  * the scoped tree, not the original) — Lines/Line % read it directly, same
  * shape as the plain unfocused cells below. Branch % and every per-tier
@@ -187,13 +190,13 @@ function NaCell() {
  * neither is tracked per-ticket at all (a `TicketChunk` carries only
  * owned/covered LINE counts), so showing a real-looking percentage computed
  * from mismatched numerator/denominator sources would read as a correctness
- * bug, not an approximation — the same reasoning `focusedLabel`'s branch
+ * bug, not an approximation — the same reasoning `scope`'s branch
  * column above already applies for the identical "not tracked at this
- * granularity" reason. When a context IS ALSO focused (`focusedLabel !==
- * null`) while a ticket is pinned, composing the two is declined the same
- * honest way — the `ticketActive` check nested inside the `focusedLabel`
+ * granularity" reason. When a scope IS ALSO active (`scope !== undefined`)
+ * while a ticket is pinned, composing the two is declined the same honest
+ * way — the `ticketActive` check nested inside the `scope`
  * branch below returns all-`NaCell` rather than computing anything; see its
- * own comment for why (`stats.ctx_lines` is a whole-file numerator with no
+ * own comment for why (`scopeTreeLines` is a whole-file numerator with no
  * per-line ticket+run cross-tab to restrict it to the ticket's owned lines,
  * so dividing it by the ticket-scoped `stats.lines.total` would read as a
  * correctness bug, not an approximation).
@@ -204,12 +207,12 @@ function NaCell() {
  * mirroring `tierRows` (format.ts) exactly, since these are the same
  * rollup fields on the same `Stats` bag (ticket-scoped or not — the ticket
  * scoping helpers in tickets.ts already carry the scoped subset of both
- * fields). The context-focused branch's `stats.ctx_lines` numerator is
+ * fields). The scoped branch's `scopeTreeLines` numerator is
  * per-run evidence, never override-sourced (same reasoning `ticketFileRow`'s
- * `ctx` branch documents), so it's untouched either way. */
+ * `scope` branch documents), so it's untouched either way. */
 function renderCellsFor(
   index: IndexPayload,
-  focusedLabel: string | null,
+  scope: FocusScope | undefined,
   focusedTier: string | undefined,
   ticketActive: boolean,
   hideAsserted = false,
@@ -217,10 +220,10 @@ function renderCellsFor(
   return (row: Row): ReactNode[] => {
     const stats = rowStats(row);
 
-    if (focusedLabel !== null) {
+    if (scope !== undefined) {
       // When a ticket is ALSO active, `stats.lines.total` is the
       // TICKET-scoped denominator (the caller builds `roots` from the
-      // scoped tree), but `stats.ctx_lines` is still a whole-file
+      // scoped tree), but `scopeTreeLines` is still a whole-file
       // numerator — no per-line ticket+run cross-tab exists at tree
       // granularity to restrict it to the ticket's owned lines. Dividing
       // the two produced a plausible-looking but out-of-range percentage
@@ -245,7 +248,7 @@ function renderCellsFor(
         return cells;
       }
 
-      const hit = stats.ctx_lines[focusedLabel] ?? 0;
+      const hit = scopeTreeLines(stats, scope);
       const total = stats.lines.total;
       const focusedPct = pct(hit, total);
       const cells: ReactNode[] = [
@@ -256,10 +259,25 @@ function renderCellsFor(
         <NaCell key="branch" />,
       ];
       for (const tier of index.tier_order) {
+        // A tier-SPANNING scope (a bare product, `tier: ""` -> no
+        // `focusedTier`) DECLINES every per-tier cell rather than printing
+        // "0.0%": the scope's hits are spread across tiers this rollup
+        // cannot split back apart, so a real-looking 0.0% beside a Lines
+        // cell reading "8/20" would be fabricated, not merely coarse. Same
+        // `NaCell` treatment the ticket branch above gives its per-tier
+        // columns, and the same answer FilePage's `buildCellsFocused`
+        // already gives by passing `null` to every tier column. A
+        // single-tier scope (a context, with or without a product) is
+        // unchanged: its own column mirrors the scoped percentage and the
+        // others read a real 0.0%.
         cells.push(
-          <span key={`tier:${tier}`} className="tabular-nums">
-            {fmtPct(tier === focusedTier ? focusedPct : 0)}
-          </span>,
+          focusedTier === undefined ? (
+            <NaCell key={`tier:${tier}`} />
+          ) : (
+            <span key={`tier:${tier}`} className="tabular-nums">
+              {fmtPct(tier === focusedTier ? focusedPct : 0)}
+            </span>
+          ),
         );
       }
       cells.push(<FlagsCell key="flags" flags={stats.flags} stateColors={index.state_colors} />);
@@ -382,6 +400,8 @@ const EMPTY_SCOPE_STATS: Stats = {
   branches: { total: 0, hit: 0, per_tier: {} },
   flags: { stale: 0, aging: 0, excluded: 0 },
   ctx_lines: {},
+  product_lines: {},
+  ctx_product_lines: {},
 };
 
 type TicketChunkState =
@@ -392,7 +412,7 @@ type TicketChunkState =
 
 export function DirectoryPage({ index, segments }: DirectoryPageProps) {
   const [, navigate] = useHashLocation();
-  const { focus, ticket, hideAsserted } = useFocus();
+  const { focus, ticket, hideAsserted, product } = useFocus();
 
   // Ticket context: resolved/loaded here, unconditionally, BEFORE
   // the `node === null` guard below — same reasoning as `useFocus()` itself
@@ -446,10 +466,10 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
   if (node === null || !("dirs" in node)) return null;
 
   // Independently re-resolved against THIS page's own `index` prop (not
-  // trusted blindly off `focus`, which is only ever a label string) — same
-  // defensive pattern AppShell.tsx uses, so a focus label that doesn't
-  // resolve here just renders unfocused instead of crashing.
-  const focusedContext = focus ? groupContexts(index).find((c) => c.label === focus) : undefined;
+  // trusted blindly off `focus`/`product`, which are only ever strings) —
+  // same defensive pattern AppShell.tsx uses, so a pin that doesn't resolve
+  // here just renders unscoped instead of crashing.
+  const scope = resolveScope(index, focus, product);
 
   const ticketLoading = ticketSummary !== undefined && ticketChunkState.status === "loading";
   const ticketOtherError =
@@ -492,8 +512,11 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
 
   const isRoot = segments.length === 0;
   const title = isRoot ? index.project_name : `${node.name}/`;
-  const scope = isRoot ? "whole repo" : `${segments.join("/")}/`;
-  const scopeWithTicket = ticketReady ? `ticket: ${ticketSummary?.id}` : scope;
+  // The unpinned scope LINE (what the card says it is describing), distinct
+  // from `scope` above (the numerator narrowing) — renamed when the latter
+  // arrived so the two can't be confused.
+  const pathScope = isRoot ? "whole repo" : `${segments.join("/")}/`;
+  const scopeWithTicket = ticketReady ? `ticket: ${ticketSummary?.id}` : pathScope;
 
   return (
     <AppShell
@@ -507,28 +530,35 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
       }
       stats={{
         scope: withHideAssertedSuffix(
-          focusedContext
+          scope
             ? ticketReady
-              ? `focused: ${focusedContext.label} · ticket: ${ticketSummary?.id}`
-              : `focused: ${focusedContext.label}`
+              ? `focused: ${scope.label} · ticket: ${ticketSummary?.id}`
+              : `focused: ${scope.label}`
             : scopeWithTicket,
           hideAsserted,
         ),
         title: "Coverage — this node and below",
-        // When BOTH a context and a ticket are active, `ticketTreeRow(...,
-        // focusedContext)` (not `focusedTreeRow`) — its `ctx` argument
+        // When BOTH a scope and a ticket are active, `ticketTreeRow(...,
+        // scope)` (not `focusedTreeRow`) — its `scope` argument
         // makes it decline the Line cell honestly (see its own doc
-        // comment) instead of dividing a whole-file ctx numerator by the
+        // comment) instead of dividing a whole-file scoped numerator by the
         // ticket-scoped denominator.
-        rows: focusedContext
+        rows: scope
           ? ticketReady
-            ? ticketTreeRow(index, effectiveNode, ticketSummary?.id ?? "", focusedContext)
-            : focusedTreeRow(index, effectiveNode.stats, focusedContext)
+            ? ticketTreeRow(index, effectiveNode, ticketSummary?.id ?? "", scope)
+            : focusedTreeRow(index, effectiveNode.stats, scope)
           : ticketReady
             ? ticketTreeRow(index, effectiveNode, ticketSummary?.id ?? "", undefined, hideAsserted)
             : tierRows(index, node.stats, hideAsserted),
         thresholds: index.thresholds,
-        keyColumnLabel: keyColumnLabel({ ticket: ticketReady, context: Boolean(focusedContext) }),
+        // Read off the RESOLVED scope, never the raw pins — a pin that
+        // resolves to nothing here leaves the unscoped rows on screen, and
+        // the header must describe the rows actually rendered.
+        keyColumnLabel: keyColumnLabel({
+          ticket: ticketReady,
+          context: scope?.ctxLabel != null,
+          product: scope?.product != null,
+        }),
       }}
     >
       <div
@@ -555,8 +585,10 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
             renderName={renderName}
             renderCells={renderCellsFor(
               index,
-              focus,
-              focusedContext?.tier,
+              scope,
+              // `""` (a tier-spanning product scope) is not a tier: no
+              // column mirrors it.
+              scope?.tier || undefined,
               ticketReady,
               hideAsserted,
             )}

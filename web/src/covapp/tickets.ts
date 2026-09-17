@@ -26,7 +26,7 @@
 //     per-line data, no placeholder arrays involved.
 
 import type { TierStatRow } from "./chrome/StatsCard";
-import type { Context } from "./contexts";
+import type { FocusScope } from "./contexts";
 import { lineHasMemberHit } from "./format";
 import type { DirNode, FileChunk, FileNode, IndexPayload, Stats, TicketChunk } from "./types";
 
@@ -62,12 +62,19 @@ interface TicketFileScope {
  * the file's asserted lines. `asserted`/`assertedOnly` default to the
  * whole-file values for the same "older report" fallback `tiers` gets.
  *
- * The remaining `Stats` fields (branches/flags/ctx_lines) still carry over
- * from the file's ORIGINAL whole-file stats verbatim: none of that data
- * exists in a per-ticket-scoped form — a known, documented limitation, so
- * callers rendering a Branch % for a ticket-scoped row should treat it as
- * "no data" (mirroring how run-focus rows already treat Branch %, for the
- * identical reason: v4 doesn't store that granularity per-run either). */
+ * The remaining `Stats` fields (branches/flags/ctx_lines/product_lines/
+ * ctx_product_lines) still carry over from the file's ORIGINAL whole-file
+ * stats verbatim: none of that data exists in a per-ticket-scoped form — a
+ * known, documented limitation, so callers rendering a Branch % for a
+ * ticket-scoped row should treat it as "no data" (mirroring how run-focus
+ * rows already treat Branch %, for the identical reason: v4 doesn't store
+ * that granularity per-run either). The three run-scoped maps carry over
+ * UNSCOPED for that same reason — there is no per-line ticket × run (or
+ * ticket × product) cross-tab at tree granularity to narrow them with — and
+ * that is safe here only because every caller that has both a ticket and a
+ * scope pinned DECLINES the composed number outright rather than reading
+ * them against the ticket-scoped denominator (`ticketTreeRow`'s `scope`
+ * branch below, and `DirectoryPage`'s matching all-`NaCell` branch). */
 function scopeFileStats(
   stats: Stats,
   owned: number[],
@@ -244,12 +251,12 @@ export function ticketChunkToFileLines(chunk: TicketChunk): {
  * `Context`, a ticket has no single tier of its own (design §6.1: a
  * ticket's lines can span every tier).
  *
- * Optional `ctx`: when a context is ALSO focused, `line` declines to `null`
- * ("no data", same treatment `branch`/`decision` already get) rather than
- * dividing `stats.ctx_lines[ctx.label]` (a whole-file numerator) by
- * `node.stats.lines.total` (the ticket-scoped denominator) — the two aren't
- * commensurable at tree granularity (no per-line ticket+run cross-tab
- * exists without loading every scoped file's own `FileChunk`), so the
+ * Optional `scope`: when a context and/or a product is ALSO pinned, `line`
+ * declines to `null` ("no data", same treatment `branch`/`decision` already
+ * get) rather than dividing `scopeTreeLines(stats, scope)` (a whole-file
+ * numerator) by `node.stats.lines.total` (the ticket-scoped denominator) —
+ * the two aren't commensurable at tree granularity (no per-line ticket+run
+ * cross-tab exists without loading every scoped file's own `FileChunk`), so the
  * honest answer is "we don't know", never a plausible-looking but
  * out-of-range percentage (a real fixture: 10 whole-file ctx hits over a
  * 3-line ticket scope reads "333.3%" if computed naively). Contrast
@@ -260,12 +267,12 @@ export function ticketTreeRow(
   index: IndexPayload,
   node: DirNode,
   ticketId: string,
-  ctx?: Context,
+  scope?: FocusScope,
   hideAsserted = false,
 ): TierStatRow[] {
   const summary: TierStatRow = {
     key: "ticket",
-    label: ctx ? `${ticketId} · ${ctx.label}` : ticketId,
+    label: scope ? `${ticketId} · ${scope.label}` : ticketId,
     // `dotColor` is simply absent: a tree-level ticket row never carries a
     // tier dot. It was previously spelled `dotColor: undefined`, which under
     // `exactOptionalPropertyTypes` is a different thing from omitting it.
@@ -276,7 +283,7 @@ export function ticketTreeRow(
     // scoped `node.stats.lines` already carries the ticket's own subset of
     // that field (`scopeFileStats`/`aggregateDirStats` above), so no
     // separate ticket-scoped asserted math is needed here.
-    line: ctx
+    line: scope
       ? null
       : [
           node.stats.lines.hit - (hideAsserted ? node.stats.lines.asserted_only : 0),
@@ -285,10 +292,10 @@ export function ticketTreeRow(
     branch: null,
     decision: null,
   };
-  // Composed with a run focus there is still nothing honest to say per
-  // tier (see this function's doc comment), so the single declining row
+  // Composed with a run/product scope there is still nothing honest to say
+  // per tier (see this function's doc comment), so the single declining row
   // remains the whole answer.
-  if (ctx) return [summary];
+  if (scope) return [summary];
 
   const tiers: TierStatRow[] = index.tier_order.map((tier) => ({
     key: tier,
@@ -315,18 +322,20 @@ export function ticketTreeRow(
  * ticket`/`hits`), which FilePage already has in full for the one file it's
  * showing — no placeholder counts needed at this granularity.
  *
- * Optional `ctx` composes run focus's numerator with the ticket's
+ * Optional `scope` composes run/product focus's numerator with the ticket's
  * denominator (spec's headline example: "PROJ-412's lines, as proven by the
  * manual run") — a line counts toward `hit` only if BOTH the ticket owns it
- * AND a member run of `ctx` hit it (`lineHasMemberHit`, the same per-run
+ * AND a member run of `scope` hit it (`lineHasMemberHit`, the same per-run
  * membership test `FilePage.tsx`'s own row tinting and `format.ts`'s
- * `focusedFileRow` use); without `ctx`, "any tier recorded a hit" (mirrors
- * `chunkTierRows`'s "hit if any tier count > 0") is enough.
+ * `focusedFileRow` use); without `scope`, "any tier recorded a hit" (mirrors
+ * `chunkTierRows`'s "hit if any tier count > 0") is enough. A product (or
+ * ctx ∧ product) scope needs no extra handling: `resolveScope` already
+ * reduced it to the member runs this reads.
  *
  * `hideAsserted` (default `false` — byte-identical when omitted)
- * only narrows the NON-`ctx` "any tier hit" test — mirroring
+ * only narrows the NON-`scope` "any tier hit" test — mirroring
  * `chunkTierRows`'s per-line recompute (a tier counts only if its hit isn't
- * override-sourced, per `LineJson.asserted`). The `ctx` branch needs no
+ * override-sourced, per `LineJson.asserted`). The `scope` branch needs no
  * such narrowing: `lineHasMemberHit` already reads `line.run` (a run
  * actually recording hits), which an override never populates — real
  * per-run evidence is never asserted-only by construction. */
@@ -334,10 +343,10 @@ export function ticketFileRow(
   index: IndexPayload,
   chunk: FileChunk,
   ticketId: string,
-  ctx?: Context,
+  scope?: FocusScope,
   hideAsserted = false,
 ): TierStatRow[] {
-  const memberIds = ctx ? new Set(ctx.runs.map((r) => r.id)) : null;
+  const memberIds = scope ? new Set(scope.runs.map((r) => r.id)) : null;
   let owned = 0;
   let hit = 0;
   for (const line of Object.values(chunk.lines)) {
@@ -352,8 +361,10 @@ export function ticketFileRow(
   return [
     {
       key: "ticket",
-      label: ctx ? `${ticketId} · ${ctx.label}` : ticketId,
-      ...(ctx && { dotColor: index.tier_colors[ctx.tier] }),
+      label: scope ? `${ticketId} · ${scope.label}` : ticketId,
+      // No dot for a tier-spanning scope (a bare product): `tier` is `""`
+      // there, which is not a key into `tier_colors`.
+      ...(scope?.tier ? { dotColor: index.tier_colors[scope.tier] } : {}),
       line: [hit, owned],
       branch: null,
       decision: null,

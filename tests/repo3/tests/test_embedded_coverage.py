@@ -13,10 +13,12 @@ the repo-declared ``[coverage].hosts`` regex (not a dedicated lab), e.g.::
     otto test --cov --lab embedded TestEmbeddedCoverage
     otto cov report <output_dir> --dir ./report
 
-Per-host lifecycle: ``host.load`` (install) -> ``call_fn cov_init`` ->
+The extension is declared as a ``kind = "llext"`` ``[[products]]`` entry (one
+per Zephyr version, sharing one name), so the per-host lifecycle is the product
+seam's: ``product.install`` (load + the ``call_after_load`` ``cov_init``) ->
 ``call_fn <op>`` (exercise) -> [collector: ``call_fn cov_dump``] ->
-``host.unload`` (teardown — skipped under ``--cov`` so the extension is still
-loaded when the collector dumps it).
+``product.uninstall`` (teardown — skipped under ``--cov`` so the extension is
+still loaded when the collector dumps it).
 
 The suite builds a version-matched product for each host (keyed by
 ``host.os_version``), reading from the per-version ``build_dir`` declared in the
@@ -38,6 +40,7 @@ from otto.config import get_repos
 from otto.config.fleet import all_hosts
 from otto.host import LocalHost
 from otto.host.embedded_host import EmbeddedHost
+from otto.host.llext_kind import LlextProduct
 from otto.suite import OttoSuite
 from otto.suite.plugin import otto_cov_key
 from otto.utils import Status
@@ -57,13 +60,31 @@ def _embedded_cov_config() -> dict:
     return {}
 
 
-def _extension() -> str:
-    return _embedded_cov_config().get("extension", "cov_ext")
+def _product_of(host: EmbeddedHost) -> LlextProduct:
+    """*host*'s declared LLEXT coverage product.
+
+    The extension is a ``[[products]]`` entry now, not a ``[coverage.embedded]``
+    key: the entry owns the name, the version-matched artifact, and the
+    load/unload lifecycle, and that same name is the ``<product>`` segment of
+    the run tree and the name the collector dumps through. Reading it off the
+    host is what keeps the suite and the collector naming one thing.
+    """
+    products = [p for p in host.products if isinstance(p, LlextProduct)]
+    if len(products) != 1:
+        raise RuntimeError(
+            f"{host.id}: expected exactly one llext product, got "
+            f"{[p.name for p in products]} — check the [[products]] match tables"
+        )
+    return products[0]
 
 
-def _extension_path_from(build_dir: str) -> Path:
-    """Path of the pre-built, stripped LLEXT extension for *build_dir* (passed to host.load)."""
-    llext = Path(build_dir) / "zephyr" / f"{_extension()}.stripped.llext"
+def _extension(host: EmbeddedHost) -> str:
+    return _product_of(host).name
+
+
+def _extension_path_from(build_dir: str, ext: str) -> Path:
+    """Path of the pre-built, stripped LLEXT extension for *build_dir* (what gets loaded)."""
+    llext = Path(build_dir) / "zephyr" / f"{ext}.stripped.llext"
     if not llext.exists():
         raise RuntimeError(f"extension not built: {llext} — build product/ first (see its README)")
     return llext
@@ -120,7 +141,7 @@ async def _build_extension_for(build_dir: str, zver: "str | None") -> None:
         result = await localhost.exec(cmd, timeout=900)
         if result.status != Status.Success:
             raise RuntimeError(f"extension build failed (see {BUILD_SCRIPT}):\n{result.value}")
-        logger.info("Rebuilt %s into %s (zver=%s)", _extension(), build_dir, zver)
+        logger.info("Rebuilt the coverage extension into %s (zver=%s)", build_dir, zver)
     finally:
         await localhost.close()
 
@@ -148,7 +169,7 @@ def _embedded_hosts() -> list[EmbeddedHost]:
 
 async def _call(host: EmbeddedHost, fn: str, timeout: float = 60) -> None:
     """Invoke an exported extension entry point over the console."""
-    ext = _extension()
+    ext = _extension(host)
     result = await host.exec(f"llext call_fn {ext} {fn}", timeout=timeout)
     if result.status != Status.Success:
         raise RuntimeError(f"call_fn {fn} failed on {host.id}: {result.value}")
@@ -182,14 +203,12 @@ class TestEmbeddedCoverage(OttoSuite):
         if not hosts:
             pytest.skip("no embedded coverage hosts in the active lab")
         cls._hosts = hosts
-        ext = _extension()
 
         # Keep each version's product up to date — repo1's TestCoverageProduct
         # compiles its binary the same way. Build before reading the artifact
         # below so the loaded extension always reflects the current source.
         # Cache by (build_dir, zver) so same-version hosts share one build.
         built: set[tuple[str, "str | None"]] = set()
-        host_llext: dict[str, Path] = {}
         host_build_dir: dict[str, str] = {}
         for host in hosts:
             build_dir = _build_dir_for(host)
@@ -198,29 +217,46 @@ class TestEmbeddedCoverage(OttoSuite):
                 await _build_extension_for(build_dir, zver)
                 built.add((build_dir, zver))
             host_build_dir[host.id] = build_dir
-            host_llext[host.id] = _extension_path_from(build_dir)
+            # Two declarations have to agree for this bed to mean anything: the
+            # [[products]] artifact (what gets LOADED) and [coverage.embedded]'s
+            # per-version build_dir (whose .gcno DECODES the dump). Disagreement
+            # is not a load failure — it surfaces much later as gcov's stamp
+            # mismatch — so it is checked here, where the fix is obvious.
+            product = _product_of(host)
+            expected = _extension_path_from(build_dir, product.name)
+            if product.artifact != expected:
+                raise RuntimeError(
+                    f"{host.id}: [[products]] artifact {product.artifact} is not the "
+                    f"{host.os_version} build's {expected} — the loaded extension and the "
+                    ".gcno that decodes its .gcda would come from different builds"
+                )
 
         for host in hosts:
-            # Evict any resident copy first so load installs the freshly-built
+            product = _product_of(host)
+            # Evict any resident copy first so install loads the freshly-built
             # bytes: otherwise llext_load refcount-bumps the stale build, the
             # rebuilt .gcno's new stamp no longer matches the dumped .gcda, and
-            # `otto cov report` fails with a stamp mismatch. host.unload drains
-            # the LLEXT use-count to 0 (idempotent when nothing is loaded).
-            await host.unload(ext)
-            load_result = await host.load(host_llext[host.id], name=ext)
-            if not load_result.is_ok:
-                raise RuntimeError(f"load did not load {ext} on {host.id}: {load_result.msg}")
-            # Run the gcov constructor so cov_dump has a registered gcov_info.
-            await _call(host, "cov_init")
-            logger.info("Loaded %s (%s) on %s", ext, host_build_dir[host.id], host.id)
+            # `otto cov report` fails with a stamp mismatch. The product's
+            # uninstall drains the LLEXT use-count to 0 (idempotent when
+            # nothing is loaded).
+            await product.uninstall(host)
+            # install = load + every `call_after_load` entry, i.e. the gcov
+            # constructor that gives cov_dump a registered gcov_info.
+            install = await product.install(host)
+            if not install.is_ok:
+                raise RuntimeError(
+                    f"install did not load {product.name} on {host.id}: {install.msg}"
+                )
+            logger.info("Loaded %s (%s) on %s", product.name, host_build_dir[host.id], host.id)
 
         yield
 
         cov_active = request.config.stash.get(otto_cov_key, False)
         if not cov_active:
             for host in hosts:
-                await host.unload(ext)
-                logger.info("Unloaded %s from %s", ext, host.id)
+                product = _product_of(host)
+                await product.uninstall(host)
+                logger.info("Unloaded %s from %s", product.name, host.id)
 
     @pytest.mark.integration
     async def test_clamp_below(self) -> None:

@@ -11,21 +11,16 @@ the larger part — how to set up a product so it can emit coverage at all.
 A coverage-instrumented LLEXT extension built against NASA's
 [embedded-gcov](https://github.com/nasa-jpl/embedded-gcov) library dumps its
 counters as an ASCII hexdump over the serial console when the `cov_dump`
-function is called (via `llext call_fn <extension> cov_dump` →
+function is called (via `llext call_fn <product> <dump_fn>` →
 `__gcov_exit`).  Otto captures that output, decodes the hexdump blocks back to
-binary `.gcda` files, and stages them under the same per-host directory
-structure used by the remote fetcher:
-
-```text
-<staging_root>/
-    <host_id>/
-        *.gcda
-```
+binary `.gcda` files, and stages them under the same per-host, per-product
+directory structure used by the remote fetcher — `cov/<host_id>/<product>/`,
+per {ref}`the run tree <run-tree>`.
 
 This means the downstream merge and report pipeline (`lcov --capture`, path
 mapping, HTML render) is reused without modification — the embedded and Unix
 code paths converge at the same `.gcda` file tree, and `otto cov get` produces
-a `capture.json` for an embedded board exactly as it does for a Unix one.
+a `capture.json` per board per product exactly as it does for a Unix host.
 `otto cov clean` does not reach embedded boards — see
 {ref}`coverage-tier-kinds` on the main page.
 
@@ -109,8 +104,9 @@ LL_EXTENSION_SYMBOL(cov_dump);
 
 The runtime lifecycle over the console is then:
 `llext load_hex` → `call_fn <ext> cov_init` → exercise the product →
-`call_fn <ext> cov_dump` (otto issues this one itself — see configuration
-below).
+`call_fn <ext> cov_dump`. Otto issues all of them: the load and `cov_init`
+are the `llext` product's `install`, and the dump is collection's — see
+configuration below.
 
 ### Build: instrument only the extension
 
@@ -197,16 +193,44 @@ on 64-bit Unix hosts).
 
 ## Embedded coverage configuration
 
-Declare the extension name in `.otto/settings.toml` under `[coverage.embedded]`:
+The instrumented extension is a **product**, declared with the built-in
+`llext` kind — so a board carries products, is scanned for instrumentation,
+and lands in the run tree exactly like any other host:
 
 ```toml
+[[products]]
+name = "my_product_cov"
+kind = "llext"
+artifact = "product/build/zephyr/my_product_cov.stripped.llext"
+call_after_load = ["cov_init"]
+match = { os_name = "Zephyr" }
+
 [coverage.embedded]
-extension = "my_product_cov"
+build_dir = "product/build"
 ```
 
-When `extension` is set, otto issues `llext call_fn my_product_cov cov_dump` on
-every embedded host in the lab that matches the optional `[coverage].hosts`
-selector.  Non-embedded hosts (Unix, Docker) are skipped automatically.
+`install` is the load: otto pushes the object through the board's binary
+loader and then calls each `call_after_load` function in order — `cov_init`
+runs the embedded-gcov constructor, which has to happen before any dump.
+`uninstall` unloads it, and `is_installed` asks the loader's own list command
+what is resident. `dump_fn` names the exported function the collector calls
+to dump counters, defaulting to `cov_dump`.
+
+{doc}`../../../configuration/declared-products-tools` has the full param
+list, the loader requirement, and how two entries sharing one `name` give a
+per-Zephyr-version artifact its own board.
+
+Collection then walks each embedded coverage host's instrumented `llext`
+products and issues `llext call_fn <product> <dump_fn>` per product, staging
+into `cov/<host_id>/<product>/`.  Which boards are walked is the optional
+`[coverage].hosts` selector; non-embedded hosts (Unix, Docker) take the
+network path instead.  A product's `cov_dir` plays no part here — the
+counters come back over the console, not out of a directory.
+
+`[coverage.embedded]` keeps `build_dir` and the per-version
+`[coverage.embedded.builds.<version>]` table: they locate the `.gcno` the
+cross-gcov decodes the counters against, which is a build-tree fact, not a
+product one.
 
 The `dump_command` timeout is generous (120 s) because the hexdump is emitted
 one `printk` character at a time and can take several seconds for large binaries.

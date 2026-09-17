@@ -45,6 +45,7 @@ from otto.coverage.capture.gitio import (
 from otto.coverage.errors import (
     CoverageConfigError,
     CoverageDataMismatchError,
+    CoverageNotInstrumentedError,
     CoverageToolVersionError,
     NoCoverageDataError,
 )
@@ -116,6 +117,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (EnsureStateError, RuntimeError),
     (CoverageToolVersionError, RuntimeError),
     (CoverageConfigError, ValueError),
+    (CoverageNotInstrumentedError, ValueError),
     (NoCoverageDataError, ValueError),
     (CoverageDataMismatchError, RuntimeError),
     (OverrideConfigError, ValueError),

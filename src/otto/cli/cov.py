@@ -51,18 +51,18 @@ See the :doc:`/guide/cli/cov/index` and :doc:`/guide/cli/host/index` documentati
             --tier integration=i.info \\
             --tier manual=m.info
 
-``otto cov get`` fetches ``.gcda`` counters straight from the lab (mirroring
-``otto test --cov``'s collection step) and produces a ``capture.json``
-per board, anchored to ``base_commit``, in its output directory. It is the single
-retrieval command for both automated (e2e-kind tier) and manual-session
-(manual-kind tier) capture production::
+``otto cov get`` fetches ``.gcda`` counters straight from the lab's
+instrumented products (mirroring ``otto test --cov``'s collection step) and
+produces a ``capture.json`` per product, anchored to ``base_commit``, in its
+output directory. It is the single retrieval command for both automated
+(e2e-kind tier) and manual-session (manual-kind tier) capture production::
 
     otto cov get --tier manual --ticket JIRA-123
 
 **Options**
 
 ``--output PATH / -o PATH``
-    Where to write fetched coverage and per-board captures (default: the
+    Where to write fetched coverage and per-product captures (default: the
     standard per-invocation output directory under the xdir, same as every
     other lab-touching command).
 
@@ -83,13 +83,13 @@ retrieval command for both automated (e2e-kind tier) and manual-session
     respectively; an unset email is omitted rather than annotated empty.
 
 ``--clean``
-    Zero the fetched Unix hosts' remote ``.gcda`` counters after a
-    successful retrieval — for use before starting a manual session.
+    Zero the fetched hosts' remote ``.gcda`` counters after a successful
+    retrieval — for use before starting a manual session.
 
-``otto cov clean`` zeroes ``.gcda`` counters on the lab's **Unix** coverage
-hosts — the same host selection ``get`` fetches from — without first
-fetching anything. Useful ahead of a manual session when the previous
-capture has already been retrieved::
+``otto cov clean`` zeroes each instrumented product's ``.gcda`` counters on
+the lab's **fetchable** coverage hosts — the same host selection ``get``
+fetches from — without first fetching anything. Useful ahead of a manual
+session when the previous capture has already been retrieved::
 
     otto cov clean
 
@@ -125,7 +125,6 @@ if TYPE_CHECKING:
     from ..coverage.tickets import TicketSpec
     from ..coverage.tiers import TierConfig
     from ..host.remote_host import RemoteHost
-    from ..host.unix_host import UnixHost
 
     # A named alias so _resolve_cov_settings's return annotation is a single
     # string literal — ty rejects an implicitly-concatenated string type
@@ -602,8 +601,7 @@ async def _connect_cov_hosts() -> tuple[
     "dict[str, Any]",
     "re.Pattern[str] | None",
     "list[RemoteHost]",
-    "list[UnixHost]",
-    str,
+    "list[RemoteHost]",
 ]:
     """Bootstrap, locate ``[coverage]`` config, and discover matching lab hosts.
 
@@ -617,23 +615,29 @@ async def _connect_cov_hosts() -> tuple[
     ``clean`` disagree on both the fetcher's staging root (a real output
     dir vs. an unused placeholder) and its ``pattern`` scope (``get``
     fetches with no pattern, preserving its existing tested behavior;
-    ``clean`` scopes to the already-computed ``unix_hosts`` list, not the
+    ``clean`` scopes to the already-computed ``fetch_hosts`` list, not the
     raw ``[coverage].hosts`` pattern, so it can never re-match an embedded
     host), so each command builds its own fetcher from the pieces returned
     here.
+
+    Container hosts are included in the walk: a product can live in a
+    container, and the fetch reaches it through its Unix parent.
 
     Raises :class:`_CovError` when no ``[coverage]`` section is configured
     at all — the one failure mode every caller treats identically.
 
     Returns:
-        ``(repos, cov_repo, cov_config, cov_pattern, cov_hosts, unix_hosts,
-        gcda_remote_dir)``.
+        ``(repos, cov_repo, cov_config, cov_pattern, cov_hosts, fetch_hosts)``,
+        where ``fetch_hosts`` are the matched hosts with a filesystem to fetch
+        over the network — every host but the runner itself and the embedded
+        boards, which dump over their console instead.
     """
     from ..config import all_hosts, get_repos
     from ..config.scope import EmptySelectionError
     from ..coverage.config import get_cov_config, get_cov_repo, load_hosts_pattern
     from ..coverage.errors import CoverageConfigError
-    from ..host import UnixHost
+    from ..host.embedded_host import EmbeddedHost
+    from ..host.local_host import LocalHost
 
     repos = get_repos()
     cov_config = get_cov_config(repos)
@@ -657,24 +661,23 @@ async def _connect_cov_hosts() -> tuple[
     # `list(...)`, not the call: `all_hosts` is a generator, so the refusal
     # arrives at the first `next()`.
     try:
-        cov_hosts = list(all_hosts(pattern=cov_pattern))
+        cov_hosts = list(all_hosts(pattern=cov_pattern, include_containers=True))
     except EmptySelectionError as e:
         raise _CovError(str(e)) from e
-    unix_hosts = [h for h in cov_hosts if isinstance(h, UnixHost)]
-    gcda_remote_dir = cov_config.get("gcda_remote_dir", "")
+    fetch_hosts = [h for h in cov_hosts if not isinstance(h, (LocalHost, EmbeddedHost))]
 
-    return repos, cov_repo, cov_config, cov_pattern, cov_hosts, unix_hosts, gcda_remote_dir
+    return repos, cov_repo, cov_config, cov_pattern, cov_hosts, fetch_hosts
 
 
-def _unix_only_pattern(unix_hosts: "list[UnixHost]") -> "re.Pattern[str]":
-    """Anchored regex matching exactly the given Unix hosts' ids.
+def _unix_only_pattern(fetch_hosts: "list[RemoteHost]") -> "re.Pattern[str]":
+    """Anchored regex matching exactly the given fetchable hosts' ids.
 
     :meth:`~otto.coverage.fetcher.remote.GcdaFetcher.clean_remote` re-derives
     its own host set from its ``pattern`` via ``do_for_all_hosts()`` /
     ``all_hosts()`` — a path with **no** ``EmbeddedHost`` guard. Passing the
     raw ``[coverage].hosts`` pattern would therefore let ``clean_remote`` send
     an embedded board a bogus ``find ... -delete`` on a mixed lab. Scoping to
-    the already-computed ``unix_hosts`` list closes that. Matching is
+    the already-computed fetchable hosts closes that. Matching is
     ``pattern.fullmatch(host.id)`` (see :meth:`OttoContext.all_hosts`); the
     ``^``/``$`` anchors are therefore redundant and kept only because they say
     out loud that a host id like ``"zephyr37-fat"`` must not also select a sibling
@@ -682,8 +685,8 @@ def _unix_only_pattern(unix_hosts: "list[UnixHost]") -> "re.Pattern[str]":
     """
     import re
 
-    unix_ids = "|".join(re.escape(h.id) for h in unix_hosts)
-    return re.compile(f"^(?:{unix_ids})$")
+    host_ids = "|".join(re.escape(h.id) for h in fetch_hosts)
+    return re.compile(f"^(?:{host_ids})$")
 
 
 async def _do_get(
@@ -724,18 +727,18 @@ async def _do_get(
 
     # collect_coverage re-derives the host set (cov_pattern/cov_hosts) itself, so
     # _do_get only needs cov_config (tier resolution), cov_repo (git preflight +
-    # manual store), cov_hosts (display names), and unix_hosts/gcda_remote_dir
-    # (the scoped --clean). The one thing _connect_cov_hosts owns that
-    # collect_coverage does not is the no-[coverage]-config _CovError, raised
-    # before any fetch — the message the "no config" get/clean tests assert.
+    # manual store), cov_hosts (display names + the instrumentation scan), and
+    # fetch_hosts (the scoped --clean). The one thing _connect_cov_hosts owns
+    # that collect_coverage does not is the no-[coverage]-config _CovError,
+    # raised before any fetch — the message the "no config" get/clean tests
+    # assert, and the reason it stays ahead of the scan below.
     (
         repos,
         cov_repo,
         cov_config,
         _cov_pattern,
         cov_hosts,
-        unix_hosts,
-        gcda_remote_dir,
+        fetch_hosts,
     ) = await _connect_cov_hosts()
 
     tiers = load_tiers(cov_config)
@@ -746,6 +749,26 @@ async def _do_get(
 
     if resolved_tier.kind == "manual" and not ticket:
         raise _GetError(f"tier {resolved_tier.name!r} is a manual-kind tier; requires --ticket")
+
+    # `otto cov get` is retrieval on purpose — the forced-on mode of the same
+    # decision `otto test --cov` takes. Detection is local (each product reads
+    # its own artifact), so a lab with nothing instrumented is refused here,
+    # with the per-product verdicts, before a single host is touched. Imported
+    # inside the command body: the instrumentation module pulls rich.table, and
+    # this module sits on an import-budget surface.
+    from ..coverage.errors import CoverageNotInstrumentedError
+    from ..coverage.instrumentation import decide_coverage, detect
+
+    try:
+        decide_coverage(True, detect(cov_hosts), has_cov_config=True, command="otto cov get")
+    except CoverageNotInstrumentedError as e:
+        # The verdicts go to the console as the rounded table, and _GetError
+        # then carries only the headline: the rest of `str(e)` is the SAME
+        # verdicts in plain text, which belongs in the run log, not printed a
+        # second time under the table.
+        from .invoke import render_instrumentation_refusal
+
+        raise _GetError(render_instrumentation_refusal(e)) from e
 
     # Git preflight: capture production anchors to HEAD (base_commit), so a
     # non-git sut can never yield a capture. Fail fast here — before the fleet pull — rather
@@ -804,12 +827,12 @@ async def _do_get(
 
     written = result.captures_written
     if not written:
-        # collect_coverage fetched .gcda from some host but produce_captures made
-        # no capture. The test-run tail swallows this; a retrieval command must
-        # not. Same message shape as before — names the boards it searched.
-        searched = ", ".join(sorted(result.host_dirs))
-        where = f"searched: {searched}" if searched else "no boards produced captures"
-        raise _GetError(f"no .gcda counters retrieved from any board ({where})")
+        # collect_coverage fetched .gcda from some product but produce_captures
+        # made no capture. The test-run tail swallows this; a retrieval command
+        # must not. The message names every host:product it searched.
+        searched = ", ".join(f"{h}:{p}" for h, p in sorted(result.product_dirs))
+        where = f"searched: {searched}" if searched else "no products produced captures"
+        raise _GetError(f"no .gcda counters retrieved from any product ({where})")
 
     if resolved_tier.kind == "manual":
         for capture_path in written:
@@ -819,15 +842,16 @@ async def _do_get(
     # `--clean` (post-retrieval remote zero, for the start of a manual session).
     # collect_coverage skipped its internal clean, so `get` does it here — but
     # clean_remote() re-derives its own host set from the fetcher's pattern with
-    # no EmbeddedHost guard, so scope a second fetcher to just the Unix host ids
-    # that actually fetched. Guard on those ids (not the raw [coverage].hosts) so
-    # a mixed lab's embedded board can never be zeroed.
-    unix_dirs = {h.id: result.host_dirs[h.id] for h in unix_hosts if h.id in result.host_dirs}
-    if clean and unix_dirs:
-        clean_fetcher = GcdaFetcher(cov_dir, pattern=_unix_only_pattern(unix_hosts))
-        await clean_fetcher.clean_remote(gcda_remote_dir)
+    # no EmbeddedHost guard, so scope a second fetcher to just the fetchable
+    # host ids that actually contributed a product. Guard on those ids (not the
+    # raw [coverage].hosts) so a mixed lab's embedded board can never be zeroed.
+    fetched_ids = {host_id for (host_id, _p) in result.product_dirs}
+    fetched_fetch_hosts = [h for h in fetch_hosts if h.id in fetched_ids]
+    if clean and fetched_fetch_hosts:
+        clean_fetcher = GcdaFetcher(cov_dir, pattern=_unix_only_pattern(fetched_fetch_hosts))
+        await clean_fetcher.clean_remote()
 
-    logger.info("Coverage captured: %d board(s) -> %s", len(written), cov_dir)
+    logger.info("Coverage captured: %d product(s) -> %s", len(written), cov_dir)
     return written
 
 
@@ -887,7 +911,7 @@ def get(
         ),
     ] = False,
 ) -> None:
-    """Fetch .gcda coverage from the lab and produce per-board captures anchored to base_commit."""
+    """Fetch .gcda from the lab's instrumented products; produce per-product captures."""
     from ..lifecycle import run_command
 
     try:
@@ -919,22 +943,23 @@ class _CleanError(_CovError):
     """Internal signal for a clean, single-line ``cov clean`` failure.
 
     Raised by :func:`_do_clean` for every ``clean``-specific failure mode
-    (no ``gcda_remote_dir`` configured, no matching Unix hosts); the sync
-    ``clean`` command catches the shared :class:`_CovError` base (which also
-    covers :func:`_connect_cov_hosts`'s "no config" failure).
+    (no matching fetchable hosts); the sync ``clean`` command catches the
+    shared :class:`_CovError` base (which also covers
+    :func:`_connect_cov_hosts`'s "no config" failure).
     """
 
 
 async def _do_clean() -> None:
-    """Zero remote ``.gcda`` counters on the lab's Unix coverage hosts.
+    """Zero remote ``.gcda`` counters on the lab's fetchable coverage hosts.
 
     Uses :func:`_connect_cov_hosts` for the identical host discovery
-    ``get`` uses (same ``[coverage].hosts`` pattern, same Unix/embedded
+    ``get`` uses (same ``[coverage].hosts`` pattern, same fetchable/embedded
     split), then hands the matched hosts to the existing
-    :meth:`~otto.coverage.fetcher.remote.GcdaFetcher.clean_remote`. That
-    method already logs one line per host (success or failure) via its own
-    module logger, so no extra per-host logging is added here — only a
-    completion summary.
+    :meth:`~otto.coverage.fetcher.remote.GcdaFetcher.clean_remote`, which
+    walks each host's instrumented products and deletes the counters under
+    each product's own ``cov_dir``. That method already logs one line per
+    host (success or failure) via its own module logger, so no extra
+    per-host logging is added here — only a completion summary.
 
     Embedded coverage hosts are out of scope for this phase (counter reset
     needs a product-side ``cov_reset`` LLEXT function mirroring
@@ -956,31 +981,36 @@ async def _do_clean() -> None:
         _cov_config,
         _cov_pattern,
         cov_hosts,
-        unix_hosts,
-        gcda_remote_dir,
+        fetch_hosts,
     ) = await _connect_cov_hosts()
-
-    if not gcda_remote_dir:
-        raise _CleanError("No coverage.gcda_remote_dir configured in .otto/settings.toml")
 
     has_embedded = any(isinstance(h, EmbeddedHost) for h in cov_hosts)
 
-    if not unix_hosts:
+    if not fetch_hosts:
         if has_embedded:
             logger.info(
                 "embedded boards not cleaned (requires product-side counter reset — later phase)"
             )
             return
-        raise _CleanError("No coverage hosts matched [coverage].hosts — nothing to clean")
+        # Not "nothing matched": the runner itself can match [coverage].hosts
+        # and is then dropped as unfetchable, so say which families were
+        # excluded rather than sending the reader back to the selector.
+        raise _CleanError(
+            "No fetchable coverage host matched [coverage].hosts — nothing to clean "
+            "(the otto runner itself and embedded boards are excluded: neither has "
+            "remote counters this command can zero)"
+        )
 
-    for host in unix_hosts:
-        host.rebuild_connections()
+    for host in fetch_hosts:
+        rebuild = getattr(host, "rebuild_connections", None)
+        if rebuild is not None:
+            rebuild()
     # staging_root is unused by clean_remote() (no files are downloaded); the
     # scoped pattern keeps clean_remote()'s own host re-derivation off embedded
     # boards on a mixed lab (see _unix_only_pattern).
-    fetcher = GcdaFetcher(Path("/tmp"), pattern=_unix_only_pattern(unix_hosts))  # noqa: S108 — deliberate staging path, never written to
-    await fetcher.clean_remote(gcda_remote_dir)
-    logger.info("Coverage counters cleared on %d host(s)", len(unix_hosts))
+    fetcher = GcdaFetcher(Path("/tmp"), pattern=_unix_only_pattern(fetch_hosts))  # noqa: S108 — deliberate staging path, never written to
+    await fetcher.clean_remote()
+    logger.info("Coverage counters cleared on %d host(s)", len(fetch_hosts))
 
     if has_embedded:
         logger.info(
@@ -990,7 +1020,7 @@ async def _do_clean() -> None:
 
 @cov_app.command()
 def clean() -> None:
-    """Zero .gcda counters on the lab's Unix coverage hosts."""
+    """Zero each instrumented product's .gcda counters on the lab's fetchable hosts."""
     from ..lifecycle import run_command
 
     try:

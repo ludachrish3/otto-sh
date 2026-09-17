@@ -4,9 +4,10 @@ Three contracts meet here:
 
 * ``log_dest`` — ``<base>/logs/<host-id>``, where *base* is an explicit
   ``dest``, else the active command's output directory, else the CWD. The
-  subtree below it (``product/``, ``debug/``) is API, not an implementation
-  detail: it mirrors the coverage pipeline's per-host-id keying, and consumers
-  read it by path.
+  subtree below it (``<product>/product/``, ``<product>/debug/`` and the
+  host-level ``debug/``) is API, not an implementation detail: it is the
+  run-tree contract of :mod:`otto.layout`, the mirror of the coverage tree's
+  keying, and consumers read it by path.
 * ``get_product_logs`` / ``get_debug_logs`` — the two halves, each best-effort,
   each with its own failure rule. Zero logs is SUCCESS; a debug glob on a host
   with no glob support is a LOUD failure rather than a silent skip.
@@ -172,11 +173,89 @@ def test_explicit_dest_beats_the_context(recording_host, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_product_logs_land_under_logs_hostid_product(recording_host, tmp_path):
+async def test_product_logs_land_under_logs_hostid_product_name_product(recording_host, tmp_path):
     recording_host.products = [_LoggingProduct("app", writes="app.log")]
     result = await recording_host.get_product_logs(dest=tmp_path)
     assert result.is_ok
-    assert (tmp_path / "logs" / recording_host.id / "product" / "app.log").exists()
+    assert (tmp_path / "logs" / recording_host.id / "app" / "product" / "app.log").exists()
+
+
+@pytest.mark.asyncio
+async def test_two_products_writing_the_same_filename_do_not_collide(recording_host, tmp_path):
+    """The reason the tree is keyed by product at all.
+
+    Kills: one shared ``product/`` dir, where the second product's ``app.log``
+    silently overwrites the first's and a whole product's logs are simply gone.
+    """
+    recording_host.products = [
+        _LoggingProduct("a", writes="app.log"),
+        _LoggingProduct("b", writes="app.log"),
+    ]
+    assert (await recording_host.get_product_logs(dest=tmp_path)).is_ok
+    root = tmp_path / "logs" / recording_host.id
+    assert (root / "a" / "product" / "app.log").exists()
+    assert (root / "b" / "product" / "app.log").exists()
+
+
+@pytest.mark.asyncio
+async def test_product_debug_globs_land_under_the_products_debug_dir(recording_host, tmp_path):
+    """A product's own debug haul has its own home, beside its product logs.
+
+    Kills: hauling it into the product-log dir (indistinguishable from what
+    the product's own hook retrieved) or into the host-level ``debug/`` (where
+    two products' globs would land on top of each other).
+    """
+    p = _LoggingProduct("app")
+    p.debug_log_globs = ["/var/log/app/*.log"]
+    recording_host.products = [p]
+    recording_host.script_glob(["/var/log/app/x.log"])
+    assert (await recording_host.get_product_logs(dest=tmp_path)).is_ok
+    dest = tmp_path / "logs" / recording_host.id / "app" / "debug"
+    assert ([Path("/var/log/app/x.log")], dest) in recording_host.get_calls
+
+
+@pytest.mark.asyncio
+async def test_a_product_debug_haul_with_zero_matches_is_success(recording_host, tmp_path):
+    # Zero matches is SUCCESS (the shared haul's contract), and the second
+    # product is still asked. Kills: an unconditional get() with no files,
+    # which several transfer backends report as a failure.
+    events = []
+    a = _LoggingProduct("a", events)
+    a.debug_log_globs = ["/logs/*.txt"]
+    recording_host.script_glob([])
+    b = _LoggingProduct("b", events)
+    recording_host.products = [a, b]
+    result = await recording_host.get_product_logs(dest=tmp_path)
+    assert result.is_ok
+    assert events == ["a:get_logs", "b:get_logs"]
+    assert len(recording_host.exec_calls) == 1  # the glob round-trip DID run
+    assert recording_host.get_calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_product_debug_failure_reports_but_the_other_products_still_run(
+    embedded_recording_host, tmp_path
+):
+    """Best-effort covers the debug half too: report the first failure, ask everyone.
+
+    Kills: returning on a product's failed debug haul, which would strand
+    every product declared after it — the same mistake the product-log half
+    already has a test for, one call site further down.
+    """
+    events = []
+    a = _LoggingProduct("a", events)
+    a.debug_log_globs = ["/logs/*.txt"]  # a pattern, on a host with no glob at all
+    b = _LoggingProduct("b", events)
+    b.debug_log_globs = ["/logs/b.log"]  # concrete: needs no glob support
+    embedded_recording_host.products = [a, b]
+    result = await embedded_recording_host.get_product_logs(dest=tmp_path)
+    assert not result.is_ok
+    assert "product 'a'" in result.msg
+    assert events == ["a:get_logs", "b:get_logs"]
+    # …and b's DEBUG half was reached too, not merely its product-log hook:
+    # the failure is a's debug haul, so that is the one the walk must step over.
+    b_debug = tmp_path / "logs" / embedded_recording_host.id / "b" / "debug"
+    assert embedded_recording_host.get_calls == [([Path("/logs/b.log")], b_debug)]
 
 
 @pytest.mark.asyncio
@@ -297,11 +376,11 @@ async def test_require_product_logs_is_not_satisfied_by_an_earlier_hauls_files(
     """A REUSED ``dest`` is the common case, and its leftovers prove nothing.
 
     ``--dest`` (or an output dir) pointed at last run's tree already contains
-    ``logs/<id>/product/…``. Kills: asking whether the directory is non-empty,
-    which reports "logs retrieved" for a haul that retrieved NOTHING and hands
-    the caller yesterday's logs as today's evidence.
+    ``logs/<id>/<product>/product/…``. Kills: asking whether the directory is
+    non-empty, which reports "logs retrieved" for a haul that retrieved NOTHING
+    and hands the caller yesterday's logs as today's evidence.
     """
-    stale = tmp_path / "logs" / recording_host.id / "product"
+    stale = tmp_path / "logs" / recording_host.id / "app" / "product"
     stale.mkdir(parents=True)
     (stale / "app.log").write_text("from an earlier haul\n", encoding="utf-8")
 
@@ -324,7 +403,7 @@ async def test_require_product_logs_counts_an_overwritten_file_as_retrieved(
     fingerprint — each of which fails the ordinary second run, where every host
     writes ``app.log`` again into a dest that already has one.
     """
-    product_dir = tmp_path / "logs" / recording_host.id / "product"
+    product_dir = tmp_path / "logs" / recording_host.id / "app" / "product"
     product_dir.mkdir(parents=True)
     stale = product_dir / "app.log"
     stale.write_text("log line\n", encoding="utf-8")  # byte-for-byte what the product writes
@@ -348,7 +427,7 @@ async def test_require_product_logs_sees_a_refetch_that_preserved_size_and_mtime
     ctime is what closes it: no userspace API can set it, so the re-write
     advances it.
     """
-    product_dir = tmp_path / "logs" / recording_host.id / "product"
+    product_dir = tmp_path / "logs" / recording_host.id / "app" / "product"
     product_dir.mkdir(parents=True)
     stale = product_dir / "app.log"
     stale.write_text("log line\n", encoding="utf-8")
@@ -415,14 +494,64 @@ async def test_get_logs_halves_are_selectable(recording_host, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_get_logs_reports_a_product_failure_without_fetching_debug_logs(
+async def test_get_logs_reports_a_product_failure_and_still_sweeps_host_debug_logs(
     recording_host, tmp_path
 ):
+    """The two halves are independent; a failed product haul only REPORTS.
+
+    Kills: returning on the product half. The host's own debug set is
+    frequently the very thing that explains why a product's logs did not come
+    off, and dropping it over that failure is the trade ``uninstall``'s
+    best-effort rule already refuses one verb up.
+    """
     recording_host.debug_log_globs = ["/logs/app.log"]
     recording_host.products = [_LoggingProduct("app", fail_logs=True)]
     result = await recording_host.get_logs(dest=tmp_path)
     assert not result.is_ok
-    assert result.msg == "app logs failed"
+    assert result.msg == "app logs failed"  # the FIRST failure is what returns
+    debug_dest = tmp_path / "logs" / recording_host.id / "debug"
+    assert recording_host.get_calls == [([Path("/logs/app.log")], debug_dest)]
+
+
+@pytest.mark.asyncio
+async def test_a_product_debug_failure_does_not_cost_the_host_its_own_debug_sweep(
+    embedded_recording_host, tmp_path
+):
+    """The same rule, reached through the half the per-product debug haul added.
+
+    Kills: letting ``get_product_logs``' NEW failure mode — a product whose
+    debug globs cannot be expanded — short-circuit the host-level sweep, which
+    the product-log half was already forbidden from doing.
+    """
+    p = _LoggingProduct("app")
+    p.debug_log_globs = ["/logs/*.txt"]  # a pattern, and this host has no glob
+    embedded_recording_host.products = [p]
+    embedded_recording_host.debug_log_globs = ["/var/log/messages"]  # concrete
+    result = await embedded_recording_host.get_logs(dest=tmp_path)
+    assert not result.is_ok
+    assert "product 'app'" in result.msg
+    host_debug = tmp_path / "logs" / embedded_recording_host.id / "debug"
+    assert embedded_recording_host.get_calls == [([Path("/var/log/messages")], host_debug)]
+
+
+@pytest.mark.asyncio
+async def test_get_logs_does_not_walk_the_log_tree_unless_the_requirement_asks(
+    recording_host, tmp_path, monkeypatch
+):
+    """The before/after snapshot is a directory walk, and it stays behind the flag.
+
+    Kills: taking the ``after`` snapshot unconditionally — an rglob-and-stat
+    of every owned product's whole tree on every ordinary ``get-logs``,
+    building a set nobody is going to compare against anything.
+    """
+    from otto.host import host as host_module
+
+    def _refuse(directory):
+        raise AssertionError(f"walked {directory} with require_product_logs=False")
+
+    monkeypatch.setattr(host_module, "_log_tree_state", _refuse)
+    recording_host.products = [_LoggingProduct("app", writes="app.log")]
+    assert (await recording_host.get_logs(dest=tmp_path)).is_ok
 
 
 # =========================================================================== #

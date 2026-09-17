@@ -38,7 +38,9 @@ otto.host.interact
 otto.host.interface
 otto.host.inventory_ref
 otto.host.lab_info
+otto.host.llext_kind
 otto.host.local_host
+otto.host.log_haul
 otto.host.login_proxy
 otto.host.mount
 otto.host.options
@@ -75,6 +77,7 @@ otto.labs.json_repository
 otto.labs.protocol
 otto.labs.registry
 otto.labs.sources
+otto.layout
 otto.link
 otto.link.impairer
 otto.link.model

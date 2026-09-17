@@ -268,6 +268,44 @@ def print_error(message: object, *, soft_wrap: bool = False) -> None:
     get_console().print(f"[red]{escape(str(message))}[/red]", soft_wrap=soft_wrap or None)
 
 
+def render_instrumentation_refusal(error: BaseException) -> str:
+    """Print a coverage refusal's per-product verdict TABLE; return the line to print beside it.
+
+    ``CoverageNotInstrumentedError`` carries the same verdicts twice: as the
+    plain listing inside ``str(error)`` (what the run log keeps, because a log
+    file cannot hold a Rich table) and as
+    ``otto.coverage.instrumentation.InstrumentationReport`` structure. On a
+    console the structure wins — the rounded table, with the "unknown" remedy
+    as its caption — so this renders it here and hands the caller back only
+    the message's FIRST line. Printing the whole message beside the table
+    would put the same verdicts on the console twice.
+
+    Any other exception (and a refusal raised without a report, or with an
+    empty one) comes back as its own full ``str()``, so a caller can use this
+    unconditionally in an error path.
+
+    The ``report`` attribute is probed before the class is imported on
+    purpose: ``from ..coverage.errors import ...`` executes
+    ``otto.coverage.__init__``, which pulls the collector, the fetcher and the
+    reporter. Only otto's own refusal carries that attribute, and by the time
+    one exists ``otto.coverage`` is already imported, so the guarded import is
+    a cache hit rather than a new edge on the ``test`` import surface.
+    """
+    if getattr(error, "report", None) is None:
+        return str(error)
+    from ..coverage.errors import CoverageNotInstrumentedError
+
+    if not isinstance(error, CoverageNotInstrumentedError):
+        return str(error)
+    report = error.report
+    if report is None or not report.rows:
+        return str(error)
+    from rich import get_console
+
+    get_console().print(report.table())
+    return str(error).splitlines()[0]
+
+
 def fail(message: object, code: int = 1, *, soft_wrap: bool = False) -> "NoReturn":
     """Render *message* as a user-facing error and exit with *code*.
 

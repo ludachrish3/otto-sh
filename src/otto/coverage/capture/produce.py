@@ -1,18 +1,19 @@
-"""Per-board ``capture.json`` production from fetched ``.gcda`` counters.
+"""Per-product ``capture.json`` production from fetched ``.gcda`` counters.
 
 Turns the raw ``.gcda`` counters collected by ``otto test --cov`` into a
-:class:`~otto.coverage.capture.model.Capture` per board, anchored to
-``base_commit``.  For each board directory under ``cov_dir`` this:
+:class:`~otto.coverage.capture.model.Capture` per (host, product),
+anchored to ``base_commit``.  For each ``<cov_dir>/<host>/<product>/``
+directory this:
 
-1. Resolves the board's toolchain and gcno (build) source root from the
+1. Resolves the host's toolchain and gcno (build) source root from the
    ``.otto_cov_meta.json`` sidecar via the :mod:`otto.coverage.reporter`
-   helpers.
+   helpers (both maps are per host, not per product).
 2. Runs :meth:`~otto.coverage.merge.merger.LcovMerger.capture` for
-   that board alone, producing ``<board>/board.info``.
+   that product alone, producing ``<host>/<product>/board.info``.
 3. Auto-discovers path mappings and rewrites the embedded ``SF:`` paths
    to their local, ``repo_root``-relative form, producing
-   ``<board>/board.resolved.info``.
-4. Builds and saves ``<board>/capture.json`` via
+   ``<host>/<product>/board.resolved.info``.
+4. Builds and saves ``<host>/<product>/capture.json`` via
    :func:`~otto.coverage.capture.model.build_capture`.
 
 The raw ``.gcda``, ``board.info``, and ``board.resolved.info`` all stay
@@ -25,27 +26,27 @@ from pathlib import Path
 from ..merge.merger import LcovMerger
 from ..merge.paths import PathRemapper, discover_path_mappings
 from ..reporter import read_cov_source_root, read_cov_source_roots, read_cov_toolchains
+from ..tree import iter_product_dirs
 from .model import build_capture
 
 logger = logging.getLogger(__name__)
 
 
-def _board_dirs(cov_dir: Path) -> list[Path]:
-    """Direct subdirectories of *cov_dir* containing at least one ``.gcda`` file (recursive).
+def _product_dirs(cov_dir: Path) -> list[tuple[str, str, Path]]:
+    """``(host_id, product, dir)`` for every ``cov/<host>/<product>/`` holding ``.gcda``.
 
-    Non-directory entries (e.g. the ``.otto_cov_meta.json`` sidecar) are
-    skipped silently.  Directories with no ``.gcda`` files anywhere below
-    them are skipped with a warning.
+    Product dirs with no ``.gcda`` files anywhere below them are skipped
+    with a warning.  The walk itself — and its by-name refusal of a host
+    dir holding counters or a capture directly, the pre-product one-level
+    tree — lives in :func:`~otto.coverage.tree.iter_product_dirs`.
     """
-    boards: list[Path] = []
-    for entry in sorted(cov_dir.iterdir()):
-        if not entry.is_dir():
+    instrumented: list[tuple[str, str, Path]] = []
+    for host_id, product, product_dir in iter_product_dirs(cov_dir):
+        if next(product_dir.rglob("*.gcda"), None) is None:
+            logger.warning("Skipping product dir with no .gcda files: %s", product_dir)
             continue
-        if next(entry.rglob("*.gcda"), None) is None:
-            logger.warning("Skipping board dir with no .gcda files: %s", entry)
-            continue
-        boards.append(entry)
-    return boards
+        instrumented.append((host_id, product, product_dir))
+    return instrumented
 
 
 def _write_resolved_info(raw_info: Path, resolved_info: Path, remapper: PathRemapper) -> None:
@@ -83,16 +84,16 @@ async def produce_captures(
     note: str | None = None,
     display_names: dict[str, str] | None = None,
 ) -> list[Path]:
-    """Produce a ``capture.json`` anchored to ``base_commit`` for each board dir under *cov_dir*.
+    """Produce a ``capture.json`` anchored to ``base_commit`` per product dir under *cov_dir*.
 
-    A board dir is any direct subdirectory of *cov_dir* containing at
-    least one ``.gcda`` file (recursively).  Boards with no ``.gcda``
+    A product dir is any ``<cov_dir>/<host>/<product>/`` containing at
+    least one ``.gcda`` file (recursively).  Products with no ``.gcda``
     files are skipped with a warning.
 
     Args:
         cov_dir: Coverage directory written by ``otto test --cov``,
-            containing per-board subdirs and a ``.otto_cov_meta.json``
-            sidecar.
+            containing ``<host>/<product>/`` subdirs and a
+            ``.otto_cov_meta.json`` sidecar.
         tier: Coverage tier name to annotate onto each capture.
         repo_root: SUT git repo root, used for base_commit/blob resolution
             and as the path-remapping target.
@@ -100,16 +101,18 @@ async def produce_captures(
         tester: Optional tester identity to annotate onto each capture.
         ticket: Optional ticket reference to annotate onto each capture.
         note: Optional free-text note to annotate onto each capture.
-        display_names: Board-dir name (host id) → host display name; boards
+        display_names: Host-dir name (host id) → host display name; hosts
             without an entry are annotated ``None``.
 
     Returns:
-        Paths of the ``capture.json`` files written, one per board, in
-        board-name sort order.
+        Paths of the ``capture.json`` files written, one per (host,
+        product), in host-then-product sort order.
 
     Raises:
         otto.coverage.capture.gitio.GitUnavailableError: If *repo_root*
             is not a git repository.
+        otto.coverage.errors.CoverageConfigError: If a host dir holds
+            coverage data directly (the pre-product one-level tree).
     """
     from ...host.connections import teardown_step
     from ...host.local_host import LocalHost
@@ -122,13 +125,12 @@ async def produce_captures(
     written: list[Path] = []
     try:
         merger = LcovMerger(localhost)
-        for board_dir in _board_dirs(cov_dir):
-            board = board_dir.name
+        for board, product, board_dir in _product_dirs(cov_dir):
             gcno_dir = source_roots.get(board, fallback_root)
             toolchain = toolchains.get(board)
 
             raw_info = board_dir / "board.info"
-            logger.info("=== Capturing board %r ===", board)
+            logger.info("=== Capturing %s / %s ===", board, product)
             await merger.capture(board_dir, gcno_dir, raw_info, toolchain=toolchain)
 
             mappings = await discover_path_mappings(raw_info, repo_root, localhost)
@@ -141,6 +143,7 @@ async def produce_captures(
                 tier=tier,
                 repo_root=repo_root,
                 board=board,
+                product=product,
                 labs=labs,
                 tester=tester,
                 ticket=ticket,

@@ -38,6 +38,7 @@ def _seed_lines(repo: Path, rel: str, linenos: list[int]) -> None:
     """Materialize *linenos* in the store, uncovered, via a 0-hit capture."""
     cap = Capture(
         tier="seed",
+        product="app",
         base_commit=head_commit(repo),
         captured_at="2026-07-01T00:00:00Z",
         board="b1",
@@ -153,6 +154,7 @@ async def test_real_manual_run_clears_the_asserted_mark(tmp_path):
     # A real bench-tier capture proves line 1.
     cap = Capture(
         tier="bench",
+        product="app",
         base_commit=head_commit(repo),
         captured_at="2026-07-02T00:00:00Z",
         board="b1",
@@ -295,6 +297,7 @@ async def test_prune_signal_reaches_the_report_log(tmp_path, caplog):
     sha = head_commit(repo)
     cap = Capture(
         tier="bench",
+        product="app",
         base_commit=head_commit(repo),
         captured_at="2026-07-02T00:00:00Z",
         board="b1",

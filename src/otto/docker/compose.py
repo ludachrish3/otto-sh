@@ -25,6 +25,7 @@ from ..config.lab import Lab
 from ..config.repo import DockerCompose, Repo
 from ..host.docker_host import DockerContainerHost
 from ..host.errors import HostCommandError
+from ..host.factory import apply_providers
 from ..host.host import Host, is_dry_run, refuse_declined_fact
 from ..host.mount import Mount
 from ..host.unix_host import UnixHost
@@ -480,6 +481,11 @@ async def register_stack_hosts(
         # aliasing LabInfo.__post_init__ exists to prevent. replace() re-runs
         # __post_init__, which copies the dict.
         host.lab_info = replace(parent.lab_info)
+        # Same products a factory-built host gets: the match table and the
+        # providers see a container by its own attributes (service, id, os).
+        # AFTER the source_lab stamp — that is what the repo-targeting gate on
+        # both seams reads to decide whether a repo may reach this host.
+        apply_providers(host)
         # Register in the lab so otto host <id> finds it. compose_up is
         # idempotent and re-registers on every call — replacing a placeholder
         # from register_declared_container_hosts, or a prior compose_up's
@@ -978,6 +984,11 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
                     placeholder.lab_info = replace(parent.lab_info)
                     if placeholder.id in lab.hosts:
                         continue
+                    # Same ingest a factory-built host runs, for the same
+                    # reason compose_up's registration runs it — and after the
+                    # duplicate skip, so a placeholder this walk discards
+                    # never runs a provider against a host nobody will see.
+                    apply_providers(placeholder)
                     lab.add_host(placeholder)
                     count += 1
     return count
@@ -1062,6 +1073,8 @@ def _register_use_case_placeholders(lab: Lab, repo: Repo) -> int:
                 placeholder.lab_info = replace(parent.lab_info)
                 if placeholder.id in lab.hosts:
                     continue
+                # Same ingest as the legacy walk's, same placement.
+                apply_providers(placeholder)
                 lab.add_host(placeholder)
                 count += 1
     return count

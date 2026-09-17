@@ -22,6 +22,23 @@ from otto.host.element import Element
 from tests._fixtures.gitrepo import git_env
 
 
+def _product(name: str, cov_dir: str | None = None, verdict: bool | None = True) -> MagicMock:
+    """A product double for the instrumentation walk (mirrors ``test_fetcher``'s)."""
+    p = MagicMock()
+    p.name = name
+    p.cov_dir = cov_dir
+    p.instrumented = MagicMock(return_value=verdict)
+    return p
+
+
+def _empty_fetcher() -> MagicMock:
+    """A ``GcdaFetcher`` double that fetches nothing and records its cleans."""
+    fetcher = MagicMock()
+    fetcher.fetch_all = AsyncMock(return_value={})
+    fetcher.clean_remote = AsyncMock(return_value=None)
+    return fetcher
+
+
 @pytest.fixture
 def sut_repo(tmp_path):
     """A real tmp_path git repo standing in for the SUT checkout."""
@@ -88,23 +105,23 @@ class TestNamedExceptions:
 
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
-
-        fetcher_instance = MagicMock()
-        fetcher_instance.fetch_all = AsyncMock(return_value={})
-        fetcher_instance.clean_remote = AsyncMock(return_value=None)
+        host.products = [_product("app", "/var/cov/app")]
 
         with (
-            patch(
-                "otto.coverage.config.get_cov_config",
-                return_value={"gcda_remote_dir": "/remote"},
-            ),
+            patch("otto.coverage.config.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.config.all_hosts", return_value=[host]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
+            patch(
+                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+                new=AsyncMock(return_value={}),
+            ),
             pytest.raises(NoCoverageDataError) as excinfo,
         ):
             asyncio.run(collect_coverage(cov_dir, repos=[repo]))
         assert isinstance(excinfo.value, ValueError)
-        assert str(excinfo.value) == "no .gcda counters retrieved from any host (searched: test1)"
+        assert str(excinfo.value) == (
+            "no .gcda counters retrieved from any product (searched: test1:app:/var/cov/app)"
+        )
 
     def test_errors_importable_from_coverage_package(self):
         from otto.coverage import CoverageConfigError, NoCoverageDataError
@@ -117,9 +134,9 @@ class TestNamedExceptions:
 
 
 class TestFetchStage:
-    """The Unix fetch constructs its GcdaFetcher at the given ``cov_dir``, and a
-    run that retrieves no ``.gcda`` from any host fails loud naming the hosts
-    searched (``_do_get``'s message shape)."""
+    """The fetch constructs its GcdaFetcher at the given ``cov_dir`` (staging per
+    ``(host, product)``), and a run that retrieves no ``.gcda`` from any product
+    fails loud naming every ``host:product:cov_dir`` triple it searched."""
 
     def test_fetcher_uses_given_cov_dir_and_empty_fails_loud(self, tmp_path):
         from otto.host import UnixHost
@@ -132,29 +149,30 @@ class TestFetchStage:
 
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
-
-        fetcher_instance = MagicMock()
-        fetcher_instance.fetch_all = AsyncMock(return_value={})
-        fetcher_instance.clean_remote = AsyncMock(return_value=None)
+        host.products = [_product("app", "/var/cov/app")]
 
         with (
-            patch(
-                "otto.coverage.config.get_cov_config",
-                return_value={"gcda_remote_dir": "/remote"},
-            ),
+            patch("otto.coverage.config.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.config.all_hosts", return_value=[host]),
             patch(
-                "otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance
+                "otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()
             ) as fetcher_cls,
-            pytest.raises(ValueError, match=r"no \.gcda counters retrieved from any host"),
+            patch(
+                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+                new=AsyncMock(return_value={}),
+            ),
+            pytest.raises(ValueError, match=r"no \.gcda counters retrieved from any product"),
         ):
             asyncio.run(collect_coverage(cov_dir, repos=[repo]))
 
         # The fetcher stages into the exact cov_dir it was handed (no override
-        # logic — the caller resolves the destination now).
-        fetcher_cls.assert_called_once_with(cov_dir)
+        # logic — the caller resolves the destination now), carrying the
+        # repo-declared host selector so its own host walk matches ours.
+        fetcher_cls.assert_called_once()
+        assert fetcher_cls.call_args.args == (cov_dir,)
+        assert fetcher_cls.call_args.kwargs["pattern"].pattern == ".*"
 
-    def test_empty_message_names_hosts_searched(self, tmp_path):
+    def test_empty_message_names_every_product_searched(self, tmp_path):
         from otto.host import UnixHost
 
         cov_dir = tmp_path / "cov"
@@ -165,23 +183,179 @@ class TestFetchStage:
 
         h1 = MagicMock(spec=UnixHost)
         h1.id = "test1"
+        h1.products = [_product("app", "/var/cov/app")]
         h2 = MagicMock(spec=UnixHost)
         h2.id = "test2"
-
-        fetcher_instance = MagicMock()
-        fetcher_instance.fetch_all = AsyncMock(return_value={})
-        fetcher_instance.clean_remote = AsyncMock(return_value=None)
+        h2.products = [_product("agent")]
 
         with (
-            patch(
-                "otto.coverage.config.get_cov_config",
-                return_value={"gcda_remote_dir": "/remote"},
-            ),
+            patch("otto.coverage.config.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.config.all_hosts", return_value=[h1, h2]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance),
-            pytest.raises(ValueError, match=r"searched: test1, test2"),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
+            patch(
+                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+                new=AsyncMock(return_value={}),
+            ),
+            pytest.raises(
+                ValueError, match=r"searched: test1:app:/var/cov/app, test2:agent:/tmp/agent"
+            ),
         ):
             asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+
+    def test_an_uninstrumented_product_is_not_searched(self, tmp_path):
+        """Only instrumented products reach the message — the fetcher skips the rest."""
+        from otto.host import UnixHost
+
+        cov_dir = tmp_path / "cov"
+        cov_dir.mkdir()
+        repo = MagicMock()
+        repo.sut_dir = tmp_path
+        repo.name = "repo"
+
+        host = MagicMock(spec=UnixHost)
+        host.id = "test1"
+        host.products = [_product("app", "/var/cov/app"), _product("dbg", verdict=False)]
+
+        with (
+            patch("otto.coverage.config.get_cov_config", return_value={"hosts": ".*"}),
+            patch("otto.config.all_hosts", return_value=[host]),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
+            patch(
+                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+                new=AsyncMock(return_value={}),
+            ),
+            pytest.raises(ValueError, match=r"searched: test1:app:/var/cov/app\)") as excinfo,
+        ):
+            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+        assert "dbg" not in str(excinfo.value)
+
+    def test_the_runner_is_never_named_as_searched(self, tmp_path):
+        """No stage looks at the local host — neither the network fetch nor the
+        console dump — so the message must not claim it was searched."""
+        from otto.host import UnixHost
+        from otto.host.local_host import LocalHost
+
+        cov_dir = tmp_path / "cov"
+        cov_dir.mkdir()
+        repo = MagicMock()
+        repo.sut_dir = tmp_path
+        repo.name = "repo"
+
+        host = MagicMock(spec=UnixHost)
+        host.id = "test1"
+        host.products = [_product("app", "/var/cov/app")]
+        runner = MagicMock(spec=LocalHost)
+        runner.id = "local"
+        runner.products = [_product("app", "/var/cov/app")]
+
+        with (
+            patch("otto.coverage.config.get_cov_config", return_value={"hosts": ".*"}),
+            patch("otto.config.all_hosts", return_value=[host, runner]),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
+            patch(
+                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+                new=AsyncMock(return_value={}),
+            ),
+            pytest.raises(ValueError, match=r"no \.gcda counters") as excinfo,
+        ):
+            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+        assert str(excinfo.value) == (
+            "no .gcda counters retrieved from any product (searched: test1:app:/var/cov/app)"
+        )
+
+
+class TestProductsOnly:
+    """The "nothing came back" message distinguishes *searched and found
+    nothing* from *there was nothing to search*."""
+
+    def test_no_data_error_names_every_host_product_cov_dir_triple(self, tmp_path):
+        from otto.coverage.errors import NoCoverageDataError
+        from otto.host import UnixHost
+
+        cov_dir = tmp_path / "cov"
+        cov_dir.mkdir()
+        repo = MagicMock()
+        repo.sut_dir = tmp_path
+        repo.name = "repo"
+        host = MagicMock(spec=UnixHost)
+        host.id = "test1"
+        host.products = [_product("app", "/var/cov/app"), _product("agent")]
+        with (
+            patch("otto.coverage.config.get_cov_config", return_value={"hosts": ".*"}),
+            patch("otto.config.all_hosts", return_value=[host]),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
+            patch(
+                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+                new=AsyncMock(return_value={}),
+            ),
+            pytest.raises(NoCoverageDataError) as excinfo,
+        ):
+            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+        assert str(excinfo.value) == (
+            "no .gcda counters retrieved from any product (searched: "
+            "test1:app:/var/cov/app, test1:agent:/tmp/agent)"
+        )
+
+    def test_an_embedded_product_is_searched_over_the_console_not_a_path(self, tmp_path):
+        """A board has no filesystem: its products dump over the serial console.
+
+        Printing ``cov_dir_of`` there names ``/tmp/<product>``, a path that
+        exists on no board — the reader goes looking for a directory instead of
+        at the console transcript.
+        """
+        from otto.coverage.errors import NoCoverageDataError
+        from otto.host.embedded_host import EmbeddedHost
+
+        cov_dir = tmp_path / "cov"
+        cov_dir.mkdir()
+        repo = MagicMock()
+        repo.sut_dir = tmp_path
+        repo.name = "repo"
+        board = MagicMock(spec=EmbeddedHost)
+        board.id = "bench-1"
+        board.products = [_product("blink")]
+        with (
+            patch("otto.coverage.config.get_cov_config", return_value={"hosts": ".*"}),
+            patch("otto.config.all_hosts", return_value=[board]),
+            patch(
+                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+                new=AsyncMock(return_value={}),
+            ),
+            pytest.raises(NoCoverageDataError) as excinfo,
+        ):
+            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+        assert str(excinfo.value) == (
+            "no .gcda counters retrieved from any product (searched: bench-1:blink:console)"
+        )
+        assert "/tmp/blink" not in str(excinfo.value)
+
+    def test_a_host_with_no_products_is_named_in_the_no_data_error(self, tmp_path):
+        from otto.coverage.errors import NoCoverageDataError
+        from otto.host import UnixHost
+
+        cov_dir = tmp_path / "cov"
+        cov_dir.mkdir()
+        repo = MagicMock()
+        repo.sut_dir = tmp_path
+        repo.name = "repo"
+        host = MagicMock(spec=UnixHost)
+        host.id = "test1"
+        host.products = []
+        with (
+            patch("otto.coverage.config.get_cov_config", return_value={"hosts": ".*"}),
+            patch("otto.config.all_hosts", return_value=[host]),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
+            patch(
+                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+                new=AsyncMock(return_value={}),
+            ),
+            pytest.raises(NoCoverageDataError) as excinfo,
+        ):
+            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+        assert str(excinfo.value) == (
+            "no .gcda counters retrieved from any product "
+            "(no instrumented products on any host: test1)"
+        )
 
 
 # ── clean_after_fetch — post-fetch remote-clean toggle ───────────────────────
@@ -203,17 +377,15 @@ class TestCleanAfterFetch:
 
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
-        board = cov_dir / "test1"
+        host.products = [_product("app", "/var/cov/app")]
+        board = cov_dir / "test1" / "app"
 
         fetcher_instance = MagicMock()
-        fetcher_instance.fetch_all = AsyncMock(return_value={"test1": board})
+        fetcher_instance.fetch_all = AsyncMock(return_value={("test1", "app"): board})
         fetcher_instance.clean_remote = AsyncMock(return_value=None)
 
         with (
-            patch(
-                "otto.coverage.config.get_cov_config",
-                return_value={"gcda_remote_dir": "/remote"},
-            ),
+            patch("otto.coverage.config.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.config.all_hosts", return_value=[host]),
             patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance),
             patch(
@@ -229,12 +401,14 @@ class TestCleanAfterFetch:
             )
         return result, fetcher_instance, board
 
-    def test_true_default_calls_clean_remote_when_unix_dirs_nonempty(self, tmp_path):
+    def test_true_default_calls_clean_remote_when_products_fetched(self, tmp_path):
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
         result, fetcher_instance, board = self._run(cov_dir)  # default True
-        fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
-        assert result.host_dirs == {"test1": board}
+        # clean_remote takes no arguments: it re-walks each host's instrumented
+        # products and deletes under each product's own cov_dir.
+        fetcher_instance.clean_remote.assert_awaited_once_with()
+        assert result.product_dirs == {("test1", "app"): board}
 
     def test_false_skips_internal_clean_remote(self, tmp_path):
         cov_dir = tmp_path / "cov"
@@ -242,30 +416,28 @@ class TestCleanAfterFetch:
         result, fetcher_instance, board = self._run(cov_dir, clean_after_fetch=False)
         fetcher_instance.clean_remote.assert_not_awaited()
         # The fetch still happened and its dirs are reported unchanged.
-        assert result.host_dirs == {"test1": board}
+        assert result.product_dirs == {("test1", "app"): board}
 
 
 # ── Embedded collection + metadata sidecar (moved from TestRunCoverageEmbedded)
 
 
 class TestCollectEmbedded:
-    """``collect_coverage`` collects embedded hosts even with no Unix
-    ``gcda_remote_dir``, and its ``.otto_cov_meta.json`` sidecar behaves exactly
-    as the old coverage-metadata writer did. Where a ``[coverage]`` repo resolves
-    (so the capture tail would fire), ``produce_captures`` is stubbed — these
-    tests pin metadata, not capture production."""
+    """``collect_coverage`` collects embedded boards' products, and its
+    ``.otto_cov_meta.json`` sidecar behaves exactly as the old coverage-metadata
+    writer did. Where a ``[coverage]`` repo resolves (so the capture tail would
+    fire), ``produce_captures`` is stubbed — these tests pin metadata, not
+    capture production."""
 
     def test_collects_embedded_when_only_embedded_configured(self, tmp_path):
         repo = MagicMock()
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
 
-        embedded_collect = AsyncMock(return_value={"zephyr37-fat": cov_dir / "zephyr37-fat"})
+        staged = cov_dir / "zephyr37-fat" / "cov_ext"
+        embedded_collect = AsyncMock(return_value={("zephyr37-fat", "cov_ext"): staged})
         with (
-            patch(
-                "otto.coverage.config.get_cov_config",
-                return_value={"embedded": {"extension": "cov_ext"}},
-            ),
+            patch("otto.coverage.config.get_cov_config", return_value={"embedded": {}}),
             patch("otto.config.all_hosts", return_value=[]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
             patch("otto.coverage.config.get_cov_repo", return_value=None),
@@ -274,7 +446,7 @@ class TestCollectEmbedded:
 
         embedded_collect.assert_awaited_once()
         assert isinstance(result, CollectResult)
-        assert result.host_dirs == {"zephyr37-fat": cov_dir / "zephyr37-fat"}
+        assert result.product_dirs == {("zephyr37-fat", "cov_ext"): staged}
         # No [coverage] repo → no captures produced.
         assert result.captures_written == []
 
@@ -304,6 +476,7 @@ class TestCollectEmbedded:
 
         hop = MagicMock(spec=UnixHost)
         hop.id = "test4"  # a Unix hop, produces no coverage
+        hop.products = []
 
         zephyr37_llext = ZephyrHost(
             ip="192.0.2.33",
@@ -316,16 +489,14 @@ class TestCollectEmbedded:
             ),
         )
 
-        embedded_collect = AsyncMock(return_value={"zephyr37-llext": cov_dir / "zephyr37-llext"})
-        cov_config = {
-            "embedded": {
-                "extension": "cov_ext",
-                "build_dir": str(build_dir),
-            },
-        }
+        embedded_collect = AsyncMock(
+            return_value={("zephyr37-llext", "cov_ext"): cov_dir / "zephyr37-llext" / "cov_ext"}
+        )
+        cov_config = {"embedded": {"build_dir": str(build_dir)}}
         with (
             patch("otto.coverage.config.get_cov_config", return_value=cov_config),
             patch("otto.config.all_hosts", return_value=[hop, zephyr37_llext]),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
             patch("otto.coverage.config.get_cov_repo", return_value=repo),
             patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
@@ -362,13 +533,10 @@ class TestCollectEmbedded:
         repo.name = "repo3"
         repo.sut_dir = tmp_path / "repo3"
 
-        embedded_collect = AsyncMock(return_value={"zephyr37-llext": cov_dir / "zephyr37-llext"})
-        cov_config = {
-            "embedded": {
-                "extension": "cov_ext",
-                "build_dir": str(build_dir),
-            },
-        }
+        embedded_collect = AsyncMock(
+            return_value={("zephyr37-llext", "cov_ext"): cov_dir / "zephyr37-llext" / "cov_ext"}
+        )
+        cov_config = {"embedded": {"build_dir": str(build_dir)}}
         with (
             patch("otto.coverage.config.get_cov_config", return_value=cov_config),
             patch("otto.config.all_hosts", return_value=[host]),
@@ -401,13 +569,10 @@ class TestCollectEmbedded:
         repo.name = "repo3"
         repo.sut_dir = tmp_path / "repo3"
 
-        embedded_collect = AsyncMock(return_value={"zephyr37-llext": cov_dir / "zephyr37-llext"})
-        cov_config = {
-            "embedded": {
-                "extension": "cov_ext",
-                "build_dir": str(build_dir),
-            },
-        }
+        embedded_collect = AsyncMock(
+            return_value={("zephyr37-llext", "cov_ext"): cov_dir / "zephyr37-llext" / "cov_ext"}
+        )
+        cov_config = {"embedded": {"build_dir": str(build_dir)}}
 
         discovered = Toolchain(
             sysroot=Path("/discovered"),
@@ -448,7 +613,7 @@ class TestCollectEmbedded:
         with (
             patch(
                 "otto.coverage.config.get_cov_config",
-                return_value={"hosts": "zephyr37_llext", "embedded": {"extension": "cov_ext"}},
+                return_value={"hosts": "zephyr37_llext", "embedded": {}},
             ),
             patch("otto.config.all_hosts", new=all_hosts_mock),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
@@ -476,10 +641,7 @@ class TestCollectEmbedded:
         all_hosts_mock = MagicMock(return_value=[])
         embedded_collect = AsyncMock(return_value={})
         with (
-            patch(
-                "otto.coverage.config.get_cov_config",
-                return_value={"embedded": {"extension": "cov_ext"}},
-            ),
+            patch("otto.coverage.config.get_cov_config", return_value={"embedded": {}}),
             patch("otto.config.all_hosts", new=all_hosts_mock),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
             patch("otto.coverage.config.get_cov_repo", return_value=None),
@@ -533,13 +695,12 @@ class TestCollectEmbedded:
 
         embedded_collect = AsyncMock(
             return_value={
-                "zephyr37-fat": cov_dir / "zephyr37-fat",
-                "zephyr44-fat": cov_dir / "zephyr44-fat",
+                ("zephyr37-fat", "cov_ext"): cov_dir / "zephyr37-fat" / "cov_ext",
+                ("zephyr44-fat", "cov_ext"): cov_dir / "zephyr44-fat" / "cov_ext",
             }
         )
         cov_config = {
             "embedded": {
-                "extension": "cov_ext",
                 "builds": {
                     "3.7": {"build_dir": str(build37)},
                     "4.4": {"build_dir": str(build44)},
@@ -558,6 +719,67 @@ class TestCollectEmbedded:
         meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
         assert meta["source_roots"]["zephyr37-fat"] == str(build37.resolve())
         assert meta["source_roots"]["zephyr44-fat"] == str(build44.resolve())
+
+
+class TestFetchedToolchainMetadata:
+    """``.otto_cov_meta.json`` records a toolchain per *fetched* host — except a
+    container, whose compiler lives in the image rather than in the host record."""
+
+    def test_a_container_host_is_left_out_of_the_toolchains_map(self, tmp_path):
+        from otto.host import UnixHost
+        from otto.host.docker_host import DockerContainerHost
+        from otto.host.toolchain import Toolchain
+
+        cov_dir = tmp_path / "cov"
+        cov_dir.mkdir()
+        repo = MagicMock()
+        repo.name = "repo1"
+        repo.sut_dir = tmp_path / "repo1"
+
+        unix = MagicMock(spec=UnixHost)
+        unix.id = "test1"
+        unix.products = [_product("app", "/var/cov/app")]
+        unix.toolchain = Toolchain()  # nothing declared in lab data → the default
+        container = MagicMock(spec=DockerContainerHost)
+        container.id = "test3.repo1.api"
+        container.products = [_product("api", "/var/cov/api")]
+        # A container answers `.toolchain` too — it inherits BaseHost's default
+        # field — so the skip cannot key off the VALUE being absent.
+        container.toolchain = Toolchain()
+
+        fetcher = MagicMock()
+        fetcher.fetch_all = AsyncMock(
+            return_value={
+                ("test1", "app"): cov_dir / "test1" / "app",
+                ("test3.repo1.api", "api"): cov_dir / "test3.repo1.api" / "api",
+            }
+        )
+        fetcher.clean_remote = AsyncMock(return_value=None)
+
+        with (
+            patch("otto.coverage.config.get_cov_config", return_value={"hosts": ".*"}),
+            patch("otto.config.all_hosts", return_value=[unix, container]),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher),
+            patch(
+                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+                new=AsyncMock(return_value={}),
+            ),
+            patch("otto.coverage.config.get_cov_repo", return_value=repo),
+            patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
+        ):
+            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+
+        meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
+        # The Unix host is recorded even at the DEFAULT toolchain: an
+        # undeclared toolchain there genuinely means "the runner's gcov".
+        assert meta["toolchains"]["test1"] == {
+            "sysroot": "/",
+            "lcov": "usr/bin/lcov",
+            "gcov": "usr/bin/gcov",
+        }
+        # The container is not, so the reporter discovers the compiler from the
+        # .gcno under its product dir instead of using the runner's gcov.
+        assert "test3.repo1.api" not in meta["toolchains"]
 
 
 class TestBuildDirPathAnchoring:
@@ -593,7 +815,9 @@ class TestBuildDirPathAnchoring:
     def _collect(self, tmp_path, repo, host, cov_config):
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        embedded_collect = AsyncMock(return_value={host.id: cov_dir / host.id})
+        embedded_collect = AsyncMock(
+            return_value={(host.id, "cov_ext"): cov_dir / host.id / "cov_ext"}
+        )
         with (
             patch("otto.coverage.config.get_cov_config", return_value=cov_config),
             patch("otto.config.all_hosts", return_value=[host]),
@@ -624,7 +848,7 @@ class TestBuildDirPathAnchoring:
         repo.sut_dir = repo_root
 
         host = self._zephyr_host(element="zephyr37_llext")
-        cov_config = {"embedded": {"extension": "cov_ext", "build_dir": "build"}}
+        cov_config = {"embedded": {"build_dir": "build"}}
 
         meta = self._collect(tmp_path, repo, host, cov_config)
         assert meta["sut_dir"] == str((repo_root / "build").resolve())
@@ -645,7 +869,7 @@ class TestBuildDirPathAnchoring:
         repo.sut_dir = tmp_path / "repo3"
 
         host = self._zephyr_host(element="zephyr37_llext")
-        cov_config = {"embedded": {"extension": "cov_ext", "build_dir": "~/covbuild"}}
+        cov_config = {"embedded": {"build_dir": "~/covbuild"}}
 
         meta = self._collect(tmp_path, repo, host, cov_config)
         assert meta["sut_dir"] == str(build_dir.resolve())
@@ -670,12 +894,7 @@ class TestBuildDirPathAnchoring:
         repo.sut_dir = repo_root
 
         host = self._zephyr_host(element="zephyr37_fat", os_version="3.7")
-        cov_config = {
-            "embedded": {
-                "extension": "cov_ext",
-                "builds": {"3.7": {"build_dir": "build/v3_7"}},
-            },
-        }
+        cov_config = {"embedded": {"builds": {"3.7": {"build_dir": "build/v3_7"}}}}
 
         meta = self._collect(tmp_path, repo, host, cov_config)
         assert meta["source_roots"]["zephyr37-fat"] == str((repo_root / "build" / "v3_7").resolve())
@@ -695,12 +914,7 @@ class TestBuildDirPathAnchoring:
         repo.sut_dir = tmp_path / "repo3"
 
         host = self._zephyr_host(element="zephyr37_fat", os_version="3.7")
-        cov_config = {
-            "embedded": {
-                "extension": "cov_ext",
-                "builds": {"3.7": {"build_dir": "~/v3_7"}},
-            },
-        }
+        cov_config = {"embedded": {"builds": {"3.7": {"build_dir": "~/v3_7"}}}}
 
         meta = self._collect(tmp_path, repo, host, cov_config)
         assert meta["source_roots"]["zephyr37-fat"] == str(build_dir.resolve())
@@ -716,7 +930,7 @@ class TestCaptureTail:
 
     def _collect(self, repo, cov_dir, cov_config):
         """Drive collect_coverage with one embedded board already collected."""
-        embedded_collect = AsyncMock(return_value={"board1": cov_dir / "board1"})
+        embedded_collect = AsyncMock(return_value={("board1", "app"): cov_dir / "board1"})
         with (
             patch("otto.coverage.config.get_cov_config", return_value=cov_config),
             patch("otto.config.all_hosts", return_value=[]),
@@ -731,8 +945,8 @@ class TestCaptureTail:
         from otto.coverage.capture import produce as produce_mod
 
         cov_dir = tmp_path / "cov"
-        (cov_dir / "board1").mkdir(parents=True)
-        (cov_dir / "board1" / "x.gcda").write_bytes(b"")
+        (cov_dir / "board1" / "app").mkdir(parents=True)
+        (cov_dir / "board1" / "app" / "x.gcda").write_bytes(b"")
 
         async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
             output.write_text(f"TN:\nSF:{sut_repo / 'f.c'}\nDA:1,3\nend_of_record\n")
@@ -748,7 +962,7 @@ class TestCaptureTail:
         # single "system" e2e tier.
         result = self._collect(repo, cov_dir, {"tiers": {}})
 
-        capture_path = cov_dir / "board1" / "capture.json"
+        capture_path = cov_dir / "board1" / "app" / "capture.json"
         assert capture_path.is_file()
         assert json.loads(capture_path.read_text())["tier"] == "system"
         assert result.captures_written == [capture_path]
@@ -759,8 +973,8 @@ class TestCaptureTail:
         from otto.coverage.capture import produce as produce_mod
 
         cov_dir = tmp_path / "cov"
-        (cov_dir / "board1").mkdir(parents=True)
-        (cov_dir / "board1" / "x.gcda").write_bytes(b"")
+        (cov_dir / "board1" / "app").mkdir(parents=True)
+        (cov_dir / "board1" / "app" / "x.gcda").write_bytes(b"")
 
         async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
             output.write_text(f"TN:\nSF:{sut_repo / 'f.c'}\nDA:1,3\nend_of_record\n")
@@ -782,7 +996,7 @@ class TestCaptureTail:
         with pytest.raises(ValueError, match=r"e2e-kind tiers"):
             self._collect(repo, cov_dir, cov_config)
 
-        assert not (cov_dir / "board1" / "capture.json").exists()
+        assert not (cov_dir / "board1" / "app" / "capture.json").exists()
 
     def test_non_git_sut_raises(self, tmp_path, monkeypatch):
         """A non-git sut dir now raises (GitUnavailableError, a RuntimeError)."""
@@ -790,8 +1004,8 @@ class TestCaptureTail:
         from otto.coverage.capture.gitio import GitUnavailableError
 
         cov_dir = tmp_path / "cov"
-        (cov_dir / "board1").mkdir(parents=True)
-        (cov_dir / "board1" / "x.gcda").write_bytes(b"")
+        (cov_dir / "board1" / "app").mkdir(parents=True)
+        (cov_dir / "board1" / "app" / "x.gcda").write_bytes(b"")
 
         notgit = tmp_path / "notgit"
         notgit.mkdir()
@@ -819,7 +1033,7 @@ class TestCaptureTail:
         cov_dir.mkdir()
 
         produce_mock = AsyncMock(return_value=[cov_dir / "board1" / "capture.json"])
-        embedded_collect = AsyncMock(return_value={"board1": cov_dir / "board1"})
+        embedded_collect = AsyncMock(return_value={("board1", "app"): cov_dir / "board1"})
         cov_config = {
             "tiers": {
                 "manual": {"kind": "manual", "precedence": 1},
@@ -875,7 +1089,7 @@ class TestTierPassthrough:
 
         tier_obj = TierConfig(name="manual", kind="manual", precedence=1, color="red")
         produce_mock = AsyncMock(return_value=[cov_dir / "board1" / "capture.json"])
-        embedded_collect = AsyncMock(return_value={"board1": cov_dir / "board1"})
+        embedded_collect = AsyncMock(return_value={("board1", "app"): cov_dir / "board1"})
         with (
             patch("otto.coverage.config.get_cov_config", return_value={"tiers": {}}),
             patch("otto.config.all_hosts", return_value=[]),
@@ -903,7 +1117,7 @@ class TestPostRunSwallowPolicy:
     def _drive_post_run(self, repo, cov_dir, cov_config):
         from otto.suite.run import RunOptions, _post_run_coverage
 
-        embedded_collect = AsyncMock(return_value={"board1": cov_dir / "board1"})
+        embedded_collect = AsyncMock(return_value={("board1", "app"): cov_dir / "board1"})
         opts = RunOptions(cov=True, cov_report=False, cov_dir=cov_dir)
         with (
             patch("otto.coverage.config.get_cov_config", return_value=cov_config),
@@ -915,8 +1129,8 @@ class TestPostRunSwallowPolicy:
 
     def test_ambiguous_tiers_do_not_fail_the_run(self, tmp_path, sut_repo, caplog):
         cov_dir = tmp_path / "cov"
-        (cov_dir / "board1").mkdir(parents=True)
-        (cov_dir / "board1" / "x.gcda").write_bytes(b"")
+        (cov_dir / "board1" / "app").mkdir(parents=True)
+        (cov_dir / "board1" / "app" / "x.gcda").write_bytes(b"")
 
         repo = MagicMock()
         repo.sut_dir = sut_repo
@@ -932,15 +1146,15 @@ class TestPostRunSwallowPolicy:
         with caplog.at_level("WARNING"):
             self._drive_post_run(repo, cov_dir, cov_config)
 
-        assert not (cov_dir / "board1" / "capture.json").exists()
+        assert not (cov_dir / "board1" / "app" / "capture.json").exists()
         assert any("Coverage collection failed" in rec.message for rec in caplog.records)
 
     def test_non_git_sut_does_not_fail_the_run(self, tmp_path, monkeypatch, caplog):
         from otto.coverage.capture import produce as produce_mod
 
         cov_dir = tmp_path / "cov"
-        (cov_dir / "board1").mkdir(parents=True)
-        (cov_dir / "board1" / "x.gcda").write_bytes(b"")
+        (cov_dir / "board1" / "app").mkdir(parents=True)
+        (cov_dir / "board1" / "app" / "x.gcda").write_bytes(b"")
 
         notgit = tmp_path / "notgit"
         notgit.mkdir()
@@ -959,7 +1173,7 @@ class TestPostRunSwallowPolicy:
         with caplog.at_level("WARNING"):
             self._drive_post_run(repo, cov_dir, {"tiers": {}})
 
-        assert not (cov_dir / "board1" / "capture.json").exists()
+        assert not (cov_dir / "board1" / "app" / "capture.json").exists()
         assert any("Coverage collection failed" in rec.message for rec in caplog.records)
 
 
@@ -979,10 +1193,7 @@ class TestCleanRemoteGcda:
         fetcher_instance.clean_remote = AsyncMock(return_value=None)
 
         with (
-            patch(
-                "otto.coverage.config.get_cov_config",
-                return_value={"gcda_remote_dir": "/remote"},
-            ),
+            patch("otto.coverage.config.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.config.all_hosts", return_value=[host]),
             patch(
                 "otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance
@@ -991,7 +1202,10 @@ class TestCleanRemoteGcda:
             asyncio.run(clean_remote_gcda([MagicMock()]))
 
         fetcher_cls.assert_called_once()
-        fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
+        # The selector rides along so the clean walks exactly the coverage hosts.
+        assert fetcher_cls.call_args.kwargs["pattern"].pattern == ".*"
+        # No argument: the clean re-walks each host's instrumented products.
+        fetcher_instance.clean_remote.assert_awaited_once_with()
         host.rebuild_connections.assert_called_once()
 
     def test_no_config_skips_clean_but_still_rebuilds(self):
@@ -1009,22 +1223,34 @@ class TestCleanRemoteGcda:
         fetcher_cls.assert_not_called()
         host.rebuild_connections.assert_called_once()
 
-    def test_no_gcda_remote_dir_warns_and_rebuilds(self, caplog):
+    def test_no_hosts_in_the_lab_skips_the_clean(self):
+        """A configured lab with no hosts has nothing to clean — and no fetcher
+        is built for it (the clean would fan out over an empty host walk)."""
         from otto.coverage.collect import clean_remote_gcda
-        from otto.host import UnixHost
 
-        host = MagicMock(spec=UnixHost)
         with (
-            patch(
-                "otto.coverage.config.get_cov_config",
-                return_value={"embedded": {"extension": "cov_ext"}},
-            ),
-            patch("otto.config.all_hosts", return_value=[host]),
+            patch("otto.coverage.config.get_cov_config", return_value={"hosts": ".*"}),
+            patch("otto.config.all_hosts", return_value=[]),
             patch("otto.coverage.fetcher.remote.GcdaFetcher") as fetcher_cls,
-            caplog.at_level("WARNING"),
         ):
             asyncio.run(clean_remote_gcda([MagicMock()]))
 
         fetcher_cls.assert_not_called()
-        host.rebuild_connections.assert_called_once()
-        assert any("gcda_remote_dir not configured" in rec.message for rec in caplog.records)
+
+    def test_a_malformed_selector_is_refused_by_name(self):
+        """The ``[coverage].hosts`` loader runs here too, so a wrong shape is
+        refused before any host is touched — as it is in ``collect_coverage``."""
+        from otto.coverage.collect import clean_remote_gcda
+        from otto.coverage.errors import CoverageConfigError
+        from otto.host import UnixHost
+
+        host = MagicMock(spec=UnixHost)
+        with (
+            patch("otto.coverage.config.get_cov_config", return_value={"hosts": 123}),
+            patch("otto.config.all_hosts", return_value=[host]),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher") as fetcher_cls,
+            pytest.raises(CoverageConfigError, match="hosts must be a string"),
+        ):
+            asyncio.run(clean_remote_gcda([MagicMock()]))
+
+        fetcher_cls.assert_not_called()

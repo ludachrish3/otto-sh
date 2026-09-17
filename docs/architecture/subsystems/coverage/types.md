@@ -169,14 +169,14 @@ generated with — including a report opened years later from a bundle built
 against different settings. Persisting the cutoffs in the store is what
 makes that possible.
 
-## The store (v7)
+## The store (v8)
 
 `store.json` is the canonical, versioned artifact `otto cov report`
 writes for downstream consumers — external tooling, a foreign report
 viewer — to read back; the in-process renderer consumes the same store
 directly, in memory, before it is ever serialized. `CoverageStore.save`/
 `.load` (`otto.coverage.store.model`) stamp every file with a top-level
-`"format"` key equal to `STORE_FORMAT_VERSION` (`7`). The loader is
+`"format"` key equal to `STORE_FORMAT_VERSION` (`8`). The loader is
 **exact-match**: a file whose `"format"` is missing, the wrong type, or
 any version other than the one the running otto expects fails loud with
 a `ValueError` naming both versions and telling the caller to
@@ -235,10 +235,15 @@ deliberately does **not** share this version counter; see
 - **`id`**, **`tier`** — index into `runs`, and the tier this run credits.
 - **`label`** — what a drilldown chip shows: the host display name when
   the capture carries one, else the board id, else the tier name.
-- **`board`**, **`host`** — the capture's board id. `host` is the explicit
-  host identity, `""` for a synthetic or legacy-merged run with no single
-  host behind it; together with `tier` and `label` it forms the
-  `(tier, label, host)` context identity supersede keys on ({doc}`merging`).
+- **`board`**, **`host`**, **`product`** — the capture's board id. `host` is
+  the explicit host identity, `""` for a synthetic or legacy-merged run with
+  no single host behind it. `product` (v8) is the `<product>` segment the
+  capture was produced from, `""` for a synthetic run or an unnamed unit
+  harvest, which name no product; together with `tier` and `label` the four
+  form the `(tier, label, host, product)` context identity supersede keys on
+  ({doc}`merging`). Product belongs in that identity because one host can
+  carry several instrumented products, and without it the second would
+  supersede the first.
 - **`labs`**, **`captured_at`**, **`tester`**, **`ticket`**, **`note`**,
   **`base_commit`**, **`dirty_remap`**, **`aging`** — capture provenance,
   carried straight through from `capture.json`.
@@ -276,17 +281,18 @@ changes what counts as covered.
 ### Per-host breakdowns are derived, not stored
 
 The schema carries no per-line host data at all. One capture is exactly one
-host and exactly one run, so grouping a line's `run` map (run id → hit
-count) by that run's `RunRecord.host` reconstructs per-host line counts
-without a persisted per-host table; this is pinned by
+host, one product, and one run, so grouping a line's `run` map (run id → hit
+count) by that run's `RunRecord.host` (or `RunRecord.product`) reconstructs
+per-host and per-product line counts without a persisted table for either;
+this is pinned by
 `tests/unit/cov/test_model.py::TestRunHost::test_per_host_lines_derivable_from_run_hits`.
 
 **Known limitation:** the legacy multi-host `.gcda`-merge fallback
-(board directories with no `capture.json` — back-compat with pre-tier
+(product directories with no `capture.json` — back-compat with pre-tier
 output directories) still collapses every host it merged into one
 synthetic run with `host = ""`. `lcov`'s counter merge combines hosts
 before otto ever sees per-board data, so there is no host identity left
 to attribute by the time a run is registered; host attribution
-requires the per-board capture path (`otto cov get` / `otto test
---cov`, one `capture.json` per board). A report built solely from the
+requires the per-product capture path (`otto cov get` / `otto test
+--cov`, one `capture.json` per host per product). A report built solely from the
 legacy fallback therefore has no per-host data to derive.

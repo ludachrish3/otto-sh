@@ -141,6 +141,23 @@ describe("RunsPage", () => {
     expect(meta).toContain("2026-07-23 14:02 UTC");
   });
 
+  it("counts one host as one host when it reports two products", () => {
+    // The host pills carry the PRODUCT too ("h1 · app"), so counting pill
+    // strings made a single host with two products read as "2 hosts".
+    const index = makeIndex({
+      runs: [
+        makeRun({ id: 1, label: "nightly", host: "h1", product: "app" }),
+        makeRun({ id: 2, label: "nightly", host: "h1", product: "agent" }),
+      ],
+    });
+    renderPage(index);
+
+    const row = screen.getByTestId("run-row-nightly");
+    expect(row.textContent).toContain("h1 · app");
+    expect(row.textContent).toContain("h1 · agent");
+    expect(screen.getByTestId("page-meta").textContent ?? "").toContain("· 1 hosts");
+  });
+
   it("renders the whole-repo stats card, same rows as the directory root", () => {
     const index = buildIndex();
     renderPage(index);
@@ -350,6 +367,128 @@ describe("RunsPage", () => {
       expect(screen.getByTestId("stats-card").textContent).toContain("focused: unit harvest");
     });
   });
+
+  // Per-product spec §10: this page owns the product chip row (the app bar's
+  // ⋮ menu owns the same pin globally) — pinning narrows the ROWS as well as
+  // the stats card, unlike run focus, which leaves every row on screen.
+  describe("product chips", () => {
+    function buildProductIndex(): IndexPayload {
+      return buildIndex({
+        products: ["agent", "app"],
+        // nightly-full (ids 1+2) is the only `app` context; unit harvest,
+        // field bring-up and smoke-2025 are all `agent`, so a pin can
+        // actually be seen to drop rows.
+        runs: RUNS.map((run) => ({ ...run, product: run.tier === "system" ? "app" : "agent" })),
+      });
+    }
+
+    it("renders a chip per product plus 'All products'; a report with no products renders none", () => {
+      renderPage(buildProductIndex());
+      expect(screen.getByTestId("product-chip-all")).toBeTruthy();
+      expect(screen.getByTestId("product-chip-app").textContent).toBe("app");
+      expect(screen.getByTestId("product-chip-agent")).toBeTruthy();
+
+      cleanup();
+      renderPage(buildIndex());
+      expect(screen.queryByTestId("product-chip-all")).toBeNull();
+      expect(screen.queryByTestId("product-chip-app")).toBeNull();
+    });
+
+    it("clicking a product chip pins ?product=, narrows the rows, and heads the key column 'Product'", () => {
+      const index = buildProductIndex();
+      window.__OTTO_COV__ = index;
+      renderPage(index);
+
+      fireEvent.click(screen.getByTestId("product-chip-app"));
+
+      expect(screen.getByTestId("run-row-nightly-full")).toBeTruthy();
+      expect(screen.queryByTestId("run-row-unit harvest")).toBeNull();
+      expect(screen.queryByTestId("run-row-field bring-up")).toBeNull();
+      expect(window.location.hash).toContain("product=app");
+
+      const card = screen.getByTestId("stats-card");
+      expect(card.textContent).toContain("focused: app");
+      expect(card.textContent).toContain("Product");
+      expect(screen.getByTestId("stats-row-ctx")).toBeTruthy();
+    });
+
+    it("'All products' restores every row and clears the pin", () => {
+      const index = buildProductIndex();
+      window.__OTTO_COV__ = index;
+      renderPage(index);
+
+      fireEvent.click(screen.getByTestId("product-chip-app"));
+      fireEvent.click(screen.getByTestId("product-chip-all"));
+
+      expect(screen.getByTestId("run-row-unit harvest")).toBeTruthy();
+      expect(screen.getByTestId("stats-card").textContent).toContain("all contexts");
+      expect(window.location.hash).not.toContain("product=");
+    });
+
+    it("a tier chip and a product pin compose as AND, not as either-or", () => {
+      // smoke-2025 is made an `app` context here so the manual tier holds
+      // BOTH products: the tier chip alone would keep it, the product pin
+      // alone would keep unit harvest — only the conjunction drops both.
+      const base = buildProductIndex();
+      const index = {
+        ...base,
+        runs: base.runs.map((run) =>
+          run.label === "smoke-2025" ? { ...run, product: "app" } : run,
+        ),
+      };
+      window.__OTTO_COV__ = index;
+      renderPage(index);
+
+      fireEvent.click(screen.getByTestId("product-chip-agent"));
+      fireEvent.click(screen.getByTestId("tier-chip-manual"));
+
+      // manual ∧ agent
+      expect(screen.getByTestId("run-row-field bring-up")).toBeTruthy();
+      // manual but NOT agent
+      expect(screen.queryByTestId("run-row-smoke-2025")).toBeNull();
+      // agent but NOT manual
+      expect(screen.queryByTestId("run-row-unit harvest")).toBeNull();
+      // neither
+      expect(screen.queryByTestId("run-row-nightly-full")).toBeNull();
+    });
+
+    it("an EMPTY ctx ∧ product intersection falls back to the unscoped card and rows", () => {
+      // nightly-full is `app`-only, so pinning `agent` on top of it leaves
+      // no member run at all. The honest answer is the unscoped report —
+      // never a scoped card reading zeros, and never an emptied row list.
+      const index = buildProductIndex();
+      window.__OTTO_COV__ = index;
+      renderPage(index);
+
+      fireEvent.click(screen.getByTestId("run-row-nightly-full"));
+      fireEvent.click(screen.getByTestId("focus-context-btn"));
+      fireEvent.click(screen.getByTestId("product-chip-agent"));
+
+      const card = screen.getByTestId("stats-card");
+      expect(card.textContent).toContain("all contexts");
+      expect(card.textContent).toContain("Tier");
+      expect(screen.getByTestId("stats-row-all")).toBeTruthy();
+      expect(screen.queryByTestId("stats-row-ctx")).toBeNull();
+
+      // Rows: unfiltered, including the `app` context whose pin is inert.
+      expect(screen.getByTestId("run-row-unit harvest")).toBeTruthy();
+      expect(screen.getByTestId("run-row-nightly-full")).toBeTruthy();
+    });
+
+    it("a context ∧ product pin names both halves on the stats card", () => {
+      const index = buildProductIndex();
+      window.__OTTO_COV__ = index;
+      renderPage(index);
+
+      fireEvent.click(screen.getByTestId("run-row-nightly-full"));
+      fireEvent.click(screen.getByTestId("focus-context-btn"));
+      fireEvent.click(screen.getByTestId("product-chip-app"));
+
+      const card = screen.getByTestId("stats-card");
+      expect(card.textContent).toContain("focused: nightly-full · app");
+      expect(card.textContent).toContain("Context · Product");
+    });
+  });
 });
 
 // Task 11 fix round (review I1): the "Coverage — whole repo" card is the
@@ -374,6 +513,8 @@ describe("RunsPage: hideAsserted (Task 11 fix round)", () => {
           branches: { total: 0, hit: 0, per_tier: {} },
           flags: { stale: 0, aging: 0, excluded: 0 },
           ctx_lines: {},
+          product_lines: {},
+          ctx_product_lines: {},
         },
       },
     });

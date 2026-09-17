@@ -293,11 +293,11 @@ def test_settings_allows_typed_coverage():
     m = SettingsModel.model_validate(
         {
             **_minimal(),
-            "coverage": {"gcda_remote_dir": "/var/cov", "embedded": {"extension": "cov"}},
+            "coverage": {"hosts": "cov_.*", "embedded": {"build_dir": "build"}},
         }
     )
-    assert m.coverage.gcda_remote_dir == "/var/cov"
-    assert m.coverage.embedded == {"extension": "cov"}
+    assert m.coverage.hosts == "cov_.*"
+    assert m.coverage.embedded == {"build_dir": "build"}
 
 
 @pytest.mark.parametrize(
@@ -725,6 +725,42 @@ def test_coverage_overrides_unknown_key_fails():
         ValidationError, match=r"(?m)^overrides\.path\n\s+Extra inputs are not permitted"
     ):
         CoverageSettingsSpec.model_validate({"overrides": {"path": "x"}})
+
+
+def test_coverage_tier_products_keys_must_be_product_names():
+    with pytest.raises(ValidationError, match="product name"):
+        SettingsModel.model_validate(
+            {
+                "name": "r",
+                "coverage": {
+                    "tiers": {
+                        "unit": {
+                            "kind": "unit",
+                            "precedence": 2,
+                            "products": {"debug": ["build"]},
+                        }
+                    }
+                },
+            }
+        )
+
+
+def test_coverage_tier_products_is_unit_only():
+    with pytest.raises(ValidationError, match=r"products.*unit"):
+        SettingsModel.model_validate(
+            {
+                "name": "r",
+                "coverage": {
+                    "tiers": {
+                        "e2e": {
+                            "kind": "e2e",
+                            "precedence": 1,
+                            "products": {"app": ["build"]},
+                        }
+                    }
+                },
+            }
+        )
 
 
 def test_project_block_accepts_patterns():

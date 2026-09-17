@@ -37,7 +37,10 @@ logger = logging.getLogger(__name__)
 
 PRODUCT_DIR = Path(__file__).resolve().parent.parent / "product"
 REMOTE_INSTALL_DIR = "/opt/coverage_product"
-GCDA_REMOTE_DIR = "/var/coverage/product"
+
+PRODUCT_NAME = "product"
+"""The ``[[products]]`` entry this suite deploys — the name otto keys the run
+tree's ``cov/<host>/<product>/`` segment and each capture's ``product`` by."""
 
 # Match bare UnixHost ids (e.g. ``test3``) and exclude the
 # dotted ``<parent>.<project>.<service>`` ids of DockerContainerHost
@@ -72,11 +75,26 @@ async def _compile_product() -> None:
         await localhost.close()
 
 
+def _cov_dir(host: UnixHost) -> str:
+    """The host-side coverage directory *host*'s ``product`` entry declares.
+
+    The single source of truth for ``GCOV_PREFIX``: otto's collector discovers
+    ``.gcda`` under exactly this directory (``Product.cov_dir``, stamped
+    concrete at lab ingest), so the suite must write them there rather than
+    keep its own copy of the path. A repo-level constant is how the two halves
+    silently stop agreeing.
+    """
+    product = next(p for p in host.products if p.name == PRODUCT_NAME)
+    assert product.cov_dir is not None, f"{host.id}: {PRODUCT_NAME} cov_dir was not stamped"
+    return product.cov_dir
+
+
 async def _install_on_host(host: UnixHost) -> None:
     """Deploy the compiled product binary to a remote host."""
     # Create directories on remote
-    await host.exec(f"sudo mkdir -p {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
-    await host.exec(f"sudo chmod 777 {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
+    cov_dir = _cov_dir(host)
+    await host.exec(f"sudo mkdir -p {REMOTE_INSTALL_DIR} {cov_dir}", timeout=10)
+    await host.exec(f"sudo chmod 777 {REMOTE_INSTALL_DIR} {cov_dir}", timeout=10)
 
     # Upload the binary
     binary = PRODUCT_DIR / "product"
@@ -93,7 +111,7 @@ async def _install_on_host(host: UnixHost) -> None:
 
 async def _uninstall_from_host(host: UnixHost) -> None:
     """Remove the product and coverage data from a remote host."""
-    await host.exec(f"sudo rm -rf {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
+    await host.exec(f"sudo rm -rf {REMOTE_INSTALL_DIR} {_cov_dir(host)}", timeout=10)
     logger.info("Uninstalled product from %s", host.id)
 
 
@@ -103,12 +121,12 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
     Returns the stdout output from the product.
     """
     # Compute GCOV_PREFIX_STRIP: strip all path components from the
-    # build directory so .gcda files land flat in GCDA_REMOTE_DIR.
+    # build directory so .gcda files land flat in the product's cov_dir.
     strip = len(PRODUCT_DIR.parts) - 1  # -1 for root '/'
 
     str_args = " ".join(str(a) for a in args)
     cmd = (
-        f"GCOV_PREFIX={GCDA_REMOTE_DIR} "
+        f"GCOV_PREFIX={_cov_dir(host)} "
         f"GCOV_PREFIX_STRIP={strip} "
         f"{REMOTE_INSTALL_DIR}/product {op} {str_args}"
     )
@@ -206,7 +224,7 @@ class TestCoverageProduct(OttoSuite):
         """
         host = self._hosts[0]
         result = await host.exec(
-            f"GCOV_PREFIX={GCDA_REMOTE_DIR} "
+            f"GCOV_PREFIX={_cov_dir(host)} "
             f"GCOV_PREFIX_STRIP={len(PRODUCT_DIR.parts) - 1} "
             f"{REMOTE_INSTALL_DIR}/product div 1 0",
             timeout=10,

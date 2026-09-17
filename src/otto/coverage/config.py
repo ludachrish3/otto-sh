@@ -25,9 +25,7 @@ if TYPE_CHECKING:
 
 def has_cov_config(cov: dict[str, Any]) -> bool:
     """Return True when the repo actually declared coverage settings."""
-    return bool(
-        cov.get("gcda_remote_dir") or cov.get("embedded") or cov.get("tiers") or cov.get("hosts")
-    )
+    return bool(cov.get("embedded") or cov.get("tiers") or cov.get("hosts"))
 
 
 def get_cov_repo(repos: "list[Repo]") -> "Repo | None":

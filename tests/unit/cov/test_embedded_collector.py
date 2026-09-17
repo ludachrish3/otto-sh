@@ -20,12 +20,24 @@ from tests._fixtures.paths import TESTS_ROOT
 FIXTURES = TESTS_ROOT / "unit" / "fixtures" / "embedded_coverage"
 
 
-def _mock_embedded_host(host_id: str, console_output: str) -> MagicMock:
+def _llext_product(name: str = "cov_ext", dump_fn: str = "cov_dump", verdict: bool = True):
+    p = MagicMock()
+    p.name = name
+    p.dump_fn = dump_fn
+    p.instrumented = MagicMock(return_value=verdict)
+    return p
+
+
+def _mock_embedded_host(host_id: str, console_output: str, *, products=None) -> MagicMock:
+    from otto.host.binary_loader import LlextHexLoader
+
     host = MagicMock(spec=EmbeddedHost)
     host.id = host_id
+    host.loader = LlextHexLoader()
     host.exec = AsyncMock(
         return_value=CommandResult(Status.Success, value=console_output, command="dump", retcode=0),
     )
+    host.products = [_llext_product()] if products is None else products
     return host
 
 
@@ -69,22 +81,19 @@ def test_decode_cov_dump_reconstructs_gcda_from_console_capture():
 
 @pytest.mark.asyncio
 async def test_collect_one_host_lays_out_decoded_gcda_under_per_host_dir(tmp_path):
-    """The collector drives `cov_dump` over the console and writes the decoded
-    `.gcda` to `staging_root/<host.id>/`, the same layout GcdaFetcher produces.
-    """
+    """The collector drives the product's dump over the console via the board's
+    loader and writes the decoded `.gcda` to `<staging_root>/<host.id>/<product>/`, the
+    same layout GcdaFetcher produces."""
     console = (FIXTURES / "cov_dump_console.txt").read_text()
     expected = (FIXTURES / "cov_ext.c.gcda").read_bytes()
     host = _mock_embedded_host("zephyr37-llext", console)
 
-    dest = await _collect_one_embedded_host(
-        host,
-        "llext call_fn cov cov_dump",
-        tmp_path,
-    )
+    dest = await _collect_one_embedded_host(host, tmp_path)
 
-    assert dest == tmp_path / "zephyr37-llext"
-    assert (dest / "cov_ext.c.gcda").read_bytes() == expected
+    assert dest == {"cov_ext": tmp_path / "zephyr37-llext" / "cov_ext"}
+    assert (dest["cov_ext"] / "cov_ext.c.gcda").read_bytes() == expected
     host.exec.assert_awaited_once()
+    assert host.exec.await_args[0][0] == "llext call_fn cov_ext cov_dump"
 
 
 @pytest.mark.asyncio
@@ -94,14 +103,59 @@ async def test_collect_one_host_skips_non_embedded_hosts(tmp_path):
     unix_host.id = "test1"
     unix_host.exec = AsyncMock()
 
-    dest = await _collect_one_embedded_host(
-        unix_host,
-        "llext call_fn cov cov_dump",
-        tmp_path,
-    )
+    dest = await _collect_one_embedded_host(unix_host, tmp_path)
 
     assert dest is None
     unix_host.exec.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_board_with_no_instrumented_product_is_skipped(tmp_path):
+    """An uninstrumented product is never dumped — the console is not touched."""
+    host = _mock_embedded_host("b", "", products=[_llext_product("x", verdict=False)])
+
+    assert await _collect_one_embedded_host(host, tmp_path) is None
+
+    host.exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_product_without_a_dump_fn_is_skipped_with_a_warning(tmp_path, caplog):
+    """Only an llext product exports a dump function. One that does not is named
+    in a WARNING and skipped — never dumped through a guessed function name."""
+    import logging
+
+    # spec'd to exactly what it has: `getattr(p, "dump_fn", None)` must miss.
+    bare = MagicMock(spec=["name", "instrumented"])
+    bare.name = "daemon"
+    bare.instrumented = MagicMock(return_value=True)
+    host = _mock_embedded_host("zephyr37-llext", "", products=[bare])
+
+    with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.embedded"):
+        assert await _collect_one_embedded_host(host, tmp_path) is None
+
+    host.exec.assert_not_called()
+    assert "daemon on zephyr37-llext has no dump_fn" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_each_instrumented_product_is_dumped_by_its_own_dump_fn(tmp_path):
+    """Two instrumented products on one board are dumped separately, each through
+    its own exported dump function."""
+    console = (FIXTURES / "cov_dump_console.txt").read_text()
+    host = _mock_embedded_host(
+        "zephyr37-llext",
+        console,
+        products=[_llext_product("cov_ext"), _llext_product("other", dump_fn="gcov_dump")],
+    )
+
+    dest = await _collect_one_embedded_host(host, tmp_path)
+
+    assert set(dest) == {"cov_ext", "other"}
+    assert [c.args[0] for c in host.exec.call_args_list] == [
+        "llext call_fn cov_ext cov_dump",
+        "llext call_fn other gcov_dump",
+    ]
 
 
 @pytest.mark.asyncio
@@ -109,9 +163,9 @@ async def test_collect_all_stages_embedded_hosts_and_skips_others(
     tmp_path,
     fake_config_module,
 ):
-    """collect_all dumps every embedded host into ``staging_root/<id>/`` and
-    leaves non-embedded hosts untouched, returning ``{host_id: dir}`` like
-    GcdaFetcher.fetch_all.
+    """collect_all dumps every embedded host into ``<staging_root>/<id>/<product>/`` and
+    leaves non-embedded hosts untouched, returning ``{(host_id, product): dir}``
+    like GcdaFetcher.fetch_all.
     """
     embedded = _mock_embedded_host(
         "zephyr37-llext",
@@ -122,42 +176,38 @@ async def test_collect_all_stages_embedded_hosts_and_skips_others(
     unix.exec = AsyncMock()
     fake_config_module(embedded, unix)
 
-    collector = EmbeddedGcdaCollector(
-        tmp_path / "staging",
-        "llext call_fn cov cov_dump",
-    )
+    collector = EmbeddedGcdaCollector(tmp_path / "staging")
     result = await collector.collect_all()
 
-    assert set(result) == {"zephyr37-llext"}
+    assert set(result) == {("zephyr37-llext", "cov_ext")}
     expected = (FIXTURES / "cov_ext.c.gcda").read_bytes()
-    assert (result["zephyr37-llext"] / "cov_ext.c.gcda").read_bytes() == expected
+    assert (result[("zephyr37-llext", "cov_ext")] / "cov_ext.c.gcda").read_bytes() == expected
     unix.exec.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_collect_embedded_coverage_drives_configured_extension(
-    tmp_path,
-    fake_config_module,
-):
-    """The [coverage.embedded].extension config drives `llext call_fn <ext> cov_dump`."""
-    embedded = _mock_embedded_host(
-        "zephyr37-llext",
-        (FIXTURES / "cov_dump_console.txt").read_text(),
-    )
-    fake_config_module(embedded)
-    cov_config = {"embedded": {"extension": "cov_ext"}}
+async def test_collect_embedded_coverage_keys_by_host_and_product(tmp_path, fake_config_module):
+    console = (FIXTURES / "cov_dump_console.txt").read_text()
+    fake_config_module(_mock_embedded_host("zephyr37-llext", console))
 
-    result = await collect_embedded_coverage(cov_config, tmp_path / "cov")
+    result = await collect_embedded_coverage(tmp_path)
 
-    assert set(result) == {"zephyr37-llext"}
-    assert embedded.exec.await_args[0][0] == "llext call_fn cov_ext cov_dump"
+    assert set(result) == {("zephyr37-llext", "cov_ext")}
 
 
 @pytest.mark.asyncio
-async def test_collect_embedded_coverage_noop_without_embedded_config(tmp_path):
-    """No [coverage.embedded] section → nothing collected, no host touched."""
-    result = await collect_embedded_coverage({"gcda_remote_dir": "/x"}, tmp_path / "cov")
-    assert result == {}
+async def test_collect_embedded_coverage_noop_without_embedded_hosts(
+    tmp_path,
+    fake_config_module,
+):
+    """No embedded board in the lab → nothing collected."""
+    unix = MagicMock()  # not an EmbeddedHost
+    unix.id = "test1"
+    unix.exec = AsyncMock()
+    fake_config_module(unix)
+
+    assert await collect_embedded_coverage(tmp_path / "cov") == {}
+    unix.exec.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -181,13 +231,11 @@ async def test_collect_embedded_coverage_scopes_hosts_by_pattern(
         (FIXTURES / "cov_dump_console.txt").read_text(),
     )
     fake_config_module(target, other)
-    cov_config = {"embedded": {"extension": "cov_ext"}}
 
     result = await collect_embedded_coverage(
-        cov_config,
         tmp_path / "cov",
         pattern=re.compile("zephyr37-llext"),
     )
 
-    assert set(result) == {"zephyr37-llext"}
+    assert set(result) == {("zephyr37-llext", "cov_ext")}
     other.exec.assert_not_awaited()

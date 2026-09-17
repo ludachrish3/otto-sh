@@ -298,6 +298,277 @@ def test_run_suite_exit_code_maps_pytest_rc(tmp_path, monkeypatch, rc, expected)
     assert not result.passed
 
 
+# ── resolve_coverage: the tri-state --cov/--no-cov decision ──────────────────
+
+
+def _stub_instrumented_lab(monkeypatch, *, instrumented=True):
+    """Stub the local instrumentation scan with a single-product report.
+
+    ``resolve_coverage`` runs ``detect_for_lab`` over the coverage hosts
+    before anything executes; every ``RunOptions(cov=True)`` run in this file
+    passes through it, so the scan is stubbed rather than pointed at a lab.
+
+    A forced ``--cov`` also refuses a missing ``[coverage]`` table, and these
+    tests' repo doubles mostly carry no settings — so ``get_cov_config`` is
+    wrapped, not replaced: a double that declares a real ``[coverage]`` keeps
+    it (the ``[coverage.tickets]`` wiring tests depend on that), and one that
+    declares none is handed a minimal stand-in table.
+    """
+    from otto.coverage.config import get_cov_config as _real_get_cov_config
+    from otto.coverage.instrumentation import InstrumentationReport, InstrumentationRow
+
+    rows = [InstrumentationRow("h1", "app", True)] if instrumented else []
+    monkeypatch.setattr(
+        "otto.coverage.instrumentation.detect_for_lab",
+        lambda repos: InstrumentationReport(rows),
+    )
+    monkeypatch.setattr(
+        "otto.coverage.config.get_cov_config",
+        lambda repos: _real_get_cov_config(repos) or {"hosts": ".*"},
+    )
+
+
+def test_resolve_coverage_auto_turns_on_when_instrumented(monkeypatch):
+    from otto.coverage.instrumentation import InstrumentationReport, InstrumentationRow
+    from otto.suite.run import RunOptions, resolve_coverage
+
+    monkeypatch.setattr(
+        "otto.coverage.instrumentation.detect_for_lab",
+        lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
+    )
+    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": ".*"})
+    assert resolve_coverage(RunOptions(), [], command="otto test").cov is True
+
+
+def test_resolve_coverage_auto_stays_off_when_nothing_instrumented(monkeypatch):
+    from otto.coverage.instrumentation import InstrumentationReport, InstrumentationRow
+    from otto.suite.run import RunOptions, resolve_coverage
+
+    monkeypatch.setattr(
+        "otto.coverage.instrumentation.detect_for_lab",
+        lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", False)]),
+    )
+    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": ".*"})
+    assert resolve_coverage(RunOptions(), [], command="otto test").cov is False
+
+
+def test_resolve_coverage_forced_on_with_nothing_raises(monkeypatch):
+    from otto.coverage.errors import CoverageNotInstrumentedError
+    from otto.coverage.instrumentation import InstrumentationReport
+    from otto.suite.run import RunOptions, resolve_coverage
+
+    monkeypatch.setattr(
+        "otto.coverage.instrumentation.detect_for_lab", lambda repos: InstrumentationReport([])
+    )
+    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": ".*"})
+    with pytest.raises(CoverageNotInstrumentedError):
+        resolve_coverage(RunOptions(cov=True), [], command="otto test --cov")
+
+
+def test_resolve_coverage_forced_off_never_detects(monkeypatch):
+    from otto.suite.run import RunOptions, resolve_coverage
+
+    monkeypatch.setattr(
+        "otto.coverage.instrumentation.detect_for_lab",
+        lambda repos: (_ for _ in ()).throw(AssertionError("must not detect")),
+    )
+    assert resolve_coverage(RunOptions(cov=False), [], command="otto test").cov is False
+
+
+def test_resolve_coverage_returns_a_copy_keeping_every_other_field(monkeypatch):
+    """The decision is a copy: the caller's RunOptions is frozen and untouched."""
+    from otto.suite.run import RunOptions, resolve_coverage
+
+    _stub_instrumented_lab(monkeypatch)
+    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": ".*"})
+    opts = RunOptions(markers="smoke", cov_report=True, project_name="P")
+    resolved = resolve_coverage(opts, [], command="otto test")
+    assert opts.cov is None
+    assert resolved.cov is True
+    assert (resolved.markers, resolved.cov_report, resolved.project_name) == ("smoke", True, "P")
+
+
+def test_run_suite_forced_cov_with_nothing_instrumented_raises(tmp_path, monkeypatch):
+    """``--cov`` against a lab with no instrumented product refuses before the
+    suite runs — the typed error reaches the caller (the CLI frames it)."""
+    import otto.config
+    from otto.coverage.errors import CoverageNotInstrumentedError
+
+    monkeypatch.setattr(otto.config, "get_repos", list)
+    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    pre_clean = AsyncMock()
+    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", pre_clean)
+    _stub_instrumented_lab(monkeypatch, instrumented=False)
+
+    class _NotInstrumentedSuite:
+        pass
+
+    with pytest.raises(CoverageNotInstrumentedError):
+        run_suite(_NotInstrumentedSuite, run_options=RunOptions(cov=True), output_dir=tmp_path)
+    # Refused before any host was touched.
+    pre_clean.assert_not_awaited()
+
+
+def test_resolve_coverage_forced_on_refuses_a_missing_coverage_table(monkeypatch):
+    """A forced ``--cov`` with no ``[coverage]`` table refuses up front.
+
+    There is nothing to collect into, and the collection stage's own refusal
+    arrives *after* the suite has run, where ``_post_run_coverage`` swallows it
+    — so an explicit request must die here, naming the remedy.
+    """
+    from otto.coverage.errors import CoverageConfigError
+    from otto.coverage.instrumentation import InstrumentationReport, InstrumentationRow
+    from otto.suite.run import RunOptions, resolve_coverage
+
+    monkeypatch.setattr(
+        "otto.coverage.instrumentation.detect_for_lab",
+        lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
+    )
+    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {})
+    with pytest.raises(CoverageConfigError, match=r"\[coverage\] table"):
+        resolve_coverage(RunOptions(cov=True), [], command="otto test --cov")
+
+
+def test_run_suite_forced_cov_without_coverage_table_refuses_before_the_run(tmp_path, monkeypatch):
+    """The refusal reaches the caller before any host is touched."""
+    import otto.config
+    from otto.coverage.errors import CoverageConfigError
+    from otto.coverage.instrumentation import InstrumentationReport, InstrumentationRow
+
+    monkeypatch.setattr(otto.config, "get_repos", list)
+    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    pre_clean = AsyncMock()
+    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", pre_clean)
+    monkeypatch.setattr(
+        "otto.coverage.instrumentation.detect_for_lab",
+        lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
+    )
+    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {})
+
+    class _NoCovTableSuite:
+        pass
+
+    with pytest.raises(CoverageConfigError, match=r"\[coverage\] table"):
+        run_suite(_NoCovTableSuite, run_options=RunOptions(cov=True), output_dir=tmp_path)
+    pre_clean.assert_not_awaited()
+
+
+def test_resolve_coverage_auto_with_no_coverage_table_does_not_raise(monkeypatch):
+    """Auto is the sibling of the refusal above: no table, no request, no error
+    — retrieval simply stays off (the instrumentation warning is logged)."""
+    from otto.coverage.instrumentation import InstrumentationReport, InstrumentationRow
+    from otto.suite.run import RunOptions, resolve_coverage
+
+    monkeypatch.setattr(
+        "otto.coverage.instrumentation.detect_for_lab",
+        lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
+    )
+    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {})
+    assert resolve_coverage(RunOptions(), [], command="otto test").cov is False
+
+
+def _raise_empty_selection(_repos):
+    from otto.config.scope import EmptySelectionError
+
+    raise EmptySelectionError("sensor", 3)
+
+
+def test_resolve_coverage_auto_survives_an_empty_hosts_selection(monkeypatch, caplog):
+    """A ``[coverage].hosts`` selector matching nothing must not kill a plain
+    ``otto test``: it is a coverage-only misconfiguration, so retrieval goes
+    off with one warning naming the command."""
+    from otto.suite.run import RunOptions, resolve_coverage
+
+    monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_empty_selection)
+    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": "sensor"})
+
+    with caplog.at_level("WARNING"):
+        resolved = resolve_coverage(RunOptions(), [], command="otto test")
+
+    assert resolved.cov is False
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("otto test: coverage stays off" in m for m in messages), messages
+
+
+def test_resolve_coverage_auto_survives_a_malformed_hosts_selector(monkeypatch, caplog):
+    """The other half of the same guard: a malformed selector warns, not raises.
+
+    The warning is also markup-escaped. Both errors carry a literal bracket
+    (``[coverage].hosts must be a string``, or a user regex like ``test[123]``
+    quoted back by ``EmptySelectionError``), and the console handler plus both
+    log files render log messages as Rich markup — unescaped, the bracketed
+    text is parsed as a style tag and silently eaten. ``getMessage()`` cannot
+    see that, so the LOGGED ARG is what this asserts.
+    """
+    from otto.coverage.errors import CoverageConfigError
+    from otto.suite.run import RunOptions, resolve_coverage
+
+    def _raise_config(_repos):
+        raise CoverageConfigError("[coverage].hosts must be a string")
+
+    monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_config)
+    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": ["a"]})
+
+    with caplog.at_level("WARNING"):
+        resolved = resolve_coverage(RunOptions(), [], command="otto test")
+
+    assert resolved.cov is False
+    record = caplog.records[-1]
+    assert "coverage stays off" in record.getMessage()
+    # The escaped form reaches the handler, so the bracket survives rendering.
+    assert record.args[-1] == r"\[coverage].hosts must be a string"
+
+
+def test_resolve_coverage_auto_warning_renders_its_brackets_literally(monkeypatch):
+    """End of the escaping chain: through a real Rich markup handler, the
+    ``[coverage]`` token is still in the rendered output."""
+    import io
+    import logging as _logging
+
+    from rich.console import Console
+    from rich.highlighter import NullHighlighter
+    from rich.logging import RichHandler
+
+    from otto.coverage.errors import CoverageConfigError
+    from otto.suite.run import RunOptions, resolve_coverage
+    from otto.suite.run import logger as run_logger
+
+    def _raise_config(_repos):
+        raise CoverageConfigError("[coverage].hosts must be a string")
+
+    monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_config)
+    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": ["a"]})
+
+    buf = io.StringIO()
+    handler = RichHandler(
+        console=Console(file=buf, width=200, force_terminal=False),
+        markup=True,
+        highlighter=NullHighlighter(),
+        show_time=False,
+        show_path=False,
+    )
+    monkeypatch.setattr(run_logger, "handlers", [handler])
+    monkeypatch.setattr(run_logger, "propagate", False)
+    monkeypatch.setattr(run_logger, "level", _logging.WARNING)
+
+    assert resolve_coverage(RunOptions(), [], command="otto test").cov is False
+
+    rendered = buf.getvalue()
+    assert "[coverage].hosts must be a string" in rendered
+
+
+def test_resolve_coverage_forced_on_propagates_an_empty_hosts_selection(monkeypatch):
+    """Forced on, the same selection error is fatal — the user asked for coverage."""
+    from otto.config.scope import EmptySelectionError
+    from otto.suite.run import RunOptions, resolve_coverage
+
+    monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_empty_selection)
+    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": "sensor"})
+
+    with pytest.raises(EmptySelectionError):
+        resolve_coverage(RunOptions(cov=True), [], command="otto test --cov")
+
+
 # ── run_suite: --cov-report wiring ───────────────────────────────────────────
 
 
@@ -316,6 +587,7 @@ def _run_suite_report(tmp_path, monkeypatch, *, run_options, log_dir):
     monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    _stub_instrumented_lab(monkeypatch)
 
     mock_store = MagicMock()
     mock_store.overall_pct.return_value = 50.0
@@ -406,6 +678,7 @@ def test_run_suite_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeyp
     monkeypatch.setattr(otto.config, "get_repos", lambda: [repo])
     monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    _stub_instrumented_lab(monkeypatch)
     mock_report = AsyncMock()
     monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_report)
 
@@ -483,6 +756,7 @@ def test_run_suite_ticket_spec_threaded_from_settings(tmp_path, monkeypatch):
     monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    _stub_instrumented_lab(monkeypatch)
 
     mock_store = MagicMock()
     mock_store.overall_pct.return_value = 50.0
@@ -627,6 +901,7 @@ def test_run_suite_overrides_threaded_from_settings(tmp_path, monkeypatch):
     monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    _stub_instrumented_lab(monkeypatch)
 
     mock_store = MagicMock()
     mock_store.overall_pct.return_value = 50.0
@@ -683,6 +958,7 @@ def test_run_suite_malformed_overrides_file_warns_and_run_still_succeeds(
     monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    _stub_instrumented_lab(monkeypatch)
     mock_run_report = AsyncMock()
     monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_run_report)
 
@@ -722,6 +998,7 @@ def test_run_suite_nonempty_cov_dir_without_overwrite_raises(tmp_path, monkeypat
     monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
     clean_mock = AsyncMock()
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", clean_mock)
+    _stub_instrumented_lab(monkeypatch)
 
     class _CovDirSuite:
         pass
@@ -751,6 +1028,7 @@ def test_run_suite_overwrite_cov_dir_true_clears_and_proceeds(tmp_path, monkeypa
     monkeypatch.setattr(otto.config, "get_repos", list)
     monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    _stub_instrumented_lab(monkeypatch)
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
 
     class _CovDirSuite2:
@@ -839,6 +1117,8 @@ def test_run_selection_typo_raises_unknown_selection_error(tmp_path, monkeypatch
         name = "fixture-repo"
         sut_dir = tmp_path
         tests: ClassVar[list] = []
+        # A real Repo always has settings; the coverage decision reads them.
+        settings: ClassVar[dict] = {}
 
         def collect_tests(self, markers=None, suite=None, tests=None):
             return [
@@ -866,6 +1146,8 @@ def test_run_selection_returns_result_single_repo(tmp_path, monkeypatch):
         name = "fixture-repo"
         sut_dir = tmp_path
         tests: ClassVar[list] = []
+        # A real Repo always has settings; the coverage decision reads them.
+        settings: ClassVar[dict] = {}
 
         def collect_tests(self, markers=None, suite=None, tests=None):
             return [
@@ -910,6 +1192,8 @@ def test_run_selection_multi_repo_junit_fan_out(tmp_path, monkeypatch):
         repo.name = name
         repo.sut_dir = tmp_path
         repo.tests = []
+        # A real Repo always has settings; the coverage decision reads them.
+        repo.settings = {}
         return repo
 
     repos = [_make_repo("repoA"), _make_repo("repoB")]
@@ -1173,6 +1457,8 @@ def test_run_selection_installs_and_restores_minimal_context(tmp_path, monkeypat
         name = "fixture-repo"
         sut_dir = tmp_path
         tests: ClassVar[list] = []
+        # A real Repo always has settings; the coverage decision reads them.
+        settings: ClassVar[dict] = {}
 
         def collect_tests(self, markers=None, suite=None, tests=None):
             return [
@@ -1231,6 +1517,8 @@ def test_run_selection_nonempty_cov_dir_without_overwrite_raises(tmp_path, monke
         name = "fixture-repo"
         sut_dir = tmp_path
         tests: ClassVar[list] = []
+        # A real Repo always has settings; the coverage decision reads them.
+        settings: ClassVar[dict] = {}
 
         def collect_tests(self, markers=None, suite=None, tests=None):
             return [
@@ -1246,6 +1534,7 @@ def test_run_selection_nonempty_cov_dir_without_overwrite_raises(tmp_path, monke
     monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
     clean_mock = AsyncMock()
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", clean_mock)
+    _stub_instrumented_lab(monkeypatch)
 
     with pytest.raises(ValueError, match="cov_dir"):
         run_selection(

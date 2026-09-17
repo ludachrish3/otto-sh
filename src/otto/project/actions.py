@@ -35,6 +35,7 @@ orchestrator's to perform once (spec section 5):
 import dataclasses
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from .. import layout
 from ..cli.run import instruction
 from ..instructions import (
     MARK_ATTR,
@@ -465,10 +466,16 @@ class ProjectActions:
             # symptom.
             return haul
         for host in self.ctx.all_hosts():
-            if not _owned(host.products, self.repo.name):
+            owned = _owned(host.products, self.repo.name)
+            if not owned:
                 continue
-            product_dir = host.log_dest() / "product"
-            if not product_dir.exists() or not any(product_dir.iterdir()):
+            # One directory per product, straight from the run-tree contract:
+            # a repo's requirement is met when ANY of its products on this host
+            # delivered something.
+            base = layout.run_dir_of(host.log_dest())
+            if not any(
+                any(layout.product_logs_dir(base, host.id, p.name).glob("**/*")) for p in owned
+            ):
                 return Result(
                     Status.Error,
                     msg=f"require_product_logs: no product logs retrieved from {host.id}",

@@ -9,10 +9,11 @@ import pytest
 
 from otto.coverage.capture.gitio import head_commit
 from otto.coverage.capture.model import Capture, CaptureFileCov
-from otto.coverage.errors import CoverageDataMismatchError
+from otto.coverage.errors import CoverageConfigError, CoverageDataMismatchError
 from otto.coverage.reporter import (
     CollectionInputs,
     CoverageReporter,
+    _partition_board_dirs,
     discover_gcda_dirs,
     read_cov_source_root,
     read_cov_source_roots,
@@ -48,20 +49,33 @@ class TestReadCovSourceRoot:
             read_cov_source_root([])
 
 
+def _counters(product_dir: Path) -> Path:
+    """Create *product_dir* with one ``.gcda`` in it and return it."""
+    product_dir.mkdir(parents=True)
+    (product_dir / "x.gcda").write_bytes(b"")
+    return product_dir
+
+
 class TestDiscoverGcdaDirs:
-    def test_discovers_host_dirs(self, tmp_path):
+    def test_discovers_product_dirs(self, tmp_path):
         cov_dir = tmp_path / "run1" / "cov"
-        (cov_dir / "host_a").mkdir(parents=True)
-        (cov_dir / "host_b").mkdir(parents=True)
+        _counters(cov_dir / "host_a" / "app")
+        _counters(cov_dir / "host_b" / "app")
 
         result = discover_gcda_dirs([cov_dir])
-        assert len(result) == 2
-        names = {d.name for d in result}
-        assert names == {"host_a", "host_b"}
+        assert result == [cov_dir / "host_a" / "app", cov_dir / "host_b" / "app"]
+
+    def test_discovers_every_product_under_one_host(self, tmp_path):
+        cov_dir = tmp_path / "run1" / "cov"
+        _counters(cov_dir / "host_a" / "agent")
+        _counters(cov_dir / "host_a" / "app")
+
+        result = discover_gcda_dirs([cov_dir])
+        assert result == [cov_dir / "host_a" / "agent", cov_dir / "host_a" / "app"]
 
     def test_multiple_cov_dirs(self, tmp_path):
         for run in ("run1", "run2"):
-            (tmp_path / run / "cov" / "host1").mkdir(parents=True)
+            _counters(tmp_path / run / "cov" / "host1" / "app")
 
         result = discover_gcda_dirs(
             [tmp_path / "run1" / "cov", tmp_path / "run2" / "cov"],
@@ -72,15 +86,50 @@ class TestDiscoverGcdaDirs:
         result = discover_gcda_dirs([tmp_path / "run_no_cov" / "cov"])
         assert len(result) == 0
 
+    def test_skips_product_dirs_without_counters(self, tmp_path):
+        cov_dir = tmp_path / "run1" / "cov"
+        _counters(cov_dir / "host1" / "app")
+        (cov_dir / "host1" / "empty").mkdir()
+
+        result = discover_gcda_dirs([cov_dir])
+        assert result == [cov_dir / "host1" / "app"]
+
     def test_skips_files_in_cov_dir(self, tmp_path):
         cov_dir = tmp_path / "run1" / "cov"
         cov_dir.mkdir(parents=True)
         (cov_dir / "stray_file.txt").write_text("not a dir")
-        (cov_dir / "host1").mkdir()
+        _counters(cov_dir / "host1" / "app")
 
         result = discover_gcda_dirs([cov_dir])
-        assert len(result) == 1
-        assert result[0].name == "host1"
+        assert result == [cov_dir / "host1" / "app"]
+
+    def test_counters_directly_under_a_host_dir_are_refused(self, tmp_path):
+        cov_dir = tmp_path / "run1" / "cov"
+        _counters(cov_dir / "host1")
+
+        with pytest.raises(CoverageConfigError, match=r"cov/<host>/<product>/"):
+            discover_gcda_dirs([cov_dir])
+
+
+class TestPartitionBoardDirs:
+    def test_splits_capture_dirs_from_gcda_dirs(self, tmp_path):
+        cov = tmp_path / "cov"
+        (cov / "h1" / "app").mkdir(parents=True)
+        (cov / "h1" / "app" / "capture.json").write_text("{}")
+        _counters(cov / "h1" / "agent")
+
+        assert _partition_board_dirs([cov]) == (
+            [cov / "h1" / "agent"],
+            [cov / "h1" / "app" / "capture.json"],
+        )
+
+    def test_a_capture_directly_under_the_host_dir_is_refused(self, tmp_path):
+        cov = tmp_path / "cov"
+        (cov / "h1").mkdir(parents=True)
+        (cov / "h1" / "capture.json").write_text("{}")
+
+        with pytest.raises(CoverageConfigError, match=r"cov/<host>/<product>/"):
+            _partition_board_dirs([cov])
 
 
 class TestReadCovSourceRoots:
@@ -114,9 +163,9 @@ class TestReadCovSourceRoots:
 class TestCoverageReporterPerHostGcno:
     def test_per_host_gcno_dirs_uses_source_roots_then_fallback(self, tmp_path):
         gcda_dirs = [
-            tmp_path / "cov" / "zephyr37-fat",
-            tmp_path / "cov" / "zephyr44-fat",
-            tmp_path / "cov" / "other",
+            tmp_path / "cov" / "zephyr37-fat" / "app",
+            tmp_path / "cov" / "zephyr44-fat" / "app",
+            tmp_path / "cov" / "other" / "app",
         ]
         root_a = tmp_path / "build_v3_7"
         root_b = tmp_path / "build_v4_4"
@@ -227,11 +276,12 @@ class TestE2eBaseCommitGuard:
 
         cap = Capture(
             tier="system",
+            product="app",
             base_commit="f" * 40,
             files={"f.c": CaptureFileCov(lines={2: 1})},
         )
         cov = tmp_path / "out" / "cov"
-        cap.save(cov / "board1" / "capture.json")
+        cap.save(cov / "board1" / "app" / "capture.json")
 
         with pytest.raises(CoverageDataMismatchError) as excinfo:
             await run_coverage_report(
@@ -253,11 +303,12 @@ class TestE2eBaseCommitGuard:
 
         cap = Capture(
             tier="system",
+            product="app",
             base_commit=head,
             files={"f.c": CaptureFileCov(lines={2: 7})},
         )
         cov = tmp_path / "out" / "cov"
-        cap.save(cov / "board1" / "capture.json")
+        cap.save(cov / "board1" / "app" / "capture.json")
 
         store = await run_coverage_report(
             [cov],
@@ -287,11 +338,12 @@ class TestE2eDirtyTreeRemap:
         # Capture in HEAD (base_commit) coordinates: all three lines covered.
         cap = Capture(
             tier="system",
+            product="app",
             base_commit=head,
             files={"f.c": CaptureFileCov(lines={1: 5, 2: 3, 3: 9})},
         )
         cov = tmp_path / "out" / "cov"
-        cap.save(cov / "board1" / "capture.json")
+        cap.save(cov / "board1" / "app" / "capture.json")
 
         # Dirty the worktree WITHOUT committing (HEAD, and thus the
         # base_commit guard, is unaffected): insert a line at the top
@@ -357,6 +409,69 @@ class TestUnitHarvest:
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
         assert frec.lines[1].hits.for_tier("unit") == 5
+
+    @pytest.mark.asyncio
+    async def test_products_table_creates_one_run_per_product(self, tmp_path, monkeypatch):
+        """A unit tier's ``products`` table gets one run record per named
+        product plus one unnamed run for ``harvest_dirs``, each loaded from
+        its own info file."""
+        from otto.coverage.merge import lcov_loader as loader_mod
+        from otto.coverage.merge import merger as merger_mod
+
+        repo = _init_repo(tmp_path)
+        app_dir = tmp_path / "build" / "app-tests"
+        agent_dir = tmp_path / "build" / "agent-tests"
+        unit_dir = tmp_path / "build" / "tests"
+        for d in (app_dir, agent_dir, unit_dir):
+            d.mkdir(parents=True)
+        (app_dir / "x.gcda").write_bytes(b"")
+        (agent_dir / "y.gcda").write_bytes(b"")
+        (unit_dir / "z.gcda").write_bytes(b"")
+
+        src = repo / "f.c"
+
+        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+            output.write_text(f"TN:\nSF:{src}\nDA:1,5\nend_of_record\n")
+            return output
+
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
+
+        load_calls: list[tuple[str, int | None]] = []
+        real_load = loader_mod.LCOVLoader.load
+
+        def spy_load(self, info_path, tier, run_id=None):
+            load_calls.append((Path(info_path).name, run_id))
+            return real_load(self, info_path, tier, run_id=run_id)
+
+        monkeypatch.setattr(loader_mod.LCOVLoader, "load", spy_load)
+
+        cov_config = {
+            "tiers": {
+                "unit": {
+                    "kind": "unit",
+                    "precedence": 1,
+                    "harvest_dirs": [str(unit_dir)],
+                    "products": {"app": [str(app_dir)], "agent": [str(agent_dir)]},
+                },
+            }
+        }
+        store = await run_coverage_report(
+            [],
+            tmp_path / "report",
+            repo_root=repo,
+            tier_configs=load_tiers(cov_config),
+        )
+        assert store is not None
+        assert {r.product for r in store.runs} == {"app", "agent", ""}
+
+        names = {name for name, _ in load_calls}
+        assert names == {
+            "unit_unit_app_0.info",
+            "unit_unit_agent_0.info",
+            "unit_unit_0.info",
+        }
+        run_ids = {rid for _, rid in load_calls}
+        assert len(run_ids) == 3
 
     @pytest.mark.asyncio
     async def test_missing_harvest_dir_warns_and_skips(self, tmp_path, monkeypatch, caplog):
@@ -566,7 +681,7 @@ class TestUnitHarvest:
 async def test_duplicate_capture_across_sources_registers_one_run(tmp_path):
     """The same capture in a cov dir AND the manual store folds in once.
 
-    Dedupe key: (tier, base_commit, board, captured_at). The manual-store copy
+    Dedupe key: (tier, base_commit, board, product, captured_at). The manual-store copy
     (validity-aware anchor chain) wins because its run key is pre-seeded
     into the dedupe set before the cov-dir captures fold.
     """
@@ -580,6 +695,7 @@ async def test_duplicate_capture_across_sources_registers_one_run(tmp_path):
 
     cap = Capture(
         tier="manual",
+        product="app",
         base_commit=head_commit(repo),
         captured_at="2026-07-01T00:00:00Z",
         ticket="T-1",
@@ -630,6 +746,55 @@ async def test_explicit_info_tier_gets_synthetic_run(tmp_path):
     assert fr.lines[1].run_hits == {rec.id: 7}
 
 
+async def _runs_for_captures(tmp_path: Path, contexts: list[tuple[str, str]]):
+    """Fold one capture per ``(board, product)`` at HEAD and return the run table."""
+    repo = _init_repo(tmp_path)
+    head = head_commit(repo)
+    cov = tmp_path / "out" / "cov"
+    capture_paths = []
+    for board, product in contexts:
+        cap = Capture(
+            tier="system",
+            product=product,
+            base_commit=head,
+            captured_at="2026-07-01T00:00:00Z",
+            board=board,
+            files={"f.c": CaptureFileCov(lines={2: 7})},
+        )
+        path = cov / board / product / "capture.json"
+        cap.save(path)
+        capture_paths.append(path)
+
+    reporter = CoverageReporter(
+        [],
+        repo,
+        tmp_path / "report",
+        collection=CollectionInputs(
+            repo_root=repo,
+            tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV),
+            capture_paths=capture_paths,
+        ),
+    )
+    store = await reporter.run()
+    return store.runs
+
+
+@pytest.mark.asyncio
+async def test_two_products_on_one_host_are_two_runs(tmp_path):
+    """``_run_key`` carries ``product``: two captures identical but for the
+    product are two runs, not one deduped run."""
+    runs = await _runs_for_captures(tmp_path, [("h1", "agent"), ("h1", "app")])
+    assert [(r.host, r.product) for r in runs] == [("h1", "agent"), ("h1", "app")]
+
+
+@pytest.mark.asyncio
+async def test_two_hosts_sharing_a_product_name_are_two_runs(tmp_path):
+    """The host component still discriminates: one product name on two hosts
+    is two runs."""
+    runs = await _runs_for_captures(tmp_path, [("h1", "app"), ("h2", "app")])
+    assert [(r.host, r.product) for r in runs] == [("h1", "app"), ("h2", "app")]
+
+
 @pytest.mark.asyncio
 async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
     """Fold-order regression (manual folds LAST): a manual capture whose
@@ -651,6 +816,7 @@ async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
 
     manual_cap = Capture(
         tier="manual",
+        product="app",
         base_commit=head1,
         captured_at="2026-07-01T00:00:00Z",
         ticket="T-1",
@@ -670,6 +836,7 @@ async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
     # line 3.
     e2e_cap = Capture(
         tier="system",
+        product="app",
         base_commit=head2,
         captured_at="2026-07-02T00:00:00Z",
         board="b2",
@@ -726,6 +893,7 @@ async def test_duplicate_survives_stale_base_commit_via_key_hoist(tmp_path):
 
     cap = Capture(
         tier="manual",
+        product="app",
         base_commit=head1,
         captured_at="2026-07-01T00:00:00Z",
         ticket="T-1",
@@ -793,6 +961,7 @@ async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
 
     cap_old = Capture(
         tier="manual",
+        product="app",
         base_commit=head1,
         captured_at="2026-07-01T00:00:00Z",
         ticket="T-1",

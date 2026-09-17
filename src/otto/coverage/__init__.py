@@ -12,7 +12,7 @@ Coverage works in two steps:
 """
 
 from .collect import CollectResult, clean_remote_gcda, collect_coverage
-from .errors import CoverageConfigError, NoCoverageDataError
+from .errors import CoverageConfigError, CoverageNotInstrumentedError, NoCoverageDataError
 from .fetcher.remote import GcdaFetcher
 from .reporter import CoverageReporter
 from .store.model import CoverageStore
@@ -20,6 +20,7 @@ from .store.model import CoverageStore
 __all__ = [
     "CollectResult",
     "CoverageConfigError",
+    "CoverageNotInstrumentedError",
     "CoverageReporter",
     "CoverageStore",
     "GcdaFetcher",

@@ -72,3 +72,23 @@ def test_builtins_registered_via_public_path():
     from otto.host import binary_loader as bl
 
     assert len(bl.LOADER_CLASSES) >= 1  # at least the built-in loader(s)
+
+
+def test_llext_list_and_call_commands():
+    loader = LlextHexLoader()
+    assert loader.list_command() == "llext list"
+    assert loader.call_command("cov_ext", "cov_dump") == "llext call_fn cov_ext cov_dump"
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ("cov_ext\n", True),
+        ("| Name      |\ncov_ext\nother\n", True),
+        ("cov_ext_two\n", False),  # a longer name is not this name
+        ("No extensions loaded\n", False),
+        ("", False),
+    ],
+)
+def test_llext_is_loaded_matches_the_name_as_a_whole_token(output, expected):
+    assert LlextHexLoader().is_loaded("cov_ext", output) is expected

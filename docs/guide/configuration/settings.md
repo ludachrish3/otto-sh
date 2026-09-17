@@ -42,9 +42,10 @@ ssh_options = { connect_timeout = 5.0, keepalive_interval = 30 }
 Every path that otto itself interprets is expanded with `~` (your home
 directory), and if it is still relative it resolves against **the repo
 root** — the directory containing `.otto/`.  Absolute paths are used as
-written.  (`ssh_options` values, merged `host_preferences` fields, and the
-remote `[coverage] gcda_remote_dir` are opaque to otto — they are handled
-by whatever consumes them, not by otto's settings layer.)
+written.  (`ssh_options` values, merged `host_preferences` fields, and any
+path in the *host's* own domain — a `[[products]]` entry's `dest_dir` or
+`cov_dir` — are opaque to otto's settings layer; they are handled by
+whatever consumes them.)
 
 ```toml
 tests    = ["tests"]                # <repo>/tests
@@ -147,8 +148,10 @@ init
 
 \[\[products\]\]
 : Optional array of declared products — settings-declared software under
-  test, matched to hosts and bound to registered kinds. See
-  {doc}`declared-products-tools`.
+  test, matched to hosts and bound to registered kinds. A product entry is
+  also where coverage is configured *per product*: `cov_dir` (the host
+  directory it writes its counters under), `debug_log_globs`, and
+  `instrumented`. See {doc}`declared-products-tools`.
 
 \[\[dev_tools\]\]
 : Optional array of declared dev tools; the identical schema feeding the
@@ -164,12 +167,15 @@ init
   the full treatment.
 
 \[coverage\]
-: Optional table configuring gcov collection: `gcda_remote_dir` (required
-  once the table exists — where `.gcda` files live on remote hosts), an
-  optional `hosts` regex scoping collection to a subset of the lab, the
-  `[coverage.tiers.<name>]` tier declarations, `[coverage.tickets]`, and
-  `[coverage.exclusions]`. See {doc}`../cli/cov/index` for the schema and
-  {doc}`../cli/cov/tiers` for the tier model.
+: Optional table configuring gcov collection. Where counters live on a host
+  is the *product's* business (`cov_dir`, above), so this table carries only
+  what is lab-wide: an optional `hosts` regex scoping collection to a subset
+  of the lab, the `[coverage.tiers.<name>]` tier declarations — including a
+  unit tier's `[coverage.tiers.<name>.products]` views — plus
+  `[coverage.embedded]`, `[coverage.tickets]`, and `[coverage.exclusions]`.
+  Having the table at all is what lets collection run. See
+  {doc}`../cli/cov/index` for the schema and {doc}`../cli/cov/tiers` for the
+  tier model.
 
 \[reservations\]
 : Optional table enabling the **reservation gate** — otto refuses to start

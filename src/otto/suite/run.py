@@ -77,7 +77,11 @@ class RunOptions:
     duration: int = 0
     threshold: float = 100.0
     results: str = ""
-    cov: bool = False
+    cov: bool | None = None
+    """Collect coverage after the run. ``None`` = auto: on when an instrumented
+    product is detected and ``[coverage]`` is configured; see
+    :func:`resolve_coverage`, which turns this into a plain bool before
+    anything executes."""
     cov_dir: Path | None = None
     overwrite_cov_dir: bool = False
     cov_clean: bool = True  # matches the --cov-clean CLI default
@@ -265,6 +269,79 @@ def _pre_run_cov_dir_check(opts: RunOptions) -> None:
     from ..coverage.config import prepare_empty_dir
 
     prepare_empty_dir(opts.cov_dir, overwrite=opts.overwrite_cov_dir, flag_name="cov_dir")
+
+
+def resolve_coverage(opts: RunOptions, repos: "list[Repo]", *, command: str) -> RunOptions:
+    """Turn the tri-state ``cov`` into a decision — a copy with ``cov: bool``.
+
+    Runs the local instrumentation scan over the coverage hosts once, before
+    anything executes, so a forced-on run with nothing instrumented refuses
+    here rather than after the suite. *command* names the invocation in the
+    messages the decision logs.
+
+    Forced off (``--no-cov``) short-circuits: no scan, no ``[coverage]``
+    lookup, nothing at all.
+
+    Forced on is a request that must be answerable *now*: with no ``[coverage]``
+    table there is nothing to collect into, so this refuses here rather than
+    running the whole suite and discarding the collection failure in
+    ``_post_run_coverage``'s never-fail-a-successful-run swallow. A coverage-only
+    configuration error (a ``[coverage].hosts`` selector that matches nothing,
+    or a malformed one) is likewise fatal when forced on — and, in auto mode,
+    only a warning: a plain ``otto test`` asked for no coverage and must not die
+    of a coverage misconfiguration.
+
+    Raises:
+        otto.coverage.errors.CoverageConfigError: ``cov`` is forced on and
+            either no ``[coverage]`` table is configured or its ``hosts``
+            selector is malformed.
+        otto.config.scope.EmptySelectionError: ``cov`` is forced on and the
+            ``[coverage].hosts`` selector matched no host.
+        otto.coverage.errors.CoverageNotInstrumentedError: ``cov`` is forced
+            on and no product on any coverage host is instrumented.
+    """
+    if opts.cov is False:
+        return dataclasses.replace(opts, cov=False)
+    # Function-scope: otto.coverage.instrumentation pulls rich.table, and this
+    # module sits on an import-budget surface a plain `otto test` must not
+    # widen.
+    from ..config.scope import EmptySelectionError
+    from ..coverage.config import get_cov_config
+    from ..coverage.errors import CoverageConfigError
+    from ..coverage.instrumentation import decide_coverage, detect_for_lab
+
+    forced_on = opts.cov is True
+    has_cov_config = bool(get_cov_config(repos))
+    if forced_on and not has_cov_config:
+        raise CoverageConfigError(
+            f"{command}: coverage was requested but no [coverage] table is configured — "
+            "add a [coverage] table (and a tier) to .otto/settings.toml, or drop --cov."
+        )
+
+    try:
+        report = detect_for_lab(repos)
+    except (EmptySelectionError, CoverageConfigError) as e:
+        if forced_on:
+            raise
+        from rich.markup import escape as escape_markup
+
+        # Auto: the user asked for a test run, not for coverage. A broken
+        # [coverage].hosts selector turns retrieval off with one warning
+        # instead of killing the run. escape_markup(*e*): both of these
+        # messages carry a literal bracket — "[coverage].hosts must be a
+        # string", or the user's own regex (`test[123]`) quoted back by
+        # EmptySelectionError — and the console handler and both log files
+        # render messages as Rich markup, which would eat it.
+        logger.warning("%s: coverage stays off: %s", command, escape_markup(str(e)))
+        return dataclasses.replace(opts, cov=False)
+
+    on = decide_coverage(opts.cov, report, has_cov_config=has_cov_config, command=command)
+    return dataclasses.replace(opts, cov=on)
+
+
+def _cov_command_label(opts: RunOptions, command: str) -> str:
+    """Name the invocation for :func:`resolve_coverage`'s messages."""
+    return f"{command} --cov" if opts.cov else command
 
 
 async def _pre_run_cov_clean(repos: "list[Repo]", opts: RunOptions) -> None:
@@ -575,7 +652,10 @@ def _run_pytest_session(
         monitor_output = log_dir / "monitor.json"
     otto_plugin = OttoPlugin(
         sut_test_dirs=sut_test_dirs,
-        cov=opts.cov,
+        # Both run paths call resolve_coverage before they reach a session, so
+        # the tri-state is already a decision here; bool() only says so to the
+        # type checker (and keeps a hand-built RunOptions honest).
+        cov=bool(opts.cov),
         iterations=opts.iterations,
         duration=opts.duration,
         monitor=opts.monitor,
@@ -681,6 +761,13 @@ def run_suite(
     sut_test_dirs = [p for r in repos for p in r.tests]
 
     with _session_context(log_dir):
+        # Inside the session context: the instrumentation scan walks the lab's
+        # hosts, which a library caller only has once the context is installed.
+        # Still ahead of every side effect — no dir is prepared, no host
+        # touched, no session started until the decision is taken.
+        run_options = resolve_coverage(
+            run_options, repos, command=_cov_command_label(run_options, "otto test")
+        )
         _pre_run_cov_dir_check(run_options)
         run_command(_pre_run_cov_clean(repos, run_options))
         outcome, interrupted = _guarded_pytest_session(
@@ -790,6 +877,9 @@ def run_selection(
     outcome: "_SessionOutcome | None" = None
     interrupted: "int | None" = None
     with _session_context(log_dir):
+        # Same placement as run_suite's: the scan needs the session context,
+        # and the decision precedes every side effect.
+        opts = resolve_coverage(opts, repos, command=_cov_command_label(opts, "otto test"))
         _pre_run_cov_dir_check(opts)
         run_command(_pre_run_cov_clean(repos, opts))
         for match in per_repo:

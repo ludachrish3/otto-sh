@@ -10,6 +10,7 @@ data from embedded and remote targets.
    store_model
    merge
    fetcher
+   instrumentation
    renderer
    capture
    anchor

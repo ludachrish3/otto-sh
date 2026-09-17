@@ -1050,7 +1050,7 @@ def entry() -> None:
 
     from ..context import reset_cli_context
     from ..errors import OttoError
-    from .invoke import print_error
+    from .invoke import print_error, render_instrumentation_refusal
 
     try:
         app()
@@ -1096,7 +1096,14 @@ def entry() -> None:
             os.environ.get(LOG_LVL_ENV_VAR, "").upper(),
         ):
             traceback.print_exc()
-        print_error(f"error: {e}")
+        # A coverage refusal carries its per-product verdicts as structure as
+        # well as text; on a console those render as the rounded table and the
+        # error line keeps only the headline. Here rather than in a leaf
+        # because `otto test <Suite> --cov` raises from inside the suite
+        # registry's runner and reaches no leaf handler at all — this frame is
+        # the one place both `otto test` paths pass through. Anything else
+        # comes back as its own full message, unchanged.
+        print_error(f"error: {render_instrumentation_refusal(e)}")
         raise SystemExit(1) from e
     finally:
         reset_cli_context()

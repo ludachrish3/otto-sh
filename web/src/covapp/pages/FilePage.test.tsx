@@ -212,6 +212,7 @@ const RUNS: RunJson[] = [
     label: "nightly-full",
     board: "",
     host: "router-a",
+    product: "",
     labs: [],
     captured_at: "2026-07-20",
     tester: null,
@@ -227,6 +228,7 @@ const RUNS: RunJson[] = [
     label: "legacy checksum",
     board: "bench-3",
     host: "",
+    product: "",
     labs: [],
     captured_at: "2026-06-01",
     tester: null,
@@ -242,6 +244,7 @@ const RUNS: RunJson[] = [
     label: "field bring-up",
     board: "",
     host: "bench-2",
+    product: "",
     labs: [],
     captured_at: "2026-07-22",
     tester: null,
@@ -841,6 +844,43 @@ describe("FilePage", () => {
       renderFocused("nightly-full");
       await screen.findByTestId("code-row-1");
       expect(screen.getByTestId("focus-chip").textContent).toContain("nightly-full");
+    });
+  });
+
+  // Per-product spec §10: a pinned product is the same per-run numerator
+  // narrowing as a focused context, over a different run set.
+  describe("under a product pin", () => {
+    // Run 3 ("field bring-up", tier unit) is the fixture's only `app` run —
+    // it hit line 6 and nothing else, while run 1 (productless, hit line 1)
+    // must NOT be credited: a run with no product never matches a pin.
+    function renderProductPinned() {
+      const index = makeFileIndex({
+        products: ["app"],
+        runs: RUNS.map((run) => (run.id === 3 ? { ...run, product: "app" } : run)),
+      });
+      window.__OTTO_COV__ = index;
+      window.location.hash = "#/coverage/src/net/tcp.c?product=app";
+      mockChunkLoad({ resolve: makeChunk() });
+      renderPage({ index, segments: ["src", "net", "tcp.c"], node: NODE });
+    }
+
+    it("the stats card credits only lines an `app` run hit", async () => {
+      renderProductPinned();
+      const row = await screen.findByTestId("stats-row-ctx");
+      expect(row.textContent).toContain("app");
+      expect(row.textContent).toContain("1/5"); // line 6 (run 3) only, of 5 chunk.lines keys
+      expect(row.textContent).toContain("20.0%");
+
+      const card = screen.getByTestId("stats-card");
+      expect(card.textContent).toContain("focused: app");
+      expect(card.textContent).toContain("Product");
+    });
+
+    it("a line hit only by a productless run is NOT credited to the pin", async () => {
+      renderProductPinned();
+      const row1 = await screen.findByTestId("code-row-1"); // run 1, product ""
+      expect(row1.className).toContain("s-unc");
+      expect(screen.getByTestId("code-row-6").className).not.toContain("s-unc");
     });
   });
 

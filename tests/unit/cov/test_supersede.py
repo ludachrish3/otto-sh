@@ -1,4 +1,7 @@
-"""Same-context re-capture supersedes: newest (tier, label, host) wins (spec §8.5)."""
+"""Same-context re-capture supersedes: newest capture per context key wins.
+
+The key is ``(tier, display_name or board, board, product)``
+(:func:`otto.coverage.capture.supersede._key`) — per PRODUCT, not per host."""
 
 from otto.coverage.capture.model import Capture
 from otto.coverage.capture.supersede import select_manual_captures
@@ -10,9 +13,11 @@ def _cap(
     tier: str = "manual",
     display_name: str | None = None,
     ticket: str | None = None,
+    product: str = "app",
 ) -> Capture:
     return Capture(
         tier=tier,
+        product=product,
         base_commit="c" * 40,
         captured_at=captured_at,
         board=board,
@@ -36,6 +41,21 @@ class TestSelectManualCaptures:
         a = _cap("2026-06-01T00:00:00Z", display_name="bring-up")
         b = _cap("2026-06-02T00:00:00Z", display_name="cert-sweep")
         assert select_manual_captures([a, b]) == [a, b]
+
+    def test_different_products_on_one_host_both_survive(self):
+        # Two instrumented products on one host are two contexts, not one:
+        # keying without `product` would silently drop the older product's
+        # coverage (and, via the reporter's seen_runs seeding, its cov-dir
+        # copy too).
+        a = _cap("2026-06-01T00:00:00Z", board="h1", product="app")
+        b = _cap("2026-07-01T00:00:00Z", board="h1", product="agent")
+        assert select_manual_captures([a, b]) == [a, b]
+
+    def test_same_host_and_product_still_supersedes(self):
+        old = _cap("2026-06-01T00:00:00Z", board="h1", product="app")
+        new = _cap("2026-07-01T00:00:00Z", board="h1", product="app")
+        assert select_manual_captures([old, new]) == [new]
+        assert select_manual_captures([new, old]) == [new]
 
     def test_blank_captured_at_loses_to_dated(self):
         blank, dated = _cap(""), _cap("2026-01-01T00:00:00Z")

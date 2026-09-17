@@ -26,7 +26,7 @@ Any string is a valid tier name; this constant spares callers a string
 literal when they mean the canonical system-coverage tier.
 """
 
-STORE_FORMAT_VERSION = 7
+STORE_FORMAT_VERSION = 8
 """``store.json`` schema version, bumped on breaking on-disk changes.
 
 Version 2 is the first version to carry an explicit ``"format"`` key —
@@ -56,6 +56,8 @@ the file means: excluded lines are now DELETED from ``lines`` rather than
 merely annotated, so every percentage in the file already has them out of
 the denominator. Version 7 also carries an additive, optional ``files[].functions``
 list (2026-09); absent keys load as no functions, so no bump.
+Version 8 adds a per-run ``product`` (the ``<product>`` segment of
+``cov/<host>/<product>/``; ``""`` for a synthetic or unnamed unit run).
 There is no migration shim: a file that does not declare this exact
 version fails loud in :meth:`CoverageStore.load` with a message telling
 the caller to regenerate it, rather than silently mis-reading
@@ -227,7 +229,8 @@ class RunRecord:
     list.  ``label`` is what the drilldown chip shows: the host display
     name when the capture carries one, else the board (host id), else the
     tier name (synthetic runs pass neither). ``host`` is the explicit
-    host identity (v4); label derivation is unchanged.
+    host identity (v4); label derivation is unchanged.  ``product`` is
+    the product the run's counters came from (v8).
     """
 
     id: int
@@ -236,6 +239,9 @@ class RunRecord:
     board: str = ""
     # Host id (the capture's board dir name == host.id); "" = no host attribution.
     host: str = ""
+    # The <product> segment of cov/<host>/<product>/; "" = a synthetic or
+    # unnamed unit run, which names no product.
+    product: str = ""
     labs: list[str] = field(default_factory=list)
     captured_at: str = ""
     tester: dict[str, str] | None = None
@@ -253,6 +259,7 @@ class RunRecord:
             "label": self.label,
             "board": self.board,
             "host": self.host,
+            "product": self.product,
             "labs": list(self.labs),
             "captured_at": self.captured_at,
             "tester": self.tester,
@@ -570,6 +577,7 @@ class CoverageStore:
         label: str | None = None,
         board: str = "",
         host: str = "",
+        product: str = "",
         labs: list[str] | None = None,
         captured_at: str = "",
         tester: dict[str, str] | None = None,
@@ -593,6 +601,7 @@ class CoverageStore:
                 label=label or board or tier,
                 board=board,
                 host=host,
+                product=product,
                 labs=list(labs or []),
                 captured_at=captured_at,
                 tester=tester,
@@ -750,6 +759,7 @@ class CoverageStore:
                     label=rd["label"],
                     board=rd.get("board", ""),
                     host=rd.get("host", ""),
+                    product=rd.get("product", ""),
                     labs=list(rd.get("labs") or []),
                     captured_at=rd.get("captured_at", ""),
                     tester=rd.get("tester"),

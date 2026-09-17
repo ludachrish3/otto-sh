@@ -59,6 +59,8 @@ paths = ["lab_data"]
 #name = "firmware"
 #kind = "file"
 #artifact = "build/fw.bin"
+#cov_dir = "/tmp/firmware"        # where it writes .gcda (GCOV_PREFIX); default /tmp/<name>
+#install = "GCOV_PREFIX={{cov_dir}} ./fw.bin &"
 #match = {{ "metadata.hw_version" = "rev2" }}
 #[[dev_tools]]
 #name = "trace-probe"
@@ -132,13 +134,27 @@ path = "lab_data/creds.json"
 # Embedded build settings live in [coverage.embedded] (see the coverage docs).
 #[coverage]
 #hosts = "example-device"
-#gcda_remote_dir = "/tmp/gcda"
+## Each tier's `kind` decides which fields it may carry: `harvest_dirs` and
+## `products` are unit-only, `max_age` is manual-only. One tier of each kind
+## below, so every field is shown where it is legal.
 #[coverage.tiers.nightly]
 #kind = "e2e"
 #precedence = 10
 #color = "#22c55e"
-#harvest_dirs = ["cov/nightly"]
-#max_age = "180d"
+## A unit tier harvests .gcda from the build tree at report time. `products`
+## splits that sweep into named views, one run each -- name a view after a
+## [[products]] entry and one product filter shows its e2e and unit evidence
+## together. Each view needs its OWN build dir: .gcno sit beside the objects.
+#[coverage.tiers.unit]
+#kind = "unit"
+#precedence = 20
+#harvest_dirs = ["build"]
+#[coverage.tiers.unit.products]
+#app = ["build/app-tests"]
+#[coverage.tiers.manual]
+#kind = "manual"
+#precedence = 30
+#max_age = "180d"           # flag-only aging; never drops data
 #[[coverage.exclusions.rules]]
 #kind = "marker"
 #name = "GCOV_EXCL"          # family: _LINE / _START / _STOP

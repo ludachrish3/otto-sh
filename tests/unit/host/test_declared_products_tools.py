@@ -357,3 +357,174 @@ def _scope_for_factory(labs):
         lab_patterns=[_re.compile(p) for p in labs],
         host_patterns=[_re.compile(".*")],
     )
+
+
+# ---------------------------------------------------------------------------
+# file kind: coverage params + placeholders  (spec 2026-09-16 §5)
+# ---------------------------------------------------------------------------
+
+
+def test_file_kind_reads_cov_dir_and_debug_globs():
+    built = product_mod.PRODUCT_KINDS.get("file")(
+        _file_entry(cov_dir="/var/cov/fw", debug_log_globs=["/var/log/fw/*.log"]), _host()
+    )
+    assert built.cov_dir == "/var/cov/fw"
+    assert built.debug_log_globs == ["/var/log/fw/*.log"]
+
+
+def test_file_kind_substitutes_cov_dir_and_name_in_commands():
+    built = product_mod.PRODUCT_KINDS.get("file")(
+        _file_entry(
+            cov_dir="/var/cov/fw",
+            install="GCOV_PREFIX={cov_dir} ./{name} &",
+            check="test -d {cov_dir}",
+            uninstall="rm -rf {cov_dir}",
+        ),
+        _host(),
+    )
+    assert built.install_cmd == "GCOV_PREFIX=/var/cov/fw ./fw &"
+    assert built.check_cmd == "test -d /var/cov/fw"
+    assert built.uninstall_cmd == "rm -rf /var/cov/fw"
+
+
+def test_file_kind_substitutes_the_default_cov_dir_when_unset():
+    built = product_mod.PRODUCT_KINDS.get("file")(
+        _file_entry(install="GCOV_PREFIX={cov_dir} ./fw"), _host()
+    )
+    assert built.install_cmd == "GCOV_PREFIX=/tmp/fw ./fw"
+
+
+def test_file_kind_unknown_placeholder_names_entry_valid_names_and_escape():
+    entry = _entry("fw", "products", kind="file", artifact="a", install="awk '{print $1}'")
+    with pytest.raises(
+        ValueError, match=r"(?s)\[\[products\]\].*'fw'.*install.*cov_dir.*name.*\{\{"
+    ):
+        product_mod.PRODUCT_KINDS.get("file")(entry, _host())
+
+
+def test_file_kind_escaped_braces_are_literal():
+    built = product_mod.PRODUCT_KINDS.get("file")(
+        _file_entry(install="awk '{{print $1}}' {cov_dir}"), _host()
+    )
+    assert built.install_cmd == "awk '{print $1}' /tmp/fw"
+
+
+@pytest.mark.parametrize(
+    "placeholder",
+    ["{cov_dir!r}", "{cov_dir:>12}", "{name.upper}", "{cov_dir[1]}", "{}", "{0}"],
+)
+def test_file_kind_rejects_conversions_specs_attrs_and_positional_fields(placeholder):
+    # format_map alone validates only the root field name — a conversion,
+    # format spec, attribute/index access, or a positional/empty field all
+    # pass it silently and would rewrite the command run on the host.
+    entry = _entry("fw", "products", kind="file", artifact="a", install=placeholder)
+    with pytest.raises(
+        ValueError, match=r"(?s)\[\[products\]\].*'fw'.*install.*cov_dir.*name.*\{\{"
+    ):
+        product_mod.PRODUCT_KINDS.get("file")(entry, _host())
+
+
+@pytest.mark.parametrize("key", ["uninstall", "check"])
+def test_file_kind_unknown_placeholder_error_names_uninstall_and_check_too(key):
+    entry = _entry("fw", "products", kind="file", artifact="a", **{key: "{cov_dir!r}"})
+    with pytest.raises(
+        ValueError, match=rf"(?s)\[\[products\]\].*'fw'.*{key}.*cov_dir.*name.*\{{\{{"
+    ):
+        product_mod.PRODUCT_KINDS.get("file")(entry, _host())
+
+
+@pytest.mark.parametrize("command", ["echo {", "sed 's/}//'"])
+def test_file_kind_unbalanced_brace_gets_the_named_error_not_a_bare_stdlib_one(command):
+    # string.Formatter().parse() is a lazy generator that itself raises a
+    # raw, unnamed ValueError ("Single '{'/'}' encountered...") on an
+    # unbalanced brace — that must still surface the named [[seam]] 'name':
+    # 'key' ... valid: {cov_dir}, {name} ... {{ escape grammar, not the bare
+    # stdlib message.
+    entry = _entry("fw", "products", kind="file", artifact="a", install=command)
+    with pytest.raises(
+        ValueError, match=r"(?s)\[\[products\]\].*'fw'.*install.*cov_dir.*name.*\{\{"
+    ):
+        product_mod.PRODUCT_KINDS.get("file")(entry, _host())
+
+
+def test_file_kind_dev_tools_get_no_substitution_and_no_coverage_params():
+    tool = _entry("probe", "dev_tools", kind="file", artifact="p.sh", install="awk '{print $1}'")
+    built = dev_tool_mod.DEV_TOOL_KINDS.get("file")(tool, _host())
+    assert built.install_cmd == "awk '{print $1}'"  # untouched
+    for key in ("cov_dir", "debug_log_globs", "instrumented"):
+        bad = _entry("probe", "dev_tools", kind="file", artifact="p.sh", **{key: "x"})
+        with pytest.raises(
+            ValueError, match=rf"(?s)\[\[dev_tools\]\].*'probe'.*{key}.*no coverage"
+        ):
+            dev_tool_mod.DEV_TOOL_KINDS.get("file")(bad, _host())
+
+
+@pytest.mark.parametrize(("value", "expected"), [(True, True), (False, False)])
+def test_file_kind_instrumented_param_overrides_the_scan(tmp_path, value, expected):
+    built = product_mod.PRODUCT_KINDS.get("file")(
+        _file_entry(artifact=str(tmp_path / "absent.tar"), instrumented=value), _host()
+    )
+    assert built.instrumented() is expected
+
+
+def test_file_kind_instrumented_false_overrides_a_positive_scan(tmp_path):
+    # The override must beat the scan in BOTH directions, not just when the
+    # scan is unknown (absent artifact) — an instrumented=False build whose
+    # artifact happens to carry a stray ``.gcda`` marker must still say False.
+    art = tmp_path / "fw.bin"
+    art.write_bytes(b"\0.gcda\0")
+    built = product_mod.PRODUCT_KINDS.get("file")(
+        _file_entry(artifact=str(art), instrumented=False), _host()
+    )
+    assert built.instrumented() is False
+
+
+def test_file_kind_instrumented_true_overrides_a_negative_scan(tmp_path):
+    art = tmp_path / "fw.bin"
+    art.write_bytes(b"clean build, no markers here")
+    built = product_mod.PRODUCT_KINDS.get("file")(
+        _file_entry(artifact=str(art), instrumented=True), _host()
+    )
+    assert built.instrumented() is True
+
+
+def test_file_kind_without_instrumented_param_scans(tmp_path):
+    art = tmp_path / "fw.bin"
+    art.write_bytes(b"\0.gcda\0")
+    built = product_mod.PRODUCT_KINDS.get("file")(_file_entry(artifact=str(art)), _host())
+    assert built.instrumented() is True
+
+
+@pytest.mark.parametrize(
+    ("params", "fragment"),
+    [
+        ({"artifact": "a", "cov_dir": 7}, "cov_dir"),
+        ({"artifact": "a", "debug_log_globs": "not-a-list"}, "debug_log_globs"),
+        ({"artifact": "a", "instrumented": "yes"}, "instrumented"),
+    ],
+)
+def test_file_kind_rejects_bad_coverage_param_types(params, fragment):
+    entry = _entry("fw", "products", kind="file", **params)
+    with pytest.raises(ValueError, match=rf"(?s)\[\[products\]\].*'fw'.*{fragment}"):
+        product_mod.PRODUCT_KINDS.get("file")(entry, _host())
+
+
+def test_file_kind_rejects_an_empty_cov_dir():
+    # An empty string passes the plain str-type check but would otherwise
+    # diverge from the substituted default: the field stays "" (falsy) while
+    # {cov_dir} substitution falls back to /tmp/<name> — silently mismatched.
+    entry = _entry("fw", "products", kind="file", artifact="a", cov_dir="")
+    with pytest.raises(ValueError, match=r"(?s)\[\[products\]\].*'fw'.*cov_dir"):
+        product_mod.PRODUCT_KINDS.get("file")(entry, _host())
+
+
+def test_file_kind_unknown_param_message_lists_the_new_names():
+    entry = _entry("fw", "products", kind="file", artifact="a", bogus=1)
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"valid: artifact, dest_dir, install, uninstall, check, "
+            r"cov_dir, debug_log_globs, instrumented"
+        ),
+    ):
+        product_mod.PRODUCT_KINDS.get("file")(entry, _host())

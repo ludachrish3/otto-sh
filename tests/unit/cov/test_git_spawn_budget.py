@@ -66,6 +66,7 @@ def big_repo(tmp_path: Path):
     }
     cap = Capture(
         tier="manual",
+        product="app",
         base_commit=base,
         captured_at="2026-07-01T00:00:00Z",
         board="bench-1",

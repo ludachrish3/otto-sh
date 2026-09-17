@@ -24,6 +24,7 @@ class TierConfig:
     color: str
     harvest_dirs: list[Path] = field(default_factory=list)
     max_age_days: int | None = None
+    products: dict[str, list[Path]] = field(default_factory=dict)
 
 
 def _tier_from_entry(name: str, entry: dict[str, Any]) -> TierConfig:
@@ -36,6 +37,10 @@ def _tier_from_entry(name: str, entry: dict[str, Any]) -> TierConfig:
         color=entry.get("color") or DEFAULT_TIER_COLORS[kind],
         harvest_dirs=[Path(p) for p in entry.get("harvest_dirs") or []],
         max_age_days=int(max_age[:-1]) if max_age else None,
+        products={
+            product: [Path(p) for p in dirs]
+            for product, dirs in (entry.get("products") or {}).items()
+        },
     )
 
 

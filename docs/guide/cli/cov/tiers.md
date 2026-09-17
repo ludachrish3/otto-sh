@@ -5,9 +5,9 @@ Every tier's `kind` selects how `otto cov report` collects its data:
 
 | Kind | Collected by | Storage |
 |------|---------------|---------|
-| `e2e` | `otto test --cov` / `otto cov get` | `<output_dir>/cov/<board_id>/capture.json` — not committed, same lifecycle as other run artifacts |
+| `e2e` | `otto test --cov` / `otto cov get` | `<output_dir>/cov/<host_id>/<product>/capture.json` — not committed, same lifecycle as other run artifacts ({ref}`the run tree <run-tree>`) |
 | `unit` | Nothing otto runs for you — build and run your instrumented unit tests as usual; `otto cov report` harvests `.gcda` from the tier's `harvest_dirs` in the **current build tree** at report time | no capture file |
-| `manual` | `otto cov get --tier <name> --ticket <ref>` | `.otto/coverage/manual/<utc-timestamp>-<ticket-slug>-<board-slug>.json`, committed to the SUT repo |
+| `manual` | `otto cov get --tier <name> --ticket <ref>` | `.otto/coverage/manual/<utc-timestamp>-<ticket-slug>-<board-slug>-<product-slug>.json`, committed to the SUT repo |
 
 **Only manual captures are committed to the repo** — every capture
 (manual or e2e) is anchored to a `base_commit`.  E2E data comes from
@@ -33,6 +33,9 @@ precedence = 2
 harvest_dirs = ["build"]     # swept for .gcda at report time; relative to the repo root
 color = "yellow"
 
+[coverage.tiers.unit.products]  # optional: one run per named product view
+app = ["build/app-tests"]
+
 [coverage.tiers.manual]
 kind = "manual"
 precedence = 3
@@ -52,6 +55,7 @@ Each `[coverage.tiers.<name>]` block:
 | `precedence` | Integer; lower wins the winner-take-all row coloring when multiple tiers cover the same line. |
 | `color` | Optional CSS named color or `#RRGGBB` hex, validated at settings load. Defaults to a per-`kind` color when omitted (`e2e` = green, `unit` = yellow, `manual` = orange). |
 | `harvest_dirs` | `unit`-kind only: build directories swept for `.gcda` at report time. Relative paths resolve against the repo root (see {doc}`../../configuration/settings`). |
+| `products` | `unit`-kind only: a `[coverage.tiers.<name>.products]` sub-table of `<product> = [<dirs>]`. Each named view is swept separately and becomes its own run, tagged with that product; `harvest_dirs` stays the unnamed view. Keys follow {ref}`the product-name rule <run-tree>`. |
 | `max_age` | `manual`-kind only: `"<days>d"` (e.g. `"180d"`); enables the *aging* flag (see {ref}`coverage-validity`). Optional, off by default. |
 
 Tier **names are free-form** and multiple tiers may share a `kind` —
@@ -84,6 +88,21 @@ cmake --build build --target my_unit_tests
 No lcov invocation and no `--tier unit=...` flag are needed — as long
 as `[coverage.tiers.unit].harvest_dirs` points at `build`, `otto cov
 report` finds and merges the counters itself.
+
+### Distinct unit views
+
+`[coverage.tiers.unit.products]` splits that one sweep into named views, each
+its own run in the report. Naming a view after a `[[products]]` entry is what
+makes a single product pin show that product's end-to-end and unit evidence
+together — the names need not match, and matching them is the whole point when
+they do.
+
+Each view needs its **own build or object directory**, and that is a
+requirement, not a tidiness preference: `.gcno` notes files sit beside the
+objects they describe, so two views compiled from one tree with different
+defines overwrite each other's notes and cannot be told apart afterwards.
+`GCOV_PREFIX` does not help here — it relocates `.gcda` counters at run time
+and has nothing to say about where the notes were written.
 
 **manual** — retrieve and anchor a session against the instrumented
 target, attaching a ticket:
@@ -169,10 +188,12 @@ coverage against the new files.
 A few more rulings that fall out of how captures are anchored and
 resolved:
 
-- A **newer manual capture with the same run label and host** entirely
-  replaces the older one — the superseded capture's credits do not
+- A **newer manual capture with the same run label, host, and product**
+  entirely replaces the older one — the superseded capture's credits do not
   accumulate, and it drops out of the run table (see
-  {ref}`coverage-runs`).
+  {ref}`coverage-runs`). Product is part of that identity because one host
+  can carry several instrumented products; without it a host's second
+  product would supersede its first.
 - On a **shallow clone**, a capture older than the clone's fetch depth has
   a `base_commit` git cannot resolve here; validity falls back to the
   per-file blob check instead of crashing — files whose current blob
@@ -191,9 +212,11 @@ resolved:
 ## Runs: which run covered this line?
 
 Every coverage input becomes a **run** at report time: each manual
-or e2e capture is one run (labelled by the host's display name; hover for
-tier, ticket, note, date, and base_commit), and each unit-tier harvest or legacy
-`.info` load gets a synthetic per-tier run.  On a file's annotated page,
+or e2e capture is one run — one host, one product (labelled by the host's
+display name, shown as `host · product` where runs are listed; hover for
+tier, ticket, note, date, and base_commit) — each named unit-tier product
+view is its own run, and the unnamed `harvest_dirs` sweep or a legacy
+`.info` load gets a synthetic per-tier run that names no product.  On a file's annotated page,
 the right-hand **runs** column expands per line to list every run that hit
 it, colored by tier, with per-run hit counts.  A stale line lists the
 revoked run struck through — the ticket to re-verify.  The index's

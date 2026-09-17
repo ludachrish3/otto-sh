@@ -34,6 +34,8 @@ export function emptyStats(overrides: Partial<Stats> = {}): Stats {
     branches: { total: 0, hit: 0, per_tier: {} },
     flags: { stale: 0, aging: 0, excluded: 0 },
     ctx_lines: {},
+    product_lines: {},
+    ctx_product_lines: {},
     ...overrides,
   };
 }
@@ -51,6 +53,7 @@ export function makeRun(overrides: Partial<RunJson> = {}): RunJson {
     label: "nightly-full",
     board: "stm32h7-rev3",
     host: "router-a",
+    product: "",
     labs: [],
     captured_at: "2026-07-21",
     tester: null,
@@ -80,6 +83,7 @@ export function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
     thresholds: { high: 80, medium: 70 },
     stat_types: ["line", "branch", "decision"],
     runs: [],
+    products: [],
     overrides: [],
     run_contrib: {},
     total_lines: 0,

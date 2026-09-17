@@ -369,9 +369,10 @@ result = await asyncio.to_thread(otto.run_suite, suite_cls, run_options=run_opti
 
 Both `otto cov get` and the `otto test --cov` tail wrap one async library
 function: `collect_coverage()` fetches `.gcda` counters from the lab's coverage
-hosts (Unix hosts over the network, embedded boards over the console), writes
-the `.otto_cov_meta.json` sidecar, and produces a `capture.json` per board —
-returning a `CollectResult`. A second async call, `run_coverage_report()`,
+hosts (Unix hosts and containers over the network, embedded boards over the
+console), walking each host's instrumented **products**; it writes the
+`.otto_cov_meta.json` sidecar and produces a `capture.json` per host per
+product — returning a `CollectResult`. A second async call, `run_coverage_report()`,
 renders those captures into a multi-tier HTML report. `collect_coverage`,
 `clean_remote_gcda`, `CollectResult`, and the two named exceptions below
 (`CoverageConfigError`, `NoCoverageDataError`) are exported at `otto.coverage`;
@@ -396,12 +397,13 @@ async def main():
     async with otto.open_context(lab="mylab") as ctx:
         cov_dir = Path("./coverage-run/cov")
 
-        # Fetch .gcda from every [coverage] host, write the metadata sidecar,
-        # and produce one capture.json per board against the resolved tier.
+        # Fetch .gcda from every [coverage] host's instrumented products, write
+        # the metadata sidecar, and produce one capture.json per (host, product)
+        # against the resolved tier.
         result = await collect_coverage(cov_dir, tier="manual", ticket="PROJ-123")
         print(f"{len(result.captures_written)} capture(s) under {result.cov_dir}")
-        for host_id, host_dir in result.host_dirs.items():
-            print(host_id, host_dir)
+        for (host_id, product), product_dir in result.product_dirs.items():
+            print(host_id, product, product_dir)
 
         # Render an HTML report from the collected cov/ directory.
         store = await run_coverage_report([cov_dir], Path("./coverage-run/report"))
@@ -419,8 +421,8 @@ asyncio.run(main())
 | Field              | Type              | Description                                                                                              |
 |--------------------|-------------------|---------------------------------------------------------------------------------------------------------|
 | `cov_dir`          | `Path`            | The directory the coverage landed in (the argument you passed).                                         |
-| `host_dirs`        | `dict[str, Path]` | Each contributing host id → its per-host `.gcda` directory.                                              |
-| `captures_written` | `list[Path]`      | The `capture.json` files produced, one per board (empty when no `[coverage]` repo resolved a git root). |
+| `product_dirs`     | `dict[tuple[str, str], Path]` | Each contributing `(host id, product)` pair → its staging directory.                         |
+| `captures_written` | `list[Path]`      | The `capture.json` files produced, one per `(host, product)` pair (empty when no `[coverage]` repo resolved a git root). |
 
 ### Fails loud — exceptions to handle
 
@@ -430,7 +432,9 @@ failure should not abort your script:
 - `otto.coverage.errors.CoverageConfigError` (a `ValueError`) — no `[coverage]`
   section is configured for any of the resolved repos.
 - `otto.coverage.errors.NoCoverageDataError` (a `ValueError`) — no `.gcda` was
-  retrieved from any matched host (the message names the hosts it searched).
+  retrieved from any matched product. The message names every
+  `host:product:cov_dir` triple it searched, or says that no host carried an
+  instrumented product at all.
 - `ValueError` — the requested tier name is ambiguous or unknown (only
   reachable when `tier=` is a name or `None`; a `TierConfig` object passed
   directly skips resolution).

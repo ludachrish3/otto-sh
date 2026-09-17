@@ -25,6 +25,8 @@ function emptyStats() {
     branches: { total: 0, hit: 0, per_tier: {} },
     flags: { stale: 0, aging: 0, excluded: 0 },
     ctx_lines: {},
+    product_lines: {},
+    ctx_product_lines: {},
   };
 }
 
@@ -42,6 +44,7 @@ function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
     thresholds: { high: 80, medium: 70 },
     stat_types: ["line", "branch", "decision"],
     runs: [],
+    products: [],
     overrides: [],
     run_contrib: {},
     total_lines: 0,

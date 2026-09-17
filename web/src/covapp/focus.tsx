@@ -63,6 +63,16 @@ const TICKET_PARAM = "ticket";
 // each other — its own param/storage key, touched by nothing else.
 const ASSERTED_PARAM = "asserted";
 
+// The product filter (spec 2026-09-16 §10): a FOURTH independent pinned
+// value — narrows the NUMERATOR to runs tagged with one product, exactly the
+// axis `ctx` narrows (by run label). Its own param/storage key, resolved
+// against `index.products`, never sharing state with the other three.
+const PRODUCT_PARAM = "product";
+
+function productStorageKey(stamp: string): string {
+  return `otto-cov:${stamp}:product`;
+}
+
 function storageKey(stamp: string): string {
   return `otto-cov:${stamp}:focus`;
 }
@@ -288,6 +298,13 @@ export interface UseFocusResult {
    * storage key so toggling it can never touch `focus`/`ticket`. */
   hideAsserted: boolean;
   setHideAsserted: (v: boolean) => void;
+  /** The pinned product (`?product=<name>`), or `null` — resolved/persisted
+   * exactly like `ticket` above (same boot precedence, same Back/Forward
+   * stamping), just against `index.products` instead of `index.tickets`, and
+   * via its own, entirely independent param/storage key so it can never
+   * clear (or be cleared by) any of the other three. */
+  product: string | null;
+  setProduct: (name: string | null) => void;
 }
 
 const FocusContext = createContext<UseFocusResult | null>(null);
@@ -312,6 +329,16 @@ function resolveTicket(id: string | null, index: IndexPayload | null): string | 
   return known ? id : null;
 }
 
+/** `resolveTicket`'s product counterpart, checked against `index.products` —
+ * the report's sorted, distinct, NON-EMPTY run products. A run whose
+ * `product` is `""` (an unnamed unit run) is therefore absent from that list
+ * and can never be pinned: `""` resolves to `null`, i.e. cleared, like any
+ * other unknown value. */
+function resolveProduct(name: string | null, index: IndexPayload | null): string | null {
+  if (name === null || index === null) return null;
+  return index.products.includes(name) ? name : null;
+}
+
 /** Boot precedence (spec-pinned): the hash query wins; else localStorage. */
 function initialFocus(index: IndexPayload | null): string | null {
   const fromQuery = parseHashQuery().get(CTX_PARAM);
@@ -330,6 +357,17 @@ function initialTicket(index: IndexPayload | null): string | null {
   if (index !== null) {
     const stored = localStorage.getItem(ticketStorageKey(index.stamp));
     if (stored !== null) return resolveTicket(stored, index);
+  }
+  return null;
+}
+
+/** `initialTicket`'s product counterpart — same query>storage precedence. */
+function initialProduct(index: IndexPayload | null): string | null {
+  const fromQuery = parseHashQuery().get(PRODUCT_PARAM);
+  if (fromQuery !== null) return resolveProduct(fromQuery, index);
+  if (index !== null) {
+    const stored = localStorage.getItem(productStorageKey(index.stamp));
+    if (stored !== null) return resolveProduct(stored, index);
   }
   return null;
 }
@@ -364,6 +402,11 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   // and `ASSERTED_PARAM`'s doc comment on why hide-asserted must compose
   // with both rather than share a slot).
   const [hideAsserted, setHideAssertedState] = useState<boolean>(() => initialHideAsserted(index));
+  // A FOURTH, independent piece of state — never derived from or combined
+  // with any of the three above (see `PRODUCT_PARAM`'s doc comment on why
+  // the product filter must compose with all of them rather than share a
+  // slot with `focus`, whose axis it most resembles).
+  const [product, setProductState] = useState<string | null>(() => initialProduct(index));
 
   // Boot reconciliation (runs once, at mount): whichever source won the
   // query>storage precedence above becomes the sole source going forward —
@@ -391,7 +434,7 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   // very first Back press (with no in-app navigation in between) would
   // land on an unstamped boot entry and get misread as a fresh push
   // rather than the real traversal it is.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: boot-only effect (see comment above) — deliberately `[]`, not re-run on `focus`/`ticket`/`index` changes (setFocus/setTicket keep both channels in sync for those directly)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: boot-only effect (see comment above) — deliberately `[]`, not re-run on `focus`/`ticket`/`hideAsserted`/`product`/`index` changes (each setter keeps both channels in sync for its own value directly)
   useEffect(() => {
     if (focus === null) {
       if (parseHashQuery().has(CTX_PARAM)) replaceHashQuery((p) => p.delete(CTX_PARAM));
@@ -413,6 +456,13 @@ export function FocusProvider({ children }: { children: ReactNode }) {
     } else {
       replaceHashQuery((p) => p.set(ASSERTED_PARAM, "1"));
       if (index !== null) localStorage.setItem(assertedStorageKey(index.stamp), "1");
+    }
+    if (product === null) {
+      if (parseHashQuery().has(PRODUCT_PARAM)) replaceHashQuery((p) => p.delete(PRODUCT_PARAM));
+      if (index !== null) localStorage.removeItem(productStorageKey(index.stamp));
+    } else {
+      replaceHashQuery((p) => p.set(PRODUCT_PARAM, product));
+      if (index !== null) localStorage.setItem(productStorageKey(index.stamp), product);
     }
     stampCurrentEntry();
   }, []);
@@ -515,20 +565,29 @@ export function FocusProvider({ children }: { children: ReactNode }) {
             else localStorage.setItem(assertedStorageKey(index.stamp), "1");
           }
         }
+        const landedProduct = resolveProduct(params.get(PRODUCT_PARAM), index);
+        if (landedProduct !== product) {
+          setProductState(landedProduct);
+          if (index !== null) {
+            if (landedProduct === null) localStorage.removeItem(productStorageKey(index.stamp));
+            else localStorage.setItem(productStorageKey(index.stamp), landedProduct);
+          }
+        }
         return;
       }
-      if (focus !== null || ticket !== null || hideAsserted) {
+      if (focus !== null || ticket !== null || hideAsserted || product !== null) {
         replaceHashQuery((p) => {
           if (focus !== null) p.set(CTX_PARAM, focus);
           if (ticket !== null) p.set(TICKET_PARAM, ticket);
           if (hideAsserted) p.set(ASSERTED_PARAM, "1");
+          if (product !== null) p.set(PRODUCT_PARAM, product);
         });
       }
       stampCurrentEntry();
     }
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
-  }, [focus, ticket, hideAsserted, index]);
+  }, [focus, ticket, hideAsserted, product, index]);
 
   const setFocus = useCallback(
     (label: string | null) => {
@@ -591,9 +650,40 @@ export function FocusProvider({ children }: { children: ReactNode }) {
     [index, show],
   );
 
+  // Mirrors `setTicket`'s shape exactly — its own `setHashQuery`/
+  // `localStorage` calls only ever touch `PRODUCT_PARAM`/`productStorageKey`,
+  // never any of the other three's, so pinning/clearing a product can never
+  // clear (or be cleared by) `focus`, `ticket` or `hideAsserted`.
+  const setProduct = useCallback(
+    (name: string | null) => {
+      const resolved = resolveProduct(name, index);
+      if (resolved === null) {
+        setHashQuery((p) => p.delete(PRODUCT_PARAM));
+        if (index !== null) localStorage.removeItem(productStorageKey(index.stamp));
+        setProductState(null);
+        show("Product pin cleared");
+        return;
+      }
+      setHashQuery((p) => p.set(PRODUCT_PARAM, resolved));
+      if (index !== null) localStorage.setItem(productStorageKey(index.stamp), resolved);
+      setProductState(resolved);
+      show(`Pinned product ${resolved}`);
+    },
+    [index, show],
+  );
+
   const value = useMemo<UseFocusResult>(
-    () => ({ focus, setFocus, ticket, setTicket, hideAsserted, setHideAsserted }),
-    [focus, setFocus, ticket, setTicket, hideAsserted, setHideAsserted],
+    () => ({
+      focus,
+      setFocus,
+      ticket,
+      setTicket,
+      hideAsserted,
+      setHideAsserted,
+      product,
+      setProduct,
+    }),
+    [focus, setFocus, ticket, setTicket, hideAsserted, setHideAsserted, product, setProduct],
   );
   return <FocusContext.Provider value={value}>{children}</FocusContext.Provider>;
 }

@@ -43,10 +43,12 @@ CONTRACT = json.loads((TESTS_ROOT / "_fixtures" / "covapp_contract.json").read_t
 def _ticket_store(tmp_path: Path) -> CoverageStore:
     """Two lines owned by PROJ-1, one hit — enough to emit every ticket key."""
     store = CoverageStore(tier_order=["unit"])
+    run_id = store.add_run(tier="unit")
     record = store.get_or_create_file(tmp_path / "a.c")
     first = record.get_or_create_line(1)
     first.ticket = ["PROJ-1"]
     first.hits.add("unit", 1)
+    first.run_hits[run_id] = 1
     second = record.get_or_create_line(2)
     second.ticket = ["PROJ-1"]
     store.tickets["PROJ-1"] = TicketRecord(id="PROJ-1", url="u/1", commits=["abc"])
@@ -160,7 +162,9 @@ def _rich_store(tmp_path: Path) -> CoverageStore:
     """A store that emits EVERY key in the contract, optional ones included.
 
     `LineJson`'s `run` / `stale_run` / `ticket` / `asserted` are omitted when
-    empty, so a minimal store would silently under-assert the key set — the
+    empty, and the run carries a product so the product maps are populated
+    rather than merely present, so a minimal store would silently under-assert
+    the key set — the
     contract would then describe less than the emitter produces, which is the
     drift it exists to catch.
     """
@@ -172,6 +176,7 @@ def _rich_store(tmp_path: Path) -> CoverageStore:
             tier="unit",
             label="dut1",
             board="dut1",
+            product="app",
             tester={"name": "chris", "email": "c@example.com"},
         )
     )

@@ -7,11 +7,15 @@ otto cov report <output_dir> --dir ./my_report
 `otto cov report` assembles a store from every source available:
 
 1. **E2E captures** — `capture.json` files under each given output
-   directory's `cov/<board_id>/`, subject to the base_commit guard below. Board
-   directories with no `capture.json` fall back to the legacy
-   `.gcda`-merge path (back-compat with pre-tier output directories).
-2. **Unit harvest** — every `unit`-kind tier's `harvest_dirs`, swept
-   fresh from the current build tree.
+   directory's `cov/<host_id>/<product>/` ({ref}`the run tree <run-tree>`),
+   subject to the base_commit guard below. A product directory with no
+   `capture.json` falls back to the legacy `.gcda`-merge path (back-compat
+   with pre-tier output directories). A directory that holds `.gcda` or a
+   `capture.json` *directly* under the host — the pre-product one-level tree
+   — is refused by name rather than misread as a product; there is no
+   migration shim, so re-collect with this version of otto.
+2. **Unit harvest** — every `unit`-kind tier's `harvest_dirs`, plus each of
+   its named `products` views, swept fresh from the current build tree.
 3. **Manual store** — every capture committed under the repo's
    `.otto/coverage/manual/`, loaded automatically with the validity
    pass applied.
@@ -211,9 +215,9 @@ configure.
   footer](../../../_static/generated/coverage-search.png)
 
 - **Runs & contexts page** (`#/runs`) — one row per run (see
-  {ref}`coverage-runs`); multi-host runs show host pills with an
-  expandable per-host lines breakdown, filterable by tier and free-text
-  search over label/host/ticket/board. Per-run **branch** contribution
+  {ref}`coverage-runs`); multi-host runs show host pills reading
+  `host · product` with an expandable per-host lines breakdown, filterable by
+  tier, by product, and by free-text search over label/host/ticket/board/product. Per-run **branch** contribution
   isn't part of the stored data (**branch** hits are recorded per line, not
   per line-and-run — unlike line hits, which are) and renders as "not
   tracked per-run".
@@ -230,6 +234,27 @@ configure.
   bookmarkable and shareable — and persists per report in `localStorage`.
   Branch cells show "—" while a focus is active; focus mode filters line
   stats only.
+- **Product focus** — pin a product from the chip row on the runs page, from
+  the app bar's **⋮** menu, or by hand with `?product=<name>` on the current
+  route; it persists per report in `localStorage` the same way a context pin
+  does. Like run focus it narrows the **numerator**: only runs tagged with
+  that product count, so one pin answers "how much of this code did *this*
+  product prove?" across every page, whatever host or tier produced the
+  evidence. The controls appear only when the report has products to pin —
+  a report whose every run is an unnamed unit harvest shows none.
+
+  It composes with the other pins. A context and a product together read as
+  `nightly · agent` and intersect (a precomputed per-context per-product
+  count, never two one-dimensional maps multiplied together); a pinned ticket
+  keeps owning the denominator while the product narrows the numerator, and
+  where that pair is too fine to answer honestly the cell declines rather
+  than guessing — the same rule the ticket-plus-context pair already
+  follows.
+
+  A product, unlike a context, **spans tiers**: an `agent` pin gathers that
+  product's e2e captures and its unit views alike. So a bare product pin has
+  no tier colour to lend — file rows tint neutral and the per-tier columns
+  read `—`. Pin a context as well to get the per-tier breakdown back.
 - **Tickets page** (`#/tickets`) — present only when `[coverage.tickets]`
   is configured (see {ref}`coverage-tickets`); one row per ticket id, sorted
   worst-uncovered-first, with the same overall stats card scoped to every

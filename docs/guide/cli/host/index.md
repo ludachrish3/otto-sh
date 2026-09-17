@@ -75,9 +75,9 @@ your own is {doc}`../../../library/cli-exposed-verbs`.
 | `is-uninstalled` | Exit 0 if no products are installed |
 | `cleanup` | Uninstall products, then remove dev tools and toolchain tools |
 | `is-clean` | Exit 0 if no product, dev tool, or toolchain tool is present |
-| `get-logs` | Retrieve product and debug logs into `logs/<host-id>/` |
-| `get-product-logs` | Retrieve each product's logs into `logs/<host-id>/product/` |
-| `get-debug-logs` | Fetch the host's `debug_log_globs` into `logs/<host-id>/debug/` |
+| `get-logs` | Retrieve product and debug logs into `logs/<host_id>/` ({ref}`the run tree <run-tree>`) |
+| `get-product-logs` | Retrieve each product's logs, and its own `debug_log_globs`, into `logs/<host_id>/<product>/` |
+| `get-debug-logs` | Fetch the host's `debug_log_globs` into `logs/<host_id>/debug/` |
 | `install-tools` | Install the host's dev tools, and its toolchain tools with `--toolchain` |
 | `install-dev-tools` | Stage then install every dev tool attached to the host |
 | `uninstall-dev-tools` | Remove every dev tool attached to the host (best-effort) |

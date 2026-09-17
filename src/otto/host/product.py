@@ -28,7 +28,7 @@ deliberately **not** supported.
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -39,6 +39,7 @@ from ..declared import KindRegistry, declared_for_host
 from ..registry import get_registering_repo
 from ..result import Result
 from ..utils import Status
+from .log_haul import haul_globs
 
 if TYPE_CHECKING:
     from ..declared import DeclaredEntry
@@ -51,13 +52,27 @@ class Product(ABC):
     """A unit of software-under-test deployed to a host (behavior contract)."""
 
     name: str
-    """Logical identity — used for logging, ``is_installed`` lookups, and dedup.
-    Not a file path: a product may be multi-file or installed from a repo."""
+    """Logical identity — used for logging, ``is_installed`` lookups, dedup,
+    and as the ``<product>`` segment of the run tree (see :mod:`otto.layout`):
+    a single path segment, never ``debug``."""
 
     owner: str | None = None
     """Owning repo's name, stamped at lab ingest from the registering-repo
     marker (see :func:`otto.registry.registering_repo`). ``None`` = attached
     outside any repo's init import. Default per-repo actions filter on this."""
+
+    cov_dir: str | None = None
+    """Host-side directory this product writes its coverage counters under —
+    the value it hands to ``GCOV_PREFIX``. A string in the HOST's path domain
+    (it only ever appears in shell commands), distinct from the CLI's local
+    ``--cov-dir`` staging root. ``None`` means the default ``/tmp/<name>``,
+    which ingest stamps (:func:`stamp_cov_dir`) so a code product can read
+    ``self.cov_dir`` when composing its install or run command."""
+
+    debug_log_globs: Sequence[str] = ()
+    """Host paths (literal or glob) of this product's own debug logs, hauled
+    into ``logs/<host>/<name>/debug/`` by :meth:`get_debug_logs`. An immutable
+    empty default on the ABC; subclasses assign their own list."""
 
     @abstractmethod
     async def stage(self, host: "Host") -> Result:
@@ -94,6 +109,89 @@ class Product(ABC):
         """
         return Result(Status.Success)
 
+    async def get_debug_logs(self, host: "Host", dest: Path) -> Result:
+        """Fetch :attr:`debug_log_globs` matches into local directory *dest*.
+
+        Same rules as the host-level haul: literal entries fetched as declared,
+        a glob needs the host's ``glob`` and fails loud without it, zero logs
+        is success. Override for a product whose debug logs come another way.
+        """
+        return await haul_globs(host, self.debug_log_globs, dest, who=f"product {self.name!r}")
+
+    def instrumented(self) -> bool | None:
+        """Whether this product's build carries coverage instrumentation.
+
+        ``True``/``False`` when known, ``None`` when this product cannot tell
+        (the ABC default — a code product that is not a :class:`FileProduct`
+        overrides this, typically by scanning its artifact with
+        :func:`scan_for_instrumentation`). Local and synchronous: it runs
+        before anything executes, over the artifact on the otto machine.
+        """
+        return None
+
+
+def cov_dir_of_name(name: str) -> str:
+    """Return the default :attr:`Product.cov_dir` for a product called *name*."""
+    return f"/tmp/{name}"  # noqa: S108 — the documented default
+
+
+def cov_dir_of(product: Product) -> str:
+    """*product*'s effective :attr:`Product.cov_dir`: the explicit value, else ``/tmp/<name>``."""
+    return product.cov_dir or cov_dir_of_name(product.name)
+
+
+def stamp_cov_dir(product: Product) -> None:
+    """Make :attr:`Product.cov_dir` concrete (ingest does this once per product)."""
+    if product.cov_dir is None:
+        product.cov_dir = cov_dir_of(product)
+
+
+INSTRUMENTATION_MARKERS: tuple[bytes, ...] = (b".gcda", b"__gcov_", b"__llvm_gcov")
+"""Byte strings a coverage build leaves in its objects. ``.gcda`` is the
+load-bearing one: GCC and clang both embed each translation unit's ``.gcda``
+filename, and it survives ``strip``; the symbol prefixes catch unstripped
+binaries whose filename strings were relocated."""
+
+_SCAN_CHUNK = 1 << 20
+
+
+def _scan_file(path: Path) -> bool | None:
+    """Scan one file, or ``None`` when it cannot be read (permissions, races)."""
+    overlap = max(len(m) for m in INSTRUMENTATION_MARKERS) - 1
+    tail = b""
+    try:
+        with path.open("rb") as fh:
+            while True:
+                chunk = fh.read(_SCAN_CHUNK)
+                if not chunk:
+                    return False
+                window = tail + chunk
+                if any(marker in window for marker in INSTRUMENTATION_MARKERS):
+                    return True
+                tail = window[-overlap:]
+    except OSError:
+        return None
+
+
+def scan_for_instrumentation(path: Path) -> bool | None:
+    """Scan *path* for :data:`INSTRUMENTATION_MARKERS`.
+
+    A regular file answers ``True``/``False``, or ``None`` when it cannot be
+    read (permissions, a race with deletion) — the tri-state means "cannot
+    tell", not "clean". A directory answers ``True`` when any regular file
+    under it hits, else ``None`` — the scan cannot see inside archives, and
+    an unreadable member is skipped rather than raised, so a clean directory
+    is unknown, not clean. A missing path is ``None``.
+    """
+    if path.is_file():
+        return _scan_file(path)
+    if path.is_dir():
+        for candidate in sorted(path.rglob("*")):
+            if candidate.is_file() and _scan_file(candidate) is True:
+                return True
+        return None
+    return None
+
 
 @dataclass(slots=True)
 class FileProduct(Product):
@@ -116,6 +214,20 @@ class FileProduct(Product):
     """Destination directory on the host; resolved against the host's
     ``default_dest_dir`` by :meth:`~otto.host.host.Host.put`."""
 
+    cov_dir: str | None = None
+    """See :attr:`Product.cov_dir <otto.host.product.Product.cov_dir>`; a dataclass
+    field so kinds can pass it."""
+
+    debug_log_globs: list[str] = field(default_factory=list)
+    """See :attr:`Product.debug_log_globs <otto.host.product.Product.debug_log_globs>`."""
+
+    instrumented_override: bool | None = None
+    """Forces :meth:`instrumented() <otto.host.product.Product.instrumented>`'s
+    verdict when the scan cannot answer — an archive the scan cannot see
+    inside, or a build whose provenance is known out of band. ``None`` = scan
+    the artifact. Every declared kind's ``instrumented`` param lands here,
+    which is why it lives on the base."""
+
     def __post_init__(self) -> None:
         if not self.name:
             self.name = self.artifact.name
@@ -124,6 +236,16 @@ class FileProduct(Product):
     async def stage(self, host: "Host") -> Result:
         """Transfer the artifact, returning ``host.put``'s result unchanged."""
         return await host.put(self.artifact, self.dest_dir)
+
+    @override
+    def instrumented(self) -> bool | None:
+        """Return :attr:`instrumented_override` when set, else scan the artifact.
+
+        The scan is :func:`scan_for_instrumentation` over :attr:`artifact`.
+        """
+        if self.instrumented_override is not None:
+            return self.instrumented_override
+        return scan_for_instrumentation(self.artifact)
 
 
 ProductProvider = Callable[["Host"], Iterable[Product] | None]

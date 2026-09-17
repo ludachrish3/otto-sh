@@ -20,12 +20,16 @@ Run with::
 from pathlib import Path
 
 import pytest
+import tomli
 
+import otto.host.factory  # noqa: F401 — imported for its side effect: the factory module is what puts the built-in "file" product kind in PRODUCT_KINDS
 from otto.config.lab import Lab
 from otto.coverage.fetcher.remote import GcdaFetcher
 from otto.coverage.reporter import CoverageReporter, discover_gcda_dirs
 from otto.host.local_host import LocalHost
+from otto.host.product import PRODUCT_KINDS, stamp_cov_dir
 from otto.host.unix_host import UnixHost
+from otto.models.settings import DeclaredEntrySpec
 from otto.utils import Status
 from tests._fixtures.paths import TESTS_ROOT
 from tests.conftest import active_context
@@ -42,9 +46,48 @@ def configured_hosts(*hosts):
     return active_context(lab=lab)
 
 
-PRODUCT_DIR = TESTS_ROOT / "repo1" / "product"
+REPO1 = TESTS_ROOT / "repo1"
+PRODUCT_DIR = REPO1 / "product"
 REMOTE_INSTALL_DIR = "/opt/coverage_product"
-GCDA_REMOTE_DIR = "/var/coverage/product"
+PRODUCT_NAME = "product"
+
+
+def _declared_entry():
+    """repo1's ``[[products]]`` entry for the C product, in runtime form.
+
+    Read from the fixture repo's own ``settings.toml`` rather than restated
+    here. These tests build their hosts directly (no lab loader, so no ingest
+    and no declared-product pass), and a second copy of ``cov_dir`` in this
+    file is exactly the drift the per-product model exists to remove: the
+    fetcher discovers counters under ``Product.cov_dir``, so if the constant
+    here and the declaration there ever disagreed, the fetch would come back
+    empty and every assertion below would read as a transport failure.
+    """
+    settings = tomli.loads((REPO1 / ".otto" / "settings.toml").read_text())
+    raw = next(e for e in settings["products"] if e["name"] == PRODUCT_NAME)
+    spec = DeclaredEntrySpec.model_validate(raw)
+    return spec.to_runtime(owner="repo1", base_dir=REPO1, seam="products")
+
+
+def attach_product(host: UnixHost) -> None:
+    """Give *host* repo1's declared product, the way lab ingest would.
+
+    ``PRODUCT_KINDS.build`` applies the entry's match table, so a host these
+    tests point at that repo1 does not declare fails here — loudly — instead
+    of silently fetching nothing.
+    """
+    built = PRODUCT_KINDS.build([_declared_entry()], host)
+    assert built, f"repo1's {PRODUCT_NAME!r} entry does not match host {host.id}"
+    for product in built:
+        stamp_cov_dir(product)
+    host.products.extend(built)
+
+
+def _cov_dir(host: UnixHost) -> str:
+    """The host-side coverage directory *host*'s product declares."""
+    product = next(p for p in host.products if p.name == PRODUCT_NAME)
+    assert product.cov_dir is not None
+    return product.cov_dir
 
 
 def _gcov_prefix_strip() -> int:
@@ -63,9 +106,11 @@ async def _compile_product() -> None:
 
 
 async def _install_on_host(host: UnixHost) -> None:
-    """Deploy the product binary to a remote host."""
-    await host.exec(f"sudo mkdir -p {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
-    await host.exec(f"sudo chmod 777 {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
+    """Attach the declared product, then deploy its binary to a remote host."""
+    attach_product(host)
+    cov_dir = _cov_dir(host)
+    await host.exec(f"sudo mkdir -p {REMOTE_INSTALL_DIR} {cov_dir}", timeout=10)
+    await host.exec(f"sudo chmod 777 {REMOTE_INSTALL_DIR} {cov_dir}", timeout=10)
 
     binary = PRODUCT_DIR / "product"
     res = await host.put(
@@ -78,7 +123,7 @@ async def _install_on_host(host: UnixHost) -> None:
 
 async def _uninstall_from_host(host: UnixHost) -> None:
     """Remove the product and coverage data from a remote host."""
-    await host.exec(f"sudo rm -rf {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
+    await host.exec(f"sudo rm -rf {REMOTE_INSTALL_DIR} {_cov_dir(host)}", timeout=10)
 
 
 async def _run_product(host: UnixHost, op: str, *args: int) -> str:
@@ -86,7 +131,7 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
     strip = _gcov_prefix_strip()
     str_args = " ".join(str(a) for a in args)
     cmd = (
-        f"GCOV_PREFIX={GCDA_REMOTE_DIR} "
+        f"GCOV_PREFIX={_cov_dir(host)} "
         f"GCOV_PREFIX_STRIP={strip} "
         f"{REMOTE_INSTALL_DIR}/product {op} {str_args}"
     )
@@ -113,23 +158,26 @@ class TestCoverageFetch:
             await _run_product(test1, "add", 1, 2)
             await _run_product(test2, "sub", 5, 3)
 
-            # Fetch .gcda files
+            # Fetch .gcda files — the fetcher takes no remote directory: each
+            # product names its own (`Product.cov_dir`), which is what makes a
+            # host with two products two separate staging dirs.
             cov_dir = tmp_path / "cov"
             with configured_hosts(*hosts):
                 fetcher = GcdaFetcher(cov_dir)
-                host_dirs = await fetcher.fetch_all(GCDA_REMOTE_DIR)
+                product_dirs = await fetcher.fetch_all()
 
             # Verify we got .gcda files from both hosts
-            assert len(host_dirs) == 2, f"Expected 2 hosts, got {len(host_dirs)}"
+            assert len(product_dirs) == 2, f"Expected 2 (host, product) keys, got {product_dirs}"
 
-            # Verify directories are named by host.id
-            assert test1.id in host_dirs
-            assert test2.id in host_dirs
+            # Verify the staging tree is keyed by (host.id, product name)
+            assert (test1.id, PRODUCT_NAME) in product_dirs
+            assert (test2.id, PRODUCT_NAME) in product_dirs
 
-            # Verify .gcda files exist
-            for host_id, host_dir in host_dirs.items():
-                gcda_files = list(host_dir.glob("**/*.gcda"))
-                assert len(gcda_files) > 0, f"No .gcda files found for host {host_id}"
+            # ...and that each key's dir is the two-level cov/<host>/<product>/
+            for (host_id, product), product_dir in product_dirs.items():
+                assert product_dir == cov_dir / host_id / product
+                gcda_files = list(product_dir.glob("**/*.gcda"))
+                assert len(gcda_files) > 0, f"No .gcda files found for {product} on {host_id}"
 
         finally:
             for host in hosts:
@@ -168,8 +216,8 @@ class TestCoverageReport:
             cov_dir = run_dir / "cov"
             with configured_hosts(*hosts):
                 fetcher = GcdaFetcher(cov_dir)
-                host_dirs = await fetcher.fetch_all(GCDA_REMOTE_DIR)
-            assert len(host_dirs) == 2
+                product_dirs = await fetcher.fetch_all()
+            assert len(product_dirs) == 2
 
             # Generate report
             gcda_dirs = discover_gcda_dirs([cov_dir])
@@ -219,14 +267,14 @@ class TestCoverageReport:
 
             # Clean previous .gcda files
             await test1.exec(
-                f"find {GCDA_REMOTE_DIR} -name '*.gcda' -delete 2>/dev/null; true",
+                f"find {_cov_dir(test1)} -name '*.gcda' -delete 2>/dev/null; true",
                 timeout=10,
             )
             await _run_product(test1, "add", 1, 2)
 
             with configured_hosts(test1):
                 fetcher1 = GcdaFetcher(cov1_dir)
-                dirs1 = await fetcher1.fetch_all(GCDA_REMOTE_DIR)
+                dirs1 = await fetcher1.fetch_all()
             assert len(dirs1) == 1
 
             # Run 2: clamp on test2
@@ -234,7 +282,7 @@ class TestCoverageReport:
             cov2_dir = run2_dir / "cov"
 
             await test2.exec(
-                f"find {GCDA_REMOTE_DIR} -name '*.gcda' -delete 2>/dev/null; true",
+                f"find {_cov_dir(test2)} -name '*.gcda' -delete 2>/dev/null; true",
                 timeout=10,
             )
             await _run_product(test2, "clamp", 1, 5, 10)
@@ -243,7 +291,7 @@ class TestCoverageReport:
 
             with configured_hosts(test2):
                 fetcher2 = GcdaFetcher(cov2_dir)
-                dirs2 = await fetcher2.fetch_all(GCDA_REMOTE_DIR)
+                dirs2 = await fetcher2.fetch_all()
             assert len(dirs2) == 1
 
             # Generate merged report from both runs
