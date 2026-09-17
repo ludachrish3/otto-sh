@@ -68,6 +68,13 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    # `make stability-unit` is a plain `uv run pytest`, and uv picks the
+    # project interpreter from `.python-versions` -- whose FIRST line is 3.10
+    # -- unless told otherwise. Without this every cell soaked 3.10 under its
+    # own label. UV_PYTHON outranks the version file for `uv sync` and every
+    # `uv run` below, including the ones the Makefile spells.
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -81,6 +88,9 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --all-extras --dev
+
+      - name: Confirm the environment runs Python ${{ matrix.python-version }}
+        run: uv run python -c "import sys; v = '%d.%d' % sys.version_info[:2]; assert v == '${{ matrix.python-version }}', f'the environment runs Python {v}'"
 
       # No BusyBox artifact cache here, on purpose: `make stability-unit` is
       # `pytest -m concurrency`, four fast no-VM files, none of which reaches
@@ -434,21 +444,28 @@ jobs:
   # The next-Python canary. NOT a matrix entry and NOT expected to pass:
   # PYTHON_VERSIONS in noxfile.py is the supported window, and this job probes
   # the interpreter one past its ceiling so the day it CAN join the window is
-  # noticed rather than discovered. Five rungs, each a superset of the last,
-  # run in order until one fails:
+  # noticed rather than discovered. Ten rungs:
   #
   #   1  runtime dependencies install   (published wheels, or sdists that build)
   #   2  the dev group installs too     (tooling gaps kept apart from runtime ones)
   #   3  otto imports                   (`otto --version`; deprecations-as-errors)
   #   4  the hostless suite collects    (every test module + conftest imports, -n0)
-  #   5  the hostless session passes    (nox tests_hostless via --extra-python;
-  #                                      the interior bundle, since the new
-  #                                      version is not a bookend until promoted)
+  #   5  the hostless session passes    (nox tests_hostless via --extra-python,
+  #                                      the import budget aside)
+  #   6  the concurrency soak passes    (`make stability-unit`)
+  #   7  the chaos suites pass          (tier 2 and the Docker slice)
+  #   8  the dashboard browser suite    (Chromium)
+  #   9  host-contract conformance      (`make conformance`, hermetic)
+  #  10  the import budget holds        (last: its goldens are per-interpreter)
+  #
+  # Rungs 1-4 are prerequisites and a failure there stops the climb. From
+  # rung 5 on every rung runs even after one fails, so one nightly names every
+  # lane the new version breaks; `reached` is the highest CONSECUTIVE rung.
   #
   # The verdict is a RATCHET against CANARY_EXPECTED_RUNG, the rung this repo
   # currently expects the canary to reach. Reaching exactly that rung is green.
   # Reaching a HIGHER one is red: the ecosystem moved, bump the constant (and
-  # at rung 5, promote the version into PYTHON_VERSIONS and retire this job).
+  # at rung 10, promote the version into PYTHON_VERSIONS and retire this job).
   # Reaching a LOWER one is red too: something regressed — a wheel pulled, a
   # dependency raising its floor — and silently resetting the climb is exactly
   # what a plain allowed-to-fail job would do. `continue-on-error` is
@@ -457,10 +474,15 @@ jobs:
   #
   # Every rung installs with --frozen: the lock is universal over
   # requires-python, so it already covers the canary interpreter and nothing
-  # here should re-resolve. The rung commands run pytest/nox directly rather
-  # than through a Makefile lane on purpose — the Makefile targets are the
-  # SUPPORTED matrix's gates, and this job is asking whether a version could
-  # join that matrix, not gating it.
+  # here should re-resolve.
+  #
+  # Every plain `uv run` -- the rungs' own and the ones inside `make` -- must
+  # run on the canary. uv otherwise takes the project interpreter from
+  # `.python-versions`, whose first line is the floor, and silently REBUILDS
+  # `.venv` on it: the 2026-09-16 nightly "climbed" to rung 10 with rungs 3,
+  # 4 and 6-10 running on 3.10 (#334). The climb exports UV_PYTHON, which
+  # outranks the version file, and `rung` fails any rung that leaves `.venv`
+  # on another interpreter, so that false climb cannot come back unnoticed.
   python-canary:
     name: Next-Python canary (expected-rung ratchet)
     runs-on: ubuntu-latest
@@ -473,12 +495,14 @@ jobs:
       # The interpreter one past PYTHON_VERSIONS' ceiling in noxfile.py.
       CANARY_PYTHON: "3.15"
       # The rung the canary is EXPECTED to reach today. 5 = every hostless
-      # test passes except the import budget (2026-09-15, on 3.15.0rc2: the
-      # budget has no 3.15 goldens, and CPython 3.15 leaves its own
-      # `_missing_stdlib_info` out of sys.stdlib_module_names, so the guard
-      # charges it to otto -- see #333). Rungs 6-9 have never run on 3.15;
-      # the first nightly after this lands says where they stop. Bump it when
-      # this job reds with "climbed"; a red "regressed" is a real regression.
+      # test passes except the import budget (2026-09-15 and 2026-09-16, on
+      # 3.15.0rc2: the budget has no 3.15 goldens, and CPython 3.15 leaves its
+      # own `_missing_stdlib_info` out of sys.stdlib_module_names, so the
+      # guard charges it to otto -- see #333). Rungs 6-9 have never truly run
+      # on 3.15 (the 2026-09-16 run of them was on 3.10, #334); the first
+      # nightly with UV_PYTHON exported says where they stop, and rung 10
+      # cannot pass until the goldens exist. Bump it when this job reds with
+      # "climbed"; a red "regressed" is a real regression.
       CANARY_EXPECTED_RUNG: "5"
     steps:
       - uses: actions/checkout@v7.0.1
@@ -504,6 +528,9 @@ jobs:
       - name: Climb the rungs and compare with the expected one
         run: |
           set -u
+          # See the job comment: without this every plain `uv run` rebuilds
+          # `.venv` on the first line of `.python-versions`.
+          export UV_PYTHON="$CANARY_PYTHON"
           reached=0
           climbing=1
           echo "## Next-Python canary: $CANARY_PYTHON" >> "$GITHUB_STEP_SUMMARY"
@@ -512,10 +539,20 @@ jobs:
           # append the log tail to the step summary on failure. `reached`
           # advances only while nothing has failed yet, so it stays the highest
           # CONSECUTIVE rung even though every test rung below runs.
+          #
+          # A rung passes only if `.venv` still runs the canary afterwards: a
+          # green rung on another interpreter says nothing about this one.
           rung() {
             n=$1; label=$2; shift 2
             echo "::group::rung $n — $label"
-            if "$@" > "rung$n.log" 2>&1; then
+            status=0
+            "$@" > "rung$n.log" 2>&1 || status=$?
+            ran_on=$(.venv/bin/python -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>&1 || true)
+            if [ "$status" -eq 0 ] && [ "$ran_on" != "$CANARY_PYTHON" ]; then
+              echo "rung $n passed, but .venv now runs Python $ran_on, not $CANARY_PYTHON" >> "rung$n.log"
+              status=1
+            fi
+            if [ "$status" -eq 0 ]; then
               if [ "$climbing" -eq 1 ]; then reached=$n; fi
               echo "rung $n PASS — $label" | tee -a "$GITHUB_STEP_SUMMARY"
               echo "::endgroup::"
@@ -646,7 +683,7 @@ jobs:
             echo "**python-canary is not a test failure either.** It is red when"
             echo "the next Python's climb stops on a rung other than"
             echo "CANARY_EXPECTED_RUNG: higher means the ecosystem moved (bump"
-            echo "the constant; at rung 5 promote the version), lower means a"
+            echo "the constant; at rung 10 promote the version), lower means a"
             echo "wheel was pulled or a floor was raised. The job's step summary"
             echo "records the rung reached and what stopped the climb."
           } > issue-body.md
