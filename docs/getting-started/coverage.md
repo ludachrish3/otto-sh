@@ -218,6 +218,43 @@ Every run in the report carries its product: the runs page lists them as
 from, and one of them can be pinned to narrow every page to its runs.
 {doc}`../guide/cli/cov/report` is the full report tour, pinning included.
 
+## A kernel module
+
+A Linux kernel module is a product too, declared with `kind = "kmod"`
+instead of `kind = "shell"` — but a module has no process to write
+`GCOV_PREFIX` counters on exit, so a companion runtime, `otto_kgcov`
+(`docs/examples/kgcov/`), does that job instead. A product links against it
+and declares `coverage = "module"`:
+
+```{literalinclude} ../../tests/repo5/.otto/settings.toml
+:language: toml
+:start-at: "[[products]]"
+:end-before: "# All three unix hosts are eligible"
+```
+
+The library, `otto_kgcov`, is declared first — products install in
+declaration order, so the module below it always finds it already loaded —
+and with `instrumented = false` overriding the artifact scan, for the
+reason its own entry comment gives. The consumer module, `otto_kmod_demo`,
+sets `coverage = "module"` and a `cov_dir`: on install, otto appends
+`gcov_dir=<cov_dir>` to *its own* `insmod` line — the parameter
+`KGCOV_DECLARE()` declares on the module — and the module hands that value
+to the `otto_kgcov` runtime at `KGCOV_INIT()`. A debugfs write then dumps
+its counters there as ordinary `.gcda` files, fetched exactly like any
+other product's.
+
+```bash
+otto test --cov TestKmodDemo
+```
+
+Coverage from a module's exit routine only reaches the report if the
+module is uninstalled before the post-run fetch — a suite's teardown does
+this by unloading the product, and the exit dump lands before `otto test
+--cov`'s own post-run fetch runs (not `otto cov get`, a separate,
+later command). {doc}`../guide/cli/cov/instrumenting/kernel-modules` has the
+rest: why a runtime is needed at all, instrumenting a module of your own,
+and the alternative `coverage = "kernel"` method.
+
 ## Several products, one container
 
 A compose-built container host ingests products exactly like any other host,

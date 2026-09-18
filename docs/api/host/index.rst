@@ -43,6 +43,7 @@ local and remote machines.
    dev_tool
    shell_kind
    llext_kind
+   kmod_kind
    power
    privilege
    file_ops

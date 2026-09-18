@@ -175,6 +175,13 @@ function* (`register_product_provider`) that otto applies to each host at
 ingest. Declaring products in lab data is deliberately not supported: lab
 data stays product-agnostic and the two evolve independently.
 
+A **kind** is a further split within products: the runtime knowledge behind
+a `[[products]]` entry's verbs — install, check, uninstall — and how its
+coverage counters are collected. The same naming rule governs every kind: a
+kind is named for **what drives its verbs**, never for the artifact's
+format. {doc}`../../guide/configuration/declared-products-tools`'s kinds
+table is the one home for the built-ins and how a repo registers another.
+
 ## Embedded strategies
 
 Embedded hosts compose three more stateless strategy objects, each with its

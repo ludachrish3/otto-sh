@@ -27,6 +27,7 @@ from tests._fixtures.paths import PROJECT_ROOT
 
 REPO1 = PROJECT_ROOT / "tests" / "repo1"
 REPO2 = PROJECT_ROOT / "tests" / "repo2"
+REPO5 = PROJECT_ROOT / "tests" / "repo5"
 REPO_E2E = PROJECT_ROOT / "tests" / "repo_e2e"
 COVERAGERC = PROJECT_ROOT / ".coveragerc"
 COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"

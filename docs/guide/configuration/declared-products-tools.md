@@ -48,6 +48,7 @@ anything else is a `shell` entry.
 |---|---|---|
 | `shell` | the `install` / `check` / `uninstall` commands you write | `.gcda` under `cov_dir`, fetched with `find` |
 | `llext` | the host's binary loader (a Zephyr LLEXT extension) | dumped over the console by the embedded collector |
+| `kmod` | the kernel's module loader (`insmod`/`rmmod`) | `none`, or `module` (the `otto_kgcov` runtime dumps to `cov_dir`), or `kernel` (`CONFIG_GCOV_KERNEL`'s debugfs tree copied to `cov_dir`) |
 
 ## Matching
 
@@ -203,6 +204,38 @@ its own object while everything downstream — the tree's
 sees a single product. Exactly one entry attaches per host, so each
 version-specific entry repeats **every** param it needs: nothing is inherited
 from the entry above it.
+
+## The `kmod` kind
+
+Built in, products only: a Linux kernel module, loaded with `insmod` and
+unloaded with `rmmod`.
+
+| Param | Meaning |
+|---|---|
+| `artifact` | **Required.** The local `.ko`; `load` transfers it, `insmod`s it, and removes it — no staged copy is left on the host |
+| `module_name` | Defaults to the artifact stem with `-` → `_` (what `/proc/modules` shows) |
+| `params` | Appended to `insmod` **unquoted**, apart from the `gcov_dir=` token otto itself adds for `coverage = "module"` — a value with whitespace is the user's to quote. `{cov_dir}`/`{name}` placeholders, as the `shell` kind |
+| `coverage` | `"none"` (default), `"module"`, or `"kernel"` |
+| `gcov_path` | Required with `coverage = "kernel"`: the module's own subtree under `/sys/kernel/debug/gcov/`, as a full path; refused outside it |
+| `cov_dir`, `instrumented`, `debug_log_globs` | As the `shell` kind, and likewise products only |
+
+Registered for products only — a kernel module is never a dev tool — and
+refused at lab load on any host missing `load`/`unload`/`lsmod` (today only
+a `UnixHost`), naming the host. With `coverage = "module"` otto appends
+`gcov_dir=<cov_dir>` to `params` itself so the `otto_kgcov` runtime
+({doc}`../cli/cov/instrumenting/kernel-modules`) knows where to write; a
+`params` that also sets `gcov_dir=` is a validation error, because
+`cov_dir` has exactly one owner. gcov counts arcs as they run, so a dump
+taken inside a module's exit routine already holds everything that routine
+executed before the dump call — `coverage = "module"` dumps there, and
+`coverage = "kernel"` keeps a module's counters after unload
+(`gcov_persist=1`, the kernel default) — so either way that coverage
+reaches a run's report only when the module is unloaded before the
+post-run fetch, which is what a suite's teardown does. The kernel wrote
+the counter files as root, so every delete a `kmod` product's coverage
+hooks issue runs under sudo. See
+{doc}`../cli/cov/instrumenting/kernel-modules` for the runtime, the worked
+example, and how a report reads back what it captured.
 
 ## Custom kinds
 

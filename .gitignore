@@ -88,3 +88,35 @@ docs/superpowers/plans/
 # ~/.cache/otto/busybox (or wherever OTTO_BUSYBOX_CACHE points), never inside
 # the repo, so an ignore rule for them would match nothing and read as though
 # the tree could contain them.
+
+# kernel build products of the coverage example and the repo5 fixture
+docs/examples/kgcov/**/*.o
+docs/examples/kgcov/**/*.ko
+docs/examples/kgcov/**/*.mod
+docs/examples/kgcov/**/*.mod.c
+docs/examples/kgcov/**/*.cmd
+docs/examples/kgcov/**/.*.cmd
+docs/examples/kgcov/**/.*.o.d
+docs/examples/kgcov/**/Module.symvers
+docs/examples/kgcov/**/modules.order
+docs/examples/kgcov/**/*.gcno
+tests/repo5/build/
+
+# repo5's own demo product builds in place (tests/repo5/kmod/demo/) rather
+# than out of tree, so its build products need their own per-extension
+# list (mirroring docs/examples/kgcov/**'s shape above), scoped to that
+# directory instead of a blanket build/ (the demo's sources live right
+# beside these outputs).
+tests/repo5/kmod/**/*.o
+tests/repo5/kmod/**/*.ko
+tests/repo5/kmod/**/*.mod
+tests/repo5/kmod/**/*.mod.c
+tests/repo5/kmod/**/*.cmd
+tests/repo5/kmod/**/.*.o.d
+tests/repo5/kmod/**/Module.symvers
+tests/repo5/kmod/**/modules.order
+tests/repo5/kmod/**/*.gcno
+tests/repo5/kmod/**/*.gcda
+tests/repo5/kmod/**/.tmp_versions
+tests/repo5/kmod/**/*.a
+tests/repo5/kmod/**/*.symvers

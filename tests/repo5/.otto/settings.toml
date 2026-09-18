@@ -1,0 +1,51 @@
+name = "repo5"
+version = "1.0.0"
+libs = ["pylib"]
+tests = ["tests"]
+init = ["repo5_instructions"]
+
+# The kernel-module and container-image coverage fixture. Its products are
+# the kinds under test; the suites drive them through the products' own verbs.
+[project]
+lab_patterns = [".*"]
+
+[[lab.sources]]
+backend = "json"
+paths = ["../_fixtures/lab_data/tech1"]
+
+# The library builds out of tree into build/lib/ (git-ignored — see
+# docs/examples/kgcov/build.sh, run by this repo's own build.sh). The demo
+# builds IN PLACE under kmod/demo/, alongside its committed sources: a
+# capture anchors every measured file to a committed git blob under this
+# repo, so the demo's .c/.h files (and the .gcno files gcc emits beside
+# them) must live here rather than in a git-ignored copy. The library is
+# declared FIRST: products install in declaration order and the demo
+# links against it. Unloading in reverse (the demo before the library it
+# depends on) is this suite's own teardown, not an otto guarantee — otto's
+# own uninstall walks products in declaration order like everything else.
+[[products]]
+name = "otto_kgcov"
+kind = "kmod"
+artifact = "build/lib/otto_kgcov.ko"
+coverage = "none"
+# otto_kgcov itself implements the __gcov_* runtime callbacks its
+# consumers call, so its .ko legitimately contains "__gcov_" bytes and
+# the instrumentation byte-scan misreads it as instrumented. It carries
+# no .gcda output of its own, so this override is simply correct.
+instrumented = false
+match = { id = "test[12]" }
+
+[[products]]
+name = "otto_kmod_demo"
+kind = "kmod"
+artifact = "kmod/demo/otto_kmod_demo.ko"
+coverage = "module"
+cov_dir = "/var/cov/otto_kmod_demo"
+match = { id = "test[12]" }
+
+# All three unix hosts are eligible, though this suite's own products only
+# match test1/test2 (see each [[products]] entry's `match` above) — a
+# product that produced no counters in a run leaves no leaf, so each e2e
+# still asserts exactly the hosts its own suite drove.
+[coverage]
+hosts = "test[1-3]"

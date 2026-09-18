@@ -1,0 +1,11 @@
+# The sentinels go FIRST and LAST: ld -r keeps this order, and it is what
+# bounds the .gcov_info section otto_kgcov walks.
+# `-include`, not `include`: `make clean` (KGCOV unset, tests/repo5/build/
+# gone) must still work when consumer.mk can't be found. A real build still
+# fails loudly afterward on the missing $(KGCOV_CFLAGS)/kgcov.h.
+-include $(KGCOV)/consumer.mk
+obj-m := otto_kmod_demo.o
+otto_kmod_demo-y := kgcov_begin.o demo_main.o demo_parse.o demo_policy.o kgcov_end.o
+CFLAGS_demo_main.o += $(KGCOV_CFLAGS)
+CFLAGS_demo_parse.o += $(KGCOV_CFLAGS)
+CFLAGS_demo_policy.o += $(KGCOV_CFLAGS)

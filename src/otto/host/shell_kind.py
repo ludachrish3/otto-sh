@@ -109,10 +109,13 @@ def _placeholder_error(entry: DeclaredEntry, key: str, offending: str) -> ValueE
     )
 
 
-def _substitute(
+def substitute_placeholders(
     entry: DeclaredEntry, key: str, command: str | None, values: dict[str, str]
 ) -> str | None:
     """Expand ``{cov_dir}``/``{name}`` in one command string, strictly.
+
+    Shared by every built-in kind that takes command text (see
+    :mod:`otto.host.kmod_kind`).
 
     ``str.format_map`` alone is not strict enough: it only validates the
     ROOT field name against the mapping, so a conversion (``{cov_dir!r}``),
@@ -203,9 +206,9 @@ def _shell_kind(entry: DeclaredEntry, host: "Host") -> DeclaredShell:  # noqa: A
         )
     if entry.seam == "products":
         values = {"cov_dir": cov_dir or cov_dir_of_name(entry.name), "name": entry.name}
-        install = _substitute(entry, "install", install, values)
-        uninstall = _substitute(entry, "uninstall", uninstall, values)
-        check = _substitute(entry, "check", check, values)
+        install = substitute_placeholders(entry, "install", install, values)
+        uninstall = substitute_placeholders(entry, "uninstall", uninstall, values)
+        check = substitute_placeholders(entry, "check", check, values)
     return DeclaredShell(
         # Local path: forward slashes in TOML, anchored to the declaring repo
         # (never the CWD); dest_dir stays in the HOST's path domain — host.put

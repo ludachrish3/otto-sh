@@ -1,0 +1,2 @@
+obj-m := otto_kgcov.o
+otto_kgcov-y := kgcov.o kgcov_gcc.o kgcov_stubs.o

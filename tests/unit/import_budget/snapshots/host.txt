@@ -39,6 +39,7 @@ otto.host.host
 otto.host.interact
 otto.host.interface
 otto.host.inventory_ref
+otto.host.kmod_kind
 otto.host.lab_info
 otto.host.llext_kind
 otto.host.local_host

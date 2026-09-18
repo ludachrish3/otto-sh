@@ -48,6 +48,8 @@ without being told to. See
 {doc}`../../../configuration/declared-products-tools` for the entry, and
 {ref}`the configuration section <coverage-configuration>` for the rest.
 
+A kernel module has no `GCOV_PREFIX`; {doc}`kernel-modules` is that path.
+
 ## Version matching
 
 The `gcov` that processes the counters must match the GCC **major version**
