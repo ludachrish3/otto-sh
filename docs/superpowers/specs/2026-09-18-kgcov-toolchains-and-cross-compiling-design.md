@@ -68,19 +68,21 @@ under `CONFIG_CONSTRUCTORS`. gcc places its gcov constructor in
 `SORT(.init_array.*)` and then plain `.init_array`.
 
 The consumer keeps two sentinel objects, first and last in its `Kbuild`
-object list as today, but each now defines one function pointer to a
-static no-op of its own (the walk never calls the sentinels themselves):
+object list as today, and their source files keep their one-line bodies
+(`KGCOV_SENTINEL_BEGIN;` and `KGCOV_SENTINEL_END;`); the macros in
+`kgcov.h` now expand to one function pointer each, to a static no-op of
+its own (the walk never calls the sentinels themselves):
 
 ```c
-/* kgcov_begin.c — first object in the consumer's link */
-static void kgcov_begin_marker(void) {}
-__attribute__((used, section(".init_array.0")))
-const kgcov_ctor_fn kgcov_ctors_begin = kgcov_begin_marker;
+/* KGCOV_SENTINEL_BEGIN — first object in the consumer's link */
+static void __kgcov_begin_marker(void) {}
+const kgcov_ctor_fn __kgcov_ctors_begin
+	__attribute__((section(".init_array.0"), used, aligned(8))) = __kgcov_begin_marker;
 
-/* kgcov_end.c — last object in the consumer's link */
-static void kgcov_end_marker(void) {}
-__attribute__((used, section(".init_array")))
-const kgcov_ctor_fn kgcov_ctors_end = kgcov_end_marker;
+/* KGCOV_SENTINEL_END — last object in the consumer's link */
+static void __kgcov_end_marker(void) {}
+const kgcov_ctor_fn __kgcov_ctors_end
+	__attribute__((section(".init_array"), used, aligned(8))) = __kgcov_end_marker;
 ```
 
 `.init_array.0` sorts before every other entry, and within it the begin
@@ -90,12 +92,16 @@ both ways against the bed kernel: the final link places the begin sentinel,
 the compiler's constructor and the end sentinel at offsets 0, 8 and 16 for
 gcc 13 and clang 18 alike.
 
-`KGCOV_INIT(THIS_MODULE)` expands to
-`kgcov_register(THIS_MODULE, &kgcov_ctors_begin, &kgcov_ctors_end)`. The
-library walks the pointers strictly between the two sentinels and calls
-each: gcc's constructor calls `__gcov_init(info)`, clang's calls
-`llvm_gcov_init(writeout, flush)`, both exported by the library, so every
-translation unit lands in the same per-module accumulator as today.
+`KGCOV_INIT()` (unchanged in spelling) expands to
+`kgcov_register(THIS_MODULE, &__kgcov_ctors_begin + 1, &__kgcov_ctors_end,
+gcov_dir)`. The library walks the pointers strictly between the two
+sentinels and calls each: gcc's constructor calls `__gcov_init(info)`,
+clang's calls `llvm_gcov_init(writeout, flush)`, both exported by the
+library, and each backend hands the resulting `gcov_info` to the
+registration in progress, so every translation unit lands in the same
+per-module accumulator as today. A constructor that runs while no
+registration is in progress (the kernel's own pass on a
+`CONFIG_CONSTRUCTORS` kernel) registers nothing.
 `-fprofile-info-section` and the `.gcov_info` sentinels are removed.
 
 A coverage build's only constructors are gcov's. A consumer's own
@@ -103,10 +109,11 @@ A coverage build's only constructors are gcov's. A consumer's own
 `CONFIG_CONSTRUCTORS` kernel would have done; the docs say so.
 
 **Idempotence.** On a kernel that does have `CONFIG_CONSTRUCTORS`, the
-loader has already run the constructors when `KGCOV_INIT` walks them again.
-The library therefore skips what it already holds: a gcc `gcov_info` by
-pointer, a clang registration by its writeout callback. Registration is
-idempotent, never doubled.
+loader has already run the constructors before `KGCOV_INIT` walks them
+again. The first pass registers nothing (no registration was in
+progress), the walk registers each unit once, and a gcc `gcov_info` seen
+twice within one walk is skipped by pointer. Registration is never
+doubled.
 
 ## 4. Two vendored backends behind one interface
 
@@ -159,7 +166,7 @@ the kernel log; the docs name that message.
   compilers; the include path as today.
 - The consumer's `Kbuild` lists `kgcov_begin.o` first and `kgcov_end.o`
   last, as today; the two files are copied from the library as today.
-- `KGCOV_INIT(THIS_MODULE)` / `KGCOV_EXIT()`, the debugfs
+- `KGCOV_DECLARE()` / `KGCOV_INIT()` / `KGCOV_EXIT()`, the debugfs
   `/sys/kernel/debug/otto_kgcov/<module>/{dump,reset}` files, the
   `gcov_dir=` module parameter, dump-adds-then-zeroes, exit dump, and the
   `.gcda` layout are unchanged. otto's `kmod` kind and the coverage hooks
@@ -179,8 +186,11 @@ the kernel log; the docs name that message.
 - The vermagic check stays: `modinfo` reads the ELF, so it works for any
   ISA; `<release>` is what it compares against (for a source tree,
   `make kernelrelease` gives it).
-- `tests/repo5/build.sh` grows the same passthrough so the fixture builds
-  with any installed toolchain.
+- The fixture's kernel half moves into its own script,
+  `tests/repo5/kmod/build.sh [<release>]`, with the same passthrough, so
+  the e2es and the matrix build it with any installed toolchain without
+  also building the container image; `tests/repo5/build.sh` becomes the
+  human entry point that runs that script and then `docker/build.sh`.
 
 Cross-compiling therefore needs exactly what the user's own module needs: a
 prepared target tree (`make ARCH=… CROSS_COMPILE=… defconfig
@@ -201,19 +211,24 @@ kernel needs none of it.
 
 ## 7. Files
 
-- `docs/examples/kgcov/`: `kgcov.c` (walk, idempotent registration, version
-  check), `kgcov.h` (`KGCOV_INIT` takes the sentinels), `kgcov_begin.c`
-  and `kgcov_end.c` (the sentinels, copied into the consumer), `kgcov_gcc.c`
-  / `kgcov_gcc.h` (full table), `kgcov_clang.c` (new), `kgcov_stubs.c`
-  (gcc stubs; clang needs none), `Kbuild` (backend by compiler),
-  `consumer.mk`, `build.sh`, `Makefile`, `README.md`.
-- `tests/repo5/kmod/demo/`: the two sentinel files replaced; `Kbuild`
-  unchanged in shape.
-- `tests/repo5/build.sh`: passthrough.
+- `docs/examples/kgcov/`: `kgcov.c` (walk, registration context, version
+  check), `kgcov.h` (sentinel macros, `KGCOV_INIT`), `kgcov_gcov.h`
+  (the vendored kernel `gcov.h` interface, renamed from `kgcov_gcc.h` now
+  that two backends implement it, plus the two backend hooks the library
+  adds), `kgcov_gcc.c` (full table), `kgcov_gcc_abi.c` (renamed from
+  `kgcov_stubs.c`: the real `__gcov_init`, the empty merge functions, the
+  gcc side of the two hooks), `kgcov_clang.c` (new: the vendored
+  `clang.c`, its `llvm_*` entry points, the clang side of the hooks),
+  `Kbuild` (backend by the compiler building it), `consumer.mk`,
+  `build.sh`, `Makefile`, `README.md`.
+- `tests/repo5/kmod/demo/`: `kgcov_begin.c`, `kgcov_end.c`, `Kbuild` and
+  the sources unchanged; `Makefile` gains the passthrough.
+- `tests/repo5/kmod/build.sh` (new) and `tests/repo5/build.sh` (§6).
 - `tests/e2e/cov/test_kgcov_toolchains_e2e.py` (`integration` +
-  `kgcov`), `_repo5_build.py` (toolchain-aware ensure functions, shared
-  with the routine kmod e2e) and `tests/e2e/conftest.py` (the
-  `--kgcov-toolchains` option): the toolchain matrix (§8).
+  `kgcov`), `_repo5_build.py` (toolchain-aware ensure function, the
+  toolchain stamp, the clang overrides, the `.init_array` reader) and
+  `_kmod_assertions.py` (the assertion bodies the routine kmod e2e and
+  the matrix share): the toolchain matrix (§8).
 - `tests/e2e/cov/test_kgcov_cross_build.py` (`hostless` + `kgcov`): the
   cross build-only proof (§8); it touches no bed. Both modules satisfy the
   e2e resource-marker rule with exactly one primary marker each.
@@ -243,9 +258,13 @@ coverage` runs them too. The two new proofs below follow the
   lane positively selects it, the release invokes that lane;
 - a `make kgcov` lane (`pytest -m kgcov -n0 --no-cov`, JUnit under
   `reports/junit/kgcov/`) that runs the matrix and the cross build, dev
-  VM only, beds required; `KGCOV_TOOLCHAINS` (default
-  `gcc-9,gcc-10,gcc-11,gcc-12,gcc-13,gcc-14,clang`) and `KGCOV_CROSS_KDIR`
-  (default `/home/vagrant/build/linux-6.8`) are its knobs;
+  VM only, beds required; its knobs are the make variables
+  `KGCOV_TOOLCHAINS` (default `gcc-9,gcc-10,gcc-11,gcc-12,gcc-13,gcc-14,clang`)
+  and `KGCOV_CROSS_KDIR` (default `/home/vagrant/build/linux-6.8`), which
+  the lane hands to the tests as the environment variables
+  `OTTO_KGCOV_TOOLCHAINS` and `OTTO_KGCOV_CROSS_KDIR` (the shape
+  `OTTO_CONFORMANCE_CELLS` already uses; a pytest option would need a
+  root-level conftest hook this tree does not have);
 - a `make release` stage that runs `make kgcov` right after
   `release-matrix` (both need the bed; make stages are sequential, so the
   bed is never shared). A missing compiler or tree fails the lane with an
@@ -255,25 +274,37 @@ coverage` runs them too. The two new proofs below follow the
 
 **Live toolchain matrix (beds test1/test2).** A `kgcov`-marked module,
 `tests/e2e/cov/test_kgcov_toolchains_e2e.py`, parametrised over the
-compilers in `--kgcov-toolchains` (a pytest option the lane fills from
-`KGCOV_TOOLCHAINS`; an empty option collects nothing from this module).
-For each compiler it rebuilds the library and the demo for the running
-kernel (`clang` implies `LLVM=1` plus the §6 overrides), runs the same
-nine assertions the routine kmod e2e runs (exact line and branch hits,
-exit drain, per-host dumps, the library's scan verdict) through the
-shared helpers, unloads, then moves to the next. Each toolchain builds
-into its own build directory so staleness stays per toolchain. The
-routine kmod e2e is unchanged and keeps the system gcc. The gcc 15 arm is
-compile-checked only through the table.
+compilers in `OTTO_KGCOV_TOOLCHAINS` (unset or empty means the system
+default compiler alone, so the module never collects an empty, skipped
+parameter set). For each compiler it rebuilds the library and the demo
+for the running kernel (`clang` implies `LLVM=1` plus the §6 overrides
+whenever the kernel's config says `CONFIG_CC_IS_GCC=y`), checks the
+demo's `.init_array` relocations name the begin marker first, one gcov
+constructor per instrumented unit, and the end marker last, then runs
+the compiler-independent assertions of the routine kmod e2e (fetch tree,
+one `.gcda` per unit, the library's scan verdict, exact line hits,
+taken-and-untaken branches, exit drain, no double count from the
+mid-suite dump) through the shared helpers, unloads, then moves to the
+next. The routine e2e keeps, in its own module, the two pins that encode
+gcc's branch folding (the four-arc `-ERANGE` compare and its per-arc
+count). The kernel half builds into `tests/repo5/build/` and in place as
+today; a stamp file `tests/repo5/build/toolchain` names the compiler that
+built it, and a stamp naming another compiler makes the artifacts stale,
+so the routine e2e and the matrix rebuild for each other correctly. The
+routine kmod e2e keeps the system gcc. The gcc 15 arm is compile-checked
+only through the table.
 
 **Cross build-only (dev VM).** A `kgcov`-marked module,
 `tests/e2e/cov/test_kgcov_cross_build.py`, builds the library and the
-demo against a kernel 6.8 source tree (about 2 GB, downloaded once from
-kernel.org to `KGCOV_CROSS_KDIR`) prepared with `make ARCH=x86_64
+demo (a copy of the demo sources under the test's temporary directory,
+so the in-place fixture build is untouched) against a kernel 6.8 source
+tree (about 2 GB, downloaded once from kernel.org to
+`OTTO_KGCOV_CROSS_KDIR`) prepared with `make ARCH=x86_64
 CROSS_COMPILE=x86_64-linux-gnu- defconfig modules_prepare`, with the same
 environment. It asserts `modinfo -F vermagic` names the tree's release,
-`readelf -h` says `X86-64` for both `.ko`, and the demo's `.gcno` files
-exist. Never loaded anywhere; it touches no bed. The dev VM is x86_64, so
+`readelf -h` says `X86-64` for both `.ko`, the cross compiler signed the
+`.comment` section, the sentinel bracket holds, and the demo's `.gcno`
+files exist. Never loaded anywhere; it touches no bed. The dev VM is x86_64, so
 this proves the knob passthrough and the source-tree recipe, not a
 foreign ISA; the docs show the arm64 form (`ARCH=arm64
 CROSS_COMPILE=aarch64-linux-gnu-`) of the same recipe.
