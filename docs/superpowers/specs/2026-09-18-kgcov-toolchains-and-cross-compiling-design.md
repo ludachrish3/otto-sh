@@ -362,6 +362,26 @@ names `aarch64-linux-gnu-gcc-13`), so an x86_64 module from
 arm64-to-x86_64 pair the proof uses and say what changes for another
 target (the `ARCH` name and the `CROSS_COMPILE` prefix, nothing else).
 
+`defconfig modules_prepare` is the only preparation the tree ever gets, and
+the kernel's own docs (`Documentation/kbuild/modules.rst`) say plainly that
+this never produces `Module.symvers` — only a full kernel build does. Without
+it modpost cannot resolve any of the base kernel's own exports (`memcpy`,
+`kfree`, `_printk`, …), which would otherwise fail the build on symbols the
+proof was never trying to check in the first place. So the build passes
+`KMAKEFLAGS=KBUILD_MODPOST_WARN=1` — the kernel's documented knob for exactly
+this — turning those into warnings, and the proof adds a check that
+guarantees the downgrade didn't hide a real problem: every unresolved symbol
+in the combined build output must be a core kernel export, never one of the
+library's or the consumer's own (`kgcov_*`, `__gcov_*`, `llvm_*`), and the
+library's `Module.symvers` — the one `KBUILD_EXTRA_SYMBOLS` hands the demo —
+must list its two exports (`kgcov_register`, `kgcov_unregister`), so the two
+`.ko`s are proven to have actually linked against each other. A module meant
+to actually be *loaded* needs a fully built tree or the target's own headers
+package (which ships a real `Module.symvers`, built the same way the running
+kernel's own `/lib/modules/<release>/build` does) — never a bare
+`modules_prepare` tree; §9 says so for the reader who reaches for this
+recipe outside a build-only proof.
+
 **Unit.** The existing 36 `kmod` kind tests stay; nothing in otto changes.
 The library has no unit tests (kernel code); its proof is the matrix.
 
@@ -376,7 +396,11 @@ The library has no unit tests (kernel code); its proof is the matrix.
   (`ignore_errors = source` in `~/.lcovrc`, or an lcov wrapper named as the
   host's `toolchain.lcov`), because clang's `.gcno` records no compilation
   directory for the kernel headers the module inlined from. One home; the
-  README under `docs/examples/kgcov/` links it.
+  README under `docs/examples/kgcov/` links it. The cross recipe's own
+  section says plainly that a `defconfig modules_prepare` tree is for a
+  build-only proof, never a module meant to load — that needs a fully built
+  tree or the target's own headers package, either of which ships a real
+  `Module.symvers`.
 - `docs/superpowers/specs/2026-09-17-product-kinds-…-design.md` §6:
   amended to the constructor-walk mechanism and the two backends.
 
