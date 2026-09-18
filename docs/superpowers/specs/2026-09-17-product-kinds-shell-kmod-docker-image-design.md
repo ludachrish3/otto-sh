@@ -243,7 +243,11 @@ points at it rather than copying it):
 
 ### 6.3 The worked example: `otto_kmod_demo`
 
-`docs/examples/kgcov/demo/` — three translation units (`demo_main.c`: init,
+`tests/repo5/kmod/demo/` — the fixture repo owns its product's sources, as
+`tests/repo1` does, because a capture anchors every measured file to a
+committed blob under the SUT repo (`build_capture` skips anything else);
+the module is built in place there and the docs `{literalinclude}` it from
+that path. Three translation units (`demo_main.c`: init,
 exit, the debugfs control file; `demo_parse.c`: command parsing;
 `demo_policy.c`: a bounded queue with three eviction policies), about 200
 lines. Writing to `/sys/kernel/debug/otto_kmod_demo/ctl` drives it:
@@ -321,18 +325,22 @@ Launchpad's librarian and installed on the dev VM the same day
 (`/lib/modules/6.8.0-86-generic/build` is complete, `Module.symvers`
 included), and a probe module built with the gcov flags against them
 carries the bed's exact `vermagic`. A `build.sh` under
-`docs/examples/kgcov/` builds the library and the demo into
-`/home/vagrant/build/kgcov/` (the same shape as repo3's `build.sh` for the
-LLEXT product); the e2e runs it when the artifacts are missing, and the
-suite compares the `.ko`'s `vermagic` with the host's `uname -r` before
-loading and fails naming both. A new fixture repo `tests/repo5`
+`docs/examples/kgcov/` builds the library out of tree into a build dir;
+`tests/repo5/build.sh` runs it into `tests/repo5/build/lib/` (git-ignored)
+and builds the demo in place under `tests/repo5/kmod/demo/`, so the
+`.gcno` files sit beside committed sources inside the SUT repo (the same
+shape as repo3's `build.sh` for the LLEXT product); the e2e runs it when
+the artifacts are missing, and `build.sh` compares each `.ko`'s
+`vermagic` with the target release before declaring success. A new fixture repo `tests/repo5`
 (`tests/repo4` is the installable-sample fixture) on `--lab unix`, the
 `kmod` products matched to `test1`/`test2` and the `docker_image` product
 matched to `test3`:
 
 - `[[products]]`: `otto_kgcov` (`kind = "kmod"`, `coverage = "none"`, declared
-  first) and `otto_kmod_demo` (`kind = "kmod"`, `coverage = "module"`), both
-  absolute artifact paths under `/home/vagrant/build/kgcov/`.
+  first, `instrumented = false` because its `.ko` carries `__gcov_` strings
+  the scan would misread) and `otto_kmod_demo` (`kind = "kmod"`,
+  `coverage = "module"`), with repo-relative artifacts
+  `build/lib/otto_kgcov.ko` and `kmod/demo/otto_kmod_demo.ko`.
 - A suite that drives the demo down chosen paths on each host (different
   command mixes per host), writes `dump` once mid-suite on one host (so that
   host's file holds a runtime dump merged with the exit dump), uninstalls
