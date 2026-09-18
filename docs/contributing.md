@@ -671,12 +671,14 @@ are pre-loaded in doc-file doctests via `doctest_global_setup` in
 
 ### Getting Started captures
 
-The pages under `docs/getting-started/` show real command output. Each block
-is a committed text file under `docs/examples/getting-started/captures/`,
-produced by `scripts/refresh_docs_captures.py` from the manifest
-`docs/examples/getting-started/captures.toml` and included with
-`{literalinclude}` — never pasted. Labless captures (`labless = true`) are
-diffed in the docs gate (`nox -s docs`, `make docs-lint`); bed captures are
+The `docs/getting-started/` pages `{literalinclude}` what they show, never
+paste it: config and code fragments from the checked-in project
+`docs/examples/getting-started/`, and real command output from committed text
+files under `docs/examples/getting-started/captures/`, produced by
+`scripts/refresh_docs_captures.py` from the manifest
+`docs/examples/getting-started/captures.toml`. Labless captures
+(`labless = true`) are diffed in the docs gate (`nox -s docs`,
+`make docs-lint`); bed captures are
 diffed by `make docs-captures-check` and refreshed by `make docs-captures`,
 both of which need the lab VMs. To refresh one: `uv run --no-sync python
 scripts/refresh_docs_captures.py --only <id>`. Never edit an artifact by hand

@@ -102,6 +102,8 @@ Alongside the schemas, `otto init --schemas` writes
 entry, an element, a cred, and each registered host type.  See
 {doc}`schema/editors`.
 
-For a full first-repo walkthrough, see {doc}`../getting-started/index`; for the
+For a full first-repo walkthrough, see {doc}`../getting-started/index`, then
+{doc}`../getting-started/running-instructions` and
+{doc}`../getting-started/running-test-suites`; for the
 one-time team decisions around it, the
 {ref}`team-setup-checklist <team-setup-checklist>`.
