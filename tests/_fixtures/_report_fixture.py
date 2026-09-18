@@ -5,24 +5,37 @@ One builder shared by the report browser suite
 (scripts/capture_docs_media.py), so the pixels users see in the guide are
 produced by the exact report the browser tests pin.
 
-Four tiers (system, unit, manual, bench), two files, every pill state the
-renderer knows: branch-taken, branch-not-taken, branch-unreachable — plus a
-fully covered file and a partially covered one so sorting has something to
+Four tiers (system, unit, manual, bench), three files in two source
+directories (``product/`` and ``lib/``), every pill state the renderer
+knows: branch-taken, branch-not-taken, branch-unreachable — plus a fully
+covered file and a partially covered one so sorting has something to
 reorder. The store is passed through ``apply_exclusions`` before rendering,
 the same stage and the same position ``CoverageReporter.run()`` uses, so the
 fixture is a report the pipeline could actually have produced: utils.c line 6
 has no ``LineRecord`` at all, only an ``excluded_lines`` entry.
 
 Rendered with ``prefix=base_dir`` so displayed paths are the
-deterministic ``product/main.c`` / ``product/utils.c`` regardless of the tmp
-dir. Registers a run table (spec §10): two ``system`` runs sharing the
-label "nightly-full" (multi-host: router-a/router-b) crediting main.c's
-system-tier lines, one ``unit`` run ("unit harvest", host ci-01) crediting
-its unit-tier lines, one fully-revoked ``manual`` run ("smoke-old" — a
-stale line with no live hits) and one aging, dirty-remapped ``manual`` run
-("field bring-up", ticket FW-1188) — every state (``t-<tier>``/``s-excl``/
-``s-stale``/``s-aging``) the SPA's file-page row precedence renders is
-reachable from this one fixture.
+deterministic ``product/main.c`` / ``product/utils.c`` / ``lib/ring.c``
+regardless of the tmp dir. Registers a run table (spec §10): three
+``system`` runs sharing the label "nightly-full" (multi-host:
+router-a/router-b, see Products below) crediting main.c's and ring.c's
+system-tier lines, two ``unit`` runs ("unit harvest" and "agent unit",
+both on host ci-01) crediting their unit-tier lines, one fully-revoked
+``manual`` run ("smoke-old" — a stale line with no live hits) and one
+aging, dirty-remapped ``manual`` run ("field bring-up", ticket FW-1188)
+— every state (``t-<tier>``/``s-excl``/``s-stale``/``s-aging``) the SPA's
+file-page row precedence renders is reachable from this one fixture.
+
+Products (per-run ``product``, the ``<product>`` segment of
+``cov/<host>/<product>/``): three. ``firmware`` owns both nightly-full
+runs above and the unit harvest; ``agent`` is a third nightly-full run on
+router-b (one host, two products, so that context's host pills read
+``host · product``) plus its own unit view ("agent unit", ci-01), and is
+the only product with evidence in ``lib/ring.c``; ``bootloader`` tags both
+manual runs. ``lib/ring.c`` is the second source directory: push/pop
+covered — the system run takes their happy paths, the unit view only
+their full-buffer and empty-buffer early returns — and ``ring_drain()``
+is never reached.
 
 Compiler-reported functions (lcov FN/FNDA): main.c carries ``checked_add``
 (hit by system and unit tiers) and ``main`` (hit by system tier only), and
@@ -37,8 +50,13 @@ distinct from ``RunRecord.ticket`` above (a different axis — see design §1).
 its one uncovered line (6, the stale/no-hit line) gives the tickets page a
 real missing-range to expand and a real ``?lines=`` deep link to click
 through. ``PROJ-9`` owns only utils.c's one hit line, fully covered, and
-carries no tracker ``url`` (the other ticket does) — exercising both of
-``TicketIdCell``'s render variants in one fixture.
+carries no tracker ``url`` (every other ticket does) — exercising both of
+``TicketIdCell``'s render variants in one fixture. Three more tickets give
+the tickets page a spread of coverage: ``PROJ-512`` owns main.c's
+``main()`` body and ring.c's ``ring_push()`` (fully covered, spanning both
+directories), ``PROJ-311`` owns ring.c's ``ring_pop()`` and
+``ring_drain()`` (5 of 9 covered — drain's lines 24-27 are the missing
+range), and ``PROJ-415`` owns only utils.c's uncovered line 10 (0%).
 
 Manual-testing overrides (Task 12): a fourth tier, ``bench`` — a
 manual-kind tier distinct from the fixture's existing ``manual`` tier —
@@ -97,9 +115,51 @@ int untested(int x) {
 }
 """
 
+_RING_C = """\
+#include <stddef.h>
+
+struct ring {
+    int buf[16];
+    size_t head, tail;
+};
+
+int ring_push(struct ring *r, int v) {
+    if (r->head - r->tail == 16) {
+        return -1;
+    }
+    r->buf[r->head++ % 16] = v;
+    return 0;
+}
+
+int ring_pop(struct ring *r, int *out) {
+    if (r->head == r->tail) {
+        return -1;
+    }
+    *out = r->buf[r->tail++ % 16];
+    return 0;
+}
+
+size_t ring_drain(struct ring *r) {
+    size_t n = r->head - r->tail;
+    r->tail = r->head;
+    return n;
+}
+"""
+
 # Fake-but-plausible 40-char shas — every run below anchors to one of these.
 _BASE_COMMIT_NIGHTLY = "a1" * 20
 _BASE_COMMIT_FIELD = "b2" * 20
+# Commit-message attribution shas for the tickets that only the lib/ tree
+# and main.c's main() carry (the older tickets reuse the run anchors above).
+_COMMIT_RING = "c3" * 20
+_COMMIT_UTILS = "d4" * 20
+_COMMIT_WIRE_UP = "e5" * 20
+
+# Products — the <product> segment of cov/<host>/<product>/ each run's
+# counters came from (RunRecord.product).
+PRODUCT_FIRMWARE = "firmware"
+PRODUCT_AGENT = "agent"
+PRODUCT_BOOTLOADER = "bootloader"
 
 
 def _line(number: int, hits: dict[str, int], run_hits: dict[int, int] | None = None) -> LineRecord:
@@ -132,6 +192,9 @@ def build_fixture_report(base_dir: Path) -> Path:
     src_dir.mkdir(parents=True, exist_ok=True)
     (src_dir / "main.c").write_text(_MAIN_C)
     (src_dir / "utils.c").write_text(_UTILS_C)
+    lib_dir = base_dir / "lib"
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    (lib_dir / "ring.c").write_text(_RING_C)
 
     store = CoverageStore(tier_order=["system", "unit", "manual", "bench"])
 
@@ -142,6 +205,7 @@ def build_fixture_report(base_dir: Path) -> Path:
         label="nightly-full",
         board="router-a",
         host="router-a",
+        product=PRODUCT_FIRMWARE,
         labs=["lab1"],
         captured_at="2026-07-20T02:00:00Z",
         base_commit=_BASE_COMMIT_NIGHTLY,
@@ -151,6 +215,21 @@ def build_fixture_report(base_dir: Path) -> Path:
         label="nightly-full",
         board="router-b",
         host="router-b",
+        product=PRODUCT_FIRMWARE,
+        labs=["lab1"],
+        captured_at="2026-07-20T02:05:00Z",
+        base_commit=_BASE_COMMIT_NIGHTLY,
+    )
+    # The same nightly invocation also collected the agent product on
+    # router-b: one host, two products, two runs under one label — so the
+    # context carries three member runs and its host pills read
+    # ``host · product``.
+    run_sys_b_agent = store.add_run(
+        tier="system",
+        label="nightly-full",
+        board="router-b",
+        host="router-b",
+        product=PRODUCT_AGENT,
         labs=["lab1"],
         captured_at="2026-07-20T02:05:00Z",
         base_commit=_BASE_COMMIT_NIGHTLY,
@@ -160,6 +239,19 @@ def build_fixture_report(base_dir: Path) -> Path:
         label="unit harvest",
         board="ci-01",
         host="ci-01",
+        product=PRODUCT_FIRMWARE,
+        labs=["ci"],
+        captured_at="2026-07-21T09:00:00Z",
+        base_commit=_BASE_COMMIT_NIGHTLY,
+    )
+    # A second unit view — `[coverage.tiers.unit.products]`'s `agent` entry —
+    # harvested as its own run, tagged with its product.
+    run_unit_agent = store.add_run(
+        tier="unit",
+        label="agent unit",
+        board="ci-01",
+        host="ci-01",
+        product=PRODUCT_AGENT,
         labs=["ci"],
         captured_at="2026-07-21T09:00:00Z",
         base_commit=_BASE_COMMIT_NIGHTLY,
@@ -171,6 +263,7 @@ def build_fixture_report(base_dir: Path) -> Path:
         label="smoke-old",
         board="bench-3",
         host="bench-3",
+        product=PRODUCT_BOOTLOADER,
         labs=["lab2"],
         captured_at="2026-06-01T00:00:00Z",
         base_commit=_BASE_COMMIT_FIELD,
@@ -181,6 +274,7 @@ def build_fixture_report(base_dir: Path) -> Path:
         label="field bring-up",
         board="bench-7",
         host="bench-7",
+        product=PRODUCT_BOOTLOADER,
         labs=["lab3"],
         captured_at="2026-05-01T00:00:00Z",
         tester={"name": "M. Reyes"},
@@ -237,6 +331,10 @@ def build_fixture_report(base_dir: Path) -> Path:
     # pinned PROJ-204 hides utils.c's tree row entirely (module docstring).
     for lineno in (3, 4, 5, 6, 7):
         main_rec.lines[lineno].ticket = ["PROJ-204"]
+    # PROJ-512 owns main()'s body here and ring_push() over in lib/ (below)
+    # — one ticket's commits spanning two directories.
+    for lineno in (10, 11, 12):
+        main_rec.lines[lineno].ticket = ["PROJ-512"]
     # Manual-overrides (Task 12): line 1 is really hit on the bench tier —
     # a recorded, non-override hit sitting right next to line 2's
     # override-sourced one, so the file page's solid-vs-hollow marker pair
@@ -279,12 +377,71 @@ def build_fixture_report(base_dir: Path) -> Path:
     # sort order (alphabetical, not by coverage) both need more than one.
     utils_rec.get_or_create_function("never_called", start_line=5, end_line=7)
     utils_rec.get_or_create_function("untested", start_line=9, end_line=11)
+    # PROJ-415 (the `untested()` body) owns only this uncovered line — a
+    # ticket at 0%.
+    utils_rec.lines[10].ticket = ["PROJ-415"]
     store.merge_file(utils_rec)
 
+    # -- lib/ring.c ------------------------------------------------------
+    # A second source directory, driven by the agent product: its system
+    # run (router-b) calls push and pop five times each, always down the
+    # happy path; its unit view (ci-01) calls each once, into the
+    # full-buffer and empty-buffer early returns only; nothing reaches
+    # ring_drain(). Every count below follows from those calls.
+    ring_rec = FileRecord(path=lib_dir / "ring.c")
+    for lineno, hits, run_hits in [
+        (8, {"system": 5, "unit": 1}, {run_sys_b_agent: 5, run_unit_agent: 1}),
+        (9, {"system": 5, "unit": 1}, {run_sys_b_agent: 5, run_unit_agent: 1}),
+        (10, {"unit": 1}, {run_unit_agent: 1}),
+        (12, {"system": 5}, {run_sys_b_agent: 5}),
+        (13, {"system": 5}, {run_sys_b_agent: 5}),
+        (16, {"system": 5, "unit": 1}, {run_sys_b_agent: 5, run_unit_agent: 1}),
+        (17, {"system": 5, "unit": 1}, {run_sys_b_agent: 5, run_unit_agent: 1}),
+        (18, {"unit": 1}, {run_unit_agent: 1}),
+        (20, {"system": 5}, {run_sys_b_agent: 5}),
+        (21, {"system": 5}, {run_sys_b_agent: 5}),
+        (24, {}, None),
+        (25, {}, None),
+        (26, {}, None),
+        (27, {}, None),
+    ]:
+        ring_rec.lines[lineno] = _line(lineno, hits, run_hits)
+    # Each check's branch 0 is the fall-through to the happy path (system's
+    # five calls), branch 1 the early return (unit's one call): both
+    # outcomes of both checks seen, each by exactly one tier.
+    for check in (9, 17):
+        ring_rec.lines[check].branches = [
+            _branch(0, 0, {"system": 5}, reachable=True),
+            _branch(0, 1, {"unit": 1}, reachable=True),
+        ]
+    ring_rec.get_or_create_function("ring_push", start_line=8, end_line=14).hits.counts.update(
+        {"system": 5, "unit": 1}
+    )
+    ring_rec.get_or_create_function("ring_pop", start_line=16, end_line=22).hits.counts.update(
+        {"system": 5, "unit": 1}
+    )
+    ring_rec.get_or_create_function("ring_drain", start_line=24, end_line=28)
+    # PROJ-512 (see main.c above) owns ring_push() — fully covered, across
+    # both directories. PROJ-311 wrote ring_pop() and ring_drain(): pop is
+    # covered, drain never is.
+    for lineno in (8, 9, 10, 12, 13):
+        ring_rec.lines[lineno].ticket = ["PROJ-512"]
+    for lineno in (16, 17, 18, 20, 21, 24, 25, 26, 27):
+        ring_rec.lines[lineno].ticket = ["PROJ-311"]
+    store.merge_file(ring_rec)
     store.tickets["PROJ-204"] = TicketRecord(
         id="PROJ-204", url="https://example.test/issues/204", commits=[_BASE_COMMIT_NIGHTLY]
     )
     store.tickets["PROJ-9"] = TicketRecord(id="PROJ-9", url=None, commits=[_BASE_COMMIT_FIELD])
+    store.tickets["PROJ-311"] = TicketRecord(
+        id="PROJ-311", url="https://example.test/issues/311", commits=[_COMMIT_RING]
+    )
+    store.tickets["PROJ-415"] = TicketRecord(
+        id="PROJ-415", url="https://example.test/issues/415", commits=[_COMMIT_UTILS]
+    )
+    store.tickets["PROJ-512"] = TicketRecord(
+        id="PROJ-512", url="https://example.test/issues/512", commits=[_COMMIT_WIRE_UP]
+    )
 
     # Manual-overrides (Task 12): the one entry main.c line 2's `asserted`
     # ref (id 0) points at.

@@ -43,8 +43,9 @@ def test_fixture_report_renders(tmp_path, hermetic_covapp_bundle):
     assert payload["project_name"] == "otto example product"
     assert payload["tier_order"] == ["system", "unit", "manual", "bench"]
 
+    # product/main.c, product/utils.c, lib/ring.c — one chunk per file.
     file_pages = list((report_dir / "cov_data" / "files").glob("*.js"))
-    assert len(file_pages) == 2
+    assert len(file_pages) == 3
 
 
 def test_fixture_report_has_branch_pills(tmp_path):
@@ -66,6 +67,36 @@ def test_fixture_report_has_branch_pills(tmp_path):
     assert unreachable["reachable"] == {"system": False, "unit": False}
 
 
+def test_ring_c_branches_agree_with_its_lines(tmp_path):
+    """lib/ring.c's story: the system run takes push/pop's happy paths
+    five times each, the unit view takes only their early returns, once
+    each. Each check's branch 0 (fall-through) must then be system-only
+    and branch 1 (early return) unit-only, and every line's tier set must
+    follow — no tier credits a branch without the line it leads to."""
+    report_dir = build_fixture_report(tmp_path)
+    store = CoverageStore.load(report_dir / "store.json")
+    (ring,) = [fr for fr in store.files() if fr.path.name == "ring.c"]
+    hit_by = {
+        tier: sorted(n for n, rec in ring.lines.items() if rec.hits.is_hit(tier))
+        for tier in ("system", "unit")
+    }
+    assert hit_by == {
+        "system": [8, 9, 12, 13, 16, 17, 20, 21],
+        "unit": [8, 9, 10, 16, 17, 18],
+    }
+    for check in (9, 17):
+        fall_through, early_return = ring.lines[check].branches
+        assert fall_through.hits.to_dict() == {"system": 5}
+        assert early_return.hits.to_dict() == {"unit": 1}
+
+    ring_node = _find_file(_index_payload(report_dir)["tree"], "ring.c")
+    assert ring_node["stats"]["branches"] == {
+        "total": 4,
+        "hit": 4,
+        "per_tier": {"system": 2, "unit": 2, "manual": 0, "bench": 0},
+    }
+
+
 def test_display_paths_are_short_and_deterministic(tmp_path):
     """The builder renders with prefix=base_dir — the screenshot and the
     browser pins both rely on the exact strings product/main.c|utils.c."""
@@ -85,8 +116,9 @@ def test_display_paths_are_short_and_deterministic(tmp_path):
 
 
 class TestRunTable:
-    """spec §10: two multi-host system runs, one unit run, and two manual
-    runs (one fully revoked, one aging + dirty-remapped)."""
+    """spec §10: three system runs under one multi-host label, two unit
+    runs, and two manual runs (one fully revoked, one aging +
+    dirty-remapped)."""
 
     def _runs(self, tmp_path):
         report_dir = build_fixture_report(tmp_path)
@@ -94,17 +126,31 @@ class TestRunTable:
         return payload["runs"]
 
     def test_nightly_full_is_two_hosts_same_label(self, tmp_path):
+        """Three member runs: firmware on router-a and router-b, plus agent
+        on router-b — two hosts, and one host carrying two products."""
         runs = self._runs(tmp_path)
         nightly = [r for r in runs if r["label"] == "nightly-full"]
-        assert len(nightly) == 2
-        assert {r["host"] for r in nightly} == {"router-a", "router-b"}
+        assert [(r["host"], r["product"]) for r in nightly] == [
+            ("router-a", "firmware"),
+            ("router-b", "firmware"),
+            ("router-b", "agent"),
+        ]
         assert all(r["tier"] == "system" for r in nightly)
+
+    def test_products_span_every_run(self, tmp_path):
+        report_dir = build_fixture_report(tmp_path)
+        payload = _index_payload(report_dir)
+        assert payload["products"] == ["agent", "bootloader", "firmware"]
+        assert all(r["product"] for r in payload["runs"])
 
     def test_unit_harvest_run(self, tmp_path):
         runs = self._runs(tmp_path)
         (unit_run,) = [r for r in runs if r["label"] == "unit harvest"]
         assert unit_run["tier"] == "unit"
         assert unit_run["host"] == "ci-01"
+        (agent_unit,) = [r for r in runs if r["label"] == "agent unit"]
+        assert agent_unit["tier"] == "unit"
+        assert (agent_unit["host"], agent_unit["product"]) == ("ci-01", "agent")
 
     def test_smoke_old_run_is_fully_revoked(self, tmp_path):
         report_dir = build_fixture_report(tmp_path)

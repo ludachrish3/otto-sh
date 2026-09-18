@@ -153,9 +153,8 @@ def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright im
 
         # Directory page — the SPA is a hash-router (covapp) — with no hash
         # it falls through to the NotFoundPlaceholder route, so the shot
-        # needs "#/coverage" explicitly. The fixture's two files sit under
-        # one "product/" dir, so the root directory page's only row is that
-        # dir.
+        # needs "#/coverage" explicitly. The fixture's files sit under two
+        # dirs ("product/" and "lib/"), so the root page lists both.
         page.goto(base_uri + "#/coverage")
         page.wait_for_selector('[data-testid="tree-row-dir:product"]')
         page.screenshot(path=OUT_DIR / "coverage-report.png", full_page=True)

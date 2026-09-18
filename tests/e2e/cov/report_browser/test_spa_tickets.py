@@ -8,12 +8,14 @@ carry their own pin control too) hides non-participating tree rows behind
 a hidden-count banner.
 
 The fixture's per-ticket data (``tests/_fixtures/_report_fixture.py``,
-Task-13 addendum — see its module docstring) has exactly two tickets:
+Task-13 addendum — see its module docstring) has five tickets:
 ``PROJ-204`` owns main.c's ``checked_add()`` body through the stale brace
 (lines 3-7: 4 hit, 1 uncovered — the stale line 6, which carries no
 per-tier hit) and nothing in utils.c; ``PROJ-9`` owns only utils.c's one,
-fully-covered line and carries no tracker ``url``. Every constant below is
-named after that fixture rather than hand-typed.
+fully-covered line and carries no tracker ``url``; ``PROJ-512``,
+``PROJ-311`` and ``PROJ-415`` spread the rest across main.c, utils.c and
+lib/ring.c. Every constant below is named after that fixture rather than
+hand-typed.
 
 ``_pageerror_guard`` (conftest.py, autouse) asserts no ``pageerror``/
 ``console.error`` fired during any test in this module.
@@ -36,10 +38,27 @@ PROJ_204_UNCOVERED = 1
 # PROJ-9 owns only utils.c line 2, which is hit.
 PROJ_9_OWNED = 1
 PROJ_9_UNCOVERED = 0
-# No overlap between the two tickets in this fixture, so the deduped
+# PROJ-512 owns main.c 10-12 and ring.c 8/9/10/12/13 — all hit.
+PROJ_512_OWNED = 8
+PROJ_512_UNCOVERED = 0
+# PROJ-311 owns ring.c 16/17/18/20/21 (hit) and ring_drain()'s 24-27 (never).
+PROJ_311_OWNED = 9
+PROJ_311_UNCOVERED = 4
+# PROJ-415 owns only utils.c line 10, which is uncovered.
+PROJ_415_OWNED = 1
+PROJ_415_UNCOVERED = 1
+_TICKETS = [
+    (PROJ_204_OWNED, PROJ_204_UNCOVERED),
+    (PROJ_9_OWNED, PROJ_9_UNCOVERED),
+    (PROJ_512_OWNED, PROJ_512_UNCOVERED),
+    (PROJ_311_OWNED, PROJ_311_UNCOVERED),
+    (PROJ_415_OWNED, PROJ_415_UNCOVERED),
+]
+TICKET_COUNT = len(_TICKETS)
+# No line is owned by two tickets in this fixture, so the deduped
 # stats-card total is a plain sum.
-TICKETS_TOTAL_OWNED = PROJ_204_OWNED + PROJ_9_OWNED
-TICKETS_TOTAL_COVERED = (PROJ_204_OWNED - PROJ_204_UNCOVERED) + (PROJ_9_OWNED - PROJ_9_UNCOVERED)
+TICKETS_TOTAL_OWNED = sum(owned for owned, _ in _TICKETS)
+TICKETS_TOTAL_COVERED = sum(owned - uncovered for owned, uncovered in _TICKETS)
 
 
 def _goto(page: Page, report_dir: Path, hash_route: str) -> None:
@@ -48,7 +67,7 @@ def _goto(page: Page, report_dir: Path, hash_route: str) -> None:
 
 def test_tickets_page_lists_rows_and_stats_card(page: Page, report_dir: Path) -> None:
     _goto(page, report_dir, "/tickets")
-    expect(page.locator('[data-testid="ticket-row"]')).to_have_count(2)
+    expect(page.locator('[data-testid="ticket-row"]')).to_have_count(TICKET_COUNT)
     expect(page.locator('[data-testid="ticket-id"]', has_text="PROJ-204")).to_be_visible()
     expect(page.locator('[data-testid="ticket-id"]', has_text="PROJ-9")).to_be_visible()
 
@@ -67,7 +86,7 @@ def test_tickets_page_lists_rows_and_stats_card(page: Page, report_dir: Path) ->
 
 def test_search_box_filters_to_matching_ticket_id(page: Page, report_dir: Path) -> None:
     _goto(page, report_dir, "/tickets")
-    expect(page.locator('[data-testid="ticket-row"]')).to_have_count(2)
+    expect(page.locator('[data-testid="ticket-row"]')).to_have_count(TICKET_COUNT)
 
     page.locator('[data-testid="tickets-search"] input').fill("204")
     expect(page.locator('[data-testid="ticket-row"]')).to_have_count(1)

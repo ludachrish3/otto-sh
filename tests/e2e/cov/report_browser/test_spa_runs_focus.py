@@ -53,12 +53,22 @@ MAIN_C_HIT_LINES = 9
 # 3,4,5 (router-a) and 10,11,12 (router-b) — 6 of main.c's 11 lines; the
 # bench-tier lines 1/2 carry no run_hits for this context.
 MAIN_C_NIGHTLY_FULL_LINES = 6
+# Per member run: router-a's firmware run posts 3 of those (3/4/5),
+# router-b's firmware run the other 3 (10/11/12), and router-b's agent run
+# posts lib/ring.c's system-tier lines — push/pop's happy paths
+# (8/9/12/13, 16/17/20/21), not the unit-only early returns 10 and 18.
+ROUTER_A_FIRMWARE_LINES = 3
+ROUTER_B_FIRMWARE_LINES = 3
+ROUTER_B_AGENT_LINES = 8
 # index.total_lines = main.c's 11 + utils.c's 2 (utils.c has LineRecords for
-# lines 2 and 10 only). Line 6 is LCOV_EXCL_LINE-marked, so the exclusion
-# filter deleted its record before rendering — it is not in this total, which
-# is the whole point of the feature: an excluded line leaves the denominator.
-TOTAL_LINES = 13
-TOTAL_HIT_LINES = 10  # main.c's 9 + utils.c's 1 (line 2; line 10 is uncovered)
+# lines 2 and 10 only) + lib/ring.c's 14. Line 6 of utils.c is
+# LCOV_EXCL_LINE-marked, so the exclusion filter deleted its record before
+# rendering — it is not in this total, which is the whole point of the
+# feature: an excluded line leaves the denominator.
+TOTAL_LINES = 27
+# main.c's 9 + utils.c's 1 (line 2; line 10 is uncovered) + ring.c's 10
+# (every line but ring_drain()'s 24-27).
+TOTAL_HIT_LINES = 20
 
 
 def _fmt_pct(hit: int, total: int) -> str:
@@ -90,10 +100,12 @@ def _pin_nightly_full(page: Page, report_dir: Path) -> None:
 
 
 def test_runs_page_one_row_per_context_with_multihost_pills(page: Page, report_dir: Path) -> None:
-    """4 contexts (nightly-full, unit harvest, smoke-old, field bring-up);
-    nightly-full is the only multi-host one (router-a + router-b)."""
+    """5 contexts (nightly-full, unit harvest, agent unit, smoke-old, field
+    bring-up); nightly-full is the only multi-host one — firmware on
+    router-a and router-b, plus agent on router-b, one pill per member run
+    reading ``host · product``."""
     _goto(page, report_dir, "/runs")
-    for label in ("nightly-full", "unit harvest", "smoke-old", "field bring-up"):
+    for label in ("nightly-full", "unit harvest", "agent unit", "smoke-old", "field bring-up"):
         expect(page.locator(f'[data-testid="run-row-{label}"]')).to_be_visible()
 
     # Host column is the run row's 3rd direct child (Run, Tier, Host, ...,
@@ -102,8 +114,12 @@ def test_runs_page_one_row_per_context_with_multihost_pills(page: Page, report_d
     # rather than substring-matching row text (the Board column can
     # legitimately repeat one of the same host names).
     host_col = page.locator('[data-testid="run-row-nightly-full"] > *').nth(2)
-    expect(host_col.locator("span")).to_have_count(2)
-    assert host_col.locator("span").all_inner_texts() == ["router-a", "router-b"]
+    expect(host_col.locator("span")).to_have_count(3)
+    assert host_col.locator("span").all_inner_texts() == [
+        "router-a · firmware",
+        "router-b · firmware",
+        "router-b · agent",
+    ]
 
     single_host_col = page.locator('[data-testid="run-row-unit harvest"] > *').nth(2)
     expect(single_host_col.locator("span")).to_have_count(1)
@@ -155,17 +171,27 @@ def test_search_by_ticket_narrows_to_field_bring_up(page: Page, report_dir: Path
 def test_nightly_full_detail_shows_per_host_lines_for_both_hosts(
     page: Page, report_dir: Path
 ) -> None:
-    """router-a covers main.c lines 3/4/5 (3 lines), router-b covers
-    10/11/12 (3 lines) — both hosts' per-host bar shows a nonzero count."""
+    """router-a's firmware run covers main.c lines 3/4/5 (3 lines),
+    router-b's covers 10/11/12 (3 lines), and router-b's agent run covers
+    lib/ring.c's 8 system-tier lines — one per-host row per member run,
+    each carrying its own count."""
     _goto(page, report_dir, "/runs")
     page.locator('[data-testid="run-row-nightly-full"]').click()
     detail = page.locator('[data-testid="run-detail-nightly-full"]')
     expect(detail).to_be_visible()
     per_host = detail.get_by_text("Per-host lines").locator("..")
-    expect(per_host).to_contain_text("router-a")
-    expect(per_host).to_contain_text("router-b")
-    # Both hosts contributed 3 lines each (see the constants block above).
-    assert per_host.inner_text().count("3") >= 2
+    # Each row is (host pill, line count, bar); read the first two spans so
+    # a count is checked against its own label, not found anywhere.
+    rows = per_host.locator(":scope > div > div")
+    expect(rows).to_have_count(3)
+    assert [
+        (row.locator("span").nth(0).inner_text(), row.locator("span").nth(1).inner_text())
+        for row in rows.all()
+    ] == [
+        ("router-a · firmware", str(ROUTER_A_FIRMWARE_LINES)),
+        ("router-b · firmware", str(ROUTER_B_FIRMWARE_LINES)),
+        ("router-b · agent", str(ROUTER_B_AGENT_LINES)),
+    ]
 
 
 def test_top_file_link_routes_to_file_page(page: Page, report_dir: Path) -> None:
@@ -416,6 +442,6 @@ def test_stats_card_all_tiers_line_pct_matches_fixture(page: Page, report_dir: P
     _goto(page, report_dir, "/coverage")
     all_row = page.locator('[data-testid="stats-row-all"]')
     expect(all_row).to_be_visible()
-    expected_pct = _fmt_pct(TOTAL_HIT_LINES, TOTAL_LINES)  # "72.7%"
+    expected_pct = _fmt_pct(TOTAL_HIT_LINES, TOTAL_LINES)  # "74.1%"
     expect(all_row).to_contain_text(expected_pct)
-    expect(all_row).to_contain_text(f"{TOTAL_HIT_LINES}/{TOTAL_LINES}")  # "8/11"
+    expect(all_row).to_contain_text(f"{TOTAL_HIT_LINES}/{TOTAL_LINES}")  # "20/27"
