@@ -56,6 +56,32 @@ expose them, {doc}`netcat` and {doc}`connections` for transport, and
 {doc}`../../configuration/host-options` for per-host tuning. Authoring a verb of
 your own is {doc}`../../cookbook/extending/cli-exposed-verbs`.
 
+### Persistent and stateless verbs
+
+Beyond the CLI verbs above, the host API splits into a persistent verb and
+stateless ones:
+
+- **`run`** — a command on the host's *persistent* shell, where `cd`,
+  environment variables and shell state survive from one call to the next
+  ({doc}`run`).
+- **`exec`** — one command, statelessly, in a fresh channel; safe to run
+  several at once. `exec` is Python-only; it is not a CLI verb.
+- **`put`** / **`get`** — files up and down ({doc}`put`, {doc}`get`).
+
+(host-run-as)=
+### Who a command runs as
+
+That split decides where identity lives.  A persistent session *already has* a
+user, so changing it is a scoped operation on the session — `as_user`,
+described in {doc}`capabilities/privilege` — and `run` refuses a per-call
+`user=` on the families that work this way.  A stateless verb has no such history: `exec`,
+`put` and `get` can each take a user directly, because each call opens its own
+channel and can open it as somebody else.
+
+What "can" means there depends on the family.  Not every host has a second
+user to become, and the ones that do reach it by different routes.  Each
+family declares its own answers, and {doc}`families` renders them.
+
 ## Subcommands
 
 | Subcommand | Description |
@@ -147,8 +173,8 @@ and an unreachable host is reported rather than treated as a failure.  See
 Every `otto host <name> <verb>` invocation derives its exit code from the
 verb's returned {class}`~otto.result.Result` family, via `Result.exit_code`.
 Command results are ssh-like: the shell's retcode when the command ran,
-255 when it never ran.  (`exec` is Python-only — it is not a CLI verb,
-so these rows apply to `run`.)
+255 when it never ran.  (`run` only — see
+[Persistent and stateless verbs](#persistent-and-stateless-verbs) above.)
 
 | Situation | Exit code |
 | --- | --- |
@@ -164,7 +190,8 @@ Custom verbs on third-party host classes may return plain values instead of a
 
 ## Beyond the CLI
 
-Every verb here is a method on {class}`~otto.host.host.BaseHost` first — calling
+Every verb here is a method on {class}`~otto.host.host.BaseHost` first (see
+{doc}`../../api/host/index`) — calling
 them from an instruction or a suite is {doc}`../../cookbook/authoring/writing-instructions`.
 Hosts are also otto's most extensible area: register new connection or transfer
 backends ({doc}`../../cookbook/extending/extending-backends`) and bring up embedded
@@ -191,4 +218,5 @@ connections
 netcat
 embedded
 capabilities/index
+families
 ```

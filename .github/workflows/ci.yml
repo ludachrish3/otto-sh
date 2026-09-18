@@ -208,7 +208,7 @@ jobs:
   # qemu-user only on the arm64 leg, and only because the runner is not x86:
   # the artifacts are x86 userland, so ubuntu-latest executes them natively
   # while the arm64 leg needs binfmt handlers registered (the step below, and
-  # docs/guide/hosts/busybox.md for the same instruction to a human).
+  # docs/architecture/subsystems/busybox-bed.md for the same instruction to a human).
   #
   # THE ARTIFACT CACHE IS DELIBERATELY NOT CACHED. Upstream publishes no
   # signatures, so trust rests on a committed SHA-256 whose entire stated

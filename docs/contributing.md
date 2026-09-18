@@ -632,7 +632,6 @@ docs/
 ├── getting-started/          # hub + the worked example (fragments from examples/getting-started/)
 ├── examples/                 # checked-in example projects the worked example includes; not Sphinx sources
 ├── installation.md           # Install flows: air-gapped, teams, offline docs
-├── guide/                    # User Guide: what the hosts otto drives can and cannot do
 ├── cli/                      # One page per command, mirroring otto's command tree
 ├── configuration/            # settings.toml, lab.json, host sources and options
 ├── cookbook/                 # Using otto from Python: library use, authoring, extending, recipes (Markdown)
@@ -731,9 +730,9 @@ reservation backend passes conformance with `expect_holders=True` and answers
 the inverted `holders` query. `tests/unit/docs/test_getting_started_includes.py`
 checks that every `{literalinclude}` under `docs/getting-started/` resolves.
 
-### Configuration and host-guide pages
+### Configuration and host pages
 
-Parts of the Configuration tree and the User Guide are tied to the code or to
+Parts of the Configuration tree and the host pages are tied to the code or to
 test fixtures, so edit them with the tie in mind:
 
 - **The inventory worked example mirrors a fixture.** The four blocks on
@@ -756,7 +755,7 @@ test fixtures, so edit them with the tie in mind:
   lab-data spec model has no row on `lab-config.md`, or an inventory record
   field has none in `inventory.md`'s *Record fields* table. It proves presence,
   not placement.
-- **`docs/guide/hosts/families.md` is generated.**
+- **`docs/cli/host/families.md` is generated.**
   `scripts/render_support_matrix.py` renders it from the `capabilities`
   declaration on each host class (the meaning rows come from
   `src/otto/host/capability_grid.py`) on every Sphinx build. The page is

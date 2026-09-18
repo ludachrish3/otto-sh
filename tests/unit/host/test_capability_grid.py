@@ -15,7 +15,7 @@ And it can be INCOHERENT: a declaration whose transfer column names both a
 registry family and a literal, or neither, renders an empty or doubled cell.
 ``HostCapabilities`` refuses that at construction.
 
-The page these back is ``docs/guide/hosts/families.md``, whose byte-for-byte
+The page these back is ``docs/cli/host/families.md``, whose byte-for-byte
 sync with the tree is pinned in ``tests/unit/test_support_matrix.py``.
 """
 

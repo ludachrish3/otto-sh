@@ -7,7 +7,6 @@ otto
    overview
    getting-started/index
    installation
-   guide/index
    cli/index
    configuration/index
    cookbook/index

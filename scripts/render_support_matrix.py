@@ -81,7 +81,7 @@ GIT-IGNORED and regenerated on every Sphinx build (``docs/conf.py``'s
 in the tree, and the copy that goes stale is the one nothing runs.
 """
 
-FAMILIES_PAGE_PATH = PROJECT_ROOT / "docs" / "guide" / "hosts" / "families.md"
+FAMILIES_PAGE_PATH = PROJECT_ROOT / "docs" / "cli" / "host" / "families.md"
 """The rendered host-families page.
 
 COMMITTED, unlike :data:`PAGE_PATH`, and for the opposite reason. Its source is
@@ -1440,7 +1440,7 @@ def _progress_promises_section() -> "list[str]":
         "which is applied last and wins -- replaces the default below, and it is that",
         "configured value a run measures the bar against.",
         "",
-        "{doc}`../guide/hosts/families` is the declared counterpart for the host verbs:",
+        "{doc}`../cli/host/families` is the declared counterpart for the host verbs:",
         "what each host family promises for `user=`, progress and session identity, read",
         "off the host classes the same way this table is read off the backends. That page",
         "changes only when a host class does; this page's *measured* cells change when the",
@@ -1780,7 +1780,7 @@ def _meaning_rows(members: "Sequence[Enum]") -> "list[str]":
     return [f"| `{member.value}` | {(member.__doc__ or '').strip()} |" for member in members]
 
 
-_FAMILY_HOME_DOCS = {"container": "../../cli/docker/index"}
+_FAMILY_HOME_DOCS = {"container": "../docker/index"}
 """Families whose selection has a CLI home page, linked from the "how selected" cell."""
 
 
@@ -1858,8 +1858,8 @@ def render_families() -> str:
         )
     lines += [
         "",
-        "The CLI pages for the verbs themselves — {doc}`../../cli/host/run`,",
-        "{doc}`../../cli/host/put`, {doc}`../../cli/host/get` — say how to pass `--user`; this",
+        "The CLI pages for the verbs themselves — {doc}`run`,",
+        "{doc}`put`, {doc}`get` — say how to pass `--user`; this",
         "page says what each family will do with it.",
         "",
     ]

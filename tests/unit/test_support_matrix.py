@@ -345,7 +345,7 @@ def committed() -> dict:
 
 @pytest.fixture(autouse=True)
 def no_test_writes_the_committed_families_page():
-    """Fail any test in this file that rewrites ``docs/guide/hosts/families.md``.
+    """Fail any test in this file that rewrites ``docs/cli/host/families.md``.
 
     THE TRIPWIRE FOR A DEFECT THIS FILE ALREADY SHIPPED ONCE. ``render_main``
     writes BOTH pages, so a call site that redirects ``--page`` into ``tmp_path``

@@ -18,7 +18,7 @@ collecting performance data.
 
 - **Drive your lab from the CLI** → the {doc}`CLI Reference <cli/index>`,
   one section per functional area.
-- **Learn what a host can do** → the {doc}`User Guide <guide/index>`: the
+- **Learn what a host can do** → {doc}`otto host <cli/host/index>`: the
   verbs every host answers and what each host family supports.
 - **Script, author or extend otto from Python** → the {doc}`Cookbook <cookbook/index>`
   (the {doc}`API reference <api/index>` backs it).

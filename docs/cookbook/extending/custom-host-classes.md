@@ -126,7 +126,7 @@ asked of your class rather than silently skipped — and, given an `instance`,
 probes each verb against what your `capabilities` promise for it: a verb
 declared `refused` must raise `NotImplementedError`, and one declared anything
 else must not.  The probes run inside a dry-run context, so nothing connects and
-no bytes move; what each value means is in {doc}`../../guide/hosts/families`.  Call
+no bytes move; what each value means is in {doc}`../../cli/host/families`.  Call
 it from a synchronous test — the probes drive their own event loop.
 
 Your `capabilities` are read per **class**, while behaviour can depend on the
@@ -136,7 +136,7 @@ and reports a violation on another, both truthfully — otto's own `unix` row
 declares `exec_user=authenticate`, which holds over `term="ssh"` while a
 `term="telnet"` host refuses.  Probe the configuration your declaration speaks
 for, and put the conditions in your row's `note` so a reader of
-{doc}`../../guide/hosts/families` sees them too.
+{doc}`../../cli/host/families` sees them too.
 
 ## Composition
 

@@ -29,10 +29,7 @@ otto host <HOST_ID> run [OPTIONS] COMMANDS...
 | `COMMANDS...` | — | One or more shell commands (space-separated, each quoted as needed) |
 | `--sudo / --no-sudo` | `--no-sudo` | Run every command through `sudo` |
 | `--timeout SECS` | `30.0` | Cumulative timeout in seconds across all commands. Must be `>= 0`; pass `inf` for a deliberately unbounded command |
-| `--user NAME` | none | Run as this user. Which families accept it, and what each does with it, is declared per family in {doc}`../../guide/hosts/families` |
+| `--user NAME` | none | Run as this user. Which families accept it, and what each does with it, is declared per family in {doc}`families` |
 
-On a unix host `run --user` is refused: `run` drives the *persistent*
-session, whose identity is set with `as_user` — see
-{doc}`capabilities/privilege`. The stateless verbs take a user directly
-instead: `put`/`get` accept `--user` ({doc}`put`), and `exec` accepts `user=`
-from Python on an `ssh`-term host.
+`run --user` is refused on families whose persistent session sets identity
+with `as_user`; see {ref}`host-run-as`.

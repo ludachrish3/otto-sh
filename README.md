@@ -245,9 +245,8 @@ The same content lives under `docs/` and can be built locally with `make docs`
 
 - `docs/getting-started/index.md` — installation and first steps
 - `docs/installation.md` — air-gapped installs, team setup, offline docs
-- `docs/guide/` — the User Guide: what every host answers, per-family support
 - `docs/cli/` — one page per command, mirroring `otto`'s own command tree
-- `docs/cli/host/` — the `otto host` verbs, capabilities and embedded hosts
+- `docs/cli/host/` — the `otto host` verbs, who a command runs as, per-family support, capabilities and embedded hosts
 - `docs/cli/cov/` — coverage collection & reports (GCC, clang, embedded)
 - `docs/configuration/` — `settings.toml`, `lab.json`, host sources and options
 - `docs/cookbook/` — using otto from Python: library use, authoring, extending, and short recipes

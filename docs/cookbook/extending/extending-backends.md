@@ -83,7 +83,7 @@ transfer with no intermediate observation, as `console`'s get is — declares
 that arm `None` and **must** explain itself in `note`; the dataclass refuses a
 `None` arm with an empty note, and refuses a stride that is not a positive
 byte count, so a bad declaration cannot even be constructed. The note appears
-beside the promise on {doc}`../../guide/hosts/families`, so write it for a user
+beside the promise on {doc}`../../cli/host/families`, so write it for a user
 reading it there.
 
 A backend whose stride is configured per instance declares its DEFAULT on the

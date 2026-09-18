@@ -104,7 +104,7 @@ running-test-suites
 ## Where to go next
 
 - {ref}`team-setup-checklist` -- One-time setup when adopting otto for a team
-- {doc}`../guide/hosts/index` -- What every host answers, and what each host family supports
+- {doc}`../cli/host/index` -- `otto host`: what every host answers, and what each host family supports
 - {doc}`../cli/index` -- Every `otto` command, one page per verb
 - {doc}`../configuration/index` -- The project and lab files every command reads
 - {doc}`../cookbook/index` -- Using otto from Python: authoring, extending, and short recipes
