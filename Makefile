@@ -1238,7 +1238,12 @@ lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependen
 # knip is the project-scope parity for what ruff's dead-code rules do on the
 # Python side: unused exports/files/deps across web/src, scoped by
 # web/knip.json (vendored Untitled UI source + generated wire types excluded,
-# mirroring biome.json's files.includes).
+# mirroring biome.json's files.includes). knip.json sets
+# treatConfigHintsAsErrors: a "configuration hint" (a stale ignore entry,
+# an unfollowed file type) is a warning about the gate's own scope, so it
+# fails lint-ts rather than printing under a green exit. `project` includes
+# CSS so knip follows the @import/@plugin lines that use the Tailwind and
+# font packages, instead of each needing an ignoreDependencies entry.
 # --error-on-warnings lives in web/package.json's `check` script, not here, so
 # a bare `npm run check` in web/ enforces the same bar as CI. Biome exits 0 on
 # warnings by default: 7 noNonNullAssertion warnings sat in tickets.test.ts
