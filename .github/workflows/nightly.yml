@@ -494,16 +494,29 @@ jobs:
     env:
       # The interpreter one past PYTHON_VERSIONS' ceiling in noxfile.py.
       CANARY_PYTHON: "3.15"
-      # The rung the canary is EXPECTED to reach today. 5 = every hostless
-      # test passes except the import budget (2026-09-15 and 2026-09-16, on
-      # 3.15.0rc2: the budget has no 3.15 goldens, and CPython 3.15 leaves its
-      # own `_missing_stdlib_info` out of sys.stdlib_module_names, so the
-      # guard charges it to otto -- see #333). Rungs 6-9 have never truly run
-      # on 3.15 (the 2026-09-16 run of them was on 3.10, #334); the first
-      # nightly with UV_PYTHON exported says where they stop, and rung 10
-      # cannot pass until the goldens exist. Bump it when this job reds with
-      # "climbed"; a red "regressed" is a real regression.
-      CANARY_EXPECTED_RUNG: "5"
+      # The rung the canary is EXPECTED to reach today. 7 = the hostless
+      # suite, the concurrency soak and both chaos lanes all pass on 3.15.
+      # Set 2026-09-17 from the FIRST honest run of rungs 6-9: every earlier
+      # run of them was secretly on 3.10 (#334), so this is the first nightly
+      # whose upper rungs mean anything. Two things stop it there, and only
+      # one of them is ours:
+      #   - rung 8 (dashboard + covapp browser suites) dies with `Fatal
+      #     Python error: Segmentation fault` on all four workers within 5 s,
+      #     i.e. a native crash somewhere in the Playwright stack under 3.15.
+      #     The cause is NOT a missing build of greenlet (3.5.3 ships cp315
+      #     wheels) and has not been identified further; the xdist
+      #     `KeyError: <WorkerController gw4>` INTERNALERROR that follows is
+      #     xdist failing to recover from the segfaults, not the cause.
+      #   - rung 10 has no 3.15 goldens, and CPython 3.15 leaves its own
+      #     `_missing_stdlib_info` out of sys.stdlib_module_names so the guard
+      #     charges it to otto -- both deliberately parked until 3.15.0 final
+      #     (#333).
+      # Rung 9 passes but cannot lift this number: `reached` is the highest
+      # CONSECUTIVE rung, and 8 is the gap. Do NOT pre-bump to 8 -- it is
+      # gated on someone else's fix, so expecting it would red this job every
+      # night until that lands. Bump when this job reds with "climbed"; a red
+      # "regressed" is a real regression.
+      CANARY_EXPECTED_RUNG: "7"
     steps:
       - uses: actions/checkout@v7.0.1
 
