@@ -578,7 +578,7 @@ SSH host key verification
   (asyncssh expands `~` itself, so `~/.ssh/known_hosts` works) — only then does that
   file need to be populated on the air-gapped host in advance. Tunnel legs to SSH
   *hop* hosts are always unverified; a hopped host's own connection still honors its
-  `known_hosts`. See [Connection options](library/connection-options.md).
+  `known_hosts`. See [Connection options](cookbook/connection-options.md).
 
 Log retention
 : Otto stores logs and artifacts under the `--xdir` directory.  On isolated systems

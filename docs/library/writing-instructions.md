@@ -99,7 +99,7 @@ operation on every host concurrently — use
 {func}`~otto.config.fleet.do_for_all_hosts`.  These helpers
 apply anywhere you have an async context (instructions, suite fixtures,
 monitors, ad-hoc scripts) and are documented in full on the
-[async patterns page](async-patterns.md).
+[async patterns page](../cookbook/async-patterns.md).
 
 Two properties of the fleet helpers to keep in mind:
 
@@ -121,7 +121,7 @@ Two properties of the fleet helpers to keep in mind:
 Instructions can transfer files to and from hosts via
 {meth}`~otto.host.host.Host.put` and
 {meth}`~otto.host.host.Host.get`.  See the
-[async patterns page](async-patterns.md)
+[async patterns page](../cookbook/async-patterns.md)
 for the lab-wide dispatch pattern.
 
 ## Sharing repo-wide options across instructions and suites
@@ -142,7 +142,7 @@ base (the recommended posture for repo-wide flags), or be literally the
 same class. Nothing in the machinery forces any of these.
 
 See also
-[Inheriting shared options](suite-recipes.md#inheriting-shared-options)
+[Inheriting shared options](../cookbook/suite-recipes.md#inheriting-shared-options)
 in the suite recipes.
 
 ### 1. Define repo-wide options

@@ -515,7 +515,7 @@ async with deployed("integration", own=True) as stack:
 ```
 
 {func}`~otto.docker.deployment.deployed` is the recommended scope — see
-{doc}`../../library/suite-recipes` for the sharing contract and
+{doc}`../../cookbook/suite-recipes` for the sharing contract and
 {mod}`otto.docker.deployment` for `deploy`, `teardown` and
 {class}`~otto.docker.deployment.UseCaseStack`.
 

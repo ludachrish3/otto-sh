@@ -95,7 +95,7 @@ def test_shape_canary_finds_every_fence_shape(tmp_path):
     blank-line-then-4-space indent (already worked before this test existed),
     a ``~~~python`` tilde fence, a ```` ```python ```` fence indented inside a
     list item (the live, otto-import-free shape at
-    ``docs/library/sessions.md:116`` — this is what would go quiet if that
+    ``docs/cookbook/sessions.md:116`` — this is what would go quiet if that
     page ever gained a real import inside it), MyST's
     ```` ```{code-block} python ```` directive, and a ```` ```python ````
     fence nested inside a ```` ```{note} ```` container at both equal and

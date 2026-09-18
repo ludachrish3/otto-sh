@@ -52,7 +52,7 @@ time.
 
 For one-off tuning at the call site (e.g. a single test wants a
 different port), pass an `*_options=` keyword to `get_host()` /
-`all_hosts()`.  See {ref}`per-call-overrides` in the library recipes.
+`all_hosts()`.  See {ref}`per-call-overrides` in the Cookbook.
 
 ### SSH
 
@@ -117,7 +117,7 @@ connection opens.  Each list element maps straight to an
 For forwards that aren't expressible in JSON (UNIX-socket forwards,
 X11, custom subsystems), build the ``SshOptions`` in Python and supply
 a ``post_connect`` async hook — see the
-[connection options recipe](../library/connection-options.md).
+[connection options recipe](../cookbook/connection-options.md).
 
 ### Telnet
 
@@ -351,7 +351,7 @@ refuses until `enter_frame()`), and frame entry still confirms the target.
 | `put`/`get` over `sftp`/`scp` | work — transport-level, they land on the host the application runs on — whether the application sees the files is the project's business |
 | `run(sudo=True)`, `read_file`/`write_file`, `lsmod`, `shutdown`, `reboot(wait=True)`, the `shell` and `nc` transfer backends | unavailable — they assume a POSIX shell at the far end of `exec`, which is how otto resolves the host's userland |
 
-`SshOptions.post_connect` ({doc}`../library/connection-options`) is a
+`SshOptions.post_connect` ({doc}`../cookbook/connection-options`) is a
 different thing: it runs against the SSH *connection* (port forwards, X11)
 and never touches a shell.
 

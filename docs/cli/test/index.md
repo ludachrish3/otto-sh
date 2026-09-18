@@ -144,7 +144,7 @@ the log:
 Without `--iterations` or `--duration` the path stays the flat
 `<output dir>/<Suite>/<test name>/` it has always been, so only stability runs
 see the extra level. `suite_dir` is suite-wide and does not move either way —
-see [per-test artifact directories](../../library/suite-recipes.md#per-test-artifact-directories).
+see [per-test artifact directories](../../cookbook/suite-recipes.md#per-test-artifact-directories).
 
 ### Monitoring a run
 

@@ -7,7 +7,7 @@ and {doc}`../cli/tunnel/index`.
 ## Custom link impairers
 
 Impairment is pluggable the same way term/transfer backends are — see
-{doc}`extending-backends` for the shared registration philosophy. A
+{doc}`../library/extending-backends` for the shared registration philosophy. A
 `LinkImpairer` builds the shell commands for one placement's impairment:
 
 ```python
@@ -144,7 +144,7 @@ signatures.
 ## Custom tunnel carriers
 
 Tunnel transport is pluggable the same way link impairment is — see
-{doc}`extending-backends` for the shared registration philosophy. A
+{doc}`../library/extending-backends` for the shared registration philosophy. A
 `TunnelCarrier` builds the argv for one tagged process's role:
 
 ```python

@@ -10,6 +10,7 @@ otto
    guide/index
    cli/index
    configuration/index
+   cookbook/index
    library/index
    architecture/index
    contributing

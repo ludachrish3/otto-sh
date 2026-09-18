@@ -16,7 +16,7 @@ otto --lab unix tunnel add --hosts test1@eth2,test3,test2 --port 6001
 | `--port` | yes | The service port, used at **both** endpoints — a client sends to `--port` on either endpoint host, and (absent `--dest`) it's delivered to `--port` on the other. One value keeps the tunnel traceable by port at every hop. |
 | `--protocol` | no (default `tcp`) | The service protocol the endpoints speak, validated against the selected carrier's supported protocols. The default `socat` carrier supports `tcp` and `udp` and always relays between hops over a plain-TCP carrier stream. |
 | `--dest` | no (default: loopback on the far endpoint) | Deliver the far endpoint's traffic on to a **third** host instead of terminating on that host's loopback — see *Relaying with `--dest`*, next. |
-| `--carrier` | no (default `socat`) | Tunnel transport — a registered `TunnelCarrier` name, applied chain-wide. See [Custom carriers](../../library/network-api.md#custom-tunnel-carriers). |
+| `--carrier` | no (default `socat`) | Tunnel transport — a registered `TunnelCarrier` name, applied chain-wide. See [Custom carriers](../../cookbook/network-api.md#custom-tunnel-carriers). |
 
 ## `@iface` interface pinning
 

@@ -139,11 +139,11 @@ delivers everything — as fixtures — and nothing otto-specific lives on
   gets `<run output dir>/<module stem>`. `test_dir` — `suite_dir/<test
   name>` (parametrized names sanitized), created when requested, like
   `tmp_path`, and one level deeper under a repeating run — see the
-  [artifact recipe](suite-recipes.md#per-test-artifact-directories).
+  [artifact recipe](../cookbook/suite-recipes.md#per-test-artifact-directories).
 - `expect` — non-fatal assertions: `expect(cond, "why")` records a failure
   and keeps the test running; the test fails at the end with every failure
   listed, in the call phase like any other failure. A hard `assert` in the
-  body still wins. See the [expect recipe](suite-recipes.md#non-fatal-assertions-with-expect).
+  body still wins. See the [expect recipe](../cookbook/suite-recipes.md#non-fatal-assertions-with-expect).
 - `ctx` — the active {class}`~otto.context.OttoContext`.
 
 **Logging.** Put `logger = logging.getLogger(__name__)` at the top of the

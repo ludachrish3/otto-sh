@@ -27,7 +27,7 @@ it on for a command that did not ask for it.
 ```
 
 Two seams carry it, matching the two ways otto registers things (see
-{doc}`extending-cli`):
+{doc}`../library/extending-cli`):
 
 - `register_cli_command(...)` and the `@cli_command(...)` decorator, for a
   whole command group

@@ -24,7 +24,7 @@ resolution works and why a middlebox that isn't actually in the path fails
 loud.
 
 The link-level `impair` field names only *where* impairment is serviced; the
-host-level `impairer` pin (see [Custom impairers](../../library/network-api.md#custom-link-impairers)) separately
+host-level `impairer` pin (see [Custom impairers](../../cookbook/network-api.md#custom-link-impairers)) separately
 selects *which* `LinkImpairer` a host uses — one field per concern.
 
 ```{note}

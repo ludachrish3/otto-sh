@@ -261,5 +261,6 @@ docker-services
 - {ref}`team-setup-checklist` -- One-time setup when adopting otto for a team
 - {doc}`../cli/index` -- Every `otto` command, one page per verb
 - {doc}`../configuration/index` -- The project and lab files every command reads
-- {doc}`../library/index` -- Using otto as a Python library, plus recipes
+- {doc}`../cookbook/index` -- Short recipes for common situations
+- {doc}`../library/index` -- Using otto as a Python library
 - {doc}`../api/index` -- Full API reference

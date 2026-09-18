@@ -176,7 +176,7 @@ mechanism, with the rules for each layer, is in
   `[[docker.use_cases]]` key.
 - {doc}`../configuration/lab-config` — `docker_capable` and `roles` on
   a lab host.
-- {doc}`../library/suite-recipes` — deploying a use-case from an instruction
+- {doc}`../cookbook/suite-recipes` — deploying a use-case from an instruction
   or a test suite instead of the CLI.
 - {doc}`../api/docker/index` — the API reference for `otto.docker`.
 - {doc}`../architecture/subsystems/docker-hosts` — why a container delegates

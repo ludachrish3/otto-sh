@@ -120,7 +120,7 @@ async def test_exec_frames_output_without_prompt_noise(
     infer from a ``None``.
 
     ``.strip()`` and no more. Whether the framing keeps the payload's trailing
-    newline is not something otto documents -- ``docs/library/sessions.md``
+    newline is not something otto documents -- ``docs/cookbook/sessions.md``
     reads every example's ``value`` through ``.strip()`` -- so pinning it here
     would be locking in observed behaviour, which this suite is not for. What
     IS the contract is that nothing the shell added survives, and stripping

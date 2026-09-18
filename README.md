@@ -250,6 +250,7 @@ The same content lives under `docs/` and can be built locally with `make docs`
 - `docs/cli/host/` — the `otto host` verbs, capabilities and embedded hosts
 - `docs/cli/cov/` — coverage collection & reports (GCC, clang, embedded)
 - `docs/configuration/` — `settings.toml`, `lab.json`, host sources and options
-- `docs/library/` — using otto as a Python library + recipes
+- `docs/cookbook/` — short recipes for common situations
+- `docs/library/` — using otto as a Python library
 - `docs/api/` — full API reference for all otto packages
 - `docs/architecture/` — how otto is designed, one page per subsystem

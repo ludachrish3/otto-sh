@@ -7,6 +7,8 @@ instructions. otto ships inline type annotations under [PEP 561](https://peps.py
 (a `py.typed` marker in the installed package), so a consumer's type checker
 sees otto's real signatures rather than treating `import otto` as untyped.
 
+Short, task-shaped recipes for common situations are in the {doc}`../cookbook/index`.
+
 ## Imports are side-effect-free; `open_context()` runs the composition root
 
 `import otto` and `import otto.config` do no I/O and run no project code.
@@ -484,10 +486,7 @@ To zero the counters *before* a run instead, call `clean_remote_gcda()`.
 See {doc}`../cli/cov/index` for the full CLI workflow, tier configuration, and
 the report format.
 
-## Recipes
-
-Patterns for common situations — runnable doctests where possible,
-illustrative code where a live host is required:
+## Authoring and extending
 
 ```{toctree}
 :caption: Authoring
@@ -511,15 +510,4 @@ inventory-backends
 creds-backends
 https-clients
 custom-parsers
-```
-
-```{toctree}
-:caption: Recipes
-
-async-patterns
-sessions
-suite-recipes
-connection-options
-dry-run-contract
-network-api
 ```

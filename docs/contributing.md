@@ -611,7 +611,8 @@ docs/
 ├── guide/                    # User Guide: what the hosts otto drives can and cannot do
 ├── cli/                      # One page per command, mirroring otto's command tree
 ├── configuration/            # settings.toml, lab.json, host sources and options
-├── library/                  # Using otto as a library + recipes (Markdown)
+├── cookbook/                 # Short recipes for common situations (Markdown)
+├── library/                  # Using otto as a library (Markdown)
 ├── architecture/             # How otto is built and why (Markdown)
 ├── contributing.md           # This page
 └── api/                      # API reference (reStructuredText, auto-generated)

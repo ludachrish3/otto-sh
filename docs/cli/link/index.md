@@ -12,7 +12,7 @@ modelled as separate underlay and overlay layers, see
 Every capability below is a plain callable first — `otto link` is a thin CLI
 wrapper over `otto.link.impair_link` / `repair_link` / `repair_all` /
 `read_link_states`. See
-[the link Python API](../../library/network-api.md#the-link-python-api)
+[the link Python API](../../cookbook/network-api.md#the-link-python-api)
 and the {doc}`API reference <../../api/link>` to call them directly.
 
 ```{note}

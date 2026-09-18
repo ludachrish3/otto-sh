@@ -138,13 +138,13 @@ otto test TestDevice --device-type switch --firmware 2.1
 
 The very same `RepoOptions` class can be inherited by **instructions**
 — see
-[Sharing repo-wide options](options-classes.md#sharing-repo-wide-options).
+[Sharing repo-wide options](../library/options-classes.md#sharing-repo-wide-options).
 Defining it once in a shared module (e.g.
 `pylib/<repo>_common/options.py`) is the recommended way to expose
 repo-wide flags uniformly across every `otto test` and `otto run`
 subcommand.
 For the complete options reference — validation, the lifecycle, and the
-`@options` decorator — see [Options classes](options-classes.md).
+`@options` decorator — see [Options classes](../library/options-classes.md).
 
 ## Monitoring from a test
 

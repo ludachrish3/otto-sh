@@ -249,6 +249,7 @@ Monitoring can also be started from within a test suite using
 - {doc}`configuration/index` — The project and lab files every command reads
 - {doc}`library/options-classes` — Shared options classes for instructions and suites
 - {doc}`library/extending-cli` — Registering your own top-level `otto` commands
-- {doc}`library/index` — Using otto as a Python library, plus recipes
+- {doc}`cookbook/index` — Short recipes for common situations
+- {doc}`library/index` — Using otto as a Python library
 - {doc}`architecture/index` — How otto is put together, for contributors and extenders
 - {doc}`api/index` — Full API reference for all otto packages

@@ -19,7 +19,7 @@ That split is not a stylistic one, and it decides where identity lives.  A
 persistent session *already has* a user, so changing it is a scoped operation
 on the session — `as_user`, described in
 {doc}`../../cli/host/capabilities/privilege` and
-{doc}`../../library/sessions` — and `run` refuses a per-call `user=` on the
+{doc}`../../cookbook/sessions` — and `run` refuses a per-call `user=` on the
 families that work this way.  A stateless verb has no such history: `exec`,
 `put` and `get` can each take a user directly, because each call opens its own
 channel and can open it as somebody else.
