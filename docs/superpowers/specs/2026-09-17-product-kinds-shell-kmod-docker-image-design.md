@@ -194,12 +194,16 @@ points at it rather than copying it):
   And the API:
 
   ```c
-  int  kgcov_register(struct module *mod, const struct gcov_info *const *begin,
-                      const struct gcov_info *const *end, const char *dir);
+  typedef void (*kgcov_ctor_fn)(void);
+
+  int  kgcov_register(struct module *mod, const kgcov_ctor_fn *begin,
+                      const kgcov_ctor_fn *end, const char *dir);
   void kgcov_unregister(struct module *mod);
   ```
 
-- On register: remember the section bounds and `dir`, create
+- On register (`KGCOV_INIT()` expands to
+  `kgcov_register(THIS_MODULE, &__kgcov_ctors_begin + 1, &__kgcov_ctors_end,
+  gcov_dir)`): remember the constructor range and `dir`, create
   `/sys/kernel/debug/otto_kgcov/<module>/dump` and `/reset`.
 - Per registered module the library keeps an **accumulator**: a private
   copy of each object's `gcov_info` (the kernel's `gcov_info_dup`, zeroed at
