@@ -355,14 +355,21 @@ matched to `test3`:
   line executed before the dump reads once in that host's `capture.json`
   (merge semantics: the two dumps never double count).
 - `docker_image`: test3 already runs a daemon (the compose lane) and can
-  pull. The dev VM also runs a daemon, so the image is built there: the
-  `tests/repo1/product` sources compiled statically with `--coverage` on
-  the dev VM, copied into an `alpine:3.20` image, and `docker save`d to a
-  git-ignored tarball under `tests/repo5/docker/` by the e2e's build fixture.
+  pull. The dev VM also runs a daemon, so the image is built there: a copy
+  of repo1's C product committed under `tests/repo5/docker/src/` (a capture
+  anchors every measured file to a committed blob under the SUT repo, so
+  the fixture repo owns the sources it reports on) compiled statically with
+  `--coverage` on the dev VM, copied into an `alpine:3.20` image whose
+  `GCOV_PREFIX_STRIP` is baked in at build time from the build directory's
+  depth, and `docker save`d to a git-ignored tarball under
+  `tests/repo5/docker/`. `tests/repo5/build.sh` builds both the modules and
+  the image; each repo5 e2e ensures both artifact sets through one shared
+  staleness rule, because otto installs every matched product on every run.
   Declared as a `docker_image` product with `run_args` that launch it with
   `GCOV_PREFIX={cov_dir}`; the e2e asserts `capture.json` under
-  `cov/test3/<product>/` and the bind-mounted counters. The reference form
-  is proven with the same image, already loaded, as a second product with
+  `cov/test3/<product>/` and the bind-mounted counters, tolerating the
+  kernel demo's exit-dump leaves on test1/test2. The reference form is
+  proven with the same image, already loaded, as a second product with
   `pull = false`.
 
 **Gates.** Per task: targeted selections + the invariant suites (API
