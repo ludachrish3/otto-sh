@@ -259,7 +259,7 @@ async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
             results = await do_for_all_hosts(
                 UnixHost.exec,
                 "uname -a",
-                pattern=re.compile(r"router"),
+                pattern=re.compile(r"router.*"),
             )
     """
     from ..context import get_context

@@ -277,7 +277,7 @@ required `login` and four optional fields:
 | `password` | string or `null` | Password, or omit/`null` for key/agent auth on SSH (an empty line on telnet). |
 | `proxy` | string | Name of a registered login proxy (see {doc}`../library/extending-backends`) that drives the steps to *become* this login, after authenticating as `via`. Omit for a directly-loginable account — a proxy-less entry still uses the built-in `"su"` proxy when `switch_user`/`as_user` switches to it. |
 | `via` | string | The `login` of another entry in this same list to authenticate as first. Only valid alongside `proxy`. Omit to default to the first proxy-less (directly-loginable) entry. |
-| `params` | object | Free-form data handed to the proxy callable (e.g. a container name, a service name). Otto interprets only two keys, and only in the built-in `"su"` proxy: `login_shell` (default `true`) and `expect_prompt` — see below. |
+| `params` | object | Free-form data handed to the proxy callable (e.g. a container name, a service name). Otto interprets only two keys: `login_shell` (default `true`) in the built-in `"su"` proxy, and `expect_prompt` for any proxy that declares a prompt — see below. |
 | `protocols` | list of strings | The protocols this entry is **for** — names of self-authenticating backends: `ssh`, `telnet`, `ftp` (a custom backend that declares `authenticates` joins the list). Omit for an entry that applies to every protocol. See {ref}`cred-protocols`. |
 
 On a host that references the inventory, this list is optional and is the
@@ -301,17 +301,29 @@ A cred that needs the old inheriting form asks for it explicitly:
 Note that `params` (like `via`) is only valid alongside `proxy`, so opting out
 means naming `"proxy": "su"` even though it is the default.
 
-The other key, `expect_prompt`, is an escape hatch you are unlikely to need.
-Otto does not wait to discover whether `su` will ask for a password: it knows
-that `su` challenges based on **who is asking**, and that root is not
-challenged, so it skips the wait entirely on hops that cannot be challenged.
-On a host whose PAM stack drops `pam_rootok` and challenges even root, that
-prediction is wrong and the switch fails with an identity error naming this
-key; setting it to `true` forces otto to wait for the prompt again:
+The other key, `expect_prompt`, applies to any proxy that declares a password
+prompt, the built-in `"su"` included. Otto does not wait to discover whether a
+switch will ask for a password: it predicts it from **who is asking**. A hop
+reached from `root` is taken as unchallenged and every other hop as
+challenged, and otto watches for the prompt only on hops it predicts will be
+challenged. `expect_prompt` overrides that prediction for one cred, either way.
+
+Set it to `true` on a host whose PAM stack drops `pam_rootok` and challenges
+even root. Without it the switch fails with an identity error: the shell
+still answers as the calling account.
 
 ```json
 {"login": "mysql", "proxy": "su", "via": "root",
  "params": {"expect_prompt": true}}
+```
+
+Set it to `false` for a switch that is never challenged even though the
+caller is not root (a `pam_wheel` trust, for example). Without it that hop
+waits out the full prompt watch, about five seconds, every time:
+
+```json
+{"login": "mysql", "proxy": "su", "via": "admin",
+ "params": {"expect_prompt": false}}
 ```
 
 **The first entry is the default login** — the login otto authenticates as,

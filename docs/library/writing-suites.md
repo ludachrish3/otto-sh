@@ -301,7 +301,7 @@ Start the monitor during a test to collect metrics:
 async def test_performance(self) -> None:
     await self.start_monitor(hosts=[host1, host2])
     # ... run workload ...
-    await self.add_monitor_event("workload started", color="blue")
+    await self.add_monitor_event("workload started", color="#1f77b4")
     # ... wait for results ...
     await self.stop_monitor()
 ```

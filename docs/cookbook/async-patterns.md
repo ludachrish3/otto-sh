@@ -91,9 +91,11 @@ others.  Per-host failures are always isolated — a host that raises
 contributes its exception as that host's dict value instead of propagating,
 so every value is either the callable's result or an exception.  That is
 why the examples below `isinstance`-check (or `match` on) each value before
-using it.  Both helpers accept a compiled regex `pattern=` filter that is
-matched against each host's `id`, so you can target a subset of the lab
-without pre-filtering yourself.
+using it.  Both helpers accept a compiled regex `pattern=` filter matched
+against each host's `id`, so you can target a subset of the lab without
+pre-filtering yourself; see
+[Narrowing further: `pattern=`](../cli/run/defaults.md#narrowing-further-pattern)
+for the matching rule.
 
 ### `run_on_all_hosts` — one or more commands, everywhere
 
@@ -113,10 +115,10 @@ async def check_all_hosts():
 
 
 async def check_routers_only():
-    """Target just hosts whose id matches /router/."""
+    """Target just hosts whose id starts with 'router'."""
     results = await run_on_all_hosts(
         ["uname -a", "uptime"],
-        pattern=re.compile(r"router"),
+        pattern=re.compile(r"router.*"),
     )
     ...
 ```

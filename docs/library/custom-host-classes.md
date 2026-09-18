@@ -21,10 +21,13 @@ register_os_profile(
 )
 ```
 
-Init modules are imported *after* settings-file parsing, so a code registration
-overrides a data table of the same name.  This lets third-party libraries ship
-profiles that users can patch from `settings.toml` without editing the library
-source.
+A code registration overrides a data table of the same name (see
+{doc}`../configuration/os-profiles`), so an `[os_profiles]` table in
+`settings.toml` cannot patch a profile a library registers in code. To change
+one, import the library in your own init module and call
+`register_os_profile` for that name afterwards, or register the variant under
+a new name.
+
 ## Custom host classes
 
 To ship a host subclass from an external repo:

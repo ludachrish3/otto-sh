@@ -8,9 +8,8 @@ flat CLI options.
 
 Most repos want a common set of CLI flags — device type, lab environment, and so
 on — on every `otto run` instruction and `otto test` suite. Define them once as a
-shared **options class** in any module named in your `init` setting (a `libs`
-directory like `pylib/` is a common home, but any importable module works), then
-inherit it from each suite and instruction.
+shared **options class** in any importable module (a `libs` directory like
+`pylib/` is a common home), then inherit it from each suite and instruction.
 
 Use the `@options` decorator — otto's name for a pydantic dataclass — so the
 flags are validated. See
@@ -26,9 +25,9 @@ import it directly, so it only needs to be importable from a `libs` dir.
 
 Options appear at three points in a project's lifecycle:
 
-- **Project definition** — you define repo-wide options once, in a module named
-  in your `init` setting. These are the common flags every instruction and suite
-  shares (device type, lab environment, …).
+- **Project definition** — you define repo-wide options once, in a module your
+  suites and instructions import. These are the common flags every
+  instruction and suite shares (device type, lab environment, …).
 - **Instruction execution** — {func}`@instruction() <otto.cli.run.instruction>`
   expands an options class into `otto run` flags and hands your function a
   populated instance.
@@ -125,10 +124,9 @@ rejected
 ## Sharing repo-wide options
 
 Define a base options class once and inherit it everywhere you want the same
-flags. Put the base in **any module named in your repo's `init` setting** — the
-location is yours. A `libs` directory such as `pylib/` is a common place to keep
-it, but the only rule is that the module is importable and listed in `init` (see
-{doc}`../configuration/settings`).
+flags. Put the base in **any importable module** — the location is yours. A
+`libs` directory such as `pylib/` is a common place to keep it (see
+{doc}`../configuration/settings` for `libs`).
 
 `otto.examples.options` bundles a complete example: a `RepoOptions` base plus a
 suite options class and an instruction options class that both inherit it.
@@ -143,7 +141,7 @@ import typer
 from otto import options
 from otto.suite import OttoSuite
 
-from my_shared.options import RepoOptions  # your base, listed in `init`
+from my_shared.options import RepoOptions  # your base, importable from `libs`
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +170,7 @@ import typer
 from otto import options
 from otto.cli.run import instruction
 
-from my_shared.options import RepoOptions  # your base, listed in `init`
+from my_shared.options import RepoOptions  # your base, importable from `libs`
 
 
 @options

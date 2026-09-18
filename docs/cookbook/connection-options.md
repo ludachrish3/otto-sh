@@ -2,7 +2,7 @@
 
 Each network protocol otto speaks — SSH, Telnet, SFTP, SCP, FTP,
 netcat — has a dedicated options dataclass in
-[`otto.host.options`](../../src/otto/host/options.py).  The default
+{mod}`otto.host.options`.  The default
 constructor of each class matches how otto connects with no options set,
 so dropping an options object onto an existing `UnixHost` never changes
 how it connects.

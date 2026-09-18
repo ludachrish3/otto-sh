@@ -127,8 +127,8 @@ for the lab-wide dispatch pattern.
 
 When several instructions — and often several test suites too — need the
 same CLI flags (device type, lab environment, etc.), define a shared base
-**options class** (with `@options`) in any module listed in your `init`
-setting — a `libs` path like `pylib/` is one common choice. See
+**options class** (with `@options`) in any importable module — a `libs`
+path like `pylib/` is one common choice. See
 {doc}`options-classes` for the full treatment. The *same* class can be inherited by
 
 - a suite's inner `Options` class (expanded during auto-registration), and

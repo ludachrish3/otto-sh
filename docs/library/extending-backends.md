@@ -316,16 +316,15 @@ never waits for a password prompt and never sends one. It declares the prompt
 its mechanism can raise, and the engine answers it.
 
 Every hop ends with a shell resync that settles, then probes until the new
-shell answers; the settle *watches* for the declared prompt, and every probe
-afterwards can still recognise one. A password is sent only when it is wanted,
-and exactly **once** when it is; a cred with no password gets an error naming
-the account that asked.
+shell answers. On a hop otto expects to be challenged, the settle *watches*
+for the declared prompt and every probe afterwards can still recognise one. A
+password is sent only when it is wanted, and exactly **once** when it is; a
+cred with no password gets an error naming the account that asked.
 
-otto arms the watch only where a prompt can arrive. `su` does not challenge
-root and challenges everyone else, and every hop's resync proves the identity
-it left the shell in, so otto knows which hops can be challenged without
-waiting. A host that challenges even root (a PAM stack without `pam_rootok`)
-sets `params={"expect_prompt": true}` on the cred to force the watch back on.
+otto expects a challenge on every hop whose via account is not `root`, for
+every proxy that declares `prompt=`; a cred's `expect_prompt` param overrides
+that prediction either way (see `params` in
+{doc}`../configuration/host-sources`).
 
 The probe reads back `id -un` as well as `$?`, so the resync also proves
 **who** answered. A rejected password — `su` reports the failure and exits

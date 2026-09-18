@@ -87,8 +87,8 @@ expansion, so you have three postures to choose from:
 3. **Same class** — both sides pass the exact same dataclass when the
    repo-wide flags are all either side needs.
 
-Define a base `Options` dataclass in a shared module (listed in your
-`init` setting) and inherit from it in each suite:
+Define a base `Options` dataclass in a shared module (importable from a
+`libs` directory) and inherit from it in each suite:
 
 ```python
 # pylib/my_shared/options.py
