@@ -345,12 +345,15 @@ matched to `test3`:
   command mixes per host), writes `dump` once mid-suite on one host (so that
   host's file holds a runtime dump merged with the exit dump), uninstalls
   in teardown, and asserts nothing itself beyond the verbs.
-- e2e: `otto test` auto-enables retrieval for the demo (not for the library,
-  which scans `no`); the capture holds one `.gcda` per translation unit;
-  exact line and branch hits per object, the deliberately uncovered branches
-  (one policy, one error path) reported uncovered, the exit routine's lines
-  hit; on the mid-suite-dump host the counters equal the sum of both dumps
-  (merge semantics), on the other host the exit dump alone.
+- e2e: `otto test --cov` fetches the demo only (the library declares
+  `instrumented = false`, and the run log's partial-instrumentation row
+  says so); the capture holds one `.gcda` per translation unit; exact line
+  and branch hits per object, each asserted branch line carrying both a
+  taken and an untaken arc, the deliberately uncovered branches (one
+  policy, one error path) reported uncovered, the exit routine's lines hit
+  on both hosts including the exit-time drain; on the mid-suite-dump host a
+  line executed before the dump reads once in that host's `capture.json`
+  (merge semantics: the two dumps never double count).
 - `docker_image`: test3 already runs a daemon (the compose lane) and can
   pull. The dev VM also runs a daemon, so the image is built there: the
   `tests/repo1/product` sources compiled statically with `--coverage` on
