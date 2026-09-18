@@ -472,10 +472,10 @@ def _drop_privately_typed_params(
 
 
 # -- build-time GUI media + terminal blocks ------------------------------------
-# Screenshots, video clips, and termynal terminal blocks are PRODUCTS OF THE
-# BUILD, never committed: scripts/capture_docs_media.py serves the real
-# dashboard (via the browser-e2e harness fixtures) seeded with deterministic
-# dummy data and captures it with headless Chromium; capture_docs_termynal.py
+# Screenshots and termynal terminal blocks are PRODUCTS OF THE BUILD, never
+# committed: scripts/capture_docs_media.py serves the real dashboard (via the
+# browser-e2e harness fixtures), feeds it committed web/fixtures/ exports and
+# captures it with headless Chromium; capture_docs_termynal.py
 # scaffolds a demo repo with `otto init` and captures real --help output and
 # tab-completion candidates. Both write into docs/_static/generated/
 # (gitignored). Hooked here — rather than in the Makefile / CI / RTD configs —
@@ -486,7 +486,7 @@ def _drop_privately_typed_params(
 # The termynal capture runs for EVERY builder: its snippets are pulled in via
 # `{raw} html :file:`, which docutils reads at parse time, so the doctest
 # builder needs them on disk too. The browser capture is html-only — no other
-# builder touches the image/video files.
+# builder touches the image files.
 
 
 def _run_capture_script(name: str) -> None:

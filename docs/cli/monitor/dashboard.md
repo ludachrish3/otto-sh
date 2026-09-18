@@ -42,14 +42,19 @@ session:
   rest of the stack, so a spike is easy to correlate across series. See
   [Chart gestures](#chart-gestures) below for how to drive them.
 
-  ![A subject page's synced chart stack: one panel per metric group and a
-  kernel log table, all sharing one time axis with event
-  markers](../../_static/generated/dashboard-review-charts.png)
+  ![A host's subject page: the series tree and its chip filters beside the
+  top of the synced chart stack, every chart sharing one time axis and the
+  session's event markers](../../_static/generated/dashboard-review-charts.png)
 
 - **Series and source filtering.** A per-subject series tree toggles
   individual metrics on and off; chip filters narrow by metric group or
   by data source (a series' own host vs. an external management host —
   externally-sourced series carry a provenance badge).
+
+  ![An element's subject page narrowed to CPU % by its chip filter: one
+  line per member host on a single chart, with the element's hosts listed
+  in the series tree](../../_static/generated/dashboard-element.png)
+
 - **Events.** A reverse-chronological slide-over lists every event in the
   loaded document; clicking a row re-scopes the review bar's range to
   that event's span (padded ±15 minutes) — or, if that padded range falls
@@ -57,6 +62,11 @@ session:
   closing on a silent no-op. An editable session (see [Marking
   events](dashboard.md#marking-events)) adds marking controls to this same
   panel.
+
+  ![The Events slide-over: each event's color, label, and start time, newest
+  first, with a span's duration after its
+  start](../../_static/generated/dashboard-events.png)
+
 - **Multiple sessions.** A document spanning more than one session (a
   config change captured mid-run, or a `--db` archive several `--live --db`
   runs appended into, for example) exposes a session picker; each entry's
@@ -67,6 +77,12 @@ session:
   loaded, unchanged.
 
 ## Topology view
+
+![The topology map of a dense lab laid out by data-plane structure:
+element nodes with their host counts and health bars, the local node on
+the left, three tunnels drawn dashed over the links they ride — ok in
+gray, degraded in orange, uncertain faded — and the Key panel
+bottom-left](../../_static/generated/dashboard-topology.png)
 
 The topology map is the dashboard's landing view (`/`) — `/topology` remains
 a working alias, so existing bookmarks and links keep resolving — with an

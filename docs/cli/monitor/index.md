@@ -3,10 +3,9 @@
 `otto monitor` collects CPU, memory, disk, and network metrics from remote
 hosts, and serves a web dashboard for reviewing what it collected.
 
-![The topology map, otto monitor's landing view: a dense lab laid out by
-data-plane structure, with element-grouped chassis nodes and a tunnel
-overlay showing all three health states — ok, degraded, and
-uncertain](../../_static/generated/dashboard-topology.png)
+![One host's CPU, memory, and network charts on a shared time axis, each
+point event drawn as a dashed marker and each span as a shaded band across
+every chart](../../_static/generated/dashboard-metrics.png)
 
 Two commands live under one binary:
 

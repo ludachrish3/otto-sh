@@ -589,10 +589,11 @@ capture scripts into `docs/_static/generated/` (gitignored):
 
 - `scripts/capture_docs_media.py` serves the real monitor dashboard —
   through the same `DashboardHarness`/`FakeCollector` fixtures the browser
-  e2e suite uses — seeds it with deterministic dummy data, and captures a
-  screenshot plus a live webm clip with headless Chromium. The topology
-  shot feeds the committed `web/fixtures/isp-core.json` export through the
-  Import front door. The same script renders the fixture coverage report
+  e2e suite uses — feeds it committed `web/fixtures/` exports through the
+  Import front door, and captures screenshots with headless Chromium, each
+  clipped to the feature it illustrates rather than the whole page. The
+  topology shot uses `web/fixtures/isp-core.json`; the fleet grid, chart,
+  element and events shots use `web/fixtures/kitchen-sink.json`. The same script renders the fixture coverage report
   shared with `tests/e2e/cov/report_browser/` through the live report
   renderer and photographs each covapp page kind (the `coverage-*.png`
   images on the `otto cov` pages).

@@ -867,7 +867,7 @@ def test_link_less_edges_do_not_open_the_inspector(shell_dash, page):
 
     # A negative assertion needs a barrier, or it passes trivially by running
     # before the click is even processed. NOT a sleep (no TEST in this repo
-    # uses wait_for_timeout — scripts/capture_docs_media.py:306 does, but that
+    # uses wait_for_timeout — scripts/capture_docs_media.py does, but that
     # is media capture, not an assertion; an arbitrary budget in a test is a
     # flake waiting to happen). The barrier is sound because `page.mouse.click()`
     # blocks through its CDP round-trips (move → down → up); Chromium

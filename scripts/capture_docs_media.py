@@ -42,6 +42,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))  # for the shared tests/_fixtures harness
@@ -72,7 +73,10 @@ _STAMP_INPUTS = [
 ARTIFACTS = [
     "dashboard-topology.png",
     "dashboard-review.png",
+    "dashboard-metrics.png",
     "dashboard-review-charts.png",
+    "dashboard-element.png",
+    "dashboard-events.png",
     "coverage-report.png",
     "coverage-file.png",
     "coverage-runs.png",
@@ -125,6 +129,87 @@ def _write_placeholders() -> None:
         (OUT_DIR / name).write_bytes(_PLACEHOLDER_PNG)
     STAMP.unlink(missing_ok=True)  # placeholders are never "fresh"
     print("docs media: wrote PLACEHOLDERS (no browser run) — media is degraded", flush=True)
+
+
+def _clip_shot(
+    page: Any,
+    name: str,
+    *locators: Any,
+    pad: int = 12,
+    bottom: float | None = None,
+    right: float | None = None,
+) -> None:
+    """Screenshot the union of *locators*' boxes (plus *pad*), nothing more.
+
+    Every still is clipped to the feature it illustrates rather than taken
+    as a full page: a full-page capture of a subject page is thousands of
+    pixels of log table, and a viewport capture of a short page is mostly
+    empty canvas. ``bottom`` (page coordinates) cuts the union short — for
+    a region that starts at one element and should stop partway down
+    another (e.g. "the app bar down to the tenth code row"); the cut is
+    exact, with no pad below it. ``right`` (page coordinates too, see
+    ``_page_right``) does the same for the right edge, plus *pad* (a
+    full-width row whose content sits on its left).
+
+    Boxes come back in viewport coordinates; the clip of a ``full_page``
+    screenshot is in page coordinates, so the current scroll offset is
+    added back before clipping. Only the *pad* is trimmed at the document's
+    edges; a box that itself runs off the document raises, since clamping
+    it would silently crop the feature the shot is meant to show.
+    """
+    scroll_x, scroll_y, doc_w, doc_h = page.evaluate(
+        "[scrollX, scrollY, document.documentElement.scrollWidth,"
+        " document.documentElement.scrollHeight]"
+    )
+    boxes = []
+    for loc in locators:
+        box = loc.bounding_box()
+        if box is None:
+            raise RuntimeError(f"docs media: {name}: {loc} has no box (not rendered)")
+        boxes.append(box)
+    left = min(b["x"] for b in boxes) + scroll_x
+    top = min(b["y"] for b in boxes) + scroll_y
+    right_edge = max(b["x"] + b["width"] for b in boxes) + scroll_x
+    bottom_edge = max(b["y"] + b["height"] for b in boxes) + scroll_y
+    if left < 0 or top < 0 or right_edge > doc_w or bottom_edge > doc_h:
+        raise RuntimeError(
+            f"docs media: {name}: the clip ({left:.0f},{top:.0f})-"
+            f"({right_edge:.0f},{bottom_edge:.0f}) runs off the {doc_w}x{doc_h} document"
+        )
+    x0 = max(0, left - pad)
+    y0 = max(0, top - pad)
+    x1 = min(doc_w, right_edge + pad)
+    y1 = min(doc_h, bottom_edge + pad)
+    if bottom is not None:
+        y1 = min(y1, bottom)
+    if right is not None:
+        x1 = min(x1, right + pad)
+    page.mouse.move(0, 0)  # no hover state left over from the last click
+    page.screenshot(
+        path=OUT_DIR / name,
+        full_page=True,
+        clip={"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0},
+    )
+
+
+def _page_bottom(loc: Any) -> float:
+    """*loc*'s bottom edge in page coordinates (for ``_clip_shot(bottom=)``)."""
+    box = loc.bounding_box()
+    if box is None:
+        raise RuntimeError(f"docs media: {loc} has no box (not rendered)")
+    return box["y"] + box["height"] + loc.page.evaluate("scrollY")
+
+
+def _page_right(loc: Any) -> float:
+    """*loc*'s right edge in page coordinates (for ``_clip_shot(right=)``)."""
+    box = loc.bounding_box()
+    if box is None:
+        raise RuntimeError(f"docs media: {loc} has no box (not rendered)")
+    return box["x"] + box["width"] + loc.page.evaluate("scrollX")
+
+
+def _tid(page: Any, testid: str) -> Any:
+    return page.locator(f'[data-testid="{testid}"]')
 
 
 def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright import is deferred
@@ -283,17 +368,31 @@ def _capture_topology(browser, harness) -> None:  # noqa: ANN001 — deferred im
     actually-rendered edge path element, then poll until the rendered count
     stops growing (see ``_wait_for_edges_settled``) instead of guessing a
     flat delay, before the shot.
+
+    Legibility: the fit reserves a fixed 256px under the graph for the key
+    (``FIT_PADDING`` in TopologyPage.tsx), so at the default viewport the
+    fitted graph is a thumbnail. A taller viewport lets the fit grow until
+    the graph's width binds, which brings node labels up to reading size,
+    and the clip is the nodes plus the key — not the empty canvas around
+    them.
     """
     fixture = REPO_ROOT / "web" / "fixtures" / "isp-core.json"
     edge_selector = '[data-testid^="topo-link-"] path.react-flow__edge-path'
-    page = browser.new_page(viewport=_VIEWPORT)
+    page = browser.new_page(viewport={"width": _VIEWPORT["width"], "height": 1100})
     page.set_default_timeout(_CAPTURE_TIMEOUT_MS)
     page.goto(harness.url)
     page.locator('[data-testid="import-input"]').set_input_files(fixture)
     page.locator('[data-testid="topology-page"]').wait_for()
     page.locator(edge_selector).first.wait_for()
     _wait_for_edges_settled(page, edge_selector)
-    page.screenshot(path=OUT_DIR / "dashboard-topology.png", full_page=True)
+    nodes = page.locator(".react-flow__node")
+    _clip_shot(
+        page,
+        "dashboard-topology.png",
+        *[nodes.nth(i) for i in range(nodes.count())],
+        _tid(page, "topo-legend"),
+        pad=16,
+    )
     page.close()
 
 
@@ -305,28 +404,88 @@ def _capture_dashboard(browser, harness) -> None:  # noqa: ANN001 — deferred i
     client-side, exactly the way the browser e2e suite does — see
     ``tests/e2e/monitor/dashboard/test_review_shell.py::_import_fixture``.
     The harness's collector stays empty; ``web/fixtures/kitchen-sink.json``
-    supplies every session, host, and metric these captures show.
+    supplies every session, host, element, event and metric these captures
+    show. Every later route is a same-document hash navigation, so the
+    imported data survives it. ``/`` is the topology landing (spec
+    2026-07-17 topology-default-view), so the grid needs an explicit
+    ``#/hosts`` hop.
 
-    Two stills: the fleet grid overview, then a subject page's synced chart
-    stack (a same-document hash navigation, so the imported data survives).
-    ``/`` is the topology landing now (spec 2026-07-17 topology-default-view),
-    so the grid needs an explicit ``#/hosts`` hop after import — it no longer
-    follows for free from a bare import the way it used to.
+    Stills, each clipped to its feature (a subject page runs on into
+    thousands of pixels of log table below the charts):
+
+    - the fleet grid overview;
+    - ``dashboard-metrics``: one host's first three synced charts, event
+      markers and spans across all of them;
+    - ``dashboard-review-charts``: that host's subject page — series tree
+      and chip filters beside the top of its chart stack;
+    - ``dashboard-element``: an element subject (chassis-a) narrowed to its
+      CPU chart, one line per member host;
+    - ``dashboard-events``: the events slide-over's list.
     """
     fixture = REPO_ROOT / "web" / "fixtures" / "kitchen-sink.json"
     page = browser.new_page(viewport=_VIEWPORT)
     page.set_default_timeout(_CAPTURE_TIMEOUT_MS)
     page.goto(harness.url)
-    page.locator('[data-testid="import-input"]').set_input_files(fixture)
-    page.locator('[data-testid="review-bar"]').wait_for()
+    _tid(page, "import-input").set_input_files(fixture)
+    _tid(page, "review-bar").wait_for()
     page.goto(f"{harness.url}#/hosts")
-    page.locator('[data-testid="host-tile-chassis-a_lc1"]').wait_for()
-    page.screenshot(path=OUT_DIR / "dashboard-review.png", full_page=True)
+    _tid(page, "host-tile-chassis-a_lc1").wait_for()
+    # The first three element groups — a three-host chassis and two
+    # single-host elements — cut at the tiles' right edge (each group's
+    # health-rollup bar and header run the full page width).
+    tiles = _tid(page, "element-section-chassis-a").locator('[data-testid^="host-tile-"]')
+    _clip_shot(
+        page,
+        "dashboard-review.png",
+        _tid(page, "element-section-chassis-a"),
+        _tid(page, "element-section-edge-gw"),
+        right=_page_right(tiles.last),
+    )
 
     page.goto(f"{harness.url}#/host/chassis-a_lc1")
-    page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()
+    _tid(page, "chart-panel-cpu").locator("canvas").wait_for()
+    _tid(page, "chart-panel-net").locator("canvas").wait_for()
     page.wait_for_timeout(400)  # let ECharts finish its initial render pass
-    page.screenshot(path=OUT_DIR / "dashboard-review-charts.png", full_page=True)
+    sections = _tid(page, "chart-stack").locator(":scope > section")
+    _clip_shot(page, "dashboard-metrics.png", sections.nth(0), sections.nth(2))
+    # The series panel is a full-height column beside the stack, so the
+    # clip is cut at the second chart's bottom edge.
+    _clip_shot(
+        page,
+        "dashboard-review-charts.png",
+        _tid(page, "subject-title"),
+        _tid(page, "series-panel"),
+        sections.nth(1),
+        bottom=_page_bottom(sections.nth(1)),
+    )
+
+    page.goto(f"{harness.url}#/host/chassis-a")
+    _tid(page, "subject-title").filter(has_text="chassis-a").wait_for()
+    _tid(page, "chart-chips").get_by_text("CPU %").click()
+    _tid(page, "chart-cpu").wait_for()
+    _tid(page, "chart-mem").wait_for(state="detached")
+    page.wait_for_timeout(400)  # the stack re-renders to one chart
+    _clip_shot(
+        page,
+        "dashboard-element.png",
+        _tid(page, "subject-title"),
+        _tid(page, "series-panel"),
+        _tid(page, "chart-stack"),
+    )
+
+    _tid(page, "events-button").click()
+    panel = _tid(page, "events-panel")
+    panel.locator("ul").wait_for()
+    page.wait_for_timeout(400)  # the slide-over's enter transition
+    # The panel spans the viewport's full height; clip to its content, with
+    # no pad sideways (that would pull in the dimmed page behind it).
+    _clip_shot(
+        page,
+        "dashboard-events.png",
+        panel,
+        pad=0,
+        bottom=_page_bottom(panel.locator("ul")) + 20,
+    )
     page.close()
 
 
