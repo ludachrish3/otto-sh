@@ -1,0 +1,271 @@
+# otto_kgcov: any gcc, clang, and other kernels or ISAs — design
+
+> Captured 2026-09-18 from a brainstorm with Chris, after the product-kinds
+> branch (spec `2026-09-17-product-kinds-shell-kmod-docker-image-design.md`)
+> landed on main. Approved section by section in that conversation.
+
+## 1. Context and motivation
+
+`otto_kgcov` (`docs/examples/kgcov/`) is the companion module that lets a
+kernel module report gcov coverage on a stock kernel: the instrumented module
+links against it, and the library dumps `.gcda` files under the product's
+`cov_dir`. It is a test-enabling example, not part of otto: otto owns no
+product build, the `kmod` kind only transfers a `.ko`. Two limits of the
+first version close the loop poorly for real users:
+
+- It is gcc-only, and gcc 11 to 13 at that. Registration relies on
+  `-fprofile-info-section` (gcc 11+), and the vendored gcov format table
+  stops at gcc 13 (`#error` above). Some projects compile their modules with
+  clang, whose gcov runtime is a different dialect.
+- Its build script assumes the build machine's own kernel headers under
+  `/lib/modules/<release>/build`. A user whose target kernel or ISA differs
+  from the build machine has no documented path.
+
+Two facts fix the shape of the answer. Stock kernels are the target — Chris:
+assume `CONFIG_CONSTRUCTORS` is unset — so a module's constructors, which is
+where both gcc (`__gcov_init`) and clang (`llvm_gcov_init`) register their
+counters, never run at load. And the net must be cast wide: every gcc the
+kernel's own gcov format supports, old and new, and clang 11 and newer.
+
+## 2. Goals and non-goals
+
+### Goals
+
+- One registration mechanism for every compiler: the library runs the
+  consumer's own constructors, bracketed by the two sentinel objects the
+  consumer already links first and last (§3).
+- Two vendored backends behind one interface: the kernel's `gcc_4_7.c` with
+  its full version table (gcc 4.7 through the newest arm in mainline), and
+  the kernel's `clang.c` (§4).
+- `consumer.mk` is plain `-fprofile-arcs -ftest-coverage` for both compilers;
+  the consumer contract, the debugfs files, otto's `kmod` kind and the
+  coverage hooks are unchanged (§5).
+- The build scripts accept a kernel tree anywhere and pass every kbuild knob
+  through unchanged (§6).
+- Proof: a live toolchain matrix on the beds and a build-only cross build
+  for another ISA from a kernel source tree (§8).
+- Docs: how to build the library for another kernel, ISA or compiler, and
+  the one rule that binds users (§9).
+
+### Non-goals
+
+- Anything in otto proper. Neither `otto.host.kmod_kind` nor the coverage
+  hooks change; otto never builds a module.
+- `.ctors`-only targets (toolchains that predate `.init_array`); documented
+  as unsupported.
+- Kernels whose gcov formats predate the vendored backends (the kernel
+  itself requires gcc 5.1; the format floor is gcc 4.7).
+- A wrapper verb (`otto kgcov build …`); rejected: a project's build system
+  already knows its toolchain and tree, and a wrapper would only chase
+  kbuild.
+
+## 3. Registration: the library runs the consumer's constructors
+
+On a stock kernel the module loader links a module's `.init_array` (the
+module linker script keeps `.init_array` and `.ctors`) but runs it only
+under `CONFIG_CONSTRUCTORS`. gcc places its gcov constructor in
+`.init_array.00100`, clang in `.init_array.0`; the script emits
+`SORT(.init_array.*)` and then plain `.init_array`.
+
+The consumer keeps two sentinel objects, first and last in its `Kbuild`
+object list as today, but each now defines one function pointer to a
+static no-op of its own (the walk never calls the sentinels themselves):
+
+```c
+/* kgcov_begin.c — first object in the consumer's link */
+static void kgcov_begin_marker(void) {}
+__attribute__((used, section(".init_array.0")))
+const kgcov_ctor_fn kgcov_ctors_begin = kgcov_begin_marker;
+
+/* kgcov_end.c — last object in the consumer's link */
+static void kgcov_end_marker(void) {}
+__attribute__((used, section(".init_array")))
+const kgcov_ctor_fn kgcov_ctors_end = kgcov_end_marker;
+```
+
+`.init_array.0` sorts before every other entry, and within it the begin
+sentinel precedes clang's entries by link order; plain `.init_array` comes
+after every sorted entry. Proven on 2026-09-18 with a throwaway module built
+both ways against the bed kernel: the final link places the begin sentinel,
+the compiler's constructor and the end sentinel at offsets 0, 8 and 16 for
+gcc 13 and clang 18 alike.
+
+`KGCOV_INIT(THIS_MODULE)` expands to
+`kgcov_register(THIS_MODULE, &kgcov_ctors_begin, &kgcov_ctors_end)`. The
+library walks the pointers strictly between the two sentinels and calls
+each: gcc's constructor calls `__gcov_init(info)`, clang's calls
+`llvm_gcov_init(writeout, flush)`, both exported by the library, so every
+translation unit lands in the same per-module accumulator as today.
+`-fprofile-info-section` and the `.gcov_info` sentinels are removed.
+
+A coverage build's only constructors are gcov's. A consumer's own
+`__attribute__((constructor))` functions run too, which is what a
+`CONFIG_CONSTRUCTORS` kernel would have done; the docs say so.
+
+**Idempotence.** On a kernel that does have `CONFIG_CONSTRUCTORS`, the
+loader has already run the constructors when `KGCOV_INIT` walks them again.
+The library therefore skips what it already holds: a gcc `gcov_info` by
+pointer, a clang registration by its writeout callback. Registration is
+idempotent, never doubled.
+
+## 4. Two vendored backends behind one interface
+
+The library keeps one internal interface (`gcov_info` construction,
+`gcov_info_add`, `gcov_info_reset`, serialisation to a `.gcda` buffer,
+`filename`/`version` accessors) and vendors the kernel's two
+implementations of it:
+
+- `kgcov_gcc.c`: `kernel/gcov/gcc_4_7.c` (v6.8) plus `gcc_base.c`'s
+  exported stubs, as today, with the version table completed from mainline:
+  gcc 4.7 to 5.0 (9 counters), 5.1 to 6 (10), 7 to 9 (9), 10 to 13 (8),
+  14 (9), 15 (mainline's arm). The gcc 14 `#error` goes; an unknown newer
+  gcc fails the build with a message naming the file to extend.
+- `kgcov_clang.c`: `kernel/gcov/clang.c` (v6.8). It builds a `gcov_info`
+  from the `llvm_gcda_*` callbacks that `llvm_gcov_init`'s writeout runs
+  at registration, keeps pointers to the live counters, and serialises with
+  its own writer. The kernel's backend does not branch on the clang version;
+  clang 11 and newer, which is what kbuild accepts, are covered.
+
+The library's `Kbuild` selects the backend by the compiler building it
+(`__clang__`), exports gcc's `__gcov_*` symbols and clang's `llvm_gcov_init`
+and `llvm_gcda_*` symbols (all under the existing GPL exports).
+
+The one rule that binds users is now checked instead of merely stated: the
+library must be built by the same compiler family as the consumer, and for
+gcc by the same major version, because `gcc_4_7.c` lays out `gcov_info` by
+`__GNUC__` at compile time. For clang the format word is fixed (`408*`,
+the gcc 4.8 layout, from clang 11 on, probed on 2026-09-18 with clang 18)
+and the callback ABI has been stable since clang 11, so the family and the
+kbuild floor are the whole rule.
+
+At registration the gcc backend decodes the major from each translation
+unit's `info->version` word (probed on 2026-09-18: gcc 9 writes `A95*`, gcc
+10 to 14 write `B05*`, `B15*`, `B24*`, `B33*`, `B42*`; so `'4'` means gcc
+4, `'A'` + digit means 5 to 9, `'B'` + digit means 10 to 19) and compares it
+with the `__GNUC__` the library was built with. A mismatch is refused with
+both versions in the kernel log rather than parsed into garbage: the
+module still loads, the unit is not registered, and the product reports
+no coverage for it. An encoding the decoder does not know (a first byte
+after `'B'`) skips the major check with one `pr_info`, so a future gcc is
+not refused by a decoder that predates it. A family mismatch needs no
+code: each build of the library exports only its own family's entry
+points, so a gcc consumer against a clang-built library (or the reverse)
+fails to load with `Unknown symbol __gcov_init` (or `llvm_gcov_init`) in
+the kernel log; the docs name that message.
+
+## 5. Consumer contract
+
+- `consumer.mk`: `KGCOV_CFLAGS := -fprofile-arcs -ftest-coverage` for both
+  compilers; the include path as today.
+- The consumer's `Kbuild` lists `kgcov_begin.o` first and `kgcov_end.o`
+  last, as today; the two files are copied from the library as today.
+- `KGCOV_INIT(THIS_MODULE)` / `KGCOV_EXIT()`, the debugfs
+  `/sys/kernel/debug/otto_kgcov/<module>/{dump,reset}` files, the
+  `gcov_dir=` module parameter, dump-adds-then-zeroes, exit dump, and the
+  `.gcda` layout are unchanged. otto's `kmod` kind and the coverage hooks
+  do not change; the existing unit tests and the kmod e2e stay valid.
+- The demo `otto_kmod_demo` gains nothing but the new sentinel files and
+  compiles clean under clang's warnings.
+
+## 6. Build knobs and cross-compiling
+
+`docs/examples/kgcov/build.sh <build-dir> [<release>]`:
+
+- `KDIR` from the environment names the kernel tree (source or headers,
+  anywhere); default stays `/lib/modules/<release>/build`.
+- `ARCH`, `CROSS_COMPILE`, `LLVM`, `CC` and `KMAKEFLAGS` (extra `make`
+  arguments, verbatim) pass through to kbuild unchanged; nothing is
+  inferred. The library's and the demo's `Makefile` do the same.
+- The vermagic check stays: `modinfo` reads the ELF, so it works for any
+  ISA; `<release>` is what it compares against (for a source tree,
+  `make kernelrelease` gives it).
+- `tests/repo5/build.sh` grows the same passthrough so the fixture builds
+  with any installed toolchain.
+
+Cross-compiling therefore needs exactly what the user's own module needs: a
+prepared target tree (`make ARCH=… CROSS_COMPILE=… defconfig
+modules_prepare` on a source tree, or a headers package for the build
+machine's own architecture) and the target toolchain. A distro headers
+package ships host tools for its own architecture and cannot be used from a
+different build machine; the docs say so and show the source-tree recipe.
+
+**clang against a gcc-built kernel.** A stock kernel's config carries
+gcc-only flags that kbuild applies to any external module. Proven recipe
+(bed kernel, clang 18): override four values on the command line —
+`CONFIG_CC_IS_GCC=` `CONFIG_GCC_VERSION=0`
+`CONFIG_CC_IMPLICIT_FALLTHROUGH=-Wimplicit-fallthrough`
+`CONFIG_UBSAN_BOUNDS_STRICT=` — with `LLVM=1` (plus `CONFIG_CC_IS_CLANG=y
+CONFIG_CLANG_VERSION=<n>` for clang-specific flags). That is a kbuild fact,
+documented as the `KMAKEFLAGS` example, not a library concern; a clang-built
+kernel needs none of it.
+
+## 7. Files
+
+- `docs/examples/kgcov/`: `kgcov.c` (walk, idempotent registration, version
+  check), `kgcov.h` (`KGCOV_INIT` takes the sentinels), `kgcov_begin.c`
+  and `kgcov_end.c` (the sentinels, copied into the consumer), `kgcov_gcc.c`
+  / `kgcov_gcc.h` (full table), `kgcov_clang.c` (new), `kgcov_stubs.c`
+  (gcc stubs; clang needs none), `Kbuild` (backend by compiler),
+  `consumer.mk`, `build.sh`, `Makefile`, `README.md`.
+- `tests/repo5/kmod/demo/`: the two sentinel files replaced; `Kbuild`
+  unchanged in shape.
+- `tests/repo5/build.sh`: passthrough.
+- `tests/e2e/cov/test_kmod_coverage_e2e.py` + `_repo5_build.py` +
+  `tests/e2e/conftest.py` (the `--kgcov-toolchains` option): the
+  toolchain matrix (§8).
+- `tests/e2e/cov/test_kgcov_cross_build.py`: the cross build-only proof
+  (§8); it touches no bed.
+- Docs (§9); spec amendment of §6 in the product-kinds spec.
+
+## 8. Proof
+
+**Live toolchain matrix (beds test1/test2).** The kmod e2e is parametrised
+over toolchains through one pytest option, `--kgcov-toolchains`, a comma
+list of `CC` values. Without it the parameter set is the system gcc alone,
+so the routine gate is unchanged. With
+`--kgcov-toolchains=gcc-9,gcc-10,gcc-11,gcc-12,gcc-13,gcc-14,clang` (all
+installed on the dev VM on 2026-09-18) the e2e rebuilds the library and
+the demo with each compiler for the running kernel (`clang` implies
+`LLVM=1` plus the §6 overrides), runs the same nine assertions (exact line
+and branch hits, exit drain, per-host dumps, the library's scan verdict),
+unloads, then moves to the next. Each toolchain builds into its own build
+directory so staleness stays per toolchain. A named compiler that is not
+installed fails the run with an error naming it; nothing is skipped. The
+gcc 15 arm is compile-checked only through the table.
+
+**Cross build-only (dev VM).** A kernel 6.8 source tree under
+`/home/vagrant/build/linux-6.8` (about 2 GB, downloaded once from
+kernel.org; the path comes from `KGCOV_CROSS_KDIR`, with that default),
+prepared with `make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- defconfig
+modules_prepare`; then `build.sh` and the demo against it with the same
+environment. The check asserts `modinfo -F vermagic` names the tree's
+release, `readelf -h` says `X86-64` for both `.ko`, and the demo's `.gcno`
+files exist. Never loaded anywhere. A missing tree or cross gcc fails the
+run with an error naming the path or tool and the preparation command;
+nothing is skipped. It is run by explicit file path, like the bed legs.
+The dev VM is x86_64, so this proves the knob passthrough and the
+source-tree recipe, not a foreign ISA; the docs show the arm64 form
+(`ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-`) of the same recipe.
+
+**Unit.** The existing 36 `kmod` kind tests stay; nothing in otto changes.
+The library has no unit tests (kernel code); its proof is the matrix.
+
+## 9. Docs
+
+- `docs/guide/cli/cov/instrumenting/kernel-modules.md`: a section
+  "Another kernel, ISA or compiler" — the same-compiler rule, the knobs,
+  the source-tree cross recipe, the clang-on-a-gcc-kernel overrides, and
+  the matrix as the evidence of what is supported (gcc 4.7+ in format,
+  9 to 14 proven live; clang 11+, 18 proven live). One home; the README
+  under `docs/examples/kgcov/` links it.
+- `docs/superpowers/specs/2026-09-17-product-kinds-…-design.md` §6:
+  amended to the constructor-walk mechanism and the two backends.
+
+## 10. Gates
+
+Per task: the named selections, `make lint`, `make typecheck-python`,
+`make docs-html` where docs change. Before the squash: the unit tier, `make
+docs`, gate-fresh, the kmod e2e (default toolchain), the docker e2e (shares
+the fixture repo), the toolchain matrix once, the cross build once. Bed
+selections run alone and sequentially; kernel modules are never loaded on
+the dev VM.
