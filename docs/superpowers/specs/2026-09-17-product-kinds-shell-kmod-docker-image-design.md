@@ -72,8 +72,10 @@ inheritance already overrides all three). Params are unchanged: `artifact`,
 `dest_dir`, `install`, `check`, `uninstall`, `cov_dir`, `debug_log_globs`,
 `instrumented`. Validation of `kind = "file"` raises
 `ValueError("kind 'file' was renamed 'shell' (its verbs are the shell commands
-you write); update the entry")` at settings parse, so the failure names the
-fix. No alias, no deprecation window (project rule: hard cutovers).
+you write); update the entry")` at lab ingest (`KindRegistry.build`, the same
+site that refuses an unknown kind — settings parsing deliberately knows no
+kind names), so the failure names the fix. No alias, no deprecation window
+(project rule: hard cutovers).
 
 Everything that spelled `file` follows: `init_templates.py`, `tests/repo1`
 and `tests/repo3` settings, every doc page, the API pages, the
