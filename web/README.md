@@ -4,6 +4,24 @@
 
 Topology canvas: [React Flow](https://reactflow.dev) (@xyflow/react, MIT) — attribution panel disabled for the air-gap; credited here instead.
 
+## Dependency overrides
+
+`package.json` is strict JSON and can't carry comments, so the reason for each
+entry in its `overrides` block is recorded here.
+
+- **`@tailwindcss/node` → `lightningcss` `1.33.0`.** Tailwind
+  (`@tailwindcss/node` 4.3.3) pins `lightningcss` to exactly `1.32.0`, which
+  doesn't know the CSS Custom Highlight API's `::highlight()` pseudo-element
+  (1.33.0 adds it). With 1.32.0, covapp's search highlight rule
+  (`::highlight(otto-search)`) still ships, but Tailwind's optimise pass
+  prints a "not recognized as a valid pseudo-element" warning on every build,
+  which `scripts/build_web_no_warnings.sh` fails. The override is scoped to
+  Tailwind, so vite resolves its own `lightningcss` range freely; today both
+  land on one deduped 1.33.0. Drop the override once `@tailwindcss/node`
+  depends on `lightningcss` ≥ 1.33, and re-run `npm install` in `web/` to
+  refresh the lockfile. `tests/unit/test_web_dependency_overrides.py` fails
+  when that day comes, so it can't be missed.
+
 ## Vendored source (Untitled UI) — the boundary and the never-hand-edit rule
 
 The following paths are **copy-in vendored source** from [Untitled UI](https://www.untitledui.com/react)'s free tier, placed via the `untitledui` CLI (`npx untitledui@latest add/init ...`):
