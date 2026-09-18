@@ -19,8 +19,8 @@
 # everything under <prefix>; anything else is a literal path), so the two
 # cannot drift on what counts as vendored.
 #
-# TWO ways this filter could go green while something is actually wrong, and
-# what stops each:
+# THREE ways this filter could go green while something is actually wrong,
+# and what stops each:
 #
 #   1. A diagnostic it cannot classify. Anything tsc prints that is not a
 #      `path(line,col): error TSnnnn` line -- config errors like TS6046, an
@@ -36,6 +36,13 @@
 #      failure, and the raw output is dumped. Discarding that status (`||
 #      true`) makes an unrunnable type-checker indistinguishable from a
 #      passing one.
+#   3. A warning on stderr. tsc prints its diagnostics on stdout; stderr is
+#      where Node and npx put everything else -- a Node deprecation warning,
+#      an npx resolution notice -- and a clean run writes nothing there. So
+#      each tsc pass captures stderr on its own (merging it with `2>&1` would
+#      have fed it to the diagnostic greps, which drop anything they don't
+#      recognise) and any stderr output at all fails the gate, reprinted.
+#      Warnings are errors here, as in scripts/build_web_no_warnings.sh.
 #
 # There is a SECOND exclusion below, for test-file noUncheckedIndexedAccess
 # diagnostics. It is a different kind of thing and is documented separately at
@@ -81,12 +88,34 @@ if [ -z "$VENDORED_RE" ]; then
     exit 1
 fi
 
+# npm's weekly "New major version of npm available!" notice goes to stderr
+# from npx itself, depends on the registry rather than on this code, and
+# would fail the any-stderr rule (point 3 above) on unchanged code. Same
+# switch as scripts/build_web_no_warnings.sh.
+export npm_config_update_notifier=false
+
 TC_TMP="$(mktemp -d)"
 trap 'rm -rf "$TC_TMP"' EXIT
 
+# Fail, reprinting it, if a tsc pass wrote anything to stderr (see point 3
+# of the header). $1 = the captured stderr file, $2 = which pass.
+fail_on_stderr() {
+    if [ -s "$1" ]; then
+        {
+            echo "typecheck_web: FAILED -- $2 wrote to stderr; any stderr"
+            echo "                output is a warning, and warnings are errors here:"
+            echo "----"
+            cat "$1"
+            echo "----"
+        } >&2
+        exit 1
+    fi
+}
+
 cd "$WEB_DIR"
 rc=0
-raw="$(npx tsc -p tsconfig.json --noEmit --pretty false "$@" 2>&1)" || rc=$?
+raw="$(npx tsc -p tsconfig.json --noEmit --pretty false "$@" 2>"$TC_TMP/tsc.err")" || rc=$?
+fail_on_stderr "$TC_TMP/tsc.err" "the tsc pass"
 
 DIAG_RE='^[^ ].*\([0-9]+,[0-9]+\): error TS'
 ours="$(printf '%s\n' "$raw"  | grep -E  "$DIAG_RE" | grep -vE "$VENDORED_RE" || true)"
@@ -156,7 +185,8 @@ n_deferred=0
 
 if [ -n "$in_tests" ]; then
     rc_base=0
-    base="$(npx tsc -p tsconfig.json --noEmit --pretty false "$@" --noUncheckedIndexedAccess false 2>&1)" || rc_base=$?
+    base="$(npx tsc -p tsconfig.json --noEmit --pretty false "$@" --noUncheckedIndexedAccess false 2>"$TC_TMP/base.err")" || rc_base=$?
+    fail_on_stderr "$TC_TMP/base.err" "the noUncheckedIndexedAccess baseline tsc pass"
     printf '%s\n' "$base" | grep -E "$DIAG_RE" > "$TC_TMP/baseline.txt" || true
     n_base=$(grep -c . "$TC_TMP/baseline.txt" || true)
     if [ "$rc_base" -ne 0 ] && [ "$n_base" -eq 0 ]; then
