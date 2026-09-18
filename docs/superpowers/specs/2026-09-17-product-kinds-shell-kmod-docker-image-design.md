@@ -201,19 +201,25 @@ points at it rather than copying it):
 
 - On register: remember the section bounds and `dir`, create
   `/sys/kernel/debug/otto_kgcov/<module>/dump` and `/reset`.
-- `dump`: serialise every object's counters to `<dir>/<absolute object
-  path>.gcda` with kernel file I/O (`filp_open`/`kernel_write`; the
-  intermediate directories are created with `kern_path_create`/`vfs_mkdir`,
-  mode 0755, files 0644). The serialiser is the kernel's GPL
-  `kernel/gcov/gcc_4_7.c` `convert_to_gcda`, vendored; it reads the gcov
-  format version from each `gcov_info` and covers gcc 4.7 through the
-  current release, so the toolchain that built the consumer is what the
-  file claims. A dump **merges** into an existing file (read, add counters
-  per function, write) exactly as user-space libgcov does, so a runtime dump
-  followed by the exit dump accumulates within a run.
-- `reset`: zero every counter in place (the files on disk are otto's to
-  delete; §5).
-- `kgcov_unregister`: dump once more, remove the debugfs entries.
+- Per registered module the library keeps an **accumulator**: a private
+  copy of each object's `gcov_info` (the kernel's `gcov_info_dup`, zeroed at
+  register). `dump` adds the live counters into the accumulator
+  (`gcov_info_add`), zeroes the live counters (`gcov_info_reset`), and
+  writes the accumulator to `<dir>/<absolute object path>.gcda`,
+  overwriting the file. The file therefore always holds the module's total
+  since register (or since the last `reset`), and consecutive dumps never
+  double count: a runtime dump followed by the exit dump accumulates within
+  a run without the library ever parsing a `.gcda`. Files are written with
+  kernel file I/O (`filp_open`/`kernel_write`, mode 0644); the intermediate
+  directories are created with `kern_path_create`/`vfs_mkdir` (mode 0755).
+  The serialiser is the kernel's GPL `kernel/gcov/gcc_4_7.c`
+  `convert_to_gcda`, vendored together with its `gcov_info_*` helpers; it
+  reads the gcov format version from each `gcov_info`, so the toolchain that
+  built the consumer is what the file claims.
+- `reset`: zero the live counters and the accumulator (the files on disk
+  are otto's to delete; §5).
+- `kgcov_unregister`: dump once more, free the accumulator, remove the
+  debugfs entries.
 - `consumer.mk`: the Kbuild snippet a consumer includes. It adds
   `-fprofile-arcs -ftest-coverage -fprofile-info-section` to the
   instrumented objects, adds `kgcov_begin.o` first and `kgcov_end.o` last to
@@ -297,16 +303,25 @@ load); the archive rule in the scan; `UnixHost.load(params=)`.
 
 **Bed (live, sequential).** Modules are built on the dev VM and staged to
 the bed, so the prerequisite is the headers package for the *bed's* kernel
-release (`linux-headers-<release>-generic`, which carries that release's
-`Module.symvers`) installed on the dev VM; a headers package for another
-release is only files, and nothing is installed on the bed. The bed hosts'
-releases are read with otto's lab credentials when the plan is written. A
-`build.sh` under `docs/examples/kgcov/` builds the library and the demo into
-`/home/vagrant/build/kgcov/` for a given release (the same shape as repo3's
-`build.sh` for the LLEXT product); the e2e runs it when the artifacts are
-missing, and the suite compares the `.ko`'s `vermagic` with the host's
-`uname -r` before loading and fails naming both. A new fixture repo
-`tests/repo4` (Unix, `--lab unix`, the `test1`/`test2` hosts):
+release installed on the dev VM; nothing is installed on the bed. Verified
+2026-09-17 with otto's lab credentials: `test1`, `test2` and `test3` all run
+`6.8.0-86-generic` on `aarch64` — the dev VM's own kernel — with
+passwordless sudo, no compiler, `CONFIG_GCOV_KERNEL` unset,
+`CONFIG_MODVERSIONS=y` and `CONFIG_DEBUG_FS=y`. The archive no longer
+carries that ABI's headers, so `linux-headers-6.8.0-86` and
+`linux-headers-6.8.0-86-generic` (6.8.0-86.87) were fetched from
+Launchpad's librarian and installed on the dev VM the same day
+(`/lib/modules/6.8.0-86-generic/build` is complete, `Module.symvers`
+included), and a probe module built with the gcov flags against them
+carries the bed's exact `vermagic`. A `build.sh` under
+`docs/examples/kgcov/` builds the library and the demo into
+`/home/vagrant/build/kgcov/` (the same shape as repo3's `build.sh` for the
+LLEXT product); the e2e runs it when the artifacts are missing, and the
+suite compares the `.ko`'s `vermagic` with the host's `uname -r` before
+loading and fails naming both. A new fixture repo `tests/repo5`
+(`tests/repo4` is the installable-sample fixture) on `--lab unix`, the
+`kmod` products matched to `test1`/`test2` and the `docker_image` product
+matched to `test3`:
 
 - `[[products]]`: `otto_kgcov` (`kind = "kmod"`, `coverage = "none"`, declared
   first) and `otto_kmod_demo` (`kind = "kmod"`, `coverage = "module"`), both
@@ -321,13 +336,16 @@ missing, and the suite compares the `.ko`'s `vermagic` with the host's
   (one policy, one error path) reported uncovered, the exit routine's lines
   hit; on the mid-suite-dump host the counters equal the sum of both dumps
   (merge semantics), on the other host the exit dump alone.
-- `docker_image`: test3 already runs a daemon (the compose lane). An
-  instrumented image built from `tests/repo1/product` (the existing coverage
-  product) in a small Dockerfile, saved as a tarball and declared as a
-  product with `run_args` that launch it with `GCOV_PREFIX={cov_dir}`; the e2e
-  asserts `capture.json` under `cov/test3/<product>/` and the bind-mounted
-  counters. A reference form is proven with the same image tagged locally
-  and `pull = false`.
+- `docker_image`: test3 already runs a daemon (the compose lane) and can
+  pull. The dev VM also runs a daemon, so the image is built there: the
+  `tests/repo1/product` sources compiled statically with `--coverage` on
+  the dev VM, copied into an `alpine:3.20` image, and `docker save`d to a
+  git-ignored tarball under `tests/repo5/docker/` by the e2e's build fixture.
+  Declared as a `docker_image` product with `run_args` that launch it with
+  `GCOV_PREFIX={cov_dir}`; the e2e asserts `capture.json` under
+  `cov/test3/<product>/` and the bind-mounted counters. The reference form
+  is proven with the same image, already loaded, as a second product with
+  `pull = false`.
 
 **Gates.** Per task: targeted selections + the invariant suites (API
 snapshot, import budget, error taxonomy) + `make typecheck-python`; whole
@@ -371,7 +389,7 @@ rule), so the rename can land before the kernel work is proven on the bed:
 
 1. **Rename and seams** — §3, §4, §8, `UnixHost.load(params=)`, the docs
    naming rule and kinds table.
-2. **Kernel modules** — §5, §6, §6.3, `tests/repo4`, the bed e2e, the
+2. **Kernel modules** — §5, §6, §6.3, `tests/repo5`, the bed e2e, the
    kernel-module docs pages and the getting-started walkthrough.
 3. **Docker images** — §7, the test3 e2e, the container docs pages and the
    getting-started section.
