@@ -634,12 +634,12 @@ def test_a_host_built_mid_bootstrap_gets_its_declared_entries(tmp_path, monkeypa
 
         [[products]]
         name = "fw"
-        kind = "file"
+        kind = "shell"
         artifact = "build/fw.bin"
 
         [[dev_tools]]
         name = "probe"
-        kind = "file"
+        kind = "shell"
         artifact = "tools/probe.sh"
         """)
     repo = make_sut_repo(

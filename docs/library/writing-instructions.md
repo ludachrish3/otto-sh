@@ -283,7 +283,7 @@ Three rungs, and the question they each answer:
 
 | Rung | Answers | Subclass |
 | ---- | ------- | -------- |
-| `Product` / `DevTool` | How does *this artifact* install on a host? | `Product`, `FileProduct`, `DevTool` |
+| `Product` / `DevTool` | How does *this artifact* install on a host? | `Product`, `ShellProduct`, `DevTool` |
 | Host class | How does *this family of machines* do it? | `UnixHost`, `EmbeddedHost`, … |
 | `ProjectActions` | What does *this repo* do to the whole lab? | `ProjectActions` |
 

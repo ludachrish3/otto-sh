@@ -243,6 +243,17 @@ def host_matches(match: dict[str, MatchValue], host: Any) -> bool:
     return True
 
 
+_RETIRED_KINDS: dict[str, str] = {
+    "file": (
+        "kind 'file' was renamed 'shell' (its verbs are the shell commands "
+        "you write); update the entry"
+    ),
+}
+"""Kind names that no longer exist, each with the message that names its
+replacement. A settings file written for a retired name fails at lab load
+pointing at the fix, instead of the generic unknown-kind listing."""
+
+
 class KindRegistry(Registry[Callable[[DeclaredEntry, Any], T]], Generic[T]):
     """Named kind factories for ONE declarative seam.
 
@@ -262,13 +273,17 @@ class KindRegistry(Registry[Callable[[DeclaredEntry, Any], T]], Generic[T]):
         first, generic fallback last" needs no new mental model. Every
         entry's kind is resolved BEFORE its match is consulted: an unknown
         kind must fail every ingest loudly, not only on the hosts the entry
-        happens to match. Built instances whose ``owner`` is None are stamped
-        with the entry's declaring repo (the provider loops' carve-out: a
-        factory may hand its instance to another repo's ownership).
+        happens to match. A name in ``_RETIRED_KINDS`` is refused first,
+        with a message naming its replacement. Built instances whose
+        ``owner`` is None are stamped with the entry's declaring repo (the
+        provider loops' carve-out: a factory may hand its instance to another
+        repo's ownership).
         """
         out: list[T] = []
         taken: set[str] = set()
         for entry in entries:
+            if entry.kind in _RETIRED_KINDS:
+                raise ValueError(f"[[{entry.seam}]] {entry.name!r}: {_RETIRED_KINDS[entry.kind]}")
             factory = self.get(entry.kind)
             if entry.name in taken or not host_matches(entry.match, host):
                 continue

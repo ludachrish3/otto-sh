@@ -10,7 +10,7 @@ strings in the object's ``.rodata`` exactly as it does in a Unix binary.
 
 Products only — there is no dev-tool analog, because a dev tool is a helper
 the host runs, not code loaded into the device's own runtime. Unlike the
-``file`` kind, an entry here takes no ``{cov_dir}``/``{name}`` substitution:
+``shell`` kind, an entry here takes no ``{cov_dir}``/``{name}`` substitution:
 it declares no command strings to substitute into.
 """
 
@@ -23,8 +23,8 @@ from typing_extensions import override
 from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
-from .file_kind import bool_param, str_list_param, str_param
-from .product import PRODUCT_KINDS, FileProduct
+from .product import PRODUCT_KINDS, ShellProduct
+from .shell_kind import bool_param, str_list_param, str_param
 
 if TYPE_CHECKING:
     from .binary_loader import BinaryLoader
@@ -44,7 +44,7 @@ _VALID = "artifact, call_after_load, dump_fn, instrumented, debug_log_globs"
 
 
 @dataclass
-class LlextProduct(FileProduct):
+class LlextProduct(ShellProduct):
     """A ``kind = "llext"`` entry's runtime form."""
 
     call_after_load: list[str] = field(default_factory=list)

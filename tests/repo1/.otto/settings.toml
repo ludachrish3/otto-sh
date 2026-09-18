@@ -77,7 +77,7 @@ max_filename_len = 32
 # are excluded as well.
 [[products]]
 name = "product"
-kind = "file"
+kind = "shell"
 artifact = "product/product"
 dest_dir = "/opt/coverage_product"
 cov_dir = "/var/coverage/product"

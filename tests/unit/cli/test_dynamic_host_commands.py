@@ -878,6 +878,8 @@ def test_embedded_and_unix_load_have_per_class_signatures():
     assert emb["name"].param_type_name == "argument"  # embedded: required positional
     assert emb["name"].required is True
     assert unix["name"].param_type_name == "option"  # unix: --name
+    assert unix["params"].param_type_name == "option"  # unix: --params "k=v ..."
+    assert unix["params"].required is False
 
 
 def test_embedded_load_unload_are_cli_exposed():

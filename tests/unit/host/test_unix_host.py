@@ -2341,6 +2341,24 @@ async def test_load_no_sudo_when_current_user_root(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_load_appends_insmod_params_verbatim(tmp_path):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from otto.utils import Status
+
+    host = _unix_host()
+    host._session_mgr = MagicMock()
+    host._session_mgr.current_user = "admin"
+    ko = tmp_path / "demo.ko"
+    ko.write_bytes(b"\x00")
+    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
+    host.run = AsyncMock(return_value=_run_result("insmod ...", "", Status.Success, 0))
+    host.rm = AsyncMock(return_value=Result(Status.Success))
+    await host.load(ko, params="  gcov_dir=/tmp/demo debug=1 ")
+    assert host.run.await_args.args[0] == "insmod /tmp/demo.ko gcov_dir=/tmp/demo debug=1"
+
+
+@pytest.mark.asyncio
 async def test_load_put_failure_short_circuits(tmp_path):
     from unittest.mock import AsyncMock, MagicMock
 

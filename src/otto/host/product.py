@@ -27,6 +27,7 @@ deliberately **not** supported.
 """
 
 import logging
+import shlex
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
@@ -35,6 +36,7 @@ from typing import TYPE_CHECKING
 
 from typing_extensions import override
 
+from .. import layout
 from ..declared import KindRegistry, declared_for_host
 from ..registry import get_registering_repo
 from ..result import Result
@@ -122,12 +124,38 @@ class Product(ABC):
         """Whether this product's build carries coverage instrumentation.
 
         ``True``/``False`` when known, ``None`` when this product cannot tell
-        (the ABC default — a code product that is not a :class:`FileProduct`
+        (the ABC default — a code product that is not a :class:`ShellProduct`
         overrides this, typically by scanning its artifact with
         :func:`scan_for_instrumentation`). Local and synchronous: it runs
         before anything executes, over the artifact on the otto machine.
         """
         return None
+
+    async def prepare_coverage(self, host: "Host") -> Result:  # noqa: ARG002 — hook signature; the default touches nothing on the host
+        """Put this product's counters on disk under :attr:`cov_dir` before a fetch.
+
+        Default: nothing to do, success — a user-space build writes its
+        ``.gcda`` files as it runs. A kind whose counters live somewhere else
+        first (a kernel module's live in the kernel) overrides this to
+        materialise them; a failure skips the product for that run and is
+        logged with host and product.
+        """
+        return Result(Status.Success)
+
+    async def reset_coverage(self, host: "Host") -> Result:
+        """Zero this product's counters on *host*.
+
+        Default: delete every ``.gcda`` under :attr:`cov_dir` — the pre-run
+        ``--cov-clean``, the post-fetch clean and ``otto cov clean`` all come
+        through here. A kind whose counters also live elsewhere overrides
+        this to zero them first, then awaits this default to finish.
+
+        Raises:
+            ValueError: :attr:`name` is not a single safe path segment;
+                checked before any command is issued.
+        """
+        layout.validate_product_name(self.name)
+        return await host.exec(f"{gcda_find_cmd(cov_dir_of(self))} -delete", timeout=60)
 
 
 def cov_dir_of_name(name: str) -> str:
@@ -146,6 +174,16 @@ def stamp_cov_dir(product: Product) -> None:
         product.cov_dir = cov_dir_of(product)
 
 
+def gcda_find_cmd(cov_dir: str) -> str:
+    """``find <cov_dir> -name '*.gcda' -type f``, with *cov_dir* shell-quoted.
+
+    The quoting is load-bearing on the reset path, which appends ``-delete``:
+    an unquoted ``/opt/My App/cov`` would reach ``find`` as TWO start points,
+    the second of them relative to the shell's cwd.
+    """
+    return f"find {shlex.quote(cov_dir)} -name '*.gcda' -type f"
+
+
 INSTRUMENTATION_MARKERS: tuple[bytes, ...] = (b".gcda", b"__gcov_", b"__llvm_gcov")
 """Byte strings a coverage build leaves in its objects. ``.gcda`` is the
 load-bearing one: GCC and clang both embed each translation unit's ``.gcda``
@@ -153,6 +191,24 @@ filename, and it survives ``strip``; the symbol prefixes catch unstripped
 binaries whose filename strings were relocated."""
 
 _SCAN_CHUNK = 1 << 20
+
+ARCHIVE_SUFFIXES: tuple[str, ...] = (
+    ".tar",
+    ".tar.gz",
+    ".tgz",
+    ".tar.xz",
+    ".tar.bz2",
+    ".zip",
+    ".gz",
+    ".xz",
+    ".bz2",
+    ".zst",
+)
+"""Artifact names the scan never opens. An archive's bytes say nothing about
+the objects inside it — a compressed one hides every marker, an uncompressed
+one may show a marker from a file that is not the product — so it answers
+``None`` (unknown), which is what puts the ``instrumented = true`` remedy in
+front of the reader."""
 
 
 def _scan_file(path: Path) -> bool | None:
@@ -177,13 +233,17 @@ def scan_for_instrumentation(path: Path) -> bool | None:
     """Scan *path* for :data:`INSTRUMENTATION_MARKERS`.
 
     A regular file answers ``True``/``False``, or ``None`` when it cannot be
-    read (permissions, a race with deletion) — the tri-state means "cannot
-    tell", not "clean". A directory answers ``True`` when any regular file
-    under it hits, else ``None`` — the scan cannot see inside archives, and
-    an unreadable member is skipped rather than raised, so a clean directory
-    is unknown, not clean. A missing path is ``None``.
+    read (permissions, a race with deletion) or when its name ends in one of
+    :data:`ARCHIVE_SUFFIXES` — the scan cannot see inside archives, so the
+    tri-state means "cannot tell", not "clean".
+    A directory answers ``True`` when any regular file under it hits, else
+    ``None`` — an unreadable member is skipped rather than raised, so a clean
+    directory is unknown, not clean.
+    A missing path is ``None``.
     """
     if path.is_file():
+        if path.name.lower().endswith(ARCHIVE_SUFFIXES):
+            return None
         return _scan_file(path)
     if path.is_dir():
         for candidate in sorted(path.rglob("*")):
@@ -194,8 +254,8 @@ def scan_for_instrumentation(path: Path) -> bool | None:
 
 
 @dataclass(slots=True)
-class FileProduct(Product):
-    """Convenience base for a product that *is* a single artifact file.
+class ShellProduct(Product):
+    """Convenience base for a product that *is* a single artifact file (the ``shell`` kind's base).
 
     ``stage()`` transfers the artifact via :meth:`~otto.host.host.Host.put`. ``name`` defaults to
     the artifact's basename. ``install``/``uninstall``/``is_installed`` remain

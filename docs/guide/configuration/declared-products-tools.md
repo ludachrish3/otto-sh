@@ -11,18 +11,18 @@ name a declared entry already claimed stands down.
 ```toml
 [[products]]
 name = "firmware"
-kind = "file"
+kind = "shell"
 artifact = "build/fw-rev2.bin"
 match = { "metadata.hw_version" = "rev2" }
 
 [[products]]                 # fallback: declared last, wins only when rev2 didn't
 name = "firmware"
-kind = "file"
+kind = "shell"
 artifact = "build/fw.bin"
 
 [[dev_tools]]
 name = "trace-probe"
-kind = "file"
+kind = "shell"
 artifact = "tools/probe.sh"
 match = { id = "bb.*", os_version = ">=3.7" }
 ```
@@ -33,6 +33,21 @@ parameter of the kind, and a built-in kind **refuses** a key it does not
 know — the entry fails to load, naming the unknown key and listing the valid
 ones, rather than ignoring a typo that would have changed what runs on the
 host.
+
+## Kinds
+
+A kind is named for **what drives its verbs** — install, check, uninstall,
+and how its coverage counters are collected — never for the artifact's
+format. `shell` is not `elf` or `binary`: its verbs are the shell commands
+you write, and the artifact can be anything a shell command can install. A
+kind exists when something brings runtime knowledge to those verbs — otto's
+built-ins below, or a repo-registered kind ([Custom kinds](#custom-kinds));
+anything else is a `shell` entry.
+
+| Kind | What drives its verbs | Coverage |
+|---|---|---|
+| `shell` | the `install` / `check` / `uninstall` commands you write | `.gcda` under `cov_dir`, fetched with `find` |
+| `llext` | the host's binary loader (a Zephyr LLEXT extension) | dumped over the console by the embedded collector |
 
 ## Matching
 
@@ -71,7 +86,7 @@ dependency pass (a required dependency missing) contributes **no** entries:
 its init modules never ran, so neither half of it — declared or code — is
 present.
 
-## The `file` kind
+## The `shell` kind
 
 Built in, and often all a simple case needs. `artifact` is the only required
 param; everything else is optional:
@@ -83,7 +98,7 @@ param; everything else is optional:
 | `install` / `uninstall` / `check` | optional command strings run on the host |
 | `cov_dir` | host directory the product writes its coverage counters under (its `GCOV_PREFIX`); default `/tmp/<name>`, and the empty string is refused |
 | `debug_log_globs` | host paths or globs of the product's own debug logs, hauled into `logs/<host_id>/<product>/debug/` ({ref}`the run tree <run-tree>`) |
-| `instrumented` | `true`/`false`, overriding the artifact scan — the answer for an archive the scan cannot see inside |
+| `instrumented` | `true`/`false`, overriding the artifact scan — the answer for an archive (`.tar`, `.tar.gz`, `.zip`, …), which always scans `unknown` because the scan cannot see inside it |
 
 The last three are **products only**: a `[[dev_tools]]` entry naming any of
 them is refused by name, because a dev tool is never under test and so has no
@@ -96,9 +111,9 @@ assumes not installed and re-stages, which is safe for what this kind
 serves.
 
 `install`, `uninstall` and `check` run under the host's default command
-timeout (30 seconds) — the `file` kind passes no `timeout` to `host.run`.
+timeout (30 seconds) — the `shell` kind passes no `timeout` to `host.run`.
 An install that needs longer belongs to a repo-registered kind instead; a
-`timeout` param on the `file` kind is a possible later extension, not
+`timeout` param on the `shell` kind is a possible later extension, not
 something to add yourself.
 
 ### Placeholders
@@ -115,7 +130,7 @@ untouched:
 ```toml
 [[products]]
 name = "app"
-kind = "file"
+kind = "shell"
 artifact = "build/app"
 dest_dir = "/opt/app"                # where staging puts the artifact
 install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 /opt/app/{name} &"
@@ -154,8 +169,8 @@ instrumentation scan reads the extension's own `.gcda` strings.
 | `artifact` | the local `.llext` object; required |
 | `call_after_load` | exported functions called, in order, right after a successful load (`["cov_init"]` runs the embedded-gcov constructor) |
 | `dump_fn` | the exported function the embedded coverage collector calls to dump counters; default `cov_dump` |
-| `instrumented` | as the `file` kind |
-| `debug_log_globs` | as the `file` kind |
+| `instrumented` | as the `shell` kind |
+| `debug_log_globs` | as the `shell` kind |
 
 There is no `{cov_dir}`/`{name}` substitution here: an `llext` entry declares
 no command strings to substitute into.

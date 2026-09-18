@@ -2896,7 +2896,7 @@ GAPS: list[Gap] = [
             "and no tier can, because those four emit NO command of their own. Each "
             "iterates `Host.products` and delegates to a `Product`, and `Product` "
             "declares all four of its methods abstract. otto ships exactly ONE concrete "
-            "body, `FileProduct.stage`, and it is a single `await host.put(...)` -- a "
+            "body, `ShellProduct.stage`, and it is a single `await host.put(...)` -- a "
             "surface this table already covers. Everything else that would reach the "
             "device is project-supplied product code otto does not own, so a test that "
             "measured `install` here would be measuring the `Product` subclass the test "

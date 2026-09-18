@@ -33,7 +33,7 @@ to fetch from:
 ```toml
 [[products]]
 name = "myproduct"
-kind = "file"
+kind = "shell"
 artifact = "build/myproduct"
 dest_dir = "/opt/myproduct"          # where staging puts the artifact
 cov_dir = "/var/coverage/myproduct"

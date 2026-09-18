@@ -7,14 +7,14 @@ import pytest
 
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
-from otto.host.product import FileProduct, Product
+from otto.host.product import Product, ShellProduct
 from otto.logger.mode import LogMode
 from otto.result import CommandResult, Result
 from otto.utils import Status
 
 
-class _DummyFileProduct(FileProduct):
-    """FileProduct with the abstract halves stubbed so it can instantiate."""
+class _DummyShellProduct(ShellProduct):
+    """ShellProduct with the abstract halves stubbed so it can instantiate."""
 
     async def install(self, host):
         return Result(Status.Success)
@@ -26,13 +26,13 @@ class _DummyFileProduct(FileProduct):
         return True
 
 
-def test_fileproduct_name_defaults_to_artifact_basename():
-    p = _DummyFileProduct(artifact=Path("/builds/app-1.2.tar.gz"))
+def test_shellproduct_name_defaults_to_artifact_basename():
+    p = _DummyShellProduct(artifact=Path("/builds/app-1.2.tar.gz"))
     assert p.name == "app-1.2.tar.gz"
 
 
-def test_fileproduct_explicit_name_wins():
-    p = _DummyFileProduct(artifact=Path("/builds/app.tar.gz"), name="myapp")
+def test_shellproduct_explicit_name_wins():
+    p = _DummyShellProduct(artifact=Path("/builds/app.tar.gz"), name="myapp")
     assert p.name == "myapp"
 
 
@@ -42,13 +42,13 @@ def test_product_cannot_be_instantiated_directly():
 
 
 def test_product_is_unowned_until_ingest_stamps_it():
-    assert _DummyFileProduct(artifact=Path("/builds/app.bin")).owner is None
+    assert _DummyShellProduct(artifact=Path("/builds/app.bin")).owner is None
 
 
 @pytest.mark.asyncio
 async def test_get_logs_default_is_successful_noop(tmp_path):
     # Kills: an abstract get_logs, which would break every existing Product
-    # subclass in every repo at import time — _DummyFileProduct declares only
+    # subclass in every repo at import time — _DummyShellProduct declares only
     # the four abstract verbs that predate the hook.
     #
     # The exact status, not `is_ok`: `Status.Skipped.is_ok` is True, so a
@@ -56,7 +56,7 @@ async def test_get_logs_default_is_successful_noop(tmp_path):
     # were no logs") passes an is_ok assertion. The two are different claims —
     # only the second is the documented "zero logs is not a failure" — and the
     # host's require_product_logs check reads the haul as ok either way.
-    result = await _DummyFileProduct(artifact=Path("/builds/app.bin")).get_logs(
+    result = await _DummyShellProduct(artifact=Path("/builds/app.bin")).get_logs(
         host=None, dest=tmp_path
     )
     assert result.status is Status.Success
@@ -64,10 +64,10 @@ async def test_get_logs_default_is_successful_noop(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_fileproduct_stage_delegates_to_host_put():
+async def test_shellproduct_stage_delegates_to_host_put():
     from unittest.mock import AsyncMock
 
-    p = _DummyFileProduct(artifact=Path("/builds/app.bin"), dest_dir=Path("/opt"))
+    p = _DummyShellProduct(artifact=Path("/builds/app.bin"), dest_dir=Path("/opt"))
     host = AsyncMock()
     put_result = Result(Status.Success, value={})
     host.put.return_value = put_result
@@ -102,7 +102,7 @@ def test_every_host_has_empty_products_by_default():
 def test_products_can_be_injected_at_construction():
     from otto.host.local_host import LocalHost
 
-    p = _DummyFileProduct(artifact=Path("/b/app.bin"))
+    p = _DummyShellProduct(artifact=Path("/b/app.bin"))
     host = LocalHost()
     host.products = [p]
     assert host.products == [p]
@@ -235,7 +235,7 @@ async def test_is_uninstalled_is_inverse():
 async def test_install_under_dry_run_does_not_transfer(tmp_path):
     from tests.conftest import active_context
 
-    class _StageOnlyProduct(FileProduct):
+    class _StageOnlyProduct(ShellProduct):
         async def install(self, host):
             return Result(Status.Success)
 
@@ -295,7 +295,7 @@ from otto.host.product import (
 
 
 def test_cov_dir_defaults_to_none_until_stamped():
-    p = _DummyFileProduct(artifact=Path("/builds/app.bin"), name="app")
+    p = _DummyShellProduct(artifact=Path("/builds/app.bin"), name="app")
     assert p.cov_dir is None
     assert cov_dir_of(p) == "/tmp/app"
     stamp_cov_dir(p)
@@ -303,7 +303,7 @@ def test_cov_dir_defaults_to_none_until_stamped():
 
 
 def test_stamp_cov_dir_keeps_an_explicit_value():
-    p = _DummyFileProduct(artifact=Path("/builds/app.bin"), name="app", cov_dir="/var/cov/app")
+    p = _DummyShellProduct(artifact=Path("/builds/app.bin"), name="app", cov_dir="/var/cov/app")
     stamp_cov_dir(p)
     assert p.cov_dir == "/var/cov/app"
     assert cov_dir_of(p) == "/var/cov/app"
@@ -365,6 +365,38 @@ def test_scan_missing_path_is_unknown(tmp_path):
     assert scan_for_instrumentation(tmp_path / "absent") is None
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "app.tar",
+        "app.tar.gz",
+        "app.tgz",
+        "app.tar.xz",
+        "app.tar.bz2",
+        "app.zip",
+        "app.gz",
+        "app.xz",
+        "app.bz2",
+        "app.zst",
+        "APP.TAR.GZ",
+    ],
+)
+def test_scan_archive_is_unknown_even_when_a_marker_is_visible(tmp_path, name):
+    # An archive's bytes are not the artifact's bytes: a marker that happens to
+    # be readable proves nothing about what is inside, and its absence proves
+    # nothing either. The answer is "cannot tell", never "no".
+    archive = tmp_path / name
+    archive.write_bytes(b"\0.gcda\0")
+    assert scan_for_instrumentation(archive) is None
+
+
+def test_shellproduct_archive_artifact_is_unknown_without_an_override(tmp_path):
+    archive = tmp_path / "app.tar.gz"
+    archive.write_bytes(b"\0")
+    assert _DummyShellProduct(artifact=archive).instrumented() is None
+    assert _DummyShellProduct(artifact=archive, instrumented_override=True).instrumented() is True
+
+
 @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
 def test_scan_unreadable_file_is_unknown_not_a_crash(tmp_path):
     f = tmp_path / "locked"
@@ -390,22 +422,76 @@ def test_scan_directory_skips_an_unreadable_member(tmp_path):
         locked.chmod(0o644)
 
 
-def test_fileproduct_instrumented_uses_the_scan(tmp_path):
+def test_shellproduct_instrumented_uses_the_scan(tmp_path):
     hit = tmp_path / "hit"
     hit.write_bytes(b"\0__llvm_gcov\0")
-    assert _DummyFileProduct(artifact=hit).instrumented() is True
+    assert _DummyShellProduct(artifact=hit).instrumented() is True
     clean = tmp_path / "clean"
     clean.write_bytes(b"\0")
-    assert _DummyFileProduct(artifact=clean).instrumented() is False
+    assert _DummyShellProduct(artifact=clean).instrumented() is False
 
 
 @pytest.mark.parametrize("override", [True, False])
-def test_fileproduct_instrumented_override_wins_over_the_scan(tmp_path, override):
+def test_shellproduct_instrumented_override_wins_over_the_scan(tmp_path, override):
     """The override lives on the base, so every kind inherits one implementation."""
     hit = tmp_path / "hit"
     hit.write_bytes(b"\0__llvm_gcov\0")  # the scan would say True
-    p = _DummyFileProduct(artifact=hit, instrumented_override=override)
+    p = _DummyShellProduct(artifact=hit, instrumented_override=override)
     assert p.instrumented() is override
+
+
+class _ExecHost:
+    """Host double for the hooks: records exec() and answers a canned status."""
+
+    def __init__(self, status=Status.Success):
+        self.id = "h1"
+        self.exec_calls: list = []
+        self._status = status
+
+    async def exec(self, cmd, **kwargs):
+        self.exec_calls.append((cmd, kwargs))
+        return CommandResult(self._status, value="", command=cmd, retcode=0)
+
+
+@pytest.mark.asyncio
+async def test_prepare_coverage_default_touches_nothing_and_succeeds():
+    host = _ExecHost()
+    result = await _DummyShellProduct(artifact=Path("/b/app"), name="app").prepare_coverage(host)
+    assert result.is_ok
+    assert host.exec_calls == []
+
+
+@pytest.mark.asyncio
+async def test_reset_coverage_default_deletes_every_gcda_under_the_quoted_cov_dir():
+    host = _ExecHost()
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/opt/My App/cov")
+    result = await p.reset_coverage(host)
+    assert result.is_ok
+    assert host.exec_calls == [
+        ("find '/opt/My App/cov' -name '*.gcda' -type f -delete", {"timeout": 60})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reset_coverage_default_uses_the_default_cov_dir_when_unset():
+    host = _ExecHost()
+    await _DummyShellProduct(artifact=Path("/b/app"), name="app").reset_coverage(host)
+    assert host.exec_calls[0][0] == "find /tmp/app -name '*.gcda' -type f -delete"
+
+
+@pytest.mark.asyncio
+async def test_reset_coverage_default_returns_the_hosts_failure():
+    host = _ExecHost(status=Status.Error)
+    result = await _DummyShellProduct(artifact=Path("/b/app"), name="app").reset_coverage(host)
+    assert not result.is_ok
+
+
+@pytest.mark.asyncio
+async def test_reset_coverage_refuses_a_malformed_name_before_any_command():
+    host = _ExecHost()
+    with pytest.raises(ValueError, match="product name"):
+        await _DummyShellProduct(artifact=Path("/b/app"), name="a/b").reset_coverage(host)
+    assert host.exec_calls == []
 
 
 @pytest.mark.asyncio
@@ -420,7 +506,7 @@ async def test_product_get_debug_logs_hauls_globs_into_dest(tmp_path):
             calls.append((paths, dest))
             return Result(Status.Success)
 
-    p = _DummyFileProduct(
+    p = _DummyShellProduct(
         artifact=Path("/x"), name="app", debug_log_globs=["/var/log/app/*.log", "/etc/app.conf"]
     )
     result = await p.get_debug_logs(_Host(), tmp_path)
@@ -436,7 +522,7 @@ async def test_product_get_debug_logs_glob_without_support_fails_loud(tmp_path):
         async def get(self, paths, dest):
             return Result(Status.Success)
 
-    p = _DummyFileProduct(artifact=Path("/x"), name="app", debug_log_globs=["/logs/*.txt"])
+    p = _DummyShellProduct(artifact=Path("/x"), name="app", debug_log_globs=["/logs/*.txt"])
     result = await p.get_debug_logs(_NoGlob(), tmp_path)
     assert not result.is_ok
     assert "glob" in result.msg
@@ -449,5 +535,5 @@ async def test_product_get_debug_logs_no_globs_is_success_without_a_get(tmp_path
         async def get(self, paths, dest):
             raise AssertionError("get must not run for an empty list")
 
-    p = _DummyFileProduct(artifact=Path("/x"), name="app")
+    p = _DummyShellProduct(artifact=Path("/x"), name="app")
     assert (await p.get_debug_logs(_Host(), tmp_path)).is_ok

@@ -41,7 +41,7 @@ local and remote machines.
    interact
    product
    dev_tool
-   file_kind
+   shell_kind
    llext_kind
    power
    privilege

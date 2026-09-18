@@ -648,7 +648,7 @@ Nobody has run otto's product verbs — `Host.stage()`, `Host.install()`,
 tier can, because **those four emit no command of their own**. Each iterates
 `Host.products` and delegates to a {class}`~otto.host.product.Product`, and
 `Product` declares all four of its methods abstract. otto ships exactly one
-concrete body — {meth}`~otto.host.product.FileProduct.stage`, a single
+concrete body — {meth}`~otto.host.product.ShellProduct.stage`, a single
 `await host.put(...)` — and `put` is a surface this table already covers and the
 five live BusyBox guests already exercise end to end.
 

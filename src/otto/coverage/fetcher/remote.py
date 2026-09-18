@@ -1,16 +1,17 @@
 """Fetch ``.gcda`` files from remote hosts, one product at a time.
 
 Every product on a coverage host names the directory it writes counters
-under (``Product.cov_dir``); the fetcher discovers ``.gcda`` there with
-``find`` and pulls them with the host's ``get`` (SCP, SFTP, FTP, netcat,
+under (``Product.cov_dir``); each product's ``prepare_coverage`` hook runs
+first to put its counters on disk, then the fetcher discovers ``.gcda`` there
+with ``find`` and pulls them with the host's ``get`` (SCP, SFTP, FTP, netcat,
 ``docker cp`` — whatever the family provides) into
 ``<staging_root>/<host_id>/<product>/`` (:func:`otto.layout.cov_product_dir_in`),
-where *staging_root* is the already-resolved local cov dir.
+where *staging_root* is the already-resolved local cov dir. Cleaning issues
+each product's ``reset_coverage`` hook instead of a hardcoded ``find -delete``.
 """
 
 import logging
 import re
-import shlex
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -23,16 +24,6 @@ if TYPE_CHECKING:
     from ...host.product import Product
 
 logger = logging.getLogger(__name__)
-
-
-def _find_cmd(cov_dir: str) -> str:
-    """``find <cov_dir> -name '*.gcda' -type f``, with *cov_dir* shell-quoted.
-
-    The quoting is load-bearing on the clean path, which appends ``-delete``:
-    an unquoted ``/opt/My App/cov`` would reach ``find`` as TWO start points,
-    the second of them relative to the shell's cwd.
-    """
-    return f"find {shlex.quote(cov_dir)} -name '*.gcda' -type f"
 
 
 def _skipped_family(host: Any) -> bool:
@@ -58,19 +49,20 @@ async def _clean_one_host(host: Any) -> None:
     from ..instrumentation import instrumented_products
 
     for product in instrumented_products(host):
-        # Before the command is built, not after: a name that is not a single
-        # safe path segment must never reach a host, least of all on the path
-        # that appends ``-delete``.
+        # Before the hook runs, not after: a name that is not a single safe
+        # path segment must never reach a host.
         layout.validate_product_name(product.name)
         cov_dir = cov_dir_of(product)
-        result = await host.exec(f"{_find_cmd(cov_dir)} -delete", timeout=60)
-        if result.status != Status.Success:
+        result = await product.reset_coverage(host)
+        if result.status is Status.NotRun:
+            continue  # dry run: the session already printed the declined command
+        if not result.is_ok:
             logger.warning(
                 "Failed to clean .gcda for %s on %s (%s): %s",
                 product.name,
                 host.id,
                 cov_dir,
-                result.value,
+                result.msg or result.value,
             )
         else:
             logger.info("Cleaned .gcda for %s on %s (%s)", product.name, host.id, cov_dir)
@@ -94,12 +86,25 @@ async def _fetch_one_product(host: Any, product: "Product", staging_root: Path) 
         ValueError: *product* has a name that is not a single safe path
             segment. Checked before any host command is issued.
     """
-    from ...host.product import cov_dir_of
+    from ...host.product import cov_dir_of, gcda_find_cmd
 
     layout.validate_product_name(product.name)
     cov_dir = cov_dir_of(product)
+    prepared = await product.prepare_coverage(host)
+    if prepared.status is Status.NotRun:
+        return None  # dry run: the session already printed the declined command
+    if not prepared.is_ok:
+        logger.warning(
+            "%s:%s: prepare_coverage failed: %s — product skipped for this run",
+            host.id,
+            product.name,
+            prepared.msg,
+        )
+        return None
     logger.info("Discovering .gcda for %s on %s:%s", product.name, host.id, cov_dir)
-    find_result = await host.exec(_find_cmd(cov_dir), timeout=60)
+    find_result = await host.exec(gcda_find_cmd(cov_dir), timeout=60)
+    if find_result.status is Status.NotRun:
+        return None  # dry run: nothing to stage
     if find_result.status != Status.Success:
         logger.warning(
             "find failed for %s on %s at %s: %s",

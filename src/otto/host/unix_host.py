@@ -975,6 +975,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         self,
         file: Annotated[Path, Arg(help="Kernel module .ko to insert.")],
         name: Annotated[str | None, Opt(help="Module name; defaults to the file stem.")] = None,
+        params: Annotated[
+            str, Opt(help="insmod parameters (`key=value` tokens), appended verbatim.")
+        ] = "",
         dest_dir: Annotated[Path, Exclude] = Path("/tmp"),  # noqa: S108 — deliberate staging path
         show_progress: Annotated[bool, Exclude] = False,
     ) -> Result:
@@ -985,6 +988,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         is already root (Spec A's ``current_user``). The staged file is removed
         afterward (the module lives in kernel memory once inserted). ``name``
         defaults to the file stem (``-``→``_``) and is used in error text.
+        *params* is appended to the ``insmod`` line as given (stripped of surrounding
+        whitespace) — ``"gcov_dir=/tmp/demo debug=1"`` becomes ``insmod /tmp/demo.ko
+        gcov_dir=/tmp/demo debug=1``. It is appended UNQUOTED, so the caller is
+        responsible for quoting any value that itself contains whitespace.
         """
         resolved = (name or file.stem).replace("-", "_")
         dest = dest_dir / file.name
@@ -992,7 +999,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         if not put_result.is_ok:
             return Result(put_result.status, msg=f"staging {file} failed: {put_result.msg}")
         need_sudo = self.current_user != "root"
-        result = await self.run(f"insmod {self._q(dest)}", sudo=need_sudo)
+        params = params.strip()
+        extra = f" {params}" if params else ""
+        result = await self.run(f"insmod {self._q(dest)}{extra}", sudo=need_sudo)
         await self.rm(dest, force=True)  # best-effort cleanup
         if result.status.is_ok:
             return Result(Status.Success)

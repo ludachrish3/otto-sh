@@ -282,6 +282,15 @@ def test_build_unknown_kind_fails_even_when_the_match_misses(kinds):
         kinds.build(entries, _host())
 
 
+def test_build_refuses_the_retired_file_kind_naming_shell(kinds):
+    # The rename is a hard cutover: an entry still spelling the old name must
+    # fail every ingest with the new name in the message, before its match
+    # is consulted — exactly as an unknown kind does.
+    entries = [_entry("fw", kind="file", match={"id": "matches-no-host"})]
+    with pytest.raises(ValueError, match=r"'fw': kind 'file' was renamed 'shell'"):
+        kinds.build(entries, _host())
+
+
 def test_build_runs_the_matcher_per_host(kinds):
     entries = [_entry("fw", match={"id": "bb.*"})]
     assert [b.name for b in kinds.build(entries, _host(id="bb1"))] == ["fw"]
@@ -430,19 +439,19 @@ def test_repo_parse_settings_builds_declared_entries(tmp_path):
         extra="""
 [[products]]
 name = "fw"
-kind = "file"
+kind = "shell"
 artifact = "build/fw.bin"
 match = { id = "bb.*" }
 
 [[dev_tools]]
 name = "probe"
-kind = "file"
+kind = "shell"
 artifact = "tools/probe.sh"
 """,
     )
     repo = Repo(sut_dir=sut)
     (fw,) = repo.declared_products
-    assert (fw.name, fw.kind, fw.seam, fw.owner) == ("fw", "file", "products", "declrepo")
+    assert (fw.name, fw.kind, fw.seam, fw.owner) == ("fw", "shell", "products", "declrepo")
     assert fw.base_dir == sut
     assert fw.params == {"artifact": "build/fw.bin"}  # raw: anchoring is the kind's job
     (probe,) = repo.declared_dev_tools

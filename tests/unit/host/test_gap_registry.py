@@ -48,7 +48,7 @@ from types import ModuleType
 import pytest
 
 from otto.host.errors import UnsupportedOnUserlandError
-from otto.host.product import FileProduct, Product
+from otto.host.product import Product, ShellProduct
 from otto.host.userland import (
     GAP_DOCS_PAGE,
     GAPS,
@@ -509,7 +509,7 @@ class TestProductLifecycleIsUntestedBecauseOttoShipsNoImplementation:
     no command of their own. They iterate ``Host.products`` and delegate, and
     :class:`~otto.host.product.Product` declares all four of its methods
     abstract. otto ships exactly ONE concrete body,
-    :meth:`~otto.host.product.FileProduct.stage`, and it is a single
+    :meth:`~otto.host.product.ShellProduct.stage`, and it is a single
     ``host.put`` -- a surface already in this table. So the half a measurement
     could reach is recorded elsewhere, and the half that decides whether
     ``install`` works on a BusyBox device is project code otto does not own.
@@ -522,7 +522,7 @@ class TestProductLifecycleIsUntestedBecauseOttoShipsNoImplementation:
 
     THE DAY THIS RECORD STOPS BEING TRUE is the day otto ships a concrete
     ``Product.install`` -- one emitting ``opkg``, ``dpkg``, ``tar``, anything --
-    or grows a second device call in ``FileProduct.stage``. Then the surface
+    or grows a second device call in ``ShellProduct.stage``. Then the surface
     becomes otto's, and measurable, and these assertions are what say so.
     """
 
@@ -535,9 +535,9 @@ class TestProductLifecycleIsUntestedBecauseOttoShipsNoImplementation:
             f"surface otto's own, and measurable. Measure it and update the record."
         )
 
-    def test_fileproduct_leaves_every_verb_but_stage_abstract(self) -> None:
-        assert set(FileProduct.__abstractmethods__) == _LIFECYCLE_VERBS - {"stage"}, (
-            f"`FileProduct` leaves {sorted(FileProduct.__abstractmethods__)} abstract. "
+    def test_shellproduct_leaves_every_verb_but_stage_abstract(self) -> None:
+        assert set(ShellProduct.__abstractmethods__) == _LIFECYCLE_VERBS - {"stage"}, (
+            f"`ShellProduct` leaves {sorted(ShellProduct.__abstractmethods__)} abstract. "
             f"The `product-lifecycle` record rests on `stage` being the ONLY verb otto "
             f"gives a body to; if `install`, `uninstall` or `is_installed` now has one, "
             f"otto emits its own commands during install and the record needs measuring "
@@ -545,16 +545,16 @@ class TestProductLifecycleIsUntestedBecauseOttoShipsNoImplementation:
         )
 
     def test_the_one_concrete_body_reaches_the_device_only_through_put(self) -> None:
-        """``FileProduct.stage`` is one ``host.put`` — an already-recorded surface.
+        """``ShellProduct.stage`` is one ``host.put`` — an already-recorded surface.
 
         That single call is the whole reason ``product-lifecycle`` adds no new
         device contact: whatever BusyBox does to it is already answered by
         ``shell-transfer-base64``, ``sftp-transfer`` and ``scp-transfer``, each
         measured on a real device of its own.
         """
-        reached = _host_attributes_reached_for_by(inspect.getsource(FileProduct.stage))
+        reached = _host_attributes_reached_for_by(inspect.getsource(ShellProduct.stage))
         assert reached == {"put"}, (
-            f"`FileProduct.stage` reaches for {sorted(reached)} on the host, not just "
+            f"`ShellProduct.stage` reaches for {sorted(reached)} on the host, not just "
             f"`put`. The `product-lifecycle` record says otto's one concrete product "
             f"body adds no device contact beyond a surface this table already covers; a "
             f"second call breaks that, and whatever it emits has never been run on a "

@@ -49,7 +49,7 @@ from otto.host.errors import HostCommandError
 from otto.host.lab_info import LabInfo
 from otto.host.login_proxy import Cred
 from otto.host.mount import Mount
-from otto.host.product import FileProduct
+from otto.host.product import ShellProduct
 from otto.host.unix_host import UnixHost
 from otto.registry import registering_repo
 from otto.result import CommandNotRunError, CommandResult, Result
@@ -164,7 +164,7 @@ def _make_lab() -> Lab:
     return lab
 
 
-class _IngestProduct(FileProduct):
+class _IngestProduct(ShellProduct):
     """A concrete product a provider or a declared entry can hang on a container."""
 
     async def install(self, host):

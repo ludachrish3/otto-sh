@@ -110,7 +110,7 @@ otto.host.transfer:BaseFileTransfer
 otto.host.transfer:ProgressGranularity
 otto.host.transfer:TransferContext
 otto.host.unix_host:UnixHost
-otto.host:FileProduct
+otto.host:ShellProduct
 otto.host:UnixHost
 otto.host:register_dev_tool_provider
 otto.host:register_product_provider

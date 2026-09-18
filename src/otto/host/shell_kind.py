@@ -1,5 +1,5 @@
 """
-The built-in ``file`` kind — the zero-code declared product/dev tool.
+The built-in ``shell`` kind — the zero-code declared product/dev tool.
 
 One artifact, staged via :meth:`~otto.host.host.Host.put`, with optional
 ``install``/``uninstall``/``check`` command strings run on the host. One
@@ -14,7 +14,7 @@ The defaults are the honest floor of today's Host surface: without an
 artifact); without ``check``, ``is_installed`` answers False — otto assumes
 not installed and re-stages, which is safe for the simple cases this kind
 serves. ``host.exists()`` does not exist yet (see
-:class:`~otto.host.product.FileProduct`); when the remote file-ops phase
+:class:`~otto.host.product.ShellProduct`); when the remote file-ops phase
 lands, the ``check`` default upgrades to an artifact-existence test.
 Anything richer than this is a repo-registered kind — the mechanism working
 as intended, not a limitation.
@@ -31,17 +31,17 @@ from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
 from .dev_tool import DEV_TOOL_KINDS, DevTool
-from .product import PRODUCT_KINDS, FileProduct, cov_dir_of_name
+from .product import PRODUCT_KINDS, ShellProduct, cov_dir_of_name
 
 if TYPE_CHECKING:
     from .host import Host
 
 
 @dataclass
-class DeclaredFile(FileProduct, DevTool):
-    """A ``kind = "file"`` entry's runtime form (both seams).
+class DeclaredShell(ShellProduct, DevTool):
+    """A ``kind = "shell"`` entry's runtime form (both seams).
 
-    ``stage`` is :class:`~otto.host.product.FileProduct`'s (``host.put``);
+    ``stage`` is :class:`~otto.host.product.ShellProduct`'s (``host.put``);
     the three remaining hooks run the declared command strings, or take the
     module docstring's honest defaults when a string is absent.
     """
@@ -175,8 +175,8 @@ def str_list_param(entry: DeclaredEntry, params: dict[str, Any], key: str) -> li
     return list(value)
 
 
-def _file_kind(entry: DeclaredEntry, host: "Host") -> DeclaredFile:  # noqa: ARG001 — required by the KindRegistry factory signature Callable[[DeclaredEntry, Host], T]; this simple kind ignores host
-    """Build a :class:`DeclaredFile` from a validated entry's params."""
+def _shell_kind(entry: DeclaredEntry, host: "Host") -> DeclaredShell:  # noqa: ARG001 — required by the KindRegistry factory signature Callable[[DeclaredEntry, Host], T]; this simple kind ignores host
+    """Build a :class:`DeclaredShell` from a validated entry's params."""
     params = dict(entry.params)
     if entry.seam == "dev_tools":
         for key in _COVERAGE_PARAMS:
@@ -198,7 +198,7 @@ def _file_kind(entry: DeclaredEntry, host: "Host") -> DeclaredFile:  # noqa: ARG
     instrumented = bool_param(entry, params, "instrumented")
     if params:
         raise ValueError(
-            f"[[{entry.seam}]] {entry.name!r}: kind 'file' got unknown param(s): "
+            f"[[{entry.seam}]] {entry.name!r}: kind 'shell' got unknown param(s): "
             f"{sorted(params)}; valid: {_VALID}"
         )
     if entry.seam == "products":
@@ -206,7 +206,7 @@ def _file_kind(entry: DeclaredEntry, host: "Host") -> DeclaredFile:  # noqa: ARG
         install = _substitute(entry, "install", install, values)
         uninstall = _substitute(entry, "uninstall", uninstall, values)
         check = _substitute(entry, "check", check, values)
-    return DeclaredFile(
+    return DeclaredShell(
         # Local path: forward slashes in TOML, anchored to the declaring repo
         # (never the CWD); dest_dir stays in the HOST's path domain — host.put
         # resolves it against the host's default_dest_dir (spec §4).
@@ -222,5 +222,5 @@ def _file_kind(entry: DeclaredEntry, host: "Host") -> DeclaredFile:  # noqa: ARG
     )
 
 
-PRODUCT_KINDS.register("file", _file_kind, origin=__name__)
-DEV_TOOL_KINDS.register("file", _file_kind, origin=__name__)
+PRODUCT_KINDS.register("shell", _shell_kind, origin=__name__)
+DEV_TOOL_KINDS.register("shell", _shell_kind, origin=__name__)

@@ -13,13 +13,13 @@ install/uninstall/check commands — needs no subclass at all: declare it as a
 {doc}`../../../configuration/declared-products-tools`. What follows is the
 code path, for anything richer.
 
-Subclass `Product` (or `FileProduct` for the single-artifact case) and implement
+Subclass `Product` (or `ShellProduct` for the single-artifact case) and implement
 the project-specific halves:
 
     from pathlib import Path
-    from otto.host import FileProduct
+    from otto.host import ShellProduct
 
-    class MyApp(FileProduct):
+    class MyApp(ShellProduct):
         async def install(self, host):
             return await host.run(f"tar xzf {self.artifact.name}")
         async def uninstall(self, host):
@@ -90,6 +90,17 @@ is expanded on the device by `glob`, so a host family without that capability
 pattern there fails loudly rather than silently retrieving nothing. A
 product's own `debug_log_globs` (above) follows the same rules through the
 same helper, into that product's subtree instead of the host's.
+
+## Coverage hooks
+
+| Method | Behavior |
+|--------|----------|
+| `await product.prepare_coverage(host)` | Puts this product's counters on disk before a fetch; default is a no-op success. |
+| `await product.reset_coverage(host)` | Zeroes this product's counters; default deletes every `.gcda` under `cov_dir`. |
+
+See {doc}`../../../../architecture/subsystems/coverage/index` for how the
+fetcher and the clean paths call these.
+
 ## `install` options
 
 ```text

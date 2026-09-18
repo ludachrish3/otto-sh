@@ -9,12 +9,12 @@ from otto.host import dev_tool as dev_tool_mod
 from otto.host import factory
 from otto.host import product as product_mod
 from otto.host.dev_tool import DevTool
-from otto.host.product import FileProduct, Product
+from otto.host.product import Product, ShellProduct
 from otto.result import Result
 from otto.utils import Status
 
 
-class _P(FileProduct):
+class _P(ShellProduct):
     async def install(self, host):
         return Result(Status.Success)
 
@@ -26,7 +26,7 @@ class _P(FileProduct):
 
 
 class _BareProduct(Product):
-    """A non-FileProduct product — no ``__post_init__`` name auto-fill, so it
+    """A non-ShellProduct product — no ``__post_init__`` name auto-fill, so it
     can actually carry an empty ``name`` for the bad-name-rejection test."""
 
     def __init__(self, name: str) -> None:
@@ -95,7 +95,7 @@ def test_apply_providers_keeps_an_explicit_cov_dir():
 
 @pytest.mark.parametrize("bad", ["debug", "a/b", ""])
 def test_apply_providers_rejects_a_bad_product_name_naming_the_host(bad):
-    # A bare Product, not a FileProduct: FileProduct.__post_init__ auto-fills
+    # A bare Product, not a ShellProduct: ShellProduct.__post_init__ auto-fills
     # an empty name from the artifact's basename, which would silently turn
     # the "" case into a valid name and never reach validate_product_name.
     product_mod.register_product_provider(lambda host: [_BareProduct(bad)])

@@ -8,7 +8,8 @@ import pytest
 from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.coverage.fetcher.remote import GcdaFetcher, _clean_one_host, _fetch_one_product
-from otto.result import CommandResult, Result
+from otto.host.product import Product
+from otto.result import CommandResult, NotRunResult, Result
 from otto.utils import Status
 
 
@@ -17,6 +18,20 @@ def _product(name: str, cov_dir: str | None = None, verdict: bool | None = True)
     p.name = name
     p.cov_dir = cov_dir
     p.instrumented = MagicMock(return_value=verdict)
+
+    # The real defaults, bound to the mock: prepare touches nothing, reset
+    # issues the find -delete the clean tests assert on. The side_effect must
+    # itself be a coroutine function (not a lambda returning one) — AsyncMock
+    # only awaits a side_effect it recognises via iscoroutinefunction; a
+    # lambda wrapping a coroutine function hands back an un-awaited coroutine.
+    async def _prepare_coverage(host: object) -> Result:
+        return await Product.prepare_coverage(p, host)
+
+    async def _reset_coverage(host: object) -> Result:
+        return await Product.reset_coverage(p, host)
+
+    p.prepare_coverage = AsyncMock(side_effect=_prepare_coverage)
+    p.reset_coverage = AsyncMock(side_effect=_reset_coverage)
     return p
 
 
@@ -413,6 +428,125 @@ class TestGcdaFetcher:
         assert [c.args[0] for c in host.exec.call_args_list] == [
             "find /var/cov/app -name '*.gcda' -type f -delete"
         ]
+
+    @pytest.mark.asyncio
+    async def test_prepare_coverage_runs_before_the_find(self, tmp_path, fake_config_module):
+        host = _make_mock_host("host1")
+        order: list[str] = []
+        host.products[0].prepare_coverage = AsyncMock(
+            side_effect=lambda h: (order.append("prepare"), Result(Status.Success))[1]
+        )
+        host.exec.side_effect = lambda *a, **k: (
+            order.append("find"),
+            CommandResult(Status.Success, value="/var/cov/foo.gcda\n", command="find", retcode=0),
+        )[1]
+        host.get.return_value = Result(Status.Success, value={})
+        fake_config_module(host)
+        await GcdaFetcher(tmp_path / "staging").fetch_all()
+        assert order == ["prepare", "find"]
+
+    @pytest.mark.asyncio
+    async def test_a_failed_prepare_skips_the_product_and_leaves_no_leaf(
+        self, tmp_path, fake_config_module, caplog
+    ):
+        host = _make_mock_host("host1")
+        host.products[0].prepare_coverage = AsyncMock(
+            return_value=Result(Status.Error, msg="no /sys/kernel/debug/otto_kgcov/app")
+        )
+        fake_config_module(host)
+        result = await GcdaFetcher(tmp_path / "staging").fetch_all()
+        assert result == {}
+        host.exec.assert_not_called()
+        host.get.assert_not_called()
+        assert not (tmp_path / "staging" / "host1").exists()
+        assert (
+            "host1:app: prepare_coverage failed: no /sys/kernel/debug/otto_kgcov/app" in caplog.text
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_declined_prepare_is_a_dry_run_not_a_failure(
+        self, tmp_path, fake_config_module, caplog
+    ):
+        """A hook that runs a host command is declined under a dry run; that is not
+        a failure to warn about, and the find that follows is not attempted."""
+        import logging
+
+        host = _make_mock_host("host1")
+        host.products[0].prepare_coverage = AsyncMock(
+            return_value=NotRunResult(
+                status=Status.NotRun, command="cat dump", retcode=-1, host_name="host1"
+            )
+        )
+        fake_config_module(host)
+        with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
+            result = await GcdaFetcher(tmp_path / "staging").fetch_all()
+        assert result == {}
+        host.exec.assert_not_called()
+        assert not (tmp_path / "staging" / "host1").exists()
+        assert caplog.text == ""
+
+    @pytest.mark.asyncio
+    async def test_clean_calls_each_products_reset_coverage(self, tmp_path, fake_config_module):
+        custom = _product("kmod", "/tmp/kmod")
+        custom.reset_coverage = AsyncMock(return_value=Result(Status.Success))
+        host = _make_mock_host("host1", products=[_product("app", "/var/cov"), custom])
+        host.exec.return_value = CommandResult(Status.Success, value="", command="find", retcode=0)
+        fake_config_module(host)
+        await GcdaFetcher(tmp_path / "staging").clean_remote()
+        # The default hook issued the delete for `app`; the override was awaited for `kmod`.
+        assert [c.args[0] for c in host.exec.call_args_list] == [
+            "find /var/cov -name '*.gcda' -type f -delete"
+        ]
+        custom.reset_coverage.assert_awaited_once_with(host)
+
+    @pytest.mark.asyncio
+    async def test_clean_remote_dry_run_declines_every_product_without_a_warning(
+        self, tmp_path, fake_config_module, caplog
+    ):
+        """A dry run's session answers every ``exec`` with a `NotRunResult`; reading
+        its `.value` inside the warning must not raise `CommandNotRunError` and hide
+        the remaining products' declined-command preview."""
+        import logging
+
+        host = _make_mock_host(
+            "host1", [_product("app", "/var/cov/app"), _product("agent", "/var/cov/agent")]
+        )
+        host.exec = AsyncMock(
+            return_value=NotRunResult(
+                status=Status.NotRun, command="find ...", retcode=-1, host_name="host1"
+            )
+        )
+        fake_config_module(host)
+
+        with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
+            await GcdaFetcher(tmp_path / "staging").clean_remote()
+
+        assert host.exec.await_count == 2
+        assert "failed to delete" not in caplog.text.lower()
+        assert "failed to clean" not in caplog.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_fetch_dry_run_stages_nothing_and_does_not_warn(
+        self, tmp_path, fake_config_module, caplog
+    ):
+        """Same decline, on the fetch path's `find`: nothing to stage, and the
+        `find failed` warning must not fire on a value that was never measured."""
+        import logging
+
+        host = _make_mock_host("host1")
+        host.exec = AsyncMock(
+            return_value=NotRunResult(
+                status=Status.NotRun, command="find ...", retcode=-1, host_name="host1"
+            )
+        )
+        fake_config_module(host)
+
+        with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
+            result = await GcdaFetcher(tmp_path / "staging").fetch_all()
+
+        assert result == {}
+        assert not (tmp_path / "staging" / "host1").exists()
+        assert caplog.text == ""
 
     @pytest.mark.asyncio
     async def test_multiple_hosts(self, tmp_path, fake_config_module):

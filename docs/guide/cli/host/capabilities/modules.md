@@ -7,7 +7,7 @@ Unix hosts manage kernel modules with three verbs:
 | Method | Behavior |
 |--------|----------|
 | `await host.lsmod()` | List loaded module names (`Result` whose `value` is `list[str]`). |
-| `await host.load(file, name=None)` | Stage the `.ko` on the host, `insmod` it, then remove the staged file. `name` defaults to the file stem. |
+| `await host.load(file, name=None, params="")` | Stage the `.ko` on the host, `insmod` it with *params* (`key=value` tokens) appended verbatim, then remove the staged file. `name` defaults to the file stem. |
 | `await host.unload(name)` | `rmmod` the module. Idempotent: unloading a module that is not resident succeeds. |
 
 `load` and `unload` elevate automatically — the `insmod`/`rmmod` runs under
@@ -17,6 +17,7 @@ As `otto host` verbs:
 ```text
 otto host <id> lsmod
 otto host <id> load ./build/my_driver.ko
+otto host <id> load ./build/my_driver.ko --params "debug=1"
 otto host <id> unload my_driver
 ```
 

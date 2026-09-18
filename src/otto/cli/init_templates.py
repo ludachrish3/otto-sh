@@ -57,14 +57,14 @@ paths = ["lab_data"]
 # docs/guide/configuration/declared-products-tools.md.
 #[[products]]
 #name = "firmware"
-#kind = "file"
+#kind = "shell"
 #artifact = "build/fw.bin"
 #cov_dir = "/tmp/firmware"        # where it writes .gcda (GCOV_PREFIX); default /tmp/<name>
 #install = "GCOV_PREFIX={{cov_dir}} ./fw.bin &"
 #match = {{ "metadata.hw_version" = "rev2" }}
 #[[dev_tools]]
 #name = "trace-probe"
-#kind = "file"
+#kind = "shell"
 #artifact = "tools/probe.sh"
 
 # --- [logging.levels] — the per-library noise floor --------------------------

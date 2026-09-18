@@ -45,7 +45,6 @@ otto.host.embedded_filesystem
 otto.host.embedded_host
 otto.host.errors
 otto.host.factory
-otto.host.file_kind
 otto.host.file_ops
 otto.host.host
 otto.host.interact
@@ -64,6 +63,7 @@ otto.host.privilege
 otto.host.product
 otto.host.remote_host
 otto.host.session
+otto.host.shell_kind
 otto.host.shell_liveness
 otto.host.telnet
 otto.host.toolchain
