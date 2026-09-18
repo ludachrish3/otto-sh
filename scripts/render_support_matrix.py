@@ -1777,6 +1777,10 @@ def _meaning_rows(members: "Sequence[Enum]") -> "list[str]":
     return [f"| `{member.value}` | {(member.__doc__ or '').strip()} |" for member in members]
 
 
+_FAMILY_HOME_DOCS = {"container": "../../cli/docker/index"}
+"""Families whose selection has a CLI home page, linked from the "how selected" cell."""
+
+
 def render_families() -> str:
     """Render the host-families page from the ``capabilities`` on each host class.
 
@@ -1848,8 +1852,11 @@ def render_families() -> str:
     ]
     for family in families:
         caps = family.capabilities
+        selector = family.selector
+        if family.name in _FAMILY_HOME_DOCS:
+            selector += f" (see {{doc}}`{_FAMILY_HOME_DOCS[family.name]}`)"
         lines.append(
-            f"| `{family.name}` | {family.selector} "
+            f"| `{family.name}` | {selector} "
             f"| `{caps.run_user.value}` | `{caps.exec_user.value}` "
             f"| `{caps.put_user.value}` | `{caps.get_user.value}` "
             f"| {'yes' if caps.show_progress else 'no'} "

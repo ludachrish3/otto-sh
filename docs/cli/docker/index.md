@@ -50,7 +50,8 @@ use-case, which is not a per-repo thing to narrow.
 
 After `otto docker up`, the resulting containers appear in `--list-hosts`
 under ids of the form `<parent>.<usecase>.<service>` (e.g.
-`test3.integration.api`). Use them anywhere a host id is expected:
+`test3.integration.api`), where `<parent>` is the lab id of the docker-capable
+host the stack runs on. Use them anywhere a host id is expected:
 
 ```text
 otto host test3.integration.api login

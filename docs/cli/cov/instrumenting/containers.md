@@ -124,5 +124,4 @@ the lab brought up with `docker compose`. That case is
 because the image itself carries no product of otto's own. `docker_image`
 is the opposite shape — the image *is* the deliverable, run as a product
 on a host that already exists.
-{doc}`../../../getting-started/docker-services` is the compose
-walkthrough.
+{doc}`../../docker/use-cases` is the compose workflow.

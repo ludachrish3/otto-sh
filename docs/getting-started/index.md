@@ -97,25 +97,12 @@ running-instructions
 running-test-suites
 ```
 
-## Docker services
-
-A lab host does not have to be a machine. Otto can deploy compose services
-onto a docker-capable lab host and register each container as a lab host of
-its own, with lab facts — another host's address, say — templated into the
-service through variable names your compose file already uses. The next page
-is a tour of declaring, deploying and templating one.
-
-```{toctree}
-:maxdepth: 1
-
-docker-services
-```
-
 ## Where to go next
 
 - {ref}`team-setup-checklist` -- One-time setup when adopting otto for a team
 - {doc}`../cli/index` -- Every `otto` command, one page per verb
 - {doc}`../configuration/index` -- The project and lab files every command reads
 - {doc}`../cookbook/index` -- Short recipes for common situations
+- {doc}`../cli/docker/use-cases` -- Docker compose services as lab hosts
 - {doc}`../library/index` -- Using otto as a Python library
 - {doc}`../api/index` -- Full API reference
