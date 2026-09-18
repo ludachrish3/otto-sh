@@ -15,7 +15,7 @@ predicted nothing about that machine at all — and they repeat identically run
 to run where a timing number never does. `--hyperfine` stays as a MANUAL
 diagnostic (`make hyperfine` installs the tool); it is no longer wired into
 `make profile`, i.e. no longer part of the release gate. See
-docs/guide/startup-performance.md.
+docs/architecture/startup-performance.md.
 
 I/O goldens are keyed per Python minor (``<key>.io.<major.minor>.txt``) and
 are checked against the RUNNING interpreter's file; a missing file is a named

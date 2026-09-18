@@ -12,7 +12,7 @@ answered there, off `otto.version` alone, and never enters the path below.
 It exists because otto's framework import graph cost thousands of path
 syscalls, every one paid at module import — before `entry()` runs a line,
 so nothing inside `entry()` could have avoided them — see
-{doc}`../guide/startup-performance` for the measured budget. Every other
+{doc}`startup-performance` for the measured budget. Every other
 argv, including `python -m otto`, is handed straight to `entry()` unchanged.
 
 ```{graphviz}

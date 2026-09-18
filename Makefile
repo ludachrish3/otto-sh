@@ -598,7 +598,7 @@ docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, cl
 # deployment's cold start to the one significant figure that field observation
 # carries (2,427 syscalls x 1.2 ms RTT ~ 2.9 s against an observed ~3 s), where
 # a dev-box wall-clock number predicted nothing about that machine at all — and
-# they repeat identically run to run. See docs/guide/startup-performance.md.
+# they repeat identically run to run. See docs/architecture/startup-performance.md.
 profile: ## (Dev) Enforce the import budget (module-count caps + snapshots + denylist + per-interpreter I/O goldens)
 	@$(SAY) "import budget (module caps + snapshots + denylist + I/O goldens)"
 	@uv run python scripts/import_budget.py --check

@@ -304,7 +304,7 @@ disposable — delete it and otto rebuilds what it needs on the next run.
 Nothing here shrinks on its own: every distinct `OTTO_SUT_DIRS` set gets its
 own workspace directory, and none is ever removed automatically.
 [`otto cache`](cache/index.md) is how you inspect, clear, and bound that
-growth — see {doc}`../guide/startup-performance` for what it costs to keep this
+growth — see {doc}`../architecture/startup-performance` for what it costs to keep this
 home on a network filesystem instead of local disk.
 
 `tls/` is the exception on both counts.  otto never creates it and never

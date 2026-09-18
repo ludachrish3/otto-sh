@@ -3,7 +3,7 @@
 otto's own engineering already removes most of what used to make startup
 slow: the console script's front door, `otto._shim:main`, answers a bare
 `otto --version` without ever importing the CLI (see
-{doc}`../architecture/lifecycle`), and warm `otto --help` is served from a
+{doc}`lifecycle`), and warm `otto --help` is served from a
 cache that validates cheaply instead of walking your test corpus (see the
 last section below). What's left after those fixes is genuinely yours to
 control — which disk your interpreter and otto's own venv sit on, how many
