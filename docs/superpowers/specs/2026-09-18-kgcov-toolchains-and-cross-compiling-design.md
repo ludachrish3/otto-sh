@@ -77,13 +77,19 @@ its own (the walk never calls the sentinels themselves):
 /* KGCOV_SENTINEL_BEGIN — first object in the consumer's link */
 static void __kgcov_begin_marker(void) {}
 const kgcov_ctor_fn __kgcov_ctors_begin
-        __attribute__((section(".init_array.0"), used, aligned(8))) = __kgcov_begin_marker;
+        __attribute__((section(".init_array.0"), used,
+                       aligned(sizeof(kgcov_ctor_fn)))) = __kgcov_begin_marker;
 
 /* KGCOV_SENTINEL_END — last object in the consumer's link */
 static void __kgcov_end_marker(void) {}
 const kgcov_ctor_fn __kgcov_ctors_end
-        __attribute__((section(".init_array"), used, aligned(8))) = __kgcov_end_marker;
+        __attribute__((section(".init_array"), used,
+                       aligned(sizeof(kgcov_ctor_fn)))) = __kgcov_end_marker;
 ```
+
+The alignment is the pointer's own, never a fixed 8: on an ILP32 target an
+`.init_array` entry is 4 bytes, and forcing 8 lets the linker insert a zero
+word that a `CONFIG_CONSTRUCTORS` kernel's `do_mod_ctors()` would call.
 
 `.init_array.0` sorts before every other entry, and within it the begin
 sentinel precedes clang's entries by link order; plain `.init_array` comes
@@ -150,11 +156,14 @@ unit's `info->version` word (probed on 2026-09-18: gcc 9 writes `A95*`, gcc
 10 to 14 write `B05*`, `B15*`, `B24*`, `B33*`, `B42*`; so `'4'` means gcc
 4, `'A'` + digit means 5 to 9, `'B'` + digit means 10 to 19) and compares it
 with the `__GNUC__` the library was built with. A mismatch is refused with
-both versions in the kernel log rather than parsed into garbage: the
-module still loads, the unit is not registered, and the product reports
-no coverage for it. An encoding the decoder does not know (a first byte
-after `'B'`) skips the major check with one `pr_info`, so a future gcc is
-not refused by a decoder that predates it. A family mismatch needs no
+both majors in the kernel log rather than parsed into garbage, and it is
+refused loudly: the registration fails, `KGCOV_INIT()` returns `-EPROTO`,
+and a consumer that returns that error from its init routine — the
+documented pattern — does not load at all. Reporting less coverage than
+the build asked for, quietly, is not an option the library offers. An
+encoding the decoder does not know (a first byte after `'B'`, or a version
+byte that is not a digit) skips the major check with one `pr_info`, so a
+future gcc is not refused by a decoder that predates it. A family mismatch needs no
 code: each build of the library exports only its own family's entry
 points, so a gcc consumer against a clang-built library (or the reverse)
 fails to load with `Unknown symbol __gcov_init` (or `llvm_gcov_init`) in
@@ -372,12 +381,16 @@ it modpost cannot resolve any of the base kernel's own exports (`memcpy`,
 proof was never trying to check in the first place. So the build passes
 `KMAKEFLAGS=KBUILD_MODPOST_WARN=1` — the kernel's documented knob for exactly
 this — turning those into warnings, and the proof adds a check that
-guarantees the downgrade didn't hide a real problem: every unresolved symbol
-in the combined build output must be a core kernel export, never one of the
-library's or the consumer's own (`kgcov_*`, `__gcov_*`, `llvm_*`), and the
-library's `Module.symvers` — the one `KBUILD_EXTRA_SYMBOLS` hands the demo —
-must list its two exports (`kgcov_register`, `kgcov_unregister`), so the two
-`.ko`s are proven to have actually linked against each other. A module meant
+guarantees the downgrade didn't hide a real problem: `modinfo -F depends` on the
+demo's `.ko` must name `otto_kgcov`, and the library's `Module.symvers` — the
+one `KBUILD_EXTRA_SYMBOLS` hands the demo — must list its two exports
+(`kgcov_register`, `kgcov_unregister`). modpost writes a `depends` entry only
+for a module whose symvers actually resolved a symbol the demo referenced, so
+that pair is what proves the two `.ko`s linked against each other. The
+combined build output is scanned too — no `undefined!` line may name one of
+the library's or the consumer's own symbols (`kgcov_*`, `__gcov_*`, `llvm_*`)
+— but modpost caps that list at ten lines per module and suppresses the rest,
+so the scan is a second opinion, never the proof. A module meant
 to actually be *loaded* needs a fully built tree or the target's own headers
 package (which ships a real `Module.symvers`, built the same way the running
 kernel's own `/lib/modules/<release>/build` does) — never a bare
