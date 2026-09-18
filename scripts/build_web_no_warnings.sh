@@ -38,9 +38,13 @@
 # beforeAll/afterAll output, and vitest's own messages. The any-stderr rule
 # catches all of them unchanged.
 #
+# Lint (check, knip) and the coverage reporters (e2e:coverage-report,
+# coverage:merged) run through it as well: every web/ npm script a Makefile
+# gate calls, pinned by tests/unit/test_ci_web_gate.py.
+#
 # Usage: scripts/build_web_no_warnings.sh <npm-script>   (e.g. build,
-# build:covapp, test, test:coverage). Run from the repo root (make does): it
-# runs `npm run` in web/.
+# build:covapp, test, check). Run from the repo root (make does): it runs
+# `npm run` in web/.
 set -euo pipefail
 
 SCRIPT="${1:?usage: build_web_no_warnings.sh <npm-script>}"

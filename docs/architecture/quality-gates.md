@@ -32,7 +32,7 @@ on that side.
 | Browser e2e | `pytest-playwright` — two suites (monitor dashboard, coverage report), three engines each (Chromium, Firefox, WebKit) | (same lane — `OTTO_TS_COVERAGE=1` arms CDP V8 collection under `make dashboard` only; the bundle-filter **drift guard** runs at configure time in every lane, armed or not — `tests/_fixtures/_ts_bundle_filter.py`) |
 | Cross-language contract | `tests/_fixtures/covapp_contract.json`, asserted from both sides; `types.gen.ts` **and** `export.gen.ts` codegen + `git diff --exit-code` | (same two mechanisms) |
 | Vendored source | — (nothing vendored) | `scripts/check_untitledui_hash.sh` — did *we* edit it; `scripts/check_untitledui_drift.sh` — did *upstream* |
-| Built-bundle gates | — | `build_web_no_warnings.sh` (warnings are errors), `check_airgap.sh`, `check_brand_tokens.sh` |
+| Built-bundle gates | — | `build_web_no_warnings.sh` (any stderr output fails; it also wraps every other web/ npm script a gate runs — vitest, Biome, knip, the coverage reporters), `check_airgap.sh`, `check_brand_tokens.sh` |
 | Docs | `sphinx-build -E -a -W` (clean rebuild), `doc8`, Sphinx doctest, `scripts/lint_markdown_doctests.py`, `--doctest-modules` over `src/otto` | — |
 
 ### The empty cell is the honest answer

@@ -792,7 +792,7 @@ $(TS_E2E_RAW_STAMP): $(WEB_SRCS) $(BROWSER_TEST_SRCS)
 
 $(TS_E2E_COV): $(TS_E2E_RAW_STAMP) $(WEB_NODE_MODULES) web/scripts/e2e_coverage_report.mjs
 	@$(SAY) "merging raw V8 browser coverage → istanbul"
-	@cd web && npm run e2e:coverage-report
+	@scripts/build_web_no_warnings.sh e2e:coverage-report
 
 # The `-m "browser and not soak"` below MUST match noxfile.py's
 # DASHBOARD_MARKER_EXPR (the `dashboard` session's marker, which is what
@@ -1251,9 +1251,9 @@ lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependen
 # side (ruff errors only, pytest filterwarnings=error) and there is not one here.
 lint-ts: $(WEB_NODE_MODULES) ## (Quality) Lint web/: the authoritative Biome gate (rules + format + assists) + knip (unused exports/files/deps)
 	@$(SAY) "biome check (web/): rules + format + assists"
-	@cd web && npm run check
+	@scripts/build_web_no_warnings.sh check
 	@$(SAY) "knip (web/): unused exports, files, deps"
-	@cd web && npm run knip
+	@scripts/build_web_no_warnings.sh knip
 
 format: format-python format-ts ## (Quality) Apply ALL safe autofixes (Python + TS): sub-targets format-python + format-ts
 
@@ -1361,7 +1361,7 @@ coverage-ts: $(TS_E2E_COV) ## (Quality) Merged TS coverage gate: vitest + browse
 	@rm -rf reports/ts-cov/final && mkdir -p reports/ts-cov/final
 	@cp web/coverage/coverage-final.json reports/ts-cov/final/vitest.json
 	@cp $(TS_E2E_COV) reports/ts-cov/final/e2e.json
-	@cd web && npm run coverage:merged
+	@scripts/build_web_no_warnings.sh coverage:merged
 
 schema: ## (Dev) Generate JSON Schema for lab.json / settings.toml / reservations into schemas/ (git-ignored; for editor autocomplete)
 	@$(SAY) "exporting JSON Schema → schemas/"

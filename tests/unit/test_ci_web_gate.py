@@ -40,7 +40,8 @@ def test_ci_invokes_the_ts_gates_not_their_internals() -> None:
 
 
 def test_check_ts_chain_reaches_biome_check() -> None:
-    """Pins the chain: check-ts -> lint-ts -> `npm run check` (biome check)."""
+    """Pins the chain: check-ts -> lint-ts -> `npm run check` (biome check),
+    run through the no-stderr gate like knip."""
     check_ts = re.search(r"^check-ts:([^\n#]*)", _MAKEFILE, re.MULTILINE)
     assert check_ts, "no `check-ts` target in the Makefile"
     assert "lint-ts" in check_ts.group(1), (
@@ -49,13 +50,15 @@ def test_check_ts_chain_reaches_biome_check() -> None:
     )
     lint_ts = re.search(r"^lint-ts:.*(?:\n\t.+)+", _MAKEFILE, re.MULTILINE)
     assert lint_ts, "no `lint-ts` target in the Makefile"
-    assert "npm run check" in lint_ts.group(0), (
+    assert "scripts/build_web_no_warnings.sh check" in lint_ts.group(0), (
         "`lint-ts` must run `npm run check` (biome check = rules + format + "
-        "assists); anything weaker reopens the organize-imports gap"
+        "assists) through the no-stderr gate; anything weaker reopens the "
+        "organize-imports gap"
     )
-    assert "npm run knip" in lint_ts.group(0), (
+    assert "scripts/build_web_no_warnings.sh knip" in lint_ts.group(0), (
         "`lint-ts` must also run knip — the project-scope unused-code parity "
-        "for what ruff already does on the Python side"
+        "for what ruff already does on the Python side — through the "
+        "no-stderr gate"
     )
     package_json = json.loads((_REPO / "web" / "package.json").read_text())
     assert package_json["scripts"]["check"].startswith("biome check"), (
@@ -144,4 +147,71 @@ def test_every_vitest_run_goes_through_the_warnings_gate() -> None:
     gated = re.findall(r"^\t@scripts/build_web_no_warnings\.sh (\S+)$", _MAKEFILE, re.MULTILINE)
     assert set(_vitest_scripts()) <= set(gated), (
         f"not every vitest script runs through the gate: {gated!r}"
+    )
+
+
+# `npm run` scripts a Makefile recipe may call directly: neither is a gate.
+# `dev` is the interactive Vite server and `check:fix` rewrites files.
+_UNGATED_NPM_SCRIPTS = {"dev", "check:fix"}
+
+# The one recipe allowed to run `npm ci` itself: every other route to an
+# install goes through it (the node_modules stamp re-runs it).
+_NPM_INSTALL_TARGET = "web-install"
+
+# A rule line: `target: ...` or `$(VAR): ...`, but not `VAR := value`.
+_RULE_LINE = re.compile(r"^([^\s#:=][^:=]*?)\s*:(?![:=])")
+# Any direct npm/npx use in a shell command, and the exempt `npm run` calls
+# (cut out of a command before it is searched, so `npm run dev && npx x`
+# still trips on the npx).
+_NPM_OR_NPX = re.compile(r"(?<![\w.-])(?:npm|npx)(?![\w.-])")
+_EXEMPT_NPM_RUN = re.compile(
+    r"(?<![\w.-])npm\s+run(?:-script)?\s+(?:"
+    + "|".join(re.escape(name) for name in sorted(_UNGATED_NPM_SCRIPTS))
+    + r")(?![\w:-])"
+)
+
+
+def _recipe_lines(makefile: str) -> list[tuple[str, str]]:
+    """(target, command) for every recipe line, comments and banners dropped."""
+    lines: list[tuple[str, str]] = []
+    target = ""
+    for line in makefile.splitlines():
+        if line.startswith("\t"):
+            command = line.strip()
+            if command and not command.startswith("#") and "$(SAY)" not in command:
+                lines.append((target, command))
+            continue
+        rule = _RULE_LINE.match(line)
+        if rule:
+            target = rule.group(1).strip()
+    return lines
+
+
+def _ungated_makefile_npm(makefile: str) -> list[str]:
+    ungated: list[str] = []
+    for target, command in _recipe_lines(makefile):
+        if target == _NPM_INSTALL_TARGET:
+            continue
+        if _NPM_OR_NPX.search(_EXEMPT_NPM_RUN.sub("", command)):
+            ungated.append(f"{target}: {command}")
+    return ungated
+
+
+def test_every_gating_npm_script_goes_through_the_warnings_gate() -> None:
+    """Lint, coverage reporting and the e2e coverage merge are gates too, and
+    a warning they print on stderr must fail them like a build warning.
+
+    So a Makefile recipe may not run npm or npx directly at all -- `npm run`,
+    `npx`, `npm ci`/`npm install`, `npm exec`, whatever the flags -- except in
+    the web-install recipe (the one `npm ci`) and for the two deliberately
+    ungated scripts above. Everything else goes through
+    scripts/build_web_no_warnings.sh, or a script that applies the same rule
+    (typecheck_web.sh, gen_web_types.sh), neither of which is npm on the
+    recipe line.
+    """
+    ungated = _ungated_makefile_npm(_MAKEFILE)
+    assert not ungated, (
+        "Makefile recipes run npm/npx outside the warnings gate; route them "
+        "through scripts/build_web_no_warnings.sh (or web-install for an "
+        f"install): {ungated!r}"
     )
