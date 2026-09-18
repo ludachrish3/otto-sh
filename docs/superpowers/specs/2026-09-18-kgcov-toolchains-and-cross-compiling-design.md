@@ -327,6 +327,23 @@ repo5's settings are untouched, and the `default` toolchain builds no overlay
 at all, which is why the routine kmod e2e's path is unchanged. Nothing in
 otto changes.
 
+**Clang's arm also needs lcov to ignore the sources it cannot open.** gcc
+records the compile's working directory in the `.gcno` (a gcc-built
+`demo_main.gcno` holds `/usr/src/linux-headers-6.8.0-86-generic` beside
+`./arch/arm64/include/asm/uaccess.h`), so gcov resolves the records for the
+kernel headers the module inlined from. Clang writes the gcov-4.2-format
+`.gcno`, which has no such record, and no clang flag changes that
+(`-fcoverage-compilation-dir` and `-fcoverage-prefix-map` leave the recorded
+path `./…`), so llvm-cov emits those header paths as kbuild gave them —
+relative to the kernel tree — and geninfo, which resolves a relative path
+against the data directory, refuses: `unable to open <fetch
+dir>/arch/arm64/include/asm/cpucaps.h`. They are kernel headers, never the
+module's own files, and the store keeps only repo files in any case. lcov's
+own remedy is `--ignore-errors source`, so the proof's clang arm passes it
+through a one-line wrapper named as the bed hosts' `toolchain.lcov` — otto
+runs the lcov the host record names for both the capture and the merge —
+while every gcc arm keeps `/usr/bin/lcov`. Still no otto change.
+
 **Cross build-only (dev VM).** A `kgcov`-marked module,
 `tests/e2e/cov/test_kgcov_cross_build.py`, builds the library and the
 demo (a copy of the demo sources under the test's temporary directory,
@@ -354,8 +371,12 @@ The library has no unit tests (kernel code); its proof is the matrix.
   "Another kernel, ISA or compiler" — the same-compiler rule, the knobs,
   the source-tree cross recipe, the clang-on-a-gcc-kernel overrides, and
   the matrix as the evidence of what is supported (gcc 4.7+ in format,
-  9 to 14 proven live; clang 11+, 18 proven live). One home; the README
-  under `docs/examples/kgcov/` links it.
+  9 to 14 proven live; clang 11+, 18 proven live), and — for a clang build
+  specifically — that lcov must be told to ignore unreadable sources
+  (`ignore_errors = source` in `~/.lcovrc`, or an lcov wrapper named as the
+  host's `toolchain.lcov`), because clang's `.gcno` records no compilation
+  directory for the kernel headers the module inlined from. One home; the
+  README under `docs/examples/kgcov/` links it.
 - `docs/superpowers/specs/2026-09-17-product-kinds-…-design.md` §6:
   amended to the constructor-walk mechanism and the two backends.
 
