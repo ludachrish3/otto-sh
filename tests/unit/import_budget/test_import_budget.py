@@ -104,8 +104,20 @@ def test_import_budget(surface):
 def test_measure_reports_io_counts():
     result = harness.measure(["python"])
     io = result["io"]
-    assert set(io) == {"open", "scandir", "listdir", "open_fixture", "open_home"}
+    assert set(io) == {
+        "open",
+        "scandir",
+        "listdir",
+        "listdir_calls",
+        "open_fixture",
+        "open_home",
+    }
     assert all(isinstance(v, int) for v in io.values())
+    # `listdir` counts DIRECTORIES and `listdir_calls` the calls that visited
+    # them, so one can never exceed the other in a live measurement. Both ends
+    # matter: equality everywhere would mean no directory was ever revisited
+    # (nothing to be immune to), and a zero would mean the hook is dead.
+    assert 0 < io["listdir"] <= io["listdir_calls"], io
     # Importing otto reads files. Zero here means the hook was installed after
     # the work it exists to observe.
     assert io["open"] > 0
@@ -651,6 +663,49 @@ def test_missing_io_golden_fails_by_name(monkeypatch):
     assert "version_repo.io.9.99.txt" in message
     assert "CPython 9.99" in message
     assert "make import-snapshot" in message
+
+
+def test_gated_listdir_counts_directories_not_calls(tmp_path):
+    """Re-listing ONE directory must not move the gated counter.
+
+    CPython's ``FileFinder`` caches each ``sys.path`` directory's contents and
+    re-calls ``os.listdir`` on any of them whose ``st_mtime`` moved since it
+    cached it. The measured child imports from trees it SHARES with the rest of
+    the run — the editable install's ``src/otto/*``, and the cwd, which
+    ``python -c`` puts on ``sys.path`` — so a concurrent xdist sibling creating
+    ``src/otto/<pkg>/__pycache__/`` on its first import bumps that directory's
+    mtime and costs the measurement one extra call. ``PYTHONDONTWRITEBYTECODE``
+    (see :func:`surface_env`) keeps the CHILD from writing bytecode; it has no
+    say over the siblings writing the shared source tree.
+
+    That extra call is a fact about who else happened to be running, not about
+    otto's import graph, and it reddened the per-surface goldens on #360/#361 —
+    a fresh runner's cold bytecode cache is exactly when those ``__pycache__``
+    directories get created. #343 saw the same counter move under the same
+    mechanism one comparison over, and excluded it from the repeat check rather
+    than making it immune.
+
+    Counting DIRECTORIES makes a refill a no-op while a genuinely new directory
+    in the import graph still moves the number. The raw calls stay visible as
+    ``listdir_calls`` — context, like ``open``, never gated.
+    """
+    import json
+
+    body = f"""
+import json, os
+_d = {str(tmp_path)!r}
+_before = dict(_io_counts)
+os.listdir(_d)
+os.listdir(_d)
+print(json.dumps({{"before": _before, "after": dict(_io_counts)}}))
+"""
+    measured = json.loads(harness._run_child(harness._CHILD_IO_PREAMBLE + body))
+    before, after = measured["before"], measured["after"]
+
+    assert after["listdir"] - before["listdir"] == 1, measured
+    # ...and BOTH calls have to have been observed, or the assertion above goes
+    # green on a counter that simply stopped counting.
+    assert after["listdir_calls"] - before["listdir_calls"] == 2, measured
 
 
 def test_open_fixture_is_the_gated_half_of_open():

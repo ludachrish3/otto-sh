@@ -477,7 +477,9 @@ if _home_root:
     _home_real = _os.path.realpath(_home_root) + _os.sep
     if _home_real not in _home_prefixes:
         _home_prefixes += (_home_real,)
-_io_counts = {"open": 0, "scandir": 0, "listdir": 0, "open_fixture": 0, "open_home": 0}
+_io_counts = {"open": 0, "scandir": 0, "listdir": 0, "listdir_calls": 0,
+              "open_fixture": 0, "open_home": 0}
+_listdir_dirs = set()
 def _io_hook(event, args):
     if event == "open":
         _io_counts["open"] += 1
@@ -493,7 +495,12 @@ def _io_hook(event, args):
     elif event == "os.scandir":
         _io_counts["scandir"] += 1
     elif event == "os.listdir":
-        _io_counts["listdir"] += 1
+        _io_counts["listdir_calls"] += 1
+        _dir = args[0]
+        if isinstance(_dir, bytes):
+            _dir = _os.fsdecode(_dir)
+        _listdir_dirs.add(_dir if isinstance(_dir, str) else repr(_dir))
+        _io_counts["listdir"] = len(_listdir_dirs)
 _sys.addaudithook(_io_hook)
 def _fixture_path_entries():
     if not _fixture_root:
@@ -865,11 +872,19 @@ inside the workspace under measurement, and ``open_home`` the half of those
 that land in the user's home — the term that dominates when ``$HOME`` is on a
 network filesystem, and the one a fixture total cannot be read back apart into.
 
-``listdir`` is gated here but is NOT scoped: the audit hook counts every
-``os.listdir`` in the child, the interpreter's own ``sys.path`` walking
-included. A golden is one measurement against a file under one interpreter, so
-it earns its keep there; comparing two measurements against EACH OTHER is a
-different claim, and :data:`REPEATABLE_IO_COUNTERS` is the set that makes it.
+``listdir`` is gated here but is NOT scoped: it spans the child's whole
+``sys.path`` walking, the interpreter's own included. IT COUNTS DIRECTORIES,
+NOT CALLS, and that is what makes it giveable to a golden at all. CPython's
+``FileFinder`` caches a directory's contents and re-lists it whenever that
+directory's ``st_mtime`` moved, so a raw call count also counts whoever else
+wrote to a tree the child imports from — and the child imports from trees it
+SHARES with the rest of the run (the editable install's ``src/otto/*``, and the
+cwd). A sibling xdist worker creating ``src/otto/<pkg>/__pycache__/`` on its
+first import bought exactly one such call, which is how a raw count reddened
+the goldens on #360/#361 and the repeat comparison on #343. Counting the
+directory set drops the refill and keeps the signal: a new directory in the
+import graph still moves the number. The raw calls survive as ``listdir_calls``
+— context beside ``open``, never gated.
 """
 
 
