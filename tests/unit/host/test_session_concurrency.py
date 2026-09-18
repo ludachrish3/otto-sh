@@ -50,9 +50,27 @@ file, arriving instead through the one wall-clock bound those assertions do not
 control. No defensible value survives a 12 s freeze; 60 s does. See
 :func:`_gather_settled` for the second half of that failure — why the guard
 could neither stop the test nor report itself.
+
+Issue #359 is the sequel, and it corrects that last claim: 60 s does NOT
+survive a freeze on its own, because a freeze does not only *stop* the clock,
+it fires whatever budgets were in flight — and each one that fires costs far
+more than the freeze did. ``test_session_manager_property`` carried a 5.0 s
+budget on its ``run_default`` op; a ~15 s nightly freeze fired it, and
+``run_cmd``'s timeout path runs ``_recover_session``, whose ``confirm_live``
+resend loop could not be satisfied by a fake that answered only the readiness
+and command markers. Every such recovery therefore ran its full
+``_RECOVERY_TIMEOUT`` (5 s) against a 0.07 s test, on a machine that was by
+then healthy again — the three sibling xdist workers had resumed at their
+normal rate while this one stayed wedged. Both halves are now closed: the fake
+answers the recover probe (so a fired budget costs one probe, not five
+seconds), and the op no longer imposes a finite budget at all. The general
+rule this leaves behind: a test double that implements only the success
+protocol does not make timeouts harmless, it makes them maximally expensive,
+because the production error path is where the long, patient retries live.
 """
 
 import asyncio
+import math
 import re
 from collections.abc import Awaitable
 from types import SimpleNamespace
@@ -125,6 +143,17 @@ class _StabilityFakeSession(ShellSession):
         elif self._begin_marker in data:
             self._read_queue.put_nowait(f"{self._begin_marker}\n")
             self._read_queue.put_nowait(f"{self._end_marker_prefix}0__\n")
+        elif self._recover_marker in data:
+            # Answer the post-timeout liveness probe (``echo "<RECOVER>$?__"``)
+            # the way a live shell would — the digits are what prove real
+            # execution to ``recover_pattern``. Without this branch every
+            # recovery is unsatisfiable and ``confirm_live`` resends until
+            # ``_RECOVERY_TIMEOUT`` (5 s) expires, which is how a single fired
+            # command budget used to cost 25x this module's whole runtime
+            # (issue #359). A fake that answers only the happy protocol does
+            # not make timeouts harmless — it makes them maximally expensive,
+            # because the error path is where the patient retry budgets live.
+            self._read_queue.put_nowait(f"{self._recover_marker}0__\n")
 
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
         buf = ""
@@ -249,6 +278,62 @@ class _SlowConnectFactory(_Factory):
         )
         self.created.append(session)
         return session
+
+
+# ── The fake answers the recovery probe ───────────────────────────────────────
+
+
+class _SwallowOneCommandFakeSession(_StabilityFakeSession):
+    """Fake whose first framed command is never answered.
+
+    Models what a frozen runner does to a command that is already in flight:
+    the reply never arrives, so the caller's budget is *certain* to fire. The
+    stimulus is deliberate — load can only delay this timeout, never prevent
+    it, so it cannot produce a false green.
+    """
+
+    def __init__(self, instance_id: int) -> None:
+        super().__init__(instance_id)
+        self.swallow_next_command = False
+
+    async def _write(self, data: str) -> None:
+        if self.swallow_next_command and self._begin_marker in data:
+            self.swallow_next_command = False
+            return  # the reply the caller is waiting for never comes
+        await super()._write(data)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_recovery_after_a_timed_out_command_confirms_against_the_fake() -> None:
+    """A timed-out command must leave the fake session CONFIRMED live.
+
+    Regression for issue #359. ``run_cmd``'s timeout path runs
+    ``_recover_session``, which drives ``confirm_live`` — a resend loop that
+    only stops early when the probe is *answered*. This fake used to answer
+    the readiness and command markers but not the recover probe, so every
+    recovery it was asked for was unsatisfiable and ran until
+    ``_RECOVERY_TIMEOUT`` (5 s) expired — 25x what this whole module costs when
+    nothing goes wrong, self-inflicted and per timeout. A nightly runner freeze
+    fired one such budget and the accumulated recoveries blew the 60 s runaway
+    guard, surfacing as a hypothesis ``FlakyFailure`` rather than as itself.
+
+    The assertion is structural, not a clock reading: ``_confirm_recovered``
+    marks the session dead precisely when the probe went unanswered, so
+    ``alive`` *is* the "did recovery confirm" bit, and a loaded gate cannot
+    counterfeit it.
+    """
+    session = _SwallowOneCommandFakeSession(instance_id=1)
+    await session._ensure_initialized()
+    session.swallow_next_command = True
+
+    result = await session.run_cmd("echo", timeout=0.01)
+
+    assert result.timed_out, "the swallowed command should have hit its budget"
+    assert session.alive, (
+        "recovery did not confirm: the fake never answered the recover probe, so "
+        "confirm_live resent until _RECOVERY_TIMEOUT expired and marked the session dead"
+    )
 
 
 # ── Targeted concurrency tests ────────────────────────────────────────────────
@@ -451,7 +536,13 @@ async def _exec_ops(ops: list[str]) -> None:
             elif op == "exec":
                 await mgr.exec("echo")
             elif op == "run_default":
-                await mgr.run_cmd("echo", timeout=5.0)
+                # No finite budget: the fakes answer in memory, so any wall
+                # clock here is a stimulus this test never wanted. A 5.0 s
+                # budget used to sit here and a runner freeze fired it — see
+                # the module docstring on issue #359. The runaway guard for
+                # this test is its ``@pytest.mark.timeout``, which is the only
+                # bound in this module allowed to discriminate nothing.
+                await mgr.run_cmd("echo", timeout=math.inf)
             elif op == "kill_default" and mgr._session is not None:
                 mgr._session._alive = False
             elif op == "kill_a" and "A" in mgr._named_sessions:
