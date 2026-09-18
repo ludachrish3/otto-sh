@@ -27,7 +27,7 @@ on that side.
 | Module layering | `tach` against `tach.toml` | — none today |
 | Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — sixteen Python rules | `ast-grep` — four rules (`no-plan-coordinates-ts`/`-tsx` over `web/src/**`, `no-bare-digit-textcontent-ts`/`-tsx` over web test files) |
 | Import cost | `scripts/import_budget.py` — module-count caps, snapshots, denylist, and per-interpreter file-I/O goldens | — (knip covers dependencies only) |
-| Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest` |
+| Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest`, run under `build_web_no_warnings.sh`: any stderr output fails (see *Built-bundle gates*) |
 | Coverage floor | `coverage.py` / `pytest-cov` — combined line+branch totals (`.coveragerc` sets `branch = true`): 95.5 for the full local run, 94.75 for the hostless CI slice (both pinned as codified minimums by `tests/unit/test_coverage_floors.py`, which also pins the branch setting) | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |
 | Browser e2e | `pytest-playwright` — two suites (monitor dashboard, coverage report), three engines each (Chromium, Firefox, WebKit) | (same lane — `OTTO_TS_COVERAGE=1` arms CDP V8 collection under `make dashboard` only; the bundle-filter **drift guard** runs at configure time in every lane, armed or not — `tests/_fixtures/_ts_bundle_filter.py`) |
 | Cross-language contract | `tests/_fixtures/covapp_contract.json`, asserted from both sides; `types.gen.ts` **and** `export.gen.ts` codegen + `git diff --exit-code` | (same two mechanisms) |

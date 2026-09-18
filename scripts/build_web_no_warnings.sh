@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Warnings-as-errors wrapper for the web/ vite builds (Chris, 2026-07-19): a
-# warning is a build failure, because a warning that only scrolls past in
-# `make web`/`make docs`/`make coverage` output never gets fixed. This runs the
-# given npm script, streams its output live, and FAILS if the build:
+# Warnings-as-errors wrapper for web/'s npm scripts — the vite builds and
+# the vitest suite (Chris, 2026-07-19): a warning is a failure, because a
+# warning that only scrolls past in `make web`/`make docs`/`make coverage`
+# output never gets fixed. This runs the given npm script, streams its output
+# live, and FAILS if the npm script:
 #
 #   1. wrote ANYTHING to stderr (the captured stderr is reprinted in the
 #      failure message), or
@@ -21,8 +22,8 @@
 #     Vite's logger entirely, so no Vite-side hook (customLogger/onwarn) could
 #     ever have caught it.
 # Scanning for known message shapes loses to the next tool with its own
-# format; "the build writes nothing to stderr" does not. A clean build of both
-# npm scripts writes zero stderr bytes.
+# format; "the script writes nothing to stderr" does not. A clean run of each
+# wrapped npm script writes zero stderr bytes.
 #
 # The chunk-size case specifically: vite.config.ts sets an explicit
 # chunkSizeWarningLimit budget (see the comment there). Growth past that
@@ -31,8 +32,15 @@
 # failure — the same pattern as the Python import-budget guard: the ceiling
 # is enforced, and raising it requires a deliberate, reviewed edit.
 #
+# The vitest suite runs through this too. Its setup file already fails a test
+# that calls console.warn/console.error, but that misses what happens outside
+# a test body: process.emitWarning (Node deprecations, MaxListeners),
+# beforeAll/afterAll output, and vitest's own messages. The any-stderr rule
+# catches all of them unchanged.
+#
 # Usage: scripts/build_web_no_warnings.sh <npm-script>   (e.g. build,
-# build:covapp). Run from the repo root (make does): it runs `npm run` in web/.
+# build:covapp, test, test:coverage). Run from the repo root (make does): it
+# runs `npm run` in web/.
 set -euo pipefail
 
 SCRIPT="${1:?usage: build_web_no_warnings.sh <npm-script>}"
@@ -51,7 +59,7 @@ trap 'rm -f "$OUT" "$ERR"' EXIT
 # `tee "$OUT"` (captured, still shown on stdout). Both tees are ordinary
 # pipeline members, so bash waits for them — the files are complete once this
 # line returns (process substitution would race that). pipefail makes the
-# status the build's own when it fails; it is propagated below as-is. A
+# status the script's own when it fails; it is propagated below as-is. A
 # non-zero status can also be a tee dying (SIGPIPE, 141, when whatever reads
 # this script's output goes away), so the message names both, not just npm.
 status=0
@@ -67,7 +75,7 @@ if [ -s "$ERR" ]; then
     {
         echo ""
         echo "build_web_no_warnings: \`npm run $SCRIPT\` wrote to stderr. Any stderr"
-        echo "output from the build counts as a warning, and warnings are errors"
+        echo "output counts as a warning, and warnings are errors"
         echo "here. Fix the cause. The captured stderr:"
         echo "----"
         cat "$ERR"
@@ -78,8 +86,8 @@ fi
 
 if grep -qE '\(!\)| WARN ' "$OUT"; then
     echo "" >&2
-    echo "build_web_no_warnings: the build emitted warning(s) above — matched" >&2
-    echo "'(!)' (vite/rollup) or ' WARN ' (rolldown) — during \`npm run $SCRIPT\`;" >&2
+    echo "build_web_no_warnings: \`npm run $SCRIPT\` printed warning(s) above —" >&2
+    echo "matched '(!)' (vite/rollup) or ' WARN ' (rolldown) on stdout;" >&2
     echo "warnings are errors here. Fix the cause (for chunk-size: the budget" >&2
     echo "lives in web/vite.config.ts's chunkSizeWarningLimit and raising it" >&2
     echo "is a reviewed decision)." >&2

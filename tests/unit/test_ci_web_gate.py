@@ -13,9 +13,12 @@ the Makefile chain from drifting back to something weaker.
 import json
 import re
 
+import pytest
 import yaml
 
 from tests._fixtures.paths import PROJECT_ROOT
+
+pytestmark = pytest.mark.interpreter_agnostic
 
 _REPO = PROJECT_ROOT
 _MAKEFILE = (_REPO / "Makefile").read_text()
@@ -95,6 +98,50 @@ def test_coverage_ts_unit_runs_the_vitest_floor() -> None:
     # the command it is announcing.
     cov = re.search(r"^coverage-ts-unit:.*(?:\n\t.+)+", _MAKEFILE, re.MULTILINE)
     assert cov, "no `coverage-ts-unit` target in the Makefile"
-    assert "npm run test:coverage" in cov.group(0), (
-        "`coverage-ts-unit` must enforce the vitest unit-tier coverage floor"
+    assert "scripts/build_web_no_warnings.sh test:coverage" in cov.group(0), (
+        "`coverage-ts-unit` must enforce the vitest unit-tier coverage floor, "
+        "through the no-stderr warnings gate"
+    )
+
+
+def _vitest_scripts() -> list[str]:
+    """web/package.json scripts that run vitest (test, test:coverage, ...)."""
+    scripts = json.loads((_REPO / "web" / "package.json").read_text())["scripts"]
+    names = sorted(name for name, command in scripts.items() if "vitest" in command)
+    assert names, "no web/package.json script runs vitest any more"
+    return names
+
+
+def test_every_vitest_run_goes_through_the_warnings_gate() -> None:
+    """vitest.setup.ts fails a test on console.warn, but process.emitWarning,
+    beforeAll/afterAll output and vitest's own messages slip past it; only the
+    no-stderr gate (scripts/build_web_no_warnings.sh) catches those.
+
+    Any recipe line that could start vitest counts: a direct `vitest`/`npx
+    vitest`, `npm test`/`npm t`, or `npm run`/`npm run-script` of a script
+    that runs vitest, whatever flags (`--prefix web`, ...) sit in between.
+    """
+    names = "|".join(re.escape(name) for name in _vitest_scripts())
+    runs_vitest = re.compile(
+        # vitest as a command word (bare, npx, node_modules/.bin/), not as
+        # part of a file name such as reports/ts-cov/final/vitest.json
+        r"(?<![\w.-])vitest(?![\w.-])"
+        r"|\bnpm\b.*\b(?:test|t)\b"
+        rf"|\bnpm\b.*\brun(?:-script)?\s+(?:{names})(?![\w:-])"
+    )
+    recipe_lines = re.findall(r"^\t.*$", _MAKEFILE, re.MULTILINE)
+    bare = [
+        line.strip()
+        for line in recipe_lines
+        if "$(SAY)" not in line
+        and runs_vitest.search(line)
+        and "scripts/build_web_no_warnings.sh" not in line
+    ]
+    assert not bare, (
+        "a Makefile recipe runs the vitest suite outside the no-stderr gate; "
+        f"route it through scripts/build_web_no_warnings.sh instead: {bare!r}"
+    )
+    gated = re.findall(r"^\t@scripts/build_web_no_warnings\.sh (\S+)$", _MAKEFILE, re.MULTILINE)
+    assert set(_vitest_scripts()) <= set(gated), (
+        f"not every vitest script runs through the gate: {gated!r}"
     )

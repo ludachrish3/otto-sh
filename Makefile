@@ -539,8 +539,8 @@ web-dev: $(WEB_NODE_MODULES) ## (Dev) Run the web/ Vite dev server with hot relo
 # stay here: they are artifact/dev targets, not language-parity gates.
 
 test-ts: $(WEB_NODE_MODULES) ## (Dev) Run the web/ vitest suite once — no coverage, the fast TS loop. (Deliberately no test-python twin and no bare `test`: the fast Python lane is `coverage-unit`.)
-	@$(SAY) "vitest (web/) — no coverage"
-	@cd web && npm run test
+	@$(SAY) "vitest (web/) — no coverage (warnings are errors)"
+	@scripts/build_web_no_warnings.sh test
 
 web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + covapp) from src/otto/_webassets/
 	@$(SAY) "removing built web/ dist (monitor + covapp)"
@@ -1346,8 +1346,8 @@ check-ts: lint-ts typecheck-ts ## (Quality) All TS static analysis: Biome + knip
 	@scripts/check_untitledui_hash.sh
 
 coverage-ts-unit: $(WEB_NODE_MODULES) ## (Quality) Run the web/ vitest suite with v8 coverage and enforce the UNIT-tier floor (the TS analogue of coverage-hostless's reduced CI gate; the full merged gate is coverage-ts)
-	@$(SAY) "vitest coverage (web/) — unit-tier floor"
-	@cd web && npm run test:coverage
+	@$(SAY) "vitest coverage (web/) — unit-tier floor (warnings are errors)"
+	@scripts/build_web_no_warnings.sh test:coverage
 
 # The FULL TS coverage gate: vitest (unit) + the Playwright e2e leg, merged
 # into ONE istanbul report and gated at the merged floor. The vitest-only
@@ -1355,8 +1355,8 @@ coverage-ts-unit: $(WEB_NODE_MODULES) ## (Quality) Run the web/ vitest suite wit
 # browserless tier CI runs — the exact analogue of coverage-hostless's 95 vs
 # the full gate's 96 on the Python side.
 coverage-ts: $(TS_E2E_COV) ## (Quality) Merged TS coverage gate: vitest + browser-e2e legs, one report, one floor (see also coverage-ts-unit)
-	@$(SAY) "vitest coverage (web/) — unit leg"
-	@cd web && npm run test:coverage
+	@$(SAY) "vitest coverage (web/) — unit leg (warnings are errors)"
+	@scripts/build_web_no_warnings.sh test:coverage
 	@$(SAY) "merging vitest + browser-e2e coverage — merged floor"
 	@rm -rf reports/ts-cov/final && mkdir -p reports/ts-cov/final
 	@cp web/coverage/coverage-final.json reports/ts-cov/final/vitest.json
