@@ -73,6 +73,13 @@ already see and what they asked for:
   lab would leave a user unable to find out that an instruction exists at
   all.
 
+`[project] lab_patterns` has no default, and a table without it applies to no
+lab: every-lab is spelled `[".*"]`, out loud, so match-all is a visible choice
+and never a default that quietly widens a project's reach. Explicit targeting
+(`otto host <id>`, `get_host("id")`) is not bounded by the declaration, because
+a repo naming a jump host it does not own must still be able to reach it, and a
+scoping typo must never brick the one command that could diagnose it.
+
 ## The orchestration environment
 
 One process means one interpreter, so the repos' glue code has to be
@@ -88,6 +95,9 @@ builds it. Its choices:
   whose `host_patterns` match no host is inactive, and would refuse the run
   instead of warning. It is metadata only — no network, no imports — which is
   what makes it affordable on every invocation.
+- **The command line outranks the settings file.** `--backend` beats a repo's
+  `[env] backend`, because the operator at the terminal knows things the file
+  does not — that uv is not installed on this particular host, say.
 - **Backend choices are never silently changed.** An explicit backend that
   cannot be honoured is refused rather than downgraded, since the user asked
   for it precisely to avoid the fallback; two repos declaring different

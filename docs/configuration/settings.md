@@ -53,21 +53,17 @@ libs     = ["../shared/pylib"]      # <repo>/../shared/pylib
 tls_cert = "~/.otto/tls/cert.pem"   # [monitor] table: $HOME/.otto/tls/cert.pem
 ```
 
-This file is committed and shared by everyone working on the repo, so a
-path is never interpreted relative to the directory you happen to run
-`otto` from.  Use `~` when you deliberately want a per-user location,
-such as TLS material.
+A path is never interpreted relative to the directory you happen to run `otto`
+from.  Use `~` when you want a per-user location, such as TLS material.
 
-When several repos are active at once (`OTTO_SUT_DIRS`), each
-`settings.toml` resolves against its own repo root — the same text means
-the right thing in every repo.
+When several repos are active at once (`OTTO_SUT_DIRS`), each `settings.toml`
+resolves against its own repo root.
 
 #### Removed: `${sut_dir}`
 
-Earlier versions expanded `${sut_dir}` to the repo root.  It is gone —
-a relative path already resolves there, so the prefix was redundant.  It
-is no longer special in any way: a settings file still containing it
-gets a directory literally named `${sut_dir}`.
+Earlier versions expanded `${sut_dir}` to the repo root.  It is gone, and no
+longer special in any way: a settings file still containing it gets a directory
+literally named `${sut_dir}`.
 
 Drop the prefix: `"${sut_dir}/tests"` becomes `"tests"`, and
 `"${sut_dir}/../shared"` becomes `"../shared"`.
@@ -108,14 +104,14 @@ libs
 tests
 : Defines where test discovery happens, in two different senses.  Every
   `test_*.py` at the **top level** of a listed directory is imported at
-  startup, which auto-registers any `Test`-prefixed `OttoSuite` subclass as
-  an `otto test` subcommand — that scan is *not* recursive, because these
-  files are executed on every otto command (list a subdirectory too if you
-  keep suites there).  Selection runs (`otto test --tests NAME[,NAME...]` or
+  startup, which auto-registers any `Test`-prefixed `OttoSuite` subclass as an
+  `otto test` subcommand — that scan is *not* recursive, and these files are
+  imported on every otto command (list a subdirectory too if you keep suites
+  there).  Selection runs (`otto test --tests NAME[,NAME...]` or
   `otto test -m EXPRESSION` with no suite name) hand the same directories to
   pytest, one session per repo, and pytest recurses as usual — so a plain
   `test_*` function in a subdirectory runs without being imported here.
-  Defaults to `[]`.  See {doc}`../cli/test/index` for the reasoning.
+  Defaults to `[]`.  See {doc}`../cli/test/index`.
 
 init
 : List of Python module names (dot-separated) to import at startup.  Use
@@ -259,10 +255,10 @@ fails validation, naming the file and pointing here.
 
 ### User-level settings
 
-One file sits outside every repo: `~/.otto/settings.toml`, otto's **user-level**
-settings.  It holds what is true of the person and the machine rather than of a
-project — today that is two tables, `[inventory]` and `[creds]`, because a
-machine is a machine regardless of which repo you are working in:
+One file sits outside every repo: `~/.otto/settings.toml`, otto's
+**user-level** settings.  It holds what is true of the person and the machine
+rather than of a project — today that is two tables, `[inventory]` and
+`[creds]`:
 
 ```toml
 [inventory]
@@ -381,14 +377,11 @@ backend = "uv"   # or "pip"; omit to auto-detect
 
 This repo's standing choice of installer for the environment
 {doc}`../cli/env/index` builds. It is a **preference, not a requirement**:
-`--backend` on the command line outranks it, because the operator at the
-terminal knows things the file does not — that uv is not installed on this
-particular host, say. Omit it to auto-detect: uv when it is on `PATH`,
-otherwise the standard library's `venv` plus pip.
+`--backend` on the command line outranks it. Omit it to auto-detect: uv when it
+is on `PATH`, otherwise the standard library's `venv` plus pip.
 
-Because a workspace is several repos, two of them can declare different values.
-That is a hard error naming both rather than a silent pick — an installer you
-did not choose is not a thing to bind quietly.
+Two repos in one workspace declaring different values is a hard error naming
+both.
 
 ### `[dependencies]` names repos; `pyproject.toml` names packages
 
@@ -526,6 +519,6 @@ Relative paths resolve against the repo root — see
 [Path resolution](#path-resolution).
 
 {doc}`../cli/docker/use-cases` is the home for what these keys *mean* — how
-fragments compete and are placed, what `${otto:...}` resolves to and why that
-syntax is valid only in this file, and how the env channels merge.
-{doc}`../cli/docker/index` lists the commands that read this block.
+fragments compete and are placed, what `${otto:...}` resolves to and where that
+syntax is valid, and how the env channels merge. {doc}`../cli/docker/index`
+lists the commands that read this block.

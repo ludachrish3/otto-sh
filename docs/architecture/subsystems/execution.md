@@ -189,10 +189,8 @@ do:
 - **Never report success over nothing.** A `pattern=` that selects no host
   raises, because a silently empty sweep is the one failure worse than a
   crash: it reports success over a lab nothing happened on.
-- **Never let scoping lock anyone out.** Explicit targeting (`otto host <id>`,
-  `ctx.get_host`) is never scoped: a repo that has to hop through a machine it
-  does not own must still be able to name it, and a scoping typo must never
-  brick the one command that could diagnose it. A driving project whose
+- **Never let scoping lock anyone out.** Explicit targeting is never scoped
+  ({doc}`bootstrap`, "Project activation"). A driving project whose
   declaration admits no host aborts, but a dependency's is only skipped — one
   project's scoping must not veto another project's run.
 - **Never blur install state.** `status` exits with three codes rather than a

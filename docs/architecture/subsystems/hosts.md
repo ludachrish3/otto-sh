@@ -95,7 +95,7 @@ persistent session *and* of other concurrent `exec` calls, which is what
 makes `asyncio.gather()` fan-out safe. Embedded hosts are exec-only —
 a serial console has no multiplexed channels to hold a session on.
 
-Two pieces of per-session state matter architecturally:
+Three pieces of per-session state matter architecturally:
 
 - **`current_user` and elevation.** Privilege changes (`su`, `sudo`,
   `switch_user`) are session state, tracked per session rather than per host —
@@ -117,6 +117,22 @@ Two pieces of per-session state matter architecturally:
   that has been confirmed in that application's dialect.
   `ShellSession._open()` and `ShellSession._handshake()` are the two halves;
   frame entry re-runs only the second.
+
+Every Unix shell otto opens also suppresses its own shell history
+({ref}`per-host-shell-history`), so automation traffic does not bury a human's
+history on a shared lab box. otto neutralizes `HISTFILE` rather than clearing
+`HISTSIZE`: `HISTSIZE=0` would make bash write its emptied history list *over*
+the history file at exit, destroying the user's real history. Suppression is
+best-effort and silent by design, and every part of it is guarded. The guards
+are load-bearing rather than decorative — POSIX makes *both* an error in a
+special builtin and a failed variable assignment abort the line, either of
+which would strand the readiness probe that shares it and take the host offline
+— so they must not be simplified away. `otto login` is excluded on purpose: it
+hands the user a real shell, and silently losing up-arrow recall would be worse
+than the noise. The cost is that a login-proxy resync probe, or a session-setup
+hook's commands, land in that shell's history; the two cannot both be had,
+since suppressing the probe means suppressing the user's history for the whole
+session.
 
 ## Connections, terms, and hops
 
@@ -163,6 +179,12 @@ moment gets a listener beside otto's instead of an address-in-use error, and
 the kernel then decides which of the two receives the connection. That is why
 a port held by more than one listener is refused and retried on a fresh one
 ({doc}`../../cli/host/netcat`).
+
+The netcat backend's remote listener is ended by otto reaping it on every error
+path and by the `timeout` prefix its spawn carries — never by `nc -w`, which
+otto does not emit. Measured on 2026-08-25, `-w` bounds the idle time of an
+*accepted* connection, so it kills a stalled transfer with a success code and a
+partial file.
 
 ## From lab data to a host object
 

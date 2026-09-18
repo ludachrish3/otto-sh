@@ -146,32 +146,25 @@ element anywhere matches fails the load rather than yielding an empty lab.
 What *is* fine is a `labs` entry in a file that holds none of that lab's
 elements — another file, or another source, supplies them.
 
-Declaration is what makes pattern membership sound.  Because an element joins
-labs by regex ([Elements](#elements) below), the set of lab names is no
-longer derivable from the elements — a pattern like `"unix.*"` names nothing
-in particular — so the `labs` table is the enumerable record of what exists.
-
-Resources are **declared**, never derived: this entry is what the lab holds
-*as a whole*.  An element or a host may declare its own alongside — three
-levels that combine freely; see [Elements](#elements) and
-[Per-host fields](#per-host-fields) below, and
-{doc}`../cli/reservation/index` for what a run actually has to hold.  One
-consequence is worth stating out loud — two labs that share an element contend
-with each other only if something they both hold locks that element.  `otto
-init` warns about any pair that shares an element, reserves nothing in common,
-**and** leaves that element unprotected — no element- or host-level `resources`
-on it.  The warning names the labs, the unprotected elements, and three
-remedies: a shared lab identifier, a `resources` entry on the element (or on
-each of its hosts), or making one lab a sub-lab of the other.  (A lab that
-declares no resources reserves nothing at all, so it is never half of such a
-pair.)
+Resources are **declared**, never derived: this entry is what the lab holds *as
+a whole*.  An element or a host may declare its own alongside — three levels
+that combine freely; see [Elements](#elements) and [Per-host
+fields](#per-host-fields) below, and {doc}`../cli/reservation/index` for what a
+run actually has to hold.  Two labs that share an element contend with each
+other only if something they both hold locks that element.  `otto init` warns
+about any pair that shares an element, reserves nothing in common, **and**
+leaves that element unprotected — no element- or host-level `resources` on it.
+The warning names the labs, the unprotected elements, and three remedies: a
+shared lab identifier, a `resources` entry on the element (or on each of its
+hosts), or making one lab a sub-lab of the other.  (A lab that declares no
+resources reserves nothing at all, so it is never half of such a pair.)
 
 A **sub-lab** is just another declared lab whose name follows a scheme —
 `unix.rack-b4` alongside `unix` — with its own `resources` and `metadata`.
-Elements opt into it through their membership patterns: `"unix(\\..*)?"`
-joins `unix` and every dotted sub-lab of it.  Reserving a portion of a lab
-means declaring that portion as a lab; elements stay the smallest divisible
-unit, and there is deliberately no host-level lab addressing.
+Elements opt into it through their membership patterns: `"unix(\\..*)?"` joins
+`unix` and every dotted sub-lab of it.  Reserving a portion of a lab means
+declaring that portion as a lab; elements stay the smallest divisible unit, and
+there is no host-level lab addressing.
 
 ## Elements
 
@@ -185,7 +178,7 @@ option tables stay on the host entries.
 | `name` | string | Element name — the human-readable name of the equipment, and the source of every child host's id (`slug(name)`; see {ref}`host-identity`).  Must slug to a non-empty token.  Required. |
 | `id` | integer | Data the author assigns to the element; reached as `host.element.id`, never part of any id.  Must be `>= 0`. |
 | `labs` | array of strings | Membership patterns, `re.fullmatch`-ed against a lab name (below).  Required and non-empty: an element that joins nothing is a mistake, and "every lab" is spelled `[".*"]`. |
-| `metadata` | object | Opaque element-level user data; otto never reads it.  Surfaces as `host.element.metadata` on every host of the element — the `Element` copies it on construction, so one element's table can never be reached through another's.  The element's `resources` below travel the same road, surfacing as `host.element.resources` (a frozenset, so it is shared safely). |
+| `metadata` | object | Opaque element-level user data; otto never reads it.  Surfaces as `host.element.metadata` on every host of the element.  The element's `resources` below surface the same way, as `host.element.resources` (a frozenset). |
 | `resources` | array of strings | Reservation identifiers for the element as one unit — the chassis, where the lab is too coarse and a slot too fine.  Combined with the lab's and each host's; see {doc}`../cli/reservation/index`.  Defaults to empty. |
 | `hosts` | array of objects | The element's host entries — the [per-host fields](#per-host-fields) below.  Required and non-empty. |
 
@@ -214,12 +207,11 @@ its Unix management host can share one element when they share membership.
 **The element is also the unit of multi-source override.**  When two
 `[[lab.sources]]` entries carry an element with the same name (compared by
 slug), the later source's element replaces the earlier one **wholesale** —
-hosts, metadata, and the membership the later element states — with a
-warning naming both sources.  Overriding one board of a four-board chassis
-means restating the whole element entry; in exchange, a hybrid element
-(this source's hosts with that source's metadata) cannot exist.  `labs`
-entries replace the same way, resources and metadata together.  See
-{doc}`host-sources`.
+hosts, metadata, and the membership the later element states — with a warning
+naming both sources.  Overriding one board of a four-board chassis means
+restating the whole element entry; a hybrid element (this source's hosts with
+that source's metadata) never results.  `labs` entries replace the same way,
+resources and metadata together.  See {doc}`host-sources`.
 
 Replacement happens per lab load, so it covers exactly the labs *both*
 elements match.  An override that **drops** a membership pattern therefore
@@ -248,7 +240,7 @@ host field — the third reservation level, beside the
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | string | Display-name override.  Otto derives a label from the element name, `board`, and `slot`, exactly as written; setting `name` replaces that label entirely.  It does **not** change the host id. |
-| `metadata` | object | Opaque user data — the sanctioned home for custom fields, so `extra="forbid"` never has to give way.  Otto never reads it.  Surfaces as `host.metadata`; the element's as `host.element.metadata`; the lab's as `host.lab_info.metadata`. |
+| `metadata` | object | Opaque user data — the home for custom fields; any other unknown key fails the load.  Otto never reads it.  Surfaces as `host.metadata`; the element's as `host.element.metadata`; the lab's as `host.lab_info.metadata`. |
 | `resources` | array of strings | This host's own reservation identifiers — a slot.  Combined with the element's and the lab's; see {doc}`../cli/reservation/index`.  Defaults to empty. |
 | `board` | string | Board type, included in the host id when set. |
 | `term` | string | Terminal protocol lab pin — must be in the host's `valid_terms` menu.  Product `[host_preferences]` and CLI `--term` can override; see the precedence chain below. |
@@ -550,9 +542,8 @@ coverage pipeline.  See {doc}`../cli/cov/index`.
 
 ## Example
 
-Two elements from otto's own test fixture — one Unix host, one Zephyr host —
-with the `labs` entries that declare their labs (the fixture's own tables
-list more resources than are shown here):
+Two elements — one Unix host, one Zephyr host — with the `labs` entries that
+declare their labs:
 
 ```json
 {
@@ -623,13 +614,13 @@ list more resources than are shown here):
 ```
 
 `test1` is in two labs because its *element* is: every host it holds joins
-`unix` and `busybox` together.  Note that the reservation identifier `test1`
-is declared on both labs, so reserving either contends with the other — the
+`unix` and `busybox` together.  Note that the reservation identifier `test1` is
+declared on both labs, so reserving either contends with the other — the
 overlap rule the [labs table](#the-labs-table) describes.  The element's own
 `test1-chassis` is a second, independent lock: a run that touches this host
-needs it whichever lab it came in through.  The Zephyr host's
-`hop` names `test4`, another element of the same fixture: a management path
-to reach the device, not a declared link.
+needs it whichever lab it came in through.  The Zephyr host's `hop` names
+`test4`, an element not shown here: a management path to reach the device, not
+a declared link.
 
 (lab-links)=
 
@@ -852,9 +843,7 @@ Merging happens **per key** at every option-table layer.  Setting only
 `port` on a host in `lab.json` still inherits `connect_timeout` from the
 product preference, and so on down to the dataclass default.
 
-The merge is performed at host construction time, so the resulting host
-carries the fully-resolved `*_options` instances — nothing has to be
-re-resolved at use time.
+The merge happens once, at host construction time.
 
 For the full `*_options` field reference and per-field semantics, see
 {doc}`host-options`.
@@ -886,9 +875,7 @@ lab is applicable **and any** `host_patterns` entry matches its id.
 `lab_patterns`
 : The labs this project applies to.  There is **no default**, and leaving the
   key out of a `[project]` table you did write is not "every lab" — it compiles
-  to no patterns, which matches nothing.  Every-lab is spelled `[".*"]`, out
-  loud: match-all is a visible choice here, never a default that quietly widens
-  a project's reach.
+  to no patterns, which matches nothing.  Every-lab is spelled `[".*"]`.
 
 `host_patterns`
 : The hosts of interest within those labs.  Defaults to `[".*"]` — every host
@@ -914,10 +901,9 @@ of it:
 ### Required once a repo registers providers
 
 A repo that registers a product or dev-tool provider (see
-{doc}`../cli/host/capabilities/index`) **must** declare `lab_patterns`.  The check runs
-at bootstrap, right after init modules have been imported — the earliest moment
-the registries can answer — and it aborts the whole run rather than being
-downgraded to a warning:
+{doc}`../cli/host/capabilities/index`) **must** declare `lab_patterns`.  The
+check runs at bootstrap, right after init modules have been imported, and it
+aborts the whole run rather than warning:
 
 ```text
 repo 'sensors' registers product/dev-tool providers but declares no
@@ -950,8 +936,7 @@ A repo that registers **no** providers needs no `[project]` table at all.
   can attach to a machine it never declared.
 - **Explicit targeting is not bounded by it.**  `otto host <id> <verb>`,
   `ctx.get_host("id")` and the `otto host` id listing reach any host in the
-  loaded lab.  Explicit targeting beats scoping: a repo naming a jump host it
-  does not own must still be able to reach it.
+  loaded lab — including a jump host the repo does not own.
 
 ### Merged labs and containers
 
@@ -980,10 +965,10 @@ it goes on the host entry inside its element, and `roles` sits beside it:
 ```
 
 `roles` is lab **intent** — what this lab uses the machine for — not a fact
-about the machine, which is why it lives here and never in the inventory
-layer.  A docker use-case fragment declaring `role = "edge"` is placed on the
-host tagged with it; a multi-role host is normal, and two hosts claiming one
-role is representable and refused at resolution rather than guessed at.
+about the machine: it is a lab-file field, and the inventory never supplies it.
+A docker use-case fragment declaring `role = "edge"` is placed on the host
+tagged with it; a multi-role host is normal, and two hosts claiming one role is
+representable and refused at resolution rather than guessed at.
 
 See {doc}`../cli/docker/use-cases` for how a role is resolved and what the
 other placement knobs are, and {doc}`../cli/docker/index` for the commands
@@ -992,8 +977,8 @@ that read this.
 ## Declaring toolchain tools in lab data
 
 Toolchain tools are host-wide artifacts (a cross-built `gdbserver`, a runtime
-`.so`), so they *are* lab data — declared alongside the coverage toolchain in
-the host's `lab.json` entry:
+`.so`), declared alongside the coverage toolchain in the host's `lab.json`
+entry:
 
 ```json
 "toolchain": {

@@ -63,17 +63,13 @@ class UserSupport(str, Enum):
     )
     ignored = (
         "ignored",
-        (
-            "The argument is accepted so the interface stays uniform, and has "
-            "no effect; the family documents why it can have none."
-        ),
+        "The argument is accepted and validated, and has no other effect.",
     )
     refused = (
         "refused",
         (
-            "The verb raises `NotImplementedError` naming the alternative. The "
-            "refusal is the first line of the body, so a dry run refuses too "
-            "rather than declining as though the call could have been honoured."
+            "The verb raises `NotImplementedError` naming the alternative, and "
+            "refuses under a dry run too."
         ),
     )
 

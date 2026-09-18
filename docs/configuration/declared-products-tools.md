@@ -28,21 +28,18 @@ match = { id = "bb.*", os_version = ">=3.7" }
 ```
 
 Reserved keys: `name` (the product/tool identity), `kind` (which registered
-kind builds it), `match` (which hosts get it). Every other key is a
-parameter of the kind, and a built-in kind **refuses** a key it does not
-know — the entry fails to load, naming the unknown key and listing the valid
-ones, rather than ignoring a typo that would have changed what runs on the
-host.
+kind builds it), `match` (which hosts get it). Every other key is a parameter
+of the kind, and a built-in kind **refuses** a key it does not know — the entry
+fails to load, naming the unknown key and listing the valid ones.
 
 ## Kinds
 
-A kind is named for **what drives its verbs** — install, check, uninstall,
-and how its coverage counters are collected — never for the artifact's
-format. `shell` is not `elf` or `binary`: its verbs are the shell commands
-you write, and the artifact can be anything a shell command can install. A
-kind exists when something brings runtime knowledge to those verbs — otto's
-built-ins below, or a repo-registered kind ([Custom kinds](#custom-kinds));
-anything else is a `shell` entry.
+A kind supplies **what drives its verbs** — install, check, uninstall, and how
+its coverage counters are collected. Use one of otto's built-ins below, or a
+repo-registered kind ([Custom kinds](#custom-kinds)), when something brings
+runtime knowledge to those verbs; anything else is a `shell` entry, whose verbs
+are the shell commands you write and whose artifact can be anything a shell
+command can install.
 
 | Kind | What drives its verbs | Coverage |
 |---|---|---|
@@ -112,11 +109,9 @@ placed the artifact). Without `check`, `is_installed` answers False — otto
 assumes not installed and re-stages, which is safe for what this kind
 serves.
 
-`install`, `uninstall` and `check` run under the host's default command
-timeout (30 seconds) — the `shell` kind passes no `timeout` to `host.run`.
-An install that needs longer belongs to a repo-registered kind instead; a
-`timeout` param on the `shell` kind is a possible later extension, not
-something to add yourself.
+`install`, `uninstall` and `check` run under the host's default command timeout
+(30 seconds) — the `shell` kind passes no `timeout` to `host.run`. An install
+that needs longer belongs to a repo-registered kind instead.
 
 ### Placeholders
 
@@ -142,9 +137,7 @@ install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 /opt/app/{name} &"
 leading components from the path baked into the build, so the tree under
 `cov_dir` stays shallow. Count the leading components of the build directory's
 absolute path on the machine that compiled the artifact and pass that; otto
-reads the value nowhere, because the fetch flattens each product's `.gcda`
-into one directory and the merge pairs them with the local `.gcno` by file
-name.
+never reads the value.
 
 The command runs through `host.run` with **no working directory of its own**,
 so a relative `./app` would resolve against the login shell's directory, not
@@ -161,9 +154,8 @@ host. A literal brace is doubled, `{{` and `}}`, which is what an `awk
 
 Built in, products only: a Zephyr LLEXT extension as a product. An extension
 has no filesystem home — the load *is* the transfer — so `stage` is a no-op,
-`install` loads the object, and `uninstall` unloads it. Modelling it this way
-is what lets a board carry the same product machinery as any other host: the
-name is the `<product>` segment of {ref}`the run tree <run-tree>`, and the
+`install` loads the object, and `uninstall` unloads it. The entry's `name` is
+the `<product>` segment of {ref}`the run tree <run-tree>`, and the
 instrumentation scan reads the extension's own `.gcda` strings.
 
 | Param | Meaning |
@@ -221,20 +213,18 @@ unloaded with `rmmod`.
 | `cov_dir`, `instrumented`, `debug_log_globs` | As the `shell` kind, and likewise products only |
 
 Registered for products only — a kernel module is never a dev tool — and
-refused at lab load on any host missing `load`/`unload`/`lsmod` (today only
-a `UnixHost`), naming the host. With `coverage = "module"` otto appends
+refused at lab load on any host missing `load`/`unload`/`lsmod` (today only a
+`UnixHost`), naming the host. With `coverage = "module"` otto appends
 `gcov_dir=<cov_dir>` to `params` itself so the `otto_kgcov` runtime
 ({doc}`../cli/cov/instrumenting/kernel-modules`) knows where to write; a
-`params` that also sets `gcov_dir=` is a validation error, because
-`cov_dir` has exactly one owner. gcov counts arcs as they run, so a dump
-taken inside a module's exit routine already holds everything that routine
-executed before the dump call — `coverage = "module"` dumps there, and
-`coverage = "kernel"` keeps a module's counters after unload
-(`gcov_persist=1`, the kernel default) — so either way that coverage
-reaches a run's report only when the module is unloaded before the
-post-run fetch, which is what a suite's teardown does. The kernel wrote
-the counter files as root, so every delete a `kmod` product's coverage
-hooks issue runs under sudo. See
+`params` that also sets `gcov_dir=` is a validation error. gcov counts arcs as
+they run, so a dump taken inside a module's exit routine already holds
+everything that routine executed before the dump call — `coverage = "module"`
+dumps there, and `coverage = "kernel"` keeps a module's counters after unload
+(`gcov_persist=1`, the kernel default) — so either way that coverage reaches a
+run's report only when the module is unloaded before the post-run fetch, which
+is what a suite's teardown does. The kernel wrote the counter files as root, so
+every delete a `kmod` product's coverage hooks issue runs under sudo. See
 {doc}`../cli/cov/instrumenting/kernel-modules` for the runtime, the worked
 example, and how a report reads back what it captured.
 

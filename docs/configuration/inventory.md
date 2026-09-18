@@ -45,26 +45,17 @@ them together. Three statements, each of which the loader enforces:
    nothing could ever look one up.
 3. **Creds are matched by `login`, and within a login the highest layer that
    states a field wins.** Lab file over inventory record over creds store,
-   field by field; a `null` states nothing and removes nothing. The lab
-   file's order is the login order — it is the one layer written knowing
-   that otto's first cred is the default login — then record-only logins in
-   record order, then store-only logins in store order. A lab file that wants
-   to fix the order of logins it does not otherwise touch lists them by
-   `login` alone.
+   field by field; a `null` states nothing and removes nothing. The lab file's
+   order is the login order, then record-only logins in record order, then
+   store-only logins in store order. A lab file that wants to fix the order of
+   logins it does not otherwise touch lists them by `login` alone.
 
 `creds` is therefore the one host field the inventory partition **composes**
 rather than **refuses**: every other supplied field must be absent inline
-beside a reference (the rule below). This is deliberately lax. A per-field
-precedence goes silent the day both sides state the field — a password set
-in the lab file hides the store's with no error anywhere — which is exactly
-why the rule below refuses precedence for machine facts. For creds the trade
-is made the other way, on purpose: one order every layer obeys is simpler to
-teach, it lets a team move creds between layers one entry at a time without
-the load failing in between, and the lab file is where a cred change is tried
-before the team-wide inventory or store changes. One consequence deserves its
-own sentence: a `proxy` names project code — a login proxy an `init` module
-registers — so an inventory or store shared across projects that carries a
-route loads only in projects that register that proxy; the doctor names the
+beside a reference (the rule below). A password set in the lab file hides the
+store's with no error. A `proxy` names project code — a login proxy an `init`
+module registers — so an inventory or store shared across projects that carries
+a route loads only in projects that register that proxy; the doctor names the
 cred and the missing proxy.
 
 ## Two layers, one rule
@@ -91,25 +82,21 @@ inventory-owned — it comes from inventory key 'carrot-b1'; remove it here, or
 drop 'inventory' and declare the host inline
 ```
 
-The check runs on the **raw** entry, before the fill, so the fill cannot fool
-it. A field written as `null` states nothing, on either side: `null` inline is
-not a collision, and `null` in a record is not a value — the entry's own
-default applies.
+The check runs on the **raw** entry, before the fill. A field written as `null`
+states nothing, on either side: `null` inline is not a collision, and `null` in
+a record is not a value — the entry's own default applies.
 
-There is deliberately no per-field precedence — no "take it from NetBox if the
-field is filled in, else from the lab file". That rule reads as convenience and
-behaves as a trap: the day somebody fills the field in, the lab file's value
-goes silent with no error anywhere.
+There is no per-field precedence — no "take it from NetBox if the field is
+filled in, else from the lab file".
 
 **Keys are the exception, and are cross-checked rather than filled.**
 `element_id` is a **cross-checked fact**, not an identity key: it is opt-in,
 named in `supplies` like any other field.  Only when a deployment does that
 does a stated record value get checked — when the inventory supplies it and
 both the record and the element state it, they must agree, or the load fails
-naming both values.  A deployment that never names `element_id` in
-`supplies` (the common case) never fills it and never checks it, because a
-record is per host and an element is shared.  (An element's identity is its
-name's slug, not its `id` — see {ref}`host-identity`.)
+naming both values.  A deployment that never names `element_id` in `supplies`
+(the common case) never fills it and never checks it.  (An element's identity
+is its name's slug, not its `id` — see {ref}`host-identity`.)
 
 ## The key
 
@@ -122,18 +109,16 @@ treated by otto as an uninterpreted identifier:
 
 - **Never an IP or a hostname.** The inventory exists because those change; a
   key that changes with the data is not a key.
-- **Never an otto host id or an element name.** That is otto's naming, per
-  lab and per project — if the inventory knew it, the decoupling would be
-  fictional.
+- **Never an otto host id or an element name.** That is otto's naming, per lab
+  and per project.
 - **Never a location.** Sites, racks and slots are facts that drift, and they
   are carried as data.
 
 Use the name people already call the machine — the DNS hostname where there is
 one. During the bridge (see [Adoption path](#adoption-path)) the keys you mint
 in a JSON file are the names the NetBox devices will eventually carry, so
-swapping the backend touches no lab file. Keys are immutable by policy:
-renaming one breaks every lab file referencing it, which is the one coupling
-this design intends.
+swapping the backend touches no lab file. Treat keys as immutable: renaming one
+breaks every lab file referencing it.
 
 `"inventory": null`, and no `inventory` key at all, both mean "references
 nothing" — the entry is inline. The empty string is an error, not a third
@@ -141,8 +126,7 @@ spelling of inline.
 
 ## Record fields
 
-A record is a subset of these. Names are host-field names, one for one, so the
-join is a plain key copy and there is no mapping table to drift.
+A record is a subset of these. Names are host-field names, one for one.
 
 | Field | Type | Notes |
 | ----- | ---- | ----- |
@@ -162,23 +146,21 @@ join is a plain key copy and there is no mapping table to drift.
 | `element_id` | integer | A **cross-checked fact**, not data: named in `supplies` to opt in, then checked against the element's `id` — never filled either way. |
 | `extra` | object | Opaque table otto never reads. Reaches the host as `host.inventory_ref.extra`. |
 
-Unknown field names are refused naming the key — a record is a boundary
-document like every other otto file. `_`-prefixed keys inside a record are
-comment space.
+Unknown field names are refused naming the key. `_`-prefixed keys inside a
+record are comment space.
 
 `element_id` and `extra` sit outside the `supplies` partition: a record may
-carry either whatever the deployment declares, because one is asserted rather
-than filled and the other has no host field to collide with.
+carry either whatever the deployment declares.
 
 ## Configuration
 
 An inventory is declared **once per user**, in otto's user-level settings file:
 
 ```{note}
-`~/.otto/settings.toml` is a new file — otto does not create it, and `otto
-init` does not scaffold it, because an inventory is not project-shaped.
-Create it by hand. `OTTO_HOME` relocates otto's home wholesale, and this file
-with it. See [The workspace home](../cli/index.md#the-workspace-home).
+`~/.otto/settings.toml` is a new file — otto does not create it, and
+`otto init` does not scaffold it. Create it by hand. `OTTO_HOME` relocates
+otto's home wholesale, and this file with it. See
+[The workspace home](../cli/index.md#the-workspace-home).
 ```
 
 The same table shape works in both places it may be written:
@@ -243,11 +225,7 @@ declares nothing and falls through to the user file.
 When more than one active repo declares `[inventory]`, the tables must be
 **identical** — same backend, same kwargs after anchoring, **and** the same
 `cache_ttl`; the `[creds]` tables are compared among themselves the same way.
-Otherwise bootstrap fails naming both settings files. Two inventories would
-reintroduce precedence through the back door, and `cache_ttl` is in the
-comparison because it is behaviour, not decoration: one repo saying `"0"` and
-another `"24h"` would let declaration order decide whether the process caches
-at all.
+Otherwise bootstrap fails naming both settings files.
 
 ```{note}
 The doctor (`otto init`) validates **this** repo's declaration against the user
@@ -259,12 +237,10 @@ both of them active, not when you run the doctor in one.
 ### Paths
 
 A relative `path` (under `[inventory]` or `[creds]`) anchors to the directory
-of the settings file that declared it: the **repo root** for a project
-override (the directory holding `.otto/`), `~/.otto` for the user file. `~`
-expands, absolute paths are
-used as written — the rule every otto settings path follows, for the same
-reason: a committed relative path must resolve the same wherever the repo is
-checked out. See [Path resolution](settings.md#path-resolution).
+of the settings file that declared it: the **repo root** for a project override
+(the directory holding `.otto/`), `~/.otto` for the user file. `~` expands,
+absolute paths are used as written — the rule every otto settings path follows.
+See [Path resolution](settings.md#path-resolution).
 
 ### The scaffolded tables
 
@@ -282,9 +258,7 @@ repo's.
 
 ## The json backend
 
-The bridge format: a JSON object mapping key → record, with nothing
-otto-shaped in it, so a future export from the system that ends up owning the
-data produces the same file.
+A JSON object mapping key → record, with nothing otto-shaped in it.
 
 ```json
 {
@@ -320,9 +294,8 @@ editor can validate this file as you type it; the editor wiring is in
 
 ## Credentials: the `[creds]` store and the layered merge
 
-Credentials are universal and secret, so they get a store of their own,
-keyed by the same inventory keys and read by otto rather than by the
-inventory backend:
+Credentials have a store of their own, keyed by the same inventory keys and
+read by otto rather than by the inventory backend:
 
 ```json
 {
@@ -357,12 +330,11 @@ order](#three-files-one-key-one-order), applied twice:
    the result the same way, and the entry's order becomes the list's order.
 
 A worked case — store `[{vagrant, vagrant}, {test, Password1}]`, no record
-creds, lab file `[{vagrant}, {test}, {root, proxy: sudo-root, via: vagrant}]`
-— yields `[{vagrant, vagrant}, {test, Password1}, {root, sudo-root via
-vagrant}]`: the two login-only placeholders pin the order, the third entry
-adds a route no store could know. Had the lab file listed only the route,
-`root` would have come first and been the default login; that is the lab
-file's call, which is why its order wins.
+creds, lab file `[{vagrant}, {test}, {root, proxy: sudo-root, via: vagrant}]` —
+yields `[{vagrant, vagrant}, {test, Password1}, {root, sudo-root via
+vagrant}]`: the two login-only placeholders pin the order, the third entry adds
+a route no store could know. Had the lab file listed only the route, `root`
+would have come first and been the default login.
 
 Scope is part of the key, never a field the layers compose: a store entry
 `admin` scoped to `ftp` overlays only a lab entry with that same login and
@@ -420,7 +392,7 @@ all.
 
 ### The mapping
 
-The one deliberate mapping table in otto:
+How record fields map to NetBox device fields:
 
 | Record field | NetBox device |
 | ------------ | ------------- |
@@ -448,9 +420,8 @@ ones `custom_fields` maps and ignores every other one, so nothing can leak into
 a record by accident.
 
 - Any record field may be mapped **except** `ip`, `creds` and `interfaces`.
-  `ip` has `ip_source` (two ways to say one thing is a way for them to
-  disagree), `creds` come from the `[creds]` store or the lab file, and `interfaces`
-  is a structure no custom field holds.
+  `ip` has `ip_source`, `creds` come from the `[creds]` store or the lab file,
+  and `interfaces` is a structure no custom field holds.
 - A mapped field of the wrong NetBox type — `element_id` mapped to a text field
   — fails the record's validation naming the device and the field.
 - `extra_custom_fields` must be a **list**, and may not name any of `id`,
@@ -462,15 +433,13 @@ a record by accident.
 The whole filtered set is fetched once, on first use, into a dict keyed by
 device name; every lookup after that is a dict hit.
 
-- A device with **no name** is skipped — NetBox allows it, and keyed by name
-  they would all collide on the string `None`.
+- A device with **no name** is skipped.
 - A device with **no address** at `ip_source` is skipped.
 
 Both are dropped from `list_keys()`, and `otto inventory list` reports how many
-of each the fetch passed over — an operator whose device is "missing from otto"
-needs to be told it was selected and skipped rather than never seen. Looking up
-an addressless device by name says exactly that, naming the device and the
-`ip_source`.
+of each the fetch passed over, so a device "missing from otto" shows as
+selected and skipped rather than never seen. Looking up an addressless device
+by name says exactly that, naming the device and the `ip_source`.
 
 Two devices sharing a name within the filtered set is an error naming both
 device ids. Connection, TLS, authentication and API failures all raise a single
@@ -478,18 +447,14 @@ inventory error naming the URL — never a raw traceback out of the HTTP client.
 
 ## Caching remote inventories
 
-A whole-set fetch produces exactly a stage-1 document, so caching it is the
-`export` writer plus a timestamp. A backend is wrapped in the snapshot cache
-when it is **not** the `json` backend, `cache_ttl` is greater than zero, and
-its `fingerprint()` is `None` — the backend's own statement that it cannot
-report freshness. NetBox says so unconditionally; a third-party backend that
-returns a string opts out, because it has a better answer than a timestamp.
+A backend is wrapped in the snapshot cache when it is **not** the `json`
+backend, `cache_ttl` is greater than zero, and its `fingerprint()` is `None` —
+the backend's own statement that it cannot report freshness. NetBox says so
+unconditionally; a third-party backend that returns a string opts out.
 
-- **`cache_ttl`** is `"0"`, or `<n>m` / `<n>h` / `<n>d`. Deliberately narrow:
-  no fractions, no whitespace, no leading zeros, no other units — one spelling
-  per duration. The default is `"24h"`, because NetBox changes on a human
-  cadence. `"0"` means every process fetches, which is how an uncached backend
-  behaves.
+- **`cache_ttl`** is `"0"`, or `<n>m` / `<n>h` / `<n>d` — no fractions, no
+  whitespace, no leading zeros, no other units. The default is `"24h"`. `"0"`
+  means every process fetches, which is how an uncached backend behaves.
 - **Where.** `<otto home>/inventory-cache/` — `~/.otto/inventory-cache/` unless
   `OTTO_HOME` says otherwise. One snapshot per distinct inventory
   configuration, named for a hash of it, written whole-or-not-at-all at mode
@@ -499,26 +464,22 @@ returns a string opts out, because it has a better answer than a timestamp.
   backend** — the ordinary otto invocation costs one file read. Older, a fetch
   runs and the snapshot is rewritten atomically.
 - **Unreachable, with a snapshot of any age.** The snapshot is served and a
-  warning names its age and its fetch time in UTC. A lab that loaded yesterday
-  should load today; the warning is what keeps the staleness visible. With no
-  snapshot at all, the failure is the error, as it would be uncached.
+  warning names its age and its fetch time in UTC. With no snapshot at all, the
+  failure is the error, as it would be uncached.
 - **The snapshot is a stage-1 document.** You can copy one out of
   `inventory-cache/` and point a `json` inventory at it.
 
 ```{important}
-Lab-free commands never install a log handler, so the `otto inventory` read
-verbs print the stale-snapshot notice **themselves**, before their own output.
-That matters most for the two that would otherwise answer in silence: `export`
-would write a stale artefact and `diff` would report "no differences" against a
-stale left side.
+The `otto inventory` read verbs print the stale-snapshot notice before their
+own output — including `export`, whose artefact is then stale, and `diff`,
+whose "no differences" is then against a stale left side.
 ```
 
 `otto inventory refresh` fetches unconditionally, whatever the TTL says, and
 reports the replaced snapshot's timestamp in **your local time** with its age.
 Run against an inventory that has no snapshot — a `json` one, or a remote one
-with `cache_ttl = "0"` — it exits 1 saying which of the two it is, rather than
-shrugging: `otto inventory refresh && …` must not proceed as though a fetch had
-happened.
+with `cache_ttl = "0"` — it exits 1 saying which of the two it is, so
+`otto inventory refresh && …` does not proceed as though a fetch had happened.
 
 ## What the doctor checks
 
@@ -542,8 +503,7 @@ and a second row, `creds: json:/…/creds.json`, when a store resolves.
 - A malformed reference (the empty string, a non-string).
 - An inventory-owned field stated inline beside `inventory`. When an entry does
   both — states a supplied field *and* names a key that does not exist — the
-  collision is what you are told about first: it is the error you can fix
-  without the inventory answering at all.
+  collision is what you are told about first.
 - A broken `[inventory]` declaration, or an unparseable user settings file,
   reported **once** rather than once per referencing entry. Those entries are
   skipped for that run and validate again once the declaration is fixed.
@@ -553,10 +513,8 @@ and a second row, `creds: json:/…/creds.json`, when a store resolves.
 
 - A **stale snapshot** the doctor was served because the remote backend was
   unreachable, naming its age and the `otto inventory refresh` that replaces
-  it. The log line that also carries this fires only once per process, so
-  `otto init` reports it in the table itself, exactly as the `otto inventory`
-  verbs do — a green table against a snapshot days old is the one thing this
-  gate must not print.
+  it. `otto init` reports it in the table itself, as the `otto inventory` verbs
+  do.
 - **Orphan records** — keys no lab file in this project references, up to ten
   of them by name and a count for the rest. During the bridge the inventory is
   expected to be wider than any one project, so this is information, not a
@@ -597,37 +555,33 @@ the repos on `OTTO_SUT_DIRS` that agree on a declaration, else the user file
 therefore completes against an inventory another repo — or the user file —
 declares, and a broken declaration empties completion for every repo, not just
 the one carrying it, until it is fixed. An entry completion could not build is
-skipped silently, never warned about — a warning printed into a completing
-shell would corrupt the candidate list — so when a host does not come up, ask
+skipped silently, never warned about, so when a host does not come up, ask
 [`otto cache info`](../cli/cache/index.md#info): its closing block shows the
-inventory as completion resolved it, the hosts offered, and every entry
-dropped with the reason.
+inventory as completion resolved it, the hosts offered, and every entry dropped
+with the reason.
 
 Two situations leave completion **uncached**. Both stay correct — the ids still
 come from a real load — and cost only speed:
 
 - The inventory reports `fingerprint()` as `None` with no snapshot cache in
-  front of it to supply one. That combination means the deployment turned the
-  cache off with `cache_ttl = "0"`: a backend that answers `None` while a TTL
-  is set is exactly the one the cache wraps.
+  front of it to supply one — the case when `cache_ttl = "0"` turns the cache
+  off.
 - The freshness probe **raises** — a networked backend's `fingerprint()` timing
-  out, say. Otto never lets that reach your shell, but a failed probe leaves no
-  stable value to key an entry on, so nothing is stored under it either.
+  out, say. Otto never lets that reach your shell, and nothing is cached.
 
 ## Adoption path
 
 Three stages, each with the verb that proves it. The **references** never
-change between them — that is what the key's bridge rule is for — so a lab file
-is touched at stage 2 only where NetBox turns out not to supply a field the
-JSON file did (step 3 below).
+change between them ([The key](#the-key)), so a lab file is touched at stage 2
+only where NetBox turns out not to supply a field the JSON file did (step 3
+below).
 
 ### Stage 1 — the JSON inventory
 
 - **One file**, owned like code — its own small repository, or a directory the
   lab team reviews changes to. A `$schema` line, sorted keys (`otto inventory
   export` normalises them). Split it along *ownership* lines if you must, never
-  along otto lines: the `json` backend reads one `path`, and one file is the
-  bridge's virtue.
+  along otto lines: the `json` backend reads one `path`.
 - **Decide the naming scheme once**, in that file's README, before the first
   entry. The keys are the device's canonical name — see [The key](#the-key).
 - **Records carry facts only**: the management address, test-network
@@ -680,9 +634,8 @@ Two things otto depends on:
 
 - **The device name is the key.** Treat it as immutable. Retiring a device — a
   status outside your `filter`, or a deletion — surfaces as a dead reference in
-  every project's doctor, which is the correct signal delivered where the fix
-  is. A rename is a retirement plus a new device plus a deliberate lab-file
-  edit, and that friction is intentional.
+  every project's doctor. A rename is a retirement plus a new device plus a
+  lab-file edit.
 - **The address `ip_source` reads stays filled in.** A device that loses it is
   skipped by the fetch and reported by `otto inventory list`; a host that
   references it fails to build.
@@ -696,7 +649,7 @@ Practices that help, none of which otto requires:
   the NetBox UI.
 - **Versions are declarations.** What a device is found to be running is an
   observation; when the two disagree, update NetBox by hand. otto never writes
-  to it — the inventory is the source of record, not a cache of observations.
+  to it.
 - **Read-only, per-user API tokens** through `token_env`; never a shared token
   in a file.
 - **Review NetBox change through otto's eyes**: `otto inventory diff` against
@@ -715,12 +668,9 @@ against it are in {doc}`../library/inventory-backends`.
 ## Worked example — the unix lab
 
 Three virtual hosts in a `unix` lab, one of which is also a member of
-`busybox`. These four files are the ones otto's own test suite loads: the suite
-proves that the referenced hosts below build **identically** to the same three
-hosts declared inline, and a guard compares the blocks on this page against
-those files, so what you read here is what otto is tested against. (The `_note`
-keys are comment space — `_`-prefixed keys are ignored in every otto JSON
-file.)
+`busybox`. The referenced hosts below build **identically** to the same three
+hosts declared inline. (The `_note` keys are comment space — `_`-prefixed keys
+are ignored in every otto JSON file.)
 
 `~/lab/inventory.json` — facts, no otto vocabulary, no secrets:
 
@@ -878,10 +828,8 @@ exactly as it would an inline entry, the host id is still `test2` from the
 element, and the host carries its provenance as
 `host.inventory_ref` — the key, the backend label and the record's `extra`.
 
-The equivalence otto's suite proves is over this `unix` lab: its three hosts,
-referenced and inline, agree field for field. The `busybox` guests
-(`bb1161`…) stay inline here — they are QEMU guests behind `test1` with no life
-outside this bed, which is exactly what the inline form is for.
+The `busybox` guests (`bb1161`…) stay inline — they are QEMU guests behind
+`test1` with no life outside this bed, which is what the inline form is for.
 
 Moving this deployment to NetBox starts with one file, `~/.otto/settings.toml`:
 

@@ -9,11 +9,10 @@ see {doc}`../cli/host/netcat`.)
 ## Connection options
 
 Every host can be configured with a dedicated options object per network
-protocol.  The default-constructed options reproduce otto's historical
-defaults exactly, so existing `lab.json` entries keep working without
-changes.  To tune a protocol, add the matching ``*_options`` object to
-the host entry — one entry of its element's ``hosts`` array, which is
-what every JSON fragment on this page shows:
+protocol.  Every field has a default, so a host entry needs none of these
+objects.  To tune a protocol, add the matching ``*_options`` object to the host
+entry — one entry of its element's ``hosts`` array, which is what every JSON
+fragment on this page shows:
 
 | Object            | Protocol                       |
 |-------------------|--------------------------------|
@@ -132,11 +131,11 @@ a ``post_connect`` async hook — see the
 }
 ```
 
-Set ``auto_window_resize`` to ``true`` for interactive telnet sessions
-to have otto install a SIGWINCH handler that sends NAWS updates on
-every local terminal resize — remote TUIs (``vi``, ``top``, ``less``)
-then reflow like they do under SSH.  It defaults to off so that
-automated runs produce deterministic output.
+Set ``auto_window_resize`` to ``true`` for interactive telnet sessions to have
+otto install a SIGWINCH handler that sends NAWS updates on every local terminal
+resize — remote TUIs (``vi``, ``top``, ``less``) then reflow like they do under
+SSH.  It defaults to off; leave it off for automated runs, whose output would
+otherwise vary with terminal resizes.
 
 `otto host <id> probe` reports whether this port answers and, when the
 service listens elsewhere, prints the fragment to paste here — see
@@ -241,7 +240,7 @@ per-host ``lab.json`` value overriding the profile. It is not accepted in
 ``[host_preferences]``, which takes only the menu-style capabilities
 (``term`` / ``transfer`` / ``impairer``).
 
-What suppression covers, and what it deliberately doesn't:
+What suppression covers, and what it doesn't:
 
 | Path | Suppressed? |
 |------|-------------|
@@ -249,29 +248,22 @@ What suppression covers, and what it deliberately doesn't:
 | Shells entered via a login proxy — `switch_user`, `as_user` | yes; `su` starts a fresh shell that re-reads rc files, so it is re-applied there |
 | `host.exec(...)` | not needed — an exec channel has no PTY, and a non-interactive shell keeps no history at all |
 | Local host commands | not needed — non-interactive |
-| `otto login` | **no**, deliberately — see the caveat below |
+| `otto login` | **no** — see the note below |
 | Embedded / Zephyr targets | not applicable — their shell history is a RAM ring buffer, never a file |
 
 ```{note}
-`otto login` is excluded because it hands *you* a real shell, and silently
-losing up-arrow recall would be worse than the noise. The trade-off is not
-free: if that login goes through a login proxy (`--user`), otto's own
+`otto login` hands *you* a real shell, with its history left on. If that
+login goes through a login proxy (`--user`), otto's own
 `__OTTO_…_RECOVER__` resync probe is written into the elevated shell and so
 appears in *its* history; on a host with a `session_setup`, the hook's own
-commands land in yours the same way. The two cannot both be had — suppressing
-the probe means suppressing your history for the whole session.
+commands land in yours the same way. There is no way to suppress the probe
+alone.
 ```
 
-Suppression is best-effort and silent by design: every part of it is guarded,
-so a shell that refuses all of it keeps working, merely unsuppressed. The
-guards are load-bearing rather than decorative — POSIX makes *both* an error
-in a special builtin and a failed variable assignment abort the line, either
-of which would strand the readiness probe that shares it and take the host
-offline. Do not simplify them away.
-
-Notably otto neutralizes ``HISTFILE`` rather than clearing ``HISTSIZE`` —
-setting ``HISTSIZE=0`` would make bash write its emptied history list *over*
-the history file at exit, destroying the user's real history.
+Suppression is best-effort and silent: a shell that refuses it keeps working,
+merely unsuppressed. To suppress history yourself (say, in a `session_setup`
+hook), unset ``HISTFILE``; never set ``HISTSIZE=0``, which makes bash overwrite
+the history file at exit.
 
 (per-host-session-setup)=
 
@@ -449,9 +441,7 @@ netcat.  It caps the wait for the listener process to exit once a transfer has
 ended, so a port-collision race that leaves a listener servicing someone else
 surfaces as a named error instead of a hang.  What ends the remote listener
 itself is otto reaping it on every error path, plus the ``timeout`` prefix the
-spawn carries — never ``nc -w``, which is not emitted: measured 2026-08-25, it
-bounds the idle time of an *accepted* connection and so kills a stalled
-transfer with a success code and a partial file.
+spawn carries; otto never passes ``nc -w``.
 
 ### What a GET can fetch
 

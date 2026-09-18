@@ -732,6 +732,39 @@ reservation backend passes conformance with `expect_holders=True` and answers
 the inverted `holders` query. `tests/unit/docs/test_getting_started_includes.py`
 checks that every `{literalinclude}` under `docs/getting-started/` resolves.
 
+### Configuration and host-guide pages
+
+Parts of the Configuration tree and the User Guide are tied to the code or to
+test fixtures, so edit them with the tie in mind:
+
+- **The inventory worked example mirrors a fixture.** The four blocks on
+  `docs/configuration/inventory.md` marked
+  `<!-- fixture: tech1-inventory/<file> -->` mirror
+  `tests/_fixtures/lab_data/tech1-inventory/`
+  (`tests/unit/docs/test_inventory_worked_example.py`): the three JSON blocks
+  must parse to the fixture files, and the TOML block must match the fixture's
+  `backend` and `supplies` (its paths differ on purpose). Exactly those four
+  markers must be present; the NetBox block is unguarded.
+  `tests/unit/labs/test_inventory_equivalence.py` proves the fixture's
+  referenced hosts build identically to the same hosts declared inline.
+- **The lab-config example is an excerpt.** The *Example* on
+  `docs/configuration/lab-config.md` is taken from
+  `tests/_fixtures/lab_data/tech1/lab.json`, trimmed to two elements, with
+  fewer resources and host fields. Nothing compares the two, so keep them in
+  step by hand.
+- **Every lab-data field needs a row.**
+  `tests/unit/docs/test_lab_config_field_coverage.py` fails when a field of a
+  lab-data spec model has no row on `lab-config.md`, or an inventory record
+  field has none in `inventory.md`'s *Record fields* table. It proves presence,
+  not placement.
+- **`docs/guide/hosts/families.md` is generated.**
+  `scripts/render_support_matrix.py` renders it from the `capabilities`
+  declaration on each host class (the meaning rows come from
+  `src/otto/host/capability_grid.py`) on every Sphinx build. The page is
+  committed, and `tests/unit/test_support_matrix.py` fails when it is not
+  byte-for-byte what the tree would generate; edit the renderer or the
+  declaration, then run `uv run python -m scripts.render_support_matrix`.
+
 ## Coverage reports
 
 ### From pytest

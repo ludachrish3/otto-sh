@@ -15,10 +15,9 @@ Four verbs carry almost all of the traffic:
 - **`put`** / **`get`** — files up and down ({doc}`../../cli/host/put`,
   {doc}`../../cli/host/get`).
 
-That split is not a stylistic one, and it decides where identity lives.  A
-persistent session *already has* a user, so changing it is a scoped operation
-on the session — `as_user`, described in
-{doc}`../../cli/host/capabilities/privilege` and
+That split decides where identity lives.  A persistent session *already has* a
+user, so changing it is a scoped operation on the session — `as_user`,
+described in {doc}`../../cli/host/capabilities/privilege` and
 {doc}`../../cookbook/sessions` — and `run` refuses a per-call `user=` on the
 families that work this way.  A stateless verb has no such history: `exec`,
 `put` and `get` can each take a user directly, because each call opens its own

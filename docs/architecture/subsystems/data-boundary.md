@@ -104,6 +104,20 @@ naming both. The composite satisfies the same protocol, so nothing downstream
 can tell how many sources there are; it is also where a lab's *existence* is
 decided, which is why one source goes through it too.
 
+A lab exists only because some source *declares* it in a `labs` table. An
+element joins labs by regex, so the set of lab names cannot be derived from the
+elements — a pattern like `"unix.*"` names nothing in particular — and the
+`labs` table is the enumerable record of what exists. The element is the
+smallest unit that joins a lab, so reserving a portion of a lab means declaring
+that portion as a lab of its own.
+
+The source list exists for one layering: physical devices are global truth —
+every team must be served the same records, from a database or a globally
+shared file — while the VMs and QEMU guests a project deploys, re-images and
+reconfigures are the project's own and belong in its repo. The override warning
+in ordinary command output is the whole transparency story: an override is a
+deliberate act, and otto says so every time one takes effect.
+
 Naming a host is a separate, cheaper query than loading one: tab completion
 and tunnel narrowing go through {func}`otto.labs.host_summaries`, which uses a
 backend's optional `SupportsHostSummaries` fast path when it has one and
@@ -116,12 +130,60 @@ Merging is part of loading: `--lab` may be passed multiple times and the
 resulting `Lab` objects merge, so a shared lab file and a personal overlay
 compose without editing either.
 
-Unlike lab merging, an inventory backend
+### Inventory design choices
+
+**Copy, never merge.** Unlike lab merging, an inventory backend
 ({doc}`../../configuration/inventory`) joins host facts into a lab entry by
-**copy, never merge**: the inventory declares which fields it supplies, and an
-entry that references it may not state them inline, so no machine fact ever
-has two sources to disagree. Credentials are the one field that composes
-across layers instead.
+copy: the inventory declares which fields it supplies, and an entry that
+references it may not state them inline, so no machine fact ever has two
+sources to disagree. A per-field precedence — "take it from NetBox if the field
+is filled in, else from the lab file" — reads as convenience and behaves as a
+trap: the day somebody fills the field in, the lab file's value goes silent
+with no error anywhere. The collision check runs on the raw entry, before the
+fill, so the fill cannot fool it. For the same reason a process has exactly one
+inventory: when several active repos declare one, the tables must be identical,
+or two inventories would reintroduce precedence through the back door.
+`cache_ttl` is part of that comparison because it is behaviour, not decoration
+— one repo saying `"0"` and another `"24h"` would let declaration order decide
+whether the process caches at all. `element_id` is never filled, only
+cross-checked, because a record is per host and an element is shared.
+
+**Credentials compose.** They are the one field that makes the trade the other
+way, on purpose. A per-field merge goes silent in exactly the way above — a
+password set in the lab file hides the store's — but one order every layer
+obeys is simpler to teach, it lets a team move creds between layers one entry
+at a time without the load failing in between, and the lab file is where a cred
+change is tried before the team-wide inventory or store changes. The lab file's
+order is the login order because it is the one layer written knowing that
+otto's first cred is the default login. Credentials get a store of their own,
+read by otto rather than by the inventory backend, because they are universal
+and secret — which is also why a NetBox-backed inventory pairs with a store and
+moving to NetBox migrates none.
+
+**The key is the one intended coupling.** It is an opaque string minted by
+whoever owns the inventory: never an address (the inventory exists because
+those change), never an otto host id or element name (if the inventory knew
+otto's per-lab naming, the decoupling would be fictional), and immutable by
+policy — a rename surfaces as a dead reference in every project's doctor, the
+signal delivered where the fix is, and that friction is intentional. Record
+field names are host-field names one for one, so the join is a plain key copy
+with no mapping table to drift; the NetBox backend's is the one deliberate
+mapping table in otto, and it refuses a custom-field mapping for `ip` because
+`ip_source` already says where the address comes from, and two ways to say one
+thing is a way for them to disagree.
+
+**Location and caching.** The inventory lives in the user-level
+`~/.otto/settings.toml`, which `otto init` never scaffolds, because an
+inventory is not project-shaped: a machine is a machine regardless of which
+repo you are working in. A remote inventory's snapshot cache defaults to `24h`
+because NetBox changes on a human cadence, and `cache_ttl` accepts one spelling
+per duration, so two settings files that mean the same thing look the same. An
+unreachable backend serves the snapshot of any age with a warning — a lab that
+loaded yesterday should load today, and the warning keeps the staleness
+visible. Because lab-free commands install no log handler, and the log line
+fires once per process, the `otto inventory` verbs and the `otto init` doctor
+print that notice themselves: a green doctor table against a snapshot days old
+is the one thing that gate must not print.
 
 ## Exported schemas
 

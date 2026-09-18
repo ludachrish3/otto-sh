@@ -7,21 +7,12 @@
 
 otto ships several kinds of host, and they do not all answer the four verbs the
 same way. A serial console has no second user to become; a container has no
-credentials for one; a unix box has both. This page is the standing answer for
-each family, and every cell on it is **declared**: each row is the
-`capabilities` object on that family's own host class, rendered here rather than
-written here.
-
-That is what separates this page from {doc}`../../architecture/support-matrix`.
-The matrix publishes what a run **measured** against real hardware, cell by cell,
-and it changes when the bed changes. This publishes what the code **promises**,
-and it changes only when a host class does. A promise below that a device does
-not keep is a bug in one of the two, and the conformance suite is what tells them
-apart.
+credentials for one; a unix box has both. Each row below is what that family's
+host class **declares** in its `capabilities` object. What a run **measured**
+against real hardware, cell by cell, is in {doc}`../../architecture/support-matrix`.
 
 A class registered from your own repository must declare one too:
-`register_host_class` refuses a class without it, so a custom family can never
-reach this page's readers as a blank row.
+`register_host_class` refuses a class without it.
 
 ## What the `user=` answers mean
 
@@ -29,8 +20,8 @@ reach this page's readers as a blank row.
 |---|---|
 | `authenticate` | The verb rides a connection opened AS that user, so it runs with that user's real credentials and permissions rather than an elevation from the login user. |
 | `chown` | The verb runs under the login identity's privilege and switches the result to the named user -- a `chown` over files that have landed, or `docker exec -u` for a command. The named user's own credentials are never needed. |
-| `ignored` | The argument is accepted so the interface stays uniform, and has no effect; the family documents why it can have none. |
-| `refused` | The verb raises `NotImplementedError` naming the alternative. The refusal is the first line of the body, so a dry run refuses too rather than declining as though the call could have been honoured. |
+| `ignored` | The argument is accepted and validated, and has no other effect. |
+| `refused` | The verb raises `NotImplementedError` naming the alternative, and refuses under a dry run too. |
 
 ## Where a session's identity comes from
 

@@ -133,10 +133,9 @@ one from scratch. See {doc}`../getting-started/index`.
 
 ### Annotating entries with `_`-prefixed keys
 
-`lab.json` is plain JSON, which has no comment syntax. Any key beginning
-with `_` (e.g. `_comment`) is stripped before validation, so it is otto's
-sanctioned way to leave a note inline without tripping the schema's
-`extra="forbid"` check. It works at **every** level of the file — the
+`lab.json` is plain JSON, which has no comment syntax. Any key beginning with
+`_` (e.g. `_comment`) is stripped before validation, so it leaves a note inline
+without failing the load. It works at **every** level of the file — the
 document, the `labs` table, a `labs` entry, an element, a host entry, a link —
 so a note can sit next to whatever it explains:
 
@@ -188,14 +187,13 @@ labels:
 element 'alt1' in lab 'site': my_project/virtual overrides my_project/global
 ```
 
-That warning is the whole transparency story: an override is a deliberate act,
-and otto says so, in ordinary command output, every time one takes effect. An
-override that repoints a host at a different `ip` is allowed — pointing the
-lab at a re-imaged VM is exactly the use this serves.
+The warning appears in ordinary command output every time an override takes
+effect. An override may repoint a host at a different `ip` — pointing the lab
+at a re-imaged VM, say.
 
 Because replacement is wholesale, overriding one board of a four-board chassis
-means restating the whole element. In exchange, a hybrid element — this
-source's hosts with that source's metadata — cannot exist.
+means restating the whole element; a hybrid element — this source's hosts with
+that source's metadata — never results.
 
 Element-level `resources` replace with the element: a later source that
 restates an element without `resources` removes that element's lock (the
@@ -229,11 +227,10 @@ still merges two *different* labs by otto's cross-lab rules (see
 
 ### Layering a repo over a global source
 
-This is the pattern the source list exists for. Physical devices are global
-truth — every team must be served the same records, from a database or a
-globally shared file. The VMs and QEMU guests a project deploys, re-images and
-reconfigures are the project's own, and belong in its repo. Declare the global
-source first and the repo-owned one after it:
+A common layout keeps physical devices in a global source — a database or a
+globally shared file — and the VMs and QEMU guests a project deploys, re-images
+and reconfigures in the project's own repo. Declare the global source first and
+the repo-owned one after it:
 
 ```toml
 [[lab.sources]]
@@ -259,9 +256,8 @@ inherited from the source below.
 
 With several repos on `OTTO_SUT_DIRS`, the process-wide list is every repo's
 list concatenated in `OTTO_SUT_DIRS` order, and all of it is live. A later
-repo's source overrides an earlier repo's on a colliding element, with the
-same warning — the labels are repo-qualified precisely so that reads
-unambiguously.
+repo's source overrides an earlier repo's on a colliding element, with the same
+warning, its labels repo-qualified.
 
 If *no* repo declares a source, otto still starts and lab-free commands still
 work; the failure arrives where a lab is actually demanded:
@@ -420,8 +416,8 @@ the account otto authenticated as.
 ### Breaking change: `creds` was a dict, now a list
 
 `creds` used to be a flat `{"login": "password"}` mapping; it is now the
-ordered list described above (`feat(host)!`). A `lab.json` still written in
-the old dict shape is rejected loudly at load:
+ordered list described above. A `lab.json` still written in the old dict shape
+is rejected loudly at load:
 
 ```text
 ValueError: creds is now a list of cred objects: [{"login": "user", "password": "pw"}, ...]
@@ -465,8 +461,6 @@ raises [`LabRepositoryError`](../api/labs.rst), listing the registered
 names.
 
 ```{note}
-This is the same named-registry mechanism otto uses everywhere else
-(`register_term_backend`, `register_reservation_backend`, `register_host_class`).
 An `init` module always imports before the lab is loaded, so the name is
 registered by the time settings select it.
 ```
@@ -529,15 +523,14 @@ registry machinery behind this and every other seam otto can be extended at.
   has the full shape.
 
 A host `otto --list-hosts` shows does not complete on TAB
-: Completion never warns — a warning printed into a completing shell corrupts
-  the candidate list — so an entry it could not build is dropped silently.
+: Completion never warns, so an entry it could not build is dropped silently.
   [`otto cache info`](../cli/cache/index.md#info) ends with a block for the
   current workspace: the cache entry's standing, the inventory as completion
   resolved it, the lab files each source read, the hosts offered, and every
   entry dropped with where it was and why. A supplement file missing from a
   source's `paths` shows as a lab file that is not listed; a reference to an
-  inventory key that does not exist and a lab file that did not parse each
-  show as a drop naming the entry; an `[inventory]` table that fails to build
-  — one without a `path`, say — shows on the `inventory` line as `BROKEN`,
-  naming the settings file and the error, and empties completion for every
-  repo until it is fixed.
+  inventory key that does not exist and a lab file that did not parse each show
+  as a drop naming the entry; an `[inventory]` table that fails to build — one
+  without a `path`, say — shows on the `inventory` line as `BROKEN`, naming the
+  settings file and the error, and empties completion for every repo until it
+  is fixed.
