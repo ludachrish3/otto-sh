@@ -429,16 +429,36 @@ Vagrant.configure("2") do |config|
             printf '[Match]\\nType=ether\\n\\n[Link]\\nMTUBytes=1350\\n' > /etc/systemd/network/10-mtu.link
         SHELL
 
-        # Node.js 24 (matches .nvmrc) for the web/ toolchain: dashboard/covapp
-        # builds (make web*, CI dashboard job) AND the TS quality gates
-        # (make check-ts / validate-ts -> Biome lint+format, tsc, vitest v8
-        # coverage; CI check-ts job). Biome and vitest are npm devDependencies
-        # pulled in by `make web-install` (Biome's native binary rides in as an
-        # npm optionalDependency), so no extra system package is needed here.
-        # Python gates never need Node. Install from NodeSource for LTS support.
+        # Node.js, the exact version in .nvmrc, for the web/ toolchain:
+        # dashboard/covapp builds (make web*, CI dashboard job) AND the TS
+        # quality gates (make check-ts / validate-ts -> Biome lint+format, tsc,
+        # vitest v8 coverage; CI check-ts job). Biome and vitest are npm
+        # devDependencies pulled in by `make web-install` (Biome's native
+        # binary rides in as an npm optionalDependency), so no extra system
+        # package is needed here. Python gates never need Node. Installed from
+        # NodeSource, pinned to the .nvmrc version like CI's setup-node: the
+        # web gates fail on any stderr output, so a Node release that adds a
+        # deprecation warning must arrive as a reviewed .nvmrc bump, not by
+        # drifting in on a re-provision or an `apt upgrade` (hence the hold).
+        # The script fails loudly: every step must succeed (set -e, and pipefail
+        # so a failed curl can't hide behind `| bash`), and it ends by checking
+        # the installed Node really is the .nvmrc version. `nodejs=<ver>-*`
+        # accepts any NodeSource respin of that version.
+        node_version = File.read(File.expand_path(".nvmrc", __dir__)).strip
+        unless node_version.match?(/\A\d+\.\d+\.\d+\z/)
+          raise "Vagrantfile: .nvmrc must hold an exact Node version like 24.18.0, got #{node_version.inspect}"
+        end
+        node_major = node_version.split(".").first
         dev.vm.provision "shell", name: "dev-node", keep_color: true, inline: <<-SHELL
-            curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            set -euo pipefail
+            curl -fsSL https://deb.nodesource.com/setup_#{node_major}.x | sudo -E bash -
+            sudo apt-get install -y --allow-downgrades --allow-change-held-packages 'nodejs=#{node_version}-*'
+            sudo apt-mark hold nodejs
+            got="$(node --version)"
+            if [ "$got" != "v#{node_version}" ]; then
+                echo "dev-node: wanted Node v#{node_version} from .nvmrc, got $got. If NodeSource no longer carries #{node_version}, bump .nvmrc." >&2
+                exit 1
+            fi
         SHELL
 
         dev.vm.provision "shell", name: "dev", privileged: false, keep_color: true, inline: <<-SHELL

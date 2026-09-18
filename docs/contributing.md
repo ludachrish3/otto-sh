@@ -166,13 +166,22 @@ uv run pytest         # run the test suite
 ### Node (the monitor dashboard's web lane)
 
 The monitor dashboard's frontend (`web/`) is a separate React + Vite +
-TypeScript project built with Node, pinned via `.nvmrc`
-([nvm](https://github.com/nvm-sh/nvm) users: `nvm use`). The dev VM
-provisions Node 24, and `make dev` runs `make web-install` (`npm ci`) so
-`web/node_modules` is ready. Node backs both the dashboard build (`make
-web`, `web-dev`) and the TypeScript quality gates below. Everything else —
-the Python test suite and every other non-`web`/non-quality `make` target —
-works from a checkout with the dashboard already built and never needs Node.
+TypeScript project built with Node, pinned to an exact version in `.nvmrc`
+([nvm](https://github.com/nvm-sh/nvm) users: `nvm use`). CI, the dev VM and
+the Read the Docs build all install exactly that version. `make dev` runs
+`make web-install` (`npm ci`) so `web/node_modules` is ready. Node backs both
+the dashboard build (`make web`, `web-dev`) and the TypeScript quality gates
+below. Everything else — the Python test suite and every other
+non-`web`/non-quality `make` target — works from a checkout with the
+dashboard already built and never needs Node.
+
+Moving Node is a reviewed bump, never a drift: the web gates fail on any
+stderr output, and a new Node release can add a deprecation warning. To bump
+it, edit `.nvmrc` in a change of its own, re-provision the dev VM
+(`vagrant provision dev --provision-with dev-node`), and confirm that
+`make web`, `make check-ts` and `make test-ts` all pass with nothing on
+stderr.
+
 ## Monitor frontend development
 
 The dashboard's frontend is a React + Vite + TypeScript single-page app in

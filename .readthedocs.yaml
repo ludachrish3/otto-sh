@@ -9,7 +9,9 @@ build:
   tools:
     python: "3.10"
     # Builds the React monitor dashboard (see the `install`/`pre_build` jobs
-    # below) — version tracks the repo's .nvmrc.
+    # below). RTD accepts only a major here, so this is .nvmrc's MAJOR; the
+    # `post_create_environment` job below then installs and selects .nvmrc's
+    # exact version, the same pin CI and the dev VM use.
     nodejs: "24"
   # `dot` renders the architecture-docs diagrams (sphinx.ext.graphviz /
   # inheritance_diagram); without it the -W build fails.
@@ -41,6 +43,14 @@ build:
       - asdf plugin add uv
       - asdf install uv latest
       - asdf global uv latest
+    # The web gates fail on any stderr output, so the docs build must not
+    # float to a newer Node than .nvmrc's (a new deprecation warning would
+    # fail it on unchanged code). tools.nodejs above only takes a major, so
+    # pin the exact version here, before `install` runs npm ci, and check it.
+    post_create_environment:
+      - asdf install nodejs "$(cat .nvmrc)"
+      - asdf global nodejs "$(cat .nvmrc)"
+      - test "$(node --version)" = "v$(cat .nvmrc)"
     install:
       - uv sync --all-extras --dev
       # The Chromium binary itself (runtime libs come from apt_packages above).
