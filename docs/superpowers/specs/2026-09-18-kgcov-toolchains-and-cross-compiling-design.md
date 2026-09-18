@@ -77,12 +77,12 @@ its own (the walk never calls the sentinels themselves):
 /* KGCOV_SENTINEL_BEGIN — first object in the consumer's link */
 static void __kgcov_begin_marker(void) {}
 const kgcov_ctor_fn __kgcov_ctors_begin
-	__attribute__((section(".init_array.0"), used, aligned(8))) = __kgcov_begin_marker;
+        __attribute__((section(".init_array.0"), used, aligned(8))) = __kgcov_begin_marker;
 
 /* KGCOV_SENTINEL_END — last object in the consumer's link */
 static void __kgcov_end_marker(void) {}
 const kgcov_ctor_fn __kgcov_ctors_end
-	__attribute__((section(".init_array"), used, aligned(8))) = __kgcov_end_marker;
+        __attribute__((section(".init_array"), used, aligned(8))) = __kgcov_end_marker;
 ```
 
 `.init_array.0` sorts before every other entry, and within it the begin
@@ -209,6 +209,18 @@ CONFIG_CLANG_VERSION=<n>` for clang-specific flags). That is a kbuild fact,
 documented as the `KMAKEFLAGS` example, not a library concern; a clang-built
 kernel needs none of it.
 
+**A gcc older than the kernel's.** A stock kernel's config records the gcc
+it was configured for (`CONFIG_GCC_VERSION`) and turns on options whose
+flags an older gcc does not know. Proven recipe (bed kernel, configured
+for gcc 13.3, probed 2026-09-18): gcc 12 needs nothing; gcc 9, 10 and 11
+build with `CONFIG_GCC_VERSION=<the real version, e.g. 90500>
+CONFIG_SHADOW_CALL_STACK= CONFIG_INIT_STACK_ALL_ZERO=
+CONFIG_ZERO_CALL_USED_REGS=` on the command line (the three options'
+flags need gcc 12, 12 and 11). The matrix derives that set from the
+kernel's `.config` and the compiler's own version; the docs state the
+rule (tell kbuild the real version, turn off the option whose flag the
+compiler names in its error) with the proven set as the example.
+
 ## 7. Files
 
 - `docs/examples/kgcov/`: `kgcov.c` (walk, registration context, version
@@ -278,7 +290,8 @@ compilers in `OTTO_KGCOV_TOOLCHAINS` (unset or empty means the system
 default compiler alone, so the module never collects an empty, skipped
 parameter set). For each compiler it rebuilds the library and the demo
 for the running kernel (`clang` implies `LLVM=1` plus the §6 overrides
-whenever the kernel's config says `CONFIG_CC_IS_GCC=y`), checks the
+whenever the kernel's config says `CONFIG_CC_IS_GCC=y`; a gcc older than
+the kernel's implies the §6 older-gcc overrides), checks the
 demo's `.init_array` relocations name the begin marker first, one gcov
 constructor per instrumented unit, and the end marker last, then runs
 the compiler-independent assertions of the routine kmod e2e (fetch tree,
@@ -304,10 +317,13 @@ CROSS_COMPILE=x86_64-linux-gnu- defconfig modules_prepare`, with the same
 environment. It asserts `modinfo -F vermagic` names the tree's release,
 `readelf -h` says `X86-64` for both `.ko`, the cross compiler signed the
 `.comment` section, the sentinel bracket holds, and the demo's `.gcno`
-files exist. Never loaded anywhere; it touches no bed. The dev VM is x86_64, so
-this proves the knob passthrough and the source-tree recipe, not a
-foreign ISA; the docs show the arm64 form (`ARCH=arm64
-CROSS_COMPILE=aarch64-linux-gnu-`) of the same recipe.
+files exist. Never loaded anywhere; it touches no bed. The dev VM and
+the beds are arm64 (`uname -m` says `aarch64`; the bed kernel's config
+names `aarch64-linux-gnu-gcc-13`), so an x86_64 module from
+`x86_64-linux-gnu-gcc` is a foreign-ISA cross build in full, and the
+`readelf -h` check is what proves it. The docs give the recipe with the
+arm64-to-x86_64 pair the proof uses and say what changes for another
+target (the `ARCH` name and the `CROSS_COMPILE` prefix, nothing else).
 
 **Unit.** The existing 36 `kmod` kind tests stay; nothing in otto changes.
 The library has no unit tests (kernel code); its proof is the matrix.
