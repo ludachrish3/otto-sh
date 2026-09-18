@@ -269,7 +269,7 @@ declaration).
 | Param | Meaning |
 |---|---|
 | `image` (required) | a reference (`registry/name:tag`) or the path of a `docker save` tarball |
-| `pull` | `false` (default): a reference must already be present (`docker image inspect`, fail loud with the name); `true`: `docker pull` first. Reference form only: declared on a tarball entry it is refused when the product is built (a tarball is loaded, never pulled) |
+| `pull` | `false` (default): a reference must already be present (`docker image inspect`, fail loud with the name); `true`: `docker pull` first. Reference form only: `pull = true` on a tarball entry is refused when the product is built (a tarball is loaded, never pulled) |
 | `run_args` | extra `docker run` arguments; `{cov_dir}`/`{name}` placeholders |
 | `container_name` | defaults to the product name |
 | `cov_dir`, `instrumented`, `debug_log_globs` | as every product |
