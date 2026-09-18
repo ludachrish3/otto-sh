@@ -10,7 +10,7 @@ from ..models.host import HostSpec
 # in both kind registries, and "llext"/"kmod" in the product registry, before
 # any declared entry builds. The factory is the only build call site, so these
 # imports are the guarantee.
-from . import kmod_kind, llext_kind, shell_kind  # noqa: F401
+from . import docker_image_kind, kmod_kind, llext_kind, shell_kind  # noqa: F401
 from .capability import select_option_defaults, select_preferences
 from .dev_tool import apply_declared_dev_tools, apply_dev_tool_providers
 from .element import Element

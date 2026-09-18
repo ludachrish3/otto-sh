@@ -35,7 +35,7 @@ from typing_extensions import override
 from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
-from .product import PRODUCT_KINDS, ShellProduct, cov_dir_of, cov_dir_of_name, gcda_find_cmd
+from .product import PRODUCT_KINDS, ShellProduct, cov_dir_of, cov_dir_of_name, sudo_gcda_delete
 from .shell_kind import bool_param, str_list_param, str_param, substitute_placeholders
 
 if TYPE_CHECKING:
@@ -155,7 +155,7 @@ class KmodProduct(ShellProduct):
             # through to the shared delete below, which announces its own
             # command and carries the same NotRun back as the overall result.
         # The kernel wrote the files as root: the default delete, elevated.
-        return await self._run_sudo(host, f"{gcda_find_cmd(cov_dir_of(self))} -delete")
+        return await sudo_gcda_delete(self, host)
 
     def _kgcov_file(self, name: str) -> str:
         return f"{KGCOV_DEBUGFS}/{self.module_name}/{name}"

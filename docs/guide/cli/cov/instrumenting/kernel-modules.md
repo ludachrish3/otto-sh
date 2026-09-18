@@ -157,7 +157,7 @@ suite does:
 ```{literalinclude} ../../../../../tests/repo5/.otto/settings.toml
 :language: toml
 :start-at: "[[products]]"
-:end-before: "# All three unix hosts are eligible"
+:end-before: "# The container-image products"
 ```
 
 `otto_kgcov` declares `instrumented = false` — overriding the artifact

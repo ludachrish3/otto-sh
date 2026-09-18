@@ -120,3 +120,11 @@ tests/repo5/kmod/**/*.gcda
 tests/repo5/kmod/**/.tmp_versions
 tests/repo5/kmod/**/*.a
 tests/repo5/kmod/**/*.symvers
+
+# repo5's container-image product builds in place too (tests/repo5/docker/):
+# the compiled binary and its .gcno files stay out of tree in docker/build/
+# (its committed sources sit right beside it, under docker/src/), and the
+# saved image tarball is a build product of docker/build.sh, not a fixture
+# input.
+tests/repo5/docker/build/
+tests/repo5/docker/*.tar

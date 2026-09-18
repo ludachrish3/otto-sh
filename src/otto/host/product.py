@@ -184,6 +184,38 @@ def gcda_find_cmd(cov_dir: str) -> str:
     return f"find {shlex.quote(cov_dir)} -name '*.gcda' -type f"
 
 
+async def sudo_gcda_delete(product: Product, host: "Host") -> Result:
+    """Delete every ``.gcda`` under *product*'s :attr:`~Product.cov_dir`, elevated.
+
+    Shared by kinds whose counters are written as root — a kernel module's
+    are the kernel's own (:mod:`otto.host.kmod_kind`), a container's are
+    whatever user its process ran as (:mod:`otto.host.docker_image_kind`).
+    Validates :attr:`Product.name` first, exactly as the unelevated default
+    (:meth:`Product.reset_coverage`) does, then runs the same find+delete line
+    through ``host.run(..., sudo=True)``. A host declining under
+    ``--dry-run`` answers :attr:`~otto.utils.Status.NotRun`; that is
+    returned as-is, never mapped to :attr:`~otto.utils.Status.Error` — the
+    dry-run contract requires a decline to reach the fetcher unchanged
+    (``docs/superpowers/specs/2026-08-15-dry-run-contract-design.md``).
+
+    Raises:
+        ValueError: :attr:`Product.name` is not a single safe path segment;
+            checked before any command is issued.
+    """
+    layout.validate_product_name(product.name)
+    cov_dir = cov_dir_of(product)
+    result = await host.run(f"{gcda_find_cmd(cov_dir)} -delete", sudo=True)
+    if result.status is Status.NotRun:
+        return Result(Status.NotRun)
+    if result.is_ok:
+        return Result(Status.Success)
+    failure = result.first_failure
+    detail = f": {failure.value.strip()}" if failure is not None else ""
+    return Result(
+        Status.Error, msg=f"{product.name}: deleting .gcda under {cov_dir} failed{detail}"
+    )
+
+
 INSTRUMENTATION_MARKERS: tuple[bytes, ...] = (b".gcda", b"__gcov_", b"__llvm_gcov")
 """Byte strings a coverage build leaves in its objects. ``.gcda`` is the
 load-bearing one: GCC and clang both embed each translation unit's ``.gcda``

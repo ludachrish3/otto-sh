@@ -89,6 +89,14 @@ async def _install(host: UnixHost) -> None:
 
 
 async def _uninstall(host: UnixHost) -> None:
+    # Product logs first, while the products still exist: otto test never
+    # calls Host.uninstall()/get_product_logs() itself (that pairing is a
+    # project-CLI-only action), so a suite that hand-rolls its own reverse
+    # teardown — required here too, the demo before the library it depends
+    # on — must re-honour that contract itself, matching test_cov_container.py.
+    hauled = await host.get_product_logs()
+    if not hauled.is_ok:
+        raise RuntimeError(f"{host.id}: hauling product logs failed: {hauled.msg}")
     for product in reversed(host.products):  # the demo before the library it depends on
         result = await product.uninstall(host)
         if not result.is_ok:

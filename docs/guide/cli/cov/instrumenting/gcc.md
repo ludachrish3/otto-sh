@@ -49,6 +49,8 @@ without being told to. See
 {ref}`the configuration section <coverage-configuration>` for the rest.
 
 A kernel module has no `GCOV_PREFIX`; {doc}`kernel-modules` is that path.
+Inside a container the same two variables apply; {doc}`containers` is the
+bind-mount half.
 
 ## Version matching
 

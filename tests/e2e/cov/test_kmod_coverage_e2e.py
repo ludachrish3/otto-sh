@@ -16,65 +16,19 @@ import pytest
 
 from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.store.model import CoverageStore, FileRecord
-from tests._fixtures.gitrepo import git_env
-from tests._fixtures.paths import PROJECT_ROOT
 from tests.e2e._otto_subprocess import REPO5, run_otto
+from tests.e2e.cov._repo5_build import DEMO_SRC, _hits, _line_of, _record, ensure_kmod_artifacts
 
-BUILD = REPO5 / "build"
-DEMO_SRC = REPO5 / "kmod" / "demo"
-KGCOV = PROJECT_ROOT / "docs" / "examples" / "kgcov"
 DEMO = "otto_kmod_demo"
 HOSTS = {"test1", "test2"}
 _LAB = "unix"
 
 
-def _demo_and_kgcov_sources() -> list[Path]:
-    """Everything a rebuild depends on: the demo's own files and otto_kgcov's."""
-    return [
-        # Kbuild writes the generated <module>.mod.c beside the sources AFTER the
-        # library .ko; counting it would make every build look stale.
-        *(p for p in DEMO_SRC.glob("*.c") if not p.name.endswith(".mod.c")),
-        *DEMO_SRC.glob("*.h"),
-        DEMO_SRC / "Kbuild",
-        DEMO_SRC / "Makefile",
-        *(p for p in KGCOV.rglob("*") if p.is_file()),
-    ]
-
-
-def _kos_are_stale(kos: list[Path], sources: list[Path]) -> bool:
-    """True when a ``.ko`` is missing, or older than any source it was built from."""
-    if any(not ko.is_file() for ko in kos):
-        return True
-    newest_source = max((p.stat().st_mtime for p in sources if p.is_file()), default=0.0)
-    oldest_ko = min(ko.stat().st_mtime for ko in kos)
-    return oldest_ko < newest_source
-
-
 @pytest.fixture(scope="module")
 def built_modules(tmp_path_factory):
-    """Build both modules for the running kernel when missing or stale."""
-    committed = subprocess.run(
-        ["git", "diff", "--quiet", "HEAD", "--", str(DEMO_SRC)],
-        cwd=REPO5,
-        env=git_env(tmp_path_factory.mktemp("githome")),
-        check=False,
-    )
-    assert committed.returncode == 0, (
-        f"{DEMO_SRC} has uncommitted changes: a capture anchors every measured file to a "
-        "committed git blob at HEAD, while _line_of() below reads the worktree — an "
-        "uncommitted edit makes the two disagree on line numbers silently. Commit or "
-        "revert before running this e2e."
-    )
-    lib_ko = BUILD / "lib" / "otto_kgcov.ko"
+    """Build the kernel-module artifact set when stale."""
+    ensure_kmod_artifacts(tmp_path_factory)
     demo_ko = DEMO_SRC / f"{DEMO}.ko"
-    if _kos_are_stale([lib_ko, demo_ko], _demo_and_kgcov_sources()):
-        try:
-            subprocess.run([str(REPO5 / "build.sh")], check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as exc:
-            raise AssertionError(
-                f"{REPO5 / 'build.sh'} failed (exit {exc.returncode}):\n"
-                f"stdout:\n{exc.stdout}\nstderr:\n{exc.stderr}"
-            ) from exc
     release = subprocess.run(
         ["uname", "-r"], check=True, capture_output=True, text=True
     ).stdout.strip()
@@ -92,27 +46,6 @@ def _run_otto(argv, *, xdir, timeout):
             f"{result.stdout}\n{result.stderr}"
         )
     return result
-
-
-def _line_of(path: Path, needle: str) -> int:
-    """1-based line number of the first source line containing *needle*."""
-    for i, line in enumerate(path.read_text().splitlines(), start=1):
-        if needle in line:
-            return i
-    raise AssertionError(f"{needle!r} not found in {path}")
-
-
-def _record(store: CoverageStore, name: str) -> FileRecord:
-    for fr in store.files():
-        if str(fr.path).endswith(name):
-            return fr
-    have = [str(f.path) for f in store.files()]
-    raise AssertionError(f"no FileRecord ending with {name!r}; have {have}")
-
-
-def _hits(rec: FileRecord, lineno: int) -> int:
-    assert lineno in rec.lines, f"{rec.path}:{lineno} carries no coverage data"
-    return rec.lines[lineno].hits.for_tier("system")
 
 
 def _has_a_taken_and_an_untaken_branch(rec: FileRecord, lineno: int) -> bool:
@@ -159,6 +92,9 @@ def coverage_run(built_modules, tmp_path_factory):
 @pytest.mark.xdist_group("coverage_e2e")
 class TestKmodFetchTree:
     def test_only_the_demo_is_fetched_and_only_from_the_two_hosts(self, coverage_run):
+        # TestKmodDemo's own fixture installs only on test1/test2 — otto
+        # test never touches a product verb, so no other host's leaf (in
+        # particular, no container leaf on test3) can appear.
         _, cov_dir, _ = coverage_run
         assert {d.name for d in cov_dir.iterdir() if d.is_dir()} == HOSTS
         for host in HOSTS:

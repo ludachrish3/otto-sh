@@ -229,7 +229,7 @@ and declares `coverage = "module"`:
 ```{literalinclude} ../../tests/repo5/.otto/settings.toml
 :language: toml
 :start-at: "[[products]]"
-:end-before: "# All three unix hosts are eligible"
+:end-before: "# The container-image products"
 ```
 
 The library, `otto_kgcov`, is declared first — products install in
@@ -255,12 +255,44 @@ later command). {doc}`../guide/cli/cov/instrumenting/kernel-modules` has the
 rest: why a runtime is needed at all, instrumenting a module of your own,
 and the alternative `coverage = "kernel"` method.
 
+## A container image
+
+A container image run by a docker daemon is a product too, declared with
+`kind = "docker_image"` instead of `kind = "shell"`. `install` loads it
+(from a tarball, here) and runs it with `docker run -d`, the product's
+`cov_dir` bind-mounted at the same path inside the container:
+
+```{literalinclude} ../../tests/repo5/.otto/settings.toml
+:language: toml
+:start-after: "# needs no pull. An archive scans unknown, hence `instrumented = true`."
+:end-at: "match = { id = \"test3\" }"
+```
+
+`instrumented = true` because the scan cannot see inside a tarball, so it
+answers *unknown* on its own. The bind mount is the whole coverage story:
+an instrumented binary inside the container writing its counters under
+`GCOV_PREFIX=<cov_dir>` (set in `run_args` above) is, as far as the daemon
+host is concerned, just writing ordinary files under `<cov_dir>` — the
+same fetcher and the same default hooks pick them up, no different from a
+product that was never containerized.
+
+```bash
+otto test --cov TestCovContainer
+```
+
+`image` can also be a `registry/name:tag` reference instead of a tarball
+path, with `pull = true` to fetch it on every install rather than requiring
+it already present. {doc}`../guide/cli/cov/instrumenting/containers` has
+the rest: the tarball/reference split, what `uninstall` removes, and how
+this differs from running a service *inside* a container as the thing
+under test.
+
 ## Several products, one container
 
 A compose-built container host ingests products exactly like any other host,
-so a container running two products reports two products. There is nothing
-extra to configure: the `/tmp/<name>` default gives each one its own
-`cov_dir`, and the fetcher discovers and pulls them separately.
+so a container running two products reports two products. That is a
+service under test *inside* a compose-built container; for an image you
+run *as* a product, see {doc}`../guide/cli/cov/instrumenting/containers`.
 
 ## Unit test views
 

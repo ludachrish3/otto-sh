@@ -43,9 +43,41 @@ coverage = "module"
 cov_dir = "/var/cov/otto_kmod_demo"
 match = { id = "test[12]" }
 
-# All three unix hosts are eligible, though this suite's own products only
-# match test1/test2 (see each [[products]] entry's `match` above) — a
-# product that produced no counters in a run leaves no leaf, so each e2e
-# still asserts exactly the hosts its own suite drove.
+# The container-image products, both on the daemon host (test3). The
+# tarball form is built by docker/build.sh on the dev VM (git-ignored
+# artifact); it bakes its own GCOV_PREFIX_STRIP into the image (see
+# docker/build.sh and docker/Dockerfile) rather than fixing a number here —
+# the strip count depends on the build directory's own absolute path,
+# which differs between a worktree and the main checkout. The reference
+# form runs the image the tarball loaded, so it is declared AFTER it and
+# needs no pull. An archive scans unknown, hence `instrumented = true`.
+[[products]]
+name = "cov_container"
+kind = "docker_image"
+image = "docker/otto-cov-demo.tar"
+instrumented = true
+cov_dir = "/var/cov/cov_container"
+run_args = "-e GCOV_PREFIX={cov_dir}"
+match = { id = "test3" }
+
+[[products]]
+name = "cov_container_ref"
+kind = "docker_image"
+image = "otto-cov-demo:e2e"
+pull = false
+instrumented = true
+cov_dir = "/var/cov/cov_container_ref"
+run_args = "-e GCOV_PREFIX={cov_dir}"
+match = { id = "test3" }
+
+# All three unix hosts are eligible for [coverage], though each suite's own
+# products only match a subset (see each [[products]] entry's `match`
+# above): otto test never installs/uninstalls a product itself (each
+# suite's own fixture does, on the hosts it selects), so no suite ever
+# touches the other family's hosts. --cov-clean and the post-run fetch DO
+# still walk every instrumented, matched product on every host here
+# regardless of which suite ran — harmless .gcda housekeeping (nothing to
+# clean or fetch where nothing was ever installed) — which is why each
+# e2e's own fetch tree is exactly, and only, the hosts its own suite drove.
 [coverage]
 hosts = "test[1-3]"

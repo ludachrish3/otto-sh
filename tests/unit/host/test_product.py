@@ -9,7 +9,7 @@ from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.product import Product, ShellProduct
 from otto.logger.mode import LogMode
-from otto.result import CommandResult, Result
+from otto.result import CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
 
 
@@ -291,6 +291,7 @@ from otto.host.product import (
     cov_dir_of,
     scan_for_instrumentation,
     stamp_cov_dir,
+    sudo_gcda_delete,
 )
 
 
@@ -492,6 +493,63 @@ async def test_reset_coverage_refuses_a_malformed_name_before_any_command():
     with pytest.raises(ValueError, match="product name"):
         await _DummyShellProduct(artifact=Path("/b/app"), name="a/b").reset_coverage(host)
     assert host.exec_calls == []
+
+
+class _RunHost:
+    """Host double for sudo_gcda_delete: records run() and answers a canned status."""
+
+    def __init__(self, status=Status.Success, output=""):
+        self.id = "h1"
+        self.run_calls: list = []
+        self._status = status
+        self._output = output
+
+    async def run(self, cmd, **kwargs):
+        self.run_calls.append((cmd, kwargs))
+        if self._status is Status.NotRun:
+            entry = NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=self.id)
+        else:
+            retcode = 0 if self._status.is_ok else 1
+            entry = CommandResult(self._status, value=self._output, command=cmd, retcode=retcode)
+        return Results.collect([entry])
+
+
+@pytest.mark.asyncio
+async def test_sudo_gcda_delete_deletes_under_sudo():
+    host = _RunHost()
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/var/cov/app")
+    result = await sudo_gcda_delete(p, host)
+    assert result.is_ok
+    assert host.run_calls == [("find /var/cov/app -name '*.gcda' -type f -delete", {"sudo": True})]
+
+
+@pytest.mark.asyncio
+async def test_sudo_gcda_delete_refuses_a_malformed_name_before_any_command():
+    # sudo_gcda_delete validates the name itself — kmod_kind and
+    # docker_image_kind's own reset_coverage() call it directly, bypassing
+    # the unelevated default tested above, so this is its own arm.
+    host = _RunHost()
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="a/b", cov_dir="/var/cov/app")
+    with pytest.raises(ValueError, match="product name"):
+        await sudo_gcda_delete(p, host)
+    assert host.run_calls == []
+
+
+@pytest.mark.asyncio
+async def test_sudo_gcda_delete_failure_includes_the_commands_output():
+    host = _RunHost(status=Status.Error, output="permission denied")
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/var/cov/app")
+    result = await sudo_gcda_delete(p, host)
+    assert not result.is_ok
+    assert result.msg == "app: deleting .gcda under /var/cov/app failed: permission denied"
+
+
+@pytest.mark.asyncio
+async def test_sudo_gcda_delete_propagates_a_dry_run_decline():
+    host = _RunHost(status=Status.NotRun)
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/var/cov/app")
+    result = await sudo_gcda_delete(p, host)
+    assert result.status is Status.NotRun
 
 
 @pytest.mark.asyncio

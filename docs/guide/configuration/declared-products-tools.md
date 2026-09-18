@@ -49,6 +49,7 @@ anything else is a `shell` entry.
 | `shell` | the `install` / `check` / `uninstall` commands you write | `.gcda` under `cov_dir`, fetched with `find` |
 | `llext` | the host's binary loader (a Zephyr LLEXT extension) | dumped over the console by the embedded collector |
 | `kmod` | the kernel's module loader (`insmod`/`rmmod`) | `none`, or `module` (the `otto_kgcov` runtime dumps to `cov_dir`), or `kernel` (`CONFIG_GCOV_KERNEL`'s debugfs tree copied to `cov_dir`) |
+| `docker_image` | a docker daemon (`docker load`/`pull`, `run -d`, `rm -f`) | `.gcda` under `cov_dir`, bind-mounted into the container |
 
 ## Matching
 
@@ -236,6 +237,56 @@ the counter files as root, so every delete a `kmod` product's coverage
 hooks issue runs under sudo. See
 {doc}`../cli/cov/instrumenting/kernel-modules` for the runtime, the worked
 example, and how a report reads back what it captured.
+
+## The `docker_image` kind
+
+Built in, products only: a docker image, installed with `docker run -d` and
+removed with `docker rm -f`. Registered for every host — nothing is checked
+at declaration; `install` itself probes `docker` on the host's `PATH` and
+fails loud naming the host when it is not.
+
+| Param | Meaning |
+|---|---|
+| `image` | **Required.** A `registry/name:tag` reference, or the path of a `docker save` tarball (`.tar`, `.tar.gz`, `.tgz`) |
+| `pull` | `false` (default): a reference must already be present (`docker image inspect`, fail loud naming it); `true`: `docker pull` first. Reference form only — declaring `pull = true` on a tarball entry is refused when the product is built |
+| `run_args` | Extra `docker run` arguments; `{cov_dir}`/`{name}` placeholders substituted as the `shell` kind does, but inserted unquoted — quote any value of your own that contains whitespace |
+| `container_name` | `--name`; defaults to the product name |
+| `cov_dir`, `instrumented`, `debug_log_globs` | As the `shell` kind, and likewise products only |
+
+`install` runs `docker run -d --name <container_name> -v
+<cov_dir>:<cov_dir> <run_args> <image>` — the bind mount is the whole
+coverage story: an instrumented binary inside the container writing under
+`GCOV_PREFIX=<cov_dir>` writes onto the daemon host, where the ordinary
+fetcher and the default hooks already work, no collector and no host class
+needed. A tarball entry's staged copy under `/tmp` is removed right after
+a successful `docker load` — it is an intermediate the load has already
+consumed, not the product itself. `is_installed` asks the daemon whether
+the container is *running* — one that exists but has exited answers not
+installed, so a re-install then collides with docker's own "name already
+in use" unless the old container is removed first.
+
+`uninstall` always runs `docker rm -f <container_name>` (idempotent — a
+missing container is not a failure), and follows with `docker rmi` only
+for an image otto itself loaded from a tarball; a pulled or
+already-present reference stays in the daemon's cache. That image is
+resolved from the container itself (`docker container inspect -f
+'{{.Config.Image}}' <container_name>`), never from in-process state, so
+it is found even when `uninstall` runs in a separate process from the
+`install` that loaded it — the normal shape of `otto install` followed
+later by `otto uninstall`. A container that is already gone has nothing
+to resolve an image from, so nothing beyond the (already-absent)
+container is removed.
+
+An `image` path ending in one of the tarball suffixes above is always
+`unknown` under the instrumentation scan — those suffixes are a subset of
+the archive suffixes the `shell` kind's own `instrumented` row above
+names, which the scan never opens — so an instrumented tarball entry
+declares `instrumented = true` itself, the same as any other archive. A
+reference has no local artifact for the scan to look at either,
+so it too reads `unknown` unless `instrumented` says otherwise. See
+{doc}`../cli/cov/instrumenting/containers` for the bind mount, the
+tarball/reference split, and how a docker-compose service under test
+(`[docker.use_cases]`) differs from this kind.
 
 ## Custom kinds
 

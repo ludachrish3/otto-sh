@@ -25,3 +25,11 @@ case "$vermagic" in
 esac
 ls "$HERE"/kmod/demo/*.gcno >/dev/null
 echo "built: $HERE/build/lib/otto_kgcov.ko $HERE/kmod/demo/otto_kmod_demo.ko (for $RELEASE)"
+
+# The container-image half: a static, --coverage build of the fixture's C
+# product, packaged as a docker save tarball. Unconditional only with
+# respect to RELEASE (it runs the same regardless of which kernel release
+# was requested above) — it is still sequenced after the kmod half under
+# `set -euo pipefail`, so a vermagic mismatch or missing kernel headers
+# stops it from running at all.
+"$HERE/docker/build.sh"
