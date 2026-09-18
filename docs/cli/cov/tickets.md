@@ -10,6 +10,12 @@ block, none of it runs — no git log walk, no tickets page, no gutter column,
 no ticket data anywhere in the store or an export — and the coverage
 numbers themselves are exactly what they'd be without this section.
 
+![The report's tickets page: one row per ticket, worst-uncovered first,
+with owned, covered, and uncovered line counts, a line percentage, and one
+column per tier, with PROJ-311 expanded to its missing lines in
+lib/ring.c; the stats card for every attributed line sits above and to the
+right](../../_static/generated/coverage-tickets.png)
+
 Attribution walks `git log --first-parent`, so a line is credited to the
 **merge** that brought it to the mainline rather than the topic-branch commit
 that first wrote it. Design notes:
@@ -168,6 +174,10 @@ edits do not re-attribute (the same `-w -M` as the rest of the walk), so
 they don't shed asserted coverage either.
 
 ### How asserted coverage is shown
+
+![main.c's first rows: line 1's solid bench hit count, and on the next
+row line 2's hollow asserted marker, with line 2 expanded to its override entry's key
+and reason](../../_static/generated/coverage-asserted.png)
 
 Asserted coverage is never indistinguishable from a recorded run:
 

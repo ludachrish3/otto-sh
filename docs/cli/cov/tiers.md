@@ -1,6 +1,10 @@
 (coverage-tier-kinds)=
 # Coverage tiers
 
+![The report's directory tree with one coverage column per tier — System,
+Unit, Manual, Bench — beside each directory's and file's combined line and
+branch percentages](../../_static/generated/coverage-tiers.png)
+
 Every tier's `kind` selects how `otto cov report` collects its data:
 
 | Kind | Collected by | Storage |

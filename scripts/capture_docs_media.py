@@ -24,7 +24,8 @@ of this and always runs for real.
 Modes — ``--mode`` flag, or the ``OTTO_DOCS_MEDIA`` env var:
 
 - ``auto`` (default): regenerate only when the stamp says the inputs changed
-  (this script, the fixtures, or anything under ``src/otto/monitor``).
+  (this script, the fixtures, ``src/otto/monitor``, or the coverage code
+  the report fixture renders through).
 - ``force``: always regenerate (``make docs-media``).
 - ``placeholder``: write tiny placeholder assets without launching a browser.
   Emergency escape hatch only — e.g. a broken Chromium install on the docs
@@ -52,7 +53,8 @@ STAMP = OUT_DIR / ".stamp"
 
 # Inputs whose change invalidates the media: this script, the harness
 # fixtures it drives, the fixture documents it imports, the whole monitor
-# subsystem (server, collector), the coverage renderer, and the built
+# subsystem (server, collector), the coverage renderer plus the store and
+# exclusion filter the report fixture builds through, and the built
 # frontend artifacts themselves (src/otto/_webassets/ — the actual bundles
 # the real MonitorServer serves; they live outside the two package trees
 # above, so without this entry a stale built bundle wouldn't invalidate the
@@ -66,6 +68,8 @@ _STAMP_INPUTS = [
     REPO_ROOT / "web" / "fixtures" / "isp-core.json",
     REPO_ROOT / "src" / "otto" / "monitor",
     REPO_ROOT / "src" / "otto" / "coverage" / "renderer",
+    REPO_ROOT / "src" / "otto" / "coverage" / "store",
+    REPO_ROOT / "src" / "otto" / "coverage" / "exclusions",
     REPO_ROOT / "src" / "otto" / "_webassets",
 ]
 
@@ -78,8 +82,13 @@ ARTIFACTS = [
     "dashboard-element.png",
     "dashboard-events.png",
     "coverage-report.png",
+    "coverage-tiers.png",
     "coverage-file.png",
     "coverage-runs.png",
+    "coverage-context-focus.png",
+    "coverage-product-focus.png",
+    "coverage-legend.png",
+    "coverage-asserted.png",
     "coverage-tickets.png",
     "coverage-ticket-context.png",
     "coverage-search.png",
@@ -212,106 +221,178 @@ def _tid(page: Any, testid: str) -> Any:
     return page.locator(f'[data-testid="{testid}"]')
 
 
+def _wait_toasts_gone(page: Any) -> None:
+    """Let any toast (pin/clear notices, Toast.tsx) finish before a shot."""
+    toast = _tid(page, "toast")
+    if toast.count():
+        toast.first.wait_for(state="detached")
+
+
 def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright import is deferred
-    """Photograph every SPA page kind against ONE rendered report.
+    """Photograph the coverage report's features against ONE rendered report.
 
     The fixture is shared with ``tests/e2e/cov/report_browser/`` (see
-    ``build_fixture_report``'s docstring), so the routes and wait-selectors
-    below mirror exactly what that suite already pins rather than guessing:
-    ``test_spa_file.py``'s ``_open_file`` helper for the file page,
-    ``test_spa_runs_focus.py``'s ``_goto(..., "/runs")`` for the runs page,
-    and ``test_spa_tickets.py`` for the tickets page and the pinned-ticket
-    directory view (Task 13) — including which ticket to pin
-    (``PROJ-204``, the one that owns lines in ``product/main.c`` but
-    nothing in ``product/utils.c``, so the pinned shot actually shows a
-    hidden file row and the hidden-count banner, not a no-op pin). One
-    report render, one page object, one browser context — five
-    navigations, five shots.
+    ``build_fixture_report``'s docstring), so the routes, testids and
+    fixture facts below are the ones that suite already pins — e.g.
+    ``PROJ-204`` owns lines in ``product/main.c`` but nothing in
+    ``product/utils.c`` (so pinning it hides a real row), ``nightly-full``
+    is the three-run, two-host, two-product context, and ``agent`` is the
+    only product with evidence under ``lib/``.
+
+    Each shot opens its route in a fresh browser context (``_open``) so no
+    pin, focus or expanded row leaks from one shot into the next — a plain
+    navigation that drops a pinned ticket or context from the hash
+    REASSERTS it (focus.tsx's ``onHashChange``), and the pins also persist
+    per report in ``localStorage``, which a new context starts without.
     """
     from tests._fixtures._report_fixture import build_fixture_report
 
     with tempfile.TemporaryDirectory(prefix="otto-docs-cov-") as tmp:
         report_dir = build_fixture_report(Path(tmp))
         base_uri = (report_dir / "index.html").as_uri()
-        page = browser.new_page(viewport=_VIEWPORT)
-        page.set_default_timeout(_CAPTURE_TIMEOUT_MS)
+        contexts: list[Any] = []
+
+        def _open(route: str, ready: str, *, height: int = _VIEWPORT["height"]):  # noqa: ANN202
+            # A new context per shot: empty localStorage, so no pin a
+            # previous shot set survives; the previous one is closed here.
+            while contexts:
+                contexts.pop().close()
+            context = browser.new_context(viewport={"width": _VIEWPORT["width"], "height": height})
+            contexts.append(context)
+            page = context.new_page()
+            page.set_default_timeout(_CAPTURE_TIMEOUT_MS)
+            page.goto(base_uri + "#" + route)
+            _tid(page, ready).first.wait_for()
+            return page
 
         # Directory page — the SPA is a hash-router (covapp) — with no hash
-        # it falls through to the NotFoundPlaceholder route, so the shot
-        # needs "#/coverage" explicitly. The fixture's files sit under two
-        # dirs ("product/" and "lib/"), so the root page lists both.
-        page.goto(base_uri + "#/coverage")
-        page.wait_for_selector('[data-testid="tree-row-dir:product"]')
-        page.screenshot(path=OUT_DIR / "coverage-report.png", full_page=True)
+        # it falls through to the NotFoundPlaceholder route, so every route
+        # below spells "#/coverage..." explicitly. The overview: stats card
+        # and the tree of both source dirs.
+        page = _open("/coverage", "tree-row-dir:product")
+        _clip_shot(page, "coverage-report.png", _tid(page, "app-bar"), _tid(page, "directory-tree"))
 
-        # File page — product/main.c carries every row-precedence state the
-        # renderer knows in one file (see _report_fixture.py's docstring):
-        # a tier-tinted hit row, a stale row, an aging row, and line 4's
-        # three-state branch pills — so this one shot shows tier colors, a
-        # stale row, and branch pills all at once.
-        page.goto(base_uri + "#/coverage/product/main.c")
-        page.wait_for_selector('[data-testid="code-row-1"]')
-        page.screenshot(path=OUT_DIR / "coverage-file.png", full_page=True)
+        # Tiers — the tree card alone: one coverage column per tier beside
+        # the combined line/branch percentages, for every dir and file.
+        _clip_shot(page, "coverage-tiers.png", _tid(page, "directory-tree"))
 
-        # Runs page — one row per context, multi-host pills, tier/search
-        # filters.
-        page.goto(base_uri + "#/runs")
-        page.wait_for_selector('[data-testid="run-row-nightly-full"]')
-        page.screenshot(path=OUT_DIR / "coverage-runs.png", full_page=True)
-
-        # Tickets page (Task 13) — two tickets, one linked to a tracker,
-        # one plain; PROJ-204's row is expanded so the shot also shows the
-        # missing-line-range detail, not just the collapsed table.
-        page.goto(base_uri + "#/tickets")
-        page.wait_for_selector('[data-testid="ticket-row"]')
-        page.locator('[data-testid="ticket-toggle-PROJ-204"]').click()
-        page.wait_for_selector('[data-testid="ticket-detail"]')
-        page.screenshot(path=OUT_DIR / "coverage-tickets.png", full_page=True)
-
-        # Pinned ticket context (Task 13) — pinning PROJ-204 at the
-        # "product/" directory hides utils.c's row and shows the
-        # hidden-count banner, since PROJ-204 owns nothing in utils.c.
-        # Pinning lives in the app bar's own search box (the tickets page's
-        # rows carry a pin control too, but this shot is of the tree).
-        page.goto(base_uri + "#/coverage/product")
-        page.wait_for_selector('[data-testid="tree-row-file:product/utils.c"]')
-        page.locator('[data-testid="ticket-search"] input').fill("PROJ-204")
-        page.locator('[data-testid="ticket-search-option-PROJ-204"]').click()
-        page.wait_for_selector('[data-testid="ticket-scope-banner"]')
-        # A "Pinned ticket" toast fires and would otherwise cover the
-        # tree/banner this shot exists to show. The option list closes
-        # itself on select; Escape is kept as a belt-and-braces dismissal
-        # for any popover the click may have left open.
+        # Legend — the ⋮ menu's coverage key (tiers, line states, branch
+        # pills). The menu is taller than the default viewport, so this page
+        # gets a tall one; the clip starts at the key's first header.
+        page = _open("/coverage", "tree-row-dir:product", height=1600)
+        _tid(page, "appbar-menu").click()
+        key_header = page.get_by_text("Coverage key — tiers")
+        key_header.wait_for()
+        last_key = page.get_by_role("menuitem").filter(has_text="unreachable")
+        _clip_shot(page, "coverage-legend.png", key_header, last_key, pad=4)
         page.keyboard.press("Escape")
-        page.locator('[data-testid="ticket-search-options"]').wait_for(state="hidden")
-        # Also let the "Pinned ticket PROJ-204" toast (Toast.tsx) clear the
-        # bottom of the viewport rather than screenshotting mid-fade.
-        page.locator('[data-testid="toast"]').first.wait_for(state="detached")
-        page.screenshot(path=OUT_DIR / "coverage-ticket-context.png", full_page=True)
 
-        # Clear the pinned ticket before the next shot — this capture reuses
-        # one page across every screenshot, and a plain navigation whose
-        # hash drops a previously pinned ticket does not clear the pin: it
-        # REASSERTS it into the new URL unless the entry is a recognized
-        # Back/Forward one (focus.tsx's `onHashChange`, the "landing"
-        # reassert branch). Only the explicit clear control actually drops
-        # it, so without this click utils.c's row would stay hidden below.
-        page.locator('[data-testid="ticket-clear"]').click()
-        page.wait_for_selector('[data-testid="tree-row-file:product/utils.c"]')
-        # Let the "Ticket pin cleared" toast clear the viewport too, same as
-        # the pin toast above, so it doesn't linger into the next shot.
-        page.locator('[data-testid="toast"]').first.wait_for(state="detached")
+        # File page — main.c's annotated source with two lines' run
+        # drilldowns open: line 3 (a system run on router-a and the unit
+        # harvest, each with its hit count) and line 6 (the revoked
+        # smoke-old run, its "revoked" tag struck through).
+        page = _open("/coverage/product/main.c", "code-row-1")
+        _tid(page, "code-expander-3").click()
+        _tid(page, "code-expander-6").click()
+        _tid(page, "run-chip").first.wait_for()
+        _clip_shot(
+            page,
+            "coverage-file.png",
+            _tid(page, "code-card"),
+            bottom=_page_bottom(_tid(page, "code-row-9")),
+        )
+
+        # Asserted coverage — main.c lines 1-3: line 1's solid bench count
+        # beside line 2's hollow asserted marker, with line 2's drilldown
+        # open on the override entry and its reason.
+        page = _open("/coverage/product/main.c", "code-row-1")
+        _tid(page, "code-expander-2").click()
+        _tid(page, "asserted-chip").wait_for()
+        _clip_shot(
+            page,
+            "coverage-asserted.png",
+            _tid(page, "code-card"),
+            bottom=_page_bottom(_tid(page, "code-row-4")),
+        )
+
+        # Runs page — tier and product chips, one row per context, and
+        # nightly-full's detail open on its per-host lines: three member
+        # runs across two hosts, one of them carrying two products.
+        page = _open("/runs", "run-row-nightly-full", height=1200)
+        _tid(page, "run-row-nightly-full").click()
+        _tid(page, "run-detail-nightly-full").wait_for()
+        _clip_shot(page, "coverage-runs.png", _tid(page, "tier-chip-all"), _tid(page, "runs-card"))
+
+        # Context focus — nightly-full pinned from its own detail row, then
+        # main.c: the app bar's focus chip, the stats card scoped to that
+        # context, and every instrumented line no nightly-full run hit
+        # reading uncovered.
+        _tid(page, "focus-context-btn").click()
+        _tid(page, "focus-chip").wait_for()
+        page.evaluate("location.hash = '#/coverage/product/main.c?ctx=nightly-full'")
+        _tid(page, "code-row-12").wait_for()
+        _wait_toasts_gone(page)
+        _clip_shot(
+            page,
+            "coverage-context-focus.png",
+            _tid(page, "app-bar"),
+            _tid(page, "code-card"),
+            bottom=_page_bottom(_tid(page, "code-row-13")),
+        )
+
+        # Product focus — "agent" pinned from the runs page's product chips,
+        # then the root directory page: lib/ carries all of agent's evidence
+        # and product/ none, tier columns read "—" (a product spans tiers).
+        page = _open("/runs", "product-chip-agent")
+        _tid(page, "product-chip-agent").click()
+        _tid(page, "product-chip").wait_for()
+        page.evaluate("location.hash = '#/coverage?product=agent'")
+        _tid(page, "tree-row-dir:lib").wait_for()
+        _wait_toasts_gone(page)
+        _clip_shot(
+            page, "coverage-product-focus.png", _tid(page, "app-bar"), _tid(page, "directory-tree")
+        )
+
+        # Tickets page — five tickets from 0% to fully covered, sorted
+        # worst-uncovered-first, with PROJ-311's row open on its missing
+        # range (ring_drain(), never reached) and the attributed-lines card.
+        page = _open("/tickets", "ticket-row")
+        _tid(page, "ticket-toggle-PROJ-311").click()
+        _tid(page, "ticket-detail").wait_for()
+        _clip_shot(
+            page, "coverage-tickets.png", _tid(page, "stats-card"), _tid(page, "tickets-card")
+        )
+
+        # Pinned ticket context — pinning PROJ-204 at "product/" hides
+        # utils.c's row (PROJ-204 owns nothing there) and shows the
+        # hidden-count banner under the tree. Pinning lives in the app
+        # bar's own search box.
+        page = _open("/coverage/product", "tree-row-file:product/utils.c")
+        _tid(page, "ticket-search").locator("input").fill("PROJ-204")
+        _tid(page, "ticket-search-option-PROJ-204").click()
+        _tid(page, "ticket-scope-banner").wait_for()
+        # The option list closes itself on select; Escape dismisses any
+        # popover the click may have left open.
+        page.keyboard.press("Escape")
+        _tid(page, "ticket-search-options").wait_for(state="hidden")
+        _wait_toasts_gone(page)
+        _clip_shot(
+            page,
+            "coverage-ticket-context.png",
+            _tid(page, "app-bar"),
+            _tid(page, "ticket-scope-banner"),
+        )
 
         # Search palette — opened from the directory page, mid-query, so the
         # shot shows grouped results, both chips, and the total-count footer.
-        page.goto(base_uri + "#/coverage/product")
-        page.wait_for_selector('[data-testid="tree-row-file:product/utils.c"]')
+        page = _open("/coverage/product", "tree-row-file:product/utils.c")
         page.keyboard.press("Control+K")
         page.get_by_role("searchbox").fill("checked_add")
-        page.wait_for_selector('[data-testid="search-result-0"]')
-        page.screenshot(path=OUT_DIR / "coverage-search.png", full_page=False)
+        _tid(page, "search-result-0").wait_for()
+        _clip_shot(page, "coverage-search.png", _tid(page, "search-palette"), pad=0)
 
-        page.close()
+        while contexts:
+            contexts.pop().close()
 
 
 def _wait_for_edges_settled(

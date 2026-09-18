@@ -583,8 +583,8 @@ by the Vagrantfile) and headless Chromium (installed by `make dev` via
 
 ### Build-time GUI media and terminal blocks
 
-Screenshots, video clips, and the animated terminal blocks are **products
-of the build**, never committed. On every build, `docs/conf.py` runs two
+Screenshots and the animated terminal blocks are **products of the
+build**, never committed. On every build, `docs/conf.py` runs two
 capture scripts into `docs/_static/generated/` (gitignored):
 
 - `scripts/capture_docs_media.py` serves the real monitor dashboard —
@@ -593,10 +593,13 @@ capture scripts into `docs/_static/generated/` (gitignored):
   Import front door, and captures screenshots with headless Chromium, each
   clipped to the feature it illustrates rather than the whole page. The
   topology shot uses `web/fixtures/isp-core.json`; the fleet grid, chart,
-  element and events shots use `web/fixtures/kitchen-sink.json`. The same script renders the fixture coverage report
-  shared with `tests/e2e/cov/report_browser/` through the live report
-  renderer and photographs each covapp page kind (the `coverage-*.png`
-  images on the `otto cov` pages).
+  element and events shots use `web/fixtures/kitchen-sink.json`. The same
+  script renders the fixture coverage report shared with
+  `tests/e2e/cov/report_browser/` through the live report renderer and
+  photographs each covapp feature — tiers, run drilldowns, context,
+  product and ticket pins, the legend, asserted coverage — each still
+  clipped to that feature (the `coverage-*.png` images on the `otto cov`
+  pages).
 - `scripts/capture_docs_termynal.py` scaffolds a demo repo with
   `otto init --all` and captures every command's real `--help` output and
   the real tab-completion candidates (via typer's completion protocol),

@@ -132,6 +132,10 @@ table both grow a column per tier in the same left-to-right order.
 (coverage-colors)=
 ## Colors and Legend
 
+![The coverage key from the ⋮ menu: each tier's color, the four line
+states, and the three branch-pill
+states](../../_static/generated/coverage-legend.png)
+
 Each tier renders in its configured `color` — a CSS named color or
 `#RRGGBB` hex, validated when settings load (an invalid value is a
 settings error, not a report-time surprise).  A tier that declares no
@@ -188,8 +192,10 @@ configure.
   from {ref}`coverage-runs`, listing every run that hit the line with
   revoked/aging credits marked.
 
-  ![Annotated source view: winner-take-all row tinting, branch pills, and
-  per-line run drilldowns](../../_static/generated/coverage-file.png)
+  ![Annotated source: per-tier hit columns, winner-take-all row tinting,
+  branch pills, and two lines' run drilldowns open — line 3's two runs with
+  their hosts and hit counts, and line 6's smoke-old run tagged
+  revoked](../../_static/generated/coverage-file.png)
 
 - **Code search** — press <kbd>Ctrl</kbd>+<kbd>K</kbd> (<kbd>⌘</kbd>+<kbd>K</kbd> on
   macOS) or click the search box in the app bar on any page. Substring
@@ -205,9 +211,8 @@ configure.
   along in the link (`?q=`), so a hit is shareable, and a pinned ticket
   narrows the search to the files it touched.
 
-  ![The search palette over an example report: matches grouped by file,
-  the Regex and Uncovered-only chips, and the total-count
-  footer](../../_static/generated/coverage-search.png)
+  ![The search palette: matches grouped by file, the Regex and
+  Uncovered-only chips, and the total-count footer](../../_static/generated/coverage-search.png)
 
 - **Runs & contexts page** (`#/runs`) — one row per run (see
   {ref}`coverage-runs`); multi-host runs show host pills reading
@@ -217,8 +222,10 @@ configure.
   per line-and-run — unlike line hits, which are) and renders as "not
   tracked per-run".
 
-  ![Runs & contexts page: one row per context with per-host breakdowns and
-  filters](../../_static/generated/coverage-runs.png)
+  ![Runs & contexts page: tier and product filter chips, one row per
+  context with its `host · product` pills, and nightly-full expanded to its
+  capture metadata, per-host lines, and top
+  files](../../_static/generated/coverage-runs.png)
 
 - **Report-wide context focus** — pin a run's context from its row on the
   runs page, or from the app bar's **⋮** overflow menu (also home to
@@ -229,6 +236,12 @@ configure.
   bookmarkable and shareable — and persists per report in `localStorage`.
   Branch cells show "—" while a focus is active; focus mode filters line
   stats only.
+
+  ![main.c with the nightly-full context pinned: the focus chip in the app
+  bar, the stats card scoped to that context, and every instrumented line
+  no nightly-full run hit reading
+  uncovered](../../_static/generated/coverage-context-focus.png)
+
 - **Product focus** — pin a product from the chip row on the runs page, from
   the app bar's **⋮** menu, or by hand with `?product=<name>` on the current
   route; it persists per report in `localStorage` the same way a context pin
@@ -249,6 +262,11 @@ configure.
   product's e2e captures and its unit views alike. So a bare product pin has
   no tier colour to lend — file rows tint neutral and the per-tier columns
   read `—`. Pin a context as well to get the per-tier breakdown back.
+
+  ![The directory page with the agent product pinned: lib/ holds all of
+  that product's evidence and product/ none, and the per-tier columns read
+  `—`](../../_static/generated/coverage-product-focus.png)
+
 - **Tickets page** (`#/tickets`) — present only when `[coverage.tickets]`
   is configured (see {ref}`coverage-tickets`); one row per ticket id, sorted
   worst-uncovered-first, with the same overall stats card scoped to every
@@ -256,10 +274,6 @@ configure.
   threshold-colored line percentage, one column per tier, and a pin control;
   every column is sortable. Expanding a row lists its missing lines grouped
   by file as ranges, each linking straight into the annotated source.
-
-  ![Tickets page: one row per ticket sorted by uncovered lines, an expanded
-  row's missing-line ranges, and the overall attributed-lines stats
-  card](../../_static/generated/coverage-tickets.png)
 
 - **Ticket context** — pin a ticket from its row on the tickets page, or from
   the ticket **search box** in the app bar (press <kbd>/</kbd> to jump straight
@@ -273,7 +287,8 @@ configure.
   proven by that run.
 
   ![A pinned ticket at the directory page: utils.c's row is hidden (it
-  owns none of the ticket's lines) and the banner names what was
+  owns none of the ticket's lines), the stats card is scoped to the
+  ticket, and the line under the tree counts what was
   hidden](../../_static/generated/coverage-ticket-context.png)
 
 `store.json` is written alongside the report with the same data —

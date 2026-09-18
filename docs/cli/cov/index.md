@@ -15,9 +15,10 @@ multi-tier HTML coverage reports.  Coverage tiers — `system` (e2e),
    harvested unit counters, the committed manual store) into an HTML
    report.
 
-![The coverage report's directory page: a sortable tree of covered source
-directories and files, per-tier percentage columns with threshold-colored
-bars, and the per-node stats card](../../_static/generated/coverage-report.png)
+![The coverage report's directory page: the app bar, a sortable tree of
+the lib/ and product/ source directories and their files with
+threshold-colored Line % and Branch % bars and one percentage column per
+tier, and the per-node stats card](../../_static/generated/coverage-report.png)
 
 See {doc}`../../architecture/subsystems/coverage/index` for how the fetch → merge →
 capture → render pipeline fits together, and for the design behind tiers,
