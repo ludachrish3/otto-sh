@@ -269,7 +269,7 @@ declaration).
 | Param | Meaning |
 |---|---|
 | `image` (required) | a reference (`registry/name:tag`) or the path of a `docker save` tarball |
-| `pull` | `false` (default): a reference must already be present (`docker image inspect`, fail loud with the name); `true`: `docker pull` first |
+| `pull` | `false` (default): a reference must already be present (`docker image inspect`, fail loud with the name); `true`: `docker pull` first. Reference form only: declared on a tarball entry it is refused when the product is built (a tarball is loaded, never pulled) |
 | `run_args` | extra `docker run` arguments; `{cov_dir}`/`{name}` placeholders |
 | `container_name` | defaults to the product name |
 | `cov_dir`, `instrumented`, `debug_log_globs` | as every product |
@@ -289,10 +289,10 @@ declaration).
   writes as root, so the lab user cannot remove the files).
 - Product logs: `debug_log_globs` on the daemon host, plus `docker logs
   <container_name>` captured to `logs/<host>/<product>/debug/container.log`.
-- Detection: a tarball is scanned (a `docker save` tar holds uncompressed
-  layer tars, so markers are usually visible; a compressed one reads
-  `unknown` per §8); a reference cannot be scanned and is `unknown` unless
-  `instrumented` is set.
+- Detection: a tarball answers `unknown` — its suffixes are a subset of
+  §8's archive list, so the file is never read; an instrumented tarball
+  entry therefore says `instrumented = true`. A reference cannot be scanned
+  and is `unknown` unless `instrumented` is set.
 
 ## 8. Instrumentation scan: archives read `unknown`
 
