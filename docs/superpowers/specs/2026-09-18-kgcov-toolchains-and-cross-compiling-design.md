@@ -307,6 +307,26 @@ so the routine e2e and the matrix rebuild for each other correctly. The
 routine kmod e2e keeps the system gcc. The gcc 15 arm is compile-checked
 only through the table.
 
+**The matrix names each compiler's gcov in the bed hosts' `toolchain`.**
+For a Unix host the gcov that reads the counters is the one the HOST RECORD
+names, not one inferred from the data: collection records every fetched Unix
+host's toolchain — the default `usr/bin/gcov` under sysroot `/` included —
+the reporter keeps it, and an explicit entry is taken before any `.gcno`
+discovery runs. Auto-discovery therefore applies only to a host whose record
+is silent, which a Unix host's never is once collected. So the matrix does
+what a user with a non-default compiler does and what `lab.json`'s "Coverage
+toolchain" section documents: it gives test1 and test2 the matching gcov
+(`/usr/bin/gcov-N` for a gcc, `llvm-cov` for clang, which otto wraps as
+`llvm-cov gcov`). It does that per compiler with an OVERLAY SUT repo layered
+over repo5 through `OTTO_SUT_DIRS` — the composite lab concatenates every
+repo's `[[lab.sources]]` in that order and replaces elements wholesale by
+slug, later source winning — so the overlay re-declares only the `test1` and
+`test2` elements, copied verbatim from the fixture's lab data with a
+`toolchain` injected into each host entry. The fixture's own lab data and
+repo5's settings are untouched, and the `default` toolchain builds no overlay
+at all, which is why the routine kmod e2e's path is unchanged. Nothing in
+otto changes.
+
 **Cross build-only (dev VM).** A `kgcov`-marked module,
 `tests/e2e/cov/test_kgcov_cross_build.py`, builds the library and the
 demo (a copy of the demo sources under the test's temporary directory,
