@@ -4,7 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>otto coverage</title>
-    <script src="./cov_data/index.js" defer></script>
+    <!-- The report's data, written next to this page. Loaded as a classic
+         script: file:// cannot load ES modules and the CSP forbids inline
+         scripts. -->
+    <script src="./cov_data/index.js" defer vite-ignore></script>
   </head>
   <body>
     <div id="root"></div>

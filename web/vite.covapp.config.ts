@@ -8,7 +8,15 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
 /** file:// cannot load ES modules; Jenkins CSP forbids inline scripts. Emit one classic
- *  IIFE script + strip module attributes from the HTML Vite generates. */
+ *  IIFE script + strip module attributes from the HTML Vite generates.
+ *
+ *  covapp.html's `./cov_data/index.js` tag is the report's runtime data file,
+ *  written next to the report and never bundled. Its `vite-ignore` attribute
+ *  keeps Vite's html plugin from trying (and warning that it can't); Vite
+ *  strips the attribute from the output but leaves the space before it, so
+ *  that one tag is tidied here, and its absence fails the build. */
+const COV_DATA_TAG = '<script src="./cov_data/index.js" defer>';
+const COV_DATA_TAG_AS_EMITTED = /<script src="\.\/cov_data\/index\.js" defer\s+>/;
 function classicScript(): Plugin {
   return {
     name: "otto-classic-script",
@@ -28,7 +36,14 @@ function classicScript(): Plugin {
       html.fileName = "index.html";
       html.source = String(html.source)
         .replaceAll(' type="module"', " defer")
-        .replaceAll(" crossorigin", "");
+        .replaceAll(" crossorigin", "")
+        .replace(COV_DATA_TAG_AS_EMITTED, COV_DATA_TAG);
+      if (!html.source.includes(COV_DATA_TAG)) {
+        throw new Error(
+          `otto-classic-script: built covapp HTML lacks ${COV_DATA_TAG} — ` +
+            "the report would load without its data",
+        );
+      }
     },
   };
 }
