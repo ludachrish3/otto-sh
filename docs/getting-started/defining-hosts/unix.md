@@ -1,9 +1,9 @@
 # Unix hosts
 
-There is little to say, which is the point. A Unix host needs an address, at
-least one credential, and `os_type: "unix"` — the default. `valid_terms` and
-`valid_transfers` are menus otto chooses from (`ssh` and `scp` first, by
-default); everything else otto works out for itself on first connect.
+A Unix host needs an address, at least one credential, and `os_type: "unix"`
+— the default. `valid_terms` and `valid_transfers` are menus otto chooses from
+(`ssh` and `scp` first, by default); everything else otto works out for itself
+on first connect.
 
 Is `probe` worth running on one? On a current Debian, Ubuntu or Fedora box,
 no: the probe finds exactly the GNU answers otto's transfer and command

@@ -8,8 +8,7 @@ keeps it somewhere: a JSON file to start, NetBox later.
 
 The one rule: **data lives in exactly one layer.** The inventory declares
 which fields it supplies; an entry that references it may not also state
-those fields inline; the join is a copy, never a merge. Two sources of the
-same fact is the situation this design refuses to have.
+those fields inline; the join is a copy, never a merge.
 
 ## The entry, by reference
 
@@ -56,6 +55,11 @@ field by field, and `lab.json`'s order is the login order.
 {ref}`credentials-layered` is the home for the rest — the store backends, the
 merge rules, and what the doctor checks.
 
+The inline entry on the previous page and this referenced one load to the
+same host — every machine fact, every interface, and every credential, the
+proxied `root` included: `lab.json` carries the route, `creds.json` the
+passwords, and the merge composes them.
+
 ## Asking the inventory
 
 ```{literalinclude} ../../examples/getting-started/captures/inventory-lookup-test1.txt
@@ -81,9 +85,3 @@ export`/`diff` to migrate — and stage three is keeping NetBox otto-healthy.
 path*; this page does not repeat it. When the answer is neither JSON nor
 NetBox, {doc}`../../library/inventory-backends` is the contract a backend
 implements and the conformance test it must pass.
-
-Both forms of this lab load to the same hosts — every machine fact, every
-interface, and every credential, the proxied `root` included: the twin's
-`lab.json` carries the route, `creds.json` the passwords, and the merge
-composes them. That is not a claim, it is a test: a guard in otto's own test
-suite builds both and compares them cred for cred.

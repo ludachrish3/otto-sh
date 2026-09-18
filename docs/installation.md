@@ -10,7 +10,7 @@ working without internet access, or managing otto alongside other Python depende
 
 ## Requirements
 
-- **Python 3.10 or later** (otto is tested on CPython 3.10 through 3.14).
+- **Python 3.10 or later** (otto supports CPython 3.10 through 3.14).
 - Linux, macOS, or Windows.
 - Internet access to PyPI — or one of the offline sources described under
   [Air-gapped installation](#air-gapped-installation).
@@ -130,8 +130,8 @@ environment do they all run in?
 Otto is a single process on a single interpreter. Every active repo's
 instruction modules and test code import into *that* interpreter, so a per-repo
 virtualenv never participates at runtime — there is no arrangement in which
-each repo brings its own. Three environments exist, and it is worth naming all
-three because only the middle one is otto's business:
+each repo brings its own. Three environments exist; only the middle one is
+otto's business:
 
 1. **A repo's own venv.** For single-repo development. Each repo manages it
    with its own tools from its own `pyproject.toml`. otto does not touch it.
@@ -206,7 +206,7 @@ wheels already embed the frontends.
 
 ## Air-gapped installation
 
-Otto is designed for air-gapped networks. The flow has four parts: **download**
+Otto installs on air-gapped networks. The flow has four parts: **download**
 everything on an internet-connected machine, **transfer** it across the gap, **serve**
 it to the isolated hosts, and **install** from that source.
 
@@ -544,17 +544,9 @@ Reading the matrix column:
 : Per-version binaries for speed, plus a `py3-none-any` wheel that any interpreter can
   fall back to. Missing the binary costs performance, not correctness.
 
-This is why {ref}`Step 1 <air-gap-download>` loops over interpreters instead of
-downloading once: a bundle built only for 3.12 carries exactly one of
+Because `per-version` wheels exist, {ref}`Step 1 <air-gap-download>` loops
+over interpreters instead of downloading once: a bundle built only for 3.12 carries exactly one of
 `pydantic-core`'s five wheels.
-
-```{note}
-This table is gated, not hand-maintained on trust:
-`scripts/check_docs_wheel_matrix.py` re-derives the package set, each matrix label,
-and the per-version wheel coverage from the committed `uv.lock` on every docs build,
-and fails the build on drift. A dependency that starts or stops shipping binary
-wheels breaks the docs build rather than the next air-gapped install.
-```
 
 Dev dependencies (pytest plugins for otto's own tests, sphinx, ruff, etc.) are
 declared in the `[dependency-groups] dev` section of `pyproject.toml` and are **not**

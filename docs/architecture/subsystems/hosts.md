@@ -175,6 +175,12 @@ function* (`register_product_provider`) that otto applies to each host at
 ingest. Declaring products in lab data is deliberately not supported: lab
 data stays product-agnostic and the two evolve independently.
 
+Dev tools share the product shape but live in a separate registry rather
+than behind a flag on one list, because their lifecycle differs: one shared
+list would make an uninstall remove dev tools as if they were products, and
+make a host carrying nothing but a debug probe read as
+installed to `otto run status`.
+
 A **kind** is a further split within products: the runtime knowledge behind
 a `[[products]]` entry's verbs — install, check, uninstall — and how its
 coverage counters are collected. The same naming rule governs every kind: a

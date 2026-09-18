@@ -39,7 +39,8 @@ source ~/.bash_completions/otto.sh
 ```
 
 To make tab completion available in every new shell, add those two lines to
-your `~/.bashrc` (or `~/.profile`) so they run automatically at login.
+your `~/.bashrc` (or `~/.profile`) so they run automatically at login. Type
+`otto ru<Tab>` to check.
 
 ## Project setup
 
@@ -47,15 +48,14 @@ Otto discovers your project through a `.otto/settings.toml` file. `otto init
 --all --name acme --path /tmp/otto-gs/acme` scaffolds a runnable one (settings,
 an example lab host, an example suite, an example instruction) and prints the
 next steps, completion included. The directory has to exist first
-(`mkdir -p /tmp/otto-gs/acme`) — `otto init` never creates one — and
-substitute your own name and a path of your own: `/tmp/otto-gs` is the scratch
-directory otto's own documentation build creates and wipes.
+(`mkdir -p /tmp/otto-gs/acme`) — `otto init` never creates one. Substitute
+your own name and a path of your own.
 
 ```{literalinclude} ../examples/getting-started/captures/init-all.txt
 :language: text
 ```
 
-The last three steps name the lab explicitly (`--lab example_lab`), as every
+Steps 4 and 6–8 name the lab explicitly (`--lab example_lab`), as every
 example on this page does; {doc}`../cli/index` covers `--lab`, the
 `OTTO_LAB` environment variable that replaces it, and the rest of the global
 options.
@@ -74,6 +74,10 @@ field; {doc}`../configuration/inventory` is the home for how the three
 files compose) before anything connects to it. Every lab also carries a built-in
 `local` host — the machine otto runs on — which needs no lab edit at all:
 `otto --lab example_lab host local run "uname -a"`.
+
+Every command that contacts a host writes a run directory under `--xdir` —
+your current directory unless you say otherwise — and prints its path as
+`Output directory:`; see {doc}`../cli/index` for the layout.
 
 ## Worked Example
 
@@ -100,6 +104,7 @@ running-test-suites
 ## Where to go next
 
 - {ref}`team-setup-checklist` -- One-time setup when adopting otto for a team
+- {doc}`../guide/hosts/index` -- What every host answers, and what each host family supports
 - {doc}`../cli/index` -- Every `otto` command, one page per verb
 - {doc}`../configuration/index` -- The project and lab files every command reads
 - {doc}`../cookbook/index` -- Short recipes for common situations

@@ -53,6 +53,14 @@ per row by `_EXPECTED_SU_DASH_L` in
 `tests/integration/busybox_bed/test_applet_userland.py`, where a rewrite to
 `-l` reddens on the 1.16.1 guest instead of quietly dropping it.
 
+Every `userland_options` field is optional, and *unset* is a third answer
+beside the two a field can declare: it means "probe at connect". That is what
+lets a fresh host entry work before anyone has pinned it — a pin only skips
+probes, it never supplies something the host could not have answered. The
+defaults are one set for every Unix host; version differences (BusyBox
+1.16.1 has no `base64` decode flag, `timeout_style` changes at 1.31.0) live in
+each host's pin rather than in per-profile defaults.
+
 ## The rule: measured-broken refuses up front, unmeasured runs
 
 Every record carries one of two statuses, and the status decides whether otto

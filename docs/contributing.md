@@ -600,6 +600,18 @@ change shows up in the docs on the next build with zero manual work.
   running a browser or the CLI — an emergency escape hatch (e.g. a broken
   Chromium install on a docs host), not a developer convenience.
 
+### Installation page gates
+
+Two tables on {doc}`installation` are gated rather than hand-maintained, both
+in `make docs-lint` and `nox -s docs`. `scripts/check_docs_dependency_table.py`
+checks the *Direct runtime dependencies* table against `pyproject.toml`.
+`scripts/check_docs_wheel_matrix.py` re-derives the *Native-extension
+dependencies* table — the package set, each wheel-matrix label, and the
+per-version wheel coverage — plus the air-gap download loop's Python list from
+the committed `uv.lock` and `[project] classifiers`, and fails on drift, so a
+dependency that starts or stops shipping binary wheels breaks the docs build
+rather than the next air-gapped install.
+
 ### Documentation layout
 
 ```text
@@ -688,15 +700,25 @@ the captures it had already written updated and the rest stale (exit 2); fix
 the cause and re-run. Every capture runs in the fixed scratch directory
 `/tmp/otto-gs` (not `$TMPDIR`), so an artifact's layout is reproducible
 regardless of machine or environment — don't refresh two manifests at once on
-the same machine, they'd collide on it. A capture whose page's step is "add
-this table to your settings" can name `settings_append = "<file>"`, a
-project-relative TOML fragment appended to the scratch copy's
+the same machine, they'd collide on it. The pages show that path in
+their examples and tell readers to substitute their own. A capture whose
+page's step is "add this table to your settings" can name
+`settings_append = "<file>"`, a project-relative TOML fragment appended to the scratch copy's
 `.otto/settings.toml` for that capture alone and restored afterwards, so
 committing the table doesn't change every other capture of the project.
 A doctest on these pages that calls `repo.import_init_modules()` imports the
 example project's init module, which registers process-global extensions — a
 command frame, monitor parsers, a login proxy, a reservation backend — that
 every later document in the same `sphinx-build -b doctest` process then sees.
+
+`tests/unit/docs/test_getting_started_example.py` keeps the example project
+itself loadable and its claims true: every lab loads through the same code a
+user's project does; the inventory twin
+(`docs/examples/getting-started-inventory/`) builds the same `unix` lab as the
+inline form, compared field by field and cred by cred; and the example
+reservation backend passes conformance with `expect_holders=True` and answers
+the inverted `holders` query. `tests/unit/docs/test_getting_started_includes.py`
+checks that every `{literalinclude}` under `docs/getting-started/` resolves.
 
 ## Coverage reports
 

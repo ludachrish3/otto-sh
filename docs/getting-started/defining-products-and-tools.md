@@ -11,9 +11,8 @@ Two things do, and they are the same shape:
   probe, a scratch helper. It is placed and removed on its own schedule and is
   never part of the installed-or-not answer.
 
-Neither is ever named in lab data. Lab data describes machines; what to put on
-them is behavior, and behavior lives in the project's code — so a product can
-change without a lab file changing. The project registers a **provider**: a
+Neither is ever named in lab data: lab data describes machines, and what goes
+on them lives in the project's code. The project registers a **provider**: a
 function otto runs once per host as it is ingested, which returns the products
 (or dev tools) that host should carry.
 
@@ -30,8 +29,8 @@ artifact carries the compiler's instrumentation.
 ```
 
 `cov_dir` is the one coverage-shaped thing a product declares: the host-side
-directory its instrumented build writes `.gcda` counters into, which is why
-`install` hands it to `GCOV_PREFIX`. Leave it out and it defaults to
+directory its instrumented build writes `.gcda` counters into; `install`
+hands it to `GCOV_PREFIX`. Leave it out and it defaults to
 `/tmp/<name>`; either way `self.cov_dir` is concrete by the time a host
 carries the product, so composing a command out of it always works.
 {doc}`coverage` is the whole coverage walkthrough.
@@ -58,11 +57,9 @@ The same four methods, a separate registry, a different lifecycle:
 :end-before: "# doc: end dev-tool"
 ```
 
-Two lists rather than a flag on one, because the lifecycles differ: dev tools
-go on with `otto run install-tools` and come off with `otto run cleanup`,
-never with `otto run uninstall`, and `otto run status` never counts them. One
-shared list would make a cleanup remove dev tools as if they were products, and
-make a host carrying nothing but a debug probe read as installed.
+Dev tools go on with `otto run install-tools` and come off with `otto run
+cleanup`, never with `otto run uninstall`, and `otto run status` never counts
+them: a host carrying nothing but a debug probe does not read as installed.
 
 ## What you get for free
 
@@ -88,8 +85,7 @@ between — a *partial* lab, which is what a half-finished install leaves behind
 `otto run install --ensure` converges rather than installs blindly: it reads
 the lab's current state and does only the work that is missing, recovering a
 partial lab instead of installing on top of remnants. That is exactly what a
-test suite marked `@pytest.mark.ensure("installed")` runs before it starts, so
-the lab a test converges is the lab you installed by hand.
+test suite marked `@pytest.mark.ensure("installed")` runs before it starts.
 
 {doc}`../cli/run/defaults` is the full treatment: every flag, the walk
 order across repos, what `cleanup` does and does not take off the lab, and how

@@ -89,11 +89,11 @@ the confirmation that the hook left a shell fit to use.
 ### A different shell at the end
 
 Sometimes the shell otto lands in is not the shell it should end up in: a
-Linux login shell in front of a vendor CLI, or — the stand-in this page can
-run on the bed — in front of a `python3` REPL. Then the entry declares two
-dialects. `landing_frame` is the shell otto lands in; `command_frame` is the
-application's dialect, a frame the project registers exactly as it registered
-the Zephyr 2.7 frame earlier; and the hook is what gets from one to the other:
+Linux login shell in front of a vendor CLI, or, as in the entry below, in
+front of a `python3` REPL. Then the entry declares two dialects. `landing_frame`
+is the shell otto lands in; `command_frame` is the application's dialect, a
+frame the project registers exactly as it registered the Zephyr 2.7 frame
+earlier; and the hook is what gets from one to the other:
 
 ```{literalinclude} ../examples/getting-started/lab_data/lab.json
 :language: json
@@ -149,8 +149,8 @@ telnet through the `test4` hop; only the landing changed:
 :language: text
 ```
 
-The inventory twin of the `unix` lab does not show the hook: it declares no
-init module on purpose, and a hook is project code. The field reference is
+The inventory twin of the `unix` lab declares no init module, so it carries
+no hook: a hook is project code. The field reference is
 in {ref}`per-host-session-setup`; the contract, and what a two-dialect host
 can and cannot do, in {doc}`../library/extending-backends`.
 
@@ -193,8 +193,7 @@ brings. This script builds a collector for one host — which resolves that
 host's parser set exactly as the monitor does — polls it for a few ticks,
 and prints one line per series collected. `otto test --monitor`
 ({doc}`../cli/monitor/during-tests`) is the same collector driven by
-the suite runner; this page drives the collector directly so the proof needs
-no suite.
+the suite runner; the script drives it directly, with no suite.
 
 ```{literalinclude} ../examples/getting-started/collect_metrics.py
 :language: python
@@ -209,13 +208,11 @@ no suite.
 `Entropy` is the added parser. `Established` and `Time-wait` are the
 replacement's, under the built-in parser's own series names, so they land in
 the same chart the default would have filled on a host that has `ss`. otto's
-*default* sockets parser still runs `ss -s` on a guest without `ss`; a
-per-profile set of defaults is a follow-up, and until it lands the
-registration above is what a project does.
+*default* sockets parser still runs `ss -s` on a guest without `ss`; the
+registration above is how a project replaces it.
 
 Three of the bed's Zephyr targets are monitored over SNMP rather than a
 shell — an `snmp` block on the entry, otto's descriptors for the enterprise
-OIDs its test firmware serves. This page does not yet capture that run; the
-pointer is the whole of it, and {doc}`../cli/monitor/metrics` covers it
+OIDs its test firmware serves. {doc}`../cli/monitor/metrics` covers it
 under *SNMP monitoring*. {doc}`../library/custom-parsers` is the reference for
 everything else on this page.

@@ -144,7 +144,6 @@ otto.monitor.snmp:register_snmp_metric
 otto.project:InstallOptions
 otto.project:ProjectActions
 otto.project:register_project_actions
-otto.registry:registering_repo
 otto.reservations:Reservation
 otto.reservations:ReservationBackendBase
 otto.reservations:register_reservation_backend

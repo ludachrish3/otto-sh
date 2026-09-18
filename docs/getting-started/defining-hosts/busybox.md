@@ -24,10 +24,8 @@ the board otto appends):
 Every source is `declared`: the entry told otto, otto asked nothing. On a new
 BusyBox build, leave the block out, probe, paste.
 
-Per-version differences the pins record — `base64_flag` is `absent` on 1.16.1
-and `-d` from 1.21.1; `timeout_style` changes at 1.31.0 — are why a
-per-profile set of defaults is worth having. Today the defaults are one set
-for every Unix host and the pin carries the difference; a review of those
-defaults per profile is a follow-up to this section, and
-{doc}`../customizations` shows what to do in the meantime when a default
-metric command does not exist on a guest.
+The pins also record per-version differences — `base64_flag` is `absent` on
+1.16.1 and `-d` from 1.21.1; `timeout_style` changes at 1.31.0. The defaults
+are one set for every Unix host, and the pin carries the difference;
+{doc}`../customizations` shows what to do when a default metric command does
+not exist on a guest.

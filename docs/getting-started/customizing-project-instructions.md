@@ -23,11 +23,8 @@ out ({doc}`../cli/run/defaults`); the message and the two
 ways to migrate an existing `install` instruction are in
 [The collision error](../library/writing-instructions.md#the-collision-error).
 
-The refusal is what keeps the lab honest. `otto run install`, a script calling
-`await otto.project.install()`, and a test marked
-`@pytest.mark.ensure("installed")` all run the same bodies. If an instruction
-of the same name could shadow one of them, the lab a test converges would not
-be the lab you installed by hand.
+`otto run install`, a script calling `await otto.project.install()`, and a
+test marked `@pytest.mark.ensure("installed")` all run the same bodies.
 
 ## A flag of your own
 
@@ -45,8 +42,8 @@ Three things that code relies on:
 
 - **The options class must inherit `InstallOptions`** — the first-party class
   for this instruction, exported from `otto.project` along with one for each
-  of the other five. otto refuses an override whose class does not; why, and
-  what each body then receives, is in [Your repo's flags on a
+  of the other five. otto refuses an override whose class does not; the rule,
+  and what each body then receives, is in [Your repo's flags on a
   default](../cli/run/defaults.md#your-repos-flags-on-a-default).
 - **`super()` keeps the default behavior.** The body above does its own work
   and then calls up; otto's body reads only the fields otto declared.
@@ -67,8 +64,7 @@ by side:
 repos that both override `install` both add to one command. Two repos wanting
 the *same* flag must inherit it from one shared base class — otherwise otto
 refuses the pair at startup — and that base belongs in a repo they **require**
-or in a library package, never in an optional one. The rule, the error and the
-reason for the ownership half are in
+or in a library package, never in an optional one. The rule and the error are in
 [One command, every repo's flags](../cli/run/defaults.md#one-command-every-repos-flags).
 
 ## A new project instruction
@@ -112,8 +108,8 @@ class BedActions(ProjectActions):  # one registered class per repo -- the same o
 `otto run deploy` now exists, walks every repo that has a `deploy` body in
 dependency order, and stops at the first failure. A second repo declaring
 `deploy` supplies its own body and its own options class, and **may not restate
-the walk keywords** — the first declaration fixed them, which is why otto's own
-six may never be reshaped by a repo. A repo's own new instruction has no
+the walk keywords** — the first declaration fixed them, so a repo can never
+reshape otto's own six, which otto declared first. A repo's own new instruction has no
 first-party class to inherit, so `DeployOpts` above inherits nothing.
 
 ## Tests follow the flags

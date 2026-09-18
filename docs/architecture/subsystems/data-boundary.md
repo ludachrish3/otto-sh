@@ -116,6 +116,13 @@ Merging is part of loading: `--lab` may be passed multiple times and the
 resulting `Lab` objects merge, so a shared lab file and a personal overlay
 compose without editing either.
 
+Unlike lab merging, an inventory backend
+({doc}`../../configuration/inventory`) joins host facts into a lab entry by
+**copy, never merge**: the inventory declares which fields it supplies, and an
+entry that references it may not state them inline, so no machine fact ever
+has two sources to disagree. Credentials are the one field that composes
+across layers instead.
+
 ## Exported schemas
 
 Because every boundary is a pydantic model, otto can *emit* its data

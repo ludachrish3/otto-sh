@@ -18,6 +18,8 @@ collecting performance data.
 
 - **Drive your lab from the CLI** → the {doc}`CLI Reference <cli/index>`,
   one section per functional area.
+- **Learn what a host can do** → the {doc}`User Guide <guide/index>`: the
+  verbs every host answers and what each host family supports.
 - **Script otto from Python** → the {doc}`Python library <library/index>`
   section (the {doc}`API reference <api/index>` backs it).
 - **Work on otto itself** → {doc}`Architecture <architecture/index>`, one
@@ -25,7 +27,7 @@ collecting performance data.
 
 ## Two ways to use otto
 
-Otto serves two audiences, and the documentation is organized around them:
+Otto serves two audiences:
 
 CLI users
 : Interact with otto through the `otto run`, `otto test`, and `otto monitor`
@@ -62,8 +64,8 @@ Every lab automatically contains a built-in `local` host — a
 {class}`~otto.host.local_host.LocalHost` for the machine otto itself runs
 on, usable as `otto host local <verb>` with no configuration.  It is
 excluded from lab-wide fleet helpers by default so a deploy or monitoring
-sweep never silently operates on the runner; see {doc}`cli/run/index` for the
-opt-in.
+sweep never silently operates on the runner; see
+{ref}`the fleet of interest <fleet-of-interest>` for the opt-in.
 
 ### Results
 

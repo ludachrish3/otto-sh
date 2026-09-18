@@ -19,28 +19,34 @@ What the declaration changes is the fleet every walk starts from.
 `all_hosts()` and {meth}`~otto.context.OttoContext.do_for_all_hosts` iterate
 the **fleet of interest**, not the lab, and a walk that would iterate
 nothing refuses loudly rather than silently doing nothing. The same
-computation, without a connection; `GS_EXAMPLE` is a `pathlib.Path` to the
-example project, and a reader substitutes their own. The `sys.path` line and
-the `import_init_modules()` block are scaffolding: the project's `libs`
-directory has to be importable, and `test1`'s login proxy
-({doc}`customizations`) has to be registered before any lab containing `test1`
-will load. The `registering_repo` block around the import is what attributes
-each registration to this repo — the project's products, dev tools and
-`ProjectActions` ({doc}`customizing-project-instructions`) are registered by
-that import too, and a class has to know whose it is. A real `otto` run does
-all of it at startup:
+computation, without a connection, run from the example project's
+directory, after its init modules are imported as a real `otto` run does
+at startup:
+
+```{testsetup}
+import os
+
+from otto.config.repo import Repo
+from otto.registry import registering_repo
+
+_old_cwd = os.getcwd()
+os.chdir(GS_EXAMPLE)
+_init_repo = Repo(sut_dir=GS_EXAMPLE)
+with registering_repo(_init_repo.name):
+    _init_repo.import_init_modules()
+```
+
+```{testcleanup}
+os.chdir(_old_cwd)
+```
 
 ```{doctest}
->>> import sys
->>> sys.path.insert(0, str(GS_EXAMPLE / "libs"))
+>>> from pathlib import Path
 >>> from otto.config.lab import load_lab
 >>> from otto.config.repo import Repo
 >>> from otto.config.scope import resolve_scopes, scoped_ids
->>> from otto.registry import registering_repo
->>> repo = Repo(sut_dir=GS_EXAMPLE)
->>> with registering_repo(repo.name):
-...     repo.import_init_modules()
->>> lab = load_lab("busybox", search_paths=[GS_EXAMPLE / "lab_data"])
+>>> repo = Repo(sut_dir=Path.cwd())
+>>> lab = load_lab("busybox", search_paths=[Path("lab_data")])
 >>> sorted(lab.hosts)
 ['bb1161_qemu', 'bb1211_qemu', 'bb1281_qemu', 'bb1310_qemu', 'bb1350_qemu', 'local', 'test1']
 >>> scopes = resolve_scopes([repo], lab.component_names, lab.hosts, exclude_ids=frozenset({"local"}))

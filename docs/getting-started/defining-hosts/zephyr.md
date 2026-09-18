@@ -27,12 +27,7 @@ command wrapped in a BEGIN marker, a `retval`, and an END marker.
 :language: text
 ```
 
-The `TelnetSession@…: framed write` line is the one to read — the earlier
-`LocalSession` one is otto reading the project's git state as it loads; in
-the run captured here that read fails and otto moves on. (The capture's
-first line names the host id, `zephyr37-fat` — the element name slugged; the
-log lines below it say `@zephyr37_fat` — the element itself. Same target,
-two spellings.)
+The `TelnetSession@…: framed write` line is the one to read.
 
 If the target's shell has no `retval` builtin, or answers the frame with
 something the stock frame does not expect, there is no exit code to read —

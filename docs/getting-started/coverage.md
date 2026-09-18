@@ -153,10 +153,8 @@ Three modes, because auto is not always what you want:
 | `--cov` | Insist. An error, before a single test runs, when nothing is instrumented |
 | `--no-cov` | Off, whatever the lab looks like |
 
-`--cov` failing early is the point — a run that was worth the lab time only
-because it was going to produce coverage should not finish and then tell you.
-The refusal is one line plus a table of every product it looked at and what it
-concluded (an excerpt, at a narrow terminal):
+The `--cov` refusal is one line plus a table of every product it looked at
+and what it concluded (an excerpt, at a narrow terminal):
 
 ```text
         coverage instrumentation
@@ -180,8 +178,7 @@ silently absent from the report.
 
 `--cov` also refuses when the repo has no `[coverage]` table at all: there is
 nowhere to collect into. In auto mode the same situation is one warning and no
-coverage, because a plain `otto test` asked for a test run, not for coverage,
-and must not die of a coverage misconfiguration.
+coverage; the tests still run.
 
 {doc}`../cli/cov/during-tests` has the rest of the flags — an explicit
 destination, the pre-run counter cleanup, the inline report.
@@ -234,8 +231,9 @@ and declares `coverage = "module"`:
 
 The library, `otto_kgcov`, is declared first — products install in
 declaration order, so the module below it always finds it already loaded —
-and with `instrumented = false` overriding the artifact scan, for the
-reason its own entry comment gives. The consumer module, `otto_kmod_demo`,
+and with `instrumented = false` overriding the artifact scan: its `.ko`
+implements the `__gcov_*` callbacks its consumers call, so the scan would
+misread it as instrumented. The consumer module, `otto_kmod_demo`,
 sets `coverage = "module"` and a `cov_dir`: on install, otto appends
 `gcov_dir=<cov_dir>` to *its own* `insmod` line — the parameter
 `KGCOV_DECLARE()` declares on the module — and the module hands that value

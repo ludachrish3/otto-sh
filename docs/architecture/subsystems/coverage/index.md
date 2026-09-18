@@ -37,6 +37,14 @@ The stages (packages `otto.coverage.fetcher` → `merge` → `capture` →
    anything runs, by scanning each artifact for the compiler's coverage
    markers (`otto.coverage.instrumentation`); that same verdict is what
    turns retrieval on for a plain `otto test`.
+
+   The `--cov`/auto/`--no-cov` decision is asymmetric on purpose. An
+   explicit `--cov` refuses before the first test runs when nothing is
+   instrumented or the repo has no `[coverage]` table: a run worth the lab
+   time only because it would produce coverage should not finish and then
+   report that it could not. Auto mode degrades the same situations to a
+   warning and no coverage, because a plain `otto test` asked for a test run
+   and must not die of a coverage misconfiguration.
 2. **Merge** — match counters to the build tree's `.gcno` graph and remap
    embedded/sysroot paths back to source paths, merging counters across hosts
    and runs (lcov semantics).

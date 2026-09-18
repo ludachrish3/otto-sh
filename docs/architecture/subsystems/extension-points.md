@@ -49,6 +49,13 @@ way to give a whole project consistent CLI flags ({doc}`../../library/options-cl
 - **Containment.** A broken init module becomes one framed warning, not a
   broken CLI ({doc}`../lifecycle`); a name collision is a loud error attributed
   to both registering modules ({doc}`registries`).
+- **One body per project instruction.** A repo customizes `install` and the
+  other project instructions only through its `ProjectActions` subclass; a
+  standalone instruction of the same name is refused at startup. `otto run
+  install`, `await otto.project.install()` and `@pytest.mark.ensure("installed")`
+  therefore run the same bodies, so the lab a test converges is the lab a
+  person installed by hand. The first declaration of a project instruction
+  also fixes its walk shape, which is why no repo can reshape otto's own six.
 - **Schema visibility.** Data-side extensions (profiles, preferences, custom
   settings tables) surface in `otto schema export`, so editors validate them
   ({doc}`data-boundary`).

@@ -35,9 +35,8 @@ required set is computed from the hosts in play;
 
 ## The shipped backend
 
-A JSON file. Selecting it is two tables in `.otto/settings.toml`. The example
-keeps them in a separate file, `reservations.toml`, so that every page before
-this one ran with no gate. To try it in your own project, paste both
+A JSON file. Selecting it is two tables in `.otto/settings.toml`; the
+example project keeps them in `reservations.toml` beside `.otto/`. To try it in your own project, paste both
 tables at the end of `.otto/settings.toml` and create `reservations.json`
 beside `.otto/`, with your own login name in place of `chris`:
 
@@ -67,8 +66,8 @@ names `chris`, so the walkthrough passes `--holder`. `alice` holds nothing:
 ```
 
 {doc}`../cli/reservation/index` covers identity (`otto reservation
-whoami` shows yours), `-R` to skip the gate with a loud warning, and why a
-backend that cannot answer fails the run rather than letting it through.
+whoami` shows yours), `-R` to skip the gate with a loud warning, and what
+happens when a backend cannot answer: the run fails.
 
 ## A backend of your own
 
@@ -78,9 +77,8 @@ methods, and forwards the three constructor arguments otto passes (`url`,
 `repo_dir`, `username`) to the base; this one reads a text file, and
 everything but the file read and its `path` setting is what every backend
 looks like. It also implements the optional `holders` — the inverted "who
-holds this?" query — which is why `@override` sits on the two required methods
-and not on that one
-([why, exactly](../library/reservation-backends.md#a-note-on-override-in-the-samples)):
+holds this?" query. `@override` marks only the two required methods
+([A note on @override](../library/reservation-backends.md#a-note-on-override-in-the-samples)):
 
 ```{literalinclude} ../examples/getting-started/libs/gs_example/reservations.py
 :language: python
@@ -109,27 +107,36 @@ Registered by name from the `init` module, then selected by that name:
 The base class catches a forgotten method at instantiation. What it cannot
 check is meaning — that a failure raises rather than returning empty, that
 identifiers match the lab file byte for byte — so otto also ships the
-conformance test a backend must pass, and this page runs it on the backend
-above every time the documentation builds (`GS_EXAMPLE` and the `sys.path`
-line are as on {doc}`boards-of-interest`):
+conformance test a backend must pass. Here it runs against the backend
+above, from the example project's directory:
+
+```{testsetup}
+import os
+
+_old_cwd = os.getcwd()
+os.chdir(GS_EXAMPLE)
+```
+
+```{testcleanup}
+os.chdir(_old_cwd)
+```
 
 ```{doctest}
->>> import sys
->>> sys.path.insert(0, str(GS_EXAMPLE / "libs"))
+>>> from pathlib import Path
 >>> from otto.testing import assert_reservation_backend_conforms
 >>> from gs_example.reservations import TeamFileBackend
 >>> assert_reservation_backend_conforms(
-...     TeamFileBackend(repo_dir=GS_EXAMPLE, username="chris", path="team-reservations.txt"),
+...     TeamFileBackend(repo_dir=Path.cwd(), username="chris", path="team-reservations.txt"),
 ...     known_user="chris",
 ...     known_resources=["bb-bench", "bb1350-chassis", "bb1350-slot"],
+...     expect_holders=True,
 ... )
 ```
 
 The rules it checks — never mutate, return the full set, raise for every
 failure, match identifiers byte for byte — and the optional capabilities
 (`holders`, username completion: implement the method and otto detects it) are
-in {doc}`../library/reservation-backends`. One thing conformance deliberately
-cannot check: because `holders` is optional, dropping it leaves the helper
-green while refusals start saying `held by: unknown`, so a backend that means
-to answer the inverted query asserts that separately — as otto's own suite
-does for the backend above.
+in {doc}`../library/reservation-backends`. Because `holders` is optional,
+dropping it leaves the helper green while refusals start saying
+`held by: unknown`; a backend that means to answer the inverted query passes
+`expect_holders=True`, described there.

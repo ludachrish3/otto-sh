@@ -86,18 +86,16 @@ host that belongs to several labs is reached through any one of them:
 :language: text
 ```
 
-That first line is the example project's `[project]` table at work — it
-selects the BusyBox guests, so the unix lab's fleet of interest is empty —
-and an explicitly named host like `test1` is never scoped by it;
-{doc}`../boards-of-interest` explains the table.
+The `fleet of interest` line reports the project's `[project]` scope
+({doc}`../boards-of-interest`); an explicitly named host like `test1` is
+never scoped by it.
 
 Paste the pin into the host's entry and the next connection skips every
-probe. Every `userland_options` field is optional on purpose: the seven
-`applet_*` fields answer `"present"` or `"absent"`, the rest name a tool or
-a flag (`elevation: sudo`, `base64_flag: -d`, …), and any of them may be
-left unset — the third answer a two-valued field cannot give, and what lets
-a fresh entry work before anyone has pinned it. The per-field values are
-listed at {ref}`userland-capabilities`.
+probe. Every `userland_options` field is optional: the seven `applet_*`
+fields answer `"present"` or `"absent"`, the rest name a tool or a flag
+(`elevation: sudo`, `base64_flag: -d`, …), and any of them may be left
+unset, so a fresh entry works before anyone has pinned it. The per-field
+values are listed at {ref}`userland-capabilities`.
 
 ## The pages that follow
 
