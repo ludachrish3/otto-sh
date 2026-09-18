@@ -27,8 +27,8 @@ Create the file the `path` setting points at:
 
 That is the complete setup.  `otto run`, `otto test`, `otto host`, and
 `otto monitor` now refuse to start on any lab whose required resources
-alice does not hold — the existing error path in Typer renders the
-failure cleanly with missing resource names and their current holders.
+alice does not hold, and the error names the missing resources and their
+current holders.
 
 ## File format
 
@@ -51,9 +51,9 @@ The top-level object has two required fields:
   * `expires` *(string, optional)* — ISO-8601 timestamp.  Past-dated
     entries are silently ignored.  Omit for "no expiry".
 
-A user may appear in multiple records — the effective set is the union.
-This is intentional: if your booking source has multiple entries for the
-same person, you don't need to merge them before writing the file.
+A user may appear in multiple records — the effective set is the union, so
+if your booking source has multiple entries for the same person, you don't
+need to merge them before writing the file.
 
 ## Choosing a location
 

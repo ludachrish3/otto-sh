@@ -31,7 +31,7 @@ told it fully succeeded.
 `repair` resolves **both** directions of the link, so it can be asked to clear
 a placement on a host the loaded lab does not contain. It clears the
 placements it *can* resolve and names the ones it cannot, rather than
-aborting — the end otto can reach must not be stranded by the end it cannot:
+aborting:
 
 ```text
 partially repaired bb1350-wire: cleared test1/bbeth-1350, timers cancelled 0
@@ -39,10 +39,8 @@ partially repaired bb1350-wire: cleared test1/bbeth-1350, timers cancelled 0
 ```
 
 The headline reads `partially repaired`, not a green `repaired`, and the
-command **exits 1**: "I did not look" is not a clean bill of health. A `--all`
-sweep files the same link as a *failure* rather than a skip, for the same
-reason — `skipped` means otto declined a link it never impaired, which is
-reassurance this link has not earned.
+command **exits 1**. A `--all` sweep files the same link as a *failure* rather
+than a skip — `skipped` means otto declined a link it never impaired.
 
 ## Repairing one selector
 

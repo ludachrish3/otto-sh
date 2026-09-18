@@ -607,6 +607,11 @@ change shows up in the docs on the next build with zero manual work.
   running a browser or the CLI — an emergency escape hatch (e.g. a broken
   Chromium install on a docs host), not a developer convenience.
 
+Not every terminal block is captured: no harness captures
+`otto reservation check`, so the table on its CLI page is hand-written and
+nothing keeps its box art in step with the code — its columns and values are
+the contract.
+
 ### Installation page gates
 
 Two tables on {doc}`installation` are gated rather than hand-maintained, both

@@ -132,7 +132,9 @@ inline validation ({doc}`../../cli/schema/editors`). The schema is
 generated from the exact model that validates ingest, so the export and the
 runtime validator cannot disagree — there is no second definition to update,
 and the schema version bumps whenever host-spec fields change shape, keeping
-downstream lab data diagnosable.
+downstream lab data diagnosable. The `otto init` doctor flags a scaffolded
+schema older than the installed otto because a schema older than the validator
+would quietly bless data otto now rejects.
 
 Extensions surface automatically: because project-registered host classes
 bring their own spec models ({doc}`hosts`), a repo that extends otto sees its

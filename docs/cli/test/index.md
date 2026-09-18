@@ -23,9 +23,7 @@ otto test --list-tests                      # list every registered test
 otto test --list-tests --markers slow TestDevice   # narrow by marker and/or suite
 ```
 
-`otto test <SuiteName>` gets registry-backed completion and `--list-suites`
-for free, like every other registry — these candidates are the demo repo's
-registered suites, resolved by the real completion machinery:
+Suite names tab-complete from the registry; `--list-suites` lists them:
 
 ```{raw} html
 :file: ../../_static/generated/termynal/complete-suites.html
@@ -110,7 +108,7 @@ otto --lab my_lab test TestDevice --no-random      # source order
 ```
 
 `--seed` implies `--random`; combining it with `--no-random` is a usage
-error, since a seed with nothing to seed is a contradiction.
+error.
 
 ### Repeating a test
 
@@ -142,8 +140,8 @@ the log:
 ```
 
 Without `--iterations` or `--duration` the path stays the flat
-`<output dir>/<Suite>/<test name>/` it has always been, so only stability runs
-see the extra level. `suite_dir` is suite-wide and does not move either way —
+`<output dir>/<Suite>/<test name>/`, so only stability runs see the extra
+level. `suite_dir` is suite-wide and does not move either way —
 see [per-test artifact directories](../../cookbook/suite-recipes.md#per-test-artifact-directories).
 
 ### Monitoring a run
@@ -161,22 +159,18 @@ archive. Both load the same way.
 `sensor` does not select `sensor-1` — write `sensor.*`. A pattern that matches
 none of the hosts the run may walk **stops the run before any test executes**,
 naming the pattern, the size of the set it was matched against, and the
-wildcard to add: you asked for a monitored run over hosts that are not there,
-and running unmonitored would answer a different question. Hosts that matched
-but cannot be sampled — an embedded console has no shell for the collector to
-read — are a different thing: that logs a warning naming them, disables
-collection, and lets the tests run.
+wildcard to add. Hosts that matched but cannot be sampled — an embedded
+console has no shell for the collector to read — are a different thing: that
+logs a warning naming them, disables collection, and lets the tests run.
 
 ## Markers
-
-`@pytest.mark.integration`
-: Requires live Vagrant VMs.  Skip with `--markers "not integration"`.
 
 `@pytest.mark.timeout(seconds)`
 : Fail the test if it runs longer than *seconds*.
 
 `@pytest.mark.retry(n)`
-: Retry a failing test up to *n* times before reporting failure.
+: Re-run a failed test body until it passes, *n* total attempts
+  (`retry(2)` is one retry); the body must be idempotent.
 
 `@pytest.mark.ensure("installed")`
 : Converge the lab through the named steps before the test — see

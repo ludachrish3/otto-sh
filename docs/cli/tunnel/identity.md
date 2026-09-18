@@ -18,9 +18,9 @@ collide with declared `lab.json` link handles, see
 
 `otto tunnel list` finds tunnels by scanning live processes: a portable `ps` on
 every `has_bash` host plus a pure parser, with each tagged process's `argv[0]`
-self-describing the whole tunnel so any single survivor reconstructs it — which
-is why discovery survives every other chain host being down. The design — and
-how it reuses the monitor's `(command, parser)` parser shape — is covered in
+self-describing the whole tunnel so any single survivor reconstructs it, and
+discovery survives every other chain host being down. The design — and how it
+reuses the monitor's `(command, parser)` parser shape — is covered in
 {doc}`../../architecture/subsystems/network`; see also
 [Custom parsers](../../library/custom-parsers.md#custom-parsers) in {doc}`../monitor/index` for the
 parser contract it is shaped to plug into. Tunnels appear live in the

@@ -99,7 +99,7 @@ reservation gate. Each first-party command declares what it needs on its
 | {doc}`run <subsystems/execution>` | yes | yes | yes |
 | {doc}`test <subsystems/execution>` | yes | yes | yes |
 | {doc}`host <subsystems/hosts>` | yes | yes | yes |
-| {doc}`monitor <subsystems/monitoring>` | yes | yes | self-gated per branch: `--live` collection gates, reviewing a saved source doesn't |
+| {doc}`monitor <subsystems/monitoring>` | no (`lab_free`) — `--live` loads the lab itself; reviewing a saved source doesn't | yes | self-gated per branch: `--live` collection gates, reviewing a saved source doesn't |
 | {doc}`docker <subsystems/docker-hosts>` | yes | yes | no — containers ride the parent's reservation |
 | {doc}`cov <subsystems/coverage/index>` | yes | no — reads existing run dirs | no |
 | {doc}`reservation <subsystems/reservations>` | no (`lab_free`) — `check` loads lab data itself | no | no — it *is* the gate, made inspectable |
@@ -113,6 +113,59 @@ and the option is `+`-separated so each segment completes in turn:
 ```{raw} html
 :file: ../_static/generated/termynal/complete-lab-names.html
 ```
+
+## Dry runs: one seam, no fabrication
+
+The user-facing contract is on {doc}`../cli/dry-run`: a dry run never runs a
+command on any device. It is stated that plainly because of what the
+alternative looks like. When logic branches on a fact about a device there are
+exactly three things a dry run can do: **fabricate the fact**, **decline
+loudly**, or **never run the logic**. "Continue gracefully" is not a fourth
+option — it is the first one wearing a kinder name. otto used to take it, and a
+dry run would report every link clean, print the body of a file it had not
+written, and accuse a host it had never contacted of missing `socat`. The
+design below is the consequence of removing that option; the result type that
+carries a declined command is {class}`~otto.result.NotRunResult`
+({doc}`utilities/results`).
+
+**The default stop lives in dispatch, not in each command.** Under `-n` the
+dispatch layer validates, prints what would run, and exits before the command
+body runs, so a command author who does nothing at all gets a correct dry run
+and cannot get it wrong. The alternative, where every author has to keep dry
+runs in mind while writing run-parse-branch logic, produces a feature that is
+subtly broken in a different way in each command, and a consistently broken
+complex feature is worse than a reliable simple one. For `otto test -n` the
+suite imports and binds and no step runs: steps not running *is* the feature,
+not a missing preview.
+
+**The stop applies to `lab_free` commands too, with no carve-out.**
+`lab_free` means "this command drives its own lifecycle", not "this command
+touches no device": `otto monitor --live` is registered lab-free and collects
+metrics from every host in the lab, so a carve-out letting lab-free commands
+run their bodies under `-n` would exempt precisely the command that can still
+reach a device while the user believed nothing would. One rule with no
+exceptions is also the only version a third-party author can hold in their
+head. A command that genuinely should run under `-n` opts in instead, with
+`dry_run_preview=True` ({doc}`../cookbook/dry-run-contract`).
+
+**`--probe` permits a connection, never a command.** A connection attempt
+produces no command result, so it feeds no `if result.is_ok:` and no parser —
+the fabrication hazard is untouched. The probe opens *and authenticates*
+because it answers "would this run's connect phase succeed?": anything
+narrower — a bare TCP connect, or the terminal channel alone — would report a
+reachability the real run is not going to get, and calling a host that refuses
+the login `reachable` would be the contract's own defect in a smaller font.
+Authenticating puts telnet and FTP credentials on the wire, which is why the
+flag is opt-in rather than part of `--dry-run`, and it requires `--dry-run`
+because dialing is only safe when no command can follow it. `not probed` is a
+state of its own because "we could not ask" and "we asked and it said no" are
+different facts, and only one of them is about the host.
+
+**One declared exemption.** Reading otto's own SUT checkout's git HEAD to
+stamp a run's provenance is a local, read-only query about the machine otto is
+already running on, so declining it would be a false positive of the contract
+rather than enforcement of it. It is declared at the one call site that uses
+it and extends to nothing else.
 
 ## Interrupts: two stages, one exit code
 

@@ -3,16 +3,7 @@
 **The labs you load decide which projects a command deals with, and the
 switches override that decision in either direction.** A project that is not
 active for an invocation is not walked, cannot have its instructions
-dispatched, and — this is the part that changes daily life — cannot fail your
-run by being broken.
-
-That last clause is why the feature exists. `OTTO_SUT_DIRS` names every repo
-in the workspace, and before activation every one of them was equally present
-in every invocation: a colleague's half-finished repo with an unimportable
-`init` module took down `otto host dut1 run uptime` for everybody, and the only
-cure was to edit the environment variable. Activation makes "which projects is
-this run about?" a question otto answers per invocation, from the labs you
-already had to name.
+dispatched, and cannot fail your run by being broken.
 
 ## The model
 
@@ -28,8 +19,8 @@ Resolution order, stated once and consulted by every enforcement point:
   is inactive. See {ref}`project-scope` in {doc}`../configuration/lab-config`
   for that schema.
 - Otherwise the repo is active. **A repo that declared no `[project]` table is
-  always active**, which is what keeps a single-repo workspace exactly as it
-  was, and what makes activation opt-in for everyone else.
+  always active**, so a single-repo workspace is unaffected and activation is
+  opt-in.
 
 With no lab loaded there is no inference to make and every repo is active.
 
@@ -43,7 +34,7 @@ With no lab loaded there is no inference to make and every repo is active.
 Both are root options, so they go **before** the subcommand. Both repeat, and
 each occurrence also splits on commas: `-E a,b` and `-E a -E b` are the same
 selection. **Only** the comma separates — unlike `OTTO_SUT_DIRS`, which also
-splits on the OS path separator, because these are names rather than paths.
+splits on the OS path separator.
 Segments are stripped, and an empty one is dropped rather than refused, so a
 trailing comma or a shell-built `-E "$NAMES"` is harmless.
 
@@ -51,9 +42,7 @@ Names are matched against the discovered repos' `name` fields the way project
 dependencies are: PEP 503-normalized, so case and `_`/`-`/`.` punctuation do
 not matter. `-I radio_FW` finds `radio-fw`.
 
-A name that matches no discovered repo is a usage error rather than a silent
-no-op, because the failure mode it prevents is a run you believed was narrowed
-and was not:
+A name that matches no discovered repo is a usage error, not a silent no-op:
 
 ```console
 $ otto --lab radio -E radio-fww run flash-radio
@@ -103,11 +92,6 @@ radio-fw  not applicable (labs: bench)
 lab is uninstalled
 ```
 
-The asymmetry is deliberate. Every reason a lab verdict can leave a repo out is
-already printed beside it, but nothing in that report records that you typed
-`-E` at all — so the switch gets a line and the ordinary "my lab does not
-include that project" case does not.
-
 ### Instruction dispatch refuses, and tells you how to undo it
 
 An instruction belongs to the repo that registered it. Ask for one whose owner
@@ -127,21 +111,19 @@ $ otto --lab radio -E radio-fw run flash-radio
 ```
 
 Both exit **1**. The hint is printed unwrapped whatever your terminal width,
-because its whole job is to be pasted.
+so it can be pasted as-is.
 
 A third shape appears when the labs match but the hosts do not — the repo's
 `host_patterns` select nothing in the loaded labs — and it names the patterns
-rather than the labs, because there the labs are the part that is already
-right.
+rather than the labs.
 
 First-party instructions (`status`, `install`, and the rest of the built-ins)
 have no owning repo and are never refused.
 
 ### A broken repo you are not using is a warning, not a failure
 
-This is the change you will notice most. A repo whose `init` module fails to
-import used to end every invocation. Now, if that repo is inactive, the failure
-demotes to one line and the run continues:
+If a repo whose `init` module fails to import is inactive, the failure demotes
+to one line and the run continues:
 
 ```console
 $ otto --lab bench --show-lab
@@ -160,15 +142,13 @@ warning: repo /work/radio-fw: failed to load radio_fw: ModuleNotFoundError("No m
 Cannot run commands while a repo fails to load (see warnings above).
 ```
 
-**A repo you `-I` stays fatal when it is broken.** You said it was part of this
-run; a run cannot be partly about a repo that did not load.
+**A repo you `-I` stays fatal when it is broken.**
 
 ```{note}
-This gate gets to demote on the **lab axis only** — the explicit switches plus
-`lab_patterns` — because it runs before the lab is built, and protecting lab
-construction from a half-registered world is its job. A repo that would have
-been inactive only because its `host_patterns` match no host in the lab is not
-yet known to be inactive here, so its import error is still fatal.
+This gate demotes on the **lab axis only** — the explicit switches plus
+`lab_patterns` — because it runs before the lab is built. A repo that would
+have been inactive only because its `host_patterns` match no host in the lab
+is not yet known to be inactive here, so its import error is still fatal.
 ```
 
 ## Dependencies of a project you switched off
@@ -202,9 +182,7 @@ WARN     repo 'radio-app' requires 'radio-fw', which was switched off
 ```
 
 Only **build-up** walks (`install`, `install_tools`) refuse. A teardown or a
-read-only verb warns and carries on: a cleanup that dies rather than removing
-what it can leaves the lab dirtier than it found it, and a report that dies
-whole is worse than a report with a row in it.
+read-only verb warns and carries on.
 
 An **optional** dependency never refuses on either axis. It logs that it went
 unsatisfied and names the axis that dropped it.
@@ -222,7 +200,7 @@ WARN     repo 'fleet-tools' switched off for this run (--exclude-projects
 
 **`-I` does not invent a fleet.** Forcing a repo active whose `host_patterns`
 match no host in the loaded labs makes its own fleet walk fail loudly rather
-than quietly doing nothing — which is the point of asking for it by name:
+than quietly doing nothing:
 
 ```console
 $ otto --lab radio -I radio-fw run install
@@ -237,6 +215,4 @@ host in those labs), or load a lab that holds the hosts this repo targets.
 **Help and completion always list every instruction.** Activation is decided
 per invocation, and `otto run -h` is not an invocation of any instruction — so
 `flash-radio` is listed under `--lab bench` even though running it there is
-refused. Discovery and dispatch answer different questions on purpose: a list
-that changed shape with the lab would leave you unable to find out that the
-instruction exists at all.
+refused.

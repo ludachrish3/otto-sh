@@ -27,13 +27,13 @@ otto env show
 | [`show`](show.md) | Report where it is, how it was built, and what is in it |
 
 Both `create` and `sync` are **lab-free** — they need no `--lab` — and they act
-on the **discovered** repo set rather than the active one. An environment
-belongs to a workspace, so which labs today's command happens to load must not
-change what goes into it (see {doc}`../projects`).
+on the **discovered** repo set rather than the active one: an environment
+belongs to a workspace, so the labs a command loads do not change what goes
+into it (see {doc}`../projects`).
 
 ## The three environments
 
-Naming all three is the point; only the second is otto's business.
+There are three, and only the second is otto's business:
 
 1. **A repo's own venv** — for single-repo development. Each repo manages it
    with its own tools from its own `pyproject.toml`. otto does not touch it.
@@ -72,14 +72,12 @@ Activate it with:
 - **Every discovered repo that has a `pyproject.toml`**, installed *editable*,
   so your live checkouts stay live.
 - **Repos without one are skipped**, with a notice naming them. That is not an
-  error and never has been: their `libs` ride `sys.path` at bootstrap, which
-  remains correct. A workspace made entirely of such repos still gets an
-  environment, because otto itself goes into it.
+  error: their `libs` ride `sys.path` at bootstrap. A workspace made entirely
+  of such repos still gets an environment, because otto itself goes into it.
 - **otto**, at whatever version you are running — and *the way* you are running
   it. If your otto is an editable install from a checkout, the environment gets
   that same checkout; if it came from a wheel, the environment pins that
-  version. A pipx-global otto would otherwise import against the wrong
-  site-packages and the environment would be decoration.
+  version.
 
 ## The dependency preflight
 
@@ -106,20 +104,19 @@ warning: repo 'repo4' requires 'otto-fixture-beetroot >= 0.1' — not satisfied 
 ```
 
 The check is metadata only — `importlib.metadata` lookups and requirement
-evaluation, no network and no imports — which is what makes it affordable on
-every invocation. It reads the **installed** distribution's metadata when the
-repo is installed here (exact, and the only thing that can answer for
-`dynamic = ["dependencies"]`) and the repo's `pyproject.toml` otherwise. Base
-dependencies only, direct dependencies only: an extra's requirements are not
-yours, and transitive consistency is the installer's promise.
+evaluation, no network and no imports. It reads the **installed**
+distribution's metadata when the repo is installed here (exact, and the only
+thing that can answer for `dynamic = ["dependencies"]`) and the repo's
+`pyproject.toml` otherwise. Base dependencies only, direct dependencies only:
+an extra's requirements are not checked, and transitive consistency is left to
+the installer.
 
 ### Where it runs, and what that excludes
 
-It runs **after the lab loads and before anything is contacted**. That position
-is what lets it ask the real activation question — whether *this* repo is part
-of *this* run — rather than a pre-lab approximation of it. A repo whose
-`host_patterns` match no host in the loaded lab is genuinely inactive, and
-warns; approximating that before the lab exists would refuse the run instead.
+It runs **after the lab loads and before anything is contacted**, so it asks
+the real activation question — whether *this* repo is part of *this* run. A
+repo whose `host_patterns` match no host in the loaded lab is inactive, and
+warns.
 
 Four consequences worth knowing:
 
@@ -143,10 +140,9 @@ nothing rather than guessing.
 ## Backends
 
 uv when it is on `PATH`, otherwise the standard library's `venv` plus the
-environment's own pip. The fallback deliberately adds no dependency of its own.
+environment's own pip. The fallback adds no dependency of its own.
 
-The choice is resolved in this order, and each step exists for a different
-reason:
+The choice is resolved in this order:
 
 | Source | Meaning |
 | ------ | ------- |
@@ -156,16 +152,14 @@ reason:
 | Auto-detect | What happens when nobody has said anything |
 
 An explicit backend that cannot be honoured is **refused, not downgraded**:
-`--backend uv` on a host without uv is an error naming `--backend pip`, because
-you asked for uv precisely to avoid the fallback.
+`--backend uv` on a host without uv is an error naming `--backend pip`.
 
 Switching backends under an existing environment is a `create --force` matter,
 not a silent migration — the recorded value lives *inside* the venv, so
 `--force` takes it with the rebuild.
 
 If two repos in one workspace declare different `[env] backend` values, that is
-a hard error naming both. Silently picking one would bind an installer you did
-not choose.
+a hard error naming both.
 
 ## Passing arguments to the installer
 
@@ -176,9 +170,9 @@ can override anything otto chose:
 $ otto env sync -- --find-links ../wheels
 ```
 
-Hermetic index pins are the whole reason this exists. Note that `--no-index`
-applies to the *entire* install, including building any repo that needs a build
-backend — so an air-gapped run has to supply those wheels too.
+Use it for hermetic index pins. Note that `--no-index` applies to the
+*entire* install, including building any repo that needs a build backend — so
+an air-gapped run has to supply those wheels too.
 
 ## Resolver failures
 
@@ -195,8 +189,7 @@ error: installing repos failed:
 ```
 
 At most one line is added, naming the two repos whose requirements collided,
-and only when otto can actually attribute the failure. A guess there would be
-worse than silence — it would send you to edit the wrong `pyproject.toml`.
+and only when otto can actually attribute the failure.
 
 ```{toctree}
 :hidden:

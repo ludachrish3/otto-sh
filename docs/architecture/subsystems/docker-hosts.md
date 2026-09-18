@@ -64,6 +64,29 @@ naming the candidates and the knobs, raised before a single file is staged.
 design rationale is in the docker use-cases design spec
 (`docs/superpowers/specs/2026-08-30-docker-use-cases-design.md`, §4-§6).
 
+Two fragments setting the same env key is the one ambiguity that is resolved
+(the later fragment wins) rather than reported: a merged stack's fragments
+routinely share innocuous keys, and refusing on every one of them would make
+cross-repo use-cases unusable.
+
+## The compose boundary
+
+otto never templates a product's compose file; it only assembles the
+environment the compose run sees, and fact references (`${otto:...}`) resolve
+entirely on otto's side, inside `settings.toml`. The test of that boundary is
+the decoupling test: running the product's compose file by hand, with the
+values supplied by the user, must behave identically to otto's deployment of
+the same stack. If a change to otto ever broke that, otto would be the thing
+that is wrong. Keeping fact references on otto's side is what keeps the
+product deployable with no otto installed at all.
+
+The resolved mapping is fed to **both** sinks — a staged `--env-file` and the
+remote process environment of the compose invocation — because compose
+consumes env at three different moments (parse-time `${VAR}` interpolation,
+`environment:` pass-through, and its own `COMPOSE_*`/`DOCKER_*` knobs) and the
+rules differ across compose versions. Feeding both makes the version
+differences moot, which is the decoupling test again.
+
 ## Naming scheme
 
 Container host id = `<parent_id>.<usecase>.<service>`, lowercased.
@@ -145,17 +168,18 @@ This avoids writing back to `lab.json` at runtime — that file stays
 read-only — while still keeping `--list-hosts` and tab completion
 populated immediately.
 
-## Mounts are derived, not declared
+## Mounts come from compose, not settings
 
+otto derives mounts from the product's own compose file, the only place
+they are declared; there is no `mounts` setting in `settings.toml`: a second
+copy of that truth would drift the first time a compose adapter rewrote a
+path, so otto only reads what the compose file and the daemon already agree
+on.
 `DockerContainerHost.mounts` is populated by one batched `docker inspect`
 call in `register_stack_hosts`, right after the same call resolves each
-service's container id. {doc}`../../cli/docker/index`'s "Shared
-directories" section is the home for *why* the table is derived rather
-than declared and for how to use it — this note covers only the WHERE and
-WHEN: reading it fresh from the daemon at the same point ids are already
-being resolved keeps the mapping correct without a second source of truth
-to keep in sync, and it falls out of a registration path that was already
-making one docker round trip per service.
+service's container id. Reading it at the point ids are already being
+resolved falls out of a registration path that was already making one docker
+round trip per service.
 
 The table's lifetime follows from that placement: it lives in the process
 that ran the bring-up, and — like the resolved container id above — is never
@@ -164,6 +188,17 @@ path, so a placeholder registered by a later invocation keeps an empty
 table (guide: "The table is per-process"). Giving it one would mean an
 `await`-ing translator or a blocking inspect inside a property; both were
 rejected in design in favour of the honest refusal.
+
+Translation matches by longest prefix, component-wise, because a first-match
+translation through an outer mount would name a parent path where a file in a
+nested mount does not exist. otto warns about a *relative* bind source (it
+points into a staging directory that is wiped per deploy) but deliberately
+stays silent about a missing *absolute* one: docker creating that directory on
+demand is documented behaviour products already rely on, and a warning would
+fire on every legitimate first run of a new stack.
+
+How to use the table is in {doc}`../../cli/docker/index`'s "Shared
+directories" section.
 
 ## Build skipping
 

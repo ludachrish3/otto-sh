@@ -69,7 +69,7 @@ directly from `test2`. There is currently no symmetric override for the near
 endpoint (`test1` here) — it always delivers to its own loopback.
 
 ```{note}
-**Why loopback, not the endpoint's own IP:** that IP is already bound by the
+**Loopback, not the endpoint's own IP:** that IP is already bound by the
 reverse chain's ingress listener, so delivering there by default would loop a
 datagram straight back into the tunnel (see
 {doc}`../../architecture/subsystems/network`). A service that insists on binding

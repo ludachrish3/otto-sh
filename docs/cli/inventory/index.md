@@ -17,12 +17,11 @@ came from a record or from the `[creds]` store; when a store is configured,
 
 ```{important}
 **A stale answer always says so.** When a cached remote inventory is
-unreachable, otto serves the snapshot rather than failing — a lab that loaded
-yesterday should load today — and `lookup`, `list`, `export` and `diff` each
-print the snapshot's age and a pointer to `otto inventory refresh` before their
-own output. An `export` taken during an outage is a copy of an old snapshot,
-and a `diff` run during one compares against an old left side; both still
-answer, and both tell you.
+unreachable, otto serves the snapshot rather than failing, and `lookup`,
+`list`, `export` and `diff` each print the snapshot's age and a pointer to
+`otto inventory refresh` before their own output. An `export` taken during an
+outage is a copy of an old snapshot, and a `diff` run during one compares
+against an old left side; both still answer, and both tell you.
 ```
 
 ```{raw} html
@@ -58,13 +57,11 @@ otto inventory refresh
 | `diff` found at least one difference | 1 |
 | `diff` could not compare at all | 2 |
 
-`diff` follows `diff(1)`: it is meant to be used as a gate in a script, where
-"the two sides disagree" is the answer you are testing for, so that outcome has
-to be distinguishable from "I never managed to look". A missing or unreadable
-file, a malformed document, no configured inventory, an inventory backend that
-is down — all of those exit **2**, and only a real difference exits 1. Without
-the split a typo'd filename reads to your script exactly like a drifted
-inventory.
+`diff` follows `diff(1)`, so a script can use it as a gate: "the two sides
+disagree" is distinguishable from "I never managed to look". A missing or
+unreadable file, a malformed document, no configured inventory, an inventory
+backend that is down — all of those exit **2**, and only a real difference
+exits 1.
 
 ## lookup
 
@@ -78,8 +75,7 @@ key and the backend's label — then the record itself, then the inventory's
 has a field you did not expect: `supplies` tells you which fields the inventory
 owns, and the table tells you what it said about them.
 
-Credentials appear as login names only. The record holds passwords; this
-command prints to a terminal, and to whatever captured it.
+Credentials appear as login names only.
 
 ## list
 
@@ -110,8 +106,7 @@ committable without leaking one.
 The file is written whole or not at all (write-then-rename), at mode `0600`,
 and an existing path is refused until you pass `--force`. This is the same
 document shape the `json` backend reads, so an export from NetBox is directly
-usable as a `json` inventory — which is what makes it a bridge rather than a
-report.
+usable as a `json` inventory.
 
 ## diff
 
@@ -125,11 +120,10 @@ when anything differs — or 2 when it could not compare at all (see
 [Exit codes](#exit-codes)). With a second path both sides are files, and the
 configured inventory is never read at all.
 
-Two blank cells would otherwise mean two different things, so the table spells
-them out: `absent` means the key is not on that side at all, `not stated`
-means the record is there and says nothing about that field. A field neither
-side mentions is not a difference; a field one side states at its default and
-the other omits is.
+The table distinguishes two kinds of blank: `absent` means the key is not on
+that side at all, `not stated` means the record is there and says nothing
+about that field. A field neither side mentions is not a difference; a field
+one side states at its default and the other omits is.
 
 ## refresh
 

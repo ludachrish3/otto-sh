@@ -18,8 +18,8 @@ teardown can never address a different project than the deployment it is
 undoing. Naming services stops and removes just those, leaving the rest of the
 stack and its network standing.
 
-Like `up`, `down` has no `--repo` — see {doc}`use-cases` for why narrowing is
-by use-case.
+Like `up`, `down` has no `--repo`: narrowing is by use-case and service
+({doc}`use-cases`).
 
 The container host ids stay synthesized after `down` — they are derived from
 the lab declaration, not from what is running — so completion keeps offering

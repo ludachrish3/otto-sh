@@ -34,11 +34,7 @@ gets its own row: the table explains *why* something is required, not just
 *that* it is.  The title names the lab, the identity being checked, and how
 many hosts are in play; that count is the fleet of interest ({doc}`index`), not
 the whole lab when a project narrows it.  It never counts the built-in `local`
-host, on the whole-lab fallback or under any `[project]` declaration: otto can
-always run on the machine it is running on, so that host is held out of the
-requirement entirely.  Scoping itself still admits by pattern rather than by id
-— a fleet *walk* reaches `local` with `include_local=True` exactly as before —
-and it is this reservation reader, not the scope, that sets it aside.  A lab
+host, on the whole-lab fallback or under any `[project]` declaration.  A lab
 declaring its own `local` entry is counted like any other host.
 
 Then the verdict — `OK — all required resources are reserved.`, or the same
@@ -69,13 +65,6 @@ contributes a bare name with no `until`. Naming holders at all is an
 a scheduler that can only answer per-user queries yields
 `(held by: unknown — this backend cannot report other users)` instead, and
 nothing else about the check changes.
-
-```{note}
-That rendering is illustrative.  No documentation harness captures `check`, so
-nothing keeps the block above in step with the code the way the captured help
-output elsewhere in this guide stays in step — read the columns and their
-values as the contract, and the box art as a sketch of the shape.
-```
 
 A lab that requires nothing of the hosts in play prints one line instead of an
 empty box — `(this lab requires no reservation for the hosts in play)` — and

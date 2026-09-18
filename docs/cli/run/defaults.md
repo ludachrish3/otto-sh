@@ -10,15 +10,13 @@ They are **project instructions**: an `@instruction(...)` declared on a
 `ProjectActions` method rather than on a free function, which gives one name a
 fixed walk across the lab's repos and **one body per repo**. Otto's six are
 declared exactly the way a repo declares its own — the same decorator, the same
-table — so nothing about them is special-cased, and a repo extends the
-interface by the mechanism otto used to write it.
-`otto run --list-instructions` shows them in their own panel, attributed to
-otto rather than to a repo.
+table. `otto run --list-instructions` shows them in their own panel,
+attributed to otto rather than to a repo.
 
 ## The four surfaces, and the one override point
 
-The same six behaviors are wanted in four places, and all four dispatch through
-the same code:
+The same six behaviors are available in four places, and all four dispatch
+through the same code:
 
 | Surface | Looks like |
 | ------- | ---------- |
@@ -30,10 +28,7 @@ the same code:
 ```{important}
 **A standalone instruction is never an override point.** A repo customizes lab
 behavior by declaring the method on a registered `ProjectActions` subclass —
-never by defining a standalone instruction of its own named `install`. If a
-standalone instruction could claim the name, then `otto run install` and an
-`ensure("installed")` marker would run different code, and the lab a test
-converges would not be the lab you installed by hand.
+never by defining a standalone instruction of its own named `install`.
 ```
 
 A standalone instruction that tries to claim a project instruction's name — any
@@ -63,12 +58,10 @@ That walk is:
    interest](#the-fleet-of-interest)). Hosts proceed in parallel.
 4. On each host, `install(owner=<repo name>)` installs that repo's products in
    declaration order.
-5. The first repo that will not install stops the walk. Installing a dependent
-   on top of a dependency known to be missing produces a lab nobody can reason
-   about.
+5. The first repo that will not install stops the walk.
 
-The `owner=` scope in step 4 is the whole point of the layer: on a host shared
-by two repos, one repo's `install` can never touch the other's products.
+Because of the `owner=` scope in step 4, on a host shared by two repos one
+repo's `install` never touches the other's products.
 
 The other five follow the same shape:
 
@@ -120,9 +113,7 @@ Three rules govern that:
   `StatusOptions` are exported from
   `otto.project` for exactly this. An override whose class does not inherit
   the right one is refused at registration, naming the repo, the instruction
-  and the class it must inherit — because otherwise one repo overriding
-  `install` would take `--ensure` off the command for everyone, and
-  `super().install(opts)` would have no field to read.
+  and the class it must inherit.
 - **Each body receives its own class**, constructed from the parsed flags its
   class declares and validated by pydantic. A body never sees another repo's
   fields, so its type annotation is exact.
@@ -143,9 +134,9 @@ their defaults.
 A field you added with **no default** is the one shape that cannot work:
 `cleanup` holds a `CleanupOptions` and `is_uninstalled()` holds nothing at all,
 so there is no value to pass and none to fall back on. Otto refuses it by name
-— the class, the field and the method to override — rather than letting the
-constructor fail in its own vocabulary. Give the field a default, or override
-`cleanup` / `is_uninstalled` as well and call your own body from there.
+— the class, the field and the method to override. Give the field a default,
+or override `cleanup` / `is_uninstalled` as well and call your own body from
+there.
 
 An override supplies `options=` and a body; it does **not** restate the walk
 shape. Those five keywords are fixed by the *first* declaration of a name — for
@@ -190,18 +181,17 @@ goes through**, never by an argument the call site has to remember:
 | ----------------- | -------- |
 | `self.ctx` inside a `ProjectActions` (the repo's view) | that repo's universe |
 | the plain context (`otto.context.get_context()`, host-global steps) | the **union** of every declaring repo's universe |
-| either, when **no** repo in the run declared `[project]` | the whole loaded lab — today's behavior, unchanged |
+| either, when **no** repo in the run declared `[project]` | the whole loaded lab |
 
-That last row is why a product-less project and every repo written before
-`[project]` existed are untouched by any of this. The fallback is all-or-
-nothing on purpose: it applies when *nothing* declared, not per repo, so a
-product-less repo joining a run cannot quietly restore the whole lab for
+So a run in which no repo declares `[project]` is not scoped at all. The
+fallback is all-or-nothing: it applies when *nothing* declared, not per repo,
+so a product-less repo joining a run does not restore the whole lab for
 everyone.
 
-Two things are deliberately **outside** the fleet, exactly as before:
-the built-in `local` host (pass `include_local=True`) and Docker containers
-(`include_containers=True`). Both flags are applied *after* scoping, so they
-still work under a declaration.
+Two things are **outside** the fleet: the built-in `local` host (pass
+`include_local=True`) and Docker containers (`include_containers=True`).
+Both flags are applied *after* scoping, so they still work under a
+declaration.
 
 ### Narrowing further: `pattern=`
 
@@ -226,24 +216,21 @@ append a wildcard — 'sensor.*' — wrapping any alternation first, as
 '(sensor).*'.
 ```
 
-A silently empty sweep is the one failure worse than a crash: it reports
-success over a lab nothing happened on. When the pattern *did* match and
-`include_containers` / `include_local` then removed every match, the same class
-is raised with the other of its two messages — that one names the flag and
-tells you **not** to widen the regex, because the regex was already right.
+When the pattern *did* match and `include_containers` / `include_local` then
+removed every match, the same class is raised with the other of its two
+messages — that one names the flag and tells you **not** to widen the regex,
+because the regex was already right.
 
 ### Explicit targeting is never scoped
 
 `otto host <id> <verb>`, `ctx.get_host("id")` and the host-id listing
-`otto host` prints reach any host in the loaded lab, declaration or not.
-A repo that has to hop through a machine it does not own must still be able to
-name it, and a scoping typo must never brick the one command that could
-diagnose it.
+`otto host` prints reach any host in the loaded lab, declaration or not, so
+a repo can name a machine it hops through without owning it, and a scoping
+typo never blocks `otto host`.
 
 ### When a declaration and the loaded lab disagree
 
-The consequence depends on **whose** declaration it is, and the asymmetry is
-deliberate — one project's scoping must not veto another project's run.
+The consequence depends on **whose** declaration it is:
 
 - **The driving project** — the first `OTTO_SUT_DIRS` entry, whose run this is
   — applying to none of the loaded labs, or applying but targeting no host in
@@ -262,8 +249,7 @@ deliberate — one project's scoping must not veto another project's run.
   bench.*) — skipping it for install
   ```
 
-  …or a loaded lab does apply and no host in it matches — where naming the labs
-  would blame the one thing that is already right:
+  …or a loaded lab does apply and no host in it matches:
 
   ```text
   repo 'sensors' applies to lab(s) [bench] but its [project] host_patterns
@@ -283,8 +269,7 @@ deliberate — one project's scoping must not veto another project's run.
 - **Every repo's declaration excluding every host** fails the fleet walk itself
   with the same class of error, naming the loaded labs and each declaring repo.
   Under the whole-lab fallback the same emptiness stays silent: an empty walk
-  over an undeclared fleet means the *lab* is empty, which is a lab problem and
-  has always been quiet.
+  over an undeclared fleet means the *lab* itself is empty.
 
 `otto run status --full` prints the resolved answer for every repo — the labs
 it applies to, and the hosts it targets:
@@ -321,19 +306,17 @@ foreign root qdisc — the `tc` configuration a colleague put on a shared host i
 not otto's to delete — and it refuses a management or hop-transit interface for
 the self-lockout reasons `link impair` refuses them. Those refusals are
 reported: `cleanup` comes back `Skipped` naming each declined link, which is
-`is_ok` (a decline is not a teardown failure and must not abort the rest of a
-best-effort cleanup) but is deliberately *not* `Success` — something may still
-be on that netdev, and otto has just declined to take it off. A link otto tried
+`is_ok` (a decline is not a teardown failure and does not abort the rest of a
+best-effort cleanup) but is *not* `Success` — something may still be on that
+netdev, and otto has just declined to take it off. A link otto tried
 and failed to repair is a failure, as usual.
 
 **A link that could never have been impaired is not a decline at all.**
 `repair_all` files those in the same bucket — every implicit hop edge is one,
 since they carry no named interface — and `cleanup` drops them before
 reporting, asking the same pure `impairment_refusal` predicate `otto link list`
-prints its reasons from. Otherwise `Success` would be unreachable on every real
-lab (an N-host lab resolves at least N implicit ids), each message would carry N
-lines nobody can act on, and a genuine foreign-qdisc refusal would be
-indistinguishable from that standing noise.
+prints its reasons from, so they never appear in `cleanup`'s `Skipped`
+message.
 
 **The tunnel reap is owner-agnostic and verified.** It finds tunnels by
 scanning every `has_bash` host for otto's process tag, so a tunnel left behind
@@ -341,31 +324,26 @@ by a crashed run comes down with the rest — and it re-scans after killing. A
 process still present in that second scan, or a host the scan could not reach,
 fails the cleanup: those are the two ways a tunnel outlives its own reap.
 
-**Order: the tunnel reap is last of all.** A tunnel can *be* the access path to
-a host, so reaping it earlier would sever the connection the repo walk, the log
-sweep and the toolchain removal still need. Resetting impairments sits
-immediately before it for the mirrored reason — clearing delay and loss off a
-link only improves the path everything above ran over.
+**Order: the tunnel reap is last of all** — a tunnel can *be* the access path
+to a host — with the impairment reset immediately before it.
 
 ## Many repos: composition and order
 
 Composition is by *iteration over resolved repos in dependency order*, never by
-cross-repo subclassing — you cannot subclass a class that may be absent, and an
-**optional** dependency may well be.
+cross-repo subclassing.
 
 - **Build-up walks dependencies first.** `install` and `install-tools` take the
   order bootstrap computed. An optional dependency that is present is simply in
   the walk; an absent one simply is not.
 - **Teardown walks it reversed.** `uninstall` and `cleanup` bring the dependent
   down before the thing it depends on.
-- **Building is fail-fast, tearing down is best-effort.** A repo that will not
-  come down must not strand the ones behind it, so every repo is attempted and
-  the first failure is what gets reported — named:
+- **Building is fail-fast, tearing down is best-effort.** On teardown every
+  repo is attempted and the first failure is what gets reported — named:
   `uninstall failed in repo 'widget': …`.
 - **Host-global steps happen once, at the ends.** The debug sweep runs after
-  every repo has torn down (teardown-time activity is what those logs exist to
-  capture); the toolchain removal follows it, so no log retrieval depends on
-  tooling that step is deleting. `cleanup` then finishes with the lab's own
+  every repo has torn down, so it captures teardown-time activity; the
+  toolchain removal follows it, so no log retrieval depends on tooling that
+  step is deleting. `cleanup` then finishes with the lab's own
   infrastructure — impairments, and the tunnel reap last of all.
 
 Ordering beyond dependency order is not configurable, and the orchestrator
@@ -395,14 +373,12 @@ Per field name, across the bodies of one instruction:
 - **Different declaring classes** — a bootstrap error naming the instruction,
   the field and the repos on each side, with the fix: *share one base class, in
   a required dependency or a library package, or rename the field.* Two repos
-  that each wrote `lab_env: str` collide even when the type and default match;
-  a flag whose meaning depends on which repo reads it is not something to
-  resolve silently.
+  that each wrote `lab_env: str` collide even when the type and default
+  match.
 - **One repo, two instructions, the same field** — no conflict at all. They are
   separate commands.
 
-The failure is the whole invocation, not the repo: a flag set the user cannot
-see is not something to degrade around.
+The failure is the whole invocation, not the repo.
 
 **On the command line the flag NAME is the key.** A parsed flag set is flat —
 one value per name — and `--ensure` reuses `install`'s parsed flags for the two
@@ -419,18 +395,15 @@ matches by declaring class, not by name.
 library package — never in an optional repo. Bootstrap imports every configured
 repo's init, so an optional repo that is merely inactive still works; but one
 absent from the workspace is not importable, and the repo whose init dies on
-that import drops out of the run. A repo should not be lost over where a flag
-was defined. Options modules are leaves — `typer` and `otto.options` — so
-following ownership down the dependency graph can never cycle.
+that import drops out of the run.
 
 ## Where the logs land
 
 Retrieval writes into a documented tree, keyed by host id and then product —
-{ref}`The run tree <run-tree>` has the shape, and it is a tested contract, not an
-implementation detail: an override that retrieves logs its own way should
-still land them there wherever a host attribution exists. `<run>` is the
-active command's output directory (see
-[Logging and artifacts](index.md#logging-and-artifacts)) unless a caller
+{ref}`The run tree <run-tree>` has the shape, and it is a contract: an
+override that retrieves logs its own way should still land them there wherever
+a host attribution exists. `<run>` is the active command's output directory
+(see [Logging and artifacts](index.md#logging-and-artifacts)) unless a caller
 passes an explicit `dest=`.
 
 Product logs are owner-scoped and hauled per repo, each product into its own
@@ -453,10 +426,6 @@ aggregate, so a script can branch without parsing the table:
 | `1` | UNINSTALLED | every counted repo is uninstalled |
 | `2` | PARTIAL | anything in between — `otto run install --ensure` recovers it |
 
-Three codes rather than a boolean, for the same reason the state is a tri-state:
-a half-installed lab and a clean one need different handling, and reporting them
-alike is how remnants get installed over.
-
 A repo with nothing to say about its install state — no products anywhere, no
 registered actions, a docs-only repo — is **not counted**: it is absent from the
 table rather than listed with a made-up state, and it cannot drag the aggregate
@@ -470,10 +439,9 @@ see [When a declaration and the loaded lab
 disagree](#when-a-declaration-and-the-loaded-lab-disagree).
 
 `await otto.project.is_uninstalled()` is that first row as a boolean, for a
-script that only wants to know whether the lab is empty. There is deliberately
-**no** `is_installed()` at this layer: `False` on it would cover PARTIAL and
-UNINSTALLED alike, which is exactly the ambiguity the tri-state exists to
-resolve — so every other question reads `status()`.
+script that only wants to know whether the lab is empty. There is **no**
+`is_installed()` at this layer — `False` on it would cover PARTIAL and
+UNINSTALLED alike — so every other question reads `status()`.
 
 ### `--full`: the lab's other axis
 
@@ -499,26 +467,20 @@ Three things about that are contracts rather than styling:
 - **The exit code does not move.** It still means install state and nothing
   else — the run above exits `2` because the *install* aggregate is PARTIAL,
   and a fully installed lab with dev tools left on it and a tunnel up still
-  exits `0`. Scripts branch on that code; folding a second axis into it would
-  change the answer to a question nobody re-asked. The cleanliness aggregate is
-  the last line instead.
+  exits `0`. The cleanliness aggregate is the last line instead.
 - **`unknown` is a cell, not a crash.** `is_clean()` *raises* on a state nobody
-  could read, deliberately — a converge must not clean on a non-fact. A display
-  has the opposite duty: an unreachable host must not hide the twelve hosts
-  that answered. Both read the same probes, so the rows and the boolean cannot
-  drift; `--full` is not `is_clean()` with the exception swallowed.
-- **It costs device work, which is why it is a flag.** Bare `otto run status`
-  counts products and nothing else. `--full` adds a netem read per impairable
-  link and a process scan per `has_bash` host — the same reads the `clean`
-  ensure step makes. Links otto refuses to impair get no row at all — every implicit hop
-  edge, and also the management or hop-transit interfaces a scan turns down.
-  A refused link is never read, so there is no state to show and a "clean" row
-  would be a claim about something nobody looked at; `cleanup` names the
-  scan-found refusals in its own `Skipped` message, which is where an operator
-  can act on one.
+  could read; `--full` shows it as `unknown`, so an unreachable host does not
+  hide the hosts that answered. Both read the same probes, so the rows and the
+  boolean agree.
+- **It costs device work.** Bare `otto run status` counts products and
+  nothing else. `--full` adds a netem read per impairable link and a process
+  scan per `has_bash` host — the same reads the `clean` ensure step makes.
+  Links otto refuses to impair get no row at all — every implicit hop edge,
+  and also the management or hop-transit interfaces a scan turns down.
+  A refused link is never read, so there is no state to show; `cleanup` names
+  the scan-found refusals in its own `Skipped` message.
 
 The same report is a library call: `await otto.project.cleanliness()` returns
 one `CleanlinessItem` per row, grouped in `cleanup`'s own step order, plus the
-`overall` aggregate — in which a **dirty** row outranks an unreadable one,
-because an answer already in hand is not discarded for a scan that fell short.
+`overall` aggregate — in which a **dirty** row outranks an unreadable one.
 

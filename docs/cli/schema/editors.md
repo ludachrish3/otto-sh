@@ -2,9 +2,9 @@
 
 otto can generate [JSON Schema](https://json-schema.org/) for the files you edit
 by hand — `lab.json`, `settings.toml`, the reservations JSON, and a `json`
-inventory file — so your editor offers field autocomplete and flags typos. The schemas are generated from
-the pydantic models inside the otto you have installed, so they always match your
-version. There is nothing to download and nothing that can go stale.
+inventory file — so your editor offers field autocomplete and flags typos.
+`otto schema export` produces them from the otto you have installed, so they
+match your version; there is nothing to download.
 
 New repos get all of this automatically: `otto init` exports the schemas to
 `.otto/schemas/`, stamps the scaffolded `settings.toml` (`#:schema` directive)
@@ -54,9 +54,8 @@ extension and add:
 
 The schemas say what is *wrong* once you have typed it; the snippets say what
 to type. `otto init` writes `.otto/schemas/` and, beside it,
-`.vscode/otto.code-snippets` — generated from the same models, so neither can
-drift from the other or from what otto accepts. VS Code auto-loads any
-`.vscode/*.code-snippets` file, so there is nothing to wire up.
+`.vscode/otto.code-snippets`, built from the same models. VS Code auto-loads
+any `.vscode/*.code-snippets` file, so there is nothing to wire up.
 
 | Prefix | Inserts |
 |--------|---------|
@@ -77,8 +76,7 @@ does — `otto-lab` in the `labs` table, `otto-element` in `elements`,
 array.
 
 The snippets file is otto-owned and rewritten whenever the schemas area is —
-by `otto init --schemas`. It is deliberately *not* checked by the staleness
-doctor: an editor convenience going stale is not a broken repo.
+by `otto init --schemas`. It is *not* checked by the staleness doctor.
 
 ## Neovim
 
@@ -130,13 +128,11 @@ now. When the stamps disagree it says so:
 0.9.0 — re-run `otto init --schemas` or `otto schema export`
 ```
 
-**Upgrading otto flags every scaffolded schema** until you re-export, which is
-the intent: an upgrade that changes a model changes the schemas, and a schema
-older than the validator would quietly bless data otto now rejects. A file
+**Upgrading otto flags every scaffolded schema** until you re-export. A file
 that differs while carrying the *same* stamp reads as `stale (differs from
 installed otto's models)` instead — that is a local edit, not an upgrade. A
 `*.schema.json` your otto emits none of is reported as `orphaned`.
 
 These are *problems*, not warnings: `otto init` exits 1 on any of them. Refresh
 with `otto init --schemas` (which rewrites the snippets alongside) or
-{doc}`export`. There is no committed copy of the schemas in the otto repo.
+{doc}`export`.

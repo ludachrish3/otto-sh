@@ -113,9 +113,8 @@ whether the fast path answers or the full path does.
 
 When every file and directory the entry depends on still stats the same as
 when it was written, the `otto` console script answers straight from that
-cache: three modules (`otto`, `otto._shim`, `otto._shim_complete`), one JSON
-read, one stat per recorded path — nothing of otto's CLI, its config layer,
-Typer or rich.  Any TAB that check can't answer runs the full path instead.
+cache, without loading otto's CLI.  Any TAB that check can't answer runs the
+full path instead.
 The candidates are the same either way: the fast path is only faster, never
 a different or a shorter list.
 
@@ -166,7 +165,7 @@ directory.  Completion resolves the same host the command would, honouring
 `--hop` and `--term`, so it needs a lab selected (`--lab` or `OTTO_LAB`) just
 like the command does.
 
-Remote completion is deliberately narrow, and where it can't answer it stays
+Remote completion is narrow, and where it can't answer it stays
 **silent** — a TAB never prints an error onto your prompt.  It offers nothing
 when:
 
@@ -174,9 +173,8 @@ when:
   remote paths in this release.
 - **you don't hold the lab's reservations.**  The same required-resource set
   the command itself checks is verified *before* any host is contacted, and
-  `-R` / `--skip-reservation-check` does **not** bypass it — that flag's loud
-  warning has nowhere to print in the middle of a TAB, and a silent
-  break-glass is not one.  See {doc}`reservation/index`.
+  `-R` / `--skip-reservation-check` does **not** bypass it.  See
+  {doc}`reservation/index`.
 - **the listing didn't come back in time.**  The remote `ls` runs under a hard
   two-second budget; a slow or wedged host costs you the suggestions, not your
   prompt.
@@ -194,8 +192,8 @@ home](#the-workspace-home), beside the main completion cache, and
 [`otto cache clear`](cache/index.md) deletes both files.
 
 The cached reservation answer is read by tab completion and by nothing else —
-see {doc}`reservation/windows` for why, and for what the booking times every
-backend reports are used for.
+see {doc}`reservation/windows` for what the booking times every backend
+reports are used for.
 
 ## Output directories
 
@@ -230,12 +228,8 @@ flag at registration — see {doc}`../library/extending-cli`.
 ### Inside a run directory
 
 Everything a run writes that belongs to a *host* or to a *product* lands at
-one documented path.  The `logs/` and `cov/` subtrees below are the contract:
-the logs pipeline and the coverage pipeline build every one of those paths
-from the same module, `otto.layout`, which is why they are the same shape
-below `<kind>/<host_id>/`
-({doc}`../architecture/utilities/logging`,
-{doc}`../architecture/subsystems/coverage/index`):
+one documented path.  The `logs/` and `cov/` subtrees below are the contract,
+and they share one shape below `<kind>/<host_id>/`:
 
 ```text
 <run>/
@@ -260,11 +254,11 @@ below `<kind>/<host_id>/`
   matched", not "nothing ran".  The coverage side is the opposite: a product's directory is
   created only once counters are known to exist, and a failed transfer takes
   the half-filled directory back out — so a missing `cov/<host_id>/<product>/`
-  is the honest record that nothing was retrieved.
+  means nothing was retrieved.
 
-`cov_report/` and the per-test directories are the run dir's other tenants and
-do not come from `otto.layout`: the report renderer owns the first, and
-pytest's own naming owns the second — see {doc}`test/index`.
+`cov_report/` and the per-test directories are the run dir's other tenants:
+the report renderer writes the first, and the second follow pytest's test
+naming — see {doc}`test/index`.
 
 `<run>` is the per-invocation output directory above, unless a caller passes
 an explicit destination (`dest=` on the log verbs, `--cov-dir` for coverage
@@ -293,9 +287,10 @@ you run them:
   tls/                              # a convention, not derived state — see below
 ```
 
-The `<hash8>` half of the key makes the name correct: two different workspaces
-cannot collide, even when their directories share basenames.  The `<slug>`
-half, built from those basenames, makes `ls ~/.otto` readable.
+`<hash8>` is the first eight hex digits of a SHA-256 over the workspace's
+resolved paths, so two different workspaces never share a directory, even
+when their directories share basenames. `<slug>` is those basenames joined
+with `-` and normalized, cut to 40 characters.
 
 Everything under a workspace home is derived, so the whole directory is
 disposable — delete it and otto rebuilds what it needs on the next run.

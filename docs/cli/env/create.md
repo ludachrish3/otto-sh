@@ -31,9 +31,8 @@ error: an environment already exists at ~/.otto/134b91c0-repo1-repo4/env — pas
 --force to remove and rebuild it, or run `otto env sync` to update it in place
 ```
 
-Exit code 1. The refusal names both escapes because they mean different things:
-`--force` throws the environment away and builds a new one, while
-{doc}`sync` updates the one you have.
+Exit code 1. The refusal names both escapes: `--force` throws the environment
+away and builds a new one, while {doc}`sync` updates the one you have.
 
 ## `--force` is the recovery story
 
@@ -41,10 +40,9 @@ A wedged environment — a half-finished install, a backend you want to leave
 behind — is what `--force` is for. It removes the directory outright rather
 than installing over the top, so nothing from the previous build survives.
 
-That includes the recorded backend, and deliberately: the metadata file lives
-*inside* the venv, so removing the venv removes it. A rebuild therefore cannot
-inherit the backend you were trying to escape. Stored beside the environment it
-would have outlived the rebuild and quietly pinned the old choice.
+That includes the recorded backend: the metadata file lives *inside* the
+venv, so removing the venv removes it, and a rebuild cannot inherit the backend
+you were trying to escape.
 
 ```console
 $ otto env create --force --backend pip

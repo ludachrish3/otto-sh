@@ -32,18 +32,16 @@ purely on the filesystem under `OTTO_HOME`.
 Every verb reaches a workspace only through one narrow matcher: a candidate
 must be a directory directly under the home whose name looks like a real
 `workspace_key` (8 hex characters, a dash, then a slug) — `settings.toml` and
-the `inventory-cache/` directory can never match that shape, so they are
-structurally unreachable rather than merely skipped, and a symlinked entry is
-skipped outright rather than followed, so a candidate can never be used to
-reach files elsewhere on disk. Inside a matched workspace, the only files
-ever unlinked are the two named above — nothing else there is touched, named
-or not — and a workspace *directory* is only ever removed with `rmdir`, which
-refuses to touch a non-empty directory; there is no recursive delete anywhere
-in this command group. That is what makes an `env/` virtualenv (from `otto
-env create`) survive every `clear` and `prune` by construction rather than by
-a case that happens to notice it: emptying a workspace of its two cache files
-still leaves `env/` behind, so `rmdir` fails and the directory — venv
-included — stays exactly where it was.
+the `inventory-cache/` directory can never match that shape, so they are never
+reached, and a symlinked entry is skipped rather than followed, so a candidate
+can never be used to reach files elsewhere on disk. Inside a matched
+workspace, the only files ever unlinked are the two named above — nothing
+else there is touched, named or not — and a workspace *directory* is only ever
+removed with `rmdir`, which refuses to touch a non-empty directory; there is
+no recursive delete anywhere in this command group. So an `env/` virtualenv
+(from `otto env create`) survives every `clear` and `prune`: emptying a
+workspace of its two cache files still leaves `env/` behind, so `rmdir` fails
+and the directory — venv included — stays exactly where it was.
 
 ## info
 
@@ -72,26 +70,24 @@ The home line names the resolved path and says whether `$OTTO_HOME` decided it
 — `(default)` above, or `(from $OTTO_HOME)` when that variable is set (and
 non-empty; an empty `OTTO_HOME` counts as unset, the same as everywhere else
 otto reads it). Rows are sorted oldest-cache-first, and the age column is the
-sort key: it is the OLDER of the two cache files in that workspace, not the newer one —
-`prune` decides per file, so a workspace with one fresh cache and one stale
-one is still something a prune would act on, and reporting the newer file's
-age would hide that. The caption totals the workspace count and cache bytes,
-then counts how many workspaces have a cache older than the default 60-day
-threshold — the same number `prune` (with no `--age`) would remove from. A
-workspace `otto cache` cannot read (permission trouble, most often) is
-omitted from the table rather than aborting the rest of the listing, and an
-empty or missing home prints `no cached workspaces` and exits 0.
+sort key: it is the OLDER of the two cache files in that workspace, not the
+newer one, because `prune` decides per file and still acts on a workspace with
+one fresh cache and one stale one. The caption totals the workspace count
+and cache bytes, then counts how many workspaces have a cache older than the
+default 60-day threshold — the same number `prune` (with no `--age`) would
+remove from. A workspace `otto cache` cannot read (permission trouble, most
+often) is omitted from the table rather than aborting the rest of the listing,
+and an empty or missing home prints `no cached workspaces` and exits 0.
 
 The block after the caption is about the workspace `otto` is running *in* —
 the repos on `OTTO_SUT_DIRS` — and is the answer to "why does my host not
-complete". Completion is best-effort by contract: a lab entry it cannot build
-is skipped, never warned about, because a warning printed into a completing
-shell corrupts the candidate list the shell is parsing. So the silence gets
-explained here instead. `completion names` is the standing of this
-workspace's cache entry — `fresh` means TAB is served from it; `stale`,
-`expired` and `outdated` mean the next TAB rebuilds it; `tainted` means it was
-written while startup reported errors and is never served, so every TAB runs
-the full load until the error is fixed.
+complete". Completion skips a lab entry it cannot build without printing a
+warning into the shell, so this block is where those skips are explained.
+`completion names` is the standing of this workspace's cache entry — `fresh`
+means TAB is served from it; `stale`, `expired` and `outdated` mean the next
+TAB rebuilds it; `tainted` means it was written while startup reported errors
+and is never served, so every TAB runs the full load until the error is
+fixed.
 
 `shim` is the standing of the fast answer — a warm TAB is answered by the
 console script from the cache alone when the entry's recorded files and
@@ -127,9 +123,7 @@ removed ~/.otto/13739bf0-repo1/remote_completion_cache.json
 Bare, `clear` acts on exactly one workspace — the one the current
 `OTTO_SUT_DIRS` resolves to — and unlinks both `completion_cache.json` and its
 remote-path sidecar `remote_completion_cache.json` if present. It never
-removes the workspace directory itself, age-blind or not: a user reaching for
-this escape hatch wants completion state gone, not the directory that will
-hold the next rebuild.
+removes the workspace directory itself.
 
 ```console
 $ otto cache clear --all

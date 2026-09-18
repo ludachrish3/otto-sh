@@ -148,6 +148,77 @@ methods, pytest semantics, stability statistics, per-test artifacts. Shared
 repo-wide options classes keep the two consistent
 ({doc}`../../library/options-classes`).
 
+## Project instructions
+
+The six first-party project instructions — `install`, `uninstall`,
+`cleanup`, `get-logs`, `install-tools`, `status` ({doc}`../../cli/run/defaults`)
+— are declared with the same decorator and table a repo uses, so nothing about
+them is special-cased and a repo extends the interface by the mechanism otto
+used to write it.
+
+A repo customizes `install` and the other project instructions only through
+its `ProjectActions` subclass; a standalone instruction of the same name is
+refused at startup. `otto run install`, `await otto.project.install()` and
+`@pytest.mark.ensure("installed")` therefore run the same bodies, so the lab a
+test converges is the lab a person installed by hand. The first declaration
+of a project instruction also fixes its *walk shape* — the walk direction,
+whether it continues past a failing repo, whether it requires dependencies,
+and how results combine and render — and a later declaration may not change
+any of it, so no repo can reshape the six first-party instructions.
+
+The rest of the design follows from what a walk across many repos must never
+do:
+
+- **Never build on a known gap, never strand a teardown.** Composition is by
+  iteration over resolved repos in dependency order, not cross-repo
+  subclassing — a class that may be absent cannot be subclassed, and an
+  optional dependency may well be. Building is fail-fast because installing a
+  dependent on top of a dependency known to be missing produces a lab nobody
+  can reason about; tearing down is best-effort because a repo that will not
+  come down must not strand the ones behind it.
+- **Never let one repo reshape another's command.** An override's options
+  class must inherit otto's class for that name; otherwise one repo overriding
+  `install` would take `--ensure` off the command for everyone, and
+  `super().install(opts)` would have no field to read. Two repos declaring the
+  same flag from different classes is a bootstrap error for the whole
+  invocation: a flag whose meaning depends on which repo reads it is not
+  something to resolve silently, and a flag set the user cannot see is not
+  something to degrade around. Options modules are leaves — `typer` and
+  `otto.options` — so a shared base placed in a required repo or a library
+  package can never create an import cycle.
+- **Never report success over nothing.** A `pattern=` that selects no host
+  raises, because a silently empty sweep is the one failure worse than a
+  crash: it reports success over a lab nothing happened on.
+- **Never let scoping lock anyone out.** Explicit targeting (`otto host <id>`,
+  `ctx.get_host`) is never scoped: a repo that has to hop through a machine it
+  does not own must still be able to name it, and a scoping typo must never
+  brick the one command that could diagnose it. A driving project whose
+  declaration admits no host aborts, but a dependency's is only skipped — one
+  project's scoping must not veto another project's run.
+- **Never blur install state.** `status` exits with three codes rather than a
+  boolean, for the same reason the state is a tri-state: a half-installed lab
+  and a clean one need different handling, and reporting them alike is how
+  remnants get installed over. `status --full` leaves that exit code alone —
+  scripts branch on it, and folding a second axis in would change the answer
+  to a question nobody re-asked. `is_clean()` raises on a state nobody could
+  read, because a converge must not clean on a non-fact, while the `--full`
+  display shows it as `unknown`, because an unreachable host must not hide the
+  others; both read the same probes, so the display is not `is_clean()` with
+  the exception swallowed. In the `cleanliness()` aggregate a dirty row
+  outranks an unreadable one: an answer already in hand is not discarded for a
+  scan that fell short.
+- **Never bury a real refusal in noise.** `cleanup` drops links that could
+  never have been impaired before reporting; otherwise `Success` would be
+  unreachable on every real lab (an N-host lab resolves at least N implicit
+  ids), each message would carry N lines nobody can act on, and a genuine
+  foreign-qdisc refusal would be indistinguishable from that standing noise.
+- **Never cut the path teardown still needs.** `cleanup`'s tunnel reap runs
+  last because a tunnel can *be* the access path to a host, and reaping it
+  earlier would sever the connection the repo walk, the log sweep and the
+  toolchain removal still need; the impairment reset sits immediately before
+  it because clearing delay and loss only improves the path everything above
+  ran over.
+
 ## Where the code lives
 
 - {mod}`otto.cli.run` — the `@instruction` decorator, the `INSTRUCTIONS`

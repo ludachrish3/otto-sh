@@ -97,6 +97,11 @@ names still appear in listings even though their registrations never ran;
 only actually dispatching one triggers the real import. Any discovery failure
 in completion mode is swallowed and falls back to the slow path.
 
+Completion must never print a warning either: text written into a completing
+shell corrupts the candidate list the shell is parsing, so a lab entry it
+cannot build is skipped silently, and `otto cache info` is where those skips
+are explained.
+
 The payoff is registry-shaped completion everywhere — captured live from a
 scaffolded demo repo at docs build time:
 

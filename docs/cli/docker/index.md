@@ -83,11 +83,9 @@ translate a path from either side to the other — the motivating case is a
 test that knows a path *inside* the container and wants it fetched through
 the parent, where otto already has a fully capable {class}`~otto.host.host.Host`.
 
-These mounts are declared exactly once: in the product's own compose file,
-under each service's `volumes:`. There is no `mounts` setting in
-`settings.toml`, and there will not be one — a second copy of that truth
-would drift the first time a compose adapter rewrote a path. otto only
-*reads* what the compose file and the daemon already agree on.
+These mounts are declared in the product's own compose file, under each
+service's `volumes:` — there is no `mounts` setting in `settings.toml`. otto
+reads what the compose file and the daemon agree on.
 
 Use {attr}`~otto.host.docker_host.DockerContainerHost.mounts` and its three
 helpers:
@@ -132,11 +130,9 @@ result = await ctr.parent.get([parent_log], local_dir)
 assert result.is_ok, result.msg
 ```
 
-`parent_path`/`container_path` match by **longest prefix** — this matters
-when one mount is nested inside another (say `/var/lib/app` and
-`/var/lib/app/logs` both declared): a first-match implementation would
-translate through the outer mount and name a parent path where the file
-does not exist, so the more specific mount always wins (see
+`parent_path`/`container_path` match by **longest prefix**: when one mount
+is nested inside another (say `/var/lib/app` and `/var/lib/app/logs` both
+declared), the more specific mount always wins (see
 {func}`~otto.host.mount.mount_for`). Matching is also **component-wise**,
 not a string prefix: a mount at `/var/lib/app` answers for
 `/var/lib/app/logs/x.txt`, but never for `/var/lib/application/x` — a
@@ -193,10 +189,10 @@ since nothing is actually staged then.
 The one gap in the warning: a source containing `$`, e.g.
 `${DATA_DIR}/data:/var/lib/app`, draws **no warning**, relative or not.
 Compose only interpolates such a value at `up` time from the env file, so
-otto's static walk over the rendered compose text cannot evaluate it and
-deliberately says nothing rather than guessing. If a variable-driven
-source resolves to something relative, it is wiped exactly like a literal
-`./data` source — otto just can't tell you so in advance.
+otto's static walk over the rendered compose text cannot evaluate it and says
+nothing. If a variable-driven source resolves to something relative, it is
+wiped exactly like a literal `./data` source — otto just can't tell you so in
+advance.
 
 ### Docker's auto-create behavior
 
@@ -211,10 +207,7 @@ The permissions variant of the same trap is worth naming separately: if
 the image runs as a non-root `USER`, that user has no write access to a
 `root`-owned auto-created directory, and the resulting failure is a plain
 permission-denied error at write time — it points nowhere near the mount
-that caused it. otto stays silent about a missing absolute bind source by
-design: warning on it would fire on every legitimate first run of a new
-stack, since docker creating that directory on demand is documented
-behaviour products already rely on, not a defect to flag.
+that caused it. otto does not warn about a missing absolute bind source.
 
 ## Where docker runs
 

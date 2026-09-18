@@ -114,12 +114,10 @@ project(s) declare an interest in via `[project] host_patterns`
 level always counts; each host in play adds its element's identifiers and its
 own.
 
-The built-in `local` host is never among them.  Otto can always run on the
-machine it is running on, so a reservation standing between you and
-`otto host local <verb>` would cost you a run and buy nobody a slot.  A lab
-that declares its *own* `local` host entry is a different thing — otto injects
-no built-in host in that case, and that entry's `resources` are enforced like
-any other's.
+The built-in `local` host is never among them, so no reservation stands
+between you and `otto host local <verb>`.  A lab that declares its *own*
+`local` host entry is a different thing — otto injects no built-in host in
+that case, and that entry's `resources` are enforced like any other's.
 
 For a combined `--lab a+b` the lab level contributes the union of the
 components' declared sets, and every lab-level row is attributed to the merged
@@ -129,10 +127,8 @@ Naming a host explicitly — as the target or as the `--hop` — adds it to that
 set, the built-in `local` host still excepted.  `otto host <id>` is not scoped
 by any `[project]` declaration
 ({doc}`../host/index`), so a host outside the fleet has its OWN element- and
-host-level identifiers checked before the command runs — otherwise holding the
-fleet's slots would be permission to touch hardware nobody reserved, and
-reaching a fleet host through an unreserved jump box is still using the jump
-box.
+host-level identifiers checked before the command runs — including a jump box
+you only reach a fleet host through.
 
 Otto then asks the configured backend which of those identifiers the effective
 user holds.  Anything missing raises an error that names each missing
@@ -176,14 +172,14 @@ for the mapping and the checklist.
 ## Fail-closed behavior
 
 If backend construction raises (scheduler unreachable, bad credentials), otto
-exits before running the requested command — and the error message *does* mention
-`-R`, because the user otherwise has no way to proceed.
+exits before running the requested command — and the error message *does*
+mention `-R` (see {doc}`skipping`).
 
 Passing `-R` / `--skip-reservation-check` goes further: otto does **not construct
-the backend at all**. A scheduler that fails or even hangs in its constructor can
-never block lab access — that is the strongest form of break-glass. (The
-introspection subcommands `otto reservation whoami` / `check` still build the
-backend on demand when you ask them to.)
+the backend at all**, so a scheduler that fails or even hangs in its
+constructor can never block lab access. (The introspection subcommands
+`otto reservation whoami` / `check` still build the backend on demand when you
+ask them to.)
 
 All other failures (the user genuinely doesn't hold the resource) exit via the
 normal `MissingReservationError` path, which does not mention `-R`.

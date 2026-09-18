@@ -23,7 +23,12 @@ starting a run.
   backend is never even constructed — a hanging scheduler cannot block lab
   access — but a factory is kept so `reservation` subcommands can still
   build it on demand. Contention errors deliberately do *not* advertise
-  `-R`; only backend-unreachable errors do ({doc}`../../cli/reservation/index`).
+  `-R` — a suggestion would be friendly, but the flag gets abused the moment
+  a user assumes it is a normal workaround; only backend-unreachable errors
+  do, because there the user has no other way to proceed
+  ({doc}`../../cli/reservation/index`). The loud red warning `-R` prints is
+  deliberate friction for the same reason: the option should feel scary to
+  reach for.
 
 - **The gate runs in completion too, on its own terms.** Remote-path tab
   completion for `otto host <id> get` / `put` ({doc}`../../cli/index`)
@@ -50,6 +55,14 @@ starting a run.
   acceptable trade for a deliberate TAB and never for a recalled command. A
   unit test enforces that boundary by AST-scanning the tree: nothing but
   `otto.cli.remote_completion` may import the cache.
+- **The expiry warning is deliberately narrow.** Its five-minute window is a
+  module constant, not a setting: it is a nudge, and a configurable nudge is a
+  support question with no right answer. It names only resources the run
+  requires, since racks held but not touched would be noise on every gated
+  command. It never refuses, and `-R` does not silence it inside
+  `otto reservation check`: `-R` means "do not block me", and the command
+  whose whole job is reporting reservation status should still say a booking
+  is lapsing.
 
 Backends are a registry like everything else (`json`, `none` built in;
 custom schedulers register by name — {doc}`registries`), and
@@ -96,11 +109,10 @@ Reservation readers reach that set through
 the gate makes and the walks do not: the built-in `local` host is subtracted.
 Otto can always run on the machine it is running on, so requiring a slot to
 reach it would be a footgun with no upside. The subtraction is by host
-identity, not by the id
-string (`otto.host.builtin_hosts.is_builtin_host`) — a lab that declares its
-own `local` entry suppresses the built-in host altogether, and that entry's
-`resources` are enforced like any other's.
-All four reservation readers — the gate, `otto reservation check`, the
+identity, not by the id string (`otto.host.builtin_hosts.is_builtin_host`) —
+a lab that declares its own `local` entry suppresses the built-in host
+altogether, and that entry's `resources` are enforced like any other's. All
+four reservation readers — the gate, `otto reservation check`, the
 explicit-target check in `otto host`, and completion's cached gate — go
 through that accessor, so none can drift from the others.
 
@@ -110,6 +122,12 @@ aborts on it, with the same message, exactly where it did before this gate
 existed — so the gate never becomes a new abort surface. Completion's gate
 builds a temporary context and passes that context's ids, so a TAB and a run
 agree about what is needed.
+
+An explicitly named host outside the fleet — the target of `otto host <id>`,
+or its `--hop` — has its own element- and host-level identifiers added to the
+required set. Otherwise holding the fleet's slots would be permission to touch
+hardware nobody reserved, and reaching a fleet host through an unreserved jump
+box is still using the jump box.
 
 ## Where the code lives
 

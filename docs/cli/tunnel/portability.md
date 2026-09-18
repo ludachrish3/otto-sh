@@ -23,8 +23,5 @@ manager, including inside Docker containers). The `socat` address forms, the
 `exec -a` argv-tagging trick, and the
 discovery `ps` command all stay within an old-stable portability floor
 (pre-`etimes`, procps/socat compatible back to Linux 2.6.32-era
-userland). The docker-endpoint e2e suite exercises this floor against a
-`centos:7` (arm64) container — no systemd, so the `setsid` launch path,
-old-procps `etime` parsing, and old-bash `exec -a` are what actually run
-there. True CentOS-6/2.6.32 validation remains a documented manual check.
+userland).
 

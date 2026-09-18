@@ -19,21 +19,19 @@ so one flag covers both directions of a service's traffic. `--proto tcp` or
 `--proto` without `--port` is a usage error (exit code 2, `--proto needs
 --port.`) — there's nothing for it to narrow.
 
-Omitting `--port` is **not** a new mode: it's exactly today's
-whole-interface impairment, byte-identical commands and semantics. Port
-scoping is strictly opt-in, per invocation.
+Omitting `--port` gives the ordinary whole-interface impairment. Port
+scoping is opt-in, per invocation.
 
 | Option | Description |
 | ------ | ----------- |
 | `--port` | Scope this impairment to one service port (1-65535), matching source OR destination. |
 | `--proto` | With `--port`: narrow to `tcp` or `udp`. Omitted, both match. Requires `--port`. |
 
-## Exclusivity: whole-link and port-scoped never mix (v1)
+## Exclusivity: whole-link and port-scoped never mix
 
-A placement's netdev is either whole-link impaired (today's exact
-root-netem shape) or port-scoped (a classful tree of per-selector bands) —
-never both. Otto refuses to mix the two on the same placement, and the
-error names the remedy:
+A placement's netdev is either whole-link impaired (a root netem qdisc) or
+port-scoped (a classful tree of per-selector bands) — never both. Otto
+refuses to mix the two on the same placement, and the error names the remedy:
 
 ```bash
 otto --lab unix link impair edge --delay 50

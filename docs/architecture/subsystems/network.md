@@ -65,12 +65,16 @@ is the kernel's, and `list` rebuilds the whole scoped tree from `tc qdisc show`
 + `tc filter show`.
 
 **Never sever otto's own path.** A link's netdev may be the very interface otto
-reaches a host *through*, so every resolved placement is checked against two
+reaches a host *through*, so every resolved placement is checked against three
 refusals before any host is mutated: the management interface a host is reached
-on, and any link touching the local host, are never impairable — including
-transitively, when a placement's netdev carries the management path of another
-host that reaches otto only by hopping through it. The invariant is simple:
-impairing the lab must never lock otto out of the lab.
+on is never impairable, nor is any link touching the local host, nor — the
+hop-transit refusal — a placement whose netdev carries the management path of
+another host that reaches otto only by hopping through it. The invariant is simple:
+impairing the lab must never lock otto out of the lab. `repair` is exempt from
+the management-interface and hop-transit refusals (the local-host refusal
+still applies — otto runs no `tc` on its own machine), because clearing a
+qdisc cannot degrade a path: enforcing them on a clear would only ever protect
+an impairment from the operator trying to remove it.
 
 **Mutations are verified, never half-applied.** Applying an impairment is
 merge-read-modify-verify ({mod}`otto.link.manage`): otto reads a placement's
@@ -140,7 +144,11 @@ user systemd manager exists, falling back to a plain `setsid`-detached process
 where it does not (older distros, and inside Docker containers). The socat
 address forms, the `exec -a` argv-tagging trick, and the discovery `ps` command
 all stay within an old-stable portability floor, so the same mechanism works on
-long-lived lab hardware as on a current distro.
+long-lived lab hardware as on a current distro. The docker-endpoint e2e suite
+exercises that floor against a `centos:7` (arm64) container — no systemd, so
+the `setsid` launch path, old-procps `etime` parsing, and old-bash `exec -a`
+are what actually run there. True CentOS-6/2.6.32 validation remains a
+documented manual check.
 
 **Tunnels in the monitor.** The live tunnel set rides the monitor's own
 session wire as `TunnelRecord` rows ({mod}`otto.models.monitor`) — id,
@@ -175,9 +183,10 @@ that raise, and it needs its own arm: the discovery is empty with an **empty**
 raises `TunnelNotMeasuredError` rather than `TunnelScanFailedError`, because
 the warning the collector logs is the whole product there and "reached none of
 the lab's N scannable hosts" would accuse a bed nobody spoke to. The monitor's
-topology view renders this set as an
-overlay along the links each tunnel's hop path traverses; see
-{doc}`../../cli/monitor/index`'s Topology view section for what that looks like.
+topology view renders this set as an overlay along the links each tunnel's hop
+path traverses; see
+[Topology view](../../cli/monitor/dashboard.md#topology-view) for what that
+looks like.
 
 ## Where the code lives
 

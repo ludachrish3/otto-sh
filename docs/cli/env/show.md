@@ -35,11 +35,8 @@ build one with:
   otto env create
 ```
 
-Exit code 0. `show` is the verb you reach for when something looks wrong, and a
-diagnostic that fails when things are broken is the one you needed most. An
-environment whose metadata is unreadable degrades the same way — it says so and
-names `otto env create --force`, rather than taking the command down over a
-field it could have skipped.
+Exit code 0. An environment whose metadata is unreadable degrades the same
+way — it says so and names `otto env create --force`.
 
 ## `stale` is an mtime comparison
 
@@ -52,18 +49,17 @@ $ otto env show
 │ repo4 │ otto-sample-repo4 │ yes       │ stale — run `otto env sync`       │
 ```
 
-This is deliberately cheap — no imports, no installer call, nothing that can
-hang on a slow index. It answers "might this environment be out of date?", not
+The check is cheap — no imports, no installer call, nothing that can hang on
+a slow index. It answers "might this environment be out of date?", not
 "is it definitely wrong": touching a `pyproject.toml` without changing its
 requirements will also flag it, and `otto env sync` is a quick no-op in that
 case.
 
 ## `installed` asks the environment itself
 
-The check runs one query inside the environment's own interpreter, because that
-is the only answer that stays true across uv and pip layouts. If the
-environment's interpreter cannot answer, the column reads `?` rather than
-guessing.
+The check runs one query inside the environment's own interpreter, so it
+answers the same way across uv and pip layouts. If the environment's
+interpreter cannot answer, the column reads `?`.
 
 A repo showing `no` after a successful build usually means its install failed
 and the failure was reported at the time — see the resolver output in

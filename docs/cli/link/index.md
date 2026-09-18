@@ -114,7 +114,7 @@ What each command shows:
   `cleared …, timers cancelled N`; that line is three measurements.
 - **`list`** — every row, with both direction cells reading `not read`. This is
   a distinct state from `-` (clean), `?` (host unreachable) and `!` (host
-  answered, read failed), because it is distinct news: nothing was asked.
+  answered, read failed): nothing was asked.
 
 **In-path links preview much less.** A middlebox's facing netdev per direction
 is resolved by subnet-matching its live address table, so a dry run cannot name

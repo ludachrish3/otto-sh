@@ -39,15 +39,12 @@ error (CLI exit code 1).
 ## Clearing is not creating
 
 `repair` does **not** enforce the management-interface or hop-transit
-refusals. Those exist to stop otto *degrading* a path; clearing a qdisc cannot
-degrade anything, so enforcing them on a clear would only ever protect an
-impairment from the operator trying to remove it.
+refusals: clearing a qdisc cannot degrade a path.
 
-This matters beyond tidying up after a refusal. Both are evaluated when the
-command runs, while lab data changes underneath them: impair a netdev
-legitimately today, declare a host that hops through it tomorrow, and that
-netdev is now hop transit — at which point otto would refuse to clear its own
-live impairment.
+So an impairment otto applied stays clearable after lab data changes. Both
+refusals are evaluated when the command runs: impair a netdev legitimately
+today, declare a host that hops through it tomorrow, and that netdev is now
+hop transit — yet `repair` still clears it.
 
 The local-host refusal still applies to `repair` (otto does not run `tc` on
 its own machine), as does the foreign-qdisc refusal — a root qdisc otto did

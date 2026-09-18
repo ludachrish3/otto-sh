@@ -28,17 +28,17 @@ dataplane  test1@eth1.100 <-> test2@eth1.200  via test3  a->b: -  b->a: -
   ```
 
   Every *implicit* link lands here, so on a lab that declares no links of its
-  own this is the entire table — a bare `n/a` explained none of it. The reason
-  covers both the structural refusals (no named interface, the local host as
-  an endpoint) and the live ones found during the scan (management interface,
-  hop transit); see [Safety](safety.md#safety-rules).
+  own this is the entire table. The reason covers both the structural refusals
+  (no named interface, the local host as an endpoint) and the live ones found
+  during the scan (management interface, hop transit); see
+  [Safety](safety.md#safety-rules).
 
   The structural half is also available on its own, as
   `otto.link.placement.impairment_refusal(link)` — no lab, no `await`, no live
-  address fetch — because `find_link` resolving a link and `impair` being able
-  to act on it are different questions. It takes the directions you mean, and
-  they matter: a link between one interfaced host and one bare host is refused
-  both ways but accepted for `--from` the interfaced end.
+  address fetch; `find_link` resolving a link does not mean `impair` can act on
+  it. It takes the directions you mean, and they matter: a link between one
+  interfaced host and one bare host is refused both ways but accepted for
+  `--from` the interfaced end.
 
   :::{warning}
   Impairing such a half-interfaced link with `--from` currently strands it.
@@ -52,8 +52,7 @@ dataplane  test1@eth1.100 <-> test2@eth1.200  via test3  a->b: -  b->a: -
 If any link's state came back partial (at least one placement host was
 unreachable), `list` still prints every row it *could* read, then adds a
 trailing `partial scan — could not fully read: <ids>` warning rather than
-silently dropping those links from the picture — the same
-never-silently-wrong philosophy as `otto tunnel list`.
+silently dropping those links from the picture.
 
 ## Listing: selector rows
 
@@ -70,7 +69,6 @@ A direction's summary column reads `port-scoped (N)` when that placement
 carries N active selectors, in place of a parameter summary or `-`. A
 placement carrying a root qdisc otto did not create renders `foreign qdisc —
 not otto's` instead: `list` reports a foreign tree, but `impair`/`repair`
-refuse to mutate **or** clear it — a root qdisc otto didn't generate could be
-anything, and otto only ever touches trees whose shape it recognizes as its
-own — so clear it manually with `tc` if it's expendable.
+refuse to mutate **or** clear it — otto only touches trees whose shape it
+recognizes as its own — so clear it manually with `tc` if it's expendable.
 

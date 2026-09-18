@@ -5,12 +5,10 @@ otto -R run some_instruction
 otto --skip-reservation-check test TestSmoke
 ```
 
-`-R` / `--skip-reservation-check` bypasses the check entirely.  It is
-intentionally aggressive:
+`-R` / `--skip-reservation-check` bypasses the check entirely, and says so:
 
 - A bold-red WARNING is printed naming the user, lab, and required
-  resources.  This is deliberate friction — the option should feel
-  scary to reach for.
+  resources.
 - A WARNING-level log line records the same details, so after-the-fact
   log review can find the runs that skipped.
 
@@ -24,13 +22,11 @@ intentionally aggressive:
 It is *not* a normal path.  If your team runs with `-R` routinely, the
 check is miscalibrated — fix the data instead.
 
-## Why error messages don't mention `-R`
+## Which error messages mention `-R`
 
 When the reservation check fails because you don't hold something, the
 error message lists the missing resources and their current holders and
-stops there.  It *deliberately* doesn't advertise `--skip-reservation-check`,
-even though a suggestion would be friendly — the flag gets abused the
-moment a user assumes it's a normal workaround.
+stops there — it does not mention `--skip-reservation-check`.
 
 The one exception is backend-unreachable errors (network down, file
 corrupt).  There, `-R` is shown as a suggestion because the user

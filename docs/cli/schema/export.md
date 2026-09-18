@@ -24,7 +24,7 @@ This defaults to `.otto/schemas/` (pass `--out` to write elsewhere) and writes:
 | `reservations.schema.json` | the reservations JSON file |
 | `inventory.schema.json` | a `json` inventory file — one record per inventory key (see {doc}`../../configuration/inventory`) |
 | `creds.schema.json` | a `json` creds store's file — a list of `CredSpec` entries per inventory key |
-| `monitor-meta.schema.json` | the monitor dashboard's internal chart/tab-layout model — not a file you edit, and not served at any endpoint; it drives the generated TypeScript types the web dashboard builds against (`scripts/gen_web_types.sh`) |
+| `monitor-meta.schema.json` | the monitor dashboard's internal chart/tab-layout model — not a file you edit, and not served at any endpoint |
 
 Every document carries an `x-otto-version` stamp naming the otto that
 generated it, which is how the `otto init` doctor tells an upgrade apart from

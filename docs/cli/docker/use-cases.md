@@ -62,16 +62,13 @@ the compose handles it contributes. Omit the argument to list every declared
 use-case.
 
 Env **key names** are listed, never values — a value can be a secret pulled
-from your shell, and an inventory has no reason to print one.
+from your shell.
 
 The verb reports rather than raises: a use-case whose placement cannot be
-resolved prints its refusal in place of a host and the listing still exits 0,
-because "one of my six use-cases cannot place its edge fragment" is the answer
-you came for, not a reason to hide the other five.
+resolved prints its refusal in place of a host, the other use-cases are
+listed as usual, and the listing still exits 0.
 
 ## How templating works — the two-sided mechanism
-
-This is the part that is powerful and not obvious, so it gets its own section.
 
 Otto never templates a product's compose file. It has no template syntax over
 one, injects no variable of its own into one, and the compose file contains no
@@ -128,9 +125,9 @@ And no `OTTO_*` variable is ever injected. A variable reaches the compose
 environment only because a channel below explicitly mapped it there.
 :::
 
-### The guarantee, as an executable test
+### Running the compose file without otto
 
-The contract is not a promise in prose — it is something you can run. From the
+A product's compose file also runs by hand, with no otto involved. From the
 repo root, with the image already built:
 
 ```console
@@ -140,21 +137,17 @@ $ EDGE_ADDR=10.0.0.5 LOG_LEVEL=debug docker compose -f docker/compose.yml up -d
 (`-f` because the file above lives at `docker/compose.yml`; from inside that
 directory a bare `docker compose up -d` is the same command.)
 
-Run by hand, with the values supplied yourself, that must behave **identically**
+Run by hand, with the values supplied yourself, that behaves **identically**
 to otto's deployment of the same stack. `${otto:...}` resolves entirely on
 otto's side of the boundary; the compose file only ever sees resolved values,
-under the names the product chose. This is the decoupling test — if a change to
-otto ever broke it, otto would be the thing that is wrong.
-
-Two consequences worth stating plainly:
+under the names the product chose. So:
 
 - **Every compose-native env feature keeps working**, because otto parses none
   of them: `${VAR:-default}`, `${VAR?message}` refusals, a product-shipped
   `.env` file, `env_file:` keys. Otto contributes values; compose does the
   interpolating.
 - **The product stays deployable with no otto anywhere.** Hand the compose
-  file to someone with no otto installed and it runs. That is the point of
-  keeping fact references on otto's side.
+  file to someone with no otto installed and it runs.
 
 ### The fact-reference namespace
 
@@ -169,17 +162,17 @@ Two consequences worth stating plainly:
 | `${otto:parent.id}` | That host's lab id |
 
 "In scope" is the same project-scoping clause placement uses, unioned across
-every repo taking part in the deployment. It is deliberately *not* narrowed to
-docker-capable hosts: telling a container the address of the bench device it
-is supposed to drive is the point. Two limits are real, though — the namespace
+every repo taking part in the deployment. It is *not* narrowed to
+docker-capable hosts, so a container can be told the address of the bench
+device it is supposed to drive. Two limits apply — the namespace
 covers **unix** lab hosts only, so a serial-attached or Zephyr target is not
 addressable this way, and a host with no configured address is refused rather
 than fabricated.
 
 An unknown reference is a configuration refusal naming the known forms and the
 roles and hosts actually available — nothing is staged and nothing is started.
-Anything not matching `${otto:` is passed through untouched, which is why a
-product `${VAR}` string is safe to use as a literal value.
+Anything not matching `${otto:` is passed through untouched, so a product
+`${VAR}` string is safe to use as a literal value.
 
 ## Where values come from: the env channels
 
@@ -201,10 +194,7 @@ later one winning:
 
 Channel 1 is assembled from *every* participating fragment, in selection
 order, and a later fragment's value silently replaces an earlier one's. There
-is no refusal and no warning — this is the one ambiguity in the design that is
-resolved rather than reported, because a merged stack's fragments routinely
-share innocuous keys and refusing on every one of them would make cross-repo
-use-cases unusable.
+is no refusal and no warning.
 
 The practical consequence: a variable two repos both care about is not a
 coordination mechanism. If the value matters, name it something only one
@@ -214,21 +204,17 @@ overlap is visible before you deploy.
 
 The final mapping is fed to **both** sinks: a staged env file passed as
 `docker compose --env-file`, and the remote process environment of the compose
-invocation itself (`env K=V ... docker compose ...`). Both, because compose
-consumes env at three different moments — parse-time `${VAR}` interpolation,
-`environment:` pass-through, and its own `COMPOSE_*`/`DOCKER_*` knobs — and
-the rules differ across compose versions. Feeding both makes the version
-differences moot: the deployment behaves exactly as if you had exported the
-mapping and run compose by hand, which is the decoupling test again.
+invocation itself (`env K=V ... docker compose ...`), so the deployment
+behaves exactly as if you had exported the mapping and run compose by hand,
+whatever your compose version.
 
 ## Provider competition: swapping a mock for the real thing
 
 The examples from here on are a different deployment from the templating
-walkthrough above — `repo1`/`repo2` with `role = "docker"`, the shape the
-captured output below was really run against, rather than the walkthrough's
-`repo-a` with `role = "edge"`. Read each half on its own; a fragment stitched
-from both would ask for a role no participating fragment carries, and be
-refused.
+walkthrough above — `repo1`/`repo2` with `role = "docker"`, rather than the
+walkthrough's `repo-a` with `role = "edge"`. Read each half on its own; a
+fragment stitched from both would ask for a role no participating fragment
+carries, and be refused.
 
 Two projects can offer the same thing. A repo that owns the real edge service
 and a repo that ships a mock of it both want to supply `edge` — and they must
@@ -275,8 +261,6 @@ lab/project combination merely changes who shows up.
 
 ### Losing is whole-fragment — a worked example
 
-This is the part that surprises people, so it is worth seeing.
-
 Repo1's fragment above contributes *two* compose handles, `core` and `edge`,
 and it is the one carrying `provides = "edge"`. Deployed normally, repo1 wins
 and both of its files are in the merged stack:
@@ -296,17 +280,14 @@ $ otto --lab unix --dry-run docker up integration --provide edge=repo2
 ```
 
 Repo1's `core` file — and the `api` service in it — is **gone**, not just its
-`edge` file. That is correct and deliberate: a fragment is the atomic unit of
-participation, and losing means the fragment stands down entirely. If repo1's
-`api` must survive a mock swap, it belongs in a *separate* fragment that
-declares no `provides`, exactly as repo2 splits its own `core` from its
-`mock-edge`.
+`edge` file: a fragment is the atomic unit of participation, and losing means
+the fragment stands down entirely. If repo1's `api` must survive a mock swap,
+it belongs in a *separate* fragment that declares no `provides`, exactly as
+repo2 splits its own `core` from its `mock-edge`.
 
-The same rule explains the displacement line's careful wording. `--provide`
-narrows the field to one repo *before* ranking, so the winner can carry a
-lower priority than the fragment it displaced — as it does above. The report
-names who won, at what, and who stood down, and never calls either priority
-"the higher one", because that would be false here.
+`--provide` narrows the field to one repo *before* ranking, so the winner can
+carry a lower priority than the fragment it displaced — as it does above. The
+displacement line names who won, at what priority, and who stood down.
 
 ## Placement: which host a fragment lands on
 
@@ -327,10 +308,9 @@ see {doc}`../../configuration/lab-config`. They are lab *intent* ("what this
 lab uses the machine for"), not machine facts.
 
 Role resolution happens **inside the owning repo's scoped universe** (see
-{doc}`../projects`). Because of that, two projects naming the same role in the
-same lab resolve identically by construction, and cross-project collisions
-cannot happen through the lab at all — only through the provider competition
-above, which is where they are meant to be decided.
+{doc}`../projects`), so two projects naming the same role in the same lab
+resolve identically, and cross-project collisions cannot happen through the
+lab at all — only through the provider competition above.
 
 Ambiguity is a configuration error, never an implicit winner: zero hosts
 carrying the role, or several, is a hard refusal listing the candidates and
@@ -399,8 +379,8 @@ services:
 ## The repo adapter
 
 For values only code can compute, or for compose files that must be *rendered*
-rather than shipped verbatim, a repo registers an adapter from its init module
-— the one place that is already otto-dependent by design:
+rather than shipped verbatim, a repo registers an adapter from its init
+module:
 
 ```python
 from otto.docker import AdapterResult, register_compose_adapter
@@ -426,10 +406,9 @@ replacement text; omitted handles ship verbatim), `extra_files` (extra files
 staged beside the compose files, for `env_file:`-style references), and `env`,
 which merges as channel 2.
 
-Adapters must be **pure with respect to devices** — no host access. That is
-what lets them run under `--dry-run`, which in turn is what makes the full
-plan printable. One adapter per (repo, use-case); a second registration for
-the same use-case fails loud.
+Adapters must be **pure with respect to devices** — no host access. They run
+under `--dry-run` too, so the full plan is printable. One adapter per (repo,
+use-case); a second registration for the same use-case fails loud.
 
 See {mod}`otto.docker.adapter` for the API.
 
@@ -453,7 +432,7 @@ Zero or several is a hard error listing them — never a quiet no-op. Bare
 `build` is different: it has a per-repo meaning of its own and builds every
 selected repo's images without resolving a use-case at all (see {doc}`build`).
 
-### `up` is convergent, and that is deliberate
+### `up` is convergent
 
 `docker compose up -d` creates what is missing, leaves unchanged services
 running, and recreates only services whose config or image changed. Otto does
@@ -461,10 +440,10 @@ not short-circuit that: re-running a broader deployment **adds** the newly
 active projects' services to a live stack rather than looking up what is
 already there.
 
-`--remove-orphans` rides along on every `up`, which is what makes provider
-transitions concrete. When a newly active real provider displaces a mock, the
-mock's still-running container is an orphan of the merged file set — and the
-same `up` removes it. The swap is one command, not a teardown plus a deploy.
+`--remove-orphans` rides along on every `up`. When a newly active real
+provider displaces a mock, the mock's still-running container is an orphan of
+the merged file set — and the same `up` removes it. The swap is one command,
+not a teardown plus a deploy.
 
 ### Dry run
 
@@ -494,8 +473,7 @@ and this answers what *would happen*.
 
 - **Compose project:** `<lab>-<usecase>-<suffix>`. The suffix is your username
   by default, or `OTTO_COMPOSE_SUFFIX`, so concurrent users on one docker host
-  never collide, and there is deliberately no `otto-` prefix. Why each segment
-  is shaped that way is in
+  never collide. There is no `otto-` prefix. Design notes on each segment:
   {doc}`../../architecture/subsystems/docker-hosts`.
 - **Container host ids:** `<parent>.<usecase>.<service>`, as
   [Container hosts](index.md#container-hosts) describes. A repo migrating from
