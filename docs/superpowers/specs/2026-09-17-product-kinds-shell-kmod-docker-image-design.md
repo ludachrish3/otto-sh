@@ -112,7 +112,7 @@ builder refuses a host that lacks `load`, `unload` and `lsmod` (today only
 
 | Param | Meaning |
 |---|---|
-| `artifact` (required) | the `.ko`, staged like any file |
+| `artifact` (required) | the local `.ko`; `load` transfers it, `insmod`s it and removes it — `stage` is a no-op, no copy stays on the host |
 | `module_name` | defaults to the artifact stem with `-` → `_` (what `/proc/modules` shows) |
 | `params` | string appended to `insmod` (`debug=1 queue=8`); `{cov_dir}`/`{name}` placeholders |
 | `coverage` | `"none"` (default), `"module"`, `"kernel"` |
