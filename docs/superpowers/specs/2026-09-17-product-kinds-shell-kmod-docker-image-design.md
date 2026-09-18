@@ -175,10 +175,11 @@ reimplemented" means here.
 On the bed's kernel series (Ubuntu 6.8 generic, verified on the dev VM):
 `CONFIG_GCOV_KERNEL` is off (no in-kernel gcov, no debugfs tree) and
 `CONFIG_CONSTRUCTORS` is off (the kernel never runs a module's constructors,
-so plain `-fprofile-arcs` registration does nothing). The way through:
-consumers compile with `-fprofile-info-section`, which records each
-translation unit's `gcov_info` pointer in a `.gcov_info` section instead of a
-constructor, and a runtime walks that section.
+so plain `-fprofile-arcs` registration does nothing). The way through, since
+the 2026-09-18 amendment (`2026-09-18-kgcov-toolchains-and-cross-compiling-design.md`):
+consumers compile with plain `-fprofile-arcs -ftest-coverage`, and the
+runtime runs the constructors each compiler emits into `.init_array`,
+between two sentinels the consumer links first and last.
 
 ### 6.2 What the library is
 
@@ -186,15 +187,10 @@ Shipped under `docs/examples/kgcov/` (documented, tested; the fixture repo
 points at it rather than copying it):
 
 - `kgcov.c`, `kgcov.h`, `Kbuild` → `otto_kgcov.ko`, `MODULE_LICENSE("GPL")`.
-- Exports, as empty functions, the same set the in-kernel gcov
-  (`kernel/gcov/base.c`) exports so any instrumented object links:
-  `__gcov_init`, `__gcov_exit`, `__gcov_merge_add`, `__gcov_merge_single`,
-  `__gcov_merge_delta`, `__gcov_merge_ior`, `__gcov_merge_time_profile`,
-  `__gcov_merge_icall_topn` (the kernel's legacy spelling) and
-  `__gcov_merge_topn` (gcc 13's), plus `__gcov_flush` (plain
-  `-fprofile-arcs` objects reference only `__gcov_merge_add`; with
-  `-fprofile-info-section` nothing calls `__gcov_init`). Merging is the
-  library's own addition, not these stubs.
+- Vendors both kernel gcov backends (`gcc_4_7.c`, full gcc 4.7 to 15 table;
+  `clang.c`) and exports the runtime symbols of the family that built it;
+  `__gcov_init`/`llvm_gcov_init` register the calling unit with the
+  registration in progress.
   And the API:
 
   ```c
@@ -225,13 +221,12 @@ points at it rather than copying it):
 - `kgcov_unregister`: dump once more, free the accumulator, remove the
   debugfs entries.
 - `consumer.mk`: the Kbuild fragment a consumer includes. It defines
-  `KGCOV_CFLAGS` (`-fprofile-arcs -ftest-coverage -fprofile-info-section`)
+  `KGCOV_CFLAGS` (`-fprofile-arcs -ftest-coverage`)
   and adds the library's include path. The consumer's own `Kbuild` applies
   `KGCOV_CFLAGS` to its instrumented objects and lists `kgcov_begin.o` first
-  and `kgcov_end.o` last in its object list (the two sentinels that bound the
-  `.gcov_info` section — the section name is not a C identifier, so the
-  linker synthesises no `__start_`/`__stop_` symbols for it; `ld -r` keeps
-  input order), and its `Makefile` passes `KBUILD_EXTRA_SYMBOLS` naming the
+  and `kgcov_end.o` last (the two sentinels that bracket `.init_array`: a
+  pointer in `.init_array.0` and one in plain `.init_array`), and its
+  `Makefile` passes `KBUILD_EXTRA_SYMBOLS` naming the
   library's `Module.symvers` (required under `CONFIG_MODVERSIONS`). A
   fragment cannot order another module's object list, so those two parts
   stay in the consumer; the demo module is the worked example.
