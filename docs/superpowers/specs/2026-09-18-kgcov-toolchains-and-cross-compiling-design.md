@@ -185,7 +185,9 @@ the kernel log; the docs name that message.
   inferred. The library's and the demo's `Makefile` do the same.
 - The vermagic check stays: `modinfo` reads the ELF, so it works for any
   ISA; `<release>` is what it compares against (for a source tree,
-  `make kernelrelease` gives it).
+  `<KDIR>/include/config/kernel.release` gives it — the value kbuild bakes
+  into vermagic; `make kernelrelease` reads a different value and can
+  disagree with it).
 - The fixture's kernel half moves into its own script,
   `tests/repo5/kmod/build.sh [<release>]`, with the same passthrough, so
   the e2es and the matrix build it with any installed toolchain without
