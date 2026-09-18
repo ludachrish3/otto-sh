@@ -210,42 +210,73 @@ kernel needs none of it.
 - `tests/repo5/kmod/demo/`: the two sentinel files replaced; `Kbuild`
   unchanged in shape.
 - `tests/repo5/build.sh`: passthrough.
-- `tests/e2e/cov/test_kmod_coverage_e2e.py` + `_repo5_build.py` +
-  `tests/e2e/conftest.py` (the `--kgcov-toolchains` option): the
-  toolchain matrix (§8).
-- `tests/e2e/cov/test_kgcov_cross_build.py`: the cross build-only proof
-  (§8); it touches no bed.
+- `tests/e2e/cov/test_kgcov_toolchains_e2e.py` (`integration` +
+  `kgcov`), `_repo5_build.py` (toolchain-aware ensure functions, shared
+  with the routine kmod e2e) and `tests/e2e/conftest.py` (the
+  `--kgcov-toolchains` option): the toolchain matrix (§8).
+- `tests/e2e/cov/test_kgcov_cross_build.py` (`hostless` + `kgcov`): the
+  cross build-only proof (§8); it touches no bed. Both modules satisfy the
+  e2e resource-marker rule with exactly one primary marker each.
+- `pyproject.toml` (marker), `Makefile` (`kgcov` lane, catch-all
+  exclusions, release stage), `noxfile.py` (catch-all exclusions),
+  `tests/unit/test_tier_marker_invariants.py` (the `kgcov` rows),
+  `docs/contributing.md` (lane row).
 - Docs (§9); spec amendment of §6 in the product-kinds spec.
 
 ## 8. Proof
 
-**Live toolchain matrix (beds test1/test2).** The kmod e2e is parametrised
-over toolchains through one pytest option, `--kgcov-toolchains`, a comma
-list of `CC` values. Without it the parameter set is the system gcc alone,
-so the routine gate is unchanged. With
-`--kgcov-toolchains=gcc-9,gcc-10,gcc-11,gcc-12,gcc-13,gcc-14,clang` (all
-installed on the dev VM on 2026-09-18) the e2e rebuilds the library and
-the demo with each compiler for the running kernel (`clang` implies
-`LLVM=1` plus the §6 overrides), runs the same nine assertions (exact line
-and branch hits, exit drain, per-host dumps, the library's scan verdict),
-unloads, then moves to the next. Each toolchain builds into its own build
-directory so staleness stays per toolchain. A named compiler that is not
-installed fails the run with an error naming it; nothing is skipped. The
-gcc 15 arm is compile-checked only through the table.
+**Where it runs: rarely by hand, always before a release.** Chris's
+guiding principle (2026-09-18): the toolchain proofs may run rarely, but
+a release must bless them. The existing kmod and docker e2es already meet
+it: they carry `integration` under `tests/e2e/cov/`, so `make release`
+runs them through `make nox` (the full suite on 3.10 and 3.14), and `make
+coverage` runs them too. The two new proofs below follow the
+`conformance` tier's pattern:
 
-**Cross build-only (dev VM).** A kernel 6.8 source tree under
-`/home/vagrant/build/linux-6.8` (about 2 GB, downloaded once from
-kernel.org; the path comes from `KGCOV_CROSS_KDIR`, with that default),
-prepared with `make ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- defconfig
-modules_prepare`; then `build.sh` and the demo against it with the same
-environment. The check asserts `modinfo -F vermagic` names the tree's
-release, `readelf -h` says `X86-64` for both `.ko`, and the demo's `.gcno`
-files exist. Never loaded anywhere. A missing tree or cross gcc fails the
-run with an error naming the path or tool and the preparation command;
-nothing is skipped. It is run by explicit file path, like the bed legs.
-The dev VM is x86_64, so this proves the knob passthrough and the
-source-tree recipe, not a foreign ISA; the docs show the arm64 form
-(`ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-`) of the same recipe.
+- a `kgcov` marker, declared in `pyproject.toml`, carried by both proofs,
+  and excluded from every catch-all selector in the `Makefile` and
+  `noxfile.py` (`not kgcov` rides beside `not busybox and not
+  conformance`), so neither CI's hostless lane nor `make coverage` nor
+  `make nox` ever collects them; the tier-marker invariant tests
+  (`tests/unit/test_tier_marker_invariants.py`) gain the same three
+  rows the conformance tier has: catch-alls exclude it, one Makefile
+  lane positively selects it, the release invokes that lane;
+- a `make kgcov` lane (`pytest -m kgcov -n0 --no-cov`, JUnit under
+  `reports/junit/kgcov/`) that runs the matrix and the cross build, dev
+  VM only, beds required; `KGCOV_TOOLCHAINS` (default
+  `gcc-9,gcc-10,gcc-11,gcc-12,gcc-13,gcc-14,clang`) and `KGCOV_CROSS_KDIR`
+  (default `/home/vagrant/build/linux-6.8`) are its knobs;
+- a `make release` stage that runs `make kgcov` right after
+  `release-matrix` (both need the bed; make stages are sequential, so the
+  bed is never shared). A missing compiler or tree fails the lane with an
+  error naming it and the install or preparation command, so it stops the
+  release instead of skipping; that is the blessing.
+- `docs/contributing.md`'s regression-category table gains the lane's row.
+
+**Live toolchain matrix (beds test1/test2).** A `kgcov`-marked module,
+`tests/e2e/cov/test_kgcov_toolchains_e2e.py`, parametrised over the
+compilers in `--kgcov-toolchains` (a pytest option the lane fills from
+`KGCOV_TOOLCHAINS`; an empty option collects nothing from this module).
+For each compiler it rebuilds the library and the demo for the running
+kernel (`clang` implies `LLVM=1` plus the §6 overrides), runs the same
+nine assertions the routine kmod e2e runs (exact line and branch hits,
+exit drain, per-host dumps, the library's scan verdict) through the
+shared helpers, unloads, then moves to the next. Each toolchain builds
+into its own build directory so staleness stays per toolchain. The
+routine kmod e2e is unchanged and keeps the system gcc. The gcc 15 arm is
+compile-checked only through the table.
+
+**Cross build-only (dev VM).** A `kgcov`-marked module,
+`tests/e2e/cov/test_kgcov_cross_build.py`, builds the library and the
+demo against a kernel 6.8 source tree (about 2 GB, downloaded once from
+kernel.org to `KGCOV_CROSS_KDIR`) prepared with `make ARCH=x86_64
+CROSS_COMPILE=x86_64-linux-gnu- defconfig modules_prepare`, with the same
+environment. It asserts `modinfo -F vermagic` names the tree's release,
+`readelf -h` says `X86-64` for both `.ko`, and the demo's `.gcno` files
+exist. Never loaded anywhere; it touches no bed. The dev VM is x86_64, so
+this proves the knob passthrough and the source-tree recipe, not a
+foreign ISA; the docs show the arm64 form (`ARCH=arm64
+CROSS_COMPILE=aarch64-linux-gnu-`) of the same recipe.
 
 **Unit.** The existing 36 `kmod` kind tests stay; nothing in otto changes.
 The library has no unit tests (kernel code); its proof is the matrix.
@@ -264,8 +295,9 @@ The library has no unit tests (kernel code); its proof is the matrix.
 ## 10. Gates
 
 Per task: the named selections, `make lint`, `make typecheck-python`,
-`make docs-html` where docs change. Before the squash: the unit tier, `make
-docs`, gate-fresh, the kmod e2e (default toolchain), the docker e2e (shares
-the fixture repo), the toolchain matrix once, the cross build once. Bed
-selections run alone and sequentially; kernel modules are never loaded on
-the dev VM.
+`make docs-html` where docs change, and the tier-marker invariant tests
+whenever a selector or marker changes. Before the squash: the unit tier,
+`make docs`, gate-fresh, the kmod e2e (default toolchain), the docker e2e
+(shares the fixture repo), and `make kgcov` once (matrix plus cross
+build). Bed selections run alone and sequentially; kernel modules are
+never loaded on the dev VM.
