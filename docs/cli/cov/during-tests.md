@@ -46,11 +46,10 @@ output directory, keyed by host and then product —
 | `--no-cov` | Off, regardless of what the lab carries |
 
 `--cov-dir`, `--cov-report`, `--cov-report-dir` and `--cov-tickets-json` all
-imply coverage, so pairing any of them with `--no-cov` is a usage error rather
-than a precedence puzzle.
+imply coverage, so pairing any of them with `--no-cov` is a usage error.
 
 The refusal is **one line plus a table** of every product it examined and what
-it concluded, so the fix is on the screen.  An excerpt, at a narrow terminal:
+it concluded.  An excerpt, at a narrow terminal:
 
 ```text
         coverage instrumentation
@@ -68,17 +67,16 @@ error: otto test --cov: no instrumented product — coverage cannot be collected
 
 A refusal is printed on the console only.  What the run log records is the
 *auto* decision: retrieval switching itself on, staying off, or proceeding
-with some products missing, each with the verdicts as a plain listing — a
-log file cannot hold a table.
+with some products missing, each with the verdicts as a plain listing.
 
-Three verdicts, because two of them are not the same "no":
+Three verdicts:
 
 - **yes** — the artifact carries the compiler's coverage markers.
 - **no** — it was scanned and carries none.
 - **unknown** — otto could not tell: the artifact is missing, unreadable, or
   an archive the scan cannot see inside. An unknown counts as *not*
-  instrumented, and it is the only verdict with a remedy, which is why the
-  table's caption appears only when one is present: override
+  instrumented. It is the only verdict with a remedy, and the table's
+  caption, shown only when an unknown is present, names it: override
   `Product.instrumented()`, or set `instrumented = true` on the
   `[[products]]` entry.
 
@@ -91,10 +89,9 @@ directly rather than listing an empty table. When *some* products are
 instrumented and others are not, retrieval proceeds and warns, naming the
 ones that will contribute nothing.
 
-In auto mode a broken `[coverage].hosts` selector is one warning and
-coverage stays off — a plain `otto test` asked for a test run, not for
-coverage, and must not die of a coverage misconfiguration. Under `--cov` the
-same selector is an error.
+In auto mode a broken `[coverage].hosts` selector is one warning: coverage
+stays off and the tests still run. Under `--cov` the same selector is an
+error.
 
 ```{note}
 Both `otto cov get` and this `otto test --cov` tail wrap one async library

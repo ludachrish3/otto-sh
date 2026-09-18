@@ -7,21 +7,17 @@ http://<ip>:<port>`, one URL per non-loopback interface).
 On load, the dashboard shell asks that same server one question — `GET
 /api/mode` — then, regardless of the answer, follows up with `GET
 /api/monitor_sessions` and renders the result, exactly as if you'd used
-Import yourself: no click needed. Live and review servers hydrate through
-that *same* endpoint and the *same* `format:1` shape — a live monitor
-session is simply one whose `end` is still open, exactly like a crashed
-session found on disk — so the topology map populates immediately either
-way (as do the fleet grid and charts once you switch to Hosts), not just
-in review mode. In live mode, once that initial
-hydrate succeeds the shell also opens `GET /api/stream` (Server-Sent
-Events) and *grows* the loaded session in place by appending each fragment
-as it arrives — the wire fragments carry the same field names as the
-payload they append to, so there is no separate live shape to reconcile.
-The same boot fetch is also why the dashboard still works when served by a
-bare static file server with no `/api/*` routes at all (used for the
-screenshots on this page, and for ad-hoc demos): any failure — connection
-refused, a non-JSON body, whatever a dumb server hands back — is swallowed
-and falls back to the same empty Import screen, never a broken page.
+Import yourself: no click needed. Live and review servers answer with the
+same `format:1` shape — a live monitor session is one whose `end` is still
+open, like a crashed session found on disk — so the topology map populates
+immediately either way (as do the fleet grid and charts once you switch to
+Hosts). In live mode, once that initial load succeeds the shell also opens
+`GET /api/stream` (Server-Sent Events) and *grows* the loaded session in
+place by appending each fragment as it arrives.
+Served by a bare static file server with no `/api/*` routes at all, the
+dashboard still works: any failure of that boot fetch — connection refused,
+a non-JSON body, whatever a plain server hands back — falls back to the
+same empty Import screen, never a broken page.
 
 Feed it a monitor export document yourself at any time — drag a file onto
 the window, or use the **⋯** overflow menu's *Import* — and it renders
@@ -70,11 +66,6 @@ session:
 - **Export.** The **⋯** menu re-downloads whatever document is currently
   loaded, unchanged.
 
-Loading a session — automatically at boot in either mode, growing live via
-SSE, or by hand via Import — is covered by the browser e2e suite
-(`tests/e2e/monitor/dashboard/`, see the [behavior-spec
-contract](../../contributing.md#monitor-frontend-development)).
-
 ## Topology view
 
 The topology map is the dashboard's landing view (`/`) — `/topology` remains
@@ -89,9 +80,7 @@ view, reachable from the same switcher — lives at `/hosts`; see [Web
 dashboard](dashboard.md#web-dashboard).
 
 The bottom-left **Key** panel documents the canvas's two axes — link class
-and health status — from the same style tables the canvas itself draws from,
-so the legend can never drift from what's on screen. There are three link
-classes:
+and health status. There are three link classes:
 
 - **static** — from the lab config: a declared link, a hop-derived one, or
   the `local` management star.
@@ -129,14 +118,9 @@ and zooming already are:
 - **Ctrl-drag** pans the current window instead of zooming, keeping its
   width fixed. This is **Ctrl** on every platform, not the app's usual
   per-platform modifier (⌘ on Mac, elsewhere Ctrl — see [Marking
-  events](dashboard.md#marking-events)) — ECharts' own drag-modifier vocabulary
-  has no meta key, so Ctrl is the one pan gesture available on every
-  platform, and the guide follows the same choice rather than disagreeing
-  with itself across platforms.
+  events](dashboard.md#marking-events)).
 - **`+`/`-` buttons**, one pair per chart, step the zoom in or out around
-  the window's current center — the same path a drag-select feeds, so a
-  button click and a drag can never disagree about what "the current
-  window" means.
+  the window's current center.
 - The **mouse wheel scrolls the page**, not the chart — it is never
   hijacked for zooming.
 
@@ -207,24 +191,20 @@ review bar's **HISTORICAL** badge, never by the app bar.
 **Pause is a view control, not a data control.** Clicking **Pause** freezes
 the visible time window; it does not stop ingestion — fragments keep
 applying to the loaded session in the background, so clicking **Resume**
-catches up immediately with no gap to backfill. "Paused" is *derived*
-rather than a separately stored flag: it is exactly "live mode with a
-pinned range," so pausing and manually picking a custom range (a chart
-drag-zoom, for example) are the same state and can never disagree with each
-other — toggling pause from either one resumes following the tail.
+catches up immediately with no gap to backfill. "Paused" means live mode
+with a pinned range, so manually picking a custom range (a chart drag-zoom,
+for example) pauses too, and toggling pause from either one resumes
+following the tail.
 
 **Reconnect re-fetches; it never replays.** When the SSE connection drops,
 the client backs off and retries, and immediately before reopening the
 stream it re-fetches the whole `/api/monitor_sessions` payload rather than
-trying to replay whatever fragments it missed while disconnected — the
-fresh snapshot is already the truth, so there's no sequence-number
-bookkeeping and no way for client and server to disagree about history.
+replaying whatever fragments it missed while disconnected.
 
 **A silent host dims.** Health (see [Health, scoped to the viewed
 range](dashboard.md#web-dashboard)) is derived from the gap since a host's last
 sample: a host goes **down** once that gap exceeds `HEALTH_K` (3) times its
 collection cadence. In live mode that evaluation runs against a moving
 "now" rather than a fixed range boundary, driven by a clock that ticks at
-the collection interval — polling the health check faster than the
-collector itself couldn't learn anything sooner anyway.
+the collection interval.
 

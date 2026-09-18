@@ -43,13 +43,10 @@ time instead of written as a number in settings:
 
 `tests/repo5/docker/build.sh` computes the strip count from its own build
 directory's absolute path and passes it as `--build-arg
-GCOV_PREFIX_STRIP`. Baking it into the image, rather than writing it in
-`settings.toml`, is the point: the strip count is a property of *the
-build* — where on disk the compiler ran — not of the product declaration,
-and that path differs between a worktree and a plain checkout of the same
-repo. A number in settings would be wrong the moment someone else built
-the image from a different checkout; baked into the image, it travels
-with whatever tarball or reference actually gets run.
+GCOV_PREFIX_STRIP`. The strip count depends on where on disk the compiler
+ran, which differs between checkouts of the same repo, so bake it into the
+image at build time rather than writing it in `settings.toml`: it then
+travels with whatever tarball or reference actually gets run.
 
 ## Tarball or reference
 
@@ -60,16 +57,13 @@ a tarball is staged and loaded with `docker load -i`; a reference with
 `pull = false` is verified with `docker image inspect`; with `pull = true`
 it is `docker pull`ed on every install instead.
 
-`pull` defaults to `false` because a lab is commonly air-gapped by
-policy — a `docker pull` on every install would routinely reach for a
-registry the lab cannot see. With `pull = false`, an image that is not
-already present fails loud at `install`, naming itself, instead of
-hanging behind a pull that was never going to land. `cov_container` above
-is the tarball form, built once by `docker/build.sh` and saved to
-`docker/otto-cov-demo.tar` (git-ignored); `cov_container_ref` is the
-reference form, declared after it and pointed at the tag the load
-produced — `pull = false` because loading already put it in the daemon's
-cache.
+`pull` defaults to `false`, which suits a lab that can't reach a registry; set
+`pull = true` only where one is reachable. With `pull = false`, an image that
+is not already present fails loud at `install`, naming itself. `cov_container`
+above is the tarball form, built once by `docker/build.sh` and saved to
+`docker/otto-cov-demo.tar` (git-ignored); `cov_container_ref` is the reference
+form, declared after it and pointed at the tag the load produced —
+`pull = false` because loading already put it in the daemon's cache.
 
 ## What is removed
 
@@ -81,8 +75,7 @@ separate process from the `install` that loaded it — the normal shape of
 `otto install` followed later by `otto uninstall`. A container that is
 already gone has nothing to resolve an image from, so nothing beyond the
 (already-absent) container is removed. The staged tarball under `/tmp` is
-removed right after a successful `docker load` — it is an intermediate the
-load has already consumed, not the product itself.
+removed right after a successful `docker load`.
 
 ## Logs
 

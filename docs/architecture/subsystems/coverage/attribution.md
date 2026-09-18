@@ -150,8 +150,12 @@ why a ticket's owned lines are not a partition of the repository.
 
 ## Manual-testing overrides
 
-{ref}`coverage-overrides` (the guide) hooks into this walk at two points,
-both without adding to the fixed subprocess budget above.
+{ref}`coverage-overrides` (the guide) hooks into this walk at two points and
+adds at most one constant subprocess to the fixed budget above (see *Asserted
+entries* below). That dependency on the walk is why an override file requires
+`[coverage.tickets]`: reattribution rewrites the walk's ticket extraction and
+asserted entries resolve against its line→commit map, and the walk only runs
+when the tickets feature is on.
 
 **Reattribution replaces extraction, not the walk.** `attribute_tickets`
 takes an optional `reattributions: dict[sha, list[ticket_id]]`. Inside the
@@ -177,6 +181,20 @@ covered files exist. The fixed per-report subprocess budget
 (`test_git_subprocess_count_is_constant_in_file_count`) therefore grows by
 at most this one constant call when overrides are configured, never by
 one call per entry or per file.
+
+**Design choices in the override file.** The override file is TOML, not
+JSON or a CLI verb, on purpose: it is a deliberate, commented, PR-reviewed
+record, meant to be read by humans as much as by otto, and it lives next to
+`settings.toml` so it is versioned alongside the SUT repo whose history it
+makes claims about.
+
+A ticket entry's `as_of` bound exists because attribution is *live*: without
+it, a new commit landing under an old ticket next month would silently
+inherit asserted coverage nobody earned for it — the silent-drift failure
+otto otherwise designs against. Aging, by contrast, costs nothing: a
+rewritten line migrates to the newer commit by ordinary supersession and
+drops out of the entry's line set, so there is no cache, snapshot, or
+invalidation surface to keep in sync.
 
 ## Why `--first-parent`
 
@@ -215,6 +233,31 @@ spawn budgets use, and for the same reason: a regression to per-file
 process spawning is exactly the failure mode this design exists to
 prevent, and it would not show up in a functional test that only checks
 the attributed answer is correct.
+
+## The `tickets.json` export
+
+`tickets.json` is otto's first public export, versioned apart from the
+internal store ({doc}`types`); the guide's {ref}`coverage-tickets-json` is
+its contract.
+
+Its `format` bumped 1 → 2 for the manual-overrides feature, and v2 changed
+the *content* of each ticket's `commits` array, not only its shape: it became
+walk-complete because an asserted ticket entry's `as_of` bound (and the
+"fully aged out" prune signal) needs a ticket's full commit history, not just
+its current line owners, to tell a legitimately aged entry from a typo'd id.
+The guide discloses that change explicitly rather than folding it into
+"additive".
+
+Byte-determinism (for a fixed `generated` stamp) is pinned by
+`tests/unit/cov/test_ticket_export.py`, which generates twice and asserts
+byte equality rather than field-by-field equality. The `missing` ranges come
+from one `group_ranges` (`otto.coverage.ticket_export`) that the tickets
+page's data emitter imports, so the two cannot drift apart.
+
+The shape — an independent format version, deterministic ordering, loud
+failure on missing inputs — is also meant as the substrate for a future
+per-ticket `--cov-fail-under` and for other report formats (Cobertura,
+Coveralls, Codecov). Neither is built yet.
 
 ## Where the code lives
 

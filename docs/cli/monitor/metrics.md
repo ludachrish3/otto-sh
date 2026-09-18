@@ -33,13 +33,11 @@ and re-baselines from the new counters — a reboot never shows up as a
 spike.
 
 ```{note}
-{doc}`otto tunnel <../tunnel/index>` discovery (`discover_tunnels`) is built as a
-`(command, pure parser)` pair for exactly this reason — it maps 1:1 onto the
-`MetricParser` shape below (command / parse / interval). `otto tunnel` needs
-no monitor to function — `otto tunnel list` is the CLI's own live view. When
-`otto monitor` *is* running, the collector also scans the whole lab for
-tunnels on each collection interval and streams them into the topology view
-as overlays; see [Topology view](dashboard.md#topology-view).
+{doc}`otto tunnel <../tunnel/index>` needs no monitor to function —
+`otto tunnel list` is the CLI's own live view. When `otto monitor` *is*
+running, the collector also scans the whole lab for tunnels on each
+collection interval and streams them into the topology view as overlays; see
+[Topology view](dashboard.md#topology-view).
 ```
 
 ## Log-sourced data
@@ -50,9 +48,9 @@ minutes, or the interesting record is a log file's event stream rather
 than a number. Both ride the same shell acquisition path as every other
 parser — the command *is* the reduction step (`cat`/`tail`/`awk`/`grep`/`jq`
 on the host ships back only the lines otto needs) — but instead of one
-untimed value per tick, each row or line carries its own timestamp. The
-design assumes source data is textually reducible on the host; binary or
-otherwise irreducible formats are out of scope.
+untimed value per tick, each row or line carries its own timestamp. Source
+data must be textually reducible on the host; binary or otherwise
+irreducible formats are not supported.
 
 ### CSV metric files
 
@@ -111,15 +109,10 @@ printf '%s,%s,%s\n' "$(date -u +%s)" "$(cat /sys/class/net/eth0/statistics/rx_by
 tail -n 12 "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"   # 12 lines = 1 h at 5-min cadence
 ```
 
-Provisioning a script like this on a bed is a manual demo step — otto's own
-test suite exercises `CsvMetricParser` entirely against fixture-written
-files, never a live cron job.
-
 ### Log-event tables
 
 {class}`~otto.monitor.log_sourced.RegexLogEventParser` turns matching log
-lines into table rows instead of chart points. A worked syslog example,
-using the same pattern otto's own test suite registers:
+lines into table rows instead of chart points. A worked syslog example:
 
 ```python
 from otto.monitor.log_sourced import RegexLogEventParser
@@ -171,7 +164,7 @@ id with a chart tab, or with another table tab (see
 configuration error that otto raises loudly rather than silently picking a
 winner.
 
-{class}`~otto.monitor.parsers.LogEvent` rows are a deliberately separate
+{class}`~otto.monitor.parsers.LogEvent` rows are a separate
 data path from {class}`~otto.monitor.events.MonitorEvent` markers: log
 events are per-host, high-volume, columnar table data, while
 `MonitorEvent`s are the global, low-volume annotations that mark moments
@@ -204,7 +197,7 @@ interval's worth of new lines, not the file's total size.
 
 Because a parser's `command` string is a static registry key, one parser
 can't vary its command per tick — reading from a byte offset that grows
-over time, for example, is unsupported by design; size `tail -n N` to the
+over time, for example, is unsupported; size `tail -n N` to the
 interval instead. A large *regenerated* file (a digest script that
 rewrites the whole thing on every run rather than appending) fits the same
 way any verbose command output does: reduce at the source with
@@ -233,7 +226,7 @@ for the `snmp` field reference.
 issues a single GET PDU per poll tick for all configured OIDs and returns a
 `{oid: float | None}` mapping.  The `pysnmp` library is imported lazily inside
 `SnmpClient.get`, so the SNMP path is entirely optional — otto imports cleanly
-without `pysnmp` installed, and unit tests can mock at the `get` boundary.
+without `pysnmp` installed.
 
 ### Built-in metric descriptors
 

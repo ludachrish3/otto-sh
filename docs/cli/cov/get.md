@@ -12,8 +12,7 @@ discovered toolchain, and written as one `capture.json` per host per product
 ({ref}`the run tree <run-tree>`).
 
 Nothing instrumented anywhere is an error *before* any host is touched:
-detection is local, so the command refuses with every product's verdict
-rather than fetching nothing and calling it a coverage session.
+detection is local, and the command refuses with every product's verdict.
 
 By default `otto cov get` targets the lab's sole `e2e`-kind tier and
 writes a capture that is **not** committed anywhere — it lives in the
@@ -45,8 +44,7 @@ otto cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
 
 `--ticket`, `--note`, `--tester-name`, and `--tester-email` are only
 meaningful for a `manual`-kind retrieval; passing them against an
-`e2e`-kind tier has no effect (an automated pull has no human tester to
-attribute).
+`e2e`-kind tier has no effect.
 
 Retrieval requires a git repository — resolving `base_commit` and, for
 a dirty tree, the offset remap both need it.  Outside a git repo,
@@ -61,18 +59,16 @@ state decides dirtiness.
 (coverage-dirty-remap)=
 ## Locally-modified builds
 
-Manual testing frequently happens against a **locally modified**
-build — printf-and-recompile, a GDB session poking at a running
-binary.  These sessions still run instrumented code, so real counters
-exist, but their line numbers describe the modified tree, not the
-committed one.  `otto cov get` detects a dirty working tree
-(`git status --porcelain` non-empty) automatically and remaps the
-retrieved hits onto **committed-code line numbers** before writing the
-capture — added/changed lines' hits are dropped (crediting untested
-code would be wrong), unchanged lines remap exactly even when they've
-shifted.  The capture records `dirty_remap: true`, which shows up in
-the report's run table (see {ref}`coverage-runs`); no diff is
-stored.
+Manual testing frequently happens against a **locally modified** build —
+printf-and-recompile, a GDB session poking at a running binary.  These
+sessions still run instrumented code, so real counters exist, but their line
+numbers describe the modified tree, not the committed one.  `otto cov get`
+detects a dirty working tree (`git status --porcelain` non-empty)
+automatically and remaps the retrieved hits onto **committed-code line
+numbers** before writing the capture — added/changed lines' hits are dropped,
+unchanged lines remap exactly even when they've shifted.  The capture records
+`dirty_remap: true`, which shows up in the report's run table (see
+{ref}`coverage-runs`); no diff is stored.
 
 ## The capture file
 

@@ -65,8 +65,8 @@ toolchain tools, which are host-wide, so there is no per-repo answer to give.
 ## Log retrieval
 
 `uninstall()` gathers product logs **before** tearing anything down and debug
-logs **after** — teardown activity is usually exactly what debug logs exist to
-capture. Both halves are also callable directly:
+logs **after**, so the debug logs include the teardown. Both halves are also
+callable directly:
 
 | Method | Behavior |
 |--------|----------|

@@ -51,14 +51,10 @@ host entry carries:
 Paste that into the host's entry and the next connection issues no probe at
 all. See {doc}`../../../configuration/host-options` for where the table lives and how it layers.
 
-**Assumed values are deliberately absent from the payload.** Inside a JSON
-object a guess is indistinguishable from a measurement, and a pinned value is
-never re-probed — so pinning one would make a momentary blip permanent. The
-reading above the payload is where those values are visible, labelled for what
-they are. A host that could answer nothing therefore prints an empty pin and
-says why, rather than offering thirteen guesses.
+**Assumed values are absent from the payload.** The reading above the payload
+is where those values are visible, labelled for what they are. A host that
+could answer nothing prints an empty pin and says why. Don't pin an assumed
+value by hand: a pinned value is never re-probed, so a guess would stick.
 
 `LocalHost`, `DockerContainerHost`, and `EmbeddedHost` build no capability resolver at all, so
-`probe` on those reports that hole plainly instead of printing a pin. That is
-recorded rather than accidental — see
-{class}`~otto.host.userland.UserlandHost` for what giving them one would cost.
+`probe` on those reports that plainly instead of printing a pin.

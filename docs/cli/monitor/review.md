@@ -26,19 +26,15 @@ clear CLI error — there is no silent partial load:
   argument is validated before the command body runs, so it fails the same
   way any other bad invocation does.
 
-**Breaking change, no migration.** A `.db`/`.json` written by an otto build
-before sessions existed used a different, unversioned shape and is no
-longer readable — `otto monitor` on one of those fails loud naming the
-expected format rather than misrendering silently. There is no converter;
-re-capture with the current build. The `GET /api/export/json` endpoint
-changed the same way (it now emits this same `format:1` shape), which is a
-breaking change for anything that scraped it directly. One narrower
-caveat, specific to this feature's early rollout: a `.db` archive captured
-by a pre-release build of `--live --db` (before its session metadata
-persistence was corrected) replays with no chart specs and a null
-interval — it looks like a valid archive but the dashboard renders it as
-one ungrouped, unit-less chart per series. That has no migration either;
-re-capture.
+**Older captures.** A `.db`/`.json` written by an otto build before sessions
+existed used a different, unversioned shape and is not readable —
+`otto monitor` on one of those fails loud naming the expected format. There
+is no converter; re-capture with the current build. The `GET
+/api/export/json` endpoint changed to this same `format:1` shape; a script
+that scraped the old shape must be updated. A `.db` archive
+captured by a pre-release build of `--live --db` replays with no chart specs
+and a null interval: the dashboard renders it as one ungrouped, unit-less
+chart per series. Re-capture it too.
 
 **Editing.** A `.db` session archive opened this way is editable — the
 dashboard's marking controls write mutations straight back into the same

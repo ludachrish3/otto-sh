@@ -156,6 +156,14 @@ The same mechanism resolves per-protocol option tables (e.g. `ssh_options`),
 so "prefer netcat on this board family, with these ports" is data, not code.
 See {doc}`../../configuration/host-options` for the user-facing rules.
 
+The netcat backend's built-in listener checks count listeners rather than
+merely detecting one. Some netcats (OpenBSD `nc` among them) bind with
+`SO_REUSEPORT`, so a second process that chose the same port at the same
+moment gets a listener beside otto's instead of an address-in-use error, and
+the kernel then decides which of the two receives the connection. That is why
+a port held by more than one listener is refused and retried on a fresh one
+({doc}`../../cli/host/netcat`).
+
 ## From lab data to a host object
 
 Host construction is a boundary crossing, described fully in
@@ -179,7 +187,10 @@ Dev tools share the product shape but live in a separate registry rather
 than behind a flag on one list, because their lifecycle differs: one shared
 list would make an uninstall remove dev tools as if they were products, and
 make a host carrying nothing but a debug probe read as
-installed to `otto run status`.
+installed to `otto run status`. The two tooling kinds install with
+asymmetric defaults on purpose: dev tools are small and wanted on nearly every
+run, while toolchain artifacts are large and rarely needed, so asking for them
+(`install-tools --toolchain`) is a decision.
 
 A **kind** is a further split within products: the runtime knowledge behind
 a `[[products]]` entry's verbs — install, check, uninstall — and how its
@@ -187,6 +198,11 @@ coverage counters are collected. The same naming rule governs every kind: a
 kind is named for **what drives its verbs**, never for the artifact's
 format. {doc}`../../configuration/declared-products-tools`'s kinds
 table is the one home for the built-ins and how a repo registers another.
+
+A `docker_image` product's `pull` defaults to `false` because a lab is
+commonly air-gapped by policy: a `docker pull` on every install would
+routinely reach for a registry the lab cannot see, and hang behind a pull
+that was never going to land instead of failing loud at `install`.
 
 ## Embedded strategies
 

@@ -31,8 +31,8 @@ otto host <HOST_ID> run [OPTIONS] COMMANDS...
 | `--timeout SECS` | `30.0` | Cumulative timeout in seconds across all commands. Must be `>= 0`; pass `inf` for a deliberately unbounded command |
 | `--user NAME` | none | Run as this user. Which families accept it, and what each does with it, is declared per family in {doc}`../../guide/hosts/families` |
 
-On a unix host `run --user` refuses by design: `run` drives the *persistent*
-session, and that session's identity belongs to `as_user` — see
+On a unix host `run --user` is refused: `run` drives the *persistent*
+session, whose identity is set with `as_user` — see
 {doc}`capabilities/privilege`. The stateless verbs take a user directly
 instead: `put`/`get` accept `--user` ({doc}`put`), and `exec` accepts `user=`
 from Python on an `ssh`-term host.

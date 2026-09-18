@@ -580,7 +580,12 @@ capture scripts into `docs/_static/generated/` (gitignored):
 - `scripts/capture_docs_media.py` serves the real monitor dashboard —
   through the same `DashboardHarness`/`FakeCollector` fixtures the browser
   e2e suite uses — seeds it with deterministic dummy data, and captures a
-  screenshot plus a live webm clip with headless Chromium.
+  screenshot plus a live webm clip with headless Chromium. The topology
+  shot feeds the committed `web/fixtures/isp-core.json` export through the
+  Import front door. The same script renders the fixture coverage report
+  shared with `tests/e2e/cov/report_browser/` through the live report
+  renderer and photographs each covapp page kind (the `coverage-*.png`
+  images on the `otto cov` pages).
 - `scripts/capture_docs_termynal.py` scaffolds a demo repo with
   `otto init --all` and captures every command's real `--help` output and
   the real tab-completion candidates (via typer's completion protocol),
@@ -591,8 +596,10 @@ The artifacts therefore always match the current code; a CLI or frontend
 change shows up in the docs on the next build with zero manual work.
 
 - Regeneration is stamp-cached: each script reruns only when its inputs
-  change (the dashboard capture watches `src/otto/monitor` + the harness
-  fixtures; the terminal capture watches all of `src/otto`).
+  change (the media capture watches `src/otto/monitor`, the coverage
+  renderer, the built `src/otto/_webassets` bundles, the harness and report
+  fixtures under `tests/_fixtures/`, and the `web/fixtures/` documents; the
+  terminal capture watches all of `src/otto`).
   `make docs-media` forces a fresh capture of everything.
 - Pages reference the generated files like any other asset; a missing
   screenshot or snippet fails the `-W` build loudly.

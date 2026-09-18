@@ -22,10 +22,9 @@ before otto parses anything:
   branch-only variants (the line still counts, only its branches are
   excluded).
 
-otto now **also enforces these itself**, as two always-on rules. That
-matters for harvested data: a `.info` file produced by someone else's CI
-was never seen by your `geninfo`, so before, its marked lines stayed in
-the numbers. They no longer do.
+otto **also enforces these itself**, as two always-on rules, so the
+marked lines of harvested data — a `.info` file produced by someone else's
+CI, never seen by your `geninfo` — are excluded too.
 
 In the row-coloring precedence (see {ref}`coverage-colors`), excluded
 **always wins**, even over a covered, stale, or aging line.
@@ -105,8 +104,7 @@ at each `stat`.
 This is a change in spelling as well as in effect. The old
 `[coverage.exclusions] markers` list matched its string **bare**, so a
 project writing `// MYPROJ_NO_COV` must now write
-`// MYPROJ_NO_COV_LINE`. There is one convention now — lcov's — rather
-than two.
+`// MYPROJ_NO_COV_LINE`.
 ```
 
 Two bases can derive the same token: `FOO` at `stat = "branch"` yields
@@ -143,16 +141,9 @@ listed macro appears positively:
 #else                                   // no condition   -> never matches
 ```
 
-### Why otto does not evaluate the condition
-
-otto never needs to know which arm the preprocessor actually selected,
-because a dead arm has no coverage records at all — the compiler emitted
-no code for it, so deleting it removes nothing. gcov already resolved
-liveness; the rule only has to name an arm.
-
-That one observation is what keeps this feature free of a macro
-environment, of `compile_commands.json`, and of having to agree with your
-build system about anything.
+otto does not evaluate the condition: a rule only names an arm. An arm the
+preprocessor did not select has no coverage records at all, so naming it
+removes nothing.
 
 ## `path`
 
@@ -183,8 +174,8 @@ no other kind fits.
 
 ## Limitations
 
-Three things this design does not do. None of them are reported at
-runtime, so they are worth knowing before you write a rule.
+Three limitations, none of them reported at runtime, worth knowing before
+you write a rule.
 
 **A mis-scoped rule is silent.** There is no per-rule accounting and no
 warning when a rule matches nothing, so a typo'd macro name or a glob

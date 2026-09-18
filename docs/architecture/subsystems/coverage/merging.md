@@ -61,6 +61,15 @@ an excluded line never reaches per-ticket coverage
 save coming last no longer is — rendering has no store side effect left for
 it to capture ({doc}`renderer`).
 
+The `preprocessor` exclusion rule never evaluates a condition. It does not
+need to know which arm the preprocessor selected, because a dead arm has no
+coverage records at all — the compiler emitted no code for it, so deleting
+it removes nothing; gcov already resolved liveness. That observation keeps
+the feature free of a macro environment, of `compile_commands.json`, and of
+having to agree with the user's build system about anything. It is also why
+`||` over-matches and an `#else` arm cannot be named: both would need real
+evaluation.
+
 ## Why manual folds last
 
 `validity.apply_manual_capture` marks a line stale only when nothing else

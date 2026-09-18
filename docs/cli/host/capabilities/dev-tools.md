@@ -3,9 +3,9 @@
 Full signatures: {class}`~otto.host.dev_tool.DevTool` and
 {class}`~otto.host.toolchain.ToolchainTool`.
 
-Tooling is not product: a debug probe on a board is not software under test, so
-it lives in its own list and is never part of `is_installed()`'s answer. Two
-seams, because the two kinds of tooling are owned differently:
+Tooling is not product: it lives in its own list and is never part of
+`is_installed()`'s answer. The two kinds of tooling are declared and owned
+differently:
 
 | Kind | Declared | Owned by | Installed by |
 |------|----------|----------|--------------|
@@ -21,6 +21,5 @@ seams, because the two kinds of tooling are owned differently:
 | `await host.remove_toolchain_tools()` | Remove each declared tool (best-effort). |
 | `await host.toolchain_tools_absent()` | True iff none of them is present — the host-wide half of `is_clean()`. |
 
-The asymmetric defaults are deliberate: dev tools are small and wanted on
-nearly every run, while toolchain artifacts are large and rarely needed, so
-asking for them is a decision.
+`install-tools` installs dev tools by default; toolchain tools only when asked
+for with `--toolchain`.

@@ -32,8 +32,8 @@ otto host --list-hosts
 
 `otto host` is **not** scoped by any repo's `[project]` declaration: naming a
 host explicitly reaches it wherever it is in the loaded lab, and the "Available
-hosts" listing printed for an unknown id enumerates the whole lab for the same
-reason.  Explicit targeting beats scoping — see
+hosts" listing printed for an unknown id enumerates the whole lab.  Explicit
+targeting beats scoping — see
 {ref}`project-scope`.
 
 Reservations follow the hosts you name, not the scope.  A host you name — the
@@ -45,9 +45,8 @@ reached needs, and hopping through a host still means holding the hop
 
 ## The host verb model
 
-Every `otto host` action is a **verb** on the host, and every verb — the four
-core ones included — is synthesized from an `@cli_exposed` host method by the
-same signature-driven mechanism. `run`, `put`, `get` and `login` are the ones
+Every `otto host` action is a **verb** on the host, backed by an
+`@cli_exposed` host method. `run`, `put`, `get` and `login` are the ones
 every host class carries; anything else is a **capability verb**, scoped to the
 host's class, so `otto host <host_id> --help` lists exactly what the chosen host
 supports and nothing more.

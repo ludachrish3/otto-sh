@@ -250,7 +250,7 @@ module is uninstalled before the post-run fetch — a suite's teardown does
 this by unloading the product, and the exit dump lands before `otto test
 --cov`'s own post-run fetch runs (not `otto cov get`, a separate,
 later command). {doc}`../cli/cov/instrumenting/kernel-modules` has the
-rest: why a runtime is needed at all, instrumenting a module of your own,
+rest: what a module lacks, instrumenting a module of your own,
 and the alternative `coverage = "kernel"` method.
 
 ## A container image

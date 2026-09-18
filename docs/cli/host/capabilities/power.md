@@ -4,9 +4,8 @@ Full signatures: {class}`~otto.host.host.BaseHost`.
 
 ## Power control
 
-Power can't run on an off host, so otto models the actor as a pluggable
-`PowerController`. The built-in `command` controller runs commands on a
-*controller* host:
+Power is driven from outside the host, by a pluggable `PowerController`. The
+built-in `command` controller runs commands on a *controller* host:
 
 ```json
 {

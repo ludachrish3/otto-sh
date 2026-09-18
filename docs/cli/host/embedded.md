@@ -36,8 +36,7 @@ Set `os_type` in the host's `lab.json` entry to select the host class:
 
 - `os_type: "zephyr"` builds a `ZephyrHost` with Zephyr-specific defaults
   (the `zephyr` command frame, `os_name: "Zephyr"`).  Use `os_version` to record
-  the exact kernel version — `"2.7"`, `"3.7"`, and `"4.4"` appear in the
-  in-tree test fixture.
+  the exact kernel version, e.g. `"2.7"`, `"3.7"` or `"4.4"`.
 - `os_type: "embedded"` builds a bare `EmbeddedHost` with no OS-specific
   defaults.  Because `EmbeddedHost` carries no default `command_frame`, it
   **fails loud** at construction if none is supplied:
@@ -71,7 +70,7 @@ frame's dialect.
 | `zephyr` | `ZephyrFrame` | Stock Zephyr `retval` shell (3.7 / 4.4 LTS).  Default for `ZephyrHost`. |
 | `zephyr-serial` | `ZephyrSerialFrame` | Same framing as `zephyr`; differs only in handshake.  For a UART shell bridged via QEMU `-serial telnet:` (raw byte bridge, not the in-guest `SHELL_BACKEND_TELNET`). |
 | `bash` | `BashFrame` | POSIX bash; used internally by SSH/telnet Unix sessions. |
-| `ash` | `AshFrame` | BusyBox `ash`.  Inherits `BashFrame`'s framing unchanged, no override — every rendered payload measured matching across the BusyBox artifact matrix. Not the same as "nothing differs": ash rejects `set +o history` outright, survivably, by design (see `AshFrame`'s docstring). |
+| `ash` | `AshFrame` | BusyBox `ash`.  Uses `BashFrame`'s framing unchanged. |
 | `raw` | `RawFrame` | landing-only, no handshake and no framing, for a console whose landing state answers no frame; only valid as `landing_frame` with a `session_setup` hook; see {ref}`per-host-session-setup`. |
 
 Declare a frame by name on the host entry, inside its element:
@@ -122,8 +121,7 @@ are unavailable on embedded hosts — they require a POSIX shell.
 
 ## Example
 
-The `zephyr37_fat` element from the test fixture, annotated — one element, one
-host entry inside it:
+A Zephyr element, annotated — one element, one host entry inside it:
 
 ```json
 {

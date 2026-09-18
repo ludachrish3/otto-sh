@@ -3,10 +3,10 @@
 A `kind = "kmod"` product is a Linux kernel module, loaded and unloaded with
 `insmod`/`rmmod` instead of staged and run. Its coverage story is different
 from every other kind on this page's siblings, because a kernel module has
-no libc, no process exit, and — on most kernels otto's beds run — no gcov
+no libc, no process exit, and — on most distribution kernels — no gcov
 runtime to hand counters to in the first place.
 
-## Why a runtime
+## What a module lacks
 
 A user-space product needs nothing beyond `--coverage`: gcc's own
 constructor registers each translation unit's counters before `main` runs,
@@ -51,11 +51,11 @@ Writing to `reset` zeroes both. `otto_kgcov` never parses a `.gcda` itself
 ## Instrumenting a module
 
 The worked example throughout this page is `tests/repo5/kmod/demo/`, a
-small bounded queue driven from a debugfs control file. It lives inside the
-fixture repo that declares it as a product, not next to the library,
-because otto's coverage capture anchors every measured file to a committed
-git blob under the SUT repo: a repo that reports coverage for a module owns
-that module's sources and builds them in place. The library's own
+small bounded queue driven from a debugfs control file, living inside the
+repo that declares it as a product. A repo that reports coverage for a
+module must own that module's sources and build them in place: coverage
+capture anchors every measured file to a committed git blob under the SUT
+repo. The library's own
 `docs/examples/kgcov/README.md` documents the same three steps that follow,
 in more general terms, for any consumer.
 
@@ -190,18 +190,15 @@ table.
 A run of `TestKmodDemo` produces exactly three tracked files per host —
 `demo_main.c`, `demo_parse.c`, `demo_policy.c`, one per translation unit
 compiled with `$(KGCOV_CFLAGS)`; the two sentinel objects carry no code of
-their own and contribute nothing to the report. The demo's own `ctl`
-read-back reports a `dropped` counter alongside `enqueued` and `drained`:
-under the `fifo`/`lifo` policies it counts rejected enqueues into a full
-queue, but under `drop-oldest` — which never rejects — it counts evicted
-items instead. The exit routine's lines —
-`demo_exit`'s cleanup and its `pr_info` calls — show real hits rather than
-zero, because the suite leaves the queue non-empty before teardown unloads
-the module, which is what proves the exit dump captured what the exit
-routine actually did rather than just what `demo_init` did. Three paths
-stay uncovered on purpose, so the report has something to show as missed:
-sending `drain` with an argument (`demo_parse.c`'s `if (arg)` guard),
-lowering `limit` below the queue's current length (`demo_policy.c`'s
-`if (cap < q->len)` guard), and the policy switch's `default:` arm
-(`demo_policy.c`'s `switch (q->policy)`), unreachable by design since the
-parser only ever admits the three named policies.
+their own and contribute nothing to the report. The demo's own `ctl` read-back
+reports a `dropped` counter alongside `enqueued` and `drained`: under the
+`fifo`/`lifo` policies it counts rejected enqueues into a full queue, but
+under `drop-oldest` — which never rejects — it counts evicted items instead.
+The exit routine's lines — `demo_exit`'s cleanup and its `pr_info` calls —
+show real hits rather than zero, because the suite leaves the queue non-empty
+before teardown unloads the module and the exit dump captures what the exit
+routine did. Three paths stay uncovered: sending `drain` with an argument
+(`demo_parse.c`'s `if (arg)` guard), lowering `limit` below the queue's
+current length (`demo_policy.c`'s `if (cap < q->len)` guard), and the policy
+switch's `default:` arm (`demo_policy.c`'s `switch (q->policy)`), unreachable
+since the parser only ever admits the three named policies.

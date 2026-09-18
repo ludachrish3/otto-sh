@@ -18,8 +18,7 @@ discipline imposed on it.
 ## Declarative Tiers
 
 A *tier* is a named layer of coverage data.  Tiers are declared under
-`[coverage.tiers.<name>]` in `.otto/settings.toml` — no more ad-hoc
-`--tier NAME=PATH` flags for data otto can collect itself:
+`[coverage.tiers.<name>]` in `.otto/settings.toml`:
 
 ```toml
 [coverage.tiers.system]
@@ -62,9 +61,8 @@ Tier **names are free-form** and multiple tiers may share a `kind` —
 for example two manual tiers, `manual_qa` and `manual_dev`, both
 `kind = "manual"`, distinguished by name, precedence, and color.
 
-**Backward compatibility:** a settings file with no `[coverage.tiers]`
-section behaves exactly as before — an implicit `system` tier
-(`kind = "e2e"`, precedence 1) is assumed.
+A settings file with no `[coverage.tiers]` section gets an implicit
+`system` tier (`kind = "e2e"`, precedence 1).
 
 ## Three-tier walkthrough
 
@@ -94,8 +92,7 @@ report` finds and merges the counters itself.
 `[coverage.tiers.unit.products]` splits that one sweep into named views, each
 its own run in the report. Naming a view after a `[[products]]` entry is what
 makes a single product pin show that product's end-to-end and unit evidence
-together — the names need not match, and matching them is the whole point when
-they do.
+together; the names need not match.
 
 Each view needs its **own build or object directory**, and that is a
 requirement, not a tidiness preference: `.gcno` notes files sit beside the
@@ -146,17 +143,15 @@ Stale vs. aging, precisely: **stale = the code changed** out from under
 the evidence; **aging = the code is unchanged but the evidence is
 old**.
 
-The anchor-chain diff is **whitespace-insensitive** (`git diff -w`), so a
-pure reformat — reindentation, tabs↔spaces, trailing-whitespace strips —
-does not stale a manually-covered line: the evidence carries through, and
-lines merely shifted by such edits remap to their new numbers.  Only a
-change to the code itself revokes coverage, and only the lines that
-actually changed — the rest of the file stays valid.  (The SUTs are
-C/C++, where whitespace is not semantically load-bearing; the single case
-this also forgives — a whitespace change *inside a string literal* — is
-treated as immaterial to coverage.)  Line-ending-only changes (a file
-flipped CRLF↔LF) are immune the same way — `-w` treats them as
-whitespace, not content.
+The anchor-chain diff is **whitespace-insensitive** (`git diff -w`), so a pure
+reformat — reindentation, tabs↔spaces, trailing-whitespace strips — does not
+stale a manually-covered line: the evidence carries through, and lines merely
+shifted by such edits remap to their new numbers.  Only a change to the code
+itself revokes coverage, and only the lines that actually changed — the rest
+of the file stays valid.  This includes a whitespace change *inside a string
+literal*, which does not stale the line even though it can change the
+program's output.  Line-ending-only changes (a file flipped CRLF↔LF) are
+immune too — `-w` treats them as whitespace, not content.
 
 Encoding changes are not exempt from that revocation: a BOM addition or
 a charset transcode changes the file's bytes, and `-w` only ignores
@@ -185,15 +180,13 @@ bar.c`.  File **splits or copies** are not rename-tracked by git and so
 are not followed either — restructuring code that way means re-proving
 coverage against the new files.
 
-A few more rulings that fall out of how captures are anchored and
-resolved:
+A few more rules:
 
 - A **newer manual capture with the same run label, host, and product**
   entirely replaces the older one — the superseded capture's credits do not
   accumulate, and it drops out of the run table (see
-  {ref}`coverage-runs`). Product is part of that identity because one host
-  can carry several instrumented products; without it a host's second
-  product would supersede its first.
+  {ref}`coverage-runs`). Two products on one host are two identities, so
+  neither supersedes the other.
 - On a **shallow clone**, a capture older than the clone's fetch depth has
   a `base_commit` git cannot resolve here; validity falls back to the
   per-file blob check instead of crashing — files whose current blob
@@ -204,9 +197,6 @@ resolved:
   commit was garbage-collected once its branch folded into `main`) can no
   longer be diffed against directly, so otto verifies each of that
   capture's files individually against its recorded blob SHA instead.
-  That per-file fallback is batched into a small, constant number of git
-  calls per capture regardless of file count, so validity checking stays
-  fast even on large repos served over NFS.
 
 (coverage-runs)=
 ## Runs: which run covered this line?

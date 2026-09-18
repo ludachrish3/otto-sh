@@ -8,18 +8,21 @@ static bundle plus data chunks.
 `SpaRenderer.render` does two things, in order:
 
 1. **Copy the bundle.** `make web` builds a second Vite app
-   (`web/src/covapp/`) into
-   `src/otto/_webassets/covapp/` — a classic-script IIFE
-   bundle with no ES modules, no inline scripts, and only relative asset
+   (`web/src/covapp/`) into `src/otto/_webassets/covapp/` — a classic-script
+   IIFE bundle with no ES modules, no inline scripts, no `eval`, no WASM
+   (syntax highlighting runs a pure-JS regex engine) and only relative asset
    paths, so it boots the same from `file://`, a CI artifacts browser, or
-   behind Jenkins' minimal CSP. That directory isn't committed; it's built
-   by `make web` and wheel-embedded (`make wheel-check` asserts the
-   bundle's `index.html` is present in the built wheel). `SpaRenderer` copies
-   it into the report directory as-is (sourcemaps excluded — kept out of
-   every emitted report, used only by the TS coverage fold in CI). A
-   checkout that skipped `make web` has no bundle to copy: `_copy_bundle`
-   warns, names `make web` as the fix, and still emits the data chunks
-   rather than failing the whole report.
+   behind the minimal Jenkins CSP ([Hosting the report in
+   CI](../../../cli/cov/report.md#hosting-the-report-in-ci));
+   `tests/e2e/cov/report_browser/test_spa_csp.py` serves a built report under
+   exactly that header and asserts the app boots with zero console errors.
+   That directory isn't committed; it's built by `make web` and wheel-embedded
+   (`make wheel-check` asserts the bundle's `index.html` is present in the
+   built wheel). `SpaRenderer` copies it into the report directory as-is
+   (sourcemaps excluded — kept out of every emitted report, used only by the
+   TS coverage fold in CI). A checkout that skipped `make web` has no bundle
+   to copy: `_copy_bundle` warns, names `make web` as the fix, and still emits
+   the data chunks rather than failing the whole report.
 2. **Emit the data chunks** (`otto.coverage.renderer.spa_data`, pure Python)
    — `cov_data/index.js`, one classic-script
    assignment to `window.__OTTO_COV__` carrying the report-wide payload:
@@ -43,6 +46,15 @@ static bundle plus data chunks.
    between the index and a stale cached chunk, or a format the running
    bundle doesn't recognize, renders a "this report needs to be
    regenerated" guard screen instead of a wrong or partial report.
+
+   The same precompute-in-Python rule shapes the focus pins
+   ([Output](../../../cli/cov/report.md#output)): a product pin combined with
+   a context pin reads a precomputed per-context per-product count from the
+   emitted data, never two one-dimensional maps multiplied together. Where
+   no precomputed figure exists the app shows none — the tickets page's
+   stats decline to a dash under "Hide asserted coverage" rather than
+   subtracting, because there is no deduped "asserted-only" total that could
+   be subtracted from a per-ticket row honestly.
 
 Chunk ids come from `mangle_path` over the file's **canonical** path, never
 its display path, so `--prefix` changes what a report shows without changing

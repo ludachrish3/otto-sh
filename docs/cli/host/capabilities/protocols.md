@@ -82,26 +82,23 @@ and the inventory then runs there **unwrapped**: no per-command `sudo` or
 A host with no shell has no in-session inventory, so the survey dials a
 bounded set of TCP ports from the hop: the family defaults, a short list of
 common alternates, and ssh's 22 and 2222. Never a range by default; the
-sweep itself runs two dials at a time, half a second each, because an RTOS
-target has a small socket pool. The declared console port is not among them
-— its verdict is the host's own console connection, and a second client on
-a single-client console buys nothing — and neither is snmp, whose check is
-the controller-issued GET described above.
+sweep itself runs two dials at a time, half a second each, to spare an RTOS
+target's small socket pool. The declared console port is not among them
+— its verdict is the host's own console connection — and neither is snmp,
+whose check is the controller-issued GET described above.
 
 `--scan-ports 2000-2010,8080` adds ports or ranges to that sweep. It is not
 embedded-only: a unix host accepts it too, adding those ports to its
 ordinary dial tier — one at a time, at the same 2 s timeout every other
 dial on that host uses, not the sweep's tighter budget. A bad value — a
 reversed range, a port outside 1..65535, or a range wider than 1024 ports —
-is refused before the survey makes any contact with the device, so a typo
-costs nothing on a slow link.
+is refused before the survey makes any contact with the device.
 
 A telnet banner on an unexpected port is a discovered console port and
 gets a real console open; an ssh banner lands in the *other listeners*
 footnote — the hint that a device may be misfiled as embedded. On a
 Zephyr 3.7 guest a dead port reads `timeout`, not `closed`: its stack
-answers a SYN to a closed port badly, and the survey does not pretend to
-know better.
+answers a SYN to a closed port badly.
 
 ## The pin
 

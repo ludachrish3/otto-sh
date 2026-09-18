@@ -19,11 +19,6 @@ multi-tier HTML coverage reports.  Coverage tiers — `system` (e2e),
 directories and files, per-tier percentage columns with threshold-colored
 bars, and the per-node stats card](../../_static/generated/coverage-report.png)
 
-*The screenshot is generated from the live report renderer at docs build
-time by `scripts/capture_docs_media.py` — the same pipeline that captures
-the monitor dashboard — so it can never drift from what `otto cov report`
-actually produces.*
-
 See {doc}`../../architecture/subsystems/coverage/index` for how the fetch → merge →
 capture → render pipeline fits together, and for the design behind tiers,
 validity, and why only manual captures are committed.
@@ -126,9 +121,9 @@ auto-detected by walking up from the current directory to find the
 `.otto/` directory.  Path mappings between build-host paths and local
 source paths are auto-discovered from the `.info` and `.gcno` files.
 
-An optional `hosts` regex scopes collection to a subset of the lab — this is
-how an SSH hop that fronts a coverage target is kept out of the coverage set
-without otto having to guess which hosts emit `.gcda`:
+An optional `hosts` regex scopes collection to a subset of the lab — use it to
+keep, for example, an SSH hop that fronts a coverage target out of the
+coverage set:
 
 ```toml
 [coverage]
@@ -138,8 +133,7 @@ hosts = "device.*"
 The regex is **fully matched** against each host id (`re.fullmatch`), never
 searched within it: `device` selects the host whose id is exactly `device`, so
 write `device.*` to match a family.  A pattern that matches none of the hosts
-the run may walk fails the command with the pattern and the wildcard hint,
-rather than collecting from nothing and reporting a coverage run that happened.
+the run may walk fails the command with the pattern and the wildcard hint.
 
 ```{toctree}
 :caption: Subcommands

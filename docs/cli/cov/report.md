@@ -20,14 +20,13 @@ otto cov report <output_dir> --dir ./my_report
    `.otto/coverage/manual/`, loaded automatically with the validity
    pass applied.
 
-`OUTPUT_DIRS` is now optional: with none given, the report is built
+`OUTPUT_DIRS` is optional: with none given, the report is built
 from the committed manual-capture store (and any configured unit
 tiers) alone.
 
 A report whose assembled store ends up **empty** — no captures, no
 harvested counters, no manual store — exits `1` with a one-line error
-naming every location that was searched, so a misconfigured CI job
-fails loudly instead of publishing a blank report.
+naming every location that was searched.
 
 ## Stitching Multiple Runs
 
@@ -45,7 +44,7 @@ otto cov report run1_output/ run2_output/ run3_output/ --dir ./combined_report
 | `--dir, -d PATH`          | Where to place the generated coverage report                        | `./cov_report`      |
 | `--project-name STR`      | Title shown in the report header                                     | `Coverage Report`   |
 | `--tier NAME[=PATH]`      | Git-less escape hatch (see below); repeatable, order = precedence    | the configured tiers (or `system` with none configured) |
-| `--tickets-json PATH`     | Also write a per-ticket coverage summary — otto's first public export (see {ref}`coverage-tickets-json`).  Requires `[coverage.tickets]` to have attributed at least one ticket; fails loud (exit 1) otherwise | not written |
+| `--tickets-json PATH`     | Also write a per-ticket coverage summary (see {ref}`coverage-tickets-json`).  Requires `[coverage.tickets]` to have attributed at least one ticket; fails loud (exit 1) otherwise | not written |
 
 (coverage-report-stale-builds)=
 ## Stale Builds: "stamp mismatch" and the e2e base_commit guard
@@ -86,8 +85,7 @@ the file pairing structurally at collection instead).
 A capture carries its own, git-based guard instead: its recorded
 `base_commit` must equal the tree's current `HEAD`.  A capture taken at a different
 commit — the tree moved on since collection — fails the report with a
-clean error naming both commits, rather than silently reporting
-numbers for the wrong tree; the recovery is to collect fresh coverage
+clean error naming both commits; the recovery is to collect fresh coverage
 with `otto test --cov` (or `otto cov get`) and report on the new
 output.  A working tree that is merely **dirty** at report time (same
 `HEAD`, uncommitted edits) does not fail: the e2e capture's hits are
@@ -163,11 +161,8 @@ past its `max_age`, i.e. a faded manual orange) → **stale** (violet —
 the only evidence was manual and the code changed since) →
 **uncovered** (light red).
 
-Because tier names are free-form, multiple tiers can share a `kind`,
-and colors are configurable, the report never relies on convention to
-explain itself: a **legend** mapping every tier name and state to its
-color is always one click away, in the app bar's **⋮** overflow menu
-present on every page.
+A **legend** mapping every tier name and state to its color is always one
+click away, in the app bar's **⋮** overflow menu present on every page.
 
 ## Output
 
@@ -210,7 +205,7 @@ configure.
   along in the link (`?q=`), so a hit is shareable, and a pinned ticket
   narrows the search to the files it touched.
 
-  ![The search palette over the fixture report: matches grouped by file,
+  ![The search palette over an example report: matches grouped by file,
   the Regex and Uncovered-only chips, and the total-count
   footer](../../_static/generated/coverage-search.png)
 
@@ -244,8 +239,7 @@ configure.
   a report whose every run is an unnamed unit harvest shows none.
 
   It composes with the other pins. A context and a product together read as
-  `nightly · agent` and intersect (a precomputed per-context per-product
-  count, never two one-dimensional maps multiplied together); a pinned ticket
+  `nightly · agent` and intersect; a pinned ticket
   keeps owning the denominator while the product narrows the numerator, and
   where that pair is too fine to answer honestly the cell declines rather
   than guessing — the same rule the ticket-plus-context pair already
@@ -273,11 +267,10 @@ configure.
   ticket **hides** files (and directories) it never touched from the tree
   entirely, and every remaining percentage — including the per-tier rows —
   recomputes over that ticket's owned lines alone. A hidden-count row above
-  the tree names what was removed, so the narrowing is never silent. The file page keeps the opposite rule: it
-  **dims**, never hides, a non-owned line, because code inside a file must
-  stay readable. Composes with run focus (`?ticket=<id>` alongside
-  `?ctx=<label>`) — "this ticket's lines, as proven by that run" is a
-  real, separate question from either filter alone.
+  the tree names what was removed. The file page keeps the opposite rule: it
+  **dims**, never hides, a non-owned line. Composes with run focus
+  (`?ticket=<id>` alongside `?ctx=<label>`) to show this ticket's lines as
+  proven by that run.
 
   ![A pinned ticket at the directory page: utils.c's row is hidden (it
   owns none of the ticket's lines) and the banner names what was
@@ -312,10 +305,5 @@ the `hudson.model.DirectoryBrowserSupport.CSP` system property:
 default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'
 ```
 
-This is sufficient because the report never needs more than it grants: no
-inline scripts, no `eval`, no WASM (syntax highlighting runs a pure-JS
-regex engine, never a WASM grammar) — only classic `<script src="...">`
-tags loading relative, self-hosted assets. A browser test serves a built
-report under exactly this header and asserts the app boots with zero
-console errors, so a stray inline script can never silently regress
-Jenkins support.
+The report runs under this policy because it only uses classic
+`<script src="...">` tags loading relative, self-hosted assets.

@@ -8,12 +8,6 @@ data-plane structure, with element-grouped chassis nodes and a tunnel
 overlay showing all three health states — ok, degraded, and
 uncertain](../../_static/generated/dashboard-topology.png)
 
-<!-- Generated AT BUILD TIME by scripts/capture_docs_media.py (hooked from
-docs/conf.py): the real review shell, fed the committed
-web/fixtures/isp-core.json export document through the Import front
-door, captured with headless Chromium. Do not commit media into
-docs/_static/generated/. -->
-
 Two commands live under one binary:
 
 - `otto monitor --live [OPTIONS]` — the only hardware-touching path (it runs

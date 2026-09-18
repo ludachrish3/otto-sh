@@ -36,7 +36,7 @@ The otto host needs `llvm-cov` installed (the `llvm` package) in addition
 to the `lcov` prerequisite from the main {doc}`../index` page.
 
 (coverage-clang-stale-deploys)=
-## Stale deploys: why the GCC stamp guard doesn't transfer
+## Stale deploys
 
 The {ref}`.gcno stamp guard <coverage-gcc-stamp-guard>` from the GCC
 page does not transfer to clang, because clang's stamp behaves

@@ -42,8 +42,7 @@ applied lands in *their* home directory, not the login user's.
 
 The mode is applied after the bytes land, in one batched `chmod` covering the
 whole transfer.  Hosts whose transfer backend has no permission model
-(embedded `console`/`tftp`) reject `--mode` before transferring anything,
-rather than accepting it and silently doing nothing.
+(embedded `console`/`tftp`) reject `--mode` before transferring anything.
 
 ```console
 $ otto host web1 put ./app.bin /opt/bin --mode 755

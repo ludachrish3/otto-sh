@@ -76,22 +76,31 @@ two seconds would otherwise bury the transcript; because LogMode gates
 command I/O only, real errors from those hosts still surface
 ({doc}`../utilities/logging`).
 
+**The interval floor.** Every human-facing interval rejects values below one
+second ({doc}`../../cli/monitor/live`): a host needs time to answer every
+query in the interval without being taxed by the polling itself.
+`MetricCollector` is deliberately exempt — it is the mechanism, not a knob a
+human sets, and otto's own tests drive it as fast as 0.01 s against fake
+hosts.
+
 **Events.** Suites stamp markers onto the same timeline
 (`start_monitor` / `add_monitor_event` from {class}`~otto.suite.suite.OttoSuite`),
 so "CPU spiked" and "test_load started" correlate.
 
 **Serving and persistence.** A live dashboard
 ({class}`~otto.monitor.server.MonitorServer`) binds an OS-assigned port and
-serves the collector's buffer to the built React frontend: an initial
-`GET /api/monitor_sessions` snapshot (the same `format:1` shape review mode
-loads) plus a live `GET /api/stream` SSE feed of `format:1`-shaped fragments
-that grows an already-open tab in real time. With `--db`, each run's
-samples persist as one session in a SQLite archive — WAL journaling on
-local disks, DELETE on network filesystems
-({doc}`data-boundary`); running against the same `--db` path
-again appends another session rather than overwriting the archive. The
-positional `otto monitor <source>` form instead replays a saved `.json`
-export or `.db` archive without touching any host. See
+serves the collector's buffer to the built React frontend: an initial `GET
+/api/monitor_sessions` snapshot (the same `format:1` shape review mode loads)
+plus a live `GET /api/stream` SSE feed of `format:1`-shaped fragments that
+grows an already-open tab in real time. Because the dashboard boots from that
+snapshot fetch in live and review mode alike, it also runs from a bare static
+file server with no `/api/*` routes (the docs screenshots and ad-hoc demos):
+any failure falls back to the empty Import screen. With `--db`, each run's
+samples persist as one session in a SQLite archive — WAL journaling on local
+disks, DELETE on network filesystems ({doc}`data-boundary`); running against
+the same `--db` path again appends another session rather than overwriting the
+archive. The positional `otto monitor <source>` form instead replays a saved
+`.json` export or `.db` archive without touching any host. See
 {doc}`../../cli/monitor/index` for the flag-level workflow — `--live`, `--db`,
 `--label`/`--note`, and the review-mode `<SOURCE>` argument.
 
@@ -142,6 +151,20 @@ sustainedly slower than the stream lapses, resyncs and lapses again rather
 than silently showing stale data. Only the live view and live exports age
 out — the DB keeps everything, so a review opened from a `.db` archive is
 always complete.
+
+## The dashboard
+
+**Dashboard view state.** "Paused" is *derived* rather than a separately
+stored flag — it is exactly "live mode with a pinned range" — so pausing and
+picking a custom range are one state and cannot disagree. The live health
+clock ticks at the collection interval, since polling health faster than the
+collector could not learn anything sooner. The topology Key panel draws from the
+same style tables as the canvas, so the legend cannot drift from what is on
+screen.
+
+**Chart gestures.** Pan is Ctrl-drag on every platform because ECharts'
+drag-modifier vocabulary has no meta key; the `+`/`-` buttons feed the same
+path a drag-select does, so the two cannot disagree about the current window.
 
 ## Where the code lives
 

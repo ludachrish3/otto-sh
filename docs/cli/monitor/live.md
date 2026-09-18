@@ -45,27 +45,23 @@ out is still this one's to watch.
 
 ### When nothing gets monitored
 
-Four different emptinesses, four different messages — because the next edit is
-different in each case:
+Four different emptinesses, four different messages, each pointing at a
+different fix:
 
 - **The pattern matched nothing.** You get the pattern, the size of the set it
   was matched against, and the wildcard form to try. Fix the regex.
 - **The pattern matched, but every match is held out of fleet sweeps** by
   `include_containers` / `include_local`. The message opens by saying the regex
-  is *not* the problem and names the flag, because widening an already-matching
-  regex is the natural first guess and changes nothing. To reach one of those
-  hosts, use `otto host <id> <verb>`.
+  is *not* the problem and names the flag; widening the regex changes nothing.
+  To reach one of those hosts, use `otto host <id> <verb>`.
 - **Nothing was selected at all.** `No hosts available in the active lab.` —
-  deliberately silent about `--hosts`, because with nothing to select from the
-  pattern is innocent.
+  the message does not mention `--hosts`.
 - **Hosts were selected, but none can be sampled.** You get the count and the
   ids (up to five, then a summary), and a reminder that otto samples over a
   shell or over SNMP. Give the host an `snmp` block, or point `--hosts` at a
   Unix host — widening the selection will not help.
 
-All four exit 1 with the message on stderr. The first two come from the
-selection layer and are caught and framed by `otto monitor` itself, so an empty
-`--hosts` is one line rather than a traceback.
+All four exit 1 with a one-line message on stderr.
 
 ## Collection interval
 
@@ -76,17 +72,13 @@ seconds, minimum: 1 second):
 otto --lab my_lab monitor --live --interval 2.0
 ```
 
-The 1-second floor is deliberate: a host needs time to answer every query in
-the interval without being taxed by the polling itself. It's enforced at
-every human-facing boundary that names an interval — `otto monitor
---interval` above, `otto test --monitor-interval` (see [Monitoring during a
-test run](during-tests.md#monitoring-during-a-test-run)), and
+The 1-second floor is enforced at every human-facing boundary that names an
+interval — `otto monitor --interval` above, `otto test --monitor-interval`
+(see [Monitoring during a test
+run](during-tests.md#monitoring-during-a-test-run)), and
 `OttoSuite.start_monitor()` (see [Monitoring from test
 suites](../../library/custom-parsers.md#monitoring-from-test-suites)) all
-reject anything lower.
-`MetricCollector` itself is deliberately exempt — it's the mechanism, not a
-knob a human sets, and otto's own tests drive it as fast as 0.01s against
-fake hosts.
+reject anything lower. `MetricCollector` itself has no floor.
 
 ## Persisting data — sessions
 

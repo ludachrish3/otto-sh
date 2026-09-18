@@ -53,6 +53,14 @@ per row by `_EXPECTED_SU_DASH_L` in
 `tests/integration/busybox_bed/test_applet_userland.py`, where a rewrite to
 `-l` reddens on the 1.16.1 guest instead of quietly dropping it.
 
+The BusyBox `ash` command frame (`AshFrame`) inherits `BashFrame`'s framing
+with no override: every rendered payload was measured matching across the
+BusyBox artifact matrix. That is not the same as "nothing differs" — ash
+rejects `set +o history` outright, survivably, by design (see `AshFrame`'s
+docstring).
+
+### Unset, pinned and probed
+
 Every `userland_options` field is optional, and *unset* is a third answer
 beside the two a field can declare: it means "probe at connect". That is what
 lets a fresh host entry work before anyone has pinned it — a pin only skips
@@ -60,6 +68,12 @@ probes, it never supplies something the host could not have answered. The
 defaults are one set for every Unix host; version differences (BusyBox
 1.16.1 has no `base64` decode flag, `timeout_style` changes at 1.31.0) live in
 each host's pin rather than in per-profile defaults.
+
+`otto host <id> probe` ({ref}`userland-capabilities`) prints the pin, and
+deliberately leaves *assumed* values out of it: inside a JSON object a guess
+is indistinguishable from a measurement, and a pinned value is never
+re-probed, so pinning one would make a momentary blip permanent. A host that
+could answer nothing therefore gets an empty pin rather than a dozen guesses.
 
 ## The rule: measured-broken refuses up front, unmeasured runs
 
@@ -313,10 +327,9 @@ declares none, because a declaration would skip the probe and a wrong guess
 would be unfixable from the device.
 
 A host whose probe round never *arrived* is **not** refused, even though
-`base64_flag` reads `absent` for it too: that value is what otto assumes before
-it has asked anything, and treating it as a measurement would turn a refused ssh
-channel into a verdict about the device's applets. Such a host attempts the
-operation exactly as it did before. Neither is a host with no resolver at all —
+`base64_flag` reads `absent` for it too: that value is assumed, not measured
+([Unset, pinned and probed](#unset-pinned-and-probed)). Such a host attempts
+the operation exactly as it did before. Neither is a host with no resolver at all —
 `LocalHost` and a docker container host never build one.
 
 **What is not refused.** Only these two methods. `put`/`get` choose a transfer

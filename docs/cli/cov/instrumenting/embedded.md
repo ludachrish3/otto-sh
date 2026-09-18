@@ -17,22 +17,18 @@ binary `.gcda` files, and stages them under the same per-host, per-product
 directory structure used by the remote fetcher — `cov/<host_id>/<product>/`,
 per {ref}`the run tree <run-tree>`.
 
-This means the downstream merge and report pipeline (`lcov --capture`, path
-mapping, HTML render) is reused without modification — the embedded and Unix
-code paths converge at the same `.gcda` file tree, and `otto cov get` produces
-a `capture.json` per board per product exactly as it does for a Unix host.
+From there, `otto cov get` produces a `capture.json` per board per product
+exactly as it does for a Unix host.
 `otto cov clean` does not reach embedded boards — see
 {ref}`coverage-tier-kinds` on the main page.
 
 ## Setting up a product
 
-The design rule that shapes everything below: **the coverage runtime ships
-inside your extension, not in the base image**. Base images stay
-product-agnostic; an instrumented extension is self-contained — it carries
-its product code, the embedded-gcov runtime, and the entry points otto
-calls. The complete working example in the otto repo is
-`tests/repo3/product/` (build script, CMake, and extension source), driven
-live by `tests/e2e/cov/test_embedded_coverage_e2e.py`.
+**The coverage runtime ships inside your extension, not in the base
+image**: an instrumented extension is self-contained — it carries its
+product code, the embedded-gcov runtime, and the entry points otto calls.
+The complete working example in the otto repo is `tests/repo3/product/`
+(build script, CMake, and extension source).
 
 ### One extension, one translation unit
 
