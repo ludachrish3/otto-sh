@@ -425,7 +425,7 @@ OPTIONS_TEMPLATE = '''\
 ``@options`` (``from otto import options``) is pydantic's dataclass
 decorator: fields declared here become validated CLI flags on every
 ``otto test`` suite and every ``otto run`` instruction whose options class
-inherits ``RepoOptions``. See docs/library/options-classes.md.
+inherits ``RepoOptions``. See docs/cookbook/authoring/options-classes.md.
 """
 
 from typing import Annotated

@@ -20,8 +20,8 @@ collecting performance data.
   one section per functional area.
 - **Learn what a host can do** → the {doc}`User Guide <guide/index>`: the
   verbs every host answers and what each host family supports.
-- **Script otto from Python** → the {doc}`Python library <library/index>`
-  section (the {doc}`API reference <api/index>` backs it).
+- **Script, author or extend otto from Python** → the {doc}`Cookbook <cookbook/index>`
+  (the {doc}`API reference <api/index>` backs it).
 - **Work on otto itself** → {doc}`Architecture <architecture/index>`, one
   design page per area, plus {doc}`contributing`.
 
@@ -197,7 +197,7 @@ Both suites and instructions accept an options class. For flags that
 are repo-wide (device type, lab environment, etc.), define a single
 `RepoOptions` class in a module listed in your `init` setting — a `libs` path
 like `pylib/` is one common choice — and inherit it from both sides —
-see [Sharing repo-wide options](library/options-classes.md#sharing-repo-wide-options).
+see [Sharing repo-wide options](cookbook/authoring/options-classes.md#sharing-repo-wide-options).
 
 ### Monitor (`otto monitor`)
 
@@ -249,9 +249,9 @@ Monitoring can also be started from within a test suite using
 - {ref}`team-setup-checklist` — One-time team setup (host source, reservations, libs)
 - {doc}`cli/index` — Every `otto` command, one page per verb
 - {doc}`configuration/index` — The project and lab files every command reads
-- {doc}`library/options-classes` — Shared options classes for instructions and suites
-- {doc}`library/extending-cli` — Registering your own top-level `otto` commands
-- {doc}`cookbook/index` — Short recipes for common situations
-- {doc}`library/index` — Using otto as a Python library
+- {doc}`cookbook/authoring/options-classes` — Shared options classes for instructions and suites
+- {doc}`cookbook/extending/extending-cli` — Registering your own top-level `otto` commands
+- {doc}`cookbook/index` — Using otto from Python: authoring, extending, and short recipes
+- {doc}`cookbook/python-library` — Using otto as a Python library
 - {doc}`architecture/index` — How otto is put together, for contributors and extenders
 - {doc}`api/index` — Full API reference for all otto packages

@@ -2,7 +2,7 @@
 
 See :mod:`otto.reservations.protocol` for the backend contract and
 ``docs/cli/reservation/`` for the end-user docs and
-``docs/library/reservation-backends.md`` for the implementer contract.
+``docs/cookbook/extending/reservation-backends.md`` for the implementer contract.
 """
 
 import inspect
@@ -267,7 +267,7 @@ def build_backend(
                 "It looks like an unfinished port to the otto 0.11.0 reservation "
                 "contract: implement fetch_reservations(username, start, end) -> "
                 "list[Reservation] and backend_name(); see "
-                "docs/library/reservation-backends.md."
+                "docs/cookbook/extending/reservation-backends.md."
             ) from e
         # Anything else -- a typo'd key in [reservations.<name>] landing in
         # **extra_kwargs, or a bug in a fully-ported backend's own __init__ --
@@ -291,7 +291,7 @@ def build_backend(
                 f"Reservation backend {type(backend).__name__!r} still defines "
                 f"{stale!r}, which otto 0.11.0 removed. Implement "
                 "fetch_reservations(username, start, end) -> list[Reservation] "
-                "instead; see docs/library/reservation-backends.md."
+                "instead; see docs/cookbook/extending/reservation-backends.md."
             )
         raise ReservationBackendError(
             f"Reservation backend {type(backend).__name__!r} does not satisfy the "

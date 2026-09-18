@@ -14,27 +14,27 @@ registries, same CLI listing and completion, same error messages
 | --- | --- | --- |
 | an `otto run` subcommand | {func}`@instruction() <otto.cli.run.instruction>` | {doc}`../../cli/run/index` |
 | an `otto test` suite | `Test`-prefixed {class}`~otto.suite.suite.OttoSuite` subclass (auto-registers) | {doc}`../../cli/test/index` |
-| a top-level `otto` command | {func}`otto.register_cli_command <otto.cli.registry.register_cli_command>` / {func}`@otto.cli_command <otto.cli.registry.cli_command>` | {doc}`../../library/extending-cli` |
-| a CLI verb on a host class | `@cli_exposed` on the method | {doc}`../../library/cli-exposed-verbs` |
-| a host class (new `os_type` base) | `register_host_class` | {doc}`../../library/custom-host-classes` |
+| a top-level `otto` command | {func}`otto.register_cli_command <otto.cli.registry.register_cli_command>` / {func}`@otto.cli_command <otto.cli.registry.cli_command>` | {doc}`../../cookbook/extending/extending-cli` |
+| a CLI verb on a host class | `@cli_exposed` on the method | {doc}`../../cookbook/extending/cli-exposed-verbs` |
+| a host class (new `os_type` base) | `register_host_class` | {doc}`../../cookbook/extending/custom-host-classes` |
 | an OS profile (defaults bundle) | `register_os_profile` or `[[os_profiles]]` in settings | {doc}`../../configuration/os-profiles` |
-| a connection (term) backend | `register_term_backend` | {doc}`../../library/extending-backends` |
-| a file-transfer backend | `register_transfer_backend` | {doc}`../../library/extending-backends` |
-| a shell dialect | `register_command_frame` | {doc}`../../library/extending-embedded` |
-| an embedded binary loader | `register_binary_loader` | {doc}`../../library/extending-embedded` |
-| an embedded filesystem type | `register_filesystem` | {doc}`../../library/extending-embedded` |
-| a power controller | `register_power_controller` | {doc}`../../library/extending-backends` |
-| a session setup hook | `register_session_setup` | {doc}`../../library/extending-backends` |
-| products on hosts | `register_product_provider` | {doc}`../../library/cli-exposed-verbs` |
-| a host source (lab repository) | {func}`otto.labs.register_lab_repository` | {doc}`../../library/lab-source-backends` |
-| fast completion for a host source | optional {class}`~otto.labs.protocol.SupportsHostSummaries` on the repository | {doc}`../../library/lab-source-backends` |
-| a reservation backend | `register_reservation_backend` | {doc}`../../library/reservation-backends` |
-| per-host monitor parsers | `register_host_parsers` | {doc}`../../library/custom-parsers` |
-| SNMP metric descriptors | `register_snmp_metric` | {doc}`../../library/custom-parsers` |
+| a connection (term) backend | `register_term_backend` | {doc}`../../cookbook/extending/extending-backends` |
+| a file-transfer backend | `register_transfer_backend` | {doc}`../../cookbook/extending/extending-backends` |
+| a shell dialect | `register_command_frame` | {doc}`../../cookbook/extending/extending-embedded` |
+| an embedded binary loader | `register_binary_loader` | {doc}`../../cookbook/extending/extending-embedded` |
+| an embedded filesystem type | `register_filesystem` | {doc}`../../cookbook/extending/extending-embedded` |
+| a power controller | `register_power_controller` | {doc}`../../cookbook/extending/extending-backends` |
+| a session setup hook | `register_session_setup` | {doc}`../../cookbook/extending/extending-backends` |
+| products on hosts | `register_product_provider` | {doc}`../../cookbook/extending/cli-exposed-verbs` |
+| a host source (lab repository) | {func}`otto.labs.register_lab_repository` | {doc}`../../cookbook/extending/lab-source-backends` |
+| fast completion for a host source | optional {class}`~otto.labs.protocol.SupportsHostSummaries` on the repository | {doc}`../../cookbook/extending/lab-source-backends` |
+| a reservation backend | `register_reservation_backend` | {doc}`../../cookbook/extending/reservation-backends` |
+| per-host monitor parsers | `register_host_parsers` | {doc}`../../cookbook/extending/custom-parsers` |
+| SNMP metric descriptors | `register_snmp_metric` | {doc}`../../cookbook/extending/custom-parsers` |
 
 Options classes deserve a mention even though they aren't a registry: a
 repo-wide `@options` class shared by instructions and suites is the standard
-way to give a whole project consistent CLI flags ({doc}`../../library/options-classes`).
+way to give a whole project consistent CLI flags ({doc}`../../cookbook/authoring/options-classes`).
 
 ## What keeps third-party code honest
 
@@ -82,17 +82,17 @@ converts a mistake that used to pass quietly into one that says so:
 
 Each seam's user-facing how-to lives in the guide:
 
-- Connection & transfer backends — {doc}`../../library/extending-backends`
-- Embedded targets & command frames — {doc}`../../library/extending-embedded`
+- Connection & transfer backends — {doc}`../../cookbook/extending/extending-backends`
+- Embedded targets & command frames — {doc}`../../cookbook/extending/extending-embedded`
 - Host classes, OS profiles & host verbs — {doc}`../../configuration/os-profiles`,
   {doc}`../../cli/host/capabilities/index`
-- Power controllers & product providers — {doc}`../../library/extending-backends`,
+- Power controllers & product providers — {doc}`../../cookbook/extending/extending-backends`,
   {doc}`../../cli/host/capabilities/index`
 - Host sources — {doc}`../../configuration/host-sources`
 - Reservation backends — {doc}`../../cli/reservation/index`
 - Monitor parsers & SNMP metrics — {doc}`../../cli/monitor/index`
-- Instructions, suites & options — {doc}`../../cli/run/index`, {doc}`../../cli/test/index`, {doc}`../../library/options-classes`
-- New top-level commands — {doc}`../../library/extending-cli`
+- Instructions, suites & options — {doc}`../../cli/run/index`, {doc}`../../cli/test/index`, {doc}`../../cookbook/authoring/options-classes`
+- New top-level commands — {doc}`../../cookbook/extending/extending-cli`
 
 ## Where the code lives
 

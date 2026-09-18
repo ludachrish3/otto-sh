@@ -22,7 +22,7 @@ self-describing the whole tunnel so any single survivor reconstructs it, and
 discovery survives every other chain host being down. The design — and how it
 reuses the monitor's `(command, parser)` parser shape — is covered in
 {doc}`../../architecture/subsystems/network`; see also
-[Custom parsers](../../library/custom-parsers.md#custom-parsers) in {doc}`../monitor/index` for the
+[Custom parsers](../../cookbook/extending/custom-parsers.md#custom-parsers) in {doc}`../monitor/index` for the
 parser contract it is shaped to plug into. Tunnels appear live in the
 monitor's topology view, riding the links their path traverses — see
 [Topology view](../monitor/dashboard.md#topology-view) in {doc}`../monitor/index`.

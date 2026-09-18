@@ -8,7 +8,7 @@ stdlib idiom directly, ``logging.getLogger(__name__)``, with nothing to
 register. An embedding process that wants otto's own console and log-file
 sinks opts in with :func:`otto.logger.install <otto.logger.management.install>`
 and undoes it with :func:`otto.logger.reset <otto.logger.management.reset>`
-— see the :doc:`library guide <../library/index>` and the
+— see the :doc:`library guide <../cookbook/python-library>` and the
 :doc:`architecture page <../architecture/utilities/logging>` for the three
 postures this pair fits into.
 

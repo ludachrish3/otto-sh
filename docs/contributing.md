@@ -635,8 +635,7 @@ docs/
 ├── guide/                    # User Guide: what the hosts otto drives can and cannot do
 ├── cli/                      # One page per command, mirroring otto's command tree
 ├── configuration/            # settings.toml, lab.json, host sources and options
-├── cookbook/                 # Short recipes for common situations (Markdown)
-├── library/                  # Using otto as a library (Markdown)
+├── cookbook/                 # Using otto from Python: library use, authoring, extending, recipes (Markdown)
 ├── architecture/             # How otto is built and why (Markdown)
 ├── contributing.md           # This page
 └── api/                      # API reference (reStructuredText, auto-generated)
@@ -645,7 +644,7 @@ docs/
 CLI usage goes in `cli/`, on the page for the command it serves —
 that tree mirrors `otto`'s own command tree, so a new subcommand gets a page
 under its verb's directory and an entry in that verb's toctree.  Anything
-that serves a *Python* author rather than a CLI user goes in `library/`
+that serves a *Python* author rather than a CLI user goes in `cookbook/`
 instead.  API reference pages live in `api/` and use `.. automodule::`
 directives to pull documentation from docstrings.  Design rationale and subsystem
 internals belong in `architecture/` — when a change alters how a
@@ -765,14 +764,14 @@ test fixtures, so edit them with the tie in mind:
   byte-for-byte what the tree would generate; edit the renderer or the
   declaration, then run `uv run python -m scripts.render_support_matrix`.
 
-### Python library and Cookbook pages
+### Cookbook pages
 
-Much of `docs/library/` and `docs/cookbook/` is executable, so edit it with
+Much of `docs/cookbook/` is executable, so edit it with
 these ties in mind:
 
 - **The custom-backend example runs.**
   `tests/unit/docs/test_extending_backends_example.py` finds the one
-  `python` fence on `docs/library/extending-backends.md` that defines
+  `python` fence on `docs/cookbook/extending/extending-backends.md` that defines
   `class XmodemTransfer`, `exec`s it as the page spells it, puts it through
   `assert_transfer_backend_conforms` and one real `put_files` of two files.
   Exactly one fence may define that class.

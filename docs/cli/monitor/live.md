@@ -77,7 +77,7 @@ interval — `otto monitor --interval` above, `otto test --monitor-interval`
 (see [Monitoring during a test
 run](during-tests.md#monitoring-during-a-test-run)), and
 `OttoSuite.start_monitor()` (see [Monitoring from test
-suites](../../library/custom-parsers.md#monitoring-from-test-suites)) all
+suites](../../cookbook/extending/custom-parsers.md#monitoring-from-test-suites)) all
 reject anything lower. `MetricCollector` itself has no floor.
 
 ## Persisting data — sessions

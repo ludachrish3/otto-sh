@@ -350,7 +350,7 @@ and both layers; at the record-to-lab-file step it surfaces from the host
 spec, naming the lab file, the element, the host and the cred. A `proxy` no
 loaded `init` module registers fails the same way, naming the cred.
 
-Other stores plug into the same seam: {doc}`../library/creds-backends` is
+Other stores plug into the same seam: {doc}`../cookbook/extending/creds-backends` is
 the contract and the conformance helper. NetBox holds no credentials, so a
 NetBox-backed inventory always pairs with a `[creds]` store — moving from the
 json inventory to NetBox migrates no credentials at all.
@@ -663,7 +663,7 @@ live elsewhere — a CMDB, a spreadsheet export, an internal API — writes a
 backend: a class implementing the inventory protocol, registered from an
 `init` module and selected by name in `[inventory]`. The contract, the
 snapshot-cache opt-in, and the conformance helper that proves a backend
-against it are in {doc}`../library/inventory-backends`.
+against it are in {doc}`../cookbook/extending/inventory-backends`.
 
 ## Worked example — the unix lab
 

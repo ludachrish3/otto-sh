@@ -9,7 +9,7 @@ record's by login; the lab file's entries layer over both.
 
 For configuration and the merge rules see
 :doc:`../configuration/inventory`; for writing a store of your own,
-:doc:`../library/creds-backends`.
+:doc:`../cookbook/extending/creds-backends`.
 
 .. automodule:: otto.creds
    :no-members:

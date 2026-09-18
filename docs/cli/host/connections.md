@@ -90,7 +90,7 @@ The accepted values are validated against the host's configured menu
 selections are rejected at invocation time. See {doc}`../../configuration/lab-config` for
 those fields. Projects can also register additional backends via
 `register_term_backend` / `register_transfer_backend`; see
-{doc}`../../library/extending-backends`.
+{doc}`../../cookbook/extending/extending-backends`.
 
 Embedded hosts use the `console` / `tftp` transfer backends instead — see
 {doc}`embedded`.

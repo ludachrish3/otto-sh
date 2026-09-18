@@ -126,7 +126,7 @@ rejected
 Define a base options class once and inherit it everywhere you want the same
 flags. Put the base in **any importable module** — the location is yours. A
 `libs` directory such as `pylib/` is a common place to keep it (see
-{doc}`../configuration/settings` for `libs`).
+{doc}`../../configuration/settings` for `libs`).
 
 `otto.examples.options` bundles a complete example: a `RepoOptions` base plus a
 suite options class and an instruction options class that both inherit it.
@@ -184,6 +184,6 @@ async def deploy(opts: _DeployOpts): ...
 
 `otto run deploy --help` shows the same repo-wide flags plus `--field/--debug`.
 
-See {doc}`index` and {doc}`../cli/test/index` for the full instruction and suite guides, and
-[Inheriting shared options](../cookbook/suite-recipes.md#inheriting-shared-options)
+See {doc}`writing-instructions`, {doc}`writing-suites` and {doc}`../../cli/test/index` for the full instruction and suite guides, and
+[Inheriting shared options](../suite-recipes.md#inheriting-shared-options)
 in the suite recipes.

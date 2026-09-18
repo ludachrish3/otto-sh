@@ -8,7 +8,7 @@ writes, and SNMP.
 
 Every Unix host in the monitored set runs `DEFAULT_PARSERS` unless a custom
 registration says otherwise —
-see [Custom parsers](../../library/custom-parsers.md#custom-parsers).
+see [Custom parsers](../../cookbook/extending/custom-parsers.md#custom-parsers).
 Each chart draws at most `MetricParser.max_series` series at once — 8 by
 default — beyond which the dashboard shows the first `max_series` and notes
 how many were hidden; a parser can raise that cap or set `max_series = None`
@@ -21,7 +21,7 @@ to opt out entirely, as the CPU chart below does:
 | `df -h` | one series per mounted filesystem, labelled by mount point | Disk Usage | Disk | |
 | `cat /proc/loadavg` | Load (1m), Load (5m), Load (15m) | Load | CPU | |
 | `cat /proc/net/dev` | `rx <iface>`, `tx <iface>` (B/s) per interface | Network I/O | Network | Loopback (`lo`) is skipped. Packet counts and error/drop rates ride along in each series' hover meta rather than charting separately. |
-| `ss -s` | Established, Time-wait | Sockets | Network | A host without `ss` simply has no Sockets series — see [Parser health](../../library/custom-parsers.md#parser-health). |
+| `ss -s` | Established, Time-wait | Sockets | Network | A host without `ss` simply has no Sockets series — see [Parser health](../../cookbook/extending/custom-parsers.md#parser-health). |
 | `cat /proc/diskstats` | `read <device>`, `write <device>` (B/s) per device | Disk I/O | Disk | Whole devices only — partitions (`sda1`, `nvme0n1p2`, …) and virtual/noise devices (`loop*`, `ram*`, `dm-*`, `zram*`, `sr*`) are skipped. |
 | `cat /proc/loadavg /proc/stat` | Runnable, Total procs, Blocked | Processes | CPU | |
 
@@ -55,7 +55,7 @@ irreducible formats are not supported.
 ### CSV metric files
 
 {class}`~otto.monitor.log_sourced.CsvMetricParser` charts a cron-digested
-CSV file. Register it like any other parser (see [Custom parsers](../../library/custom-parsers.md#custom-parsers)):
+CSV file. Register it like any other parser (see [Custom parsers](../../cookbook/extending/custom-parsers.md#custom-parsers)):
 
 ```python
 from otto.monitor.log_sourced import CsvMetricParser
@@ -94,7 +94,7 @@ monitor starts, not just whatever arrives after that.
 One instance per file: the command string is the parser registry key, so
 monitoring "a couple of CSV files" means two registered instances. Give a
 slow-cadence file its own `interval` (seconds; see
-[Per-parser collection intervals](../../library/custom-parsers.md#per-parser-collection-intervals)) so
+[Per-parser collection intervals](../../cookbook/extending/custom-parsers.md#per-parser-collection-intervals)) so
 otto doesn't re-read an unchanged file on every tick.
 
 A cron job maintaining such a file might look like this:
@@ -135,7 +135,7 @@ register_parsers(
 Every named group in `pattern` besides the timestamp group becomes a table
 column, in pattern order (`loghost`, `proc`, `message` above). A line that
 doesn't match is skipped entirely — a wrong pattern therefore produces zero
-rows ever, which the [Parser health](../../library/custom-parsers.md#parser-health) silent-command
+rows ever, which the [Parser health](../../cookbook/extending/custom-parsers.md#parser-health) silent-command
 backstop surfaces by the third tick.
 
 `ts_group` (default `"ts"`) names the group holding the timestamp;
@@ -169,7 +169,7 @@ data path from {class}`~otto.monitor.events.MonitorEvent` markers: log
 events are per-host, high-volume, columnar table data, while
 `MonitorEvent`s are the global, low-volume annotations that mark moments
 on the chart timeline (see
-[Monitoring from test suites](../../library/custom-parsers.md#monitoring-from-test-suites)).
+[Monitoring from test suites](../../cookbook/extending/custom-parsers.md#monitoring-from-test-suites)).
 
 ### Timestamps
 
@@ -202,7 +202,7 @@ interval instead. A large *regenerated* file (a digest script that
 rewrites the whole thing on every run rather than appending) fits the same
 way any verbose command output does: reduce at the source with
 `awk`/`jq`/a product CLI, and give the parser its own slower `interval`
-(see [Per-parser collection intervals](../../library/custom-parsers.md#per-parser-collection-intervals))
+(see [Per-parser collection intervals](../../cookbook/extending/custom-parsers.md#per-parser-collection-intervals))
 if the file itself only changes infrequently — each parser rides its own
 bucket, so a slow file never blocks faster ones.
 
@@ -276,7 +276,7 @@ the same way both sides agree on the core `.1` scalars above.
 `<i>` is the interface or filesystem index (`0`, `1`, …).  The generated
 labels above (`rx if0`, `fs1 used`, …) come from the same descriptor
 registry as the core scalars, so they can be renamed per device — see
-[registering custom descriptors](../../library/custom-parsers.md#extending-registering-custom-descriptors).
+[registering custom descriptors](../../cookbook/extending/custom-parsers.md#extending-registering-custom-descriptors).
 Lab data never spells out these OIDs directly; the `otto-net:N` /
 `otto-fs:N` bundles (see {doc}`../../configuration/lab-config`) expand them
 and register their descriptors together.

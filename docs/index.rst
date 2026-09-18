@@ -11,7 +11,6 @@ otto
    cli/index
    configuration/index
    cookbook/index
-   library/index
    architecture/index
    contributing
    release_process

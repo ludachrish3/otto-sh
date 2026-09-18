@@ -2,7 +2,7 @@
 
 An **instruction** is an async Python function that otto exposes as an
 `otto run` subcommand. This page is how to write one. For invoking the ones
-you already have, see {doc}`../cli/run/index`.
+you already have, see {doc}`../../cli/run/index`.
 
 ## Defining an instruction
 
@@ -43,7 +43,7 @@ The function:
 - Must be `async` and return a `Result` (or `None`). A returned `Result`'s
   exit code is honored: a failing result exits the process non-zero, under
   the same "Return values" rules as any registered command
-  ({doc}`extending-cli`); `None` renders nothing. `async` is enforced, not
+  ({doc}`../extending/extending-cli`); `None` renders nothing. `async` is enforced, not
   merely advised — a plain `def` raises `TypeError` at decoration, because
   only a coroutine reaches the lifecycle bridge that sweeps the instruction's
   hosts and turns an interrupt into a clean exit
@@ -59,7 +59,7 @@ The function:
   annotations
 
 `@instruction()` registration is one seam among many; see
-{doc}`Extension points <../architecture/subsystems/extension-points>` for
+{doc}`Extension points <../../architecture/subsystems/extension-points>` for
 the registry machinery behind this and every other way otto can be extended.
 
 ## Accessing hosts
@@ -91,7 +91,7 @@ matches none of the hosts the run may walk raises
 `all_hosts()` walks the run's **fleet of interest** — the hosts the active
 repos' `[project]` declarations admit — which is the whole loaded lab when no
 repo declared one.  `get_host()` is unscoped and reaches any host.
-See [The fleet of interest](../cli/run/defaults.md#the-fleet-of-interest).
+See [The fleet of interest](../../cli/run/defaults.md#the-fleet-of-interest).
 
 For fan-out across the lab — running the same command or async
 operation on every host concurrently — use
@@ -99,7 +99,7 @@ operation on every host concurrently — use
 {func}`~otto.config.fleet.do_for_all_hosts`.  These helpers
 apply anywhere you have an async context (instructions, suite fixtures,
 monitors, ad-hoc scripts) and are documented in full on the
-[async patterns page](../cookbook/async-patterns.md).
+[async patterns page](../async-patterns.md).
 
 Two properties of the fleet helpers to keep in mind:
 
@@ -120,7 +120,7 @@ Two properties of the fleet helpers to keep in mind:
 Instructions can transfer files to and from hosts via
 {meth}`~otto.host.host.Host.put` and
 {meth}`~otto.host.host.Host.get`.  See the
-[async patterns page](../cookbook/async-patterns.md)
+[async patterns page](../async-patterns.md)
 for the lab-wide dispatch pattern.
 
 ## Sharing repo-wide options across instructions and suites
@@ -141,7 +141,7 @@ base (the recommended posture for repo-wide flags), or be literally the
 same class. Nothing in the machinery forces any of these.
 
 See also
-[Inheriting shared options](../cookbook/suite-recipes.md#inheriting-shared-options)
+[Inheriting shared options](../suite-recipes.md#inheriting-shared-options)
 in the suite recipes.
 
 ### 1. Define repo-wide options
@@ -420,7 +420,7 @@ its install promotes the field into the base its suites already inherit.
   cannot answer, the axes after it are not read at all.
 - **`otto run status --full` asks the same probes and never raises.** It
   prints an `unknown` cell where `is_clean()` refuses to answer; see
-  [Reading `status`](../cli/run/defaults.md#reading-status).
+  [Reading `status`](../../cli/run/defaults.md#reading-status).
 - **`status()` never moves for either of them.** An impaired link and a live
   tunnel are lab infrastructure; the tri-state install answer stays a count of
   products, so a lab under test with 200 ms of injected delay still reads
@@ -498,7 +498,7 @@ What the decorator on a method does differently:
   speak; a repo restating one of them fails at init, naming the keyword. A repo
   declaring a new name sets them, and the next repo to declare that name
   inherits them. Each keyword's meaning is tabulated under [Your repo's flags on
-  a default](../cli/run/defaults.md#your-repos-flags-on-a-default).
+  a default](../../cli/run/defaults.md#your-repos-flags-on-a-default).
 - An override of a first-party name **must** pass an `options=` class that
   inherits the first-party class for that name
   (`InstallOptions` and its five siblings, all
@@ -508,7 +508,7 @@ What the decorator on a method does differently:
 `otto run <name>` exposes the union of every registered body's fields, and each
 body receives its own class. Which fields merge into one flag, what a
 cross-repo collision looks like, and where a shared base class belongs are in
-[One command, every repo's flags](../cli/run/defaults.md#one-command-every-repos-flags).
+[One command, every repo's flags](../../cli/run/defaults.md#one-command-every-repos-flags).
 
 ## The collision error
 
@@ -606,7 +606,7 @@ permissions".
 {class}`~otto.host.local_host.LocalHost` copies files within the local
 filesystem, {class}`~otto.host.unix_host.UnixHost` transfers between the
 local machine and the remote host, and `EmbeddedHost` provides its own
-console/tftp transfer path; see {doc}`../cli/host/embedded`.
+console/tftp transfer path; see {doc}`../../cli/host/embedded`.
 
 `mode` follows the same split: it is honoured by
 {class}`~otto.host.local_host.LocalHost`, every
@@ -629,5 +629,5 @@ reaches the console and the log files.
 - `never` — redacts the I/O from every sink.
 
 Warnings and errors are never suppressed by the log mode, whichever one you
-pass. See {doc}`../cli/host/run` for the CLI-side view of the same
+pass. See {doc}`../../cli/host/run` for the CLI-side view of the same
 output.

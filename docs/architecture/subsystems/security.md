@@ -86,7 +86,7 @@ operational side — what an `SSLError` means and how to fix it without
 touching settings — is in the
 [inventory guide](../../configuration/inventory.md#the-netbox-backend).
 The helper a backend author calls is described in the
-[HTTPS clients guide](../../library/https-clients.md).
+[HTTPS clients guide](../../cookbook/extending/https-clients.md).
 
 ### Certificate scoping
 

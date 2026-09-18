@@ -98,7 +98,7 @@ Both `otto cov get` and this `otto test --cov` tail wrap one async library
 function — `collect_coverage()` — paired with `run_coverage_report()` for the
 HTML report. To drive collection and reporting from your own Python (CI glue or
 a custom pipeline), see the *Collecting coverage from Python* section of
-{doc}`../../library/index`.
+{doc}`../../cookbook/python-library`.
 ```
 
 ## Options

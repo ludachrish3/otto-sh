@@ -3,7 +3,7 @@
 A **suite** is a `Test`-prefixed subclass of
 {class}`~otto.suite.suite.OttoSuite`, which registers itself and becomes an
 `otto test` subcommand. This page is how to write one. For running suites,
-see {doc}`../cli/test/index`.
+see {doc}`../../cli/test/index`.
 
 ## Defining a test suite
 
@@ -109,7 +109,7 @@ top level of a listed directory.
 :::
 
 Auto-registration is one seam among many; see
-{doc}`Extension points <../architecture/subsystems/extension-points>` for the
+{doc}`Extension points <../../architecture/subsystems/extension-points>` for the
 registry machinery behind this and every other way otto can be extended.
 
 ## Options classes
@@ -137,11 +137,11 @@ delivers everything — as fixtures — and nothing otto-specific lives on
   gets `<run output dir>/<module stem>`. `test_dir` — `suite_dir/<test
   name>` (parametrized names sanitized), created when requested, like
   `tmp_path`, and one level deeper under a repeating run — see the
-  [artifact recipe](../cookbook/suite-recipes.md#per-test-artifact-directories).
+  [artifact recipe](../suite-recipes.md#per-test-artifact-directories).
 - `expect` — non-fatal assertions: `expect(cond, "why")` records a failure
   and keeps the test running; the test fails at the end with every failure
   listed, in the call phase like any other failure. A hard `assert` in the
-  body still wins. See the [expect recipe](../cookbook/suite-recipes.md#non-fatal-assertions-with-expect).
+  body still wins. See the [expect recipe](../suite-recipes.md#non-fatal-assertions-with-expect).
 - `ctx` — the active {class}`~otto.context.OttoContext`.
 
 **Logging.** Put `logger = logging.getLogger(__name__)` at the top of the
@@ -192,7 +192,7 @@ the same `otto.project` function `otto run <verb> --ensure` calls; a
 convergence that fails **errors the test with the failing host named** —
 never a skip ({class}`~otto.errors.EnsureStateError`). A misspelled step
 stops the run at collection. What each verb converges, and how a repo
-customizes it, is {doc}`../cli/run/defaults`.
+customizes it, is {doc}`../../cli/run/defaults`.
 
 ## Setup and teardown as fixtures
 

@@ -1,13 +1,11 @@
-# Python library
+# Using otto as a Python library
 
-Using otto as a library — otto is not limited to the `otto` CLI. You can use it directly in your own
+otto is not limited to the `otto` CLI. You can use it directly in your own
 async Python scripts — for example, one-off automation, CI tooling, or
 integration scripts that operate on lab hosts without needing test suites or
 instructions. otto ships inline type annotations under [PEP 561](https://peps.python.org/pep-0561/)
 (a `py.typed` marker in the installed package), so a consumer's type checker
 sees otto's real signatures rather than treating `import otto` as untyped.
-
-Short, task-shaped recipes for common situations are in the {doc}`../cookbook/index`.
 
 ## Imports are side-effect-free; `open_context()` runs the composition root
 
@@ -197,7 +195,7 @@ If your script needs to verify reservations before running, call
 `otto.reservations.check_reservations(...)` explicitly before entering the
 block. For the full build-a-backend → resolve-identity → gate → present
 walkthrough (including a complete, runnable example CLI to copy), see
-{doc}`Using the reservation library in your own CLI <reservation-backends>`.
+{doc}`Using the reservation library in your own CLI <extending/reservation-backends>`.
 
 ## In-memory labs (no lab file)
 
@@ -477,29 +475,3 @@ lab. To zero the counters *before* a run instead, call `clean_remote_gcda()`.
 
 See {doc}`../cli/cov/index` for the full CLI workflow, tier configuration, and
 the report format.
-
-## Authoring and extending
-
-```{toctree}
-:caption: Authoring
-
-writing-instructions
-writing-suites
-options-classes
-```
-
-```{toctree}
-:caption: Extending otto
-
-extending-cli
-cli-exposed-verbs
-custom-host-classes
-extending-backends
-extending-embedded
-lab-source-backends
-reservation-backends
-inventory-backends
-creds-backends
-https-clients
-custom-parsers
-```

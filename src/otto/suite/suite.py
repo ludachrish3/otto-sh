@@ -167,7 +167,7 @@ class OttoSuite:
     ``logging.getLogger(__name__)``. Suite-wide setup is a class-scoped,
     autouse, ``@classmethod`` yield fixture; per-test setup a function-scoped
     one. The full guide, including the mapping from ``setup_class`` and
-    friends, is ``docs/library/writing-suites.md``.
+    friends, is ``docs/cookbook/authoring/writing-suites.md``.
 
     Per-test timeouts are enforced by ``pytest-timeout`` (a runtime
     dependency). Apply ``@pytest.mark.timeout(seconds)`` to individual tests

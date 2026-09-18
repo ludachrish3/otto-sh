@@ -2,7 +2,7 @@
 A **code profile** registers a host *class*: Python that changes how otto
 talks to a host, not just what the lab entry says about it. Data profiles —
 named bundles of lab-data defaults — are configuration and live in
-{doc}`../configuration/os-profiles`.
+{doc}`../../configuration/os-profiles`.
 ## Code profiles
 
 Call `register_os_profile()` from an init module listed in `settings.toml`:
@@ -22,7 +22,7 @@ register_os_profile(
 ```
 
 A code registration overrides a data table of the same name (see
-{doc}`../configuration/os-profiles`), so an `[os_profiles]` table in
+{doc}`../../configuration/os-profiles`), so an `[os_profiles]` table in
 `settings.toml` cannot patch a profile a library registers in code. To change
 one, import the library in your own init module and call
 `register_os_profile` for that name afterwards, or register the variant under
@@ -126,7 +126,7 @@ asked of your class rather than silently skipped — and, given an `instance`,
 probes each verb against what your `capabilities` promise for it: a verb
 declared `refused` must raise `NotImplementedError`, and one declared anything
 else must not.  The probes run inside a dry-run context, so nothing connects and
-no bytes move; what each value means is in {doc}`../guide/hosts/families`.  Call
+no bytes move; what each value means is in {doc}`../../guide/hosts/families`.  Call
 it from a synchronous test — the probes drive their own event loop.
 
 Your `capabilities` are read per **class**, while behaviour can depend on the
@@ -136,7 +136,7 @@ and reports a violation on another, both truthfully — otto's own `unix` row
 declares `exec_user=authenticate`, which holds over `term="ssh"` while a
 `term="telnet"` host refuses.  Probe the configuration your declaration speaks
 for, and put the conditions in your row's `note` so a reader of
-{doc}`../guide/hosts/families` sees them too.
+{doc}`../../guide/hosts/families` sees them too.
 
 ## Composition
 
@@ -163,7 +163,7 @@ The profile's defaults are merged beneath the host's own fields; host fields
 always win.
 ## See also
 
-- {doc}`../configuration/lab-config` — `lab.json` schema and repo-level host defaults
-- {doc}`../cli/host/embedded` — embedded host classes, command frames, and filesystems
+- {doc}`../../configuration/lab-config` — `lab.json` schema and repo-level host defaults
+- {doc}`../../cli/host/embedded` — embedded host classes, command frames, and filesystems
 - {doc}`extending-embedded` — writing a custom command frame or filesystem
-- {doc}`../configuration/settings` — `init` modules and `settings.toml` field reference
+- {doc}`../../configuration/settings` — `init` modules and `settings.toml` field reference

@@ -270,7 +270,7 @@ That three-touch figure is a floor, not a ceiling: a present settings file
 turns its probing `stat` into a `stat` *and* an `open` — four touches — and a
 configured, cached `[inventory]` backend adds the biggest one of all, because
 its [snapshot
-cache](../library/inventory-backends.md#opting-into-the-snapshot-cache)
+cache](../cookbook/extending/inventory-backends.md#opting-into-the-snapshot-cache)
 content-hashes the stored snapshot against
 `<home>/inventory-cache/<slug>.meta.json` on every invocation that consults
 the cache — cold reads and completion, not just a warm `otto --help` — the
@@ -294,7 +294,7 @@ site:
   (The one content-based link in the chain is a cached inventory backend's
   snapshot hash — a raw-byte sha256, not a stat — and it agrees cross-machine
   at least as well: see [Opting into the snapshot
-  cache](../library/inventory-backends.md#opting-into-the-snapshot-cache).)
+  cache](../cookbook/extending/inventory-backends.md#opting-into-the-snapshot-cache).)
 - **Writes are atomic.** Every cache write lands in a tempfile beside the
   target and `os.replace`s it into place; a reader — on any machine — sees
   either the complete old file or the complete new one, never a partial

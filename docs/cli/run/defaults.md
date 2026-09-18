@@ -33,12 +33,12 @@ never by defining a standalone instruction of its own named `install`.
 
 A standalone instruction that tries to claim a project instruction's name — any
 of them, not only otto's six — is refused at registration; see
-[The collision error](../../library/writing-instructions.md#the-collision-error).
+[The collision error](../../cookbook/authoring/writing-instructions.md#the-collision-error).
 
 ## Zero effort: one repo, one command
 
 With products registered (see
-{doc}`Registering products <../../library/cli-exposed-verbs>`) and nothing else done:
+{doc}`Registering products <../../cookbook/extending/cli-exposed-verbs>`) and nothing else done:
 
 ```bash
 otto --lab my_lab run install
@@ -153,7 +153,7 @@ at init naming the keyword:
 
 A repo declaring a name otto has never heard of *is* the first declaration, so
 it sets all five, and a second repo declaring the same name inherits them. See
-[Project instructions](../../library/writing-instructions.md#project-instructions)
+[Project instructions](../../cookbook/authoring/writing-instructions.md#project-instructions)
 for the declaration in full.
 
 (fleet-of-interest)=

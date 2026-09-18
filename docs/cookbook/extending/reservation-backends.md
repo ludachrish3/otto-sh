@@ -3,12 +3,12 @@
 Otto reads reservation state through a **backend**: a small class that
 answers "who holds this resource right now, and until when?" against whatever
 scheduler your team already uses. The `json` backend ships with otto
-({doc}`../cli/reservation/json-backend`); anything else is a class you
+({doc}`../../cli/reservation/json-backend`); anything else is a class you
 register from your own repo.
 
 When your team already has a scheduler (Jira, a web API, a database), write a
 backend that talks to it instead of using the JSON file. A backend is a
-subclass of [`ReservationBackendBase`](../api/reservations.rst) that
+subclass of [`ReservationBackendBase`](../../api/reservations.rst) that
 implements its two abstract read-only methods — `fetch_reservations` and
 `backend_name`. Otto never calls a write method; the scheduler stays
 authoritative.
@@ -24,7 +24,7 @@ Both bounds default to *this instant*, so the unbounded call is "what does
 this user hold right now?". The rest of the rules the returned times must obey
 — timezone-awareness, one row per `(user, resource)`, and the rest — are in
 [Contract rules for implementers](#contract-rules-for-implementers) below.
-{doc}`../cli/reservation/windows` is the other half: what otto *does*
+{doc}`../../cli/reservation/windows` is the other half: what otto *does*
 with the times once a backend reports them.
 
 ```{warning}
@@ -57,7 +57,7 @@ ends after `end` is active during the window and must come back. `>` on the
 second clause is what drops rows that have already lapsed at the instant asked
 about — dropping lapsed rows is this comparison, not a separate pass. That
 strict `>` differs from the inclusive `<=` in
-[`Reservation.is_active`](../api/reservations.rst), which asks about a single
+[`Reservation.is_active`](../../api/reservations.rst), which asks about a single
 instant rather than a range; its docstring names the one row the two disagree
 about. A `None` on a *row* satisfies its clause unconditionally, which is what
 "unbounded" means.
@@ -88,7 +88,7 @@ true, and only `b.ends > window_start` can exclude an entry.
 ## Writing the class
 
 The base class is the recommended starting point, not a requirement: what
-otto actually checks is the [`ReservationBackend`](../api/reservations.rst)
+otto actually checks is the [`ReservationBackend`](../../api/reservations.rst)
 Protocol, satisfied by any class with the two methods. Inheriting buys you a
 `TypeError` naming any method you forgot the moment the class is
 instantiated, the cached `reservations` member every consumer reads (and the
@@ -161,7 +161,7 @@ mutating it corrupts the cache for the rest of the run.
 
 `fetch_reservations` answers "what does user X hold?". The *inverted* query —
 "who holds resource Y, and until when?" — is the optional
-[`SupportsResourceHolders`](../api/reservations.rst) capability:
+[`SupportsResourceHolders`](../../api/reservations.rst) capability:
 
 ```python
 def holders(self, resource: str) -> list[Reservation]: ...
@@ -190,7 +190,7 @@ that is already raising, so a backend that implements it by enumerating will
 scan once per missing resource in a refusal.
 
 Otto ships a small, dependency-free reference implementation —
-[`otto.examples.reservations.ExampleReservationBackend`](../api/examples.rst) —
+[`otto.examples.reservations.ExampleReservationBackend`](../../api/examples.rst) —
 that you can copy from `src/otto/examples/reservations.py` as a starting point.
 It demonstrates a multi-holder `holders`, a stable `backend_name`, and the
 optional `list_usernames` completion capability:
@@ -240,7 +240,7 @@ unregistered name raises an error listing the registered backends. This is the
 same named-registry mechanism otto uses for host sources, term/transfer
 backends, and host classes; an `init` module always imports before the
 reservation check runs, so the name is registered in time.
-See {doc}`Extension points <../architecture/subsystems/extension-points>` for
+See {doc}`Extension points <../../architecture/subsystems/extension-points>` for
 the registry machinery behind this and every other seam otto can be extended
 at.
 
@@ -368,7 +368,7 @@ the kwarg asserts *your* capability set rather than tightening the contract.
   `end is None` means it is open-ended and never expires. The Unix epoch and a
   far-future year are fabricated instants that no reader downstream can tell
   from real ones.
-- **Raise [`ReservationBackendError`](../api/reservations.rst)** for *every*
+- **Raise [`ReservationBackendError`](../../api/reservations.rst)** for *every*
   failure mode that prevents a definitive answer: network errors, timeouts,
   credential failures, malformed responses, missing data files. Do not swallow,
   do not return empty. The CLI surfaces this specific exception as a fail-closed
@@ -387,7 +387,7 @@ the kwarg asserts *your* capability set rather than tightening the contract.
   way custom lab backends do, and `username` as the identity `reservations`
   queries for.
 - **Optionally implement `list_usernames()`** to power cached `--holder`
-  completion (see [Username tab-completion](../cli/reservation/identity.md#username-tab-completion)).
+  completion (see [Username tab-completion](../../cli/reservation/identity.md#username-tab-completion)).
 - **Optionally implement `holders()`** if your scheduler can answer the
   inverted query — see [above](#the-optional-holders-capability).
 
@@ -395,8 +395,8 @@ the kwarg asserts *your* capability set rather than tightening the contract.
 
 Implementing the method **is** the signal. Otto detects each capability with
 `isinstance` against a `runtime_checkable` Protocol —
-[`SupportsUsernameCompletion`](../api/reservations.rst) is "has a callable
-`list_usernames`", [`SupportsResourceHolders`](../api/reservations.rst) is
+[`SupportsUsernameCompletion`](../../api/reservations.rst) is "has a callable
+`list_usernames`", [`SupportsResourceHolders`](../../api/reservations.rst) is
 "has a callable `holders`". There is no flag to set, nothing to
 register, and nothing on the base class to override: add the method to your
 subclass and the feature is on from the next run. Failing to implement the
@@ -470,22 +470,22 @@ own CLI) can run the exact same check without going through `otto` at all.
 Four steps:
 
 1. **Build** a backend from your tool's own settings with
-   [`build_backend`](../api/reservations.rst), passing the identity as
+   [`build_backend`](../../api/reservations.rst), passing the identity as
    `username=`. An empty settings dict (no
    `[reservations]` table at all) or `backend = "none"` resolves to
-   [`NullReservationBackend`](../api/reservations.rst) — a no-op, so this step
+   [`NullReservationBackend`](../../api/reservations.rst) — a no-op, so this step
    needs no live scheduler to exercise in a test. A dict with keys but no
    `backend` is refused: a present table is a specified checker and must name
    its backend.
 2. **Resolve** the effective identity with
-   [`resolve_username`](../api/reservations.rst).
-3. **Construct** a [`ReservationGate`](../api/reservations.rst) from the
+   [`resolve_username`](../../api/reservations.rst).
+3. **Construct** a [`ReservationGate`](../../api/reservations.rst) from the
    backend and identity and call `.evaluate()`.
 4. **Present** the result yourself. `evaluate()` returns a
    `ReservationGateResult` whose `warning` is plain text — the library never
    touches your terminal. `MissingReservationError` and
    `ReservationBackendError` (the same two exceptions from
-   [Fail-closed behavior](../cli/reservation/index.md#fail-closed-behavior))
+   [Fail-closed behavior](../../cli/reservation/index.md#fail-closed-behavior))
    are what you catch;
    exit codes, logging, and styling are entirely your call — `otto`'s own CLI
    wraps `warning` in rich markup, nothing here requires you to do the same.
@@ -502,11 +502,11 @@ than let that happen.
 | `ReservationBackendError` | `build_backend()` (construction) or `evaluate()` (query time)  | The backend itself couldn't answer — network, credentials, malformed data. |
 
 A complete, runnable example ships as
-[`otto.examples.reservations_cli`](../api/examples.rst)
+[`otto.examples.reservations_cli`](../../api/examples.rst)
 (`src/otto/examples/reservations_cli.py`) — copy it as a starting point. Its
 `run_check()` is steps 3-4, kept separate from the Typer command so it is
 directly testable against the Null backend or the
-[`ExampleReservationBackend`](../api/examples.rst) sample, no real scheduler
+[`ExampleReservationBackend`](../../api/examples.rst) sample, no real scheduler
 or CLI invocation required:
 
 ```{doctest}

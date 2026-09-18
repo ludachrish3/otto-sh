@@ -49,7 +49,7 @@ lifecycle bridge awaited. A returned `Result` supplies its own `exit_code`.
 `None` — what every side-effect-only first-party leaf returns — renders
 **nothing** and exits `0`, unless the leaf installed a `RenderPolicy` with a
 `none_message`; any other value prints as-is and exits `0`
-({doc}`../library/extending-cli`).
+({doc}`../cookbook/extending/extending-cli`).
 
 The front door looks like this — and every terminal block in these docs is
 **captured from the real CLI at build time** (a scaffolded demo repo, real
@@ -218,7 +218,7 @@ invoke wrapper detects the coroutine a plain `async def` leaf returned and
 bridges it through `run_command()`, so a third-party command gets host-scope
 entry, the two-stage policy, and the bounded teardown for free — the same
 policy the first-party commands run under
-({doc}`../library/extending-cli`).
+({doc}`../cookbook/extending/extending-cli`).
 
 A phase that owns its *own* event loop cannot be wrapped that way, and
 {func}`otto.lifecycle.sync_phase` is its sibling: the same two stages, but
@@ -339,5 +339,5 @@ async with otto.open_context(lab="my_lab") as ctx:
 loads and merges the requested lab(s), installs the context, and tears
 everything down — scope included — on exit. It does *not* run the reservation
 gate; that is a CLI-preamble concern, and scripts that want it call
-`check_reservations` explicitly. See {doc}`../library/index` for the
+`check_reservations` explicitly. See {doc}`../cookbook/python-library` for the
 user-facing walkthrough.

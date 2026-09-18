@@ -72,7 +72,7 @@ The top-level CLI is itself registry-backed. A
 First-party commands in `otto/cli/builtin_commands.py` and third-party
 commands both go through {func}`~otto.cli.registry.register_cli_command` (or
 the {func}`~otto.cli.registry.cli_command` decorator) — the symmetry rule
-again. See {doc}`../../library/extending-cli` for the how-to.
+again. See {doc}`../../cookbook/extending/extending-cli` for the how-to.
 
 The backend registries' `register_*()` functions take `overwrite=True` to
 replace an existing entry; `register_cli_command()` has no such escape hatch. A

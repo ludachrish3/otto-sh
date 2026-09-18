@@ -182,7 +182,7 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
 
     Examples:
         Narrow the fleet by id pattern — a FULL match, so the trailing
-        ``.*`` is what makes this a prefix (see :doc:`/library/index` for a
+        ``.*`` is what makes this a prefix (see :doc:`/cookbook/python-library` for a
         runnable, in-memory example)::
 
             import re

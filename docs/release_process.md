@@ -64,7 +64,7 @@ Pushing a `v*` tag fires [`.github/workflows/release.yml`](https://github.com/lu
   the web frontends first (they ship inside the wheel for air-gapped labs),
   runs the air-gap/brand gates, then `uv build` plus embed assertions —
   including that the wheel carries the `py.typed` marker described in the
-  {doc}`library docs <library/index>`. The build backend itself refuses an asset-less wheel,
+  {doc}`library docs <cookbook/python-library>`. The build backend itself refuses an asset-less wheel,
   so a bare `uv build` without the web step fails rather than publishing a
   frontend-less package.
 - **publish** uploads to PyPI via OIDC, gated by the `pypi` GitHub

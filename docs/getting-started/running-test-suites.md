@@ -73,7 +73,7 @@ dataclass decorator: decorating an Options class with it makes the class a
 pydantic dataclass, so its fields are validated. `otto --lab example_lab test
 TestExample --retries -1` fails with a clean CLI error (exit code 2) instead
 of being silently accepted. The same `@options` classes power `@instruction(options=...)`
-for `otto run` subcommands. See {doc}`../library/options-classes` for the full picture.
+for `otto run` subcommands. See {doc}`../cookbook/authoring/options-classes` for the full picture.
 
 The validation runs at construction time, so an out-of-range value is rejected
 before the suite ever runs:

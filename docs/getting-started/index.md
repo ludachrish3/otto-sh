@@ -107,7 +107,7 @@ running-test-suites
 - {doc}`../guide/hosts/index` -- What every host answers, and what each host family supports
 - {doc}`../cli/index` -- Every `otto` command, one page per verb
 - {doc}`../configuration/index` -- The project and lab files every command reads
-- {doc}`../cookbook/index` -- Short recipes for common situations
+- {doc}`../cookbook/index` -- Using otto from Python: authoring, extending, and short recipes
 - {doc}`../cli/docker/use-cases` -- Docker compose services as lab hosts
-- {doc}`../library/index` -- Using otto as a Python library
+- {doc}`../cookbook/python-library` -- Using otto as a Python library
 - {doc}`../api/index` -- Full API reference

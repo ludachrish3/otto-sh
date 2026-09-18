@@ -286,7 +286,7 @@ after every login-proxy hop, with a real session handle.
 
 A string selects the hook by name; an object names it in `type` and hands
 every other key to the hook as `ctx.params`. The hook itself is project
-code, registered from an `init` module — {doc}`../library/extending-backends`
+code, registered from an `init` module — {doc}`../cookbook/extending/extending-backends`
 has the contract and a copyable registration, and the Getting Started
 {doc}`../getting-started/customizations` page walks through three.
 

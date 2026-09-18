@@ -407,7 +407,7 @@ class TestTheDeclarationIsPerClassNotPerInstance:
 
         The violation is a statement about THIS INSTANCE's configuration, not a
         defect in `UnixHost`. `assert_host_conforms`'s docstring and
-        `docs/library/custom-host-classes.md` say so where an author reads
+        `docs/cookbook/extending/custom-host-classes.md` say so where an author reads
         them; this is the executable half.
         """
         with pytest.raises(

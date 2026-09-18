@@ -34,7 +34,7 @@ digraph testpipeline {
 Both paths transform a plain signature into CLI flags with the **same
 options-to-parameters machinery**: a parameter annotated with an options
 dataclass has its fields — including inherited ones, which is how
-repo-wide `RepoOptions` bases work ({doc}`../../library/options-classes`) —
+repo-wide `RepoOptions` bases work ({doc}`../../cookbook/authoring/options-classes`) —
 expanded into individual flags, and the populated instance is reconstructed
 at call time. One options hierarchy serves both instructions and suites.
 
@@ -146,7 +146,7 @@ flash, collect — with one body and an exit code from their returned
 {class}`~otto.result.Result`. Suites are *verdicts*: many independent test
 methods, pytest semantics, stability statistics, per-test artifacts. Shared
 repo-wide options classes keep the two consistent
-({doc}`../../library/options-classes`).
+({doc}`../../cookbook/authoring/options-classes`).
 
 ## Project instructions
 

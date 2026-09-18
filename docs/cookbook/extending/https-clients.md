@@ -10,7 +10,7 @@ otto's rule is **one way to trust a certificate: install it in the operating
 system** — the CA that lets a browser on the machine open the dashboard also
 lets otto's NetBox client, `curl` and `git` reach the same servers, with no
 otto-specific trust configuration anywhere (the reasoning is on the
-[security page](../architecture/subsystems/security.md#client-side-trust)).
+[security page](../../architecture/subsystems/security.md#client-side-trust)).
 {mod}`otto.tls` gives your backend the same trust in one call.
 
 ## A requests session
@@ -77,6 +77,6 @@ client = httpx.Client(verify=os_trust_context(), timeout=DEFAULT_TIMEOUT_SECONDS
 
 ## When the CA cannot be installed
 
-See [the NetBox backend](../configuration/inventory.md#the-netbox-backend)
+See [the NetBox backend](../../configuration/inventory.md#the-netbox-backend)
 for the `SSL_CERT_FILE` / `SSL_CERT_DIR` escape hatch — it applies to every
 `otto.tls` client, not only NetBox.

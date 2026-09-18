@@ -393,7 +393,7 @@ than taking the draw.
 thing called conformance and it is unrelated: `src/otto/testing/conformance.py`
 (re-exported as `otto.testing.assert_lab_repository_conforms` and
 `otto.testing.assert_reservation_backend_conforms`, and documented in
-{doc}`../library/lab-source-backends`) checks that a *pluggable backend
+{doc}`../cookbook/extending/lab-source-backends`) checks that a *pluggable backend
 interface* conforms — that someone's custom lab source or reservation store
 answers otto's protocol correctly. That is an API-shape check a third party
 runs against their own code. This lane is about HOSTS, and it runs real

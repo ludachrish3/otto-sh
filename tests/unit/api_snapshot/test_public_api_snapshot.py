@@ -64,7 +64,7 @@ def test_every_golden_line_resolves():
 def test_extractor_finds_a_known_documented_path():
     """The docs walk must not silently go vacuous.
 
-    ``docs/library/writing-suites.md`` teaches ``from otto.suite import
+    ``docs/cookbook/authoring/writing-suites.md`` teaches ``from otto.suite import
     OttoSuite`` in a real fenced example; if the walk ever stopped finding
     anything (wrong root, wrong glob, a fence-parsing regression that eats
     every block), this is the canary.

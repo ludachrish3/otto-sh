@@ -36,7 +36,7 @@ reads, and spells out the constructor the factory calls.
 records (``backend_name`` returns a plain ``str``), so every backend reports
 *when* a booking runs.  The rules those times obey — the window predicate, and
 what a ``None`` bound means on the query versus on a row — are stated once,
-under "The query window" in :doc:`../library/reservation-backends`.  Porting a
+under "The query window" in :doc:`../cookbook/extending/reservation-backends`.  Porting a
 backend written for otto 0.10 is covered in the same page's "Migrating from
 0.10".
 
@@ -49,7 +49,7 @@ inverted "who holds this resource, and until when?" query implements
 ``holders``.  Both are detected structurally with ``isinstance`` — implement
 the method or don't.  Omitting ``holders`` degrades only the refusal message,
 which then reports the holders as unknown;
-:doc:`../library/reservation-backends` is the implementer's guide to both.
+:doc:`../cookbook/extending/reservation-backends` is the implementer's guide to both.
 
 .. autoclass:: otto.reservations.SupportsUsernameCompletion
 
@@ -163,4 +163,4 @@ to ``super().__init__``.
 See :doc:`../getting-started/reservations` for a worked example — a small
 backend, its ``init`` module registration, its ``[reservations]`` table, and
 the conformance test that proves it — and
-:doc:`../library/reservation-backends` for the full implementer's contract.
+:doc:`../cookbook/extending/reservation-backends` for the full implementer's contract.

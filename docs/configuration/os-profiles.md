@@ -59,4 +59,4 @@ With this profile in place, a host entry only needs to name the profile:
 Unknown `base` values and unknown default field names raise `ValueError` at
 startup so typos fail loudly instead of silently no-opping.
 Registering a *code* profile — a new host class, or a subclass of one otto
-ships — is a Python author's job; see {doc}`../library/custom-host-classes`.
+ships — is a Python author's job; see {doc}`../cookbook/extending/custom-host-classes`.

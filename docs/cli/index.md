@@ -222,7 +222,7 @@ Read-only commands create no directory: `otto reservation`, `otto inventory`,
 group — it retrieves counters and stages them, so it takes the standard
 per-invocation directory like any other writing command (`--output/-o`
 overrides it).  Third-party commands control this with the `output_dir=`
-flag at registration — see {doc}`../library/extending-cli`.
+flag at registration — see {doc}`../cookbook/extending/extending-cli`.
 
 (run-tree)=
 ### Inside a run directory

@@ -70,7 +70,7 @@ Three postures cover every way the process gets configured:
   `NullHandler`; an embedding process opts in with one call,
   {func}`otto.logger.install <otto.logger.management.install>`, and undoes
   it with {func}`otto.logger.reset <otto.logger.management.reset>`. See
-  {doc}`the library page <../../library/index>` for the embedder API and
+  {doc}`the library page <../../cookbook/python-library>` for the embedder API and
   {ref}`[logging.levels] <logging-levels>` for the noise-floor table both
   the CLI and `install()` apply.
 

@@ -275,7 +275,7 @@ required `login` and four optional fields:
 |-------|------|--------------|
 | `login` | string | The account name (required). |
 | `password` | string or `null` | Password, or omit/`null` for key/agent auth on SSH (an empty line on telnet). |
-| `proxy` | string | Name of a registered login proxy (see {doc}`../library/extending-backends`) that drives the steps to *become* this login, after authenticating as `via`. Omit for a directly-loginable account — a proxy-less entry still uses the built-in `"su"` proxy when `switch_user`/`as_user` switches to it. |
+| `proxy` | string | Name of a registered login proxy (see {doc}`../cookbook/extending/extending-backends`) that drives the steps to *become* this login, after authenticating as `via`. Omit for a directly-loginable account — a proxy-less entry still uses the built-in `"su"` proxy when `switch_user`/`as_user` switches to it. |
 | `via` | string | The `login` of another entry in this same list to authenticate as first. Only valid alongside `proxy`. Omit to default to the first proxy-less (directly-loginable) entry. |
 | `params` | object | Free-form data handed to the proxy callable (e.g. a container name, a service name). Otto interprets only two keys: `login_shell` (default `true`) in the built-in `"su"` proxy, and `expect_prompt` for any proxy that declares a prompt — see below. |
 | `protocols` | list of strings | The protocols this entry is **for** — names of self-authenticating backends: `ssh`, `telnet`, `ftp` (a custom backend that declares `authenticates` joins the list). Omit for an entry that applies to every protocol. See {ref}`cred-protocols`. |
@@ -445,7 +445,7 @@ explicit and ordered, rather than relying on dict insertion order.
 Any **registered** backend can be named by a source entry. Register yours from
 an `init` module (one of the modules listed in `init = [...]`), then select it —
 the `LabRepository` protocol the class must satisfy is in
-{doc}`../library/lab-source-backends`:
+{doc}`../cookbook/extending/lab-source-backends`:
 
 ```python
 # my_lab_source.py  (listed in init = [...])

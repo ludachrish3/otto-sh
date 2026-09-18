@@ -1,26 +1,26 @@
 # Lab source backends
 
 Otto reads its hosts through **host-data sources** declared in
-`[[lab.sources]]` — see {doc}`../configuration/host-sources` for the
+`[[lab.sources]]` — see {doc}`../../configuration/host-sources` for the
 declaration syntax and merge order. The `json` backend ships with otto;
 anything else (a CMDB, an inventory API, a scheduler's asset list) is a class
 you register from your own repo. This page is that contract.
 
 ## The interface
 
-A host source implements the [`LabRepository`](../api/labs.rst) protocol —
+A host source implements the [`LabRepository`](../../api/labs.rst) protocol —
 two read-only methods:
 
 `load_lab(name, preferences=None) -> Lab`
 : Build and return the named lab. Raises
-  [`LabNotFoundError`](../api/labs.rst) if the name is unknown. Populate the
+  [`LabNotFoundError`](../../api/labs.rst) if the name is unknown. Populate the
   reservation identifiers at every level your equipment uses: `Lab.resources`
   for what the lab reserves as a whole, and, on each host it builds,
   `element.resources` for the element it belongs to and `resources` for the
   host itself. Both host-side sets are `frozenset[str]`; a host built through
-  [`create_host_from_dict`](../api/host/factory.rst) gets the element's set
+  [`create_host_from_dict`](../../api/host/factory.rst) gets the element's set
   from the `Element` passed as `element=` and the host's own from the host
-  dict's `resources` key. See {doc}`../cli/reservation/index` for what
+  dict's `resources` key. See {doc}`../../cli/reservation/index` for what
   the three levels mean.
 
 `list_labs() -> list[str]`
@@ -57,7 +57,7 @@ just make it a decision rather than an omission.
   the {doc}`migration note <inventory-backends>`); otto always passes it by
   keyword, and `assert_lab_repository_conforms` checks the signature.
   Implementing
-  [`SupportsHostSummaries`](../api/labs.rst) is purely an optimization —
+  [`SupportsHostSummaries`](../../api/labs.rst) is purely an optimization —
   otto detects it structurally, and a backend that omits it still gets
   completion, because otto falls back to `list_labs()` + `load_lab()`.
 
@@ -71,7 +71,7 @@ just make it a decision rather than an omission.
     applies the same profile merge and validation the host factory applies,
     which hand-formatting silently gets wrong (a numeric field arriving as
     `3.0`, or an `os_profile` that supplies `board`/`slot`). See
-    [`host_identity`](../api/host/factory.rst).
+    [`host_identity`](../../api/host/factory.rst).
   - **Every host `load_lab()` produces must be summarized.** Otherwise
     completion simply stops offering it, and nothing anywhere says so.
   - **Every FIELD must match**, not just `id`. `HostSummary`'s fields have
@@ -99,13 +99,13 @@ just make it a decision rather than an omission.
 A backend is any class satisfying the two required methods (plus, optionally,
 `list_host_summaries`). Otto ships a small,
 dependency-free reference implementation —
-[`otto.examples.lab_repository.ExampleLabRepository`](../api/examples.rst) — that
+[`otto.examples.lab_repository.ExampleLabRepository`](../../api/examples.rst) — that
 you can copy from `src/otto/examples/lab_repository.py` as a starting point. It
 holds a mapping of lab name to element dicts — each grouping its own host
 dicts — builds one `Element` per group, resolves each host dict's inventory
 reference with `resolve_host_entry(record, inventory, element)` (a
 pass-through when the record carries no `inventory` key), and builds real
-hosts with [`create_host_from_dict`](../api/host/factory.rst) (`element=`
+hosts with [`create_host_from_dict`](../../api/host/factory.rst) (`element=`
 that same `Element`, `inventory_ref=` the resolution's `ref`) so each becomes
 a `RemoteHost` keyed by its `id` — which is what the rest of otto expects.
 Note where its resources live: a *second* mapping, lab name to
@@ -145,13 +145,13 @@ not found
 ## Error contract
 
 A backend signals trouble through two exceptions (from
-[`otto.labs`](../api/labs.rst)):
+[`otto.labs`](../../api/labs.rst)):
 
-[`LabNotFoundError`](../api/labs.rst)
+[`LabNotFoundError`](../../api/labs.rst)
 : `load_lab` was asked for a name the backend does not know. Raise this — never
   return `None` or raise a bare `KeyError`.
 
-[`LabRepositoryError`](../api/labs.rst)
+[`LabRepositoryError`](../../api/labs.rst)
 : Any other failure (I/O, network, parse, credentials) that prevents a
   definitive answer. `LabNotFoundError` is a subclass, so callers can catch the
   base.

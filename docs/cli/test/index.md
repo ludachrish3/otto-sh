@@ -30,8 +30,8 @@ Suite names tab-complete from the registry; `--list-suites` lists them:
 ```
 
 Suites can also run as a plain library call, with no CLI/Typer involved — see
-[Running suites from Python](../../library/index.md#running-suites-from-python)
-in the Python library guide.
+[Running suites from Python](../../cookbook/python-library.md#running-suites-from-python)
+in the Cookbook.
 
 ## Synopsis
 
@@ -174,7 +174,7 @@ logs a warning naming them, disables collection, and lets the tests run.
 
 `@pytest.mark.ensure("installed")`
 : Converge the lab through the named steps before the test — see
-  {doc}`../../library/writing-suites` (Declaring lab state).
+  {doc}`../../cookbook/authoring/writing-suites` (Declaring lab state).
 
 `@pytest.mark.parametrize("arg", [values])`
 : Run the test once per value.  Each parameter combination gets its own

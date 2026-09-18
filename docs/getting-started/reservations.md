@@ -78,7 +78,7 @@ methods, and forwards the three constructor arguments otto passes (`url`,
 everything but the file read and its `path` setting is what every backend
 looks like. It also implements the optional `holders` — the inverted "who
 holds this?" query. `@override` marks only the two required methods
-([A note on @override](../library/reservation-backends.md#a-note-on-override-in-the-samples)):
+([A note on @override](../cookbook/extending/reservation-backends.md#a-note-on-override-in-the-samples)):
 
 ```{literalinclude} ../examples/getting-started/libs/gs_example/reservations.py
 :language: python
@@ -88,7 +88,7 @@ holds this?" query. `@override` marks only the two required methods
 
 When that API is HTTPS, {func}`otto.tls.os_trust_session` gives you a
 client that trusts the CA your organisation installed on the machine, with
-no `verify=` anywhere — see {doc}`../library/https-clients`.
+no `verify=` anywhere — see {doc}`../cookbook/extending/https-clients`.
 
 Registered by name from the `init` module, then selected by that name:
 
@@ -136,7 +136,7 @@ os.chdir(_old_cwd)
 The rules it checks — never mutate, return the full set, raise for every
 failure, match identifiers byte for byte — and the optional capabilities
 (`holders`, username completion: implement the method and otto detects it) are
-in {doc}`../library/reservation-backends`. Because `holders` is optional,
+in {doc}`../cookbook/extending/reservation-backends`. Because `holders` is optional,
 dropping it leaves the helper green while refusals start saying
 `held by: unknown`; a backend that means to answer the inverted query passes
 `expect_holders=True`, described there.

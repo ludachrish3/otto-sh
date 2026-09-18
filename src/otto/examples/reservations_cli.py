@@ -3,7 +3,7 @@
 :mod:`otto.reservations` has no dependency on Typer, rich, or otto's own CLI
 machinery — this small app is the starting point for wiring the same plumbing
 into your own tool. Copy it, or run it as-is (see
-``docs/library/reservation-backends.md`` → "Using the reservation library in
+``docs/cookbook/extending/reservation-backends.md`` → "Using the reservation library in
 your own CLI" for the walkthrough):
 
 1. **Build** a backend from settings with :func:`~otto.reservations.build_backend`.

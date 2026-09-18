@@ -16,8 +16,8 @@ records no times report `None`.
 ## Where the rules live
 
 Backend implementers: the timing contract is in
-[Contract rules for implementers](../../library/reservation-backends.md#contract-rules-for-implementers)
-and [The query window](../../library/reservation-backends.md#the-query-window).
+[Contract rules for implementers](../../cookbook/extending/reservation-backends.md#contract-rules-for-implementers)
+and [The query window](../../cookbook/extending/reservation-backends.md#the-query-window).
 
 Two consequences are worth knowing as a user, whichever backend your team
 runs. A booking your scheduler cannot put an end on is reported as
@@ -63,8 +63,8 @@ invocation checks reservations live, straight against the backend.
 
 ## What the conformance helper checks
 
-[`assert_reservation_backend_conforms`](../../library/reservation-backends.md#verify-your-backend)
+[`assert_reservation_backend_conforms`](../../cookbook/extending/reservation-backends.md#verify-your-backend)
 enforces those contract rules for every backend, not just the ones that opt in
 — including two checks of the window predicate, and what they can and cannot
 see — see
-[How the window predicate is checked](../../library/reservation-backends.md#how-the-window-predicate-is-checked).
+[How the window predicate is checked](../../cookbook/extending/reservation-backends.md#how-the-window-predicate-is-checked).

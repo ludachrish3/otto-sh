@@ -8,7 +8,7 @@ default body for each; a repo replaces its own body, and adds flags of its own
 to the command.
 
 That is the difference from a **standalone instruction** (the `@instruction`
-on a plain async function that {doc}`../library/writing-instructions` opens
+on a plain async function that {doc}`../cookbook/authoring/writing-instructions` opens
 with): a standalone instruction has one body, belongs to one repo, and is its
 own command. A project instruction is shared, and every repo that has a body
 for it runs in dependency order under the one command.
@@ -21,7 +21,7 @@ standalone instruction named `install`. otto refuses that one at startup,
 naming the repo, the instruction and the guide page that spells the override
 out ({doc}`../cli/run/defaults`); the message and the two
 ways to migrate an existing `install` instruction are in
-[The collision error](../library/writing-instructions.md#the-collision-error).
+[The collision error](../cookbook/authoring/writing-instructions.md#the-collision-error).
 
 `otto run install`, a script calling `await otto.project.install()`, and a
 test marked `@pytest.mark.ensure("installed")` all run the same bodies.
@@ -142,9 +142,9 @@ Sharing the whole install class is the shortest version and puts `--ensure` on
 the suite too. The usual shape is the one the flag-sharing rule above already
 described: put `variant` on a small repo-wide options class, and let both the
 install options and the suite's `Options` inherit *that*. See
-{doc}`../library/options-classes`.
+{doc}`../cookbook/authoring/options-classes`.
 
 The suite side of the marker is in
-{doc}`../library/writing-suites`; the declaration rules on this page have their
-home in {doc}`../library/writing-instructions` under *Project instructions*,
+{doc}`../cookbook/authoring/writing-suites`; the declaration rules on this page have their
+home in {doc}`../cookbook/authoring/writing-instructions` under *Project instructions*,
 and the composition rules in {doc}`../cli/run/defaults`.

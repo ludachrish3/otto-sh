@@ -41,7 +41,7 @@ project carries the shortest script that proves the round trip:
 ```
 
 The built-in `su` proxy is registered the same way —
-{doc}`../library/extending-backends` shows it, the contract, and a
+{doc}`../cookbook/extending/extending-backends` shows it, the contract, and a
 container-entering example.
 
 ## After connecting
@@ -152,7 +152,7 @@ telnet through the `test4` hop; only the landing changed:
 The inventory twin of the `unix` lab declares no init module, so it carries
 no hook: a hook is project code. The field reference is
 in {ref}`per-host-session-setup`; the contract, and what a two-dialect host
-can and cannot do, in {doc}`../library/extending-backends`.
+can and cannot do, in {doc}`../cookbook/extending/extending-backends`.
 
 ## Adding a metric
 
@@ -170,7 +170,7 @@ entropy on every host that has no parser set of its own:
 otto's built-in sockets metric runs `ss -s`, and BusyBox ships no `ss`
 applet. A host without `ss` produces a shell error the parser cannot match,
 so the series simply never appears — a missing command is not an error otto
-recovers from (see *Parser health* in {doc}`../library/custom-parsers`). The
+recovers from (see *Parser health* in {doc}`../cookbook/extending/custom-parsers`). The
 fix is the same shape as adding one — a parser with the same series names
 and a command the guest does have — registered for those hosts only:
 
@@ -214,5 +214,5 @@ registration above is how a project replaces it.
 Three of the bed's Zephyr targets are monitored over SNMP rather than a
 shell — an `snmp` block on the entry, otto's descriptors for the enterprise
 OIDs its test firmware serves. {doc}`../cli/monitor/metrics` covers it
-under *SNMP monitoring*. {doc}`../library/custom-parsers` is the reference for
+under *SNMP monitoring*. {doc}`../cookbook/extending/custom-parsers` is the reference for
 everything else on this page.

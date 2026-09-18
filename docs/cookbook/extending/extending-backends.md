@@ -18,7 +18,7 @@ registration runs before any lab data loads. The two seams are:
   (plus the reserved `tftp`).
 
 For the lab-data fields that select them (`term`, `transfer`), see
-{doc}`../configuration/lab-config`; for the host classes that carry them, see {doc}`../configuration/os-profiles`.
+{doc}`../../configuration/lab-config`; for the host classes that carry them, see {doc}`../../configuration/os-profiles`.
 
 ## Registration errors and replacing a built-in
 
@@ -83,7 +83,7 @@ transfer with no intermediate observation, as `console`'s get is — declares
 that arm `None` and **must** explain itself in `note`; the dataclass refuses a
 `None` arm with an empty note, and refuses a stride that is not a positive
 byte count, so a bad declaration cannot even be constructed. The note appears
-beside the promise on {doc}`../guide/hosts/families`, so write it for a user
+beside the promise on {doc}`../../guide/hosts/families`, so write it for a user
 reading it there.
 
 A backend whose stride is configured per instance declares its DEFAULT on the
@@ -230,7 +230,7 @@ Because the selector validator and `otto schema export` both read the **live
 registry** after init modules load, the new `xmodem` name is accepted in lab
 data, appears in shell completion, and is included in the generated JSON Schema
 automatically — there is nothing else to wire up. (For the schema export, see
-{doc}`../cli/schema/editors`.)
+{doc}`../../cli/schema/editors`.)
 
 A custom `term` backend follows the same shape against
 {class}`~otto.host.connections.ConnectionManager` and
@@ -324,7 +324,7 @@ cred with no password gets an error naming the account that asked.
 otto expects a challenge on every hop whose via account is not `root`, for
 every proxy that declares `prompt=`; a cred's `expect_prompt` param overrides
 that prediction either way (see `params` in
-{doc}`../configuration/host-sources`).
+{doc}`../../configuration/host-sources`).
 
 The probe reads back `id -un` as well as `$?`, so the resync also proves
 **who** answered. A rejected password — `su` reports the failure and exits
@@ -390,7 +390,7 @@ default to the first directly-loginable entry):
 `proxy` names are validated against the registry at lab-load time, in the same
 place and the same way as `term`/`transfer` selectors — a typo'd proxy name
 fails loud at load, listing the registered proxies, rather than failing later
-mid-connection. See {doc}`../configuration/host-sources` for the full `creds` field reference,
+mid-connection. See {doc}`../../configuration/host-sources` for the full `creds` field reference,
 including the ownership consequences of proxying (which transfer paths land
 files owned by the via-user vs. the proxied target user).
 
@@ -527,9 +527,9 @@ a host that sets either key itself wins over the profile, field by field.
 ## See also
 
 - {doc}`extending-embedded` — custom command frames and embedded filesystems
-- {doc}`../configuration/os-profiles` — registering a custom host class that bundles these
-- {doc}`../configuration/lab-config` — the `term` / `transfer` lab-data fields
-- {doc}`../configuration/host-sources` — the `creds` field reference and login-proxy ownership
+- {doc}`../../configuration/os-profiles` — registering a custom host class that bundles these
+- {doc}`../../configuration/lab-config` — the `term` / `transfer` lab-data fields
+- {doc}`../../configuration/host-sources` — the `creds` field reference and login-proxy ownership
   consequences
 - {doc}`creds-backends` — a creds store of your own
-- {doc}`../cli/schema/editors` — `otto schema export` for editor autocompletion
+- {doc}`../../cli/schema/editors` — `otto schema export` for editor autocompletion

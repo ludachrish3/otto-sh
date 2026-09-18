@@ -559,7 +559,7 @@ def _expect_no_lapsed_rows(
     it reads ``.end`` only for the expiry warning and the "held by … until"
     text — so a lapsed row admits a user whose booking is over.  It fails OPEN.
 
-    The published predicate (``docs/library/reservation-backends.md``, "The
+    The published predicate (``docs/cookbook/extending/reservation-backends.md``, "The
     query window") is ``row.end is None or row.end > start``, with ``start``
     substituted as ``now`` for the unbounded call.  So for the default query
     every returned row must satisfy ``row.end is None or row.end > now``, and

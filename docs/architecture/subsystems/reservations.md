@@ -43,7 +43,7 @@ starting a run.
   {class}`~otto.reservations.protocol.Reservation` rows carrying `start` and
   `end`, so the expiry warning fires for every backend rather than only for
   the ones that opted in (the rules those bounds obey are the implementer's
-  contract — {doc}`../../library/reservation-backends`). What stays optional
+  contract — {doc}`../../cookbook/extending/reservation-backends`). What stays optional
   is
   {class}`~otto.reservations.protocol.SupportsResourceHolders` — `holders`,
   the inverted "who holds this?" query, isinstance-detected like

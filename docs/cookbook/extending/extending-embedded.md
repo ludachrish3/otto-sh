@@ -13,8 +13,8 @@ The two stories often pair (a new RTOS usually has both a new shell and a new
 filesystem), but they are independent — you can add one without the other.
 Both register from an `init` module listed in `.otto/settings.toml`, so the
 registration runs before any lab data loads. For the lab-data fields that
-select them (`command_frame`, `filesystem`), see {doc}`../configuration/lab-config`; for the
-host class that carries them, see {doc}`../configuration/os-profiles`.
+select them (`command_frame`, `filesystem`), see {doc}`../../configuration/lab-config`; for the
+host class that carries them, see {doc}`../../configuration/os-profiles`.
 
 ## Adding a shell dialect (a `CommandFrame`)
 
@@ -107,7 +107,7 @@ register_command_frame("myshell", MyShellFrame)
 
 For a target that should carry the frame as its default (the way `ZephyrHost`
 defaults to `ZephyrFrame`), ship a host subclass instead — see *Custom host
-classes* in {doc}`../configuration/os-profiles`.
+classes* in {doc}`../../configuration/os-profiles`.
 
 ### Bringing a new shell up
 
@@ -235,6 +235,6 @@ data, not runtime-detected.
 
 ## See also
 
-- {doc}`../cli/host/embedded` — the embedded-host user guide (selecting frames/filesystems)
-- {doc}`../configuration/os-profiles` — registering a custom host class that bundles these
-- {doc}`../configuration/lab-config` — the `command_frame` / `filesystem` lab-data fields
+- {doc}`../../cli/host/embedded` — the embedded-host CLI page (selecting frames/filesystems)
+- {doc}`../../configuration/os-profiles` — registering a custom host class that bundles these
+- {doc}`../../configuration/lab-config` — the `command_frame` / `filesystem` lab-data fields

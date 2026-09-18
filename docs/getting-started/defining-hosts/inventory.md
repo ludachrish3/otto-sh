@@ -83,5 +83,5 @@ The JSON inventory is stage one of three. Stage two is NetBox — the same
 export`/`diff` to migrate — and stage three is keeping NetBox otto-healthy.
 {doc}`../../configuration/inventory` walks all three under *Adoption
 path*; this page does not repeat it. When the answer is neither JSON nor
-NetBox, {doc}`../../library/inventory-backends` is the contract a backend
+NetBox, {doc}`../../cookbook/extending/inventory-backends` is the contract a backend
 implements and the conformance test it must pass.

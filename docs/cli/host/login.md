@@ -33,6 +33,6 @@ otto --lab my_lab host --hop jumpbox router1 login
 
 **`--user NAME`.**  Open the shell as this user. Containers implement it via
 `docker exec -u`; unix hosts replay any login-proxy hops needed to reach that
-login (see {doc}`../../library/extending-backends`); host families that can
+login (see {doc}`../../cookbook/extending/extending-backends`); host families that can
 do neither raise. See {ref}`container-users` for how the container case
 combines with a compose fragment's declared default and the image's `USER`.

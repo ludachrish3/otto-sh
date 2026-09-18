@@ -7,10 +7,10 @@ found.
 Before the first entry, know where the two things this section grows into
 come from. Host *facts* — addresses, credentials, rack positions — can be
 typed inline, as this page does, or referenced from an **inventory**: a JSON
-file, NetBox, or a backend you write ({doc}`../../library/inventory-backends`).
+file, NetBox, or a backend you write ({doc}`../../cookbook/extending/inventory-backends`).
 And the lab can be gated by a **reservation scheduler** ({doc}`../reservations`)
 — the JSON file otto ships, or a backend you write
-({doc}`../../library/reservation-backends`).
+({doc}`../../cookbook/extending/reservation-backends`).
 Both seams are pluggable; the pages that follow use the shipped backends and
 link to the contract when you outgrow them.
 

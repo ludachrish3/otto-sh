@@ -8,7 +8,7 @@ team database — is a class you register from your own repo.
 
 This page is the contract. The user-facing side — the `[creds]` table, the
 three-layer merge, what the doctor checks — lives in
-{doc}`../configuration/inventory`.
+{doc}`../../configuration/inventory`.
 
 ## The protocol
 
@@ -99,7 +99,7 @@ backend.
 you pass `overwrite=True`; {func}`~otto.creds.get_creds_backend_class`
 resolves a name. This is the same named-registry mechanism otto uses for
 inventories, host sources and reservation backends — see
-{doc}`Extension points <../architecture/subsystems/extension-points>`.
+{doc}`Extension points <../../architecture/subsystems/extension-points>`.
 
 ## Proving it
 

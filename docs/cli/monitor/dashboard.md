@@ -170,7 +170,7 @@ pressing **Delete** twice ("Really delete?") before it takes effect.
 
 **Live during a test run.** When a test uses `start_monitor()` (see
 [Monitoring from test
-suites](../../library/custom-parsers.md#monitoring-from-test-suites)), both
+suites](../../cookbook/extending/custom-parsers.md#monitoring-from-test-suites)), both
 the automatic per-test start/pass/fail marks and any `add_monitor_event`
 call appear on that run's open dashboard the moment they're recorded —
 the same live `/api/stream` feed the metrics ride — so there's no reload

@@ -16,7 +16,7 @@ otto --lab my_lab host router1 run "cd /tmp" "ls -la"
 The host's built-in logging displays each command and its output as it runs --
 the same output you see inside instructions and test suites. Calling `run` from
 Python can narrow that per command; see
-[Log modes](../../library/writing-instructions.md#log-modes).
+[Log modes](../../cookbook/authoring/writing-instructions.md#log-modes).
 
 ## `run` options
 
