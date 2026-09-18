@@ -184,7 +184,7 @@ async def test_capture_logs(self, test_dir) -> None:
 Both are created when first requested, like `tmp_path`; a test that never
 names them leaves nothing behind.
 
-Under `--iterations` or `--duration` ({doc}`../guide/cli/test/index`), one
+Under `--iterations` or `--duration` ({doc}`../cli/test/index`), one
 more level follows and `test_dir` becomes
 `<run output dir>/TestDevice/test_capture_logs/iteration_1/`, then
 `iteration_2/`, and so on — the numbering matches the `--- test_capture_logs
@@ -219,7 +219,7 @@ Ownership is stack-level and all-or-nothing.
 
 `--on`, `--provide`, `--env` and service narrowing are all keyword arguments
 here (`on=`, `provide=`, `env=`, `services=`); see
-{doc}`../guide/cli/docker/use-cases` for what each one does and
+{doc}`../cli/docker/use-cases` for what each one does and
 {mod}`otto.docker.deployment` for the signatures.
 
 The per-repo primitives stay public and supported —

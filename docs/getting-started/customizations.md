@@ -192,7 +192,7 @@ A registration is only worth anything if the guest answers the command it
 brings. This script builds a collector for one host — which resolves that
 host's parser set exactly as the monitor does — polls it for a few ticks,
 and prints one line per series collected. `otto test --monitor`
-({doc}`../guide/cli/monitor/during-tests`) is the same collector driven by
+({doc}`../cli/monitor/during-tests`) is the same collector driven by
 the suite runner; this page drives the collector directly so the proof needs
 no suite.
 
@@ -216,6 +216,6 @@ registration above is what a project does.
 Three of the bed's Zephyr targets are monitored over SNMP rather than a
 shell — an `snmp` block on the entry, otto's descriptors for the enterprise
 OIDs its test firmware serves. This page does not yet capture that run; the
-pointer is the whole of it, and {doc}`../guide/cli/monitor/metrics` covers it
+pointer is the whole of it, and {doc}`../cli/monitor/metrics` covers it
 under *SNMP monitoring*. {doc}`../library/custom-parsers` is the reference for
 everything else on this page.

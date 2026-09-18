@@ -26,7 +26,13 @@ from otto.host.remote_host import make_host_id
 from tests._fixtures.labdata import flat_hosts
 from tests._fixtures.paths import PROJECT_ROOT
 
-DOCS = PROJECT_ROOT / "docs" / "guide"
+DOCS = PROJECT_ROOT / "docs"
+# Scan every ``*.md`` page under docs/ rather than an enumerated list of
+# trees, so this guard cannot go stale the next time a tree is renamed,
+# promoted, or a new one grows a ``--hosts`` example — only the paths Sphinx
+# itself treats as non-page content are excluded (see ``exclude_patterns``
+# in docs/conf.py) plus its own build output.
+_EXCLUDED_DIRS = {"superpowers", "_build", "_inventories", "examples"}
 
 _HOSTS_RE = re.compile(r"--hosts\s+(\S+)")
 
@@ -49,11 +55,20 @@ def _interface_counts() -> dict[str, int]:
     return counts
 
 
+def _pages() -> list[Path]:
+    """Every doc page under docs/, minus the non-page trees Sphinx excludes."""
+    return [
+        page
+        for page in sorted(DOCS.rglob("*.md"))
+        if not _EXCLUDED_DIRS & set(page.relative_to(DOCS).parts[:-1])
+    ]
+
+
 def _examples() -> list[tuple[Path, str, str]]:
     """Every ``(page, entry, full-value)`` a ``--hosts`` example names."""
     return [
         (page, entry, value)
-        for page in sorted(DOCS.rglob("*.md"))
+        for page in _pages()
         for value in _HOSTS_RE.findall(page.read_text())
         for entry in value.split(",")
         if entry and not any(t in entry for t in _NOT_A_PLAIN_HOST)
@@ -83,7 +98,7 @@ def test_a_multi_homed_host_is_never_named_without_its_interface() -> None:
             continue
         count = counts.get(entry)
         if count is not None and count > 1:
-            offenders.append(f"{page.relative_to(DOCS.parent)}: --hosts {value} (entry {entry!r})")
+            offenders.append(f"{page.relative_to(DOCS)}: --hosts {value} (entry {entry!r})")
     assert not offenders, (
         "these documented commands name a multi-homed host without an interface "
         "and fail with 'ambiguous interface':\n  " + "\n  ".join(offenders)

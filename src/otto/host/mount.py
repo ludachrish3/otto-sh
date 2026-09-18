@@ -3,7 +3,7 @@
 A bind mount or named volume gives one directory two names: one inside the
 container, one on the parent. otto DERIVES the pairing (from ``docker
 inspect``, see :mod:`otto.docker.mounts`) rather than accepting a
-declaration -- see :doc:`/guide/cli/docker/index`'s "Shared directories"
+declaration -- see :doc:`/cli/docker/index`'s "Shared directories"
 section for why, and for how callers use it.
 
 The matching here is deliberately pure: it takes a list of

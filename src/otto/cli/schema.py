@@ -8,7 +8,7 @@ always match the running version. By default, schemas land in ``.otto/schemas/``
 the same location that ``otto init`` scaffolds and where the doctor checks for
 staleness. Point your editor at the emitted files for autocomplete + typo-catching
 on ``lab.json``, ``settings.toml``, the reservations JSON, and a ``json``
-inventory file. See the "Editor schemas" user guide.
+inventory file. See the "Editor schemas" CLI reference.
 """
 
 import json

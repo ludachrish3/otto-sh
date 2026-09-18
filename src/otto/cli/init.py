@@ -248,7 +248,7 @@ def _scaffold_editor_wiring(root: Path) -> list[Path]:
             if target.name == "settings.json":
                 typer.echo(
                     "existing .vscode/settings.json left untouched — see "
-                    "docs/guide/cli/schema/editors.md for the schema associations"
+                    "docs/cli/schema/editors.md for the schema associations"
                 )
             continue
         vscode.mkdir(exist_ok=True)

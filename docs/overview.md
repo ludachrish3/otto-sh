@@ -16,7 +16,7 @@ collecting performance data.
 
 ## Where to start
 
-- **Drive your lab from the CLI** → the {doc}`User Guide <guide/index>`,
+- **Drive your lab from the CLI** → the {doc}`CLI Reference <cli/index>`,
   one section per functional area.
 - **Script otto from Python** → the {doc}`Python library <library/index>`
   section (the {doc}`API reference <api/index>` backs it).
@@ -29,7 +29,7 @@ Otto serves two audiences, and the documentation is organized around them:
 
 CLI users
 : Interact with otto through the `otto run`, `otto test`, and `otto monitor`
-  commands.  See the {doc}`guide/index` for command-level documentation.
+  commands.  See the {doc}`cli/index` for command-level documentation.
 
 API builders
 : Import otto's Python packages to build higher-level automation on top of
@@ -62,7 +62,7 @@ Every lab automatically contains a built-in `local` host — a
 {class}`~otto.host.local_host.LocalHost` for the machine otto itself runs
 on, usable as `otto host local <verb>` with no configuration.  It is
 excluded from lab-wide fleet helpers by default so a deploy or monitoring
-sweep never silently operates on the runner; see {doc}`guide/cli/run/index` for the
+sweep never silently operates on the runner; see {doc}`cli/run/index` for the
 opt-in.
 
 ### Results
@@ -245,7 +245,7 @@ Monitoring can also be started from within a test suite using
 - {doc}`getting-started/index` — Installation and first steps
 - {doc}`installation` — Air-gapped installs, team setup, offline docs
 - {ref}`team-setup-checklist` — One-time team setup (host source, reservations, libs)
-- {doc}`guide/cli/index` — Every `otto` command, one page per verb
+- {doc}`cli/index` — Every `otto` command, one page per verb
 - {doc}`guide/configuration/index` — The project and lab files every command reads
 - {doc}`library/options-classes` — Shared options classes for instructions and suites
 - {doc}`library/extending-cli` — Registering your own top-level `otto` commands

@@ -9,7 +9,7 @@ registered with :func:`otto.project.actions.register_project_actions` — and
 repo in dependency order, performing the host-global steps that belong to no
 repo. The first-party options classes a repo's override
 inherits (``InstallOptions`` and its five siblings) are exported from
-``otto.project``. :doc:`../guide/cli/run/defaults` is the guide-level
+``otto.project``. :doc:`../cli/run/defaults` is the guide-level
 treatment, flag tables and all.
 
 .. automodule:: otto.project

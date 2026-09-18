@@ -328,7 +328,7 @@ def instruction(
             raise ValueError(
                 f"repo {repo_name!r} defines instruction {cmd_name!r}, which is a "
                 "project instruction. Override lab behavior by declaring the method on a "
-                "ProjectActions subclass instead (see docs/guide/cli/run/defaults.md), "
+                "ProjectActions subclass instead (see docs/cli/run/defaults.md), "
                 "or rename the instruction."
             )
 

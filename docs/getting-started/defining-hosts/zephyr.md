@@ -6,7 +6,7 @@ and what the exit code was. That bracket is the **command frame**. The
 built-in `zephyr` frame is right for Zephyr 3.x and later — three of the bed's
 targets name `zephyr-serial` instead, the same framing with a different
 handshake for a UART shell bridged through QEMU
-({doc}`../../guide/cli/host/embedded` lists every built-in frame). This page
+({doc}`../../cli/host/embedded` lists every built-in frame). This page
 shows how to see one working, and how to define one when none of them fits.
 
 ## Connect with the default class and read the frame
@@ -74,7 +74,7 @@ And the same command on the 2.7 target:
 :language: text
 ```
 
-{doc}`../../guide/cli/host/embedded` lists the built-in frames and filesystems;
+{doc}`../../cli/host/embedded` lists the built-in frames and filesystems;
 {doc}`../../guide/configuration/os-profiles` shows how a named profile bundles
 `os_version`, `command_frame` and the rest so each entry declares only its
 identity. Monitoring a Zephyr target over SNMP — three of the bed's targets do

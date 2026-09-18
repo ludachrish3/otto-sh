@@ -238,7 +238,7 @@ Because the selector validator and `otto schema export` both read the **live
 registry** after init modules load, the new `xmodem` name is accepted in lab
 data, appears in shell completion, and is included in the generated JSON Schema
 automatically — there is nothing else to wire up. (For the schema export, see
-{doc}`../guide/cli/schema/editors`.)
+{doc}`../cli/schema/editors`.)
 
 A custom `term` backend follows the same shape against
 {class}`~otto.host.connections.ConnectionManager` and
@@ -565,4 +565,4 @@ a host that sets either key itself wins over the profile, field by field.
 - {doc}`../guide/configuration/host-sources` — the `creds` field reference and login-proxy ownership
   consequences
 - {doc}`creds-backends` — a creds store of your own
-- {doc}`../guide/cli/schema/editors` — `otto schema export` for editor autocompletion
+- {doc}`../cli/schema/editors` — `otto schema export` for editor autocompletion

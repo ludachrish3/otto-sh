@@ -12,8 +12,8 @@ registries, same CLI listing and completion, same error messages
 
 | You want to add | Register with | Guide |
 | --- | --- | --- |
-| an `otto run` subcommand | {func}`@instruction() <otto.cli.run.instruction>` | {doc}`../../guide/cli/run/index` |
-| an `otto test` suite | `Test`-prefixed {class}`~otto.suite.suite.OttoSuite` subclass (auto-registers) | {doc}`../../guide/cli/test/index` |
+| an `otto run` subcommand | {func}`@instruction() <otto.cli.run.instruction>` | {doc}`../../cli/run/index` |
+| an `otto test` suite | `Test`-prefixed {class}`~otto.suite.suite.OttoSuite` subclass (auto-registers) | {doc}`../../cli/test/index` |
 | a top-level `otto` command | {func}`otto.register_cli_command <otto.cli.registry.register_cli_command>` / {func}`@otto.cli_command <otto.cli.registry.cli_command>` | {doc}`../../library/extending-cli` |
 | a CLI verb on a host class | `@cli_exposed` on the method | {doc}`../../library/cli-exposed-verbs` |
 | a host class (new `os_type` base) | `register_host_class` | {doc}`../../library/custom-host-classes` |
@@ -82,13 +82,13 @@ Each seam's user-facing how-to lives in the guide:
 - Connection & transfer backends — {doc}`../../library/extending-backends`
 - Embedded targets & command frames — {doc}`../../library/extending-embedded`
 - Host classes, OS profiles & host verbs — {doc}`../../guide/configuration/os-profiles`,
-  {doc}`../../guide/cli/host/capabilities/index`
+  {doc}`../../cli/host/capabilities/index`
 - Power controllers & product providers — {doc}`../../library/extending-backends`,
-  {doc}`../../guide/cli/host/capabilities/index`
+  {doc}`../../cli/host/capabilities/index`
 - Host sources — {doc}`../../guide/configuration/host-sources`
-- Reservation backends — {doc}`../../guide/cli/reservation/index`
-- Monitor parsers & SNMP metrics — {doc}`../../guide/cli/monitor/index`
-- Instructions, suites & options — {doc}`../../guide/cli/run/index`, {doc}`../../guide/cli/test/index`, {doc}`../../library/options-classes`
+- Reservation backends — {doc}`../../cli/reservation/index`
+- Monitor parsers & SNMP metrics — {doc}`../../cli/monitor/index`
+- Instructions, suites & options — {doc}`../../cli/run/index`, {doc}`../../cli/test/index`, {doc}`../../library/options-classes`
 - New top-level commands — {doc}`../../library/extending-cli`
 
 ## Where the code lives

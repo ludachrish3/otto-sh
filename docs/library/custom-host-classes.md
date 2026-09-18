@@ -164,6 +164,6 @@ always win.
 ## See also
 
 - {doc}`../guide/configuration/lab-config` — `lab.json` schema and repo-level host defaults
-- {doc}`../guide/cli/host/embedded` — embedded host classes, command frames, and filesystems
+- {doc}`../cli/host/embedded` — embedded host classes, command frames, and filesystems
 - {doc}`extending-embedded` — writing a custom command frame or filesystem
 - {doc}`../guide/configuration/settings` — `init` modules and `settings.toml` field reference

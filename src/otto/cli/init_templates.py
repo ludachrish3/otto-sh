@@ -96,7 +96,7 @@ paths = ["lab_data"]
 #base = "unix"
 #valid_terms = ["ssh"]
 
-# --- [reservations] — reservation gate; see docs/guide/cli/reservation/ ------
+# --- [reservations] — reservation gate; see docs/cli/reservation/ ------------
 # Backend-specific settings live in [reservations.<backend>].
 #[reservations]
 #backend = "none"
@@ -188,7 +188,7 @@ path = "lab_data/creds.json"
 #path = "docker/compose.yaml"
 #services = ["{name}-svc"]
 ## Use-case fragments: what `otto docker up` deploys. See
-## docs/guide/cli/docker/use-cases.md for provider competition (provides,
+## docs/cli/docker/use-cases.md for provider competition (provides,
 ## priority), placement (role, placement) and env templating (env, pass_env).
 #[[docker.use_cases]]
 #name = "integration"
@@ -577,7 +577,7 @@ logger = logging.getLogger(__name__)
 #
 # One override point, so `otto run install --variant`, a script, a suite, and
 # an ensure("installed") marker all pick it up.
-# See docs/guide/cli/run/defaults.md.
+# See docs/cli/run/defaults.md.
 
 
 @options

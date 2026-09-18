@@ -20,7 +20,7 @@ two read-only methods:
   host itself. Both host-side sets are `frozenset[str]`; a host built through
   [`create_host_from_dict`](../api/host/factory.rst) gets the element's set
   from the `Element` passed as `element=` and the host's own from the host
-  dict's `resources` key. See {doc}`../guide/cli/reservation/index` for what
+  dict's `resources` key. See {doc}`../cli/reservation/index` for what
   the three levels mean.
 
 `list_labs() -> list[str]`

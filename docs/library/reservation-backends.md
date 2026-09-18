@@ -3,7 +3,7 @@
 Otto reads reservation state through a **backend**: a small class that
 answers "who holds this resource right now, and until when?" against whatever
 scheduler your team already uses. The `json` backend ships with otto
-({doc}`../guide/cli/reservation/json-backend`); anything else is a class you
+({doc}`../cli/reservation/json-backend`); anything else is a class you
 register from your own repo.
 
 When your team already has a scheduler (Jira, a web API, a database), write a
@@ -24,7 +24,7 @@ Both bounds default to *this instant*, so the unbounded call is "what does
 this user hold right now?". The rest of the rules the returned times must obey
 — timezone-awareness, one row per `(user, resource)`, and the rest — are in
 [Contract rules for implementers](#contract-rules-for-implementers) below.
-{doc}`../guide/cli/reservation/windows` is the other half: what otto *does*
+{doc}`../cli/reservation/windows` is the other half: what otto *does*
 with the times once a backend reports them.
 
 ```{warning}
@@ -393,7 +393,7 @@ tightening the contract. Otto passes it for its own documentation example — se
   way custom lab backends do, and `username` as the identity `reservations`
   queries for.
 - **Optionally implement `list_usernames()`** to power cached `--holder`
-  completion (see [Username tab-completion](../guide/cli/reservation/identity.md#username-tab-completion)).
+  completion (see [Username tab-completion](../cli/reservation/identity.md#username-tab-completion)).
 - **Optionally implement `holders()`** if your scheduler can answer the
   inverted query — see [above](#the-optional-holders-capability).
 
@@ -496,7 +496,7 @@ Four steps:
    `ReservationGateResult` whose `warning` is plain text — the library never
    touches your terminal. `MissingReservationError` and
    `ReservationBackendError` (the same two exceptions from
-   [Fail-closed behavior](../guide/cli/reservation/index.md#fail-closed-behavior))
+   [Fail-closed behavior](../cli/reservation/index.md#fail-closed-behavior))
    are what you catch;
    exit codes, logging, and styling are entirely your call — `otto`'s own CLI
    wraps `warning` in rich markup, nothing here requires you to do the same.

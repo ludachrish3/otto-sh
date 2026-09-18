@@ -286,7 +286,7 @@ for junit in result.junit_paths:
 3. The current working directory.
 
 Same `--xdir`-defaults-to-CWD philosophy the CLI uses (see
-[Output directories](../guide/cli/index.md#output-directories)) — pass
+[Output directories](../cli/index.md#output-directories)) — pass
 `output_dir=` explicitly, or open a context first, if a script shouldn't drop
 artifacts next to whatever its caller's CWD happens to be.
 
@@ -481,7 +481,7 @@ what `otto cov get` does, so its `--clean` flag can be scoped to just the Unix
 host ids that actually fetched — never zeroing an embedded board on a mixed lab.
 To zero the counters *before* a run instead, call `clean_remote_gcda()`.
 
-See {doc}`../guide/cli/cov/index` for the full CLI workflow, tier configuration, and
+See {doc}`../cli/cov/index` for the full CLI workflow, tier configuration, and
 the report format.
 
 ## Recipes

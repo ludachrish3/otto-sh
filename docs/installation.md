@@ -142,7 +142,7 @@ three because only the middle one is otto's business:
    discouraged once several repos are active, because nothing guarantees it
    holds all of their requirements.
 
-{doc}`guide/cli/env/index` builds and maintains the second:
+{doc}`cli/env/index` builds and maintains the second:
 
 ```console
 $ export OTTO_SUT_DIRS=~/work/repo-a,~/work/repo-b

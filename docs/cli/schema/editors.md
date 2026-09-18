@@ -1,0 +1,142 @@
+# Editor setup
+
+otto can generate [JSON Schema](https://json-schema.org/) for the files you edit
+by hand — `lab.json`, `settings.toml`, the reservations JSON, and a `json`
+inventory file — so your editor offers field autocomplete and flags typos. The schemas are generated from
+the pydantic models inside the otto you have installed, so they always match your
+version. There is nothing to download and nothing that can go stale.
+
+New repos get all of this automatically: `otto init` exports the schemas to
+`.otto/schemas/`, stamps the scaffolded `settings.toml` (`#:schema` directive)
+and `lab.json` (`$schema` key) so single files self-wire, writes
+`.vscode/otto.code-snippets` ([Snippets](#snippets) below), and writes
+`.vscode/settings.json` + `.vscode/extensions.json` when they don't already
+exist (an existing file is never modified — add the associations below by
+hand). The `otto init` doctor also flags stale schemas after an upgrade. The
+manual steps below are for existing repos or other editors — generate the
+files first with {doc}`export`.
+
+## VS Code
+
+`lab.json`, the reservations JSON, a `json` inventory file and a `json` creds
+file are covered by the built-in JSON language server. Add to your workspace
+`.vscode/settings.json`:
+
+```json
+{
+  "json.schemas": [
+    { "fileMatch": ["**/lab.json"], "url": "./.otto/schemas/lab.schema.json" },
+    { "fileMatch": ["**/reservations.json"], "url": "./.otto/schemas/reservations.schema.json" },
+    { "fileMatch": ["**/inventory*.json"], "url": "./.otto/schemas/inventory.schema.json" },
+    { "fileMatch": ["**/creds*.json"], "url": "./.otto/schemas/creds.schema.json" }
+  ]
+}
+```
+
+The inventory association covers a file kept inside the workspace. An
+inventory shared across projects usually lives outside every repo (see
+{doc}`../../guide/configuration/inventory`), so add the same entry to whatever
+workspace you edit it in.
+
+For `settings.toml`, install the
+[Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml)
+extension and add:
+
+```json
+{
+  "evenBetterToml.schema.associations": {
+    ".*/settings\\.toml$": "./.otto/schemas/settings.schema.json"
+  }
+}
+```
+
+## Snippets
+
+The schemas say what is *wrong* once you have typed it; the snippets say what
+to type. `otto init` writes `.otto/schemas/` and, beside it,
+`.vscode/otto.code-snippets` — generated from the same models, so neither can
+drift from the other or from what otto accepts. VS Code auto-loads any
+`.vscode/*.code-snippets` file, so there is nothing to wire up.
+
+| Prefix | Inserts |
+|--------|---------|
+| `otto-lab` | A `labs` table entry: declared `resources` and `metadata` |
+| `otto-element` | An `elements` entry: `name`, `labs` patterns, `metadata`, an empty `hosts` array with the cursor inside it |
+| `otto-unix-host` | A Unix host entry with every required field, `os_type` and the `valid_*` menus pre-filled |
+| `otto-embedded-host` | The same for an embedded host |
+| `otto-cred` | One `creds` entry |
+
+A repo that registers its own host classes gets a snippet per registered type,
+named the same way — the set follows the live registry, exactly as the schema
+export does.
+
+Hoisted keys never appear in a host-entry snippet: `element`, `element_id`,
+`labs` belong to the element. So the three snippets nest the way the file
+does — `otto-lab` in the `labs` table, `otto-element` in `elements`,
+`otto-unix-host` at the cursor the element snippet leaves inside its `hosts`
+array.
+
+The snippets file is otto-owned and rewritten whenever the schemas area is —
+by `otto init --schemas`. It is deliberately *not* checked by the staleness
+doctor: an editor convenience going stale is not a broken repo.
+
+## Neovim
+
+With the JSON language server (`jsonls`, from `vscode-json-languageserver`) via
+`nvim-lspconfig`:
+
+```lua
+require('lspconfig').jsonls.setup({
+  settings = {
+    json = {
+      schemas = {
+        { fileMatch = { 'lab.json' }, url = './.otto/schemas/lab.schema.json' },
+        { fileMatch = { 'reservations.json' }, url = './.otto/schemas/reservations.schema.json' },
+      },
+    },
+  },
+})
+```
+
+For `settings.toml`, the [taplo](https://taplo.tamasfe.dev/) language server
+honours schema directives. Either add a directive at the top of the file:
+
+```toml
+#:schema ./schemas/settings.schema.json
+```
+
+This path is relative to `.otto/settings.toml` itself, not the repo root — so
+`./schemas/` here means `.otto/schemas/`. (`otto init` stamps this line for
+you.)
+
+Or associate it in the taplo config (`.taplo.toml`):
+
+```toml
+[[rule]]
+include = ["settings.toml"]
+[rule.schema]
+path = ".otto/schemas/settings.schema.json"
+```
+
+## Note on drift
+
+The schemas reflect the otto version that generated them. Every generated
+document carries an `x-otto-version` stamp naming that otto, and the `otto
+init` doctor compares each file on disk against what your installed otto emits
+now. When the stamps disagree it says so:
+
+```text
+.otto/schemas/lab.schema.json: generated by otto 0.8.3, installed otto is
+0.9.0 — re-run `otto init --schemas` or `otto schema export`
+```
+
+**Upgrading otto flags every scaffolded schema** until you re-export, which is
+the intent: an upgrade that changes a model changes the schemas, and a schema
+older than the validator would quietly bless data otto now rejects. A file
+that differs while carrying the *same* stamp reads as `stale (differs from
+installed otto's models)` instead — that is a local edit, not an upgrade. A
+`*.schema.json` your otto emits none of is reported as `orphaned`.
+
+These are *problems*, not warnings: `otto init` exits 1 on any of them. Refresh
+with `otto init --schemas` (which rewrites the snippets alongside) or
+{doc}`export`. There is no committed copy of the schemas in the otto repo.

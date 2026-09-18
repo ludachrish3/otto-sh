@@ -1,0 +1,182 @@
+# Embedded hosts
+
+An embedded host is a firmware or RTOS target reached over a serial console —
+typically via a telnet connection, often through an SSH hop.  Shell I/O is
+wrapped in a *command frame* that encodes each command and parses the
+output/return-code back from the plain telnet byte stream.
+
+Embedded hosts expose the same `Host` API as Unix hosts (`run` / `exec` /
+`send` / `expect` / `put` / `get`), so test code does not branch on host type.
+The key differences are:
+
+- **One console.** An embedded target exposes a single shell.  There is no
+  second channel to run commands out-of-band, so `exec` shares the
+  persistent session with `run` and is **not** concurrency-safe.
+- **No bash.** No `$?`, no command substitution, no `scp`/`ftp`/`nc`.  Command
+  framing and file transfer use a device-shell protocol, not Unix tools.
+- **Telnet only.** The shell is reached over telnet (optionally through an SSH
+  hop), never SSH directly.
+
+## Host class taxonomy
+
+```text
+Host (Protocol) / BaseHost (ABC)
+├── LocalHost(BaseHost)            local machine, no network
+├── RemoteHost(BaseHost)          abstract base for networked hosts
+│   ├── UnixHost(RemoteHost)      SSH/Telnet shell; SCP/SFTP/FTP/nc transfer
+│   └── EmbeddedHost(RemoteHost)  console-framed RTOS/firmware target;
+│       │                         OS-agnostic — fails loud with no command_frame
+│       └── ZephyrHost(EmbeddedHost)   concrete Zephyr defaults
+└── DockerContainerHost(BaseHost) container host
+```
+
+## Selecting an embedded host
+
+Set `os_type` in the host's `lab.json` entry to select the host class:
+
+- `os_type: "zephyr"` builds a `ZephyrHost` with Zephyr-specific defaults
+  (the `zephyr` command frame, `os_name: "Zephyr"`).  Use `os_version` to record
+  the exact kernel version — `"2.7"`, `"3.7"`, and `"4.4"` appear in the
+  in-tree test fixture.
+- `os_type: "embedded"` builds a bare `EmbeddedHost` with no OS-specific
+  defaults.  Because `EmbeddedHost` carries no default `command_frame`, it
+  **fails loud** at construction if none is supplied:
+
+```text
+EmbeddedHost '<name>' has no command_frame. A bare 'embedded' host carries no
+shell-framing dialect. Set os_type to a profile that supplies one (e.g.
+"zephyr"), or pass an explicit command_frame.
+```
+
+Supply a frame via a profile (see {doc}`../../guide/configuration/os-profiles`), or by setting
+`command_frame` directly in the host entry.
+
+
+
+## Command frames
+
+A command frame is a small stateless strategy object that:
+
+1. wraps each command in unique sentinels (BEGIN/END markers, a return-code
+   probe), and
+2. parses the echoed byte stream back into `(output, retcode)`.
+
+How the wrapping and parsing work differs per target OS — that variation is the
+frame's dialect.
+
+### Built-in frames
+
+| Name | Class | Notes |
+|------|-------|-------|
+| `zephyr` | `ZephyrFrame` | Stock Zephyr `retval` shell (3.7 / 4.4 LTS).  Default for `ZephyrHost`. |
+| `zephyr-serial` | `ZephyrSerialFrame` | Same framing as `zephyr`; differs only in handshake.  For a UART shell bridged via QEMU `-serial telnet:` (raw byte bridge, not the in-guest `SHELL_BACKEND_TELNET`). |
+| `bash` | `BashFrame` | POSIX bash; used internally by SSH/telnet Unix sessions. |
+| `ash` | `AshFrame` | BusyBox `ash`.  Inherits `BashFrame`'s framing unchanged, no override — every rendered payload measured matching across the BusyBox artifact matrix. Not the same as "nothing differs": ash rejects `set +o history` outright, survivably, by design (see `AshFrame`'s docstring). |
+| `raw` | `RawFrame` | landing-only, no handshake and no framing, for a console whose landing state answers no frame; only valid as `landing_frame` with a `session_setup` hook; see {ref}`per-host-session-setup`. |
+
+Declare a frame by name on the host entry, inside its element:
+
+```json
+{
+    "name": "zephyr37_nofs",
+    "labs": ["embedded"],
+    "hosts": [
+        { "ip": "192.0.2.1", "os_type": "zephyr", "command_frame": "zephyr-serial" }
+    ]
+}
+```
+
+## Embedded filesystems
+
+The `filesystem` field declares the on-device filesystem variant.  It controls
+the mount path, the optional `fs mount` command issued before the first
+transfer, and the command-formation hooks the file transfer code drives.
+
+### Built-in filesystems
+
+| Name | Class | Mount path | Notes |
+|------|-------|------------|-------|
+| `none` | `NoFileSystem` | — | No filesystem.  Transfer and disk metrics short-circuit to a clear no-op / error. |
+| `fat-ram` | `FatRamFileSystem` | `/RAM:` | FAT on a RAM disk.  Otto issues `fs mount fat /RAM:` on first transfer (Zephyr 3.7 LTS does not auto-mount FAT). |
+| `littlefs` | `LittleFsFileSystem` | `/lfs` | LittleFS on simulated flash.  Auto-mounted at boot via `zephyr,fstab`; no mount command needed. |
+
+The `max_filename_len` field caps the basename length (including extension)
+accepted by the target filesystem.  Defaults to `255`.  Override per-host
+when the firmware enforces a tighter limit — for example `32` for a build with
+`CONFIG_FS_FATFS_MAX_LFN=32` or `CONFIG_FS_LITTLEFS_NAME_MAX=32`.
+
+Registering a dialect or a filesystem otto does not ship is a Python
+author's job — see {doc}`../../library/extending-embedded`.
+
+## File transfer
+
+The `transfer` field selects the file-transfer backend for an embedded host:
+
+| Value | Description |
+|-------|-------------|
+| `console` | Default.  Drives the device shell's `fs` commands (`fs write`, `fs read`). Requires a real filesystem (not `none`). |
+| `tftp` | Not supported. |
+
+This is distinct from the Unix transfer set (`scp`, `sftp`, `ftp`, `nc`), which
+are unavailable on embedded hosts — they require a POSIX shell.
+
+## Example
+
+The `zephyr37_fat` element from the test fixture, annotated — one element, one
+host entry inside it:
+
+```json
+{
+    "name": "zephyr37_fat",
+    "labs": ["embedded"],
+    "hosts": [
+        {
+            "ip": "192.0.2.1",
+            "os_type": "zephyr",
+            "os_version": "3.7",
+            "transfer": "console",
+            "filesystem": "fat-ram",
+            "max_filename_len": 32,
+            "is_virtual": true,
+            "hop": "test4",
+            "snmp": {
+                "address": "10.10.200.14",
+                "port": 16101,
+                "community": "public",
+                "oids": [
+                    "1.3.6.1.2.1.1.3.0",
+                    "1.3.6.1.4.1.63245.1.1.0",
+                    "1.3.6.1.4.1.63245.1.2.0",
+                    "1.3.6.1.4.1.63245.1.3.0",
+                    "1.3.6.1.4.1.63245.1.4.0"
+                ]
+            }
+        }
+    ]
+}
+```
+
+Key fields:
+
+- `labs: ["embedded"]` — membership belongs to the *element*, so every host it
+  holds joins the same labs.  What lab `embedded` reserves is declared in the
+  file's `labs` table, not here; see
+  {doc}`../../guide/configuration/lab-config`.
+- `os_type: "zephyr"` — builds `ZephyrHost` with the `zephyr` command frame and
+  `os_name: "Zephyr"`.
+- `os_version: "3.7"` — recorded on the host; selects the correct test paths
+  (e.g. coverage SDK version).
+- `transfer: "console"` — file I/O over the device's `fs` shell commands.
+- `filesystem: "fat-ram"` — FAT on RAM disk, mounted at `/RAM:`.
+- `max_filename_len: 32` — firmware `CONFIG_FS_FATFS_MAX_LFN` ceiling.
+- `hop: "test4"` — all connections route through the `test4` jump host.
+- `snmp` block — enables SNMP-based metric collection alongside the telnet
+  console (a separate channel).
+
+## See also
+
+- {doc}`../../guide/configuration/lab-config` — full `lab.json` schema reference
+- {doc}`../../guide/configuration/os-profiles` — custom host classes and data profile bundles
+- {doc}`../../library/extending-embedded` — writing custom command frames and filesystems
+- {doc}`../cov/index` — cross-toolchain configuration for embedded coverage
+- {doc}`../monitor/index` — SNMP monitoring configuration

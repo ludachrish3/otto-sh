@@ -28,7 +28,7 @@ Holding `bb-bench` is holding the bench; `bb1350-chassis` the element;
 {doc}`boards-of-interest` is what is in play — five guests — so the
 requirement is the bench plus the chassis and slot identifiers of the guests
 that declare them. The built-in `local` host is never in play.
-{doc}`../guide/cli/reservation/index` defines the three levels and how the
+{doc}`../cli/reservation/index` defines the three levels and how the
 required set is computed from the hosts in play;
 {doc}`../guide/configuration/lab-config` is the field reference for
 `resources`.
@@ -66,7 +66,7 @@ names `chris`, so the walkthrough passes `--holder`. `alice` holds nothing:
 :language: text
 ```
 
-{doc}`../guide/cli/reservation/index` covers identity (`otto reservation
+{doc}`../cli/reservation/index` covers identity (`otto reservation
 whoami` shows yours), `-R` to skip the gate with a loud warning, and why a
 backend that cannot answer fails the run rather than letting it through.
 

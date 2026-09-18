@@ -97,8 +97,8 @@ add a `[[docker.images]]` entry naming its Dockerfile and build context, and
 have the compose file name that image's `:latest` tag instead of a registry
 one. `otto docker up` builds before it deploys, and `otto docker build` runs
 the same step on its own — including the context-hash caching that decides
-when a rebuild is actually needed. {doc}`../guide/cli/docker/build` and
-{doc}`../guide/cli/docker/rebuild-policy` are the home for both; the keys
+when a rebuild is actually needed. {doc}`../cli/docker/build` and
+{doc}`../cli/docker/rebuild-policy` are the home for both; the keys
 themselves are in {doc}`../guide/configuration/settings`.
 
 ## Step 3 — use the container like a host
@@ -161,15 +161,15 @@ There is more to it — a second channel where a project registers Python code
 to compute values or render whole compose files, an allowlist for passing
 variables through from your shell, and `--env` on the command line. The full
 mechanism, with the rules for each layer, is in
-{doc}`../guide/cli/docker/use-cases`.
+{doc}`../cli/docker/use-cases`.
 
 ## Where to go next
 
-- {doc}`../guide/cli/docker/use-cases` — the workflow home. Fragments and how
+- {doc}`../cli/docker/use-cases` — the workflow home. Fragments and how
   several projects contribute to one deployment, swapping a mock for the real
   service (provider competition), how placement resolves, the full templating
   walkthrough, and the compose adapter.
-- {doc}`../guide/cli/docker/index` — every `otto docker` verb, its options,
+- {doc}`../cli/docker/index` — every `otto docker` verb, its options,
   and how container hosts behave.
 - {doc}`../guide/configuration/settings` — the reference for every
   `[docker]`, `[[docker.images]]`, `[[docker.composes]]` and

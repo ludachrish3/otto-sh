@@ -64,7 +64,7 @@ things at import time — for repo test files, during bootstrap phase 2
 Because both live in a registry, tab completion of instruction and suite
 names, and `--list-instructions` / `--list-suites`, come for free — like
 every other registry ({doc}`registries`). See it captured live in
-{doc}`../../guide/cli/run/index` and {doc}`../../guide/cli/test/index`.
+{doc}`../../cli/run/index` and {doc}`../../cli/test/index`.
 
 ## Handing off to pytest
 
@@ -120,7 +120,7 @@ the rest of the cache uses, so the collected set never goes stale silently.
 The completer itself still **never runs user code** — the collection happens
 in a disposable subprocess, never in the process answering the keystroke.
 The behavior this feeds — base-name matching, `TestClass::test_name`
-disambiguation — is documented in {doc}`../../guide/cli/test/index`.
+disambiguation — is documented in {doc}`../../cli/test/index`.
 
 ## Non-fatal assertions
 
@@ -137,7 +137,7 @@ Both ride the standard invoke preamble unmodified ({doc}`../lifecycle`);
 what differs is the body. An instruction's body is just the user's coroutine
 on the invocation's event loop, and its returned {class}`~otto.result.Result`
 (if any) becomes the process exit code ({doc}`../utilities/results`);
-artifacts belong in `get_context().output_dir` ({doc}`../../guide/cli/run/index`).
+artifacts belong in `get_context().output_dir` ({doc}`../../cli/run/index`).
 A suite's body hands off to pytest, as above.
 
 Both are registered callables with option classes; the split is intent.

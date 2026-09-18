@@ -81,7 +81,7 @@ against the lab. Each walks every configured repo in dependency order:
 Two of them are worth trying first.
 
 `otto run status` reads and changes nothing. It exits `0` when every
-[counted](../guide/cli/run/defaults.md#reading-status) repo is installed, `1`
+[counted](../cli/run/defaults.md#reading-status) repo is installed, `1`
 when every counted repo is uninstalled, and `2` for anything in
 between — a *partial* lab, which is what a half-finished install leaves behind.
 
@@ -91,7 +91,7 @@ partial lab instead of installing on top of remnants. That is exactly what a
 test suite marked `@pytest.mark.ensure("installed")` runs before it starts, so
 the lab a test converges is the lab you installed by hand.
 
-{doc}`../guide/cli/run/defaults` is the full treatment: every flag, the walk
+{doc}`../cli/run/defaults` is the full treatment: every flag, the walk
 order across repos, what `cleanup` does and does not take off the lab, and how
 to read `status`.
 

@@ -58,6 +58,6 @@ are published with the backends themselves, in {ref}`matrix-progress-promises`.
 | `container` | a `[docker]` service, started by `otto docker up` | `chown` | `chown` | `chown` | `ignored` | no | bound at open | the parent host's own backend for the staging leg, then `docker cp` across the container boundary, `--concurrent` governing the staging leg | `user=` defaults to the service's declared user, and falls back to the image's own `USER` when neither is set. |
 | `local` | implicit -- the machine otto itself runs on | `refused` | `refused` | `refused` | `refused` | no | as_user scoped | `shutil.copy2` on the machine's own filesystem, one file at a time | otto already runs as the invoking user and local copies keep that user's ownership, so no verb takes `user=`; `as_user()` still switches the persistent session. |
 
-The CLI pages for the verbs themselves — {doc}`../cli/host/run`,
-{doc}`../cli/host/put`, {doc}`../cli/host/get` — say how to pass `--user`; this
+The CLI pages for the verbs themselves — {doc}`../../cli/host/run`,
+{doc}`../../cli/host/put`, {doc}`../../cli/host/get` — say how to pass `--user`; this
 page says what each family will do with it.

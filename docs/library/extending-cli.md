@@ -14,7 +14,7 @@ twelve subcommand groups register through this same function — see
 
 Decorate an async function with `@cli_command()` in a module listed in your
 settings file's `init` field (see {doc}`../guide/configuration/settings`). The ergonomics
-deliberately match `@instruction()` (see {doc}`../guide/cli/run/index`): an `OttoContext`-annotated
+deliberately match `@instruction()` (see {doc}`../cli/run/index`): an `OttoContext`-annotated
 parameter is injected and hidden from the CLI, and an `options=` dataclass
 expands into individual flags. Unlike `@instruction()`, `@cli_command()` takes
 keyword arguments only (`options=`, `name=`, `help=`, `lab_free=`, `output_dir=`,
@@ -279,7 +279,7 @@ shell tab completion — there is nothing extra to wire up. Two paths feed this:
 Inside the command body, return whatever your logic produces. If it's a
 `Result` (or `CommandResult`/`Results`), otto derives the process exit code
 from it using the same polymorphic, ssh-like rules `otto host <name> <verb>`
-uses — see [Exit codes](../guide/cli/host/index.md#exit-codes) in the host guide for the
+uses — see [Exit codes](../cli/host/index.md#exit-codes) in the host guide for the
 full table; a failing result exits the process non-zero. A plain
 (non-`Result`) return value is printed as-is and the process exits `0`; a
 `list` that carries a Rich `Table` or `Text` is the one exception — it
@@ -292,7 +292,7 @@ bridge), so it holds identically for registered commands and instructions.
 
 ## See also
 
-- {doc}`../guide/cli/run/index` — instructions (`otto run ...`), the closest sibling to a
+- {doc}`../cli/run/index` — instructions (`otto run ...`), the closest sibling to a
   `@cli_command()` leaf
 - {doc}`extending-backends` — the term/transfer backend registries, which
   share {class}`~otto.registry.Registry`'s engine but allow `overwrite=True`

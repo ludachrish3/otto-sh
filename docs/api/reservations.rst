@@ -10,7 +10,7 @@ implementation — shipped ones, or your own class selected by registered name i
 ``.otto/settings.toml``.
 
 For narrative setup, configuration, and writing a custom backend, see
-the :doc:`user guide <../guide/cli/reservation/index>`.
+the :doc:`CLI reference <../cli/reservation/index>`.
 
 Package summary
 ---------------
@@ -102,7 +102,7 @@ JSON backend
 
 Reference implementation and test double — also a perfectly usable
 production backend for small teams that don't have a scheduler yet.
-See the :doc:`user guide <../guide/cli/reservation/index>` for the file format.
+See the :doc:`CLI reference <../cli/reservation/index>` for the file format.
 
 .. automodule:: otto.reservations.json_backend
 

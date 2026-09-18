@@ -3,7 +3,7 @@
 Teaching `otto monitor` to collect values it has no built-in metric for:
 per-host and project-level parsers, their health reporting, custom SNMP
 descriptors, and driving the collector from a suite. For running the
-monitor, see {doc}`../guide/cli/monitor/index`.
+monitor, see {doc}`../cli/monitor/index`.
 
 ## Custom parsers
 
@@ -182,7 +182,7 @@ after `chart` has a default, so a private OID only needs the first three:
 
 `register_snmp_metric` always overwrites, so the same call renames a
 built-in descriptor too — including the auto-generated per-index labels
-from [Per-interface and per-filesystem OIDs](../guide/cli/monitor/metrics.md#per-interface-and-per-filesystem-oids)
+from [Per-interface and per-filesystem OIDs](../cli/monitor/metrics.md#per-interface-and-per-filesystem-oids)
 (`rx if0`, `fs1 used`, …): register a new `SnmpMetric` for that exact OID
 with a more meaningful `label` (e.g. `rx wan0`) and it replaces the default.
 
@@ -204,7 +204,7 @@ class TestPerformance(OttoSuite):
 
 `add_monitor_event` validates through the same seam every other marking
 surface uses (see
-[Marking events](../guide/cli/monitor/dashboard.md#marking-events)): `label` can't
+[Marking events](../cli/monitor/dashboard.md#marking-events)): `label` can't
 be blank, `color` must be a `#rrggbb` hex string (not a CSS color name),
 and `dash` must be one of the six styles the event editor offers — a
 violation raises a validation error immediately, before the collector is
@@ -215,5 +215,5 @@ the per-suite collector takes precedence for that test.  Events — the
 automatic per-test start/pass/fail marks and any `add_monitor_event` call
 — appear live on the dashboard timeline the moment they're recorded, making
 it easy to correlate metric changes with test actions; see [Marking
-events](../guide/cli/monitor/dashboard.md#marking-events) for what the dashboard does with a mark once it's
+events](../cli/monitor/dashboard.md#marking-events) for what the dashboard does with a mark once it's
 there.

@@ -205,7 +205,7 @@ deployments `$HOME` sits on the very mount you're trying to get off of — at
 which point the "one open" is a network round trip like any other. See
 [When `$HOME` is on NFS](#when-home-is-on-nfs) below for the measured cost
 of that and the relocation experiment it motivates.
-[`otto cache`](cli/cache/index.md) (`info` / `clear` / `prune`) is the
+[`otto cache`](../cli/cache/index.md) (`info` / `clear` / `prune`) is the
 management story for what accumulates under the home — worth knowing
 precisely because `actimeo`/`nocto` (above) raise the odds of a stale
 stat-based digest going unnoticed for longer.
@@ -323,7 +323,7 @@ None of the above shrinks the one cost that genuinely is NFS's fault:
 nothing removes a workspace's cache directory on its own, and every distinct
 `OTTO_SUT_DIRS` set a machine has ever run against leaves one behind
 forever. Inspecting, clearing, and bounding that by age is
-[`otto cache`](cli/cache/index.md)'s job — see that page for `info`,
+[`otto cache`](../cli/cache/index.md)'s job — see that page for `info`,
 `clear`, `prune`, and the safety argument for why pruning can never touch
 anything but the two cache files.
 

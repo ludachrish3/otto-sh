@@ -1,7 +1,7 @@
 # Contributing
 
 Before changing code, start at {doc}`architecture/index` — it has one design
-page per functional area, mirroring the User Guide's sections, and each page
+page per functional area, mirroring the CLI Reference's sections, and each page
 ends with a "Where the code lives" section pointing at the modules that
 implement it.
 
@@ -609,15 +609,15 @@ docs/
 ├── examples/                 # checked-in example projects the worked example includes; not Sphinx sources
 ├── installation.md           # Install flows: air-gapped, teams, offline docs
 ├── guide/
-│   ├── cli/                  # One page per command, mirroring otto's command tree
 │   └── configuration/        # settings.toml, lab.json, host sources and options
+├── cli/                      # One page per command, mirroring otto's command tree
 ├── library/                  # Using otto as a library + recipes (Markdown)
 ├── architecture/             # How otto is built and why (Markdown)
 ├── contributing.md           # This page
 └── api/                      # API reference (reStructuredText, auto-generated)
 ```
 
-CLI usage goes in `guide/cli/`, on the page for the command it serves —
+CLI usage goes in `cli/`, on the page for the command it serves —
 that tree mirrors `otto`'s own command tree, so a new subcommand gets a page
 under its verb's directory and an entry in that verb's toctree.  Anything
 that serves a *Python* author rather than a CLI user goes in `library/`

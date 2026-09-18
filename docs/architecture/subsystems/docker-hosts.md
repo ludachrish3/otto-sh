@@ -4,7 +4,7 @@ How {class}`~otto.host.docker_host.DockerContainerHost` fits the host
 subsystem ({doc}`hosts`): why containers delegate to a parent
 {class}`~otto.host.unix_host.UnixHost` instead of being a parallel transport
 stack, and the consequences of that choice. The user-facing workflow lives in
-{doc}`../../guide/cli/docker/index`.
+{doc}`../../cli/docker/index`.
 
 ## Why parent-delegation
 
@@ -60,7 +60,7 @@ description of one.
 Resolution refuses rather than guesses. An ambiguous role, a provider tie, a
 pin naming a host this lab does not have — each is a configuration error
 naming the candidates and the knobs, raised before a single file is staged.
-{doc}`../../guide/cli/docker/use-cases` documents the rules for users; the
+{doc}`../../cli/docker/use-cases` documents the rules for users; the
 design rationale is in the docker use-cases design spec
 (`docs/superpowers/specs/2026-08-30-docker-use-cases-design.md`, §4-§6).
 
@@ -149,7 +149,7 @@ populated immediately.
 
 `DockerContainerHost.mounts` is populated by one batched `docker inspect`
 call in `register_stack_hosts`, right after the same call resolves each
-service's container id. {doc}`../../guide/cli/docker/index`'s "Shared
+service's container id. {doc}`../../cli/docker/index`'s "Shared
 directories" section is the home for *why* the table is derived rather
 than declared and for how to use it — this note covers only the WHERE and
 WHEN: reading it fresh from the daemon at the same point ids are already

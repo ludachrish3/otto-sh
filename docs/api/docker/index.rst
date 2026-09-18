@@ -7,7 +7,7 @@ on a remote parent host.
 
 The user-facing model these modules implement -- fragments, provider
 competition, placement and the env channels -- is documented in
-:doc:`/guide/cli/docker/use-cases`.
+:doc:`/cli/docker/use-cases`.
 
 .. automodule:: otto.docker
 

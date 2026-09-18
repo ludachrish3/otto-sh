@@ -60,7 +60,7 @@ def _one_match(pattern: str, text: str, what: str) -> str:
 def test_the_hand_maintained_group_counts_track_the_registry():
     """Three counters spell the number of first-party groups in prose. Pin all three.
 
-    ``docs/guide/cli/index.md``'s opening sentence, the ``builtin_commands``
+    ``docs/cli/index.md``'s opening sentence, the ``builtin_commands``
     module docstring, and ``scripts/capture_docs_termynal.py``'s ``COMMANDS``
     list (both its length and the comment above it) each restate a number no
     test could previously read. Two of them were already stale — the docs said
@@ -76,7 +76,7 @@ def test_the_hand_maintained_group_counts_track_the_registry():
     assert count in _NUMBER_WORDS, f"extend _NUMBER_WORDS: {count} groups registered ({names})"
     word = _NUMBER_WORDS[count]
 
-    guide = (PROJECT_ROOT / "docs" / "guide" / "cli" / "index.md").read_text()
+    guide = (PROJECT_ROOT / "docs" / "cli" / "index.md").read_text()
     assert (
         _one_match(r"`otto` is one command with (\w+) subcommand groups", guide, "count sentence")
         == word
@@ -102,7 +102,7 @@ def test_the_cli_guide_lists_every_group_in_its_table_and_toctree():
     from tests._fixtures.paths import PROJECT_ROOT
 
     names = _builtin_command_names()
-    guide = (PROJECT_ROOT / "docs" / "guide" / "cli" / "index.md").read_text()
+    guide = (PROJECT_ROOT / "docs" / "cli" / "index.md").read_text()
 
     rows = re.findall(r"^\| \[`otto (\S+)`\]", guide, re.MULTILINE)
     assert sorted(rows) == sorted(names), "the Commands table and the registry disagree"

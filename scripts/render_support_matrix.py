@@ -1857,8 +1857,8 @@ def render_families() -> str:
         )
     lines += [
         "",
-        "The CLI pages for the verbs themselves — {doc}`../cli/host/run`,",
-        "{doc}`../cli/host/put`, {doc}`../cli/host/get` — say how to pass `--user`; this",
+        "The CLI pages for the verbs themselves — {doc}`../../cli/host/run`,",
+        "{doc}`../../cli/host/put`, {doc}`../../cli/host/get` — say how to pass `--user`; this",
         "page says what each family will do with it.",
         "",
     ]

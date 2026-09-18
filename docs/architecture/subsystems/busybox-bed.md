@@ -138,7 +138,7 @@ $ make busybox
 
 This is the only lane that selects `-m busybox`; every catch-all selector excludes it.
 That is deliberate — the tier reaches the public internet on a cold cache, so an
-upstream outage must not be able to redden the per-task gate. See {doc}`../../guide/cli/test/index` for
+upstream outage must not be able to redden the per-task gate. See {doc}`../../cli/test/index` for
 the lane layout generally.
 
 What it measures is the artifacts and nothing else: each file still hashing to its

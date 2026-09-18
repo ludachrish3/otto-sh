@@ -19,7 +19,7 @@ A repo customizes a project instruction by declaring a method on a
 `ProjectActions` subclass and registering that subclass — never by defining a
 standalone instruction named `install`. otto refuses that one at startup,
 naming the repo, the instruction and the guide page that spells the override
-out ({doc}`../guide/cli/run/defaults`); the message and the two
+out ({doc}`../cli/run/defaults`); the message and the two
 ways to migrate an existing `install` instruction are in
 [The collision error](../library/writing-instructions.md#the-collision-error).
 
@@ -47,7 +47,7 @@ Three things that code relies on:
   for this instruction, exported from `otto.project` along with one for each
   of the other five. otto refuses an override whose class does not; why, and
   what each body then receives, is in [Your repo's flags on a
-  default](../guide/cli/run/defaults.md#your-repos-flags-on-a-default).
+  default](../cli/run/defaults.md#your-repos-flags-on-a-default).
 - **`super()` keeps the default behavior.** The body above does its own work
   and then calls up; otto's body reads only the fields otto declared.
 - **`self.ctx` is this repo's view of the lab** — `self.ctx.all_hosts()` is
@@ -69,7 +69,7 @@ the *same* flag must inherit it from one shared base class — otherwise otto
 refuses the pair at startup — and that base belongs in a repo they **require**
 or in a library package, never in an optional one. The rule, the error and the
 reason for the ownership half are in
-[One command, every repo's flags](../guide/cli/run/defaults.md#one-command-every-repos-flags).
+[One command, every repo's flags](../cli/run/defaults.md#one-command-every-repos-flags).
 
 ## A new project instruction
 
@@ -151,4 +151,4 @@ install options and the suite's `Options` inherit *that*. See
 The suite side of the marker is in
 {doc}`../library/writing-suites`; the declaration rules on this page have their
 home in {doc}`../library/writing-instructions` under *Project instructions*,
-and the composition rules in {doc}`../guide/cli/run/defaults`.
+and the composition rules in {doc}`../cli/run/defaults`.

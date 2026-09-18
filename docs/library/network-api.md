@@ -1,8 +1,8 @@
 # Link & tunnel APIs
 
 Registering your own impairers and carriers, and driving links and
-tunnels from Python. For the commands, see {doc}`../guide/cli/link/index`
-and {doc}`../guide/cli/tunnel/index`.
+tunnels from Python. For the commands, see {doc}`../cli/link/index`
+and {doc}`../cli/tunnel/index`.
 
 ## Custom link impairers
 

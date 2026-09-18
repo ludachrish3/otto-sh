@@ -3,7 +3,7 @@
 A **suite** is a `Test`-prefixed subclass of
 {class}`~otto.suite.suite.OttoSuite`, which registers itself and becomes an
 `otto test` subcommand. This page is how to write one. For running suites,
-see {doc}`../guide/cli/test/index`.
+see {doc}`../cli/test/index`.
 
 ## Defining a test suite
 
@@ -195,7 +195,7 @@ marker and the command can never diverge; a convergence that fails **errors
 the test with the failing host named** — never a skip
 ({class}`~otto.errors.EnsureStateError`). A misspelled step stops the run at
 collection. What each verb converges, and how a repo customizes it, is
-{doc}`../guide/cli/run/defaults`.
+{doc}`../cli/run/defaults`.
 
 ## Setup and teardown as fixtures
 

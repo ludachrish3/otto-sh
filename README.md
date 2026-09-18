@@ -206,7 +206,7 @@ This works for GCC- and clang-built products on Unix hosts (`.gcda`
 counters fetched over the network, cross-toolchains supported) — and for
 embedded RTOS targets, where otto pulls coverage over the serial console
 from an instrumented LLEXT extension. See
-[docs/guide/cli/cov/](docs/guide/cli/cov/index.md) and its
+[docs/cli/cov/](docs/cli/cov/index.md) and its
 per-build-type instrumenting subpages (GCC, clang, embedded).
 
 ## Quick-start example
@@ -243,11 +243,13 @@ Hosted documentation: [otto-sh.readthedocs.io](https://otto-sh.readthedocs.io).
 The same content lives under `docs/` and can be built locally with `make docs`
 — the generated HTML is written to `docs/_build/html/`. Key entry points:
 
-- `docs/getting-started.md` — installation and first steps
+- `docs/getting-started/index.md` — installation and first steps
 - `docs/installation.md` — air-gapped installs, team setup, offline docs
-- `docs/guide/cli/` — one page per command, mirroring `otto`'s own command tree
-- `docs/guide/cli/host/` — the `otto host` verbs, capabilities and embedded hosts
-- `docs/guide/cli/cov/` — coverage collection & reports (GCC, clang, embedded)
+- `docs/guide/` — the User Guide: what every host answers, per-family support
+- `docs/cli/` — one page per command, mirroring `otto`'s own command tree
+- `docs/cli/host/` — the `otto host` verbs, capabilities and embedded hosts
+- `docs/cli/cov/` — coverage collection & reports (GCC, clang, embedded)
 - `docs/guide/configuration/` — `settings.toml`, `lab.json`, host sources and options
 - `docs/library/` — using otto as a Python library + recipes
 - `docs/api/` — full API reference for all otto packages
+- `docs/architecture/` — how otto is designed, one page per subsystem

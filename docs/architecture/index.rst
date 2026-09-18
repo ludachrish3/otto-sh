@@ -2,7 +2,7 @@ Architecture
 ============
 
 These pages describe how otto is put together and why it is shaped the way
-it is — written for contributors. The :doc:`User Guide <../guide/index>`
+it is — written for contributors. The :doc:`CLI Reference <../cli/index>`
 explains how to *use* each functional area; each page here explains the
 moving parts behind one, and the two link across rather than repeat each
 other.

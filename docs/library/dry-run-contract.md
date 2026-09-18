@@ -3,7 +3,7 @@
 What `--dry-run` means to code you write — how a declined operation is
 reported, why reading its value raises, and how to adapt
 run-parse-branch code. For the CLI behaviour, see
-{doc}`../guide/cli/dry-run`.
+{doc}`../cli/dry-run`.
 
 ## Opting in: `dry_run_preview=True`
 
@@ -95,7 +95,7 @@ dry run: no command body was run and no device was contacted
   lab: my_lab (3 hosts); references resolve: host 'dut1'
 ```
 
-See {doc}`../guide/cli/link/index` and {doc}`../guide/cli/tunnel/index` for what each of those
+See {doc}`../cli/link/index` and {doc}`../cli/tunnel/index` for what each of those
 previews can and cannot tell you.
 
 ## The library contract, for suite and script authors

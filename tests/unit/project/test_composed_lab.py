@@ -123,7 +123,7 @@ class _FleetHost(BaseHost):
 class _JournaldHost(_FleetHost):
     """The guide's own example: a host family whose debug logs come out of journald.
 
-    ``docs/guide/cli/run/defaults.md`` names this override by name as the sanctioned
+    ``docs/cli/run/defaults.md`` names this override by name as the sanctioned
     way to teach otto a host family's log story, so it is the honest subject for
     "does the lab-level sweep run it".
     """

@@ -121,7 +121,7 @@ compose without editing either.
 Because every boundary is a pydantic model, otto can *emit* its data
 contracts: `otto schema export` writes JSON Schemas for `lab.json`,
 `settings.toml`, and reservation files, which editors use for completion and
-inline validation ({doc}`../../guide/cli/schema/editors`). The schema is
+inline validation ({doc}`../../cli/schema/editors`). The schema is
 generated from the exact model that validates ingest, so the export and the
 runtime validator cannot disagree — there is no second definition to update,
 and the schema version bumps whenever host-spec fields change shape, keeping

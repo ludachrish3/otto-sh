@@ -200,6 +200,6 @@ async def deploy(opts: _DeployOpts): ...
 
 `otto run deploy --help` shows the same repo-wide flags plus `--field/--debug`.
 
-See {doc}`index` and {doc}`../guide/cli/test/index` for the full instruction and suite guides, and
+See {doc}`index` and {doc}`../cli/test/index` for the full instruction and suite guides, and
 [Inheriting shared options](suite-recipes.md#inheriting-shared-options)
 in the suite recipes.

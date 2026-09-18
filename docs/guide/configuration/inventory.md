@@ -178,7 +178,7 @@ An inventory is declared **once per user**, in otto's user-level settings file:
 `~/.otto/settings.toml` is a new file — otto does not create it, and `otto
 init` does not scaffold it, because an inventory is not project-shaped.
 Create it by hand. `OTTO_HOME` relocates otto's home wholesale, and this file
-with it. See [The workspace home](../cli/index.md#the-workspace-home).
+with it. See [The workspace home](../../cli/index.md#the-workspace-home).
 ```
 
 The same table shape works in both places it may be written:
@@ -314,7 +314,7 @@ data produces the same file.
 
 `otto init` generates `inventory.schema.json` beside `lab.schema.json`, so an
 editor can validate this file as you type it; the editor wiring is in
-{doc}`../cli/schema/editors`.
+{doc}`../../cli/schema/editors`.
 
 (credentials-layered)=
 
@@ -406,7 +406,7 @@ verification off. An inventory error ending in `SSLError: …` therefore means
 the operating system does not trust the instance. Install your organisation's
 CA (or, for a self-signed instance, its own certificate) in the OS store with
 the same steps a dashboard viewer uses — see [each viewer trusts the
-CA](../cli/monitor/serving.md#creating-the-certificates) — and the error goes
+CA](../../cli/monitor/serving.md#creating-the-certificates) — and the error goes
 away with no settings change. On Linux without root, set `SSL_CERT_FILE` to
 the certificate (or `SSL_CERT_DIR` to a hashed directory); these are
 OpenSSL's own overrides and `curl`, `git` and otto all honour them — on
@@ -571,7 +571,7 @@ and a second row, `creds: json:/…/creds.json`, when a store resolves.
 ## The verbs
 
 `otto inventory` reads the configured inventory. Every verb is read-only, needs
-no lab and touches no host — see {doc}`../cli/inventory/index` for the full
+no lab and touches no host — see {doc}`../../cli/inventory/index` for the full
 treatment, including the three exit codes `diff` uses.
 
 | Verb | What it answers |
@@ -599,7 +599,7 @@ declares, and a broken declaration empties completion for every repo, not just
 the one carrying it, until it is fixed. An entry completion could not build is
 skipped silently, never warned about — a warning printed into a completing
 shell would corrupt the candidate list — so when a host does not come up, ask
-[`otto cache info`](../cli/cache/index.md#info): its closing block shows the
+[`otto cache info`](../../cli/cache/index.md#info): its closing block shows the
 inventory as completion resolved it, the hosts offered, and every entry
 dropped with the reason.
 

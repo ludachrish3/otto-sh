@@ -104,7 +104,7 @@ param; everything else is optional:
 
 The last three are **products only**: a `[[dev_tools]]` entry naming any of
 them is refused by name, because a dev tool is never under test and so has no
-coverage. What otto does with them is {doc}`../cli/cov/index`'s subject, and
+coverage. What otto does with them is {doc}`../../cli/cov/index`'s subject, and
 {doc}`../../getting-started/coverage` is the walkthrough.
 
 Without `install`/`uninstall` those steps are no-op successes (staging
@@ -180,7 +180,7 @@ no command strings to substitute into.
 The matched host must carry a **binary loader** — the object is pushed through
 `host.load`, and `is_installed` asks the loader's own list command what is
 resident. An `llext` entry matched to a host without one is refused at lab
-load, naming the host. See {doc}`../cli/cov/instrumenting/embedded`.
+load, naming the host. See {doc}`../../cli/cov/instrumenting/embedded`.
 
 ```toml
 [[products]]
@@ -224,7 +224,7 @@ Registered for products only — a kernel module is never a dev tool — and
 refused at lab load on any host missing `load`/`unload`/`lsmod` (today only
 a `UnixHost`), naming the host. With `coverage = "module"` otto appends
 `gcov_dir=<cov_dir>` to `params` itself so the `otto_kgcov` runtime
-({doc}`../cli/cov/instrumenting/kernel-modules`) knows where to write; a
+({doc}`../../cli/cov/instrumenting/kernel-modules`) knows where to write; a
 `params` that also sets `gcov_dir=` is a validation error, because
 `cov_dir` has exactly one owner. gcov counts arcs as they run, so a dump
 taken inside a module's exit routine already holds everything that routine
@@ -235,7 +235,7 @@ reaches a run's report only when the module is unloaded before the
 post-run fetch, which is what a suite's teardown does. The kernel wrote
 the counter files as root, so every delete a `kmod` product's coverage
 hooks issue runs under sudo. See
-{doc}`../cli/cov/instrumenting/kernel-modules` for the runtime, the worked
+{doc}`../../cli/cov/instrumenting/kernel-modules` for the runtime, the worked
 example, and how a report reads back what it captured.
 
 ## The `docker_image` kind
@@ -284,7 +284,7 @@ names, which the scan never opens — so an instrumented tarball entry
 declares `instrumented = true` itself, the same as any other archive. A
 reference has no local artifact for the scan to look at either,
 so it too reads `unknown` unless `instrumented` says otherwise. See
-{doc}`../cli/cov/instrumenting/containers` for the bind mount, the
+{doc}`../../cli/cov/instrumenting/containers` for the bind mount, the
 tarball/reference split, and how a docker-compose service under test
 (`[docker.use_cases]`) differs from this kind.
 

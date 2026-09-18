@@ -92,7 +92,7 @@ local disks, DELETE on network filesystems
 again appends another session rather than overwriting the archive. The
 positional `otto monitor <source>` form instead replays a saved `.json`
 export or `.db` archive without touching any host. See
-{doc}`../../guide/cli/monitor/index` for the flag-level workflow — `--live`, `--db`,
+{doc}`../../cli/monitor/index` for the flag-level workflow — `--live`, `--db`,
 `--label`/`--note`, and the review-mode `<SOURCE>` argument.
 
 **Gating.** `otto monitor` gates itself per branch rather than in the

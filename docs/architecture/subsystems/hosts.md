@@ -61,7 +61,7 @@ A verb's return value is rendered by one shared path: members of the
 third-party fallback, printed as-is with exit `0`. Command output itself
 streams live during execution, so a successful `run` verb prints nothing
 extra at the end — the user-facing exit-code table lives in
-{doc}`../../guide/cli/host/index`.
+{doc}`../../cli/host/index`.
 
 Tab completion mirrors the synthesis model at every position: host ids come
 from the completion cache's snapshot, falling back to a live lab scan on a
@@ -70,7 +70,7 @@ id is typed, the verb candidates are that host's class menu — the same
 definedness scoping that decides what is dispatchable; and option values
 backed by registries complete from the registry, so a project-registered
 term backend completes exactly like a built-in one. See these captured live
-in {doc}`../../guide/cli/host/index` and {doc}`../../guide/cli/host/connections`.
+in {doc}`../../cli/host/index` and {doc}`../../cli/host/connections`.
 
 What is unique about `host` among the first-party commands:
 
@@ -79,7 +79,7 @@ What is unique about `host` among the first-party commands:
   should not litter `--xdir` with empty run directories.
 - Per-invocation `--term` / `--transfer` / `--hop` overrides apply option
   overlays to the one resolved host before the verb runs
-  ({doc}`../../guide/cli/host/connections`).
+  ({doc}`../../cli/host/connections`).
 
 ## Sessions: persistent `run` vs stateless `exec`
 

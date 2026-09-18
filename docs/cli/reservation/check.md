@@ -1,0 +1,85 @@
+# otto reservation check
+
+```bash
+otto --lab tech1 reservation check
+```
+
+Runs the check standalone and reports what the lab requires of you before
+anything touches hardware.  Useful as a pre-flight before kicking off a long
+`otto test` run — you find out in one second instead of twenty minutes.
+`check` is the one reservation subcommand that needs `--lab`: the lab
+defines the required-resource list.  It reads lab *data* only — no host
+is contacted.
+
+`check` runs the same gate every hardware-touching command runs in its
+preamble — see {doc}`index` for what that gate covers and
+{doc}`skipping` for the break-glass override.
+
+## What it prints
+
+First the requirement, as a table with one row per (resource, origin) pair:
+
+| Column | What it holds |
+|--------|---------------|
+| `resource` | The identifier, exactly as declared.  Opaque to otto. |
+| `level` | `lab`, `element` or `host` — the level that required it. |
+| `owner` | The lab name, the element slug (e.g. `chassis`), or the host id. |
+| `held` | `yes` or `no` for the effective user.  `n/a` under `backend = "none"`, which is never queried. |
+
+Rows are sorted by resource, then level, then owner, so the same lab always
+prints in the same order.  Level sorts widest-first — `lab`, then `element`,
+then `host` — not alphabetically, so one identifier declared at two levels
+reads top-down from the coarsest thing that required it.  Each such declaration
+gets its own row: the table explains *why* something is required, not just
+*that* it is.  The title names the lab, the identity being checked, and how
+many hosts are in play; that count is the fleet of interest ({doc}`index`), not
+the whole lab when a project narrows it.  It never counts the built-in `local`
+host, on the whole-lab fallback or under any `[project]` declaration: otto can
+always run on the machine it is running on, so that host is held out of the
+requirement entirely.  Scoping itself still admits by pattern rather than by id
+— a fleet *walk* reaches `local` with `include_local=True` exactly as before —
+and it is this reservation reader, not the scope, that sets it aside.  A lab
+declaring its own `local` entry is counted like any other host.
+
+Then the verdict — `OK — all required resources are reserved.`, or the same
+error a gated command would fail with, one line per missing identifier and
+origin.  For the three-level `rig` on {doc}`index`, checked as a user who
+holds everything but the second slot:
+
+```text
+reservations required by lab rig for chris (3 host(s)
+                       in play)
+╭──────────────────┬─────────┬───────────────┬──────╮
+│ resource         │ level   │ owner         │ held │
+├──────────────────┼─────────┼───────────────┼──────┤
+│ chassis-1        │ element │ chassis       │ yes  │
+│ chassis-1-slot-1 │ host    │ chassis_slot1 │ yes  │
+│ chassis-1-slot-2 │ host    │ chassis_slot2 │ no   │
+│ rig-pdu          │ lab     │ rig           │ yes  │
+╰──────────────────┴─────────┴───────────────┴──────╯
+User 'chris' does not hold all resources required by lab 'rig'. Missing:
+  chassis-1-slot-2  host chassis_slot2  (held by: dana until 16:00)
+```
+
+Each `held by:` clause names the current holders and, for any booking that has
+an end, when it frees up — so you can tell whether it is worth waiting.
+Multiple holders join with `, `, and a holder whose booking is open-ended
+contributes a bare name with no `until`. Naming holders at all is an
+[optional backend capability](../../library/reservation-backends.md#the-optional-holders-capability):
+a scheduler that can only answer per-user queries yields
+`(held by: unknown — this backend cannot report other users)` instead, and
+nothing else about the check changes.
+
+```{note}
+That rendering is illustrative.  No documentation harness captures `check`, so
+nothing keeps the block above in step with the code the way the captured help
+output elsewhere in this guide stays in step — read the columns and their
+values as the contract, and the box art as a sketch of the shape.
+```
+
+A lab that requires nothing of the hosts in play prints one line instead of an
+empty box — `(this lab requires no reservation for the hosts in play)` — and
+the backend is never queried, so a scheduler that is up but unhappy cannot turn
+an empty requirement into a failure.  The backend is still *constructed* first,
+though, so a constructor that raises fails the command as usual (see
+{doc}`index`'s fail-closed section).

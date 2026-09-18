@@ -56,11 +56,11 @@ directory otto's own documentation build creates and wipes.
 ```
 
 The last three steps name the lab explicitly (`--lab example_lab`), as every
-example on this page does; {doc}`../guide/cli/index` covers `--lab`, the
+example on this page does; {doc}`../cli/index` covers `--lab`, the
 `OTTO_LAB` environment variable that replaces it, and the rest of the global
 options.
 
-{doc}`../guide/cli/init` is the flag reference; {doc}`../guide/configuration/settings`
+{doc}`../cli/init` is the flag reference; {doc}`../guide/configuration/settings`
 explains every key `settings.toml` accepts and the one-time
 {ref}`team-setup-checklist`. Point otto at the project with the
 `export OTTO_SUT_DIRS=…` line it printed — nothing is discovered from the
@@ -200,7 +200,7 @@ otto --lab example_lab test -m "not integration"    # run by marker, no suite na
 
 The last two forms skip the suite name entirely — `--tests` and/or `-m`
 alone select matching tests across every suite (and every repo). See
-{doc}`../guide/cli/test/index` for the full selection-run syntax, including how a
+{doc}`../cli/test/index` for the full selection-run syntax, including how a
 suite's `Options` defaults apply when it's reached this way.
 
 `@options` (`from otto import options`) is otto's name for **pydantic's**
@@ -240,7 +240,7 @@ otto --lab example_lab monitor --live --hosts 'example-device' --interval 2.0
 This opens a web dashboard showing CPU, memory, disk, and network metrics.
 `--live` is what collects from the lab; the positional argument reviews a
 saved export instead, and `--hosts` narrows by a regex full-matched against
-host ids — see {doc}`../guide/cli/monitor/index`.
+host ids — see {doc}`../cli/monitor/index`.
 
 ### Docker services
 
@@ -259,7 +259,7 @@ docker-services
 ## Where to go next
 
 - {ref}`team-setup-checklist` -- One-time setup when adopting otto for a team
-- {doc}`../guide/cli/index` -- Every `otto` command, one page per verb
+- {doc}`../cli/index` -- Every `otto` command, one page per verb
 - {doc}`../guide/configuration/index` -- The project and lab files every command reads
 - {doc}`../library/index` -- Using otto as a Python library, plus recipes
 - {doc}`../api/index` -- Full API reference

@@ -2,7 +2,7 @@
 
 An **instruction** is an async Python function that otto exposes as an
 `otto run` subcommand. This page is how to write one. For invoking the ones
-you already have, see {doc}`../guide/cli/run/index`.
+you already have, see {doc}`../cli/run/index`.
 
 ## Defining an instruction
 
@@ -91,7 +91,7 @@ matches none of the hosts the run may walk raises
 `all_hosts()` walks the run's **fleet of interest** — the hosts the active
 repos' `[project]` declarations admit — which is the whole loaded lab when no
 repo declared one.  `get_host()` is deliberately unscoped and reaches any host.
-See [The fleet of interest](../guide/cli/run/defaults.md#the-fleet-of-interest).
+See [The fleet of interest](../cli/run/defaults.md#the-fleet-of-interest).
 
 For fan-out across the lab — running the same command or async
 operation on every host concurrently — use
@@ -441,7 +441,7 @@ anybody writes.
   display's duty on a state nobody could read is the opposite of a converge's,
   so it prints an `unknown` cell where `is_clean()` refuses to answer. Both
   come off the same probe, which is what keeps them from disagreeing; see
-  [Reading `status`](../guide/cli/run/defaults.md#reading-status).
+  [Reading `status`](../cli/run/defaults.md#reading-status).
 - **`status()` never moves for either of them.** An impaired link and a live
   tunnel are lab infrastructure; the tri-state install answer stays a count of
   products, so a lab under test with 200 ms of injected delay still reads
@@ -519,7 +519,7 @@ What the decorator on a method does differently:
   speak; a repo restating one of them fails at init, naming the keyword. A repo
   declaring a new name sets them, and the next repo to declare that name
   inherits them. Each keyword's meaning is tabulated under [Your repo's flags on
-  a default](../guide/cli/run/defaults.md#your-repos-flags-on-a-default).
+  a default](../cli/run/defaults.md#your-repos-flags-on-a-default).
 - An override of a first-party name **must** pass an `options=` class that
   inherits the first-party class for that name
   (`InstallOptions` and its five siblings, all
@@ -531,7 +531,7 @@ What the decorator on a method does differently:
 `otto run <name>` exposes the union of every registered body's fields, and each
 body receives its own class. Which fields merge into one flag, what a
 cross-repo collision looks like, and where a shared base class belongs are in
-[One command, every repo's flags](../guide/cli/run/defaults.md#one-command-every-repos-flags).
+[One command, every repo's flags](../cli/run/defaults.md#one-command-every-repos-flags).
 
 ## The collision error
 
@@ -542,7 +542,7 @@ modules are being imported:
 ```text
 repo 'widget' defines instruction 'install', which is a project instruction.
 Override lab behavior by declaring the method on a ProjectActions subclass
-instead (see docs/guide/cli/run/defaults.md), or rename the instruction.
+instead (see docs/cli/run/defaults.md), or rename the instruction.
 ```
 
 A **method** declaration of the same name is the sanctioned override and passes;
@@ -629,7 +629,7 @@ permissions".
 {class}`~otto.host.local_host.LocalHost` copies files within the local
 filesystem, {class}`~otto.host.unix_host.UnixHost` transfers between the
 local machine and the remote host, and `EmbeddedHost` provides its own
-console/tftp transfer path; see {doc}`../guide/cli/host/embedded`.
+console/tftp transfer path; see {doc}`../cli/host/embedded`.
 
 `mode` follows the same split: it is honoured by
 {class}`~otto.host.local_host.LocalHost`, every
@@ -652,5 +652,5 @@ reaches the console and the log files.
 - `never` — redacts the I/O from every sink.
 
 Warnings and errors are never suppressed by the log mode, whichever one you
-pass. See {doc}`../guide/cli/host/run` for the CLI-side view of the same
+pass. See {doc}`../cli/host/run` for the CLI-side view of the same
 output.

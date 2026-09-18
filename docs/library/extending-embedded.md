@@ -238,6 +238,6 @@ data, not runtime-detected.
 
 ## See also
 
-- {doc}`../guide/cli/host/embedded` — the embedded-host user guide (selecting frames/filesystems)
+- {doc}`../cli/host/embedded` — the embedded-host user guide (selecting frames/filesystems)
 - {doc}`../guide/configuration/os-profiles` — registering a custom host class that bundles these
 - {doc}`../guide/configuration/lab-config` — the `command_frame` / `filesystem` lab-data fields

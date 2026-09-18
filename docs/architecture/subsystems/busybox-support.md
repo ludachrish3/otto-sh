@@ -653,7 +653,7 @@ concrete body — {meth}`~otto.host.product.ShellProduct.stage`, a single
 five live BusyBox guests already exercise end to end.
 
 Everything else that would reach the device comes from **your** product code.
-The documented shape (see {doc}`../../guide/cli/host/capabilities/index`) has `install`
+The documented shape (see {doc}`../../cli/host/capabilities/index`) has `install`
 call `host.run("tar xzf …")` and `is_installed` call `host.run("test -d …")`,
 so on a BusyBox device the verdict is decided by those commands and by the
 `run`/`put` rows above — not by anything in `otto.host.product`.

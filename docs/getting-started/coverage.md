@@ -21,7 +21,7 @@ CFLAGS  += --coverage -O0
 LDFLAGS += --coverage
 ```
 
-{doc}`../guide/cli/cov/instrumenting/gcc` is the full GCC treatment — version
+{doc}`../cli/cov/instrumenting/gcc` is the full GCC treatment — version
 matching, cross toolchains, the stale-build stamp guard — and its siblings
 cover clang and embedded targets.
 
@@ -116,7 +116,7 @@ hosts = ".*"
 `".*"` is every host in the lab, `"test[12]"` is those two. A tier is optional
 — with no `[coverage.tiers]` table otto assumes a single implicit tier named
 `system`, of the `e2e` kind, which is the one a lab run collects into.
-{doc}`../guide/cli/cov/tiers` is the tier model, and the unit views at the
+{doc}`../cli/cov/tiers` is the tier model, and the unit views at the
 bottom of this page are the second tier most projects add.
 
 ## Run tests
@@ -183,7 +183,7 @@ nowhere to collect into. In auto mode the same situation is one warning and no
 coverage, because a plain `otto test` asked for a test run, not for coverage,
 and must not die of a coverage misconfiguration.
 
-{doc}`../guide/cli/cov/during-tests` has the rest of the flags — an explicit
+{doc}`../cli/cov/during-tests` has the rest of the flags — an explicit
 destination, the pre-run counter cleanup, the inline report.
 
 ## Where it lands
@@ -216,7 +216,7 @@ whole directory can be copied or published as it is.
 Every run in the report carries its product: the runs page lists them as
 `host · product`, so a lab with two products says which one each number came
 from, and one of them can be pinned to narrow every page to its runs.
-{doc}`../guide/cli/cov/report` is the full report tour, pinning included.
+{doc}`../cli/cov/report` is the full report tour, pinning included.
 
 ## A kernel module
 
@@ -251,7 +251,7 @@ Coverage from a module's exit routine only reaches the report if the
 module is uninstalled before the post-run fetch — a suite's teardown does
 this by unloading the product, and the exit dump lands before `otto test
 --cov`'s own post-run fetch runs (not `otto cov get`, a separate,
-later command). {doc}`../guide/cli/cov/instrumenting/kernel-modules` has the
+later command). {doc}`../cli/cov/instrumenting/kernel-modules` has the
 rest: why a runtime is needed at all, instrumenting a module of your own,
 and the alternative `coverage = "kernel"` method.
 
@@ -282,7 +282,7 @@ otto test --cov TestCovContainer
 
 `image` can also be a `registry/name:tag` reference instead of a tarball
 path, with `pull = true` to fetch it on every install rather than requiring
-it already present. {doc}`../guide/cli/cov/instrumenting/containers` has
+it already present. {doc}`../cli/cov/instrumenting/containers` has
 the rest: the tarball/reference split, what `uninstall` removes, and how
 this differs from running a service *inside* a container as the thing
 under test.
@@ -292,7 +292,7 @@ under test.
 A compose-built container host ingests products exactly like any other host,
 so a container running two products reports two products. That is a
 service under test *inside* a compose-built container; for an image you
-run *as* a product, see {doc}`../guide/cli/cov/instrumenting/containers`.
+run *as* a product, see {doc}`../cli/cov/instrumenting/containers`.
 
 ## Unit test views
 
@@ -319,10 +319,10 @@ product owns them.
 
 Each view needs its **own** build directory — `.gcno` files sit beside the
 objects they describe, so two views built from one tree cannot be told apart.
-{doc}`../guide/cli/cov/tiers` has the rule and the rest of the tier model.
+{doc}`../cli/cov/tiers` has the rule and the rest of the tier model.
 
 ## Next
 
-{doc}`../guide/cli/cov/index` is the command reference for the whole workflow:
+{doc}`../cli/cov/index` is the command reference for the whole workflow:
 `otto cov get`, `otto cov clean`, `otto cov report`, tiers, exclusions,
 thresholds, and per-ticket attribution.

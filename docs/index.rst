@@ -8,6 +8,7 @@ otto
    getting-started/index
    installation
    guide/index
+   cli/index
    library/index
    architecture/index
    contributing

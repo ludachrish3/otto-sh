@@ -167,7 +167,7 @@ so a note can sit next to whatever it explains:
 ```
 
 A top-level `$schema` is comment space too — that is the key wiring the file
-to the generated schema in your editor (see {doc}`../cli/schema/editors`).
+to the generated schema in your editor (see {doc}`../../cli/schema/editors`).
 The `_` idiom is scoped to `lab.json`; it is not a general convention
 elsewhere in otto's JSON/TOML configuration.
 
@@ -531,7 +531,7 @@ registry machinery behind this and every other seam otto can be extended at.
 A host `otto --list-hosts` shows does not complete on TAB
 : Completion never warns — a warning printed into a completing shell corrupts
   the candidate list — so an entry it could not build is dropped silently.
-  [`otto cache info`](../cli/cache/index.md#info) ends with a block for the
+  [`otto cache info`](../../cli/cache/index.md#info) ends with a block for the
   current workspace: the cache entry's standing, the inventory as completion
   resolved it, the lab files each source read, the hosts offered, and every
   entry dropped with where it was and why. A supplement file missing from a

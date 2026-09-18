@@ -105,9 +105,9 @@ scaffolded demo repo at docs build time:
 ```
 
 More showcases live elsewhere: suite names and `--tests`
-({doc}`../../guide/cli/test/index`), instruction names ({doc}`../../guide/cli/run/index`),
-per-class host verbs ({doc}`../../guide/cli/host/index`) plus registry-backed
-option values ({doc}`../../guide/cli/host/connections`), and `--lab`
+({doc}`../../cli/test/index`), instruction names ({doc}`../../cli/run/index`),
+per-class host verbs ({doc}`../../cli/host/index`) plus registry-backed
+option values ({doc}`../../cli/host/connections`), and `--lab`
 ({doc}`../lifecycle`).
 
 The consistent rule behind all of them: the process answering the keystroke

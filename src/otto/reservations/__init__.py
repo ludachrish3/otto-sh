@@ -1,7 +1,7 @@
 """Lab reservation / scheduler-check subsystem.
 
 See :mod:`otto.reservations.protocol` for the backend contract and
-``docs/guide/cli/reservation/`` for the end-user docs and
+``docs/cli/reservation/`` for the end-user docs and
 ``docs/library/reservation-backends.md`` for the implementer contract.
 """
 

@@ -7,8 +7,8 @@ that answers a bash TAB straight from the completion cache, standard
 library only, whenever the cache's own bookkeeping says it still describes
 the world. Anything it cannot answer that way runs today's path unchanged;
 see
-{doc}`the CLI page <../../guide/cli/index>` and
-{doc}`the cache page <../../guide/cli/cache/index>` for the user-facing
+{doc}`the CLI page <../../cli/index>` and
+{doc}`the cache page <../../cli/cache/index>` for the user-facing
 behavior this subsystem serves.
 
 ## Two paths, one answer
@@ -110,7 +110,7 @@ fresher-than-the-cache check against every rewrite, and its window would last
 the size of the step plus the minute. Because the marker must be at least as
 new as the cache's own mtime, rewriting the cache invalidates every marker
 beside it automatically — nothing has to remember to delete them. The marker
-lifecycle under the cache commands is on {doc}`../../guide/cli/cache/index`.
+lifecycle under the cache commands is on {doc}`../../cli/cache/index`.
 
 **Known inequalities**, beyond the window itself:
 

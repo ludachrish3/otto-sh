@@ -5,7 +5,7 @@ into CLI arguments and options. This page is the authoring contract: how a
 method is exposed, how its parameters are inferred, and how a repo registers
 the product and dev-tool providers whose verbs appear the same way.
 For what the resulting verbs *do*, see
-{doc}`../guide/cli/host/capabilities/index`.
+{doc}`../cli/host/capabilities/index`.
 ## Methods as CLI verbs
 
 Any host coroutine method decorated with `@cli_exposed` is automatically an
@@ -55,7 +55,7 @@ otto host <my-host-id> flash-firmware ./build/app.bin
 
 A verb returning a `Result` exits non-zero when its status is not OK, and a
 verb returning a plain value exits 0 with the value printed as-is — see
-[Exit codes](../guide/cli/host/index.md#exit-codes).
+[Exit codes](../cli/host/index.md#exit-codes).
 
 ### Parameter inference rules
 
@@ -129,7 +129,7 @@ dest_dir: Annotated[Path, Arg(remote_path="dir")]
 ```
 
 The marker only affects tab completion — see
-[Remote path completion](../guide/cli/index.md#remote-path-completion) for what
+[Remote path completion](../cli/index.md#remote-path-completion) for what
 completion offers and when it stays quiet.  It is rejected on a comma-list or
 `key=value` option (which render as a single string the completer can't split);
 mark a completable path list as `Arg(variadic=True, remote_path=...)` instead.
