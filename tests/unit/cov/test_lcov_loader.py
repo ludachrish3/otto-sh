@@ -2,7 +2,12 @@
 
 import pytest
 
-from otto.coverage.merge.lcov_loader import LCOVLoader, parse_fn_record, parse_fnda_record
+from otto.coverage.merge.lcov_loader import (
+    LCOVLoader,
+    _parse_block_id,
+    parse_fn_record,
+    parse_fnda_record,
+)
 from otto.coverage.merge.paths import PathMapping, PathRemapper
 from otto.coverage.store.model import CoverageStore
 
@@ -189,3 +194,56 @@ class TestFunctionRecords:
         assert foo.functions["ghost"].start_line == 0
         assert foo.functions["ghost"].hits.for_tier("system") == 4
         assert any("ghost" in r.message and "FN" in r.message for r in caplog.records)
+
+
+class TestBlockIdParsing:
+    """``BRDA:<line>,[e]<block>,<branch>,<taken>`` (``man geninfo``): a
+    leading ``e`` on the block field is the exception tag — "'exception
+    tag' is 'e' if this is a branch related to exception handling" —
+    confirmed against lcov 2.0's own parser (``lcovutil.pm``:
+    ``/^BRDA:(\\d+),(e?)(\\d+),(.+)$/``). Seen live as
+    ``BRDA:<line>,e0,<branch>,<taken>`` from arm64 kernel headers'
+    asm-goto alternatives in a kmod product's report; otto's store has no
+    exception-branch concept, so these records are dropped entirely."""
+
+    def test_decimal_block_id_stays_decimal(self):
+        assert _parse_block_id("20") == 20
+
+    def test_exception_tagged_block_id_is_dropped(self):
+        assert _parse_block_id("e0") is None
+
+    def test_load_drops_an_exception_tagged_branch(self, source_tree, tmp_path):
+        info = tmp_path / "exception_block.info"
+        info.write_text(
+            f"TN:\nSF:{source_tree}/src/foo.c\nDA:3,10\nBRDA:3,e0,0,5\nBRDA:3,e0,1,-\nend_of_record\n"
+        )
+        store = CoverageStore()
+        LCOVLoader(store, PathRemapper([])).load(info, "system")
+        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        assert foo.lines[3].branches == []
+
+    def test_load_keeps_an_untagged_branch(self, source_tree, tmp_path):
+        info = tmp_path / "untagged_block.info"
+        info.write_text(
+            f"TN:\nSF:{source_tree}/src/foo.c\nDA:3,10\nBRDA:3,0,0,5\nBRDA:3,0,1,-\nend_of_record\n"
+        )
+        store = CoverageStore()
+        LCOVLoader(store, PathRemapper([])).load(info, "system")
+        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        branches = foo.lines[3].branches
+        assert len(branches) == 2
+        assert all(b.block == 0 for b in branches)
+
+    def test_load_a_mixed_file_yields_only_the_untagged_branches(self, source_tree, tmp_path):
+        info = tmp_path / "mixed_block.info"
+        info.write_text(
+            f"TN:\nSF:{source_tree}/src/foo.c\nDA:3,10\n"
+            "BRDA:3,0,0,5\nBRDA:3,0,1,-\nBRDA:3,e1,0,3\nBRDA:3,e1,1,-\n"
+            "end_of_record\n"
+        )
+        store = CoverageStore()
+        LCOVLoader(store, PathRemapper([])).load(info, "system")
+        foo = store.get_or_create_file(source_tree / "src" / "foo.c")
+        branches = foo.lines[3].branches
+        assert len(branches) == 2
+        assert all(b.block == 0 for b in branches)

@@ -1,4 +1,4 @@
-"""Parse lcov ``.info`` files into a :class:`~otto.coverage.store.model.CoverageStore`.
+r"""Parse lcov ``.info`` files into a :class:`~otto.coverage.store.model.CoverageStore`.
 
 The lcov ``.info`` format is stable and well-documented:
 https://manpages.ubuntu.com/manpages/focal/man1/geninfo.1.html
@@ -10,9 +10,23 @@ Format summary::
     FN:<start>[,<end>],<function name>
     FNDA:<count>,<function name>
     DA:<line>,<count>[,<checksum>]
-    BRDA:<line>,<block>,<branch>,<taken>   taken='-' means never reached
+    BRDA:<line>,[e]<block>,<branch>,<taken>   taken='-' means never reached
     BRH:<hit>,<found>
     end_of_record
+
+``BRDA``'s block field carries an optional leading ``e``: ``man geninfo``
+places it before the *line number* (``BRDA:<exception tag><line
+number>,<block number>,...``), but that is wrong — lcov 2.0's own writer
+(``lcovutil.pm`` ~5093, ``printf(INFO_HANDLE "BRDA:%u,%s%u,%s,%s\n", $line,
+$br->is_exception() ? 'e' : '', $block_id, ...)``) and its own parser
+(``lcovutil.pm`` ~4725, ``/^BRDA:(\d+),(e?)(\d+),(.+)$/``) agree the tag
+sits between the line number and the block number, exactly where this
+module's format summary puts it. "'exception tag' is 'e' if this is a
+branch related to exception handling" (``man geninfo``). otto's store has
+no exception-branch concept, and these are compiler-synthesised arcs the
+product never wrote (observed live: arm64 kernel headers'
+``alternative-macros.h`` asm-goto alternatives, pulled into a kmod
+product's translation unit) — see ``_parse_block_id`` below.
 """
 
 import logging
@@ -63,6 +77,22 @@ def parse_fnda_record(body: str) -> FunctionHit:
     """Parse the text after ``FNDA:`` — ``<count>,<name>``, split once."""
     count_text, _, name = body.partition(",")
     return FunctionHit(count=int(count_text), name=name)
+
+
+def _parse_block_id(text: str) -> int | None:
+    """Parse a ``BRDA:`` block field, or ``None`` for an exception-tagged branch.
+
+    The field is ``[e]<digits>`` (see the module docstring, and lcov's own
+    writer/parser cited there): a leading ``e`` marks the branch as
+    exception-handling machinery the compiler synthesised, not a branch the
+    product's own source wrote. otto's store has no exception-branch tier,
+    so the caller drops the whole record on ``None`` rather than storing it
+    under a guessed block id. An untagged id is always plain decimal — no
+    fallback base is needed or applied.
+    """
+    if text.startswith("e"):
+        return None
+    return int(text)
 
 
 class LCOVLoader:
@@ -140,8 +170,10 @@ class LCOVLoader:
 
                 elif line.startswith("BRDA:") and current_file is not None:
                     parts = line[5:].split(",")
+                    block = _parse_block_id(parts[1])
+                    if block is None:
+                        continue  # exception-tagged: compiler machinery, not a product branch
                     lineno = int(parts[0])
-                    block = int(parts[1])
                     branch = int(parts[2])
                     taken = parts[3]
 

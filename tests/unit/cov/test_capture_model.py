@@ -76,6 +76,44 @@ def test_parse_info(tmp_path: Path) -> None:
     assert branches[3] == [(0, 0, 4), (0, 1, None)]
 
 
+def test_parse_info_drops_an_exception_tagged_branch(tmp_path: Path) -> None:
+    """``BRDA:<line>,[e]<block>,<branch>,<taken>`` (``man geninfo``): a
+    leading ``e`` on the block field is the exception tag — confirmed
+    against lcov 2.0's own parser (``lcovutil.pm``:
+    ``/^BRDA:(\\d+),(e?)(\\d+),(.+)$/``). Seen live as
+    ``BRDA:<line>,e0,<branch>,<taken>`` from arm64 kernel headers'
+    asm-goto alternatives in a kmod product's capture; dropped entirely
+    since captures carry no exception-branch concept."""
+    src = tmp_path / "f.c"
+    info = tmp_path / "exception.info"
+    info.write_text(f"TN:\nSF:{src}\nDA:3,7\nBRDA:3,e0,0,4\nBRDA:3,e0,1,-\nend_of_record\n")
+    files = parse_info(info)
+    _, branches = files[str(src)]
+    assert branches.get(3, []) == []
+
+
+def test_parse_info_keeps_an_untagged_branch(tmp_path: Path) -> None:
+    src = tmp_path / "f.c"
+    info = tmp_path / "untagged.info"
+    info.write_text(f"TN:\nSF:{src}\nDA:3,7\nBRDA:3,0,0,4\nBRDA:3,0,1,-\nend_of_record\n")
+    files = parse_info(info)
+    _, branches = files[str(src)]
+    assert branches[3] == [(0, 0, 4), (0, 1, None)]
+
+
+def test_parse_info_a_mixed_file_yields_only_the_untagged_branches(tmp_path: Path) -> None:
+    src = tmp_path / "f.c"
+    info = tmp_path / "mixed.info"
+    info.write_text(
+        f"TN:\nSF:{src}\nDA:3,7\n"
+        "BRDA:3,0,0,4\nBRDA:3,0,1,-\nBRDA:3,e1,0,9\nBRDA:3,e1,1,-\n"
+        "end_of_record\n"
+    )
+    files = parse_info(info)
+    _, branches = files[str(src)]
+    assert branches[3] == [(0, 0, 4), (0, 1, None)]
+
+
 def test_build_capture_clean(repo: Path, tmp_path: Path) -> None:
     info = _write_info(tmp_path, repo / "f.c")
     cap = build_capture(
