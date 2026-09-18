@@ -54,7 +54,7 @@ export default defineConfig({
     // artifact keeps the air-gap gate (scripts/check_airgap.sh) trivially
     // auditable. 2 300 kB = the 2026-07 bundle (~2 110 kB) plus headroom;
     // `make web` runs vite through scripts/build_web_no_warnings.sh, which
-    // turns any (!) warning into a BUILD FAILURE — so growth past this
+    // turns any warning into a BUILD FAILURE — so growth past this
     // number stops the build, and raising it is a reviewed edit here, same
     // deal as the Python import-budget guard.
     chunkSizeWarningLimit: 2_300,

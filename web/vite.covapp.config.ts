@@ -85,7 +85,7 @@ export default defineConfig({
         // no-op. Any dynamic import() a later task adds still lands in this
         // one file; nothing here relies on the option actually doing
         // anything, so it stays out rather than shipping a build warning
-        // build_web_no_warnings.sh's "(!)" grep doesn't happen to catch.
+        // that scripts/build_web_no_warnings.sh would fail on.
         entryFileNames: "dist/covapp.js",
         assetFileNames: "dist/covapp.[ext]",
       },

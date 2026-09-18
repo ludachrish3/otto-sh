@@ -52,6 +52,13 @@ VENV_BIN := $(if $(VIRTUAL_ENV),$(VIRTUAL_ENV)/bin,$(CURDIR)/.venv/bin)
 # unaffected (those tools resolve via the explicit VENV_BIN PATH prepend).
 unexport VIRTUAL_ENV
 
+# npm's weekly "New major version of npm available!" notice goes to stderr,
+# and the web gates fail on any stderr output (scripts/build_web_no_warnings.sh
+# and the scripts that follow its rule), so a registry release would fail them
+# on unchanged code. Those scripts switch the notifier off themselves, for a
+# direct run; exporting it here covers every npm/npx any recipe runs.
+export npm_config_update_notifier := false
+
 # Coverage target invoked by `validate-python`. Defaults to the full Python
 # gate (coverage-python); `ci` overrides this to `coverage-hostless` because
 # GitHub Actions doesn't have the Vagrant VMs that integration/hops tests
@@ -504,10 +511,14 @@ web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + t
 	@$(SAY) "regenerating web/ API types from the live pydantic models"
 	@scripts/gen_web_types.sh
 	@git diff --exit-code web/src/api/types.gen.ts web/src/api/export.gen.ts
-# build_web_no_warnings.sh = vite with warnings-as-errors: any "(!)"
-# build warning (chunk budget overrun, rollup notices) fails the build
-# instead of scrolling past. The chunk budget itself lives in
-# web/vite.config.ts (chunkSizeWarningLimit) / web/vite.covapp.config.ts.
+# build_web_no_warnings.sh = vite with warnings-as-errors: the build fails
+# if it writes ANYTHING to stderr. That rule is what enforces the chunk
+# budget (Vite 8 reports a chunkSizeWarningLimit overrun on stderr) and what
+# catches warnings with no marker at all (Vite's html-plugin notices,
+# Tailwind's bare console.warn). A "(!)"/" WARN " scan over stdout is only a
+# backstop for tools that print warnings there. The chunk budget itself
+# lives in web/vite.config.ts (chunkSizeWarningLimit) /
+# web/vite.covapp.config.ts.
 	@$(SAY) "vite build: monitor dashboard (warnings are errors)"
 	@scripts/build_web_no_warnings.sh build
 	@$(SAY) "vite build: covapp (warnings are errors)"
