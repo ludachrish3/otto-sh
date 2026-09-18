@@ -2,7 +2,7 @@
 
 Read-only helpers over the configured host inventory — the tool-agnostic layer
 beneath `lab.json`, described in
-{doc}`../../guide/configuration/inventory`. `lookup` and `list` debug the join
+{doc}`../../configuration/inventory`. `lookup` and `list` debug the join
 without editing a lab file; `export` and `diff` are the transition tools
 between a JSON inventory and NetBox; `refresh` forces a fetch of a cached
 remote inventory.

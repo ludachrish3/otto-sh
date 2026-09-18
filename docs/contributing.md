@@ -608,9 +608,9 @@ docs/
 ├── getting-started/          # hub + the worked example (fragments from examples/getting-started/)
 ├── examples/                 # checked-in example projects the worked example includes; not Sphinx sources
 ├── installation.md           # Install flows: air-gapped, teams, offline docs
-├── guide/
-│   └── configuration/        # settings.toml, lab.json, host sources and options
+├── guide/                    # User Guide: hosts, startup performance
 ├── cli/                      # One page per command, mirroring otto's command tree
+├── configuration/            # settings.toml, lab.json, host sources and options
 ├── library/                  # Using otto as a library + recipes (Markdown)
 ├── architecture/             # How otto is built and why (Markdown)
 ├── contributing.md           # This page

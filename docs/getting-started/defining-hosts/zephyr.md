@@ -75,7 +75,7 @@ And the same command on the 2.7 target:
 ```
 
 {doc}`../../cli/host/embedded` lists the built-in frames and filesystems;
-{doc}`../../guide/configuration/os-profiles` shows how a named profile bundles
+{doc}`../../configuration/os-profiles` shows how a named profile bundles
 `os_version`, `command_frame` and the rest so each entry declares only its
 identity. Monitoring a Zephyr target over SNMP — three of the bed's targets do
 — is on {doc}`../customizations`.

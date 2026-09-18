@@ -58,7 +58,7 @@ rather than on anything being wrong.
 `{cov_dir}` and `{name}` are the two placeholders `install`, `uninstall`, and
 `check` accept; anything else is refused when settings load. A literal brace —
 `awk '{{print $1}}'`, a shell `${{VAR}}` — is written doubled. See
-{doc}`../guide/configuration/declared-products-tools` for the whole `shell`
+{doc}`../configuration/declared-products-tools` for the whole `shell`
 kind.
 
 A product written in Python says exactly the same thing. The previous page's

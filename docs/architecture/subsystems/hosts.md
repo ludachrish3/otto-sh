@@ -154,7 +154,7 @@ Which backend a host actually uses is resolved from three inputs:
 
 The same mechanism resolves per-protocol option tables (e.g. `ssh_options`),
 so "prefer netcat on this board family, with these ports" is data, not code.
-See {doc}`../../guide/configuration/host-options` for the user-facing rules.
+See {doc}`../../configuration/host-options` for the user-facing rules.
 
 ## From lab data to a host object
 
@@ -165,7 +165,7 @@ over a *base family* (`unix`, `embedded`) — the profile picks the host class
 and its pydantic spec, defaults and host fields are merged (host fields win),
 the spec validates, and `to_host()` builds the runtime object. Custom host
 classes and profiles register through `register_host_class` /
-`register_os_profile` ({doc}`../../guide/configuration/os-profiles`).
+`register_os_profile` ({doc}`../../configuration/os-profiles`).
 
 Profiles are the **data** half of otto's customization split: they name a
 bundle of defaults many hosts share. The **code** half is products —
@@ -179,7 +179,7 @@ A **kind** is a further split within products: the runtime knowledge behind
 a `[[products]]` entry's verbs — install, check, uninstall — and how its
 coverage counters are collected. The same naming rule governs every kind: a
 kind is named for **what drives its verbs**, never for the artifact's
-format. {doc}`../../guide/configuration/declared-products-tools`'s kinds
+format. {doc}`../../configuration/declared-products-tools`'s kinds
 table is the one home for the built-ins and how a repo registers another.
 
 ## Embedded strategies

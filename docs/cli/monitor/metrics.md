@@ -224,7 +224,7 @@ network gear — on a separate channel from command execution.
 
 Use SNMP monitoring when a host either has no shell (embedded Zephyr targets) or
 when you prefer to pull metrics through a dedicated management channel rather than
-shell commands.  See {doc}`../host/embedded` for embedded host setup and {doc}`../../guide/configuration/lab-config`
+shell commands.  See {doc}`../host/embedded` for embedded host setup and {doc}`../../configuration/lab-config`
 for the `snmp` field reference.
 
 ### How otto reads SNMP data
@@ -285,7 +285,7 @@ labels above (`rx if0`, `fs1 used`, …) come from the same descriptor
 registry as the core scalars, so they can be renamed per device — see
 [registering custom descriptors](../../library/custom-parsers.md#extending-registering-custom-descriptors).
 Lab data never spells out these OIDs directly; the `otto-net:N` /
-`otto-fs:N` bundles (see {doc}`../../guide/configuration/lab-config`) expand them
+`otto-fs:N` bundles (see {doc}`../../configuration/lab-config`) expand them
 and register their descriptors together.
 
 An OID present in `oids` but without a registered descriptor falls back to

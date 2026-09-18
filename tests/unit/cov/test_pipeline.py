@@ -633,7 +633,7 @@ class TestUnitHarvest:
     @pytest.mark.asyncio
     async def test_tilde_harvest_dir_expands_via_home(self, tmp_path, monkeypatch):
         """A ``~``-prefixed ``harvest_dirs`` entry expands against ``HOME`` before
-        repo-anchoring (path-resolution convention, docs/guide/configuration/settings.md).
+        repo-anchoring (path-resolution convention, docs/configuration/settings.md).
 
         Without the fix, ``~`` is never expanded and the entry is anchored
         literally under ``repo_root / "~" / "unit_build"``, which never exists —

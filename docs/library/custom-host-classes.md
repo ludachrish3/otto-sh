@@ -2,7 +2,7 @@
 A **code profile** registers a host *class*: Python that changes how otto
 talks to a host, not just what the lab entry says about it. Data profiles —
 named bundles of lab-data defaults — are configuration and live in
-{doc}`../guide/configuration/os-profiles`.
+{doc}`../configuration/os-profiles`.
 ## Code profiles
 
 Call `register_os_profile()` from an init module listed in `settings.toml`:
@@ -163,7 +163,7 @@ The profile's defaults are merged beneath the host's own fields; host fields
 always win.
 ## See also
 
-- {doc}`../guide/configuration/lab-config` — `lab.json` schema and repo-level host defaults
+- {doc}`../configuration/lab-config` — `lab.json` schema and repo-level host defaults
 - {doc}`../cli/host/embedded` — embedded host classes, command frames, and filesystems
 - {doc}`extending-embedded` — writing a custom command frame or filesystem
-- {doc}`../guide/configuration/settings` — `init` modules and `settings.toml` field reference
+- {doc}`../configuration/settings` — `init` modules and `settings.toml` field reference

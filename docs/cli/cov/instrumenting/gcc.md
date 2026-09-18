@@ -45,7 +45,7 @@ before `GCOV_PREFIX` is prepended, which is what keeps the tree under
 `cov_dir` shallow rather than a deep replica of the build machine's layout.
 `cov_dir` defaults to `/tmp/<name>`, so two products on one host stay apart
 without being told to. See
-{doc}`../../../guide/configuration/declared-products-tools` for the entry, and
+{doc}`../../../configuration/declared-products-tools` for the entry, and
 {ref}`the configuration section <coverage-configuration>` for the rest.
 
 A kernel module has no `GCOV_PREFIX`; {doc}`kernel-modules` is that path.

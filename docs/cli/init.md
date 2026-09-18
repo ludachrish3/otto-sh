@@ -59,11 +59,11 @@ Each directory a json source's `paths` names holds a `lab.json` file
 describing the equipment at that location (a `paths` entry may also name a
 `.json` file directly, or a glob).  The full schema — the `labs` table, the
 element entry, every host field, the connection-option tables and the link
-entry — lives in {doc}`../guide/configuration/lab-config`.
+entry — lives in {doc}`../configuration/lab-config`.
 
 Everything `otto init` writes is read back by the same loader every other
-command uses — see {doc}`../guide/configuration/settings` for the settings schema and
-what happens to it at startup, and {doc}`../guide/configuration/lab-config` for the
+command uses — see {doc}`../configuration/settings` for the settings schema and
+what happens to it at startup, and {doc}`../configuration/lab-config` for the
 `lab.json` schema.
 
 ## The lab doctor
@@ -94,7 +94,7 @@ never changes the exit code. Two are about lab shape:
 
 When an inventory is configured, its own doctor findings join the same
 `Warnings` block — see the
-[Warnings](../guide/configuration/inventory.md#warnings) section of the inventory
+[Warnings](../configuration/inventory.md#warnings) section of the inventory
 guide.
 
 Alongside the schemas, `otto init --schemas` writes

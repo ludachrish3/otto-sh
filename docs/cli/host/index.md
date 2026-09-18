@@ -3,7 +3,7 @@
 running commands, transferring files, opening an interactive shell, and invoking
 host capabilities -- without writing a test suite or instruction.
 
-Hosts are *defined* in `lab.json` — see {doc}`../../guide/configuration/lab-config`.
+Hosts are *defined* in `lab.json` — see {doc}`../../configuration/lab-config`.
 This section is about *using* them.
 ```{raw} html
 :file: ../../_static/generated/termynal/help-host.html
@@ -54,7 +54,7 @@ supports and nothing more.
 
 See {doc}`capabilities/index` for the capability families and which host types
 expose them, {doc}`netcat` and {doc}`connections` for transport, and
-{doc}`../../guide/configuration/host-options` for per-host tuning. Authoring a verb of
+{doc}`../../configuration/host-options` for per-host tuning. Authoring a verb of
 your own is {doc}`../../library/cli-exposed-verbs`.
 
 ## Subcommands

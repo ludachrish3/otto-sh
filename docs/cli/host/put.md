@@ -37,7 +37,7 @@ destination — completes against the host itself
 
 On a unix host the transfer rides that user's own connection, so a `DEST` that
 is still relative once
-[`default_dest_dir`](../../guide/configuration/lab-config.md#common-optional) has been
+[`default_dest_dir`](../../configuration/lab-config.md#common-optional) has been
 applied lands in *their* home directory, not the login user's.
 
 The mode is applied after the bytes land, in one batched `chmod` covering the

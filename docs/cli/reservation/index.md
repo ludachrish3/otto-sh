@@ -13,7 +13,7 @@ authoritative.
 
 ```{note}
 Wiring up reservations is a one-time, team-level decision. See the
-{ref}`team-setup-checklist` in {doc}`../../guide/configuration/settings` for the full onboarding map.
+{ref}`team-setup-checklist` in {doc}`../../configuration/settings` for the full onboarding map.
 ```
 
 See {doc}`../../architecture/subsystems/reservations` for what makes
@@ -61,9 +61,9 @@ strings the backend matches byte-for-byte:
 
 | Level | Where it is declared | What it stands for |
 |-------|----------------------|--------------------|
-| lab | `resources` in the lab's [`labs` table](../../guide/configuration/lab-config.md#the-labs-table) entry | Infrastructure the lab shares as a whole — a switch, a PDU, a bed. |
-| element | `resources` on an [`elements`](../../guide/configuration/lab-config.md#elements) entry | The element reserved as one unit — a chassis. |
-| host | `resources` on a [host entry](../../guide/configuration/lab-config.md#common-optional) | The slot. |
+| lab | `resources` in the lab's [`labs` table](../../configuration/lab-config.md#the-labs-table) entry | Infrastructure the lab shares as a whole — a switch, a PDU, a bed. |
+| element | `resources` on an [`elements`](../../configuration/lab-config.md#elements) entry | The element reserved as one unit — a chassis. |
+| host | `resources` on a [host entry](../../configuration/lab-config.md#common-optional) | The slot. |
 
 A lab whose every element carries a resource leaves nothing unguarded — every
 reservable host in play then requires something (container hosts declare none,

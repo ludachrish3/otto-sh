@@ -8,7 +8,7 @@ inventory wraps the selected store in
 record's by login; the lab file's entries layer over both.
 
 For configuration and the merge rules see
-:doc:`../guide/configuration/inventory`; for writing a store of your own,
+:doc:`../configuration/inventory`; for writing a store of your own,
 :doc:`../library/creds-backends`.
 
 .. automodule:: otto.creds

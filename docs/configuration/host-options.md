@@ -1,8 +1,8 @@
 # Host options
 
 Persistent per-host connection tuning, declared in `lab.json`. (For
-per-invocation overrides, see {doc}`../../cli/host/connections`; for the custom netcat backend,
-see {doc}`../../cli/host/netcat`.)
+per-invocation overrides, see {doc}`../cli/host/connections`; for the custom netcat backend,
+see {doc}`../cli/host/netcat`.)
 
 (connection-options)=
 
@@ -22,7 +22,7 @@ what every JSON fragment on this page shows:
 | ``sftp_options``  | SFTP transfers                 |
 | ``scp_options``   | SCP transfers                  |
 | ``ftp_options``   | FTP transfers (aioftp)         |
-| ``nc_options``    | see {doc}`../../cli/host/netcat`     |
+| ``nc_options``    | see {doc}`../cli/host/netcat`     |
 
 One further table, ``userland_options``, sits alongside these but names no
 protocol: it declares facts about the *device* (which elevation mechanism it
@@ -74,7 +74,7 @@ connect timeout:
 
 `otto host <id> probe` reports whether this port answers and, when the
 service listens elsewhere, prints the fragment to paste here — see
-{doc}`../../cli/host/capabilities/protocols`.
+{doc}`../cli/host/capabilities/protocols`.
 
 Anything supported by ``asyncssh.connect()`` but not surfaced as a
 curated field is reachable via ``extra``, which is forwarded verbatim:
@@ -117,7 +117,7 @@ connection opens.  Each list element maps straight to an
 For forwards that aren't expressible in JSON (UNIX-socket forwards,
 X11, custom subsystems), build the ``SshOptions`` in Python and supply
 a ``post_connect`` async hook — see the
-[connection options recipe](../../library/connection-options.md).
+[connection options recipe](../library/connection-options.md).
 
 ### Telnet
 
@@ -140,7 +140,7 @@ automated runs produce deterministic output.
 
 `otto host <id> probe` reports whether this port answers and, when the
 service listens elsewhere, prints the fragment to paste here — see
-{doc}`../../cli/host/capabilities/protocols`.
+{doc}`../cli/host/capabilities/protocols`.
 
 **Embedded / UART-backed consoles** — four extra fields matter when the
 telnet endpoint is a QEMU ``-serial telnet:`` bridge rather than a Unix
@@ -209,9 +209,9 @@ unlimited), and ``passive_commands`` (default ``["epsv", "pasv"]``).
 
 `otto host <id> probe` reports whether this port answers and, when the
 service listens elsewhere, prints the fragment to paste here — see
-{doc}`../../cli/host/capabilities/protocols`.
+{doc}`../cli/host/capabilities/protocols`.
 
-Netcat has additional options and auto-detection strategies — see {doc}`../../cli/host/netcat`.
+Netcat has additional options and auto-detection strategies — see {doc}`../cli/host/netcat`.
 
 (per-host-shell-history)=
 
@@ -294,9 +294,9 @@ after every login-proxy hop, with a real session handle.
 
 A string selects the hook by name; an object names it in `type` and hands
 every other key to the hook as `ctx.params`. The hook itself is project
-code, registered from an `init` module — {doc}`../../library/extending-backends`
+code, registered from an `init` module — {doc}`../library/extending-backends`
 has the contract and a copyable registration, and the Getting Started
-{doc}`../../getting-started/customizations` page walks through three.
+{doc}`../getting-started/customizations` page walks through three.
 
 ### What runs, in order
 
@@ -351,7 +351,7 @@ refuses until `enter_frame()`), and frame entry still confirms the target.
 | `put`/`get` over `sftp`/`scp` | work — transport-level, they land on the host the application runs on — whether the application sees the files is the project's business |
 | `run(sudo=True)`, `read_file`/`write_file`, `lsmod`, `shutdown`, `reboot(wait=True)`, the `shell` and `nc` transfer backends | unavailable — they assume a POSIX shell at the far end of `exec`, which is how otto resolves the host's userland |
 
-`SshOptions.post_connect` ({doc}`../../library/connection-options`) is a
+`SshOptions.post_connect` ({doc}`../library/connection-options`) is a
 different thing: it runs against the SSH *connection* (port forwards, X11)
 and never touches a shell.
 
@@ -363,12 +363,12 @@ A host that exposes metrics over SNMP rather than a shell carries an ``snmp``
 block ({class}`~otto.host.options.SnmpOptions`) instead of (or alongside) the
 ``*_options`` transport objects.  The full field reference and a worked example
 are under [SNMP monitoring](lab-config.md#snmp-monitoring) in the lab schema;
-see {doc}`../../cli/monitor/metrics` for what ``otto monitor`` does with the
+see {doc}`../cli/monitor/metrics` for what ``otto monitor`` does with the
 readings.
 
 `otto host <id> probe` reports whether this port answers and, when the
 service listens elsewhere, prints the fragment to paste here — see
-{doc}`../../cli/host/capabilities/protocols`.
+{doc}`../cli/host/capabilities/protocols`.
 
 (per-host-toolchain)=
 
@@ -437,9 +437,9 @@ The `nc_options` object accepts all eight fields of {class}`~otto.host.options.N
 |------------------------------|------------|---------------------------------------------------------------------------|
 | ``exec_name``                | ``"nc"``   | Netcat binary on both sides (e.g. ``ncat``, ``netcat``).                  |
 | ``port``                     | ``9000``   | Base port; the ss/netstat/proc scans start at a random offset above it.   |
-| ``port_strategy``            | ``"auto"`` | Strategy for finding a free remote port (see {doc}`../../cli/host/netcat`).                |
+| ``port_strategy``            | ``"auto"`` | Strategy for finding a free remote port (see {doc}`../cli/host/netcat`).                |
 | ``port_cmd``                 | ``null``   | Shell command printing a free port; used when ``port_strategy="custom"``. |
-| ``listener_check``           | ``"auto"`` | Strategy for verifying the remote listener is ready (see {doc}`../../cli/host/netcat`).    |
+| ``listener_check``           | ``"auto"`` | Strategy for verifying the remote listener is ready (see {doc}`../cli/host/netcat`).    |
 | ``listener_cmd``             | ``null``   | Shell command (``{port}``); exits 0 when ``listener_check="custom"``.     |
 | ``listener_timeout``         | ``30.0``   | Seconds otto waits for the remote listener to exit after a transfer ends. |
 | ``max_concurrent_transfers`` | ``null``   | Files in flight at once; ``null`` fits a default sshd (see below).        |

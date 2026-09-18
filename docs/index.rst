@@ -9,6 +9,7 @@ otto
    installation
    guide/index
    cli/index
+   configuration/index
    library/index
    architecture/index
    contributing

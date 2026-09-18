@@ -1,4 +1,4 @@
-# Project & lab configuration
+# Configuration
 
 Two files describe everything otto knows about your project: a
 `.otto/settings.toml` at the repository root, and the host data it names —

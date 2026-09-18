@@ -48,7 +48,7 @@ shell-framing dialect. Set os_type to a profile that supplies one (e.g.
 "zephyr"), or pass an explicit command_frame.
 ```
 
-Supply a frame via a profile (see {doc}`../../guide/configuration/os-profiles`), or by setting
+Supply a frame via a profile (see {doc}`../../configuration/os-profiles`), or by setting
 `command_frame` directly in the host entry.
 
 
@@ -161,7 +161,7 @@ Key fields:
 - `labs: ["embedded"]` — membership belongs to the *element*, so every host it
   holds joins the same labs.  What lab `embedded` reserves is declared in the
   file's `labs` table, not here; see
-  {doc}`../../guide/configuration/lab-config`.
+  {doc}`../../configuration/lab-config`.
 - `os_type: "zephyr"` — builds `ZephyrHost` with the `zephyr` command frame and
   `os_name: "Zephyr"`.
 - `os_version: "3.7"` — recorded on the host; selects the correct test paths
@@ -175,8 +175,8 @@ Key fields:
 
 ## See also
 
-- {doc}`../../guide/configuration/lab-config` — full `lab.json` schema reference
-- {doc}`../../guide/configuration/os-profiles` — custom host classes and data profile bundles
+- {doc}`../../configuration/lab-config` — full `lab.json` schema reference
+- {doc}`../../configuration/os-profiles` — custom host classes and data profile bundles
 - {doc}`../../library/extending-embedded` — writing custom command frames and filesystems
 - {doc}`../cov/index` — cross-toolchain configuration for embedded coverage
 - {doc}`../monitor/index` — SNMP monitoring configuration

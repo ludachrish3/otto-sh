@@ -84,7 +84,7 @@ adapter rather than injected process-wide, because `otto monitor` serves TLS
 in the same process and `truststore`'s global injection is client-only. The
 operational side — what an `SSLError` means and how to fix it without
 touching settings — is in the
-[inventory guide](../../guide/configuration/inventory.md#the-netbox-backend).
+[inventory guide](../../configuration/inventory.md#the-netbox-backend).
 The helper a backend author calls is described in the
 [HTTPS clients guide](../../library/https-clients.md).
 

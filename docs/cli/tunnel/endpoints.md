@@ -40,7 +40,7 @@ no auto-install. This applies to every hop in the chain, not just the
 endpoints.
 
 Whether a host qualifies is the
-[`has_bash`](../../guide/configuration/lab-config.md#common-optional) capability, not a check against
+[`has_bash`](../../configuration/lab-config.md#common-optional) capability, not a check against
 a specific host class: it defaults to `true` for Unix hosts (including the
 built-in `local` host and Docker containers) and `false` for embedded
 targets, and can be overridden per host in `lab.json` for a host that

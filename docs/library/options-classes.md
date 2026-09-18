@@ -142,7 +142,7 @@ Define a base options class once and inherit it everywhere you want the same
 flags. Put the base in **any module named in your repo's `init` setting** — the
 location is yours. A `libs` directory such as `pylib/` is a common place to keep
 it, but the only rule is that the module is importable and listed in `init` (see
-{doc}`../guide/configuration/settings`).
+{doc}`../configuration/settings`).
 
 `otto.examples.options` bundles a complete example: a `RepoOptions` base plus a
 suite options class and an instruction options class that both inherit it.

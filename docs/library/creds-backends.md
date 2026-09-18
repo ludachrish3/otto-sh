@@ -8,7 +8,7 @@ team database — is a class you register from your own repo.
 
 This page is the contract. The user-facing side — the `[creds]` table, the
 three-layer merge, what the doctor checks — lives in
-{doc}`../guide/configuration/inventory`.
+{doc}`../configuration/inventory`.
 
 ## The protocol
 

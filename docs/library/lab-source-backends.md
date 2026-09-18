@@ -1,7 +1,7 @@
 # Lab source backends
 
 Otto reads its hosts through **host-data sources** declared in
-`[[lab.sources]]` — see {doc}`../guide/configuration/host-sources` for the
+`[[lab.sources]]` — see {doc}`../configuration/host-sources` for the
 declaration syntax and merge order. The `json` backend ships with otto;
 anything else (a CMDB, an inventory API, a scheduler's asset list) is a class
 you register from your own repo. This page is that contract.

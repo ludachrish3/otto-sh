@@ -3,7 +3,7 @@
 How otto reaches a host for a single invocation: route through SSH jump hosts with
 `--hop`, and override the terminal or file-transfer protocol with `--term` /
 `--transfer`. (For *persistent* connection tuning in `lab.json`, see
-{doc}`Host configuration <../../guide/configuration/host-options>`.)
+{doc}`Host configuration <../../configuration/host-options>`.)
 
 ## Reaching hosts through hops
 
@@ -31,7 +31,7 @@ otto --lab my_lab host --hop jumpbox target_seed get /var/log/syslog ./logs/
 ```
 
 For persistent hop configuration, set the `hop` field on the host entry in
-`lab.json` (see {doc}`../../guide/configuration/lab-config` for the full schema):
+`lab.json` (see {doc}`../../configuration/lab-config` for the full schema):
 
 ```json
 {
@@ -87,7 +87,7 @@ Valid values for the built-in backends (UnixHost):
 
 The accepted values are validated against the host's configured menu
 (`valid_terms` / `valid_transfers` fields in `lab.json`); out-of-menu
-selections are rejected at invocation time. See {doc}`../../guide/configuration/lab-config` for
+selections are rejected at invocation time. See {doc}`../../configuration/lab-config` for
 those fields. Projects can also register additional backends via
 `register_term_backend` / `register_transfer_backend`; see
 {doc}`../../library/extending-backends`.

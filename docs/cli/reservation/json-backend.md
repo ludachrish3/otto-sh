@@ -69,4 +69,4 @@ Two common layouts work well:
   the day and PR overhead would feel absurd.
 
 Relative paths resolve against the repo root — see
-{doc}`../../guide/configuration/settings`.
+{doc}`../../configuration/settings`.

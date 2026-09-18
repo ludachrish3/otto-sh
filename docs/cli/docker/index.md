@@ -70,8 +70,8 @@ See {doc}`../../architecture/subsystems/docker-hosts` for why a container
 delegates to its parent host instead of being a parallel transport stack.
 
 Configuration lives with the rest of the project's settings: the per-project
-`[docker]` block in {doc}`../../guide/configuration/settings`, and the per-lab
-`docker_capable`/`roles` host fields in {doc}`../../guide/configuration/lab-config`.
+`[docker]` block in {doc}`../../configuration/settings`, and the per-lab
+`docker_capable`/`roles` host fields in {doc}`../../configuration/lab-config`.
 
 ## Shared directories
 

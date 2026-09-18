@@ -106,7 +106,7 @@ version used to compile the product.
 
 Two things, in two places. **Where the counters live on a host** belongs to
 the product that writes them — its `cov_dir`, defaulting to `/tmp/<name>`
-(see {doc}`../../guide/configuration/declared-products-tools`, and
+(see {doc}`../../configuration/declared-products-tools`, and
 {doc}`../../getting-started/coverage` for the walkthrough):
 
 ```toml

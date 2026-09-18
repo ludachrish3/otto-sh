@@ -25,7 +25,7 @@ Resolution order, stated once and consulted by every enforcement point:
 - Otherwise, if the repo declared a `[project]` table, its `lab_patterns` and
   `host_patterns` are matched against the loaded labs. A repo no loaded lab
   applies to — or one whose `host_patterns` match no host in the labs that do —
-  is inactive. See {ref}`project-scope` in {doc}`../guide/configuration/lab-config`
+  is inactive. See {ref}`project-scope` in {doc}`../configuration/lab-config`
   for that schema.
 - Otherwise the repo is active. **A repo that declared no `[project]` table is
   always active**, which is what keeps a single-repo workspace exactly as it
@@ -174,7 +174,7 @@ yet known to be inactive here, so its import error is still fatal.
 ## Dependencies of a project you switched off
 
 A repo can declare `[dependencies]` on other repos (see
-{doc}`../guide/configuration/settings`). Dropping a provider that something else
+{doc}`../configuration/settings`). Dropping a provider that something else
 requires is a real decision, and otto splits it by *which axis* dropped it.
 
 **The labs dropped it** — the dependent says the provider must be handled, the

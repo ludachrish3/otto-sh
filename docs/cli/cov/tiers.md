@@ -54,7 +54,7 @@ Each `[coverage.tiers.<name>]` block:
 | `kind` | One of `e2e`, `unit`, `manual`. Selects the collection machinery — see {ref}`coverage-tier-kinds`. |
 | `precedence` | Integer; lower wins the winner-take-all row coloring when multiple tiers cover the same line. |
 | `color` | Optional CSS named color or `#RRGGBB` hex, validated at settings load. Defaults to a per-`kind` color when omitted (`e2e` = green, `unit` = yellow, `manual` = orange). |
-| `harvest_dirs` | `unit`-kind only: build directories swept for `.gcda` at report time. Relative paths resolve against the repo root (see {doc}`../../guide/configuration/settings`). |
+| `harvest_dirs` | `unit`-kind only: build directories swept for `.gcda` at report time. Relative paths resolve against the repo root (see {doc}`../../configuration/settings`). |
 | `products` | `unit`-kind only: a `[coverage.tiers.<name>.products]` sub-table of `<product> = [<dirs>]`. Each named view is swept separately and becomes its own run, tagged with that product; `harvest_dirs` stays the unnamed view. Keys follow {ref}`the product-name rule <run-tree>`. |
 | `max_age` | `manual`-kind only: `"<days>d"` (e.g. `"180d"`); enables the *aging* flag (see {ref}`coverage-validity`). Optional, off by default. |
 

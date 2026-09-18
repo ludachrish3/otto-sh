@@ -5,7 +5,7 @@ validated (existing artifacts are checked via the SAME ingestion code
 bootstrap uses — never modified, except the otto-owned schemas area, which
 ``--schemas`` refreshes even when already present), or scaffolded.
 Interactive by default; ``--all`` or per-area flags skip prompts. See
-docs/guide/configuration/settings.md.
+docs/configuration/settings.md.
 """
 
 import dataclasses

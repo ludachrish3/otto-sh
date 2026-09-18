@@ -12,7 +12,7 @@ from typing import Any
 
 SETTINGS_TEMPLATE = """\
 #:schema ./schemas/settings.schema.json
-# {name} — otto repo settings. Reference: docs/guide/configuration/settings.md.
+# {name} — otto repo settings. Reference: docs/configuration/settings.md.
 # Lines starting "#key" or "#[section]" are optional settings: remove the
 # leading "#" to enable them. Your editor autocompletes every field from the
 # schema line above (regenerate with `otto schema export`).
@@ -30,7 +30,7 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 # host record (a warning names both). The built-in "json" backend reads
 # lab.json from directories, or a .json file directly; custom backends are
 # selected by registered name with their kwargs inline. See
-# docs/guide/configuration/host-sources.md.
+# docs/configuration/host-sources.md.
 [[lab.sources]]
 backend = "json"
 paths = ["lab_data"]
@@ -54,7 +54,7 @@ paths = ["lab_data"]
 
 # --- [[products]] / [[dev_tools]] — attach things to hosts without a provider -
 # Same schema, different seam. See
-# docs/guide/configuration/declared-products-tools.md.
+# docs/configuration/declared-products-tools.md.
 #[[products]]
 #name = "firmware"
 #kind = "shell"
@@ -110,7 +110,7 @@ paths = ["lab_data"]
 # is the login order. The usual home for both tables is ~/.otto/settings.toml
 # (declared once per user); a table here overrides it for this repo. Grow
 # `supplies` as inventory.json takes over more fields.
-# See docs/guide/configuration/inventory.md.
+# See docs/configuration/inventory.md.
 [inventory]
 backend = "json"
 path = "lab_data/inventory.json"
@@ -228,7 +228,7 @@ EXAMPLE_ELEMENT_ENTRY = {
         "Example element — replace these values. An element is the smallest unit that "
         "joins a lab: 'labs' lists regex patterns full-matched against lab names, and "
         "'hosts' are the machines/boards it holds. Full schema: "
-        "docs/guide/configuration/lab-config.md or `otto schema export`. The host below "
+        "docs/configuration/lab-config.md or `otto schema export`. The host below "
         "is REFERENCED: its 'inventory' value is the machine's own name (typically its "
         "DNS hostname), never an otto id; its address lives in inventory.json and its "
         "creds in creds.json under that key."
@@ -243,7 +243,7 @@ LAB_JSON_TEMPLATE: dict[str, Any] = {
     "_comment": (
         "otto lab database: 'labs' declares each lab (its reservable resources and "
         "metadata); 'elements' groups hosts and says which labs they join; 'links' "
-        "declares data-plane routes (see docs/guide/configuration/lab-config.md). "
+        "declares data-plane routes (see docs/configuration/lab-config.md). "
         "Keys starting with _ are comments; $schema wires editor autocomplete. A host "
         'that says "inventory" gets its machine facts from inventory.json and its '
         "creds from creds.json under that key; everything otto-specific stays here, "
@@ -302,7 +302,7 @@ order is the login order (the first entry is the default login). A cred
 change you want to try before the team's files change goes in `lab.json`.
 The full rules, the other backends (NetBox, your own store) and the
 `~/.otto/settings.toml` home for a shared inventory are in
-`docs/guide/configuration/inventory.md`.
+`docs/configuration/inventory.md`.
 
 ## `lab.json`
 
@@ -322,7 +322,7 @@ It is a JSON object with three sections, each optional:
 Older otto repos listed every host in a top-level `hosts` array. That shape is
 gone: otto refuses a `lab.json` that still has one and names where each field
 moved. See "Migrating from the hosts array" in
-`docs/guide/configuration/lab-config.md`.
+`docs/configuration/lab-config.md`.
 
 ## The `labs` table
 
@@ -355,7 +355,7 @@ exists and reserves nothing.
   as `host.element.metadata`; otto never reads it.
 - **`hosts`** — one or more host entries. Each is validated against a
   pydantic spec before otto will use it (`UnixHostSpec` /
-  `EmbeddedHostSpec`, see `docs/guide/configuration/lab-config.md`).
+  `EmbeddedHostSpec`, see `docs/configuration/lab-config.md`).
 
 ## Fields in the example host entry
 
@@ -411,7 +411,7 @@ otto's sanctioned way to leave a note inline — at the top level, inside the
 ## Where to go next
 
 - Every host field, and the full `lab.json` reference:
-  `docs/guide/configuration/lab-config.md` (the reference the doctor keeps
+  `docs/configuration/lab-config.md` (the reference the doctor keeps
   complete — a field otto accepts but that page omits is a bug)
 - Machine-readable schema (for editor validation or codegen):
   `otto schema export`

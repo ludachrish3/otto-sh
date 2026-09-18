@@ -135,7 +135,7 @@ a whole.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `resources` | array of strings | Reservation identifiers shared by the lab as a whole — a switch, a PDU, a bed.  Matched byte-for-byte by the reservation backend.  Elements and hosts may declare their own alongside; see {doc}`../../cli/reservation/index`.  Defaults to empty — a lab that reserves nothing is a perfectly good declaration. |
+| `resources` | array of strings | Reservation identifiers shared by the lab as a whole — a switch, a PDU, a bed.  Matched byte-for-byte by the reservation backend.  Elements and hosts may declare their own alongside; see {doc}`../cli/reservation/index`.  Defaults to empty — a lab that reserves nothing is a perfectly good declaration. |
 | `metadata` | object | Opaque lab-level user data; otto never reads it.  Surfaces as `lab.metadata["<lab name>"]`, and on every host of the lab as `host.lab_info.metadata`. |
 
 **A lab exists if and only if some source declares it here.**  `otto
@@ -155,7 +155,7 @@ Resources are **declared**, never derived: this entry is what the lab holds
 *as a whole*.  An element or a host may declare its own alongside — three
 levels that combine freely; see [Elements](#elements) and
 [Per-host fields](#per-host-fields) below, and
-{doc}`../../cli/reservation/index` for what a run actually has to hold.  One
+{doc}`../cli/reservation/index` for what a run actually has to hold.  One
 consequence is worth stating out loud — two labs that share an element contend
 with each other only if something they both hold locks that element.  `otto
 init` warns about any pair that shares an element, reserves nothing in common,
@@ -186,7 +186,7 @@ option tables stay on the host entries.
 | `id` | integer | Data the author assigns to the element; reached as `host.element.id`, never part of any id.  Must be `>= 0`. |
 | `labs` | array of strings | Membership patterns, `re.fullmatch`-ed against a lab name (below).  Required and non-empty: an element that joins nothing is a mistake, and "every lab" is spelled `[".*"]`. |
 | `metadata` | object | Opaque element-level user data; otto never reads it.  Surfaces as `host.element.metadata` on every host of the element — the `Element` copies it on construction, so one element's table can never be reached through another's.  The element's `resources` below travel the same road, surfacing as `host.element.resources` (a frozenset, so it is shared safely). |
-| `resources` | array of strings | Reservation identifiers for the element as one unit — the chassis, where the lab is too coarse and a slot too fine.  Combined with the lab's and each host's; see {doc}`../../cli/reservation/index`.  Defaults to empty. |
+| `resources` | array of strings | Reservation identifiers for the element as one unit — the chassis, where the lab is too coarse and a slot too fine.  Combined with the lab's and each host's; see {doc}`../cli/reservation/index`.  Defaults to empty. |
 | `hosts` | array of objects | The element's host entries — the [per-host fields](#per-host-fields) below.  Required and non-empty. |
 
 **Membership is by pattern.**  Each `labs` entry is a Python regular
@@ -249,11 +249,11 @@ host field — the third reservation level, beside the
 |-------|------|-------------|
 | `name` | string | Display-name override.  Otto derives a label from the element name, `board`, and `slot`, exactly as written; setting `name` replaces that label entirely.  It does **not** change the host id. |
 | `metadata` | object | Opaque user data — the sanctioned home for custom fields, so `extra="forbid"` never has to give way.  Otto never reads it.  Surfaces as `host.metadata`; the element's as `host.element.metadata`; the lab's as `host.lab_info.metadata`. |
-| `resources` | array of strings | This host's own reservation identifiers — a slot.  Combined with the element's and the lab's; see {doc}`../../cli/reservation/index`.  Defaults to empty. |
+| `resources` | array of strings | This host's own reservation identifiers — a slot.  Combined with the element's and the lab's; see {doc}`../cli/reservation/index`.  Defaults to empty. |
 | `board` | string | Board type, included in the host id when set. |
 | `term` | string | Terminal protocol lab pin — must be in the host's `valid_terms` menu.  Product `[host_preferences]` and CLI `--term` can override; see the precedence chain below. |
 | `transfer` | string | File-transfer protocol lab pin — must be in the host's `valid_transfers` menu.  Product `[host_preferences]` and CLI `--transfer` can override; see the precedence chain below. |
-| `impairer` | string | Link-impairment backend lab pin — must be in the host's `valid_impairers` menu (Unix hosts only).  Product `[host_preferences]` can override.  See {doc}`../../cli/link/index`. |
+| `impairer` | string | Link-impairment backend lab pin — must be in the host's `valid_impairers` menu (Unix hosts only).  Product `[host_preferences]` can override.  See {doc}`../cli/link/index`. |
 | `valid_terms` | array of strings | Ordered list of term backends that may be selected for this host (gates `--term` and `[host_preferences]`).  Defaults to `["ssh", "telnet"]` for Unix hosts and `["telnet"]` for embedded hosts.  Custom backends registered via `register_term_backend` also appear. |
 | `valid_transfers` | array of strings | Ordered list of transfer backends that may be selected for this host (gates `--transfer` and `[host_preferences]`).  Defaults to `["scp", "sftp", "ftp", "nc"]` for Unix hosts and `["console"]` for embedded hosts.  Custom backends registered via `register_transfer_backend` also appear. |
 | `valid_impairers` | array of strings | Ordered list of impairer backends that may be selected for this host (gates `impairer` and `[host_preferences]`).  Unix hosts only; defaults to `["netem"]`.  Custom impairers registered via `register_impairer` are valid entries too. |
@@ -265,12 +265,12 @@ host field — the third reservation level, beside the
 | `inventory` | string | Key of the inventory record this host is resolved from — see [Referencing the inventory](#referencing-the-inventory) below and {doc}`inventory`.  Inventory-owned fields must then be absent here. |
 | `default_dest_dir` | string | Directory an empty or relative `put`/`get` destination resolves against.  Defaults to empty — SCP/SFTP then land in the login user's home directory (or the authenticated user's home when `--user` is given), and an embedded host with a mounted filesystem falls back to its mount point. |
 | `max_filename_len` | integer | Longest basename the host's filesystem accepts.  Defaults to `255` (the Linux `NAME_MAX`, and the typical LittleFS ceiling); lower it where the firmware enforces a tighter limit — e.g. `32` on a Zephyr build with a short-name FAT. |
-| `debug_log_globs` | array of strings | Remote log paths `get_debug_logs` fetches off this host.  A pattern (`*`, `?`, `[`) is expanded on the device itself, so embedded hosts — which have no shell to expand with — declare concrete paths.  See {doc}`../../cli/host/capabilities/index`. |
+| `debug_log_globs` | array of strings | Remote log paths `get_debug_logs` fetches off this host.  A pattern (`*`, `?`, `[`) is expanded on the device itself, so embedded hosts — which have no shell to expand with — declare concrete paths.  See {doc}`../cli/host/capabilities/index`. |
 | `is_virtual` | boolean | `true` when the host is a VM or emulator. |
 | `log` | string | Standing log disposition for this host's command I/O, named by its `LogMode`: `"normal"` (the default) logs everywhere, `"quiet"` keeps it in `verbose.log` but off the console, `"never"` redacts it from every sink.  Composed with each command's own mode, the more restrictive winning.  Booleans are no longer accepted — write the mode name. |
 | `docker_capable` | boolean | `true` when this host can run Docker containers (Unix hosts only). |
 | `roles` | array of strings | Lab-intent tags for this host (e.g. `["edge", "db"]`, Unix hosts only). Consumed by docker use-case placement resolution to pick the host a use-case's role names. Defaults to `[]`. |
-| `has_bash` | boolean | `true` when the host has a working `bash` to `exec -a`-tag processes through. Gates which hosts can host or be scanned for `otto tunnel` tunnels — see {doc}`../../cli/tunnel/index`. Defaults to `true` for Unix hosts (including `local` and Docker containers), `false` for embedded hosts. |
+| `has_bash` | boolean | `true` when the host has a working `bash` to `exec -a`-tag processes through. Gates which hosts can host or be scanned for `otto tunnel` tunnels — see {doc}`../cli/tunnel/index`. Defaults to `true` for Unix hosts (including `local` and Docker containers), `false` for embedded hosts. |
 | `shell_history` | boolean | Whether otto's own commands are recorded in this host's shell history (Unix hosts only). Defaults to `false` — otto neutralizes `HISTFILE` on each shell it opens so automation traffic doesn't bury a human's history. Set `true` where otto's commands should stay visible in the history file. See {ref}`per-host-shell-history`. |
 | `command_frame` | string | Shell-framing dialect (e.g. `"bash"`, `"zephyr"`, `"zephyr-serial"`). `"raw"` is refused here — it is a landing-only dialect, valid only as `landing_frame`. See {ref}`per-host-session-setup`. |
 | `session_setup` | string or object | A registered session-setup hook that runs once on every shell session, after the readiness handshake and every login-proxy hop, with a real session handle: export variables, provision through an app shell, or manoeuvre into the application the `command_frame` describes. A string names the hook; an object names it in `type` and passes every other key as the hook's params. See {ref}`per-host-session-setup`. |
@@ -383,7 +383,7 @@ one display name per host, all sharing the element's `metadata` and `id`.
 ### Embedded-only fields
 
 These fields apply only to hosts with an embedded base type (e.g.
-`os_type: "zephyr"` or `os_type: "embedded"`).  See {doc}`../../cli/host/embedded` for full
+`os_type: "zephyr"` or `os_type: "embedded"`).  See {doc}`../cli/host/embedded` for full
 details.
 
 | Field | Type | Description |
@@ -392,7 +392,7 @@ details.
 | `loader` | string | Binary-load strategy for this target's runtime, by registry name (e.g. `"llext-hex"`).  Optional — omit it on a target that never loads binaries, and `host.load()`/`unload()` then fail loud.  Projects register their own via `register_binary_loader`. |
 
 File transfer for embedded hosts uses `"console"` or `"tftp"` — see
-{doc}`../../cli/host/embedded`.
+{doc}`../cli/host/embedded`.
 
 ### Network interfaces
 
@@ -449,7 +449,7 @@ a *controller* host in the lab:
 }
 ```
 
-See {doc}`../../cli/host/capabilities/index` for the Power Control section, runtime API
+See {doc}`../cli/host/capabilities/index` for the Power Control section, runtime API
 (`host.power()`, `host.reboot(hard=True)`), and how to register a custom
 controller (`register_power_controller`).
 
@@ -457,7 +457,7 @@ controller (`register_power_controller`).
 
 The optional `snmp` block configures SNMP polling for a host's metrics — add
 it to a host entry in `lab.json` and `otto monitor` starts collecting for that
-host.  See {doc}`../../cli/monitor/metrics` for what otto does with the readings.
+host.  See {doc}`../cli/monitor/metrics` for what otto does with the readings.
 
 The `address` and `port` are the endpoint reachable from the otto host — for
 an embedded device behind a hop this is typically the local end of a UDP relay
@@ -501,8 +501,8 @@ same list:
 
 `N` must be a positive integer.  An unknown bundle name fails fast at
 monitor startup rather than silently polling nothing.  See
-[Per-interface and per-filesystem OIDs](../../cli/monitor/metrics.md#per-interface-and-per-filesystem-oids)
-in {doc}`../../cli/monitor/index` for what each expanded OID charts.
+[Per-interface and per-filesystem OIDs](../cli/monitor/metrics.md#per-interface-and-per-filesystem-oids)
+in {doc}`../cli/monitor/index` for what each expanded OID charts.
 
 ### Option tables
 
@@ -538,7 +538,7 @@ one.  Run `otto host <id> probe` and otto prints the answers it settled as a
 ### Coverage toolchain
 
 The `toolchain` object points to the cross-toolchain binaries used by the
-coverage pipeline.  See {doc}`../../cli/cov/index`.
+coverage pipeline.  See {doc}`../cli/cov/index`.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -546,7 +546,7 @@ coverage pipeline.  See {doc}`../../cli/cov/index`.
 | `toolchain.sysroot` | string | Path to the cross-toolchain sysroot. |
 | `toolchain.gcov` | string | Path to `gcov` relative to `sysroot`, or an absolute path. |
 | `toolchain.lcov` | string | Path to the `lcov` binary. |
-| `toolchain.tools` | array of objects | Artifacts otto *installs onto* this host (`name`, `source`, `dest`, `user`, `mode`) — the inverse of the three fields above, which otto only reads from.  See {doc}`../../cli/host/capabilities/index`. |
+| `toolchain.tools` | array of objects | Artifacts otto *installs onto* this host (`name`, `source`, `dest`, `user`, `mode`) — the inverse of the three fields above, which otto only reads from.  See {doc}`../cli/host/capabilities/index`. |
 
 ## Example
 
@@ -638,8 +638,8 @@ to reach the device, not a declared link.
 A `links` entry in `lab.json` declares a data-plane route between two hosts —
 distinct from the `hop` field's SSH/telnet *management* path. It is resolved
 into a runtime `Link` object (`otto.link`) at lab-load time: the edge that
-`otto tunnel add` (see {doc}`../../cli/tunnel/index`) rides to actually stand up traffic, and
-that `otto link impair` (see {doc}`../../cli/link/index`) targets to impair it:
+`otto tunnel add` (see {doc}`../cli/tunnel/index`) rides to actually stand up traffic, and
+that `otto link impair` (see {doc}`../cli/link/index`) targets to impair it:
 
 ```json
 {
@@ -659,7 +659,7 @@ that `otto link impair` (see {doc}`../../cli/link/index`) targets to impair it:
 | `endpoints[].interface` | string | A key in that host's `interfaces` map (above). **Required only when the host defines more than one interface** — with one interface (or none) otto assumes it and its IP. Omitting it on a host with more than one interface is a load-time validation error ("ambiguous interface — specify one of {…}"), since otto can't disambiguate. |
 | `protocol` | string | Optional; defaults to `"tcp"`. Informational for a declared link (documents what the route carries — e.g. `"udp"`, `"rtp"`); the analogous `otto tunnel add --protocol` flag is what actually drives socat UDP-vs-TCP when a tunnel is built over this route. |
 | `name` | string | Optional friendly handle; the link's id is otherwise derived from its endpoints. |
-| `impair` | string | Optional in-path middlebox **host id** — a bare string, validated as a known host reference at lab load. When set, `otto link impair` (see {doc}`../../cli/link/index`) places both directions' netem on that middlebox's live-resolved facing interfaces instead of the link's own endpoints. `None` (the default) is endpoint-anchored impairment. |
+| `impair` | string | Optional in-path middlebox **host id** — a bare string, validated as a known host reference at lab load. When set, `otto link impair` (see {doc}`../cli/link/index`) places both directions' netem on that middlebox's live-resolved facing interfaces instead of the link's own endpoints. `None` (the default) is endpoint-anchored impairment. |
 | `management` | string | Optional; accepted but currently has no effect. |
 
 **Lab membership is derived, not authored** — a link carries no membership of
@@ -914,7 +914,7 @@ of it:
 ### Required once a repo registers providers
 
 A repo that registers a product or dev-tool provider (see
-{doc}`../../cli/host/capabilities/index`) **must** declare `lab_patterns`.  The check runs
+{doc}`../cli/host/capabilities/index`) **must** declare `lab_patterns`.  The check runs
 at bootstrap, right after init modules have been imported — the earliest moment
 the registries can answer — and it aborts the whole run rather than being
 downgraded to a warning:
@@ -943,7 +943,7 @@ A repo that registers **no** providers needs no `[project]` table at all.
 - **Fleet walks are bounded by it.**  `ctx.all_hosts()`,
   `ctx.do_for_all_hosts(...)` and `ctx.run_on_all_hosts(...)` iterate the
   declared universe rather than the whole loaded lab.  See
-  {doc}`../../cli/run/defaults` for the walk semantics, the union across repos, and
+  {doc}`../cli/run/defaults` for the walk semantics, the union across repos, and
   the whole-lab fallback for repos that declare nothing.
 - **Providers are gated by it.**  A repo's product and dev-tool providers are
   not invoked at all on a host outside its universe, so nothing that repo owns
@@ -985,8 +985,8 @@ layer.  A docker use-case fragment declaring `role = "edge"` is placed on the
 host tagged with it; a multi-role host is normal, and two hosts claiming one
 role is representable and refused at resolution rather than guessed at.
 
-See {doc}`../../cli/docker/use-cases` for how a role is resolved and what the
-other placement knobs are, and {doc}`../../cli/docker/index` for the commands
+See {doc}`../cli/docker/use-cases` for how a role is resolved and what the
+other placement knobs are, and {doc}`../cli/docker/index` for the commands
 that read this.
 
 ## Declaring toolchain tools in lab data
@@ -1017,5 +1017,5 @@ destinations are usually root-owned, hence the per-tool `user` and `mode`.
 
 One toolchain serves every owner on a host, so placing and removing it is a
 host-wide step: no repo's actions touch it (see
-{doc}`../../cli/run/defaults`), and the default `install_toolchain_tools` is the method
+{doc}`../cli/run/defaults`), and the default `install_toolchain_tools` is the method
 most likely to need project surgery — override it on the host class.

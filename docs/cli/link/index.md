@@ -2,7 +2,7 @@
 
 `otto link` inspects and impairs the lab's **static links** — the topology
 edges declared in `lab.json`'s `links` section, or derived from each host's
-management `hop` (see {ref}`lab-links` in {doc}`../../guide/configuration/lab-config`). A link is
+management `hop` (see {ref}`lab-links` in {doc}`../../configuration/lab-config`). A link is
 where `tc qdisc` actually attaches; tunnels (see {doc}`../tunnel/index`) ride *over*
 links but are never impaired directly — impairing a link a tunnel happens to
 ride affects that tunnel realistically, for free. For why links and tunnels are

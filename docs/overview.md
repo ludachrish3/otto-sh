@@ -111,11 +111,11 @@ paths = ["../lab_data"]
 ```
 
 Relative paths resolve against the repository root — see
-{doc}`guide/configuration/settings`.  The `init` list names Python modules that
+{doc}`configuration/settings`.  The `init` list names Python modules that
 otto imports at startup — this is where you register your instructions and
 shared options.  `[[lab.sources]]` is an ordered list: declare several and
 otto combines them, later sources overriding earlier ones one element (or one
-`labs` table entry) at a time (see {doc}`guide/configuration/host-sources`).
+`labs` table entry) at a time (see {doc}`configuration/host-sources`).
 
 ### Instructions (`otto run`)
 
@@ -246,7 +246,7 @@ Monitoring can also be started from within a test suite using
 - {doc}`installation` — Air-gapped installs, team setup, offline docs
 - {ref}`team-setup-checklist` — One-time team setup (host source, reservations, libs)
 - {doc}`cli/index` — Every `otto` command, one page per verb
-- {doc}`guide/configuration/index` — The project and lab files every command reads
+- {doc}`configuration/index` — The project and lab files every command reads
 - {doc}`library/options-classes` — Shared options classes for instructions and suites
 - {doc}`library/extending-cli` — Registering your own top-level `otto` commands
 - {doc}`library/index` — Using otto as a Python library, plus recipes

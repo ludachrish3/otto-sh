@@ -10,7 +10,7 @@ deploys. A product is a small injected strategy object; the host orchestrates.
 The common case — one artifact, matched to hosts, with optional
 install/uninstall/check commands — needs no subclass at all: declare it as a
 `[[products]]` entry in `settings.toml` instead. See
-{doc}`../../../guide/configuration/declared-products-tools`. What follows is the
+{doc}`../../../configuration/declared-products-tools`. What follows is the
 code path, for anything richer.
 
 Subclass `Product` (or `ShellProduct` for the single-artifact case) and implement

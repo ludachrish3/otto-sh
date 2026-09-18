@@ -33,7 +33,7 @@ as soon as the repo's scope holds more than one docker-capable host, which is
 the common case. Drop it when there is exactly one, and the fragment is three
 lines.
 
-{doc}`../../guide/configuration/settings` is the schema reference for every key
+{doc}`../../configuration/settings` is the schema reference for every key
 above; this page is about what they *mean*.
 
 ## Seeing what is declared before deploying anything
@@ -323,7 +323,7 @@ Each winning fragment resolves its own host, in this order:
 | 4 | *(no role)* | — | The repo's scope, if it holds exactly one docker-capable host |
 
 Roles are declared on hosts in lab data as `"roles": ["edge", "builder"]` —
-see {doc}`../../guide/configuration/lab-config`. They are lab *intent* ("what this
+see {doc}`../../configuration/lab-config`. They are lab *intent* ("what this
 lab uses the machine for"), not machine facts.
 
 Role resolution happens **inside the owning repo's scoped universe** (see
@@ -352,7 +352,7 @@ what `${otto:role.<role>.addr}` is for.
 ## Container users
 
 A compose fragment may declare a default access user per service — see
-[Docker images and compose stacks](../../guide/configuration/settings.md#docker-images-and-compose-stacks)
+[Docker images and compose stacks](../../configuration/settings.md#docker-images-and-compose-stacks)
 for the `users = { db = "postgres" }` field itself.
 
 That declared default is the middle of three precedence layers: a per-call

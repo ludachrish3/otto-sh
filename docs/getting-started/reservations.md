@@ -30,7 +30,7 @@ requirement is the bench plus the chassis and slot identifiers of the guests
 that declare them. The built-in `local` host is never in play.
 {doc}`../cli/reservation/index` defines the three levels and how the
 required set is computed from the hosts in play;
-{doc}`../guide/configuration/lab-config` is the field reference for
+{doc}`../configuration/lab-config` is the field reference for
 `resources`.
 
 ## The shipped backend

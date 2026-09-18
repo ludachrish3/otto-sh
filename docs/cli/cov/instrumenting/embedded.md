@@ -216,7 +216,7 @@ runs the embedded-gcov constructor, which has to happen before any dump.
 what is resident. `dump_fn` names the exported function the collector calls
 to dump counters, defaulting to `cov_dump`.
 
-{doc}`../../../guide/configuration/declared-products-tools` has the full param
+{doc}`../../../configuration/declared-products-tools` has the full param
 list, the loader requirement, and how two entries sharing one `name` give a
 per-Zephyr-version artifact its own board.
 
@@ -275,5 +275,5 @@ not a path under the sysroot.
 - **One console session.** The Zephyr shell serves a single session;
   coordinate anything else driving the same console.
 
-See {doc}`../../host/embedded` for embedded host setup and {doc}`../../../guide/configuration/lab-config`
+See {doc}`../../host/embedded` for embedded host setup and {doc}`../../../configuration/lab-config`
 for the full `lab.json` schema.

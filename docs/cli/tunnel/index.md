@@ -5,7 +5,7 @@ tunnels** — an ordered chain of `socat` processes, tagged and spawned
 directly on lab hosts, that carries a service's traffic end-to-end across
 one or more hops. A tunnel rides one or more **links**: the topology edges
 declared in `lab.json`, or derived from each host's management `hop` (see
-{ref}`lab-links` in {doc}`../../guide/configuration/lab-config`). Links document routes that exist;
+{ref}`lab-links` in {doc}`../../configuration/lab-config`). Links document routes that exist;
 `otto tunnel add` is what actually stands traffic up over them — one `add`
 builds exactly one tunnel, so a second `add` on the same route with a
 different port is a second, coexisting tunnel. Links are the static

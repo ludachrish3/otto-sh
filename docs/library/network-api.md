@@ -63,7 +63,7 @@ Which impairer a placement host actually uses is resolved the same way as
 - The host's `impairer` field pins a specific selection from that menu.
 - `[host_preferences]` in `.otto/settings.toml` can override the pin with an
   ordered preference list under the `impairer` key, product-wins-over-lab
-  like `term`/`transfer` (see {ref}`host-preferences` in {doc}`../guide/configuration/lab-config`):
+  like `term`/`transfer` (see {ref}`host-preferences` in {doc}`../configuration/lab-config`):
 
   ```toml
   [host_preferences.".*"]

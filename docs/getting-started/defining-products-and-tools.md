@@ -46,7 +46,7 @@ required — the repo has to say which labs and hosts it is speaking for, and
 otto will not call the provider for a host outside that declaration. The
 worked example declares it as `lab_patterns = ["busybox"]` and
 `host_patterns = ["bb.*_qemu"]` — both fullmatched regexes, defined in
-{ref}`project-scope` in {doc}`../guide/configuration/lab-config`.
+{ref}`project-scope` in {doc}`../configuration/lab-config`.
 
 ## A dev tool
 
@@ -101,7 +101,7 @@ A provider is code, and the common cases do not need any. A `[[products]]` or
 `[[dev_tools]]` entry in `.otto/settings.toml` attaches a product to the hosts
 a `match` table picks out, with no Python at all; a provider stays the fallback
 for what a match table cannot express. See
-{doc}`../guide/configuration/declared-products-tools`.
+{doc}`../configuration/declared-products-tools`.
 
 ## Next
 

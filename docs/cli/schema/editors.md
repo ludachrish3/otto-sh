@@ -35,7 +35,7 @@ file are covered by the built-in JSON language server. Add to your workspace
 
 The inventory association covers a file kept inside the workspace. An
 inventory shared across projects usually lives outside every repo (see
-{doc}`../../guide/configuration/inventory`), so add the same entry to whatever
+{doc}`../../configuration/inventory`), so add the same entry to whatever
 workspace you edit it in.
 
 For `settings.toml`, install the

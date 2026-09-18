@@ -45,7 +45,7 @@ _MIGRATION_HINT = (
     "'name', optional 'id', 'labs' membership patterns, optional 'metadata', and "
     "'hosts'), and per-host 'labs' moved to the element (a host's 'resources' may "
     "stay on the host — a slot — or move to the element or the 'labs' table). "
-    "See docs/guide/configuration/lab-config.md, "
+    "See docs/configuration/lab-config.md, "
     '"Migrating from the hosts array".'
 )
 

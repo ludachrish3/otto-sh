@@ -18,7 +18,7 @@ and `otto cov get` both just see a directory. `GCOV_PREFIX`
 and `GCOV_PREFIX_STRIP` mean exactly what they mean for any GCC build —
 {doc}`gcc` is the whole rule; a container only changes *where* the two
 variables get set, never what they do. See
-{doc}`../../../guide/configuration/declared-products-tools` for every parameter
+{doc}`../../../configuration/declared-products-tools` for every parameter
 this kind takes, including why an instrumented tarball entry must say
 `instrumented = true`.
 
@@ -54,7 +54,7 @@ with whatever tarball or reference actually gets run.
 ## Tarball or reference
 
 `image` is either a `docker save` tarball path or a `registry/name:tag`
-reference — see {doc}`../../../guide/configuration/declared-products-tools` for
+reference — see {doc}`../../../configuration/declared-products-tools` for
 the exact tarball suffixes. `install` tells the two apart by suffix alone:
 a tarball is staged and loaded with `docker load -i`; a reference with
 `pull = false` is verified with `docker image inspect`; with `pull = true`
@@ -73,7 +73,7 @@ cache.
 
 ## What is removed
 
-See {doc}`../../../guide/configuration/declared-products-tools` for the exact
+See {doc}`../../../configuration/declared-products-tools` for the exact
 `rm`/`rmi` rule. The image `rmi` removes is resolved from the container
 itself (`docker container inspect -f '{{.Config.Image}}' <container_name>`), never
 from in-process state, so it is found even when `uninstall` runs in a

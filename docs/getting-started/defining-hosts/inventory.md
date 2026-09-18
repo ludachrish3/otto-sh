@@ -70,14 +70,14 @@ merge rules, and what the doctor checks.
 loader every command uses, so a dead reference, a field stated on both sides,
 a creds-store file readable by more than its owner, or a creds key the
 inventory no longer holds are all named before any host is contacted
-({doc}`../../guide/configuration/inventory` lists each check).
+({doc}`../../configuration/inventory` lists each check).
 
 ## Growing out of the file
 
 The JSON inventory is stage one of three. Stage two is NetBox — the same
 `supplies` rule, the fields NetBox natively holds, and `otto inventory
 export`/`diff` to migrate — and stage three is keeping NetBox otto-healthy.
-{doc}`../../guide/configuration/inventory` walks all three under *Adoption
+{doc}`../../configuration/inventory` walks all three under *Adoption
 path*; this page does not repeat it. When the answer is neither JSON nor
 NetBox, {doc}`../../library/inventory-backends` is the contract a backend
 implements and the conformance test it must pass.

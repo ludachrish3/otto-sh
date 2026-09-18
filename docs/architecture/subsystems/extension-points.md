@@ -17,7 +17,7 @@ registries, same CLI listing and completion, same error messages
 | a top-level `otto` command | {func}`otto.register_cli_command <otto.cli.registry.register_cli_command>` / {func}`@otto.cli_command <otto.cli.registry.cli_command>` | {doc}`../../library/extending-cli` |
 | a CLI verb on a host class | `@cli_exposed` on the method | {doc}`../../library/cli-exposed-verbs` |
 | a host class (new `os_type` base) | `register_host_class` | {doc}`../../library/custom-host-classes` |
-| an OS profile (defaults bundle) | `register_os_profile` or `[[os_profiles]]` in settings | {doc}`../../guide/configuration/os-profiles` |
+| an OS profile (defaults bundle) | `register_os_profile` or `[[os_profiles]]` in settings | {doc}`../../configuration/os-profiles` |
 | a connection (term) backend | `register_term_backend` | {doc}`../../library/extending-backends` |
 | a file-transfer backend | `register_transfer_backend` | {doc}`../../library/extending-backends` |
 | a shell dialect | `register_command_frame` | {doc}`../../library/extending-embedded` |
@@ -81,11 +81,11 @@ Each seam's user-facing how-to lives in the guide:
 
 - Connection & transfer backends — {doc}`../../library/extending-backends`
 - Embedded targets & command frames — {doc}`../../library/extending-embedded`
-- Host classes, OS profiles & host verbs — {doc}`../../guide/configuration/os-profiles`,
+- Host classes, OS profiles & host verbs — {doc}`../../configuration/os-profiles`,
   {doc}`../../cli/host/capabilities/index`
 - Power controllers & product providers — {doc}`../../library/extending-backends`,
   {doc}`../../cli/host/capabilities/index`
-- Host sources — {doc}`../../guide/configuration/host-sources`
+- Host sources — {doc}`../../configuration/host-sources`
 - Reservation backends — {doc}`../../cli/reservation/index`
 - Monitor parsers & SNMP metrics — {doc}`../../cli/monitor/index`
 - Instructions, suites & options — {doc}`../../cli/run/index`, {doc}`../../cli/test/index`, {doc}`../../library/options-classes`

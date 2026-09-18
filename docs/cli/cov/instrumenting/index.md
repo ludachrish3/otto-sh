@@ -24,7 +24,7 @@ applies inside — but getting its counters out from behind the docker
 daemon is its own story: see {doc}`containers`.
 
 Which toolchain otto reaches for is resolved per host — see
-{ref}`per-host-toolchain` in {doc}`../../../guide/configuration/host-options`.
+{ref}`per-host-toolchain` in {doc}`../../../configuration/host-options`.
 
 ```{toctree}
 :caption: Topics

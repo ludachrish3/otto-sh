@@ -14,7 +14,7 @@ otto --lab unix link impair edge --expire 300 --loss 5
 ```
 
 `<link>` accepts a link's id or its `name` (the same value when a `name` is
-declared — see {ref}`lab-links` in {doc}`../../guide/configuration/lab-config`); both tab-complete
+declared — see {ref}`lab-links` in {doc}`../../configuration/lab-config`); both tab-complete
 from the loaded lab.
 
 | Option | Description |

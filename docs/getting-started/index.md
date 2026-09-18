@@ -60,7 +60,7 @@ example on this page does; {doc}`../cli/index` covers `--lab`, the
 `OTTO_LAB` environment variable that replaces it, and the rest of the global
 options.
 
-{doc}`../cli/init` is the flag reference; {doc}`../guide/configuration/settings`
+{doc}`../cli/init` is the flag reference; {doc}`../configuration/settings`
 explains every key `settings.toml` accepts and the one-time
 {ref}`team-setup-checklist`. Point otto at the project with the
 `export OTTO_SUT_DIRS=…` line it printed — nothing is discovered from the
@@ -70,7 +70,7 @@ The scaffolded `example-device` is a placeholder: its `lab_data/lab.json`
 entry names the inventory key `device-01.lab.example`, so replace that key's
 placeholder `ip` in `lab_data/inventory.json` and placeholder `creds` in
 `lab_data/creds.json` (the scaffolded `lab_data/README.md` explains every
-field; {doc}`../guide/configuration/inventory` is the home for how the three
+field; {doc}`../configuration/inventory` is the home for how the three
 files compose) before anything connects to it. Every lab also carries a built-in
 `local` host — the machine otto runs on — which needs no lab edit at all:
 `otto --lab example_lab host local run "uname -a"`.
@@ -260,6 +260,6 @@ docker-services
 
 - {ref}`team-setup-checklist` -- One-time setup when adopting otto for a team
 - {doc}`../cli/index` -- Every `otto` command, one page per verb
-- {doc}`../guide/configuration/index` -- The project and lab files every command reads
+- {doc}`../configuration/index` -- The project and lab files every command reads
 - {doc}`../library/index` -- Using otto as a Python library, plus recipes
 - {doc}`../api/index` -- Full API reference

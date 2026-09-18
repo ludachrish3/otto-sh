@@ -93,7 +93,7 @@ source declares, and alternatives (a database, an inventory service)
 register a name via {func}`otto.labs.register_lab_repository`.
 {func}`otto.testing.assert_lab_repository_conforms` verifies a custom backend
 against the contract, and `otto.examples.lab_repository` is a copyable
-reference implementation. See {doc}`../../guide/configuration/host-sources`.
+reference implementation. See {doc}`../../configuration/host-sources`.
 
 A process reads *every* source every repo declares:
 {func}`otto.labs.build_lab_sources` constructs each `[[lab.sources]]` entry

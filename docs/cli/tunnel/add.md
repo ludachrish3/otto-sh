@@ -22,7 +22,7 @@ otto --lab unix tunnel add --hosts test1@eth2,test3,test2 --port 6001
 
 Each `--hosts` entry may pin a specific interface with `host@iface`, where
 `iface` is a key in that host's `interfaces` map in `lab.json` (see
-[Network interfaces](../../guide/configuration/lab-config.md#network-interfaces)). The pin is only
+[Network interfaces](../../configuration/lab-config.md#network-interfaces)). The pin is only
 **required** when the host defines more than one interface — with zero or
 one interface, otto resolves it automatically. Naming an interface the host
 doesn't have, or omitting `@iface` on a host with more than one, is a

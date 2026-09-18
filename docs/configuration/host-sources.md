@@ -128,7 +128,7 @@ field, and the link entry — lives in {doc}`lab-config`.
 Running `otto init` (or `otto init --lab`) scaffolds a `lab.json` with one
 declared lab and one example element, plus a `lab_data/README.md` walking
 through the three sections — a faster way to see a valid file than building
-one from scratch. See {doc}`../../getting-started/index`.
+one from scratch. See {doc}`../getting-started/index`.
 ```
 
 ### Annotating entries with `_`-prefixed keys
@@ -167,7 +167,7 @@ so a note can sit next to whatever it explains:
 ```
 
 A top-level `$schema` is comment space too — that is the key wiring the file
-to the generated schema in your editor (see {doc}`../../cli/schema/editors`).
+to the generated schema in your editor (see {doc}`../cli/schema/editors`).
 The `_` idiom is scoped to `lab.json`; it is not a general convention
 elsewhere in otto's JSON/TOML configuration.
 
@@ -279,7 +279,7 @@ required `login` and four optional fields:
 |-------|------|--------------|
 | `login` | string | The account name (required). |
 | `password` | string or `null` | Password, or omit/`null` for key/agent auth on SSH (an empty line on telnet). |
-| `proxy` | string | Name of a registered login proxy (see {doc}`../../library/extending-backends`) that drives the steps to *become* this login, after authenticating as `via`. Omit for a directly-loginable account — a proxy-less entry still uses the built-in `"su"` proxy when `switch_user`/`as_user` switches to it. |
+| `proxy` | string | Name of a registered login proxy (see {doc}`../library/extending-backends`) that drives the steps to *become* this login, after authenticating as `via`. Omit for a directly-loginable account — a proxy-less entry still uses the built-in `"su"` proxy when `switch_user`/`as_user` switches to it. |
 | `via` | string | The `login` of another entry in this same list to authenticate as first. Only valid alongside `proxy`. Omit to default to the first proxy-less (directly-loginable) entry. |
 | `params` | object | Free-form data handed to the proxy callable (e.g. a container name, a service name). Otto interprets only two keys, and only in the built-in `"su"` proxy: `login_shell` (default `true`) and `expect_prompt` — see below. |
 | `protocols` | list of strings | The protocols this entry is **for** — names of self-authenticating backends: `ssh`, `telnet`, `ftp` (a custom backend that declares `authenticates` joins the list). Omit for an entry that applies to every protocol. See {ref}`cred-protocols`. |
@@ -437,7 +437,7 @@ explicit and ordered, rather than relying on dict insertion order.
 Any **registered** backend can be named by a source entry. Register yours from
 an `init` module (one of the modules listed in `init = [...]`), then select it —
 the `LabRepository` protocol the class must satisfy is in
-{doc}`../../library/lab-source-backends`:
+{doc}`../library/lab-source-backends`:
 
 ```python
 # my_lab_source.py  (listed in init = [...])
@@ -461,7 +461,7 @@ every key other than `backend` and `name` becomes a keyword argument, plus
 interpret those kwargs; validate them in your constructor and fail loud there.
 Two entries may name the same backend with different kwargs (two databases,
 two files) — each is constructed separately. Naming an unregistered backend
-raises [`LabRepositoryError`](../../api/labs.rst), listing the registered
+raises [`LabRepositoryError`](../api/labs.rst), listing the registered
 names.
 
 ```{note}
@@ -471,7 +471,7 @@ An `init` module always imports before the lab is loaded, so the name is
 registered by the time settings select it.
 ```
 
-See {doc}`Extension points <../../architecture/subsystems/extension-points>` for the
+See {doc}`Extension points <../architecture/subsystems/extension-points>` for the
 registry machinery behind this and every other seam otto can be extended at.
 
 ## Troubleshooting
@@ -531,7 +531,7 @@ registry machinery behind this and every other seam otto can be extended at.
 A host `otto --list-hosts` shows does not complete on TAB
 : Completion never warns — a warning printed into a completing shell corrupts
   the candidate list — so an entry it could not build is dropped silently.
-  [`otto cache info`](../../cli/cache/index.md#info) ends with a block for the
+  [`otto cache info`](../cli/cache/index.md#info) ends with a block for the
   current workspace: the cache entry's standing, the inventory as completion
   resolved it, the lab files each source read, the hosts offered, and every
   entry dropped with where it was and why. A supplement file missing from a

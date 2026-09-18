@@ -46,7 +46,7 @@ dev tools, and its `ProjectActions`:
 ```
 
 The lab file declares the labs and the elements that join them
-({doc}`../../guide/configuration/lab-config` is the field reference). The
+({doc}`../../configuration/lab-config` is the field reference). The
 three labs the bed declares:
 
 ```{literalinclude} ../../examples/getting-started/lab_data/lab.json
@@ -70,7 +70,7 @@ The third credential is not a password: it names a login *proxy*, code that
 line out until you reach that page — a lab that names an unregistered proxy
 refuses to load.
 
-`os_type` selects the host class ({doc}`../../guide/configuration/os-profiles`);
+`os_type` selects the host class ({doc}`../../configuration/os-profiles`);
 `hop`, absent here, names the host otto must reach this one through.
 
 ## What otto finds out

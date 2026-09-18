@@ -16,7 +16,7 @@ This page is the tour. Each step links to the page that owns the detail.
 
 - A lab host that can run docker — call it `dock1`. Tag it in your lab file
   with `"docker_capable": true`, plus a `roles` tag naming what the lab uses
-  it for. See {doc}`../guide/configuration/lab-config`.
+  it for. See {doc}`../configuration/lab-config`.
 
   ```text
   {
@@ -99,7 +99,7 @@ one. `otto docker up` builds before it deploys, and `otto docker build` runs
 the same step on its own — including the context-hash caching that decides
 when a rebuild is actually needed. {doc}`../cli/docker/build` and
 {doc}`../cli/docker/rebuild-policy` are the home for both; the keys
-themselves are in {doc}`../guide/configuration/settings`.
+themselves are in {doc}`../configuration/settings`.
 
 ## Step 3 — use the container like a host
 
@@ -171,10 +171,10 @@ mechanism, with the rules for each layer, is in
   walkthrough, and the compose adapter.
 - {doc}`../cli/docker/index` — every `otto docker` verb, its options,
   and how container hosts behave.
-- {doc}`../guide/configuration/settings` — the reference for every
+- {doc}`../configuration/settings` — the reference for every
   `[docker]`, `[[docker.images]]`, `[[docker.composes]]` and
   `[[docker.use_cases]]` key.
-- {doc}`../guide/configuration/lab-config` — `docker_capable` and `roles` on
+- {doc}`../configuration/lab-config` — `docker_capable` and `roles` on
   a lab host.
 - {doc}`../library/suite-recipes` — deploying a use-case from an instruction
   or a test suite instead of the CLI.

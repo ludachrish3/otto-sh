@@ -4,13 +4,13 @@ Otto reads the tool-agnostic half of a host — address, interfaces,
 credentials, versions, location — through an **inventory backend**: a small
 class that answers "what is true about the machine with this key?". Two ship
 with otto, the `json` file and `netbox`
-({doc}`../guide/configuration/inventory`); anything else is a class you
+({doc}`../configuration/inventory`); anything else is a class you
 register from your own repo, because your source of record is a CMDB, an asset
 database, or a service nobody else has.
 
 This page is the contract. The user-facing side — the partition rule, the
 settings table, the adoption path — lives in
-{doc}`../guide/configuration/inventory`.
+{doc}`../configuration/inventory`.
 
 ## The protocol
 

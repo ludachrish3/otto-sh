@@ -70,7 +70,7 @@ CA, and every machine in the lab already trusts it. Then there is nothing to
 create here — ask that CA for the leaf certificate in step 3 and skip step 2,
 because viewers' browsers, `otto`'s own NetBox client and everything else on
 the machine trust it already. See [The NetBox
-backend](../../guide/configuration/inventory.md#the-netbox-backend): a CA trusted
+backend](../../configuration/inventory.md#the-netbox-backend): a CA trusted
 once on a machine covers both the dashboard it views and the inventory it
 fetches.
 

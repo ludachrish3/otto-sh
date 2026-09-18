@@ -78,6 +78,6 @@ client = httpx.Client(verify=os_trust_context(), timeout=DEFAULT_TIMEOUT_SECONDS
 
 ## When the CA cannot be installed
 
-See [the NetBox backend](../guide/configuration/inventory.md#the-netbox-backend)
+See [the NetBox backend](../configuration/inventory.md#the-netbox-backend)
 for the `SSL_CERT_FILE` / `SSL_CERT_DIR` escape hatch — it applies to every
 `otto.tls` client, not only NetBox.

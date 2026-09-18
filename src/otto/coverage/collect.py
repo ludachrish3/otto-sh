@@ -414,7 +414,7 @@ async def _write_metadata(
     def _anchor_build_dir(raw: str) -> str:
         """Anchor a raw ``build_dir`` value read from the config passthrough dict.
 
-        Applies the documented path-resolution convention (docs/guide/configuration/
+        Applies the documented path-resolution convention (docs/configuration/
         settings.md ``### Path resolution``): ``~`` expansion and
         repo-root anchoring for a still-relative value.
         """

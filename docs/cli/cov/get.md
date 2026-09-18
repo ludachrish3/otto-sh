@@ -4,7 +4,7 @@
 by `[coverage].hosts`, and on each one every **product** whose build is
 instrumented — Unix hosts over the network, embedded boards over the console.
 Each product's counters are discovered under its own `cov_dir`
-({doc}`../../guide/configuration/declared-products-tools`), parsed with the
+({doc}`../../configuration/declared-products-tools`), parsed with the
 discovered toolchain, and written as one `capture.json` per host per product
 (anchored to `base_commit`) plus debug artifacts — the raw `.gcda` and the
 `.info` tracefiles lcov captured from them — into

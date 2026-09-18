@@ -32,7 +32,7 @@ from otto.models.inventory import InventoryRecord
 from otto.models.lab import HOISTED_HOST_KEYS, ElementSpec, LabEntrySpec
 from tests._fixtures.paths import PROJECT_ROOT
 
-_CONFIG = PROJECT_ROOT / "docs" / "guide" / "configuration"
+_CONFIG = PROJECT_ROOT / "docs" / "configuration"
 _PAGE = _CONFIG / "lab-config.md"
 _INVENTORY_PAGE = _CONFIG / "inventory.md"
 _RECORD_FIELDS = "## Record fields"

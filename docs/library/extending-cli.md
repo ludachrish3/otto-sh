@@ -13,7 +13,7 @@ twelve subcommand groups register through this same function — see
 ## Registering a top-level command
 
 Decorate an async function with `@cli_command()` in a module listed in your
-settings file's `init` field (see {doc}`../guide/configuration/settings`). The ergonomics
+settings file's `init` field (see {doc}`../configuration/settings`). The ergonomics
 deliberately match `@instruction()` (see {doc}`../cli/run/index`): an `OttoContext`-annotated
 parameter is injected and hidden from the CLI, and an `options=` dataclass
 expands into individual flags. Unlike `@instruction()`, `@cli_command()` takes
@@ -297,7 +297,7 @@ bridge), so it holds identically for registered commands and instructions.
 - {doc}`extending-backends` — the term/transfer backend registries, which
   share {class}`~otto.registry.Registry`'s engine but allow `overwrite=True`
   where CLI commands deliberately don't
-- {doc}`../guide/configuration/settings` — the `init` field that makes registration modules load
+- {doc}`../configuration/settings` — the `init` field that makes registration modules load
 - {doc}`index` — using otto without the CLI at all
 - {doc}`Extension points <../architecture/subsystems/extension-points>` — the
   registry machinery behind this and every other seam otto can be extended at

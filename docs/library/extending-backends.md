@@ -18,7 +18,7 @@ registration runs before any lab data loads. The two seams are:
   (plus the reserved `tftp`).
 
 For the lab-data fields that select them (`term`, `transfer`), see
-{doc}`../guide/configuration/lab-config`; for the host classes that carry them, see {doc}`../guide/configuration/os-profiles`.
+{doc}`../configuration/lab-config`; for the host classes that carry them, see {doc}`../configuration/os-profiles`.
 
 ## Registration errors and replacing a built-in
 
@@ -423,7 +423,7 @@ default to the first directly-loginable entry):
 `proxy` names are validated against the registry at lab-load time, in the same
 place and the same way as `term`/`transfer` selectors — a typo'd proxy name
 fails loud at load, listing the registered proxies, rather than failing later
-mid-connection. See {doc}`../guide/configuration/host-sources` for the full `creds` field reference,
+mid-connection. See {doc}`../configuration/host-sources` for the full `creds` field reference,
 including the ownership consequences of proxying (which transfer paths land
 files owned by the via-user vs. the proxied target user).
 
@@ -560,9 +560,9 @@ a host that sets either key itself wins over the profile, field by field.
 ## See also
 
 - {doc}`extending-embedded` — custom command frames and embedded filesystems
-- {doc}`../guide/configuration/os-profiles` — registering a custom host class that bundles these
-- {doc}`../guide/configuration/lab-config` — the `term` / `transfer` lab-data fields
-- {doc}`../guide/configuration/host-sources` — the `creds` field reference and login-proxy ownership
+- {doc}`../configuration/os-profiles` — registering a custom host class that bundles these
+- {doc}`../configuration/lab-config` — the `term` / `transfer` lab-data fields
+- {doc}`../configuration/host-sources` — the `creds` field reference and login-proxy ownership
   consequences
 - {doc}`creds-backends` — a creds store of your own
 - {doc}`../cli/schema/editors` — `otto schema export` for editor autocompletion

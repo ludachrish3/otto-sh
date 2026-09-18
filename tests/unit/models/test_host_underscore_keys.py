@@ -14,7 +14,7 @@ MINIMAL = {
 
 def test_underscore_key_is_ignored() -> None:
     spec = UnixHostSpec.model_validate(
-        MINIMAL | {"_comment": "see docs/guide/configuration/host-sources.md"}
+        MINIMAL | {"_comment": "see docs/configuration/host-sources.md"}
     )
     assert spec.ip == "192.0.2.1"
 

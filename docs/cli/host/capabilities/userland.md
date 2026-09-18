@@ -49,7 +49,7 @@ host entry carries:
 ```
 
 Paste that into the host's entry and the next connection issues no probe at
-all. See {doc}`../../../guide/configuration/host-options` for where the table lives and how it layers.
+all. See {doc}`../../../configuration/host-options` for where the table lives and how it layers.
 
 **Assumed values are deliberately absent from the payload.** Inside a JSON
 object a guess is indistinguishable from a measurement, and a pinned value is

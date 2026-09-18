@@ -167,7 +167,7 @@ module built with the sentinel/macro snippet above refuses to load without
 that `gcov_dir=` argument — `KGCOV_INIT()` returns `-EINVAL` — so
 `coverage = "none"` on such a module, or a manual `insmod`, fails with a
 message only `dmesg --sudo` shows. See
-{doc}`../../../guide/configuration/declared-products-tools` for every parameter
+{doc}`../../../configuration/declared-products-tools` for every parameter
 this kind takes — this page only walks the build the params point at.
 
 ## The `kernel` method
@@ -182,7 +182,7 @@ report size 0, so `scp` cannot fetch them directly, and this copy is the
 materialize step. Resetting writes each entry under `gcov_path`
 individually, never the tree's own global reset, which would zero every
 other loaded module's counters along with this one's. See
-{doc}`../../../guide/configuration/declared-products-tools` for the parameter
+{doc}`../../../configuration/declared-products-tools` for the parameter
 table.
 
 ## What the report shows

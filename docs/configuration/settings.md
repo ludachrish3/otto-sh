@@ -9,7 +9,7 @@ The `.otto` name is shared by three directories holding three different
 kinds of thing.  This page is about the **repo's** `.otto/` — source
 config, committed with the code.  The xdir holds run outputs, and
 `~/.otto` — otto's user-level home — holds derived state otto can rebuild.
-See [The workspace home](../../cli/index.md#the-workspace-home).
+See [The workspace home](../cli/index.md#the-workspace-home).
 ```
 
 ## The settings file
@@ -79,7 +79,7 @@ both receive `repo_dir` and can anchor their own paths.
 
 One exception worth knowing: `[reservations.json] path` is read by otto
 itself, not passed through, so a relative value there still resolves
-against the repo root — see {doc}`../../cli/reservation/index`.
+against the repo root — see {doc}`../cli/reservation/index`.
 
 ### Field reference
 
@@ -115,7 +115,7 @@ tests
   `otto test -m EXPRESSION` with no suite name) hand the same directories to
   pytest, one session per repo, and pytest recurses as usual — so a plain
   `test_*` function in a subdirectory runs without being imported here.
-  Defaults to `[]`.  See {doc}`../../cli/test/index` for the reasoning.
+  Defaults to `[]`.  See {doc}`../cli/test/index` for the reasoning.
 
 init
 : List of Python module names (dot-separated) to import at startup.  Use
@@ -144,7 +144,7 @@ init
   or declares a non-empty `[[products]]`/`[[dev_tools]]` array (see below):
   either way the repo is *providing*, and bootstrap refuses a providing repo
   with no `[project]` scope. See {ref}`project-scope` in {doc}`lab-config` for
-  the full schema and {doc}`../../cli/run/defaults` for what it does to a walk.
+  the full schema and {doc}`../cli/run/defaults` for what it does to a walk.
 
 \[\[products\]\]
 : Optional array of declared products — settings-declared software under
@@ -174,7 +174,7 @@ init
   unit tier's `[coverage.tiers.<name>.products]` views — plus
   `[coverage.embedded]`, `[coverage.tickets]`, and `[coverage.exclusions]`.
   Having the table at all is what lets collection run. See
-  {doc}`../../cli/cov/index` for the schema and {doc}`../../cli/cov/tiers` for the
+  {doc}`../cli/cov/index` for the schema and {doc}`../cli/cov/tiers` for the
   tier model.
 
 \[reservations\]
@@ -184,7 +184,7 @@ init
   required and names a registered scheduler source (`"none"` disables the
   gate explicitly; `"json"` reads a reservation file) — a table without it,
   even a bare `[reservations]` header, refuses the load rather than silently
-  allowing everything. See {doc}`../../cli/reservation/index` for backends,
+  allowing everything. See {doc}`../cli/reservation/index` for backends,
   the file format, and the `--holder` / `-R` break-glass overrides.
 
 \[inventory\]
@@ -315,7 +315,7 @@ occurs:
    available to the zero-argument accessors (`get_host`, `all_hosts`) in
    all commands.
 
-See {doc}`../../architecture/subsystems/bootstrap` for how this sequence
+See {doc}`../architecture/subsystems/bootstrap` for how this sequence
 composes multiple repos into one process and contains per-file failures.
 
 ## Multiple repos
@@ -380,7 +380,7 @@ backend = "uv"   # or "pip"; omit to auto-detect
 ```
 
 This repo's standing choice of installer for the environment
-{doc}`../../cli/env/index` builds. It is a **preference, not a requirement**:
+{doc}`../cli/env/index` builds. It is a **preference, not a requirement**:
 `--backend` on the command line outranks it, because the operator at the
 terminal knows things the file does not — that uv is not installed on this
 particular host, say. Omit it to auto-detect: uv when it is on `PATH`,
@@ -414,7 +414,7 @@ them apart:
 
 So a missing *repo* is a load-order problem and a missing *package* is an
 environment problem, and each is reported by the thing that owns it — see
-{doc}`../../cli/env/index`, which also documents what the preflight does not
+{doc}`../cli/env/index`, which also documents what the preflight does not
 cover.
 
 (team-setup-checklist)=
@@ -429,13 +429,13 @@ otto for a team:
    json `[[lab.sources]]` entry, and the `libs` / `tests` / `init` paths — this
    page, above) with every optional section present but commented out, the
    generated editor schemas
-   (`.otto/schemas/` + `.vscode` wiring, see {doc}`../../cli/schema/editors`), an example
+   (`.otto/schemas/` + `.vscode` wiring, see {doc}`../cli/schema/editors`), an example
    lab host, and a shared `RepoOptions` class inherited by both an example test
    suite and an example instructions module — so `otto test TestExample` and
    `otto run smoke` share a `--message` flag out of the box. `otto init --all`
    scaffolds everything with no prompts; bare `otto init` asks per missing
    area; `otto init --schemas` also *refreshes* the generated schemas after an
-   otto upgrade. See {doc}`../../installation` and {doc}`../../cli/index`.
+   otto upgrade. See {doc}`../installation` and {doc}`../cli/index`.
 2. **Choose your host sources** — `otto init` scaffolds one `[[lab.sources]]`
    entry on the built-in `json` backend (commit `lab.json` under `lab_data/`).
    Add an entry for a CMDB or inventory API if you have one, and mind the
@@ -446,20 +446,20 @@ otto for a team:
    default) for sandbox labs, or wire `[reservations]` to your scheduler so otto
    refuses to clobber a held rack. Tell the team about the `--holder` and
    `-R` / `--skip-reservation-check` break-glass overrides *before* they need
-   them. See {doc}`../../cli/reservation/index`.
+   them. See {doc}`../cli/reservation/index`.
 4. **Register shared code** — put instruction/option modules under `libs` and
-   list them in `init`; auto-import test suites from `tests`. See {doc}`../../cli/run/index` and
-   {doc}`../../cli/test/index`.
+   list them in `init`; auto-import test suites from `tests`. See {doc}`../cli/run/index` and
+   {doc}`../cli/test/index`.
 5. **Set per-product preferences** — optional `[host_preferences]` /
    `[os_profiles]` (this page, above, and {doc}`lab-config` / {doc}`os-profiles`).
-6. **Enable tab completion** — see {doc}`../../getting-started/index`.
+6. **Enable tab completion** — see {doc}`../getting-started/index`.
 7. **(Optional) Add TLS to the dashboard** — plain HTTP plus a per-run
    access key is the default and needs no setup; add TLS only if a lab
    needs it. A team owner creates a CA once and distributes trust to
    viewers; each machine that runs `otto monitor` then gets its own leaf
    cert, and the repo's `settings.toml` gains a `[monitor]` table pointing
-   at it. See {doc}`../../cli/monitor/index`'s [Securing the
-   dashboard](../../cli/monitor/serving.md#serving-the-dashboard) section for the steps.
+   at it. See {doc}`../cli/monitor/index`'s [Securing the
+   dashboard](../cli/monitor/serving.md#serving-the-dashboard) section for the steps.
 
 Each backend choice is verifiable: otto ships conformance helpers
 (`otto.testing.assert_lab_repository_conforms` /
@@ -525,7 +525,7 @@ to docker verbatim (`"1000:1000"`, `"postgres"`, `"postgres:staff"`). See
 Relative paths resolve against the repo root — see
 [Path resolution](#path-resolution).
 
-{doc}`../../cli/docker/use-cases` is the home for what these keys *mean* — how
+{doc}`../cli/docker/use-cases` is the home for what these keys *mean* — how
 fragments compete and are placed, what `${otto:...}` resolves to and why that
 syntax is valid only in this file, and how the env channels merge.
-{doc}`../../cli/docker/index` lists the commands that read this block.
+{doc}`../cli/docker/index` lists the commands that read this block.
