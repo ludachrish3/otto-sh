@@ -363,12 +363,13 @@ matched to `test3`:
   `GCOV_PREFIX_STRIP` is baked in at build time from the build directory's
   depth, and `docker save`d to a git-ignored tarball under
   `tests/repo5/docker/`. `tests/repo5/build.sh` builds both the modules and
-  the image; each repo5 e2e ensures both artifact sets through one shared
-  staleness rule, because otto installs every matched product on every run.
+  the image for a human; each repo5 e2e ensures only its own family's
+  artifacts through one shared staleness rule, because `otto test` never
+  calls a product verb — each suite installs and removes its own products,
+  so each e2e pins exactly the hosts its suite drove.
   Declared as a `docker_image` product with `run_args` that launch it with
   `GCOV_PREFIX={cov_dir}`; the e2e asserts `capture.json` under
-  `cov/test3/<product>/` and the bind-mounted counters, tolerating the
-  kernel demo's exit-dump leaves on test1/test2. The reference form is
+  `cov/test3/<product>/` and the bind-mounted counters. The reference form is
   proven with the same image, already loaded, as a second product with
   `pull = false`.
 
