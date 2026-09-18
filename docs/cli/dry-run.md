@@ -113,15 +113,7 @@ dry run exits 0 either way — **reachability is information, not a gate.**
   connection(s) this invocation would use, and no command follows.
 - **`--probe` requires `--dry-run`.**  On its own it is a usage error (exit 2).
 
-
-`--probe` is opt-in on top of a dry run. It lets otto **open a connection** to
-each host the command names and report whether it answered.
-
-```{important}
-**`--probe` permits a connection, never a command.** Reachability is
-information, not a gate: an unreachable host is reported and the dry run still
-exits 0.
-```
+With the full dry-run banner, the same probe reads:
 
 ```console
 $ otto --lab my_lab -n --probe host router1 run "make install"
@@ -138,7 +130,7 @@ dry run: no command body was run; --probe opened a connection only, and ran no c
 Note the headline: once a socket is opened it no longer ends "and no device
 was contacted".
 
-**`--probe` requires `--dry-run`.** On its own it is a usage error (exit 2):
+On its own:
 
 ```console
 $ otto --lab my_lab --probe link list
