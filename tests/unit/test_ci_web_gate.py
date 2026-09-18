@@ -12,6 +12,7 @@ the Makefile chain from drifting back to something weaker.
 
 import json
 import re
+from pathlib import Path
 
 import pytest
 import yaml
@@ -214,4 +215,56 @@ def test_every_gating_npm_script_goes_through_the_warnings_gate() -> None:
         "Makefile recipes run npm/npx outside the warnings gate; route them "
         "through scripts/build_web_no_warnings.sh (or web-install for an "
         f"install): {ungated!r}"
+    )
+
+
+def _shell_commands(node: object) -> list[str]:
+    """Every string under ``node``: RTD's job lists and a step's ``run``."""
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, dict):
+        return [c for value in node.values() for c in _shell_commands(value)]
+    if isinstance(node, list):
+        return [c for item in node for c in _shell_commands(item)]
+    return []
+
+
+def _ci_shell_commands(rtd: Path, workflows: list[Path]) -> dict[str, list[str]]:
+    """The shell each CI config runs: RTD's build.jobs/commands, and every
+    workflow step's ``run`` (step names and comments are not commands)."""
+    commands: dict[str, list[str]] = {}
+    config = yaml.safe_load(rtd.read_text())
+    build = config.get("build", {})
+    commands[rtd.name] = _shell_commands([build.get("jobs", {}), build.get("commands", [])])
+    for workflow in workflows:
+        jobs = yaml.safe_load(workflow.read_text()).get("jobs", {})
+        commands[f"workflows/{workflow.name}"] = [
+            step["run"]
+            for job in jobs.values()
+            for step in job.get("steps", [])
+            if isinstance(step, dict) and "run" in step
+        ]
+    return commands
+
+
+def _direct_npm_in_ci(rtd: Path, workflows: list[Path]) -> list[str]:
+    return [
+        f"{source}: {line.strip()}"
+        for source, commands in _ci_shell_commands(rtd, workflows).items()
+        for command in commands
+        for line in command.splitlines()
+        if not line.strip().startswith("#") and _NPM_OR_NPX.search(line)
+    ]
+
+
+def test_ci_configs_reach_npm_only_through_make() -> None:
+    """Read the Docs and the GitHub workflows run web/'s npm tooling only via
+    make (`make web-install`, `make web`, `make check-ts`, ...), so they get
+    the same warnings gates as a local run. A bare `cd web && npm ci` in
+    .readthedocs.yaml skipped web-install's `npm warn` check."""
+    workflows = sorted((_REPO / ".github" / "workflows").glob("*.yml"))
+    assert workflows, "no .github/workflows/*.yml found"
+    direct = _direct_npm_in_ci(_REPO / ".readthedocs.yaml", workflows)
+    assert not direct, (
+        f"CI configs run npm/npx directly instead of through a make target: {direct!r}"
     )

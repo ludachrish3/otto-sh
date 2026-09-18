@@ -57,7 +57,10 @@ build:
       # If this breaks on an RTD image change, OTTO_DOCS_MEDIA=placeholder in
       # the RTD environment variables ships degraded-but-green docs meanwhile.
       - uv run playwright install chromium
-      - cd web && npm ci
+      # Through make, not a bare `cd web && npm ci`: web-install is where an
+      # `npm warn` line fails the install (and a network blip is retried).
+      # Node is .nvmrc's exact version from post_create_environment above.
+      - make web-install
     pre_build:
       # capture_docs_media.py (hooked from docs/conf.py) drives a real
       # MonitorServer to screenshot the dashboard — post-cutover that

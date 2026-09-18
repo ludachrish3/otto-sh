@@ -467,6 +467,12 @@ browsers: ## (Setup) Install the Playwright Chromium + Firefox + WebKit binaries
 # The whole loop is @-silenced: echoing it is 11 lines of shell noise. npm's own
 # log is buffered and replayed IN FULL on failure (that's the diagnostic); on
 # success only its one-line tally is shown, so the routine case stays quiet.
+# Warnings are errors here too: a successful npm ci that printed any
+# `npm warn` line (a deprecated dependency, EBADENGINE, an unknown config
+# key, ...) fails with those lines reprinted, rather than having them
+# discarded along with the rest of the quiet log. A clean install prints none.
+# The failure also deletes the install stamp (below), so the next make run
+# retries web-install instead of trusting the warned-about node_modules.
 web-install: ## (Dev) Install web/'s npm dependencies from the committed lockfile (npm ci)
 	@$(SAY) "npm ci (web/)"
 	@cd web && n=1 && while :; do \
@@ -474,6 +480,9 @@ web-install: ## (Dev) Install web/'s npm dependencies from the committed lockfil
 	  npm ci >"$$log" 2>&1; rc=$$?; \
 	  if [ $$rc -eq 0 ]; then \
 	    grep -E '^(added|removed|changed|up to date)' "$$log" || cat "$$log"; \
+	    if grep -iE '^npm warn' "$$log" >&2; then \
+	      rm -f "$$log" node_modules/.package-lock.json; \
+	      echo "web-install: npm ci printed the warning(s) above; warnings are errors here" >&2; exit 1; fi; \
 	    rm -f "$$log"; break; fi; \
 	  cat "$$log" >&2; \
 	  if ! grep -qiE 'ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|socket hang up|npm (error|ERR!) network' "$$log"; then \
