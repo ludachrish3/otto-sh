@@ -124,8 +124,7 @@ async with otto.open_context(lab="mylab") as ctx:
 
 ## Bring-your-own-CLI: lower-level primitives
 
-otto's own CLI uses these three steps internally — `open_context` is just them
-packaged across the callback/subcommand boundary:
+`open_context` is these three steps:
 
 1. Build an `OttoContext` with the chosen lab and runtime flags.
 2. Install it as the active context with `set_context()`, which returns a reset
@@ -287,7 +286,7 @@ for junit in result.junit_paths:
    context is open.
 3. The current working directory.
 
-Same `--xdir`-defaults-to-CWD philosophy the CLI uses (see
+This is the same default the CLI's `--xdir` has (see
 [Output directories](../cli/index.md#output-directories)) — pass
 `output_dir=` explicitly, or open a context first, if a script shouldn't drop
 artifacts next to whatever its caller's CWD happens to be.
@@ -321,9 +320,9 @@ result = run_selection(
 ```
 
 `run_selection` requires at least one of `tests=`/`markers=` on `RunOptions`;
-called with both empty (a bare `RunOptions()`) it raises `ValueError` rather
-than silently matching every test in every repo — mirroring the `otto test`
-callback, which only takes the suite-less path once `--tests`/`-m` is given.
+called with both empty (a bare `RunOptions()`) it raises `ValueError`. The
+`otto test` callback likewise takes the suite-less path only once
+`--tests`/`-m` is given.
 
 ### `cov_dir` overwrite guard
 
@@ -454,34 +453,27 @@ an existing `except ValueError` handler keeps working unmodified; catch them
 by name first if you want to distinguish the two fail-loud sites.
 `GitUnavailableError`, `CoverageDataMismatchError`, and
 `CoverageToolVersionError` all subclass `RuntimeError`, so catch them *before* a
-bare `except RuntimeError` if you want to distinguish them. Swallowing-and-logging
-these is exactly what the `otto test --cov` tail does — a coverage-collection
-failure must never turn an otherwise-green test run red — whereas `otto cov get`
-surfaces each as a clean, single-line error. Every exception otto *defines* also
-subclasses `otto.errors.OttoError`, so a single `except OttoError` clause
-catches all of them when you don't need to distinguish — with one deliberate
-exception: `SyncPhaseInterrupt` stays a plain `KeyboardInterrupt` by signal
-contract, so interrupt handling is never accidentally swallowed.
+bare `except RuntimeError` if you want to distinguish them. The `otto test
+--cov` tail logs these and leaves the test run's verdict alone, whereas `otto
+cov get` surfaces each as a clean, single-line error. Every exception otto
+*defines* also subclasses `otto.errors.OttoError`, so a single `except
+OttoError` clause catches all of them when you don't need to distinguish —
+except `SyncPhaseInterrupt`, which is a plain `KeyboardInterrupt`.
 
-`except OttoError` is not the same as "anything otto raised", though. otto
-also raises plain stdlib exceptions at 330 sites — a rejected argument is
-usually a bare `ValueError` rather than a named class — so `OttoError` covers
-otto's two dozen *named* failures and no more. No single clause catches
-everything: `except Exception` misses the five `SystemExit` raises (three of
-them in public API — `run_command`, `run_suite`, `run_selection`), and
-`except (ValueError, RuntimeError)` reaches only 15 of the 24 named classes,
-since seven are rooted at plain `Exception` and two under `OSError`. See
-{mod}`otto.errors` for the full breakdown.
+`except OttoError` catches otto's *named* failures, not every exception otto
+raises: a rejected argument is usually a plain `ValueError`, and `run_command`,
+`run_suite` and `run_selection` can raise `SystemExit`, which `except
+Exception` does not catch either. See {mod}`otto.errors` for which clause
+reaches which exceptions.
 
 ### `clean_after_fetch`
 
 By default `collect_coverage` zeroes the Unix hosts' remote `.gcda` counters
-immediately after a successful fetch — the `otto test --cov` behavior that keeps
-the next run from mixing in stale data. Pass `clean_after_fetch=False` to skip
-that internal clean when you want to own the post-fetch reset yourself. That is
-what `otto cov get` does, so its `--clean` flag can be scoped to just the Unix
-host ids that actually fetched — never zeroing an embedded board on a mixed lab.
-To zero the counters *before* a run instead, call `clean_remote_gcda()`.
+immediately after a successful fetch, as `otto test --cov` does. Pass
+`clean_after_fetch=False` to skip that internal clean when you want to own the
+post-fetch reset yourself, as `otto cov get` does: its `--clean` flag zeroes
+only the Unix hosts that actually fetched, never an embedded board on a mixed
+lab. To zero the counters *before* a run instead, call `clean_remote_gcda()`.
 
 See {doc}`../cli/cov/index` for the full CLI workflow, tier configuration, and
 the report format.

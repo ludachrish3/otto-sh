@@ -32,8 +32,7 @@ ValueError: Unknown transfer backend 'sftpp'. Did you mean 'sftp'? Registered: c
 ```
 
 Registering the *same* name twice is a hard failure by default, naming both
-modules — this is what protects you from two `init` modules silently racing
-to define `ssh`. If you deliberately want to replace a built-in (for example,
+modules. If you deliberately want to replace a built-in (for example,
 swapping in your own `json` lab-repository backend, or overriding otto's
 stock `ssh` term with a hardened variant), pass `overwrite=True` to the
 `register_*` function:
@@ -46,10 +45,9 @@ register_transfer_backend("scp", MyHardenedScp, overwrite=True)
 
 Without `overwrite=True` this raises
 `ValueError: transfer backend 'scp' is already registered by 'otto.host.transfer.unix'; ...`.
-This asymmetry is intentional and does **not** apply everywhere: CLI top-level
-commands are the one seam with no `overwrite` escape hatch at all — see
-{doc}`extending-cli`'s [Collisions](extending-cli.md#collisions) section for
-why a duplicate `otto <name>` registration always fails loud instead.
+CLI top-level commands are the one seam with no `overwrite` parameter at all
+— a duplicate `otto <name>` registration always fails; see
+{doc}`extending-cli`'s [Collisions](extending-cli.md#collisions) section.
 
 ## `host_families` applicability
 
@@ -69,8 +67,7 @@ on an embedded host — fails with a clear error naming the families the backend
 actually serves, rather than blowing up at connect time. A backend registered
 with **empty** families can never validate on any host, so both
 `register_transfer_backend` and `register_term_backend` reject it at
-registration time rather than letting it sit in the registry as a latent dead
-end.
+registration time.
 
 ## `progress_granularity` — what the backend promises the bar
 
@@ -85,9 +82,9 @@ A direction that emits exactly **one** event, at completion — a whole-file
 transfer with no intermediate observation, as `console`'s get is — declares
 that arm `None` and **must** explain itself in `note`; the dataclass refuses a
 `None` arm with an empty note, and refuses a stride that is not a positive
-byte count, so a bad declaration cannot even be constructed. The note is
-published beside the promise on the support-matrix page, so it is written for
-a user reading it there.
+byte count, so a bad declaration cannot even be constructed. The note appears
+beside the promise on {doc}`../guide/hosts/families`, so write it for a user
+reading it there.
 
 A backend whose stride is configured per instance declares its DEFAULT on the
 class and overrides
@@ -98,8 +95,8 @@ is applied last and therefore wins). Such a backend must read the INSTANCE
 wherever the promise has to hold for a live host, because its class attribute is
 only the default. A backend whose stride is FIXED has nothing to override and
 reads its own class attribute freely — `sftp` passes
-`self.progress_granularity.put` / `.get` straight to asyncssh as `block_size`,
-which is what makes its promise true by construction.
+`self.progress_granularity.put` / `.get` straight to asyncssh as
+`block_size`.
 
 ## `authenticates` — whether the backend logs in with a cred
 
@@ -112,10 +109,8 @@ this is the class attribute {class}`~otto.host.transfer.BaseFileTransfer`'s
 `console` ride a term session and inherit its identity, so they stay `False`.
 
 The declaration has one consumer: a cred's `protocols` scope
-({ref}`cred-protocols`) may only name an authenticating backend, because
-scoping a cred to a protocol that never logs in would be a statement with no
-effect. Both registration functions refuse a non-bool, so the vocabulary is
-always stated, never guessed.
+({ref}`cred-protocols`) may only name an authenticating backend. Both
+registration functions refuse a non-bool.
 
 ## The `create(ctx)` construction contract
 
@@ -143,12 +138,9 @@ selector and never appear in `lab.json`.
 
 ## `tftp` is reserved
 
-`tftp` is registered and applicable to embedded hosts (a future cross-family
-implementation would extend its `host_families` to `unix` as well), so it
-validates cleanly in lab data today. Its transfer body, however, raises
-`NotImplementedError` until the protocol is implemented — it is a placeholder
-that reserves the name and exercises the applicability path, not a working
-backend.
+`tftp` is registered and applicable to embedded hosts, so it validates
+cleanly in lab data. Its transfer body, however, raises `NotImplementedError`
+— it reserves the name and is not a working backend.
 
 ## A worked example
 
@@ -254,7 +246,7 @@ register_term_backend("my_term", MyTerm, host_families=frozenset({"unix"}), auth
 # host_families and authenticates are required (no default) — omitting either raises TypeError
 ```
 
-`TermContext` no longer carries `user`; a backend that needs the session
+`TermContext` does not carry `user`; a backend that needs the session
 identity asks the manager it builds for `login_target_for(ctx.term)`.
 
 ### Proving it
@@ -301,8 +293,8 @@ elevation path, so one proxy function runs unmodified over all three.
 {class}`~otto.host.login_proxy.ProxyContext` carries `target` (the
 {class}`~otto.host.login_proxy.Cred` being become — its `login`/`password`/`params`), `via`
 (the cred currently in control), and `host_id` (for error messages) —
-deliberately **not** the host object itself: calling `run()` mid-proxy on the
-very session being established would deadlock. Host-specific data rides in
+**not** the host object itself: calling `run()` mid-proxy on the very session
+being established would deadlock. Host-specific data rides in
 `target.params`.
 
 The built-in `"su"` proxy — the default for any cred with no `proxy` field —
@@ -323,42 +315,23 @@ It sends the switch line and stops. Notice what is *not* there: the proxy
 never waits for a password prompt and never sends one. It declares the prompt
 its mechanism can raise, and the engine answers it.
 
-That split exists because whether `su` challenges depends on **who is
-asking**, not on the cred. The same `mysql` entry prompts when reached from an
-unprivileged account and stays silent when reached from `root`, and a cred
-cannot know which hop it is on. A proxy that waited whenever a password was
-configured would stall every switch the host was willing to perform for free —
-for the whole of a command timeout.
+Every hop ends with a shell resync that settles, then probes until the new
+shell answers; the settle *watches* for the declared prompt, and every probe
+afterwards can still recognise one. A password is sent only when it is wanted,
+and exactly **once** when it is; a cred with no password gets an error naming
+the account that asked.
 
-So the prompt is answered where otto is already listening. Every hop ends with
-a shell resync that settles, then probes until the new shell answers; that
-settle is spent *watching* for the declared prompt instead of sleeping through
-it, and every probe afterwards can still recognise one. A password is sent only
-when it is wanted, and exactly **once** when it is; a
-cred with no password gets an error naming the account that asked — rather
-than letting otto's own probes spend authentication attempts against it, which
-is how a lockout policy gets tripped by an automation that meant no harm.
-
-Waiting out a watch costs real time, so otto arms one only where a prompt can
-actually arrive. Whether `su` challenges depends on **who is asking** — root is
-not authenticated, everyone else is — and every hop's resync already *proves*
-the identity it left the shell in, so this is decided from state otto holds
-rather than discovered by waiting. On the bed that takes a root-to-service-
-account switch from 1.44s to 1.25s, and leaves a challenged switch unchanged at
-0.63s, because a real prompt ends the watch in milliseconds.
-
-The watch is never merely *shortened* to buy that time. A prompt arriving just
-after a too-short wait would be met by otto's first probe, and a probe typed at
-a live password prompt is itself a failed authentication — the outcome this
-design exists to prevent. A host that challenges even root (a PAM stack without
-`pam_rootok`) sets `params={"expect_prompt": true}` on the cred to force the
-watch back on.
+otto arms the watch only where a prompt can arrive. `su` does not challenge
+root and challenges everyone else, and every hop's resync proves the identity
+it left the shell in, so otto knows which hops can be challenged without
+waiting. A host that challenges even root (a PAM stack without `pam_rootok`)
+sets `params={"expect_prompt": true}` on the cred to force the watch back on.
 
 The probe reads back `id -un` as well as `$?`, so the resync also proves
-**who** answered. A rejected password is otherwise invisible: `su` reports the
-failure and exits back to the calling shell, which then answers a liveness
-probe perfectly well. Checking identity is what turns that into a clear error
-instead of a session that quietly runs the block as the wrong user.
+**who** answered. A rejected password — `su` reports the failure and exits
+back to the calling shell, which still answers a liveness probe — becomes
+a clear error instead of a session that quietly runs the block as the
+wrong user.
 
 :::{warning}
 Declare `prompt=` only if your proxy does **not** answer the prompt itself. If
@@ -371,17 +344,12 @@ Note the `log=LogMode.NEVER` otto puts on every password send — the
 password-hygiene convention for logged output applies inside a proxy step
 exactly as it does everywhere else a credential is sent.
 
-It sends the **login-shell** form, `su - <login>`. The accounts that need a
-proxy are usually service accounts whose whole point is their own
-environment, and plain `su` gives them the caller's `PATH`, `HOME` and
-`USER` without sourcing their profile — frequently leaving the target's own
-tooling off `PATH` entirely. Two consequences follow from `-` and are worth
-knowing before you rely on either: the new shell starts in the **target's
-home directory**, not the caller's cwd, and the environment is reset rather
-than inherited. A cred that needs the inheriting form sets
-`params={"login_shell": false}` — the one key otto itself reads out of
-`params`, and the reason you rarely need a custom proxy just to drop the
-dash.
+It sends the **login-shell** form, `su - <login>`: the target's environment
+is set up from its own profile, the new shell starts in the **target's home
+directory**, not the caller's cwd, and the environment is reset rather than
+inherited. A cred that needs the inheriting form sets
+`params={"login_shell": false}`, so you rarely need a custom proxy just to
+drop the dash.
 
 Register your own the same way, with an optional `undo=` that reverses the
 steps for `as_user` restore. The default reversal (used by `"su"`) sends a
@@ -500,8 +468,8 @@ marked dead and the open fails — so give the hook's `expect` timeouts
 generous budgets rather than tight ones.
 
 In a **framed** landing, calling `run()` after navigating away without
-entering the frame is a bug the docs cannot make cheap: the framed
-command waits out its timeout, recovery fails, and the open fails as
+entering the frame fails slowly: the framed command waits out its timeout,
+recovery fails, and the open fails as
 {class}`~otto.host.errors.SessionSetupError`.
 
 ### Consequences

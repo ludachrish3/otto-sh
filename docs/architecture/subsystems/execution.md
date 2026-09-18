@@ -183,9 +183,26 @@ do:
   same flag from different classes is a bootstrap error for the whole
   invocation: a flag whose meaning depends on which repo reads it is not
   something to resolve silently, and a flag set the user cannot see is not
-  something to degrade around. Options modules are leaves — `typer` and
-  `otto.options` — so a shared base placed in a required repo or a library
-  package can never create an import cycle.
+  something to degrade around. Flags merge by declaring class, and the same
+  rule decides which suite fields reach a repo's options under `otto test`,
+  so an unrelated suite field that merely spells `variant` never leaks into
+  an install. Options modules are leaves — `typer` and `otto.options` — so a
+  shared base placed in a required repo or a library package can never
+  create an import cycle.
+- **Never let one repo act for another.** No default `ProjectActions` body
+  spells `owner=`; the instance gets it from the repo view `actions_for`
+  builds (`ctx.for_repo(repo.name)`). That is why constructing one by hand
+  with a plain `OttoContext` raises `TypeError`: the object would walk the
+  whole union *and* call every host verb with `owner=None`, which the host
+  layer reads as **every** owner's products, so its `cleanup()` would
+  uninstall the neighbours' products and report success.
+- **Never let a repo own what a host or the lab owns.** The defaults refuse
+  per-repo debug logs and toolchain tools: N repos each sweeping one host's
+  debug logs is N transfers each overwriting the last, and one toolchain
+  serves every owner on a host, so a repo removing it would take its
+  neighbours' tooling with it. Impairments and tunnels belong to the lab,
+  and nothing in a repo's products or dev tools put them there. All of these
+  run once, above the repo walk.
 - **Never report success over nothing.** A `pattern=` that selects no host
   raises, because a silently empty sweep is the one failure worse than a
   crash: it reports success over a lab nothing happened on.
@@ -205,6 +222,12 @@ do:
   the exception swallowed. In the `cleanliness()` aggregate a dirty row
   outranks an unreadable one: an answer already in hand is not discarded for a
   scan that fell short.
+- **Never let a probe and its remedy drift.** `is_clean()` answers for exactly
+  what `cleanup` removes. A *foreign* qdisc therefore leaves the lab "clean":
+  `cleanup` will not remove one, and reporting it dirty would send every
+  `clean` ensure step into a cleanup that cannot change the answer. Once one
+  axis cannot answer, the axes after it are not read: they could only
+  strengthen a verdict that is already unavailable.
 - **Never bury a real refusal in noise.** `cleanup` drops links that could
   never have been impaired before reporting; otherwise `Success` would be
   unreachable on every real lab (an N-host lab resolves at least N implicit

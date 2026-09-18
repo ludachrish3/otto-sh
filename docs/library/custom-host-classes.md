@@ -64,8 +64,7 @@ class `kw_only=True` and mark that one field `field(kw_only=False)`, the way
 Your class must also declare a `capabilities`
 ({class}`~otto.host.capability_grid.HostCapabilities`) saying what its verbs
 promise for `user=`, progress and session identity — `register_host_class`
-refuses a class that does not, so no family reaches a reader as a blank row in
-{doc}`../guide/hosts/families`.  Subclassing `EmbeddedHost` or `UnixHost`
+refuses a class that does not.  Subclassing `EmbeddedHost` or `UnixHost`
 inherits theirs; redeclare only where yours differs.
 
 `ZephyrHost` in `otto.host.embedded_host` is the in-tree worked example — it
@@ -81,16 +80,14 @@ all five families answer; `RemoteHost` holds what the networked families add.
 A subclass inherits the lot with its defaults already in place, whether it
 subclasses `EmbeddedHost`, `UnixHost`, or `RemoteHost`/`BaseHost` directly:
 there is nothing to copy, and no field you must re-declare to make it exist.
-The field-by-field reference is generated from the classes themselves — see
-{class}`~otto.host.host.BaseHost` and {class}`~otto.host.remote_host.RemoteHost`
-in the API pages.
+The field-by-field reference is on {class}`~otto.host.host.BaseHost` and
+{class}`~otto.host.remote_host.RemoteHost` in the API pages.
 
 Re-declare a base field only to change its *value policy*: a different default,
 `init=False`, or "required here".  Do it keyword-only — either under a
 `kw_only=True` class as above, or as `field(kw_only=True, ...)` on that one
 line — so the override cannot shift the positional signature.  An override
-carries **no docstring**: the docstring lives with the field's one home, and
-`tests/unit/host/test_field_homes.py` holds otto's own leaves to that shape.
+carries **no docstring**: the docstring lives with the field's one home.
 
 ### Migrating a subclass written before the bases became dataclasses
 

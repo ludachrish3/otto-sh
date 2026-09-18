@@ -59,8 +59,7 @@ register_host_parsers(
 ```
 
 `UptimeParser` (in `otto.examples.monitor`) is a complete, runnable example:
-it charts `cat /proc/uptime` as a single "Uptime" series in seconds, and
-otto's own test suite registers it exactly this way.
+it charts `cat /proc/uptime` as a single "Uptime" series in seconds.
 
 A compiled pattern instead of a host id scopes the same registration to
 every host whose id matches — for example, giving a family of `busybox-*`
@@ -202,10 +201,9 @@ class TestPerformance(OttoSuite):
         await self.stop_monitor()
 ```
 
-`add_monitor_event` validates through the same seam every other marking
-surface uses (see
-[Marking events](../cli/monitor/dashboard.md#marking-events)): `label` can't
-be blank, `color` must be a `#rrggbb` hex string (not a CSS color name),
+`add_monitor_event` validates the same way every other marking surface does
+(see [Marking events](../cli/monitor/dashboard.md#marking-events)): `label`
+can't be blank, `color` must be a `#rrggbb` hex string (not a CSS color name),
 and `dash` must be one of the six styles the event editor offers — a
 violation raises a validation error immediately, before the collector is
 ever touched.

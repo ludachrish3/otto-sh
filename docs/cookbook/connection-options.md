@@ -3,8 +3,8 @@
 Each network protocol otto speaks — SSH, Telnet, SFTP, SCP, FTP,
 netcat — has a dedicated options dataclass in
 [`otto.host.options`](../../src/otto/host/options.py).  The default
-constructor of each class reproduces otto's historical behavior, so
-dropping an options object onto an existing `UnixHost` never changes
+constructor of each class matches how otto connects with no options set,
+so dropping an options object onto an existing `UnixHost` never changes
 how it connects.
 
 Options can be set in four places, layered lowest-to-highest:
@@ -130,8 +130,8 @@ element's `name`, and the rest is its one host entry:
 
 ## Disabling strict host-key checking for a lab host
 
-Otto's default already disables host-key checking (that's the historical
-behavior).  For a host where you *do* want to check:
+Otto's default already disables host-key checking.  For a host where you
+*do* want to check:
 
 ```python
 ssh_options = SshOptions(
@@ -275,14 +275,9 @@ for h in all_hosts(telnet_options=TelnetOptions(cols=300)):
     ...
 ```
 
-A returned override host is a fresh `dataclasses.replace`-style copy
-of the stored host whose `__post_init__` has re-run, so its
-`ConnectionManager` is constructed with the override options from the
-start.  This is required because protocol options shape the
-connection itself (key algorithms, hop wiring, etc.) and cannot be
-swapped on an already-open connection — the override copy opens its
-own connection on first use, and the stored host (and any connection
-it owns) is untouched.
+A returned override host is a fresh copy of the stored host built with
+the override options: it opens its own connection on first use, and the
+stored host (and any connection it owns) is untouched.
 
 When no `*_options=` kwarg is passed, `get_host()` returns the stored
 instance unchanged so identity (`get_host("x") is get_host("x")`) is

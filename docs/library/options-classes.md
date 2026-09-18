@@ -10,9 +10,7 @@ Most repos want a common set of CLI flags — device type, lab environment, and 
 on — on every `otto run` instruction and `otto test` suite. Define them once as a
 shared **options class** in any module named in your `init` setting (a `libs`
 directory like `pylib/` is a common home, but any importable module works), then
-inherit it from each suite and instruction. Options are a first-class part of
-project definition: declared here at setup, they thread through instruction
-execution and test runs.
+inherit it from each suite and instruction.
 
 Use the `@options` decorator — otto's name for a pydantic dataclass — so the
 flags are validated. See
@@ -20,17 +18,9 @@ flags are validated. See
 
 `otto init` scaffolds exactly this shape: a `pylib/<name>_options.py` with a
 repo-wide `RepoOptions` that the example suite and instruction both inherit.
-Listing the options module in `init` — as the hand-written example under
-"The settings file" above does with `my_shared_options` — is optional: it
-only needs to be importable from a `libs` dir, since suites and instructions
-import it directly rather than relying on startup registration. `otto
-init`'s scaffold leaves it out of `init` for exactly that reason.
-
-
-Options classes are how you add command-line flags to your `otto run`
-instructions and `otto test` suites. They are otto's through-line: define a set
-of options once, and the same definition surfaces on every command that
-inherits it.
+Listing the options module in `init` is optional: suites and instructions
+import it directly, so it only needs to be importable from a `libs` dir.
+`otto init`'s scaffold leaves it out of `init`.
 
 ## Options across otto's lifecycle
 
@@ -86,10 +76,6 @@ a *pydantic dataclass*: its fields are validated when the class is constructed.
 `@dataclass`. Use `@options` for every options class so your flags are
 validated and consistent.
 ```
-
-Importing `from otto import options` — rather than reaching for pydantic
-directly — keeps every options class on one standard import and gives otto a
-single seam through which all options behaviour flows.
 
 ## Validating fields
 

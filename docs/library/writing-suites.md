@@ -84,7 +84,7 @@ rule). Registration:
 4. Adds the suite as a subcommand of `otto test`
 
 This all happens at import time, and *where* otto looks is narrower than
-where pytest does — deliberately.
+where pytest does.
 
 :::{important}
 otto registers suites from the **top level** of each directory in `tests`:
@@ -97,11 +97,9 @@ the subdirectory to the list — `tests` is a top-level key in
 tests = ["tests", "tests/device"]
 ```
 
-The reason is blast radius, not speed. These files are **executed** at
-bootstrap on every otto command so that `__init_subclass__` fires, and a
-failure in any of them exits non-zero for *every* command — so one broken
-test file stops `otto host list`. Listing the directories keeps that surface
-one you chose.
+These files are **executed** at bootstrap on every otto command so that
+`__init_subclass__` fires, and a failure in any of them exits non-zero for
+*every* command — one broken test file stops `otto host list`.
 
 This bounds *registration* only. `otto test` hands the same directories to
 pytest, which recurses as usual, so a nested `test_*` function still runs and
@@ -190,12 +188,11 @@ single step `none`. The closest marker wins outright — test, then class, then
 the module's `pytestmark` — and nothing merges: a class path of `("clean",
 "installed")` under a test marked `("installed")` gives that test
 `("installed")` alone. An unmarked test converges nothing. Each step calls
-the same `otto.project` function `otto run <verb> --ensure` calls, so a
-marker and the command can never diverge; a convergence that fails **errors
-the test with the failing host named** — never a skip
-({class}`~otto.errors.EnsureStateError`). A misspelled step stops the run at
-collection. What each verb converges, and how a repo customizes it, is
-{doc}`../cli/run/defaults`.
+the same `otto.project` function `otto run <verb> --ensure` calls; a
+convergence that fails **errors the test with the failing host named** —
+never a skip ({class}`~otto.errors.EnsureStateError`). A misspelled step
+stops the run at collection. What each verb converges, and how a repo
+customizes it, is {doc}`../cli/run/defaults`.
 
 ## Setup and teardown as fixtures
 

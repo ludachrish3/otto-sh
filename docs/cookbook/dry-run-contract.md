@@ -34,10 +34,8 @@ Two seams carry it, matching the two ways otto registers things (see
 - `@cli_exposed(dry_run_preview=True)`, for one host verb
 
 A **leaf may opt in without its group**. `otto host` as a group keeps the safe
-default, while `put`, `get` and `write-file` opt in individually — those three
-have a real plan to show and `run` does not. For `run`, the echoed command line
-*is* the whole announcement, so running the body would add nothing and widen
-the surface for no gain.
+default, while `put`, `get` and `write-file` opt in individually. `run` does
+not: its echoed command line is its announcement.
 
 What the opt-in buys, from `otto link impair` (abridged):
 
@@ -56,8 +54,7 @@ dry run core: no device was contacted — nothing was read and nothing was chang
   not checked: live expire timers … and the post-apply verify …
 ```
 
-Every preview has the same three parts, and the third is what makes the other
-two safe to read:
+Every preview has the same three parts:
 
 1. **The plan** — concrete actions derived from configuration alone: the host,
    the netdev, the exact command line, wherever configuration can produce one.
@@ -77,16 +74,14 @@ $ otto --lab my_lab -n host dut1 write-file /etc/motd "hello there"
 @dut1   | [DRY RUN] WRITE: 11 bytes -> /etc/motd
 ```
 
-Eleven bytes, named destination, no eleven bytes. **Suppress the payload, never
-the announcement** — a dry run with no output is a bug, because a preview with
-no product is useless and one with an invented product is dangerous. (The
-announcement appears twice on purpose: once from the library layer, which is
-what a script or suite sees, and once from the renderer, which is what
-guarantees a console product even for a host whose standing log mode is quiet.)
+Eleven bytes, named destination, no eleven bytes. When you write a preview,
+**suppress the payload, never the announcement** — a dry run with no output is
+a bug. The announcement appears twice: once from the library layer, which is
+what a script or suite sees, and once from the renderer, so it reaches the
+console even on a host whose standing log mode is quiet.
 
 Verbs with nothing to preview keep the seam default and print the ordinary
-block — `ls` among them, because "here is a directory listing" is precisely
-what it cannot honestly produce:
+block — `ls` among them:
 
 ```console
 $ otto --lab my_lab -n host dut1 ls /var/log
@@ -120,10 +115,9 @@ result.retcode  # -1   (otto's "never ran" sentinel)
 result.exit_code  # 255  (ssh's "never connected")
 ```
 
-`Status.NotRun` is a distinct member rather than a reuse of `Status.Skipped`,
-because `Skipped.is_ok` is `True` and must stay that way for genuine skips — a
-skipped test step, a folded transfer. `NotRun` means one thing only: *a dry run
-declined this*.
+`Status.NotRun` is not `Status.Skipped`: `Skipped.is_ok` is `True`, for
+genuine skips such as a skipped test step or a folded transfer. `NotRun` means
+one thing only: *a dry run declined this*.
 
 `is_ok=False` is what a caller branching on the result acts on, and what the
 CLI renderer keys on to announce a decline rather than parse one. It is worth
@@ -192,23 +186,12 @@ CommandNotRunError: "toolchain_tools_absent('gdb')" was not run on host 'localho
 CommandNotRunError: "expect('prompt')" was not run on host 'localhost': …
 ```
 
-That last line is the **example host's** answer, not a universal one.
-`is_clean` asks this host's products and dev tools before it asks the
-toolchain, and those two questions run project-supplied `is_installed` hooks —
-what they do under a dry run is the hook's business, so a host carrying them
-can refuse earlier and name something else. The example host carries neither
-and declares a `gdb` toolchain tool, which is why the toolchain probe is both
-the first thing it asks and the only thing it can refuse on.
-
-A `bool` has only `True` and `False`, and both are lies: `exists` returning
-`False` under a dry run reports a path absent that may well be there, and a
-caller that then creates it has acted on a fact nobody measured. `ls` returning
-`[]` is a fabricated empty directory, and `glob` returning `[]` a fabricated
-"nothing matched" — the shape a log collector reads as "this host has no logs".
-`toolchain_tools_absent` returning `True` — and `is_clean`, which asks it —
-would report a host clean that nobody looked at, and send a converge into a
-cleanup on a fact nobody established. `expect` returning `""` is a fabricated
-prompt. Raising is the only honest answer these signatures allow.
+What `is_clean` refuses on depends on the host. It asks the host's products
+and dev tools before it asks the toolchain, and those questions run
+project-supplied `is_installed` hooks — what a hook does under a dry run is
+up to the hook, so a host carrying products or dev tools can refuse earlier
+and name something else. A host with neither refuses on the toolchain probe,
+as above.
 
 The *acting* verbs beside them decline rather than raise, because a `Result` has
 somewhere to put "I did not look": `install`, `uninstall`, `cleanup`,
@@ -229,7 +212,7 @@ get that decline — `get_product_logs` contacts nothing on its own, and
 `Product.get_logs`'s default retrieves nothing *successfully*, so a host whose
 products leave that hook alone still passes an ok product half through to the
 raise. What declines is a hook that actually attempts a transfer or a command,
-which is the same "it is the hook's business" point made two paragraphs above.
+which is the same "it is the hook's business" point made above.
 Turn the debug half off, or declare concrete paths, to get the decline back
 everywhere.
 

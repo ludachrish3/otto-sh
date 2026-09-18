@@ -74,6 +74,13 @@ commands both go through {func}`~otto.cli.registry.register_cli_command` (or
 the {func}`~otto.cli.registry.cli_command` decorator) — the symmetry rule
 again. See {doc}`../../library/extending-cli` for the how-to.
 
+The backend registries' `register_*()` functions take `overwrite=True` to
+replace an existing entry; `register_cli_command()` has no such escape hatch. A
+top-level command name is part of the CLI's surface: letting a second
+registration replace it would make `otto --help` and tab completion depend on
+init-module import order, so a duplicate always fails loud and a project that
+wants different behavior picks a different name.
+
 ### Lazy dispatch
 
 The root group resolves commands in two tiers:

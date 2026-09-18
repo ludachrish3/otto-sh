@@ -6,19 +6,18 @@ or a whole command group — that show up in `otto --help` and tab completion
 next to the built-ins (`run`, `test`, `monitor`, `host`, ...). First-party and
 third-party commands travel the exact same path:
 {func}`~otto.cli.registry.register_cli_command` and the
-{func}`~otto.cli.registry.cli_command` decorator built on top of it. otto's own
-twelve subcommand groups register through this same function — see
-`otto/cli/builtin_commands.py` for the reference call sites this page mirrors.
+{func}`~otto.cli.registry.cli_command` decorator built on top of it.
 
 ## Registering a top-level command
 
 Decorate an async function with `@cli_command()` in a module listed in your
-settings file's `init` field (see {doc}`../configuration/settings`). The ergonomics
-deliberately match `@instruction()` (see {doc}`../cli/run/index`): an `OttoContext`-annotated
-parameter is injected and hidden from the CLI, and an `options=` dataclass
-expands into individual flags. Unlike `@instruction()`, `@cli_command()` takes
-keyword arguments only (`options=`, `name=`, `help=`, `lab_free=`, `output_dir=`,
-`gate=`) and does not forward extra positional or keyword arguments to Typer.
+settings file's `init` field (see {doc}`../configuration/settings`). The
+ergonomics match `@instruction()` (see {doc}`../cli/run/index`): an
+`OttoContext`-annotated parameter is injected and hidden from the CLI, and an
+`options=` dataclass expands into individual flags. Unlike `@instruction()`,
+`@cli_command()` takes keyword arguments only (`options=`, `name=`, `help=`,
+`lab_free=`, `output_dir=`, `gate=`) and does not forward extra positional or
+keyword arguments to Typer.
 
 ```python
 from typing import Annotated
@@ -97,17 +96,13 @@ A `register_cli_command()` loader can be one of three things:
 - a live `typer.Typer` app &mdash; treated as a **group** when it has more than
   one command, a callback, or sub-groups, so `otto mytool --help` lists
   subcommands. A single-command, callback-free, subgroup-free app instead
-  **flattens** into a bare leaf under the registered name — exactly the rule
-  Typer itself applies to a name-less `add_typer`, so `otto monitor --help`
-  shows monitor's own `--live` / `--hosts` flags directly rather than hiding
-  them behind a spurious nested `monitor` subcommand;
+  **flattens** into a bare leaf under the registered name, so its flags
+  appear directly under `otto <name> --help` with no nested subcommand;
 - a plain or `async` function &mdash; a **leaf** command, wrapped in a
   throwaway `Typer` the same way `@cli_command()`'s target is;
 - a `"pkg.mod:attr"` string &mdash; resolved **lazily**, only when the command
-  is actually dispatched or explicitly tab-completed. This is what every
-  built-in uses (e.g. `register_cli_command("run", "otto.cli.run:run_app",
-  ...)`) so that `otto --help` never imports `otto.cli.run`, `otto.cli.test`,
-  or any other subcommand module it isn't showing the details of.
+  is actually dispatched or explicitly tab-completed. Use it so `otto --help`
+  never imports your module.
 
 ## The command lifecycle comes free
 
@@ -125,11 +120,10 @@ with none of it. The edges to know about:
   return value, so an `async def` callback on a `typer.Typer` app (shared
   option plumbing) can never reach the bridge — otto rejects one loudly at
   registration-dispatch time rather than letting it silently do nothing.
-- **`@instruction()` rejects every plain `def`.** `otto run` is the lab-work
-  lane, and the rule is re-applied when a leaf is INVOKED — so registering an
-  `InstructionEntry` straight into `INSTRUCTIONS`, hanging a command off
-  `run_app` with `@run_app.command()`, or adding a sub-group with `add_typer`
-  all reach the same check rather than routing around the decorator.
+- **`@instruction()` rejects every plain `def`.** The rule is re-applied
+  when a leaf is invoked, so registering an `InstructionEntry` straight into
+  `INSTRUCTIONS`, hanging a command off `run_app` with `@run_app.command()`,
+  or adding a sub-group with `add_typer` is refused the same way.
 - **`@cli_command()` rejects a sync handler unless `lab_free=True`.** Note
   what `lab_free` actually means: otto will not load a lab, open a session or
   run the reservation gate for you. It is *not* a promise that the command
@@ -137,10 +131,9 @@ with none of it. The edges to know about:
   `all_hosts()`. So read the exemption as "I take responsibility for the
   lifecycle myself", which is what monitor does; if you do not, write the
   command `async def` and let the bridge do it.
-- **Other registration routes are not gated yet.** A sync leaf on a
+- **Other registration routes run a sync leaf as-is.** A sync leaf on a
   `typer.Typer` app loader, or a bare sync function passed to
-  `register_cli_command()`, still dispatches as-is. otto's own `otto test`
-  and `otto cov` leaves are in that category on purpose.
+  `register_cli_command()`, dispatches without the lifecycle.
 - **`async def` is necessary, not sufficient.** The interrupt policy is
   delivered through the event loop, so a command body that blocks it never
   sees Ctrl-C — put local blocking work in {func}`asyncio.to_thread`.
@@ -195,12 +188,8 @@ metadata, mirrored on {class}`~otto.cli.registry.CommandSpec`:
 | `output_dir` | `True`  | Creates a per-invocation artifact directory under `--xdir` before the command body runs.                                                |
 | `gate`       | `True`  | Runs the reservation gate before dispatch (ignored entirely when `lab_free=True`).                                                      |
 
-All three are read lazily by the shared leaf-invoke preamble
-({func}`~otto.cli.invoke.command_preamble`), which runs once per real
-invocation, *after* argv parsing and *never* on a `--help` path — a
-subcommand's `--help` exits during Click's parse step, before
-`Command.invoke` is reached, so it can never create a spurious output
-directory or trip the reservation gate.
+All three take effect once per real invocation, *after* argv parsing and
+*never* on a `--help` path.
 
 The built-ins span the whole matrix — read them as worked examples
 (`otto/cli/builtin_commands.py`):
@@ -213,7 +202,7 @@ The built-ins span the whole matrix — read them as worked examples
   no per-invocation artifacts and gate nothing.
 - **`monitor`** sets `gate=False` at the spec level, then gates *itself*,
   per-branch, inside the command body: reviewing a saved `<source>` reads a
-  local file and never touches live hardware, so it's gate-exempt by design,
+  local file and never touches live hardware, so it's gate-exempt,
   while `--live` collection still evaluates the gate explicitly. This is the
   precedent to follow whenever a uniform `gate=True`/`gate=False` would be
   either too strict or too permissive for some of a command's branches —
@@ -223,10 +212,8 @@ The built-ins span the whole matrix — read them as worked examples
   built) and call its `.evaluate()` yourself — the same inline pattern
   {func}`~otto.cli.invoke.command_preamble` uses for `gate=True` commands.
 - **`run`, `test`, `host`, `docker`** all keep the defaults (or override just
-  `gate` for `docker`, which is `gate=False` because docker was never
-  reservation-gated — the flag preserves that pre-existing behavior) —
-  everything else takes the full lab-aware, output-dir-creating, gate-checked
-  path.
+  `gate` for `docker`, which is `gate=False`) — everything else takes the full
+  lab-aware, output-dir-creating, gate-checked path.
 
 ## Collisions
 
@@ -242,11 +229,8 @@ unique name.
 Unlike the backend registries covered in {doc}`extending-backends` (term,
 transfer, host classes, ...), which accept `overwrite=True` for a deliberate
 replacement, **`register_cli_command()` has no `overwrite` parameter at
-all** — there is deliberately no escape hatch for CLI commands. A user-facing
-top-level command name is part of your CLI's surface area; silently letting a
-second registration replace it would make `otto --help` and tab completion
-depend on unpredictable init-module import order. If you need to intentionally
-replace a built-in's behavior, give your command a different top-level name.
+all**. If you need to replace a built-in's behavior, give your command a
+different top-level name.
 
 ## Completion
 
@@ -257,17 +241,16 @@ shell tab completion — there is nothing extra to wire up. Two paths feed this:
   {data}`~otto.cli.registry.CLI_COMMANDS` registry has every command from
   every loaded `init` module, first- and third-party alike.
 - **Fast path** (shell completion, `otto <TAB>`): bootstrap is *skipped*
-  entirely for latency — completion never executes arbitrary user code. A
-  cache file records each third-party command's name, help text, and
-  `lab_free` flag from the most recent slow-path run (built by
-  `collect_cli_commands()` in `otto/config/completion_cache.py`) —
-  plus, for a group, its subcommand tree (names, helps, option schemas), so
-  `otto <your-group> <TAB>` completes children without importing your code.
+  entirely — completion never executes arbitrary user code. A cache file
+  records each third-party command's name, help text, and `lab_free` flag
+  from the most recent slow-path run — plus, for a group, its subcommand tree
+  (names, helps, option schemas), so `otto <your-group> <TAB>` completes
+  children without importing your code.
   Built-in commands aren't cached — they re-register on every real
-  invocation, so caching them would be redundant. On the fast path, otto
-  serves stubs assembled purely from that cached data; a name only
-  the live registry knows about (never seen by a completing shell before) is
-  simply invisible until the next slow-path run refreshes the cache.
+  invocation. On the fast path, otto serves stubs assembled purely from that
+  cached data; a name only the live registry knows about (never seen by a
+  completing shell before) is simply invisible until the next slow-path run
+  refreshes the cache.
 
   One cost note for lazy `"pkg.mod:attr"` group loaders: serializing the
   subcommand tree imports that module during the *slow-path* cache refresh
@@ -286,9 +269,8 @@ full table; a failing result exits the process non-zero. A plain
 prints one item per line instead, so a renderable interleaved with plain
 strings renders in order rather than as one pretty-printed Python object.
 Returning `None` renders nothing — a side-effect-only command stays silent
-unless it prints its own output. This contract is enforced at the
-leaf-invoke wrapper (the same seam that runs the preamble and the lifecycle
-bridge), so it holds identically for registered commands and instructions.
+unless it prints its own output. The same rules apply to registered
+commands and instructions.
 
 ## See also
 
@@ -296,7 +278,7 @@ bridge), so it holds identically for registered commands and instructions.
   `@cli_command()` leaf
 - {doc}`extending-backends` — the term/transfer backend registries, which
   share {class}`~otto.registry.Registry`'s engine but allow `overwrite=True`
-  where CLI commands deliberately don't
+  where CLI commands don't
 - {doc}`../configuration/settings` — the `init` field that makes registration modules load
 - {doc}`index` — using otto without the CLI at all
 - {doc}`Extension points <../architecture/subsystems/extension-points>` — the

@@ -31,8 +31,8 @@ Two rules that are easy to miss:
 - **Construction does no I/O.** No socket, no file read, no environment
   variable that must be set — the paths and parameters are computed, and the
   first `lookup`/`list_keys` does the work. A lab with no referenced entry
-  never touches the inventory at all, which is what keeps a broken or
-  unreachable inventory from breaking a run that did not need it.
+  never touches the inventory at all, so a broken or unreachable inventory
+  does not affect a run that does not need it.
 - **A record may not carry a field outside `supplies`.** Otto's join copies
   exactly `supplies`, so a record stating more than the deployment declared is
   a partition violation, not a bonus. Two fields are exempt: `element_id`, a
@@ -44,8 +44,7 @@ Two rules that are easy to miss:
 Validate the `supplies` declaration with
 {func}`~otto.inventory.protocol.check_supplies`, which is what both built-ins
 call: `None` means "every fillable record field", a name that is not a record
-field is refused, and a set without `"ip"` is refused — a reference that yields
-no address is pointless.
+field is refused, and a set without `"ip"` is refused.
 
 ```python
 from otto.inventory import check_supplies
@@ -138,16 +137,15 @@ remote backend gets a snapshot cache for free:
   snapshot's content hash — so completion caches normally.
 
 The snapshot is written in the same stage-1 document shape the `json` backend
-reads, which is why an operator can copy one out of otto's home and point a
-`json` inventory at it.
+reads, so an operator can copy one out of otto's home and point a `json`
+inventory at it.
 
-A snapshot never holds credentials — that is what makes it shareable — so a
-backend whose own `supplies` includes `creds` is **refused** the cache rather
-than quietly losing them for the rest of the TTL. The fix is on your side of
-the API: leave `creds` out of `supplies` and let the deployment's `[creds]`
-store carry them instead (which is where credentials belong anyway).
-An operator who cannot change the backend still has `cache_ttl = "0"`. The
-error names your backend and the settings file that declared it.
+A snapshot never holds credentials, so a backend whose own `supplies` includes
+`creds` is **refused** the cache rather than quietly losing them for the rest
+of the TTL. The fix is on your side of the API: leave `creds` out of
+`supplies` and let the deployment's `[creds]` store carry them instead. An
+operator who cannot change the backend still has `cache_ttl = "0"`. The error
+names your backend and the settings file that declared it.
 
 ## Verify your backend
 

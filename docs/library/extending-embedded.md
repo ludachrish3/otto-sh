@@ -30,15 +30,12 @@ A {class}`~otto.host.command_frame.CommandFrame` makes that dialect a
 first-class, **stateless value object** that a session *holds* rather than *is*.
 The per-session sentinels (unique per connection so two sessions can't
 cross-talk) are passed to the frame as a
-{class}`~otto.host.command_frame.SessionMarkers` value, keeping the frame pure
-and unit-testable without a live session.
+{class}`~otto.host.command_frame.SessionMarkers` value.
 
 ### The seven methods (and one optional)
 
 Subclass `CommandFrame` and implement seven methods — a *render half* (command
-→ bytes to write) and a *parse half* (bytes read → structured result). They
-live together because they co-vary through *where the retcode lives*; splitting
-them would let mismatched halves combine.
+→ bytes to write) and a *parse half* (bytes read → structured result).
 
 | Method | Half | Responsibility |
 |--------|------|----------------|
@@ -129,7 +126,7 @@ different `retval`-equivalent output, different ANSI noise — the loop is **not
 4. If a method's slice is wrong, the logged buffer shows exactly what it had to
    chew on. Fix that one method; the other six are unaffected.
 
-Things you should **not** do, by design:
+Things you should **not** do:
 
 - **Don't write a read loop, expect handler, or recovery code.** The session
   owns the engine; the frame only supplies dialect. A correct frame inherits

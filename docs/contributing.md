@@ -765,6 +765,26 @@ test fixtures, so edit them with the tie in mind:
   byte-for-byte what the tree would generate; edit the renderer or the
   declaration, then run `uv run python -m scripts.render_support_matrix`.
 
+### Python library and Cookbook pages
+
+Much of `docs/library/` and `docs/cookbook/` is executable, so edit it with
+these ties in mind:
+
+- **The custom-backend example runs.**
+  `tests/unit/docs/test_extending_backends_example.py` finds the one
+  `python` fence on `docs/library/extending-backends.md` that defines
+  `class XmodemTransfer`, `exec`s it as the page spells it, puts it through
+  `assert_transfer_backend_conforms` and one real `put_files` of two files.
+  Exactly one fence may define that class.
+- **Imports on these pages are public API.** `scripts/api_snapshot.py`
+  collects every `import otto…`/`from otto… import` in a code fence or
+  doctest anywhere under `docs/` (except `docs/superpowers/`) into
+  `tests/unit/api_snapshot/public_api.txt`. A page that starts or stops
+  teaching a deep path no other page teaches changes that golden
+  (regenerate with `make api-snapshot`), and a taught import that no longer
+  resolves fails `tests/unit/api_snapshot/test_public_api_snapshot.py` (see
+  *Branching and commits*).
+
 ## Coverage reports
 
 ### From pytest

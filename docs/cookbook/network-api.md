@@ -7,7 +7,7 @@ and {doc}`../cli/tunnel/index`.
 ## Custom link impairers
 
 Impairment is pluggable the same way term/transfer backends are — see
-{doc}`../library/extending-backends` for the shared registration philosophy. A
+{doc}`../library/extending-backends` for the shared registration mechanism. A
 `LinkImpairer` builds the shell commands for one placement's impairment:
 
 ```python
@@ -79,8 +79,7 @@ Which impairer a placement host actually uses is resolved the same way as
 
 The scoped surface — `supports_selectors` plus the `scoped_*` command
 builders and the scoped parser — is **optional** on a `LinkImpairer` (see
-[Custom impairers](#custom-link-impairers)) and defaults off, so an
-existing third-party impairer is unaffected by this feature. A `--port`
+[Custom impairers](#custom-link-impairers)) and defaults off. A `--port`
 request routed to a host whose impairer doesn't declare
 `supports_selectors = True` is a loud capability error naming the impairer
 and the host — never a silent fallback to whole-link impairment.
@@ -89,17 +88,15 @@ and the host — never a silent fallback to whole-link impairment.
 **Tunnels are out of scope.** Port-scoped impairment is a link-only
 feature: it operates on `otto.link` placements exclusively, and
 `otto.tunnel` is untouched by it — there is no "impair a tunnel" surface.
-Impairing a link that tunnel traffic happens to ride
-remains possible exactly as it is today (`tc` cannot know what a port
-belongs to), with no added coupling between the two packages.
+Impairing a link that tunnel traffic happens to ride is still possible, as a
+whole-link impairment (`tc` cannot know what a port belongs to).
 ```
 
 
 ## The link Python API
 
-`otto link impair`/`repair`/`list` are thin renderers over four functions in
-`otto.link` — the single API the CLI, the monitor's topology overlay, and
-any direct importer all call exactly the same way:
+`otto link impair`/`repair`/`list` render the results of four functions in
+`otto.link`, which your own code can call directly:
 
 ```python
 from otto.link import ImpairmentParams, impair_link, read_link_states, repair_link
@@ -115,7 +112,7 @@ await repair_link(lab, "edge")
 
 `selector` is the same optional keyword on both mutators — pass a `Selector`
 to route through the port-scoped path instead of the whole-interface one;
-omitted (the default), behavior is unchanged:
+omitted (the default), the whole interface is impaired or repaired:
 
 ```python
 from otto.link import Selector, impair_link, repair_link
@@ -138,13 +135,13 @@ live ones.
 `find_link`, `repair_all`, and the
 `ImpairReport`/`RepairReport`/`LinkState`/`Selector`/`DirectionState`/`ScopedState`
 result types round out the surface. Nothing in this layer prints or knows
-about exit codes — see the {doc}`API reference <../../api/link>` for full
+about exit codes — see the {doc}`API reference <../api/link>` for full
 signatures.
 
 ## Custom tunnel carriers
 
 Tunnel transport is pluggable the same way link impairment is — see
-{doc}`../library/extending-backends` for the shared registration philosophy. A
+{doc}`../library/extending-backends` for the shared registration mechanism. A
 `TunnelCarrier` builds the argv for one tagged process's role:
 
 ```python
@@ -198,7 +195,7 @@ pid regardless of which carrier built them.
 ## The tunnel Python API
 
 Every command above has a callable counterpart in `otto.tunnel` — see the
-{doc}`API reference <../../api/tunnel>` for full signatures:
+{doc}`API reference <../api/tunnel>` for full signatures:
 
 ```python
 from otto.cli.run import instruction

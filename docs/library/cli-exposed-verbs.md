@@ -158,10 +158,8 @@ log: Annotated[bool, Exclude] = True
 ## Registering products from a product repo
 
 Products are **behavior**, so they're customized in code — never declared in lab
-data. Lab data stays product-agnostic so it can evolve independently of product
-code: reverting a product's behavior must never force a lab change. A product
-repo registers its products from a `.otto` init module, and otto applies them to
-each host as it is ingested from lab data:
+data. A product repo registers its products from a `.otto` init module, and
+otto applies them to each host as it is ingested from lab data:
 
     from pathlib import Path
     from otto.host import register_product_provider
@@ -218,20 +216,14 @@ host_patterns = ["sensor-.*"]
 ```
 
 With that in place, `_provide` above never sees a host of lab `floor`, and
-never sees `gw-1` in `bench1` either. Skipping *before* the call is the point:
-a provider that ran has already been handed a machine its repo never declared,
-and providers inspect hosts and keep their own state.
+never sees `gw-1` in `bench1` either.
 
-Two cases are admitted rather than judged, because a gate that cannot compute a
-narrowing must narrow nothing:
+Two cases are admitted — the provider runs for them unscoped:
 
 - **A host with no lab attribution** — one built outside the lab loader by a
-  direct `create_host_from_dict` call, and the built-in `local` host. These
-  predate scoping and behave exactly as before.
+  direct `create_host_from_dict` call, and the built-in `local` host.
 - **A registering repo otto cannot resolve** — a provider carrying a repo name
-  this process has no settings for. Refusing there would turn "otto could not
-  find its config" into "your host has no products", which is the same
-  silent-wrong-answer the scoping exists to prevent, pointed the other way.
+  this process has no settings for.
 
 Skips are logged at DEBUG, naming the repo, the host and the host's lab.
 ## Registering dev tools from a repo
@@ -263,6 +255,5 @@ registered it.
 
 Dev-tool providers are gated by the registering repo's `[project]` declaration
 under exactly the rule and the carve-outs products use
-({ref}`provider-scope-gate`) — the two
-registries are separate, so the gate is applied separately, and registering
-either kind makes `lab_patterns` required.
+({ref}`provider-scope-gate`), applied separately, and registering either kind
+makes `lab_patterns` required.

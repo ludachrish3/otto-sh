@@ -56,10 +56,10 @@ That is **overlap**, not containment: a booking that began before `start` and
 ends after `end` is active during the window and must come back. `>` on the
 second clause is what drops rows that have already lapsed at the instant asked
 about — dropping lapsed rows is this comparison, not a separate pass. That
-strict `>` is deliberately not the inclusive `<=` in
+strict `>` differs from the inclusive `<=` in
 [`Reservation.is_active`](../api/reservations.rst), which asks about a single
 instant rather than a range; its docstring names the one row the two disagree
-about and why. A `None` on a *row* satisfies its clause unconditionally, which is what
+about. A `None` on a *row* satisfies its clause unconditionally, which is what
 "unbounded" means.
 
 A backend whose rows carry both bounds writes it out once — this is the body
@@ -128,9 +128,8 @@ class MyTeamBackend(ReservationBackendBase):
     def backend_name(self) -> str: ...
 ```
 
-`@override` on both required methods is not decoration: it is also what keeps
-ruff's `ARG002` quiet about a `start` / `end` your implementation may not read
-— see [A note on `@override` in the samples](#a-note-on-override-in-the-samples).
+Decorate both required methods with `@override` — see
+[A note on `@override` in the samples](#a-note-on-override-in-the-samples).
 
 ## One query per run
 
@@ -139,7 +138,7 @@ bookings, active right now. It is queried **lazily, on first access, and never
 again**, so one otto run makes one scheduler query and every consumer reads
 the same list.
 
-Nothing fetches at construction time. That is deliberate on both sides:
+Nothing fetches at construction time, and your backend should not either:
 
 - The base constructor runs on the `super().__init__()` line, before your
   subclass has assigned its own state, so an eager fetch would read
@@ -184,8 +183,7 @@ completion and the expiry warning all work unchanged. The only thing that
 degrades is that one message, which then reads `(held by: unknown — this
 backend cannot report other users)`. Otto checks for the capability before
 calling it and never infers absence from an empty result: an empty list is a
-definite `nobody`, and telling a locked-out engineer that the rack they
-cannot get is held by nobody would be a confident lie.
+definite `nobody`, so return one only when nobody holds the resource.
 
 `holders` is *not* cached. It is called once per missing resource on a path
 that is already raising, so a backend that implements it by enumerating will
@@ -343,11 +341,8 @@ def test_my_backend_conforms():
     )
 ```
 
-The default is `False` and must stay that way: a backend without `holders` is
-fully conforming, so the kwarg asserts *your* capability set rather than
-tightening the contract. Otto passes it for its own documentation example — see
-`test_the_example_reservation_backend_conforms` in
-`tests/unit/docs/test_getting_started_example.py`.
+The default is `False`: a backend without `holders` is fully conforming, so
+the kwarg asserts *your* capability set rather than tightening the contract.
 
 {doc}`Lab source backends <lab-source-backends>` carry the same knob,
 `expect_host_summaries=`, for their own optional capability.
@@ -372,8 +367,7 @@ tightening the contract. Otto passes it for its own documentation example — se
   None` means the booking has been held since before this backend knows;
   `end is None` means it is open-ended and never expires. The Unix epoch and a
   far-future year are fabricated instants that no reader downstream can tell
-  from real ones, and otto's expiry logic would then have to special-case the
-  lie.
+  from real ones.
 - **Raise [`ReservationBackendError`](../api/reservations.rst)** for *every*
   failure mode that prevents a definitive answer: network errors, timeouts,
   credential failures, malformed responses, missing data files. Do not swallow,
@@ -416,15 +410,10 @@ checker hold your signature to the contract.
 ### A note on `@override` in the samples
 
 Otto's own samples decorate `fetch_reservations` and `backend_name` with
-`typing_extensions.override` — and deliberately **not** `holders`. Both facts
-are load-bearing, not style:
+`typing_extensions.override` — and **not** `holders`:
 
 - `@override` on the two required methods says "this implements the base
-  class's abstract method", and it doubles as the reason ruff's `ARG002`
-  (unused argument) stays quiet about the `start` and `end` parameters a
-  time-less sample never reads. Without the decorator you would need a
-  `# noqa`, which is how `otto.reservations.null_backend`'s `holders` spells
-  the same idea visibly.
+  class's abstract method".
 - `holders` carries no `@override` because it overrides nothing: it is not on
   the base class, and defining it *is* the capability signal.
 

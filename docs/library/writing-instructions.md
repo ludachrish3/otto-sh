@@ -90,7 +90,7 @@ matches none of the hosts the run may walk raises
 
 `all_hosts()` walks the run's **fleet of interest** — the hosts the active
 repos' `[project]` declarations admit — which is the whole loaded lab when no
-repo declared one.  `get_host()` is deliberately unscoped and reaches any host.
+repo declared one.  `get_host()` is unscoped and reaches any host.
 See [The fleet of interest](../cli/run/defaults.md#the-fleet-of-interest).
 
 For fan-out across the lab — running the same command or async
@@ -105,8 +105,7 @@ Two properties of the fleet helpers to keep in mind:
 
 - **Fleet membership.**  The built-in `local` host (the machine otto
   itself runs on, present in every lab) and Docker container hosts are
-  excluded by default — a lab-wide sweep should never silently operate
-  on the runner or on containers.  Opt in with `include_local=True` (on
+  excluded by default.  Opt in with `include_local=True` (on
   `all_hosts()` and `do_for_all_hosts()`) or `include_containers=True`;
   `get_host("local")` always resolves the local host.
 - **Failure isolation.**  `run_on_all_hosts()` and `do_for_all_hosts()`
@@ -274,8 +273,8 @@ async def deploy(
     ...
 ```
 
-Existing instructions that use only inline parameters continue to work
-unchanged — the ``options=`` parameter is entirely opt-in.
+The ``options=`` parameter is optional; an instruction may use inline
+parameters alone.
 
 ## The override ladder
 
@@ -348,11 +347,7 @@ Two things that example relies on:
 **Let `actions_for` build it.** `otto.project.actions_for(repo, ctx)` is what
 hands the instance `ctx.for_repo(repo.name)` — the view that both bounds the
 fleet and supplies the `owner=`. Constructing `ProjectActions(repo, ctx)` by
-hand with a plain `OttoContext` raises `TypeError`, deliberately: no default
-body spells `owner=` any more, so that object would walk the whole union *and*
-call every host verb with `owner=None`, which the host layer reads as **every**
-owner's products. Its `cleanup()` would uninstall the neighbours' products and
-report success.
+hand with a plain `OttoContext` raises `TypeError`.
 ```
 
 A repo registers **at most one** `ProjectActions`; a second registration from
@@ -360,14 +355,10 @@ the same repo fails loud. Different repos each registering their own is the
 intended composition, not a collision. A repo that registers nothing gets
 `ProjectActions` itself.
 
-Some things are deliberately *not* per-repo, and the defaults refuse them:
-**debug logs** and **toolchain tools** belong to a host, not to a repo — N
-repos each sweeping the same host's debug logs means N transfers each
-overwriting the last, and one toolchain serves every owner on a host, so a repo
-removing it would take its neighbours' tooling with it. **Impairments and
-tunnels** are one step further out again: they belong to the lab rather than to
-any single host, and nothing in a repo's products or dev tools put them there.
-All of them are performed once, by the layer above.
+Some things are *not* per-repo, and the defaults refuse them: **debug logs**
+and **toolchain tools** belong to a host, not to a repo, and **impairments and
+tunnels** belong to the lab. All of them are performed once, by the layer
+above the repo walk.
 
 ## Declaring lab state in suites
 
@@ -388,9 +379,8 @@ class TestWidget(OttoSuite):
 
 The steps are `installed`, `uninstalled` and `clean` (and `none`); a marker
 on a test overrides the class's, and the path runs in the written order
-before the body. Each step is a one-line call into the same converge
-functions the CLI uses, so a marker and `otto run install --ensure` cannot
-diverge. The marker's full semantics are in
+before the body. Each step runs the same converge as `otto run install
+--ensure`. The marker's full semantics are in
 {doc}`writing-suites`; the bullets below are what each step does.
 
 **Where a body's options come from under `otto test`.** There are no
@@ -399,12 +389,9 @@ options class itself: a field takes the suite's value when the suite's
 `Options` class and the repo's options class inherit it from the **same
 declaring class**, every other field takes its default, and pydantic validates
 the instance — so a bad default fails the test naming the field rather than
-installing something odd. Matching by declaring class, not by name, is what
-keeps an unrelated suite field that merely spells `variant` from leaking into
-an install, and it is the same rule the CLI uses to decide that two repos share
-one flag. A repo that wants a test to steer its install promotes the field into
-the base its suites already inherit — the one piece of explicit inheritance
-anybody writes.
+installing something odd. A suite field that merely has the same name as a
+repo field, such as `variant`, is not passed. A repo that wants a test to steer
+its install promotes the field into the base its suites already inherit.
 
 - **Function-scoped**: the guarantee is per test *case*. When the state already
   holds, the cost is one probe of it — but not the same probe for all three.
@@ -415,32 +402,24 @@ anybody writes.
   for `toolchain_tools_absent()`, every impairable link's netem state is read,
   and the lab is scanned for tunnel processes.
 - **`installed` recovers a PARTIAL lab** by tearing it down and
-  installing fresh — installing over remnants is how a lab got into that state
-  in the first place.
+  installing fresh.
 - **`clean` is stronger than `uninstalled`**: dev tools,
   toolchain tools, impairments and tunnels are not products, so an
   uninstalled-but-tooled — or merely impaired — lab still gets cleaned.
-- **`is_clean()` answers for exactly what `cleanup` removes**, which is the
-  rule that keeps the two from drifting: a lab dirty only in tunnels is not
-  clean, and `otto run cleanup` is what the step runs to fix it. It cuts the
-  other way too — a *foreign* qdisc leaves the lab "clean", because `cleanup`
-  provably will not remove one, and reporting otherwise would send every
-  `clean` step into a cleanup that cannot change the answer.
+- **`is_clean()` answers for exactly what `cleanup` removes**: a lab dirty
+  only in tunnels is not clean, and `otto run cleanup` is what the step runs
+  to fix it. A *foreign* qdisc leaves the lab "clean", because `cleanup` will
+  not remove one.
 - **A state that could not be read is an error, never an answer.** A host that
   did not respond to the toolchain probe, a link whose impairment could not be
   read, a tunnel scan that reached nobody: each raises out of `is_clean()`
-  rather than being counted clean (a fact nobody measured) or dirty (a converge
-  into a cleanup on the same non-fact). The exception proves the rule, on every
-  one of those axes: if the sweep *did* read one link carrying netem, or find
-  one tunnel, before it ran out of hosts, the lab is dirty and says so — an
-  unreachable host cannot unmake an answer otto already has. That holds within
-  an axis. Once one of them cannot answer, the axes after it are not read at
-  all, because the only thing they could do is strengthen a verdict that is
-  already unavailable.
-- **`otto run status --full` asks the same probes and never raises.** A
-  display's duty on a state nobody could read is the opposite of a converge's,
-  so it prints an `unknown` cell where `is_clean()` refuses to answer. Both
-  come off the same probe, which is what keeps them from disagreeing; see
+  rather than being counted clean or dirty. On every one of those axes, if the
+  sweep *did* read one link carrying netem, or find one tunnel, before it ran
+  out of hosts, the lab is dirty and says so — an unreachable host does not
+  undo an answer otto already has. That holds within an axis. Once one of them
+  cannot answer, the axes after it are not read at all.
+- **`otto run status --full` asks the same probes and never raises.** It
+  prints an `unknown` cell where `is_clean()` refuses to answer; see
   [Reading `status`](../cli/run/defaults.md#reading-status).
 - **`status()` never moves for either of them.** An impaired link and a live
   tunnel are lab infrastructure; the tri-state install answer stays a count of
@@ -509,8 +488,8 @@ class WidgetActions(ProjectActions):
 What the decorator on a method does differently:
 
 - It registers into the **project-instruction table** under the name, instead
-  of building a standalone Typer command. On a free function it behaves exactly
-  as it always has.
+  of building a standalone Typer command. On a free function it builds that
+  standalone command.
 - The body is repo-scoped through `self.ctx` and `self.repo`, so nothing is
   handed to it beyond its options.
 - The walk-shape keywords — `walk`, `continue_on_failure`,
@@ -523,10 +502,8 @@ What the decorator on a method does differently:
 - An override of a first-party name **must** pass an `options=` class that
   inherits the first-party class for that name
   (`InstallOptions` and its five siblings, all
-  exported from `otto.project`); registration refuses anything else, so the
-  first-party flags can never disappear from the command and `super()` can
-  always read its own fields. A repo's own new name has no base and declares
-  freely.
+  exported from `otto.project`); registration refuses anything else. A repo's
+  own new name has no base and declares freely.
 
 `otto run <name>` exposes the union of every registered body's fields, and each
 body receives its own class. Which fields merge into one flag, what a

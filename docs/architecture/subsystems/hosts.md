@@ -34,6 +34,13 @@ built-in `local` host, excluded from fleet iteration by default
 delegates everything to a parent `UnixHost` rather than duplicating the
 transport stack — that design has its own page: {doc}`docker-hosts`.
 
+`BaseHost` and `RemoteHost` are `kw_only` dataclass bases, and each shared
+field — its type, its docstring, its default — is declared exactly once, on
+the base that owns it. A subclass re-declares a field only to change its value
+policy, and the re-declaration carries no docstring, so the field's
+documentation has one home. `tests/unit/host/test_field_homes.py` holds otto's
+own host classes to that shape.
+
 ## The CLI layer: verbs from methods
 
 `otto host <id> <verb>` is not a hand-written command set: every verb is
@@ -107,7 +114,9 @@ Three pieces of per-session state matter architecturally:
   object** the session *holds* rather than *is* (`BashFrame` for POSIX
   shells, `ZephyrFrame` for the Zephyr shell). Per-session sentinels are
   passed in as values, keeping frames pure and unit-testable without a live
-  session.
+  session. A frame's render half and parse half live on one object because
+  they co-vary through *where the retcode lives*; splitting them would let
+  mismatched halves combine.
 - **Establishment.** A session is opened in a fixed order: the transport
   (through every `hop`), the readiness handshake in the *landing* frame,
   every login-proxy hop, an optional lab-declared session-setup hook
@@ -133,6 +142,31 @@ than the noise. The cost is that a login-proxy resync probe, or a session-setup
 hook's commands, land in that shell's history; the two cannot both be had,
 since suppressing the probe means suppressing the user's history for the whole
 session.
+
+A login proxy declares the password prompt its mechanism can raise, and the
+session engine — not the proxy — answers it, because whether `su` challenges
+depends on **who is asking**, not on the cred: the same `mysql` entry prompts
+when reached from an unprivileged account and stays silent when reached from
+`root`, and a cred cannot know which hop it is on. A proxy that waited whenever
+a password was configured would stall every switch the host was willing to
+perform for free, for the whole of a command timeout. So each hop's resync
+spends its settle *watching* for the declared prompt, and a password is sent
+exactly once, only when wanted; a cred with no password gets an error naming
+the account rather than letting otto's own probes spend authentication
+attempts against it, which is how a lockout policy gets tripped by automation
+that meant no harm.
+
+Because the resync proves the identity each hop leaves the shell in, the
+watch is armed only on hops that can be challenged (root is not), which
+removes a wait from every uncontested switch. The watch is never merely
+*shortened* instead: a prompt arriving after a too-short wait would meet
+otto's first probe, and a probe typed at a live password prompt is itself a
+failed authentication.
+
+The built-in `"su"` proxy uses the login-shell form, `su -`, because the
+accounts that need a proxy are usually service accounts whose own environment
+is the point; plain `su` hands them the caller's `PATH`, `HOME` and `USER`
+without sourcing their profile.
 
 ## Connections, terms, and hops
 
@@ -204,6 +238,15 @@ and product repos attach products to hosts by registering a *provider
 function* (`register_product_provider`) that otto applies to each host at
 ingest. Declaring products in lab data is deliberately not supported: lab
 data stays product-agnostic and the two evolve independently.
+
+A provider is gated by its repo's `[project]` declaration *before* it is
+called, never filtered after: a provider that ran has already been handed a
+machine its repo never declared, and providers inspect hosts and keep their
+own state. Where the gate cannot compute a narrowing it narrows nothing. A
+host with no lab attribution predates scoping and is admitted, and a provider
+whose repo otto cannot resolve still runs, because refusing it would turn
+"otto could not find its config" into "your host has no products" — the same
+silent wrong answer scoping exists to prevent, pointed the other way.
 
 Dev tools share the product shape but live in a separate registry rather
 than behind a flag on one list, because their lifecycle differs: one shared

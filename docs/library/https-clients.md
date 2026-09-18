@@ -51,8 +51,7 @@ class MyTeamBackend(ReservationBackendBase):
 - carries that same trust through an `HTTPS_PROXY`, which stock `requests`
   does not (its proxied pool falls back to urllib3's own defaults). This is
   the destination's certificate: an `https://` proxy's own certificate is
-  still verified with urllib3's defaults, since one source of trust is a
-  claim about the server you are talking to;
+  still verified with urllib3's defaults;
 - ignores `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE`, which would otherwise
   union a second trust list into the connection;
 - bounds every request that names no `timeout=` of its own at

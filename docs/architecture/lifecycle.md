@@ -77,6 +77,13 @@ effects with an explicit composition root:
   traceback that bricks the process. The CLI prints one warning line per
   contained error; actually *dispatching* into broken code fails loud.
 
+Test files are imported only from the top level of each directory a repo
+lists under `tests`, never recursively, and the reason is blast radius rather
+than speed: a test file that fails to import stops *every* command, so one
+broken file under an unlisted subdirectory would take down `otto host list`.
+Listing the directories keeps that surface one the repo chose. `otto test`
+still hands the same directories to pytest, which recurses as usual.
+
 `bootstrap()` is idempotent: the CLI entry point calls it before argv parsing,
 {func}`~otto.context.open_context` calls it lazily for library users, and
 repeated calls return the same result.
@@ -160,6 +167,28 @@ flag is opt-in rather than part of `--dry-run`, and it requires `--dry-run`
 because dialing is only safe when no command can follow it. `not probed` is a
 state of its own because "we could not ask" and "we asked and it said no" are
 different facts, and only one of them is about the host.
+
+**A declined result cannot pass for a measurement.** A declined command
+carries `Status.NotRun` rather than reusing `Status.Skipped`, because
+`Skipped.is_ok` is `True` and must stay that way for genuine skips — a skipped
+test step, a folded transfer. Reading a declined result's `.value` raises, so
+the always-wrong case, parsing a non-measurement as data, breaks at the line
+that made the mistake. A verb whose return type has nowhere to put "I did not
+look" raises rather than fabricate: a `bool` has only `True` and `False`, and
+both are lies — `exists` returning `False` reports absent a path that may well
+be there, `ls` or `glob` returning `[]` is a fabricated empty directory or
+"nothing matched" (the shape a log collector reads as "this host has no
+logs"), `toolchain_tools_absent` returning `True` would report clean a host
+nobody looked at, and `expect` returning `""` is a fabricated prompt.
+
+**Suppress the payload, never the announcement.** A dry run with no output is
+a bug: a preview with no product is useless, and one with an invented product
+is dangerous. The announcement is printed from the renderer as well as the
+library layer so that a console product is guaranteed even for a host whose
+standing log mode is quiet. A verb opts into `dry_run_preview` only when it
+has a real plan to show. `otto host run` does not opt in — running its body
+would widen the surface for no gain — and neither does `ls`, because a
+directory listing is precisely what a dry run cannot honestly produce.
 
 **One declared exemption.** Reading otto's own SUT checkout's git HEAD to
 stamp a run's provenance is a local, read-only query about the machine otto is
