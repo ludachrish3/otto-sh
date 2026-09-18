@@ -190,9 +190,11 @@ points at it rather than copying it):
   (`kernel/gcov/base.c`) exports so any instrumented object links:
   `__gcov_init`, `__gcov_exit`, `__gcov_merge_add`, `__gcov_merge_single`,
   `__gcov_merge_delta`, `__gcov_merge_ior`, `__gcov_merge_time_profile`,
-  `__gcov_merge_topn` (plain `-fprofile-arcs` objects reference only
-  `__gcov_merge_add`; with `-fprofile-info-section` nothing calls
-  `__gcov_init`). Merging is the library's own addition, not these stubs.
+  `__gcov_merge_icall_topn` (the kernel's legacy spelling) and
+  `__gcov_merge_topn` (gcc 13's), plus `__gcov_flush` (plain
+  `-fprofile-arcs` objects reference only `__gcov_merge_add`; with
+  `-fprofile-info-section` nothing calls `__gcov_init`). Merging is the
+  library's own addition, not these stubs.
   And the API:
 
   ```c
@@ -222,14 +224,17 @@ points at it rather than copying it):
   are otto's to delete; §5).
 - `kgcov_unregister`: dump once more, free the accumulator, remove the
   debugfs entries.
-- `consumer.mk`: the Kbuild snippet a consumer includes. It adds
-  `-fprofile-arcs -ftest-coverage -fprofile-info-section` to the
-  instrumented objects, adds `kgcov_begin.o` first and `kgcov_end.o` last to
-  the object list (the two sentinels that bound the `.gcov_info` section —
-  the section name is not a C identifier, so the linker synthesises no
-  `__start_`/`__stop_` symbols for it; `ld -r` keeps input order), and sets
-  `KBUILD_EXTRA_SYMBOLS` to the library's `Module.symvers` (required under
-  `CONFIG_MODVERSIONS`).
+- `consumer.mk`: the Kbuild fragment a consumer includes. It defines
+  `KGCOV_CFLAGS` (`-fprofile-arcs -ftest-coverage -fprofile-info-section`)
+  and adds the library's include path. The consumer's own `Kbuild` applies
+  `KGCOV_CFLAGS` to its instrumented objects and lists `kgcov_begin.o` first
+  and `kgcov_end.o` last in its object list (the two sentinels that bound the
+  `.gcov_info` section — the section name is not a C identifier, so the
+  linker synthesises no `__start_`/`__stop_` symbols for it; `ld -r` keeps
+  input order), and its `Makefile` passes `KBUILD_EXTRA_SYMBOLS` naming the
+  library's `Module.symvers` (required under `CONFIG_MODVERSIONS`). A
+  fragment cannot order another module's object list, so those two parts
+  stay in the consumer; the demo module is the worked example.
 - `kgcov.h` provides the three macros a consumer writes: `KGCOV_DECLARE()`
   at file scope (declares the `gcov_dir` charp module parameter, read-only
   in sysfs), `KGCOV_INIT()` first in the init routine (registers with the
