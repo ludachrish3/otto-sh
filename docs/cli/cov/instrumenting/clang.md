@@ -6,8 +6,11 @@ counters in the GCC 4.8-era file format (clang stamps ``408*``), which
 modern GNU ``gcov`` refuses.  They must be read by ``llvm-cov gcov``:
 
 - **Auto-discovery**: with ``llvm-cov`` (or a versioned
-  ``llvm-cov-<N>``) on ``PATH``, otto detects the clang stamp and uses
-  it automatically — no configuration needed.
+  ``llvm-cov-<N>``) on ``PATH``, otto reads the clang stamp from the
+  product's own ``.gcda`` files and uses it — no configuration, for any
+  host whose record does not name a gcov of its own (the order is on the
+  {ref}`main page <coverage-gcov-resolution>`). Without ``llvm-cov`` the
+  report fails naming the ``llvm`` package.
 - **Explicit config**: point the host toolchain's ``gcov`` at an
   ``llvm-cov`` binary; otto substitutes the required one-word
   ``llvm-cov gcov`` wrapper for ``lcov --gcov-tool`` at capture time.

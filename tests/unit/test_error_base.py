@@ -58,6 +58,7 @@ from otto.env.backends import BackendUnavailableError
 from otto.errors import EnsureStateError, OttoError
 from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, ParseMismatch
 from otto.host.errors import (
+    CoverageToolMissingError,
     HostCommandError,
     HostUnreachableError,
     MountNotFoundError,
@@ -127,6 +128,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (ParseMismatch, ValueError),
     (HostUnreachableError, RuntimeError),
     (HostCommandError, RuntimeError),
+    (CoverageToolMissingError, RuntimeError),
     (MountNotFoundError, ValueError),
     (ListingError, ValueError),
     (UnsupportedOnUserlandError, RuntimeError),

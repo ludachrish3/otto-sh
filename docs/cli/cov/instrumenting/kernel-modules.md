@@ -244,15 +244,12 @@ table, and every clang from 11 on shares one format. `.ctors`-only
 toolchains, which predate `.init_array`, are not supported.
 
 Getting a module to load is not the same as getting its counters read
-back. otto reads a Unix host's counters with the gcov its host record
-names — system gcov when the record is silent; `.gcno` auto-discovery does
-not apply to a Unix host. A module built by `gcc-12` on a `gcc-13`
-machine, or by clang, therefore fails `otto cov report` with geninfo's
-*"Incompatible GCC/GCOV version"* until the bed host's `toolchain.gcov`
-names the matching tool (`/usr/bin/gcov-12`, `llvm-cov`) — see the
-"Coverage toolchain" table in the
-[lab configuration guide](../../../configuration/lab-config.md#coverage-toolchain).
-What naming `llvm-cov` there means for otto is [clang's own page](clang.md).
+back. The gcov that reads them is chosen per product from the data's own
+stamp — the system `gcov`, `gcov-<major>` for a module built by another
+gcc, `llvm-cov` for clang — unless the bed host's `toolchain.gcov` names
+one; the order, and the failure naming the package when a tool is missing,
+are on the {ref}`main coverage page <coverage-gcov-resolution>`. What
+naming `llvm-cov` there means for otto is [clang's own page](clang.md).
 
 A clang build needs one more setting for that report to come back clean:
 clang's `.gcno` carries no compilation directory (gcc 9+ records it), so

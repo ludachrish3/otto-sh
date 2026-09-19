@@ -109,6 +109,7 @@ from rich.markup import escape as escape_markup
 from ..coverage.errors import CoverageDataMismatchError, CoverageToolVersionError
 from ..coverage.reporter import TierSpec, run_coverage_report
 from ..coverage.store.model import TIER_SYSTEM
+from ..host.errors import CoverageToolMissingError
 
 if TYPE_CHECKING:
     # Type-only: never executed, so it carries no runtime import cost and
@@ -397,10 +398,11 @@ def report(
                 prefix=prefix,
             )
         )
-    except (CoverageDataMismatchError, CoverageToolVersionError) as e:
+    except (CoverageDataMismatchError, CoverageToolVersionError, CoverageToolMissingError) as e:
         # Typed capture errors — polluted tree (product rebuilt after the
-        # test run) or a gcov tool that cannot read the build's format (e.g.
-        # clang build captured with GNU gcov): the message already names the
+        # test run), a gcov tool that cannot read the build's format (e.g.
+        # clang build captured with GNU gcov), or a gcov the data's own
+        # stamp names that is not installed: the message already names the
         # cause and remedy — print it clean, never as a traceback. Escaped:
         # the console handler renders log messages as Rich markup, and this
         # message is arbitrary (lcov/geninfo) text that may itself contain a
@@ -724,6 +726,7 @@ async def _do_get(
     from ..coverage.errors import CoverageDataMismatchError, CoverageToolVersionError
     from ..coverage.fetcher.remote import GcdaFetcher
     from ..coverage.tiers import load_tiers, resolve_get_tier
+    from ..host.errors import CoverageToolMissingError
 
     # collect_coverage re-derives the host set (cov_pattern/cov_hosts) itself, so
     # _do_get only needs cov_config (tier resolution), cov_repo (git preflight +
@@ -818,7 +821,7 @@ async def _do_get(
         )
     except GitUnavailableError as e:
         raise _GetError(str(e)) from e
-    except (CoverageDataMismatchError, CoverageToolVersionError) as e:
+    except (CoverageDataMismatchError, CoverageToolVersionError, CoverageToolMissingError) as e:
         raise _GetError(str(e)) from e
     except ValueError as e:
         raise _GetError(str(e)) from e

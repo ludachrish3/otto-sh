@@ -364,7 +364,7 @@ async def _write_metadata(
     """
     import json
 
-    from ..host.docker_host import DockerContainerHost
+    from ..host.toolchain import Toolchain
     from ..utils import anchor_path
     from .config import get_cov_repo
 
@@ -378,16 +378,11 @@ async def _write_metadata(
         # (e.g. an SSH hop) that are in the lab solely for connectivity.
         if host.id not in fetched_host_ids:
             continue
-        # Skipped on host KIND, never on the toolchain's value: a container
-        # inherits BaseHost's default ``Toolchain`` like every other host, so
-        # there is nothing here to tell "unset" from "set to the defaults". A
-        # container's compiler is the image's, not the host record's, so
-        # writing the record would point the reporter at the *runner's* gcov;
-        # leaving it out is what sends the reporter to .gcno discovery under
-        # the product dir. A Unix host at the default toolchain is a different
-        # claim — there the runner's gcov is genuinely the right answer — so it
-        # is still recorded.
-        if isinstance(host, DockerContainerHost):
+        # Only what was configured. A host at the default toolchain gets no
+        # entry: the reporter reads its counters with the gcov the data's own
+        # stamp names, and a recorded default would say "the runner's gcov"
+        # about counters another gcc, clang, or a container's image wrote.
+        if host.toolchain == Toolchain():
             continue
         tc = host.toolchain
         toolchains[host.id] = {
@@ -436,7 +431,6 @@ async def _write_metadata(
     source_roots: dict[str, str] = {}
     if embedded_host_ids and (embedded_build_dir or embedded_builds):
         from ..host.embedded_host import EmbeddedHost
-        from ..host.toolchain import Toolchain
         from ..host.toolchain_discovery import discover_toolchain_from_gcno
 
         embedded_hosts = {h.id: h for h in cov_hosts if isinstance(h, EmbeddedHost)}

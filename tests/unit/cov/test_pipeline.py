@@ -2,6 +2,7 @@
 
 import json
 import os
+import stat
 import subprocess
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from otto.coverage.reporter import (
     run_coverage_report,
 )
 from otto.coverage.tiers import load_tiers
+from otto.host.errors import CoverageToolMissingError
+from otto.host.toolchain import Toolchain
 from tests._fixtures.gitrepo import git_env
 
 
@@ -177,6 +180,128 @@ class TestCoverageReporterPerHostGcno:
             source_roots={"zephyr37-fat": root_a, "zephyr44-fat": root_b},
         )
         assert r._per_host_gcno_dirs() == [root_a, root_b, fallback]  # 3rd falls back
+
+
+# .gcda headers: 4-byte magic (little-endian files store it reversed) + the
+# 4-char gcov version stamp, reversed likewise + a build stamp word.
+_CLANG_GCDA = b"adcg*804" + b"\x00" * 4
+_GCC12_GCDA = b"adcg*42B" + b"\x00" * 4
+_GCC13_GCDA = b"adcg*33B" + b"\x00" * 4
+
+
+def _gcda_dir(root: Path, host: str, product: str, header: bytes) -> Path:
+    d = root / "cov" / host / product
+    d.mkdir(parents=True)
+    (d / "main.gcda").write_bytes(header)
+    return d
+
+
+def _tool(bin_dir: Path, name: str) -> Path:
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    exe = bin_dir / name
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return exe
+
+
+class TestResolveToolchains:
+    """Per gcda directory: a record that names a gcov wins; otherwise the
+    directory's own stamp chooses, and replaces only the gcov of whatever
+    record there is. The system gcov's major is probed once per report."""
+
+    @pytest.fixture(autouse=True)
+    def system_gcov_is_13(self, monkeypatch):
+        self.probes = 0
+
+        def probe(gcov="gcov"):
+            self.probes += 1
+            return 13
+
+        monkeypatch.setattr("otto.host.toolchain_discovery.system_gcov_major", probe)
+
+    @pytest.fixture
+    def bin_dir(self, tmp_path, monkeypatch):
+        d = tmp_path / "bin"
+        monkeypatch.setenv("PATH", str(d))
+        return d
+
+    def _reporter(self, tmp_path, gcda_dirs, toolchains=None):
+        return CoverageReporter(
+            gcda_dirs=gcda_dirs,
+            source_root=tmp_path / "src",
+            output_dir=tmp_path / "out",
+            toolchains=toolchains,
+        )
+
+    def test_a_recorded_default_is_silent_and_the_stamp_chooses(self, tmp_path, bin_dir):
+        llvm_cov = _tool(bin_dir, "llvm-cov")
+        d = _gcda_dir(tmp_path, "test1", "app", _CLANG_GCDA)
+        r = self._reporter(tmp_path, [d], {"test1": Toolchain()})
+
+        (tc,) = r._resolve_toolchains()
+
+        assert tc is not None
+        assert tc.gcov_bin == str(llvm_cov)
+        assert tc.lcov == Path("usr/bin/lcov")  # the record's other fields stay
+
+    def test_an_explicit_gcov_wins_over_a_disagreeing_stamp(self, tmp_path, bin_dir, monkeypatch):
+        def never(*a, **k):
+            raise AssertionError("the stamp must not be read for an explicit record")
+
+        monkeypatch.setattr("otto.host.toolchain_discovery.discover_toolchain_from_gcda", never)
+        cross = Toolchain(sysroot=Path("/opt/cross"), gcov=Path("bin/arm-gcov"))
+        d = _gcda_dir(tmp_path, "test1", "app", _CLANG_GCDA)
+        r = self._reporter(tmp_path, [d], {"test1": cross})
+
+        assert r._resolve_toolchains() == [cross]
+        assert self.probes == 0
+
+    def test_a_record_naming_only_an_lcov_keeps_it_and_takes_the_stamps_gcov(
+        self, tmp_path, bin_dir
+    ):
+        gcov_12 = _tool(bin_dir, "gcov-12")
+        d = _gcda_dir(tmp_path, "test1", "app", _GCC12_GCDA)
+        wrapper = Toolchain(lcov=Path("/tmp/lcov-wrapper.sh"))
+        r = self._reporter(tmp_path, [d], {"test1": wrapper})
+
+        (tc,) = r._resolve_toolchains()
+
+        assert tc is not None
+        assert tc.gcov_bin == str(gcov_12)
+        assert tc.lcov_bin == "/tmp/lcov-wrapper.sh"
+
+    def test_a_mixed_run_resolves_each_directory_on_its_own(self, tmp_path, bin_dir):
+        llvm_cov = _tool(bin_dir, "llvm-cov")
+        gcov_12 = _tool(bin_dir, "gcov-12")
+        dirs = [
+            _gcda_dir(tmp_path, "test1", "app", _CLANG_GCDA),
+            _gcda_dir(tmp_path, "test2", "app", _GCC12_GCDA),
+            _gcda_dir(tmp_path, "test3", "app", _GCC13_GCDA),
+        ]
+        r = self._reporter(tmp_path, dirs)
+
+        clang, gcc12, gcc13 = r._resolve_toolchains()
+
+        assert clang is not None
+        assert clang.gcov_bin == str(llvm_cov)
+        assert gcc12 is not None
+        assert gcc12.gcov_bin == str(gcov_12)
+        assert gcc13 is None  # the system gcov's own major: the merger default
+        assert self.probes == 1
+
+    def test_a_same_major_stamp_keeps_a_recorded_default_as_recorded(self, tmp_path, bin_dir):
+        d = _gcda_dir(tmp_path, "test1", "app", _GCC13_GCDA)
+        recorded = Toolchain()
+        r = self._reporter(tmp_path, [d], {"test1": recorded})
+
+        assert r._resolve_toolchains() == [recorded]
+
+    def test_a_missing_tool_fails_the_report_before_lcov_runs(self, tmp_path, bin_dir):
+        d = _gcda_dir(tmp_path, "test2", "otto_kmod_demo", _GCC12_GCDA)
+        r = self._reporter(tmp_path, [d])
+
+        with pytest.raises(CoverageToolMissingError, match=r"gcov-12.*apt install gcc-12"):
+            r._resolve_toolchains()
 
 
 class TestCoverageReporter:

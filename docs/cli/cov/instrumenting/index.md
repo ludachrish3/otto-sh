@@ -23,8 +23,8 @@ coverage pipeline of its own — whatever compiled it (GCC, clang) still
 applies inside — but getting its counters out from behind the docker
 daemon is its own story: see {doc}`containers`.
 
-Which toolchain otto reaches for is resolved per host — see
-{ref}`per-host-toolchain` in {doc}`../../../configuration/host-options`.
+Which toolchain otto reaches for is resolved per `<host>/<product>`
+directory — see {ref}`coverage-gcov-resolution`.
 
 ```{toctree}
 :caption: Topics

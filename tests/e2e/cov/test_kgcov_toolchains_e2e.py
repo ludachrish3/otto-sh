@@ -10,11 +10,13 @@ when the kernel was configured for a newer one; LLVM=1 with the gcc-kernel
 overrides for clang (tests/e2e/cov/_repo5_build.py has both) — the demo's
 .init_array bracket is checked in the .ko, and the routine kmod e2e's
 compiler-independent assertions run through the shared helpers on a real
-``otto test --cov`` run. The bed hosts are given the gcov that matches the
-compiler (``gcov-N``, ``llvm-cov``) in their ``toolchain`` field through an
-overlay SUT repo layered over repo5 with OTTO_SUT_DIRS, the way a user with a
-non-default compiler configures a bed — otto reads a Unix host's counters
-with the gcov its host record names. Unset or empty, the variable means the system's
+``otto test --cov`` run. otto reads each host's counters with the gcov the
+counters' own stamp names (``gcov-N`` for a gcc, ``llvm-cov`` for clang, from
+PATH), so the bed hosts are left unconfigured for every gcc and the run's
+green is that discovery's proof; clang's arm alone layers an overlay SUT repo
+over repo5 with OTTO_SUT_DIRS (tests/e2e/cov/_repo5_build.py) naming an lcov
+wrapper that ignores the kernel headers llvm-cov reports relative to the
+kernel tree. Unset or empty, the variable means the system's
 default compiler, so this module never collects an empty, skipped parameter
 set; a compiler that is not installed FAILS the run naming it — a release
 must be able to trust a green here, so nothing skips. Carries `kgcov`:

@@ -94,17 +94,6 @@ class Toolchain:
 
     name: str
     env: dict[str, str]
-    gcov: "str | None" = None
-    """Absolute path of the gcov that reads what this compiler writes, or ``None``.
-
-    ``None`` means the system gcov, i.e. no bed configuration at all — the
-    routine e2e's exact behaviour. Otherwise the bed hosts must be TOLD this
-    path: for a Unix host otto reads the counters with the gcov the host
-    RECORD names (collection records every fetched Unix host's toolchain, the
-    default ``usr/bin/gcov`` included, and the reporter takes an explicit
-    entry before any ``.gcno`` discovery), so nothing is ever inferred from
-    the data. :func:`overlay_lab` is what puts it there.
-    """
     lcov_args: list[str] = field(default_factory=list)
     """Extra arguments this compiler's output needs lcov to carry — usually none.
 
@@ -112,6 +101,13 @@ class Toolchain:
     has to reach both the capture and the merge, which is why
     :func:`overlay_lab` delivers it as a wrapper named in ``toolchain.lcov``
     rather than as a flag on one command. See :data:`CLANG_LCOV_ARGS`.
+
+    No gcov is named anywhere: otto reads a Unix host's counters with the
+    gcov the host record names only when it names one, and otherwise with
+    the one the counters' own stamp names — ``gcov-N`` for a gcc,
+    ``llvm-cov`` for clang, from PATH — so the bed stays unconfigured and the
+    matrix's green is that discovery's proof. :func:`toolchain` still
+    requires the tool up front, so a missing one fails naming its package.
     """
 
 
@@ -189,10 +185,7 @@ def toolchain(name: str, kdir: Path | None = None) -> Toolchain:
         env = {"LLVM": "1"}
         if "CONFIG_CC_IS_GCC=y" in config:
             env["KMAKEFLAGS"] = CLANG_ON_GCC_KERNEL.format(version=compiler_version_number("clang"))
-        # The plain name: otto's ``ensure_gcov_tool`` recognises any
-        # ``llvm-cov(-N)?`` and wraps it as the two-word ``llvm-cov gcov``
-        # that lcov cannot be handed directly.
-        return Toolchain(name, env, gcov=shutil.which("llvm-cov"), lcov_args=list(CLANG_LCOV_ARGS))
+        return Toolchain(name, env, lcov_args=list(CLANG_LCOV_ARGS))
     _require(name, f"install it (apt install {name}) or drop it from OTTO_KGCOV_TOOLCHAINS")
     gcov = name.replace("gcc", "gcov", 1)
     _require(
@@ -209,19 +202,17 @@ def toolchain(name: str, kdir: Path | None = None) -> Toolchain:
             if actual // 10000 < floor and f"{option}=y" in config
         ]
         env["KMAKEFLAGS"] = " ".join([f"CONFIG_GCC_VERSION={actual}", *off])
-    return Toolchain(name, env, gcov=shutil.which(gcov))
+    return Toolchain(name, env)
 
 
-def _lcov_for(tc: Toolchain, root: Path) -> str:
-    """The lcov the bed hosts should name: the system one, or a wrapper carrying *tc*'s args.
+def _lcov_wrapper(tc: Toolchain, root: Path) -> str:
+    """An executable that runs the system lcov with *tc*'s extra arguments.
 
     otto runs the lcov the host record names for BOTH the capture and the
     merge, and a host record names a command, not a command line — so extra
-    arguments have to travel as an executable. Hence the wrapper, written
-    beside the overlay lab file rather than into the developer's ``~/.lcovrc``.
+    arguments have to travel as an executable, written beside the overlay lab
+    file rather than into the developer's ``~/.lcovrc``.
     """
-    if not tc.lcov_args:
-        return SYSTEM_LCOV
     wrapper = root / "lcov-wrapper.sh"
     wrapper.write_text(f'#!/bin/sh\nexec {SYSTEM_LCOV} {" ".join(tc.lcov_args)} "$@"\n')
     wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -229,19 +220,22 @@ def _lcov_for(tc: Toolchain, root: Path) -> str:
 
 
 def overlay_lab(tc: Toolchain, root: Path) -> "Path | None":
-    """Write a lab file under *root* giving the bed hosts *tc*'s gcov, or ``None``.
+    """Write a lab file under *root* giving the bed hosts *tc*'s lcov wrapper, or ``None``.
 
-    ``None`` when *tc* names no gcov (the system one), so the default build
-    runs against the fixture's lab data exactly as the routine e2e does.
+    ``None`` when *tc* needs no lcov arguments — every gcc, and the default —
+    so those builds run against the fixture's lab data exactly as the routine
+    e2e does, and otto finds the gcov from the counters.
 
     Otherwise the file re-declares the two bed elements and nothing else. The
     composite lab replaces an element WHOLESALE by slug, later source winning,
     so each element is copied from the fixture's lab data key for key and only
-    a ``toolchain`` is added to its host entries. The ``labs`` TABLE is
+    a ``toolchain`` naming the wrapper as ``lcov`` is added to its host
+    entries — no ``gcov``, so the record stays silent about it and otto reads
+    the counters with the tool the stamp names. The ``labs`` TABLE is
     deliberately absent: re-declaring it would replace the lab's resource
     lists, and this overlay has nothing to say about them.
     """
-    if tc.gcov is None:
+    if not tc.lcov_args:
         return None
     fixture = json.loads((LAB_DATA / "lab.json").read_text())
     elements = [e for e in fixture["elements"] if e["name"] in OVERLAY_ELEMENTS]
@@ -250,11 +244,11 @@ def overlay_lab(tc: Toolchain, root: Path) -> "Path | None":
         f"expected {list(OVERLAY_ELEMENTS)} — the bed elements were renamed?"
     )
     root.mkdir(parents=True, exist_ok=True)
-    lcov = _lcov_for(tc, root)
+    lcov = _lcov_wrapper(tc, root)
     for element in elements:
         assert element.get("hosts"), f"{element['name']} has no host entry to configure"
         for host in element["hosts"]:
-            host["toolchain"] = {"sysroot": "/", "gcov": tc.gcov, "lcov": lcov}
+            host["toolchain"] = {"lcov": lcov}
     lab = root / "lab.json"
     lab.write_text(json.dumps({"elements": elements}, indent=4) + "\n")
     return lab
@@ -270,10 +264,9 @@ def overlay_repo(tc: Toolchain, root: Path) -> "Path | None":
     exists to configure two hosts, and anything else it declared would shadow
     repo5's own.
     """
-    if tc.gcov is None:
-        return None
     lab = overlay_lab(tc, root)
-    assert lab is not None
+    if lab is None:
+        return None
     return make_sut_repo(
         root / "kgcov_overlay",
         name="kgcov_overlay",

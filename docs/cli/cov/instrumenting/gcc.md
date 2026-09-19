@@ -57,15 +57,22 @@ bind-mount half.
 The `gcov` that processes the counters must match the GCC **major version**
 that compiled the product — the on-disk gcov record format changes between
 releases (GCC 12 notably changed record length encoding, and GCC 14 added a
-counter kind). A mismatched `gcov` fails with *"record size mismatch"* or
-silently reports 0%. otto auto-discovers the right tool from the `.gcno`
-version stamp where it can; see the toolchain resolution order on the main
-page.
+counter kind). A mismatched `gcov` fails with *"Incompatible GCC/GCOV
+version"* or *"record size mismatch"*, or silently reports 0%. otto reads
+the major from the `.gcda` stamp: a product built by the system gcc's major
+is read by the system `gcov`, one built by another major by `gcov-<major>`
+from `PATH` (`apt install gcc-12` ships `gcov-12`), and that package is
+named when it is missing: `otto test --cov` logs it as a warning and
+writes no capture, `otto cov get` and `otto cov report` fail with it. A
+host record that names a
+`toolchain.gcov` is used instead of the stamp — the order is on the
+{ref}`main page <coverage-gcov-resolution>`.
 
 ## Cross-compiled products
 
-A cross-GCC's `gcov` cannot be discovered from the `.gcno` alone —
-configure it per host entry in `lab.json`:
+A cross-GCC's `gcov` cannot be discovered from the stamp — it names a
+compiler major, never a target — so configure it per host entry in
+`lab.json`:
 
 ```json
 {

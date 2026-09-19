@@ -404,21 +404,10 @@ wrapper that ``lcov`` requires at capture time:
 
 ### Resolution order
 
-With no explicit `toolchain` object, otto resolves the tools in this order:
-
-1. **Explicit config** — the `toolchain` object above.
-2. **Auto-discovery** — otto reads the gcov *version stamp* from the build's
-   `.gcno` headers (a `.gcno` embeds no compiler path, but every compiler
-   stamps the format version it wrote). A clang stamp resolves to `llvm-cov`
-   from `PATH`; a GCC stamp means the default `gcov` already applies — a
-   *cross*-GCC toolchain cannot be located from the `.gcno` alone and must be
-   configured on the host.
-3. **System default** — `/usr/bin/gcov` and `/usr/bin/lcov`.
-
-When the resolved tool cannot actually read the build's counters — classically
-a clang build captured with GNU `gcov` — the capture stops with a typed error
-naming both versions and the fix, instead of producing an empty or wrong
-report.
+See {ref}`coverage-gcov-resolution` on the coverage page for the order
+otto uses to pick a host's `gcov` when this object does not name one, and
+for what happens when the resolved tool cannot actually read the build's
+counters.
 
 
 ## `nc_options` reference

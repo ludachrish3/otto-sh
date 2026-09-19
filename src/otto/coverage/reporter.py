@@ -310,42 +310,14 @@ class CoverageReporter:
         return [self.source_roots.get(d.parent.name, self.source_root) for d in self.gcda_dirs]
 
     def _resolve_toolchains(self) -> "list[Toolchain | None]":
-        """Build a per-gcda-dir list of toolchains.
+        """Resolve each gcda directory's toolchain, parallel to ``gcda_dirs``.
 
-        Toolchains are per host, so each ``<cov>/<host>/<product>`` gcda
-        dir resolves under its host dir's name.
-
-        Resolution order for each directory:
-        1. Explicit toolchain from ``self.toolchains`` (matched by host dir name)
-        2. Auto-discovery from ``.gcno`` files in the source root
-        3. ``None`` (merger will use its own defaults)
+        The rule lives in :func:`otto.coverage.toolchains.resolve_toolchains`,
+        shared with the capture producer.
         """
-        from ..host.toolchain_discovery import discover_toolchain_from_gcno
+        from .toolchains import resolve_toolchains
 
-        result: "list[Toolchain | None]" = []
-        discovered_fallback: "Toolchain | None" = None
-        fallback_computed = False
-
-        for gcda_dir in self.gcda_dirs:
-            host_id = gcda_dir.parent.name
-            if host_id in self.toolchains:
-                result.append(self.toolchains[host_id])
-                continue
-
-            # Lazy auto-discovery: run once and cache, against the shared
-            # source_root. Note: a host with its own ``source_roots`` entry
-            # (a different build tree) but no explicit ``toolchains`` entry
-            # would get a toolchain sniffed from this fallback root, which may
-            # be wrong. The metadata writer (``collect_coverage``) emits a per-host
-            # toolchain whenever it emits a per-host source root, so this path
-            # is not reached for per-version embedded hosts.
-            if not fallback_computed:
-                discovered_fallback = discover_toolchain_from_gcno(self.source_root)
-                fallback_computed = True
-
-            result.append(discovered_fallback)
-
-        return result
+        return resolve_toolchains(self.gcda_dirs, self.toolchains)
 
     def _wants_system_tier(self) -> bool:
         return any(name == TIER_SYSTEM and path is None for name, path in self.tiers)

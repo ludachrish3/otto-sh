@@ -534,7 +534,7 @@ coverage pipeline.  See {doc}`../cli/cov/index`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `toolchain` | object | The cross-toolchain block.  Omit it to leave the host on system-installed `gcov`/`lcov`. |
+| `toolchain` | object | The cross-toolchain block.  Omit it to leave the host on the gcov its data names (the system `gcov`, `gcov-<major>` or `llvm-cov`; see {ref}`coverage-gcov-resolution`) and the system `lcov`. |
 | `toolchain.sysroot` | string | Path to the cross-toolchain sysroot. |
 | `toolchain.gcov` | string | Path to `gcov` relative to `sysroot`, or an absolute path. |
 | `toolchain.lcov` | string | Path to the `lcov` binary. |

@@ -722,13 +722,16 @@ class TestCollectEmbedded:
 
 
 class TestFetchedToolchainMetadata:
-    """``.otto_cov_meta.json`` records a toolchain per *fetched* host — except a
-    container, whose compiler lives in the image rather than in the host record."""
+    """``.otto_cov_meta.json`` records a toolchain per *fetched* host only when
+    one was configured: the reporter reads a host left at the default with
+    the gcov its data's own stamp names, and recording the default would say
+    "the runner's gcov" about counters another gcc, clang, or a container's
+    image may have written."""
 
-    def test_a_container_host_is_left_out_of_the_toolchains_map(self, tmp_path):
+    @staticmethod
+    def _collect(tmp_path, hosts):
         from otto.host import UnixHost
         from otto.host.docker_host import DockerContainerHost
-        from otto.host.toolchain import Toolchain
 
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
@@ -736,29 +739,23 @@ class TestFetchedToolchainMetadata:
         repo.name = "repo1"
         repo.sut_dir = tmp_path / "repo1"
 
-        unix = MagicMock(spec=UnixHost)
-        unix.id = "test1"
-        unix.products = [_product("app", "/var/cov/app")]
-        unix.toolchain = Toolchain()  # nothing declared in lab data → the default
-        container = MagicMock(spec=DockerContainerHost)
-        container.id = "test3.repo1.api"
-        container.products = [_product("api", "/var/cov/api")]
-        # A container answers `.toolchain` too — it inherits BaseHost's default
-        # field — so the skip cannot key off the VALUE being absent.
-        container.toolchain = Toolchain()
+        doubles = []
+        fetched = {}
+        for host_id, kind, toolchain in hosts:
+            host = MagicMock(spec=UnixHost if kind == "unix" else DockerContainerHost)
+            host.id = host_id
+            host.products = [_product("app", "/var/cov/app")]
+            host.toolchain = toolchain
+            doubles.append(host)
+            fetched[(host_id, "app")] = cov_dir / host_id / "app"
 
         fetcher = MagicMock()
-        fetcher.fetch_all = AsyncMock(
-            return_value={
-                ("test1", "app"): cov_dir / "test1" / "app",
-                ("test3.repo1.api", "api"): cov_dir / "test3.repo1.api" / "api",
-            }
-        )
+        fetcher.fetch_all = AsyncMock(return_value=fetched)
         fetcher.clean_remote = AsyncMock(return_value=None)
 
         with (
             patch("otto.coverage.config.get_cov_config", return_value={"hosts": ".*"}),
-            patch("otto.config.all_hosts", return_value=[unix, container]),
+            patch("otto.config.all_hosts", return_value=doubles),
             patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
@@ -769,17 +766,46 @@ class TestFetchedToolchainMetadata:
         ):
             asyncio.run(collect_coverage(cov_dir, repos=[repo]))
 
-        meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
-        # The Unix host is recorded even at the DEFAULT toolchain: an
-        # undeclared toolchain there genuinely means "the runner's gcov".
-        assert meta["toolchains"]["test1"] == {
-            "sysroot": "/",
-            "lcov": "usr/bin/lcov",
-            "gcov": "usr/bin/gcov",
+        return json.loads((cov_dir / ".otto_cov_meta.json").read_text())["toolchains"]
+
+    def test_hosts_at_the_default_toolchain_get_no_entry(self, tmp_path):
+        from otto.host.toolchain import Toolchain
+
+        # A container answers `.toolchain` too — it inherits BaseHost's default
+        # field — so the value rule covers it without a kind check.
+        toolchains = self._collect(
+            tmp_path,
+            [("test1", "unix", Toolchain()), ("test3.repo1.api", "container", Toolchain())],
+        )
+
+        assert toolchains == {}
+
+    def test_a_configured_gcov_is_recorded(self, tmp_path):
+        from otto.host.toolchain import Toolchain
+
+        toolchains = self._collect(
+            tmp_path,
+            [
+                ("test1", "unix", Toolchain(gcov=Path("/usr/bin/gcov-12"))),
+                ("test2", "unix", Toolchain()),
+            ],
+        )
+
+        assert toolchains == {
+            "test1": {"sysroot": "/", "lcov": "usr/bin/lcov", "gcov": "/usr/bin/gcov-12"}
         }
-        # The container is not, so the reporter discovers the compiler from the
-        # .gcno under its product dir instead of using the runner's gcov.
-        assert "test3.repo1.api" not in meta["toolchains"]
+
+    def test_a_record_naming_only_an_lcov_is_recorded_as_it_was(self, tmp_path):
+        """The reporter treats its gcov as silent; what was configured is kept."""
+        from otto.host.toolchain import Toolchain
+
+        toolchains = self._collect(
+            tmp_path, [("test1", "unix", Toolchain(lcov=Path("/tmp/lcov-wrapper.sh")))]
+        )
+
+        assert toolchains == {
+            "test1": {"sysroot": "/", "lcov": "/tmp/lcov-wrapper.sh", "gcov": "usr/bin/gcov"}
+        }
 
 
 class TestBuildDirPathAnchoring:

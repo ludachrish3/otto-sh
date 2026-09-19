@@ -5,9 +5,10 @@ Turns the raw ``.gcda`` counters collected by ``otto test --cov`` into a
 anchored to ``base_commit``.  For each ``<cov_dir>/<host>/<product>/``
 directory this:
 
-1. Resolves the host's toolchain and gcno (build) source root from the
+1. Resolves each product's gcno (build) source root from the
    ``.otto_cov_meta.json`` sidecar via the :mod:`otto.coverage.reporter`
-   helpers (both maps are per host, not per product).
+   helpers (per host, not per product), and its toolchain via
+   :func:`~otto.coverage.toolchains.resolve_toolchains`.
 2. Runs :meth:`~otto.coverage.merge.merger.LcovMerger.capture` for
    that product alone, producing ``<host>/<product>/board.info``.
 3. Auto-discovers path mappings and rewrites the embedded ``SF:`` paths
@@ -26,6 +27,7 @@ from pathlib import Path
 from ..merge.merger import LcovMerger
 from ..merge.paths import PathRemapper, discover_path_mappings
 from ..reporter import read_cov_source_root, read_cov_source_roots, read_cov_toolchains
+from ..toolchains import resolve_toolchains
 from ..tree import iter_product_dirs
 from .model import build_capture
 
@@ -113,6 +115,8 @@ async def produce_captures(
             is not a git repository.
         otto.coverage.errors.CoverageConfigError: If a host dir holds
             coverage data directly (the pre-product one-level tree).
+        otto.host.errors.CoverageToolMissingError: If a product's stamp
+            names a gcov that is not on PATH.
     """
     from ...host.connections import teardown_step
     from ...host.local_host import LocalHost
@@ -120,14 +124,17 @@ async def produce_captures(
     toolchains = read_cov_toolchains([cov_dir])
     source_roots = read_cov_source_roots([cov_dir])
     fallback_root = read_cov_source_root([cov_dir])
+    product_dirs = _product_dirs(cov_dir)
+    # One resolver with the reporter: a recorded gcov wins, else the
+    # product's own .gcda stamp names the tool, before any lcov runs.
+    resolved = resolve_toolchains([d for _, _, d in product_dirs], toolchains)
 
     localhost = LocalHost()
     written: list[Path] = []
     try:
         merger = LcovMerger(localhost)
-        for board, product, board_dir in _product_dirs(cov_dir):
+        for (board, product, board_dir), toolchain in zip(product_dirs, resolved, strict=True):
             gcno_dir = source_roots.get(board, fallback_root)
-            toolchain = toolchains.get(board)
 
             raw_info = board_dir / "board.info"
             logger.info("=== Capturing %s / %s ===", board, product)

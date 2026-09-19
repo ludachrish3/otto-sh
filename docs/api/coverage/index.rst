@@ -7,6 +7,7 @@ data from embedded and remote targets.
 .. toctree::
 
    reporter
+   toolchains
    store_model
    merge
    fetcher

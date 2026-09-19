@@ -214,6 +214,31 @@ class TestCovReportMergeErrors:
         assert "clang" in message  # names the likely cause
         assert "llvm-cov" in message  # names the fix
 
+    def test_missing_gcov_tool_reports_cause_without_traceback(self, cov_dir):
+        """A stamp naming a gcov not on PATH must exit 1 with the message
+        as-is — no traceback, and never relabeled as a merge failure."""
+        from otto.host.errors import CoverageToolMissingError
+
+        with (
+            patch.object(
+                cov_module,
+                "run_coverage_report",
+                side_effect=CoverageToolMissingError(
+                    "Coverage data for product 'app' on host 'test1' was written by "
+                    "gcc 12 (gcov stamp '12.2.0') and needs `gcov-12` to read it, but no "
+                    "`gcov-12` is on PATH. Install it (`apt install gcc-12`), or name the "
+                    "gcov to use in the host's `toolchain.gcov`."
+                ),
+            ),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["report", str(cov_dir)])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        message = mock_err.call_args[0][0]
+        assert "gcov-12" in message  # names the missing tool
+        assert "Coverage merge failed" not in message
+
     def test_generic_merge_failure_reports_cleanly(self, cov_dir):
         with (
             patch.object(

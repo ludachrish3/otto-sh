@@ -215,16 +215,24 @@ def test_init_array_symbols_fails_on_a_module_without_the_section(monkeypatch, t
         helper.init_array_symbols(tmp_path / "x.ko")
 
 
-# --- The gcov each compiler's counters need, and the overlay that names it ----
+# --- The overlay: only what otto cannot find from the data -------------------
 #
-# otto reads a Unix host's counters with the gcov the HOST RECORD names, so the
-# matrix has to put one there. These cover the naming and the overlay's shape;
-# whether otto then reads the counters is the matrix's own live proof.
+# otto reads a Unix host's counters with the gcov the host RECORD names when
+# it names one, and otherwise with the gcov the counters' own stamp names —
+# gcov-N for a gcc, llvm-cov for clang, from PATH. So a gcc arm configures
+# nothing on the bed and the matrix's green is the discovery proof. Clang's
+# arm still needs lcov to ignore the kernel headers it cannot open, and that
+# is an lcov argument, not a gcov, so it travels as a wrapper in
+# toolchain.lcov. A compiler whose gcov is not installed fails HERE, naming
+# the package, rather than in otto's report.
 
 
-def test_a_gcc_names_the_matching_gcov(gcc13_kdir, compilers_present, monkeypatch):
+def test_a_gcc_requires_its_gcov_and_configures_nothing(gcc13_kdir, compilers_present, monkeypatch):
     monkeypatch.setattr(helper, "compiler_version_number", lambda cc: 120300)
-    assert helper.toolchain("gcc-12", gcc13_kdir).gcov == "/usr/bin/gcov-12"
+    tc = helper.toolchain("gcc-12", gcc13_kdir)
+    assert tc.lcov_args == []
+    assert helper.overlay_lab(tc, gcc13_kdir / "overlay") is None
+    assert helper.overlay_repo(tc, gcc13_kdir / "overlay") is None
 
 
 def test_a_gcc_whose_gcov_is_missing_fails_naming_the_compiler(gcc13_kdir, monkeypatch):
@@ -236,9 +244,11 @@ def test_a_gcc_whose_gcov_is_missing_fails_naming_the_compiler(gcc13_kdir, monke
         helper.toolchain("gcc-12", gcc13_kdir)
 
 
-def test_clang_names_the_llvm_cov_that_which_finds(gcc13_kdir, compilers_present, monkeypatch):
+def test_clang_requires_llvm_cov_and_carries_the_ignore_errors_pair(
+    gcc13_kdir, compilers_present, monkeypatch
+):
     monkeypatch.setattr(helper, "compiler_version_number", lambda cc: 180103)
-    assert helper.toolchain("clang", gcc13_kdir).gcov == "/usr/bin/llvm-cov"
+    assert helper.toolchain("clang", gcc13_kdir).lcov_args == ["--ignore-errors", "source"]
 
 
 def test_clang_without_llvm_cov_fails_naming_llvm(gcc13_kdir, monkeypatch):
@@ -250,30 +260,35 @@ def test_clang_without_llvm_cov_fails_naming_llvm(gcc13_kdir, monkeypatch):
         helper.toolchain("clang", gcc13_kdir)
 
 
-def test_the_default_toolchain_names_no_gcov_and_builds_no_overlay(tmp_path):
-    assert helper.DEFAULT_TOOLCHAIN.gcov is None
+def test_the_default_toolchain_builds_no_overlay(tmp_path):
+    assert helper.DEFAULT_TOOLCHAIN.lcov_args == []
     assert helper.overlay_lab(helper.DEFAULT_TOOLCHAIN, tmp_path) is None
     assert helper.overlay_repo(helper.DEFAULT_TOOLCHAIN, tmp_path) is None
 
 
+def test_extra_lcov_arguments_are_opt_in_and_clangs_are_the_ignore_errors_pair():
+    assert helper.Toolchain("gcc-12", {"CC": "gcc-12"}).lcov_args == []
+    assert helper.CLANG_LCOV_ARGS == ["--ignore-errors", "source"]
+
+
 @pytest.fixture
-def gcc12_overlay(tmp_path) -> Path:
-    tc = helper.Toolchain("gcc-12", {"CC": "gcc-12"}, gcov="/usr/bin/gcov-12")
+def clang_overlay(tmp_path) -> Path:
+    tc = helper.Toolchain("clang", {"LLVM": "1"}, lcov_args=list(helper.CLANG_LCOV_ARGS))
     lab = helper.overlay_lab(tc, tmp_path)
     assert lab is not None
     return lab
 
 
-def test_the_overlay_redeclares_only_the_two_bed_elements(gcc12_overlay):
-    data = json.loads(gcc12_overlay.read_text())
+def test_the_overlay_redeclares_only_the_two_bed_elements(clang_overlay):
+    data = json.loads(clang_overlay.read_text())
     assert sorted(data) == ["elements"], data.keys()
     assert [e["name"] for e in data["elements"]] == ["test1", "test2"]
 
 
-def test_the_overlay_copies_every_original_key_of_those_elements(gcc12_overlay):
+def test_the_overlay_copies_every_original_key_of_those_elements(clang_overlay):
     fixture = json.loads((helper.LAB_DATA / "lab.json").read_text())
     originals = {e["name"]: e for e in fixture["elements"] if e["name"] in ("test1", "test2")}
-    for element in json.loads(gcc12_overlay.read_text())["elements"]:
+    for element in json.loads(clang_overlay.read_text())["elements"]:
         original = originals[element["name"]]
         assert sorted(element) == sorted(original)
         for key, value in original.items():
@@ -284,19 +299,24 @@ def test_the_overlay_copies_every_original_key_of_those_elements(gcc12_overlay):
         assert element["labs"] == original["labs"]
 
 
-def test_the_overlay_injects_the_toolchain_into_every_host_entry(gcc12_overlay):
-    for element in json.loads(gcc12_overlay.read_text())["elements"]:
+def test_the_overlay_names_only_an_lcov_wrapper_in_every_host_entry(clang_overlay, tmp_path):
+    named = set()
+    for element in json.loads(clang_overlay.read_text())["elements"]:
         assert element["hosts"]
         for host in element["hosts"]:
-            assert host["toolchain"] == {
-                "sysroot": "/",
-                "gcov": "/usr/bin/gcov-12",
-                "lcov": "/usr/bin/lcov",
-            }
+            # No gcov and no sysroot: the record stays silent about the gcov
+            # so otto reads the counters with the llvm-cov the stamp names.
+            assert sorted(host["toolchain"]) == ["lcov"], host["toolchain"]
+            named.add(host["toolchain"]["lcov"])
+    assert len(named) == 1, named
+    wrapper = Path(next(iter(named)))
+    assert wrapper.parent == tmp_path, wrapper
+    assert wrapper.read_text() == '#!/bin/sh\nexec /usr/bin/lcov --ignore-errors source "$@"\n'
+    assert os.access(wrapper, os.X_OK), "otto execs this path; it must be executable"
 
 
 def test_the_overlay_repo_points_a_lab_source_at_that_lab_file(tmp_path):
-    tc = helper.Toolchain("gcc-12", {"CC": "gcc-12"}, gcov="/usr/bin/gcov-12")
+    tc = helper.Toolchain("clang", {"LLVM": "1"}, lcov_args=list(helper.CLANG_LCOV_ARGS))
     repo = helper.overlay_repo(tc, tmp_path)
     assert repo is not None
     settings = (repo / ".otto" / "settings.toml").read_text()
@@ -308,33 +328,3 @@ def test_the_overlay_repo_points_a_lab_source_at_that_lab_file(tmp_path):
     # or project block that could shadow repo5's.
     assert "[[products]]" not in settings
     assert "tests =" not in settings
-
-
-def test_a_gccs_overlay_names_the_system_lcov(gcc12_overlay):
-    for element in json.loads(gcc12_overlay.read_text())["elements"]:
-        for host in element["hosts"]:
-            assert host["toolchain"]["lcov"] == "/usr/bin/lcov"
-
-
-def test_extra_lcov_arguments_are_opt_in_and_clangs_are_the_ignore_errors_pair():
-    assert helper.Toolchain("gcc-12", {"CC": "gcc-12"}).lcov_args == []
-    assert helper.DEFAULT_TOOLCHAIN.lcov_args == []
-    assert helper.CLANG_LCOV_ARGS == ["--ignore-errors", "source"]
-
-
-def test_clangs_overlay_names_an_lcov_wrapper_carrying_those_arguments(tmp_path):
-    tc = helper.Toolchain(
-        "clang", {"LLVM": "1"}, gcov="/usr/bin/llvm-cov", lcov_args=helper.CLANG_LCOV_ARGS
-    )
-    lab = helper.overlay_lab(tc, tmp_path)
-    assert lab is not None
-    named = {
-        host["toolchain"]["lcov"]
-        for element in json.loads(lab.read_text())["elements"]
-        for host in element["hosts"]
-    }
-    assert len(named) == 1, named
-    wrapper = Path(next(iter(named)))
-    assert wrapper.parent == tmp_path, wrapper
-    assert wrapper.read_text() == '#!/bin/sh\nexec /usr/bin/lcov --ignore-errors source "$@"\n'
-    assert os.access(wrapper, os.X_OK), "otto execs this path; it must be executable"

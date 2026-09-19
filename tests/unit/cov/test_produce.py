@@ -1,5 +1,6 @@
 """produce_captures orchestration (merger stubbed, no lcov binary)."""
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -44,6 +45,36 @@ def _stub_merger(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
         return output
 
     monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
+
+
+@pytest.fixture(autouse=True)
+def no_system_gcov_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The producer now resolves toolchains from the data; keep the unit tests
+    off the real ``gcov --version`` subprocess."""
+    monkeypatch.setattr("otto.host.toolchain_discovery.system_gcov_major", lambda gcov="gcov": 13)
+
+
+def _gcov_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> Path:
+    tool = tmp_path / "bin" / name
+    tool.parent.mkdir(exist_ok=True)
+    tool.write_text("#!/bin/sh\nexit 0\n")
+    monkeypatch.setattr(
+        "otto.host.toolchain_discovery.shutil.which",
+        lambda wanted: str(tool) if wanted == name else None,
+    )
+    return tool
+
+
+def _capture_spy(monkeypatch: pytest.MonkeyPatch, repo: Path) -> list:
+    seen: list = []
+
+    async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+        seen.append(toolchain)
+        output.write_text(f"TN:\nSF:{repo / 'f.c'}\nDA:1,3\nend_of_record\n")
+        return output
+
+    monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
+    return seen
 
 
 @pytest.mark.asyncio
@@ -146,3 +177,52 @@ def test_a_gcda_directly_under_the_host_dir_is_refused(tmp_path):
     (tmp_path / "h1" / "x.gcda").write_bytes(b"")
     with pytest.raises(CoverageConfigError, match=r"cov/<host>/<product>/"):
         _product_dirs(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_produce_reads_each_product_with_the_gcov_its_stamp_names(
+    tmp_path: Path, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The capture tail resolves the gcov the way the reporter does: a host
+    with no recorded toolchain whose counters another gcc major wrote is
+    captured with that major's gcov, not the system one."""
+    cov_dir = tmp_path / "out" / "cov"
+    (cov_dir / "host1" / "app").mkdir(parents=True)
+    (cov_dir / "host1" / "app" / "x.gcda").write_bytes(b"adcg*42B" + b"\x00" * 4)  # gcc 12
+    _write_meta(cov_dir, repo)
+    gcov_12 = _gcov_on_path(tmp_path, monkeypatch, "gcov-12")
+    seen = _capture_spy(monkeypatch, repo)
+
+    await produce_captures(cov_dir, tier="system", repo_root=repo, labs=["lab1"])
+
+    (toolchain,) = seen
+    assert toolchain is not None
+    assert toolchain.gcov_bin == str(gcov_12)
+
+
+@pytest.mark.asyncio
+async def test_produce_keeps_a_recorded_gcov_over_the_stamp(
+    tmp_path: Path, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cov_dir = tmp_path / "out" / "cov"
+    (cov_dir / "host1" / "app").mkdir(parents=True)
+    (cov_dir / "host1" / "app" / "x.gcda").write_bytes(b"adcg*42B" + b"\x00" * 4)
+    (cov_dir / ".otto_cov_meta.json").write_text(
+        json.dumps(
+            {
+                "repo_name": "r",
+                "sut_dir": str(repo),
+                "toolchains": {
+                    "host1": {"sysroot": "/", "lcov": "usr/bin/lcov", "gcov": "/opt/cross/gcov"}
+                },
+                "source_roots": {},
+            }
+        )
+    )
+    seen = _capture_spy(monkeypatch, repo)
+
+    await produce_captures(cov_dir, tier="system", repo_root=repo, labs=["lab1"])
+
+    (toolchain,) = seen
+    assert toolchain is not None
+    assert toolchain.gcov_bin == "/opt/cross/gcov"
