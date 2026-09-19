@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://otto-sh.readthedocs.io/schemas/kgcov-matrix.schema.json",
+  "title": "otto kgcov_matrix.json",
+  "description": "The otto_kgcov compatibility matrix: {contract} x {compiler}, per venue (design 2026-09-18). A sibling of support-matrix.schema.json with the same three rules -- only a run writes a verdict, every verdict carries its provenance, a lost verdict stops the release -- and the same `cells[surface][profile].status` nesting, which is what lets scripts/check_matrix_downgrades.py gate both. HAND-WRITTEN, like that file, in its house style.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "surfaces", "profiles", "cells"],
+  "properties": {
+    "$schema": {"type": "string", "title": "$schema"},
+    "format": {"const": 1, "type": "integer", "title": "Format", "description": "Document version. Required with no default: an unversioned file fails loud rather than validating as an empty modern one."},
+    "surfaces": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Surface"}, "title": "Surfaces", "description": "The matrix rows, in render order. tests/unit/test_kgcov_matrix.py asserts this set equals the contracts the tree declares, both ways."},
+    "profiles": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Profile"}, "title": "Profiles", "description": "The matrix columns, in render order: the Makefile's default KGCOV_TOOLCHAINS, then the cross build."},
+    "cells": {
+      "type": "object",
+      "title": "Cells",
+      "description": "The grid, keyed surface id -> profile id -> cell. An object, not a list: keys cannot collide, so no (surface, profile) pair can carry two verdicts.",
+      "additionalProperties": {"type": "object", "additionalProperties": {"$ref": "#/$defs/Cell"}}
+    }
+  },
+  "$defs": {
+    "Surface": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "title", "venue", "contract", "control"],
+      "title": "Surface",
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9_]+(-[a-z0-9_]+)*$", "title": "Id"},
+        "title": {"type": "string", "minLength": 1, "title": "Title"},
+        "venue": {"$ref": "#/$defs/Venue"},
+        "contract": {"$ref": "#/$defs/NodeId", "title": "Contract", "description": "The test's nodeid without its [compiler] parametrization."},
+        "control": {"type": "boolean", "title": "Control", "description": "Whether this row is the bed columns' positive control: the library refusing a demo from another compiler. A bed cell may be measured-ok only when the control passed in the same run."}
+      }
+    },
+    "Profile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "title", "venue"],
+      "title": "Profile",
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$", "title": "Id", "description": "The name the lane selects by (gcc-12, clang, x86_64-cross); the measured version lives on the cell."},
+        "title": {"type": "string", "minLength": 1, "title": "Title"},
+        "venue": {"$ref": "#/$defs/Venue"}
+      }
+    },
+    "Cell": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status"],
+      "title": "Cell",
+      "description": "One (contract, compiler) verdict with the evidence that earned it. Three states: measured-ok and measured-broken carry the run's provenance; untested carries status alone.",
+      "properties": {
+        "status": {"type": "string", "enum": ["measured-ok", "measured-broken", "untested"], "title": "Status"},
+        "nodeid": {"$ref": "#/$defs/NodeId", "title": "Nodeid"},
+        "venue": {"$ref": "#/$defs/Venue"},
+        "as_of": {"type": "string", "format": "date", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "title": "As Of"},
+        "outcome": {"type": "string", "enum": ["passed", "failed", "error"], "title": "Outcome", "description": "What pytest reported. A skip never reaches the artifact: the collate step discards it with a reason."},
+        "compiler_version": {"type": "string", "minLength": 1, "title": "Compiler Version", "description": "The compiler's -dumpfullversion (clang: -dumpversion) on the machine that measured."},
+        "kernel_release": {"type": "string", "minLength": 1, "title": "Kernel Release", "description": "The release the modules were built for: the bed's running kernel, or the cross tree's include/config/kernel.release."},
+        "control": {"oneOf": [{"$ref": "#/$defs/NodeId"}, {"type": "null"}], "title": "Control", "description": "For a bed cell, the control contract's nodeid whose passing record backs this verdict; null for the build column, which has no control and whose cells prove what a build can prove."},
+        "failure_summary": {"type": "string", "minLength": 1, "title": "Failure Summary", "description": "How a measured-broken cell broke: the failing phase's last E line, or the control's own outcome when the control did not pass."}
+      },
+      "allOf": [
+        {
+          "if": {"required": ["status"], "properties": {"status": {"const": "measured-ok"}}},
+          "then": {
+            "required": ["status", "nodeid", "venue", "as_of", "outcome", "compiler_version", "kernel_release", "control"],
+            "propertyNames": {"enum": ["status", "nodeid", "venue", "as_of", "outcome", "compiler_version", "kernel_release", "control"]},
+            "properties": {"outcome": {"const": "passed"}}
+          }
+        },
+        {
+          "if": {"required": ["status"], "properties": {"status": {"const": "measured-broken"}}},
+          "then": {
+            "required": ["status", "nodeid", "venue", "as_of", "outcome", "compiler_version", "kernel_release", "control", "failure_summary"],
+            "propertyNames": {"enum": ["status", "nodeid", "venue", "as_of", "outcome", "compiler_version", "kernel_release", "control", "failure_summary"]}
+          }
+        },
+        {
+          "if": {"required": ["status"], "properties": {"status": {"const": "untested"}}},
+          "then": {"propertyNames": {"enum": ["status"]}}
+        }
+      ]
+    },
+    "NodeId": {
+      "type": "string",
+      "pattern": "^tests/[A-Za-z0-9_./-]+\\.py(::[A-Za-z_][A-Za-z0-9_]*)+$",
+      "title": "NodeId",
+      "description": "A pytest nodeid rooted at tests/, WITHOUT parametrization: the matrix's column is the parametrization."
+    },
+    "Venue": {"type": "string", "enum": ["bed", "build"], "title": "Venue", "description": "bed: the module was loaded on the lab's unix hosts; build: it was only built (the x86_64 cross build)."}
+  }
+}

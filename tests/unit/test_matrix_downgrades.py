@@ -68,6 +68,22 @@ def test_a_downgrade_blocks_and_names_the_cell(tmp_path, capsys):
     assert "measured-ok -> measured-broken" in captured.out
 
 
+def test_the_refusal_names_the_candidate_it_would_have_you_commit(tmp_path, capsys):
+    """Two matrices share this gate; a refusal must point at the one just measured.
+
+    The message used to hardcode ``schemas/support_matrix.json``, which would
+    misdirect an operator refused by a kgcov re-measure -- ``make
+    release-kgcov-matrix`` invokes this same script with ``--candidate
+    schemas/kgcov_matrix.json``.
+    """
+    base = _write(tmp_path, "base.json", {"timeout": {"gnu": "measured-ok"}})
+    cand = _write(tmp_path, "kgcov_matrix.json", {"timeout": {"gnu": "measured-broken"}})
+    assert main(["--baseline", str(base), "--candidate", str(cand)]) == 1
+    err = capsys.readouterr().err
+    assert str(cand) in err
+    assert "support_matrix.json" not in err
+
+
 def test_an_improvement_is_allowed(tmp_path):
     base = _write(tmp_path, "base.json", {"timeout": {"gnu": "measured-broken"}})
     cand = _write(tmp_path, "cand.json", {"timeout": {"gnu": "measured-ok"}})

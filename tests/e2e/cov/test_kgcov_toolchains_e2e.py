@@ -25,14 +25,18 @@ excluded from every default lane, selected by `make kgcov`, which
 both hosts' modules and /var/cov/otto_kmod_demo are shared bed state.
 """
 
+import asyncio
 import os
 import re
 import subprocess
+import uuid
 
 import pytest
 
 from otto.coverage.store.model import CoverageStore
+from otto.host.factory import create_host_from_dict
 from tests._ambient_env import ambient
+from tests._fixtures.labdata import element_for, host_data
 from tests.e2e._otto_subprocess import REPO5, run_otto
 from tests.e2e.cov._kmod_assertions import (
     assert_exit_routine_lines_are_hit_once_per_host,
@@ -48,8 +52,11 @@ from tests.e2e.cov._kmod_assertions import (
 from tests.e2e.cov._repo5_build import (
     BUILD,
     DEMO_SRC,
+    build_foreign_demo,
     ensure_kmod_artifacts,
+    foreign_toolchain,
     init_array_symbols,
+    note_toolchain,
     overlay_repo,
     toolchain,
 )
@@ -62,13 +69,107 @@ _NAMES = [n.strip() for n in ambient("OTTO_KGCOV_TOOLCHAINS", "").split(",") if 
 ]
 _GCOV_CONSTRUCTORS = {"_sub_I_00100_0", "__llvm_gcov_init"}
 
+_CONTROL_HOST = "test1"
+_LIBRARY = "otto_kgcov"
+_DEMO = "otto_kmod_demo"
+# The runtime symbol a library of the OTHER family does not export, one name
+# per family: what the loader's own refusal has to be about under the family
+# rule (kernel-modules.md, "Another kernel, ISA or compiler").
+_FAMILY_SYMBOLS = ("__gcov_init", "llvm_gcov_init")
+
 
 @pytest.fixture(scope="module", params=_NAMES, ids=_NAMES)
 def built_with(request, tmp_path_factory):
     """The kernel-module artifact set, rebuilt with this parameter's compiler."""
     tc = toolchain(request.param)
+    note_toolchain(request.config, tc)
     ensure_kmod_artifacts(tmp_path_factory, tc)
     return tc
+
+
+def _assert_the_log_refused_this_demo(log: str, built_with, foreign) -> None:
+    """Fail unless a line of *log* refuses THIS demo for the reason this column's rule names.
+
+    Only lines naming the demo module count. Both refusals carry that name:
+    the library prefixes its own with the consumer's module name
+    (``otto_kgcov: otto_kmod_demo: a unit … was compiled by gcc 13,
+    otto_kgcov by gcc 12; …``) and so does the loader's
+    (``otto_kmod_demo: Unknown symbol __gcov_init (err -2)``) — measured on
+    test1. A bare ``Unknown symbol`` is a generic loader complaint about any
+    module, and would otherwise let some unrelated line stand in for the
+    refusal this control exists to observe.
+
+    Which sentence is demanded follows the rule the column exercises:
+
+    - gcc against another gcc major — the library's own refusal, naming BOTH
+      majors IN ORDER (the consumer's, then its own), so the same sentence
+      left by the other direction's column does not satisfy this one.
+    - across the families — ``KGCOV_INIT()`` is never reached, so the line has
+      to name the runtime symbol the other family's library does not export.
+    """
+    lines = [line for line in log.splitlines() if _DEMO in line]
+    if "clang" in (built_with.name, foreign.name):
+        wanted = [
+            line
+            for line in lines
+            if "Unknown symbol" in line and any(sym in line for sym in _FAMILY_SYMBOLS)
+        ]
+        assert wanted, (
+            f"no line refusing {_DEMO} over {' or '.join(_FAMILY_SYMBOLS)}; "
+            f"lines naming it: {lines}"
+        )
+        return
+    sentence = re.compile(
+        rf"compiled by gcc {foreign.compiler_version.split('.')[0]}, "
+        rf"otto_kgcov by gcc {built_with.compiler_version.split('.')[0]}\b"
+    )
+    assert [line for line in lines if sentence.search(line)], (
+        f"no line refusing {_DEMO} with {sentence.pattern!r}; lines naming it: {lines}"
+    )
+
+
+async def _refusal_on_the_bed(foreign_ko) -> "tuple[bool, str, list[str]]":
+    """Load this column's library on the bed, try the foreign demo, read the kernel log.
+
+    Answers ``(demo_load_ok, kernel log after the marker, lsmod names)``.
+    Everything the control leaves behind is undone before it returns: the
+    demo (never resident, but ``unload`` is idempotent) and the library, so
+    the coverage run that follows reloads a library of its own.
+    """
+    host = create_host_from_dict(dict(host_data(_CONTROL_HOST)), element=element_for(_CONTROL_HOST))
+    async with host:
+        await host.verify_connection()
+        for name in (_DEMO, _LIBRARY):
+            unload = await host.unload(name)
+            assert unload.is_ok, f"{name}: {unload.msg}"
+        try:
+            library = await host.load(BUILD / "lib" / "otto_kgcov.ko", _LIBRARY)
+            assert library.is_ok, f"this column's library did not load: {library.msg}"
+            marker = f"kgcov-control {uuid.uuid4().hex}"
+            stamped = await host.run(f"sh -c 'echo {marker} > /dev/kmsg'", sudo=True)
+            assert stamped.is_ok, stamped.only.value
+            demo = await host.load(foreign_ko, _DEMO, params="gcov_dir=/var/cov/otto_kmod_demo")
+            # Slice on the host. The whole ring buffer is thousands of lines the
+            # host layer logs at INFO, once per column; only the window this
+            # column stamped is evidence. The marker is a literal plus a uuid
+            # hex, so it carries no sed address or shell metacharacter.
+            log = await host.run(f"sh -c \"dmesg | sed -n '/{marker}/,\\$p'\"", sudo=True)
+            assert log.is_ok, log.only.value
+            text = log.only.value
+            # No fallback to the whole buffer: the ring buffer still holds the
+            # previous column's refusal (the lane runs several columns in one
+            # session), so a lost marker must fail here rather than hand the
+            # caller a window a stale line can satisfy.
+            assert marker in text, (
+                f"the marker never reached the kernel log; the slice returned:\n{text[-3000:]}"
+            )
+            after = text[text.index(marker) :]
+            listing = await host.lsmod()
+            assert listing.is_ok, listing.msg
+            return demo.is_ok, after, list(listing.value)
+        finally:
+            for name in (_DEMO, _LIBRARY):
+                await host.unload(name)
 
 
 def _run_otto(argv, *, xdir, timeout, overlay=None):
@@ -138,6 +239,33 @@ class TestBuild:
         assert len(syms[1:-1]) == 3, syms
         assert len(set(syms[1:-1])) == 1, syms
         assert syms[1] in _GCOV_CONSTRUCTORS, syms
+
+    def test_a_demo_from_another_compiler_is_refused_at_load(self, built_with, tmp_path):
+        """The column's positive control: the library can say no.
+
+        A green coverage row is evidence only if the instrument could have
+        failed. This builds the demo with the compiler kernel-modules.md says
+        this column's library must refuse — the nearest other gcc major for a
+        gcc column (the same-major rule), the system gcc for clang (the family
+        rule) — loads THIS column's library on one bed host, tries the foreign
+        demo, and asserts the load fails, the module is not resident, and the
+        kernel log carries the documented refusal.
+
+        Order-independent, and it must stay that way: test order here is
+        randomised, so this runs before or after the coverage run as the seed
+        decides. Both modules are unloaded before and after this control, and
+        the coverage run stands up a library and a demo of its own, so no
+        counter this control could touch outlives it. Anything added here that
+        leaves bed state behind — a resident library, a file under the demo's
+        gcov directory — breaks that and needs its own ordering, not this
+        docstring.
+        """
+        foreign = foreign_toolchain(built_with.name, _NAMES)
+        ko = build_foreign_demo(foreign, tmp_path)
+        loaded, log, resident = asyncio.run(_refusal_on_the_bed(ko))
+        assert not loaded, f"{foreign.name}'s demo loaded against {built_with.name}'s library"
+        assert _DEMO not in resident, resident
+        _assert_the_log_refused_this_demo(log, built_with, foreign)
 
 
 class TestCoverage:

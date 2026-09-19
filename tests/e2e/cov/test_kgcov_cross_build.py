@@ -35,7 +35,14 @@ from pathlib import Path
 import pytest
 
 from tests._ambient_env import ambient
-from tests.e2e.cov._repo5_build import DEMO_SRC, KGCOV, init_array_symbols
+from tests.e2e.cov._repo5_build import (
+    DEMO_SRC,
+    KGCOV,
+    Toolchain,
+    compiler_version_string,
+    init_array_symbols,
+    note_toolchain,
+)
 
 pytestmark = [pytest.mark.hostless, pytest.mark.kgcov]
 
@@ -90,7 +97,7 @@ def prepared_tree() -> Path:
 
 
 @pytest.fixture(scope="module")
-def cross_build(prepared_tree, tmp_path_factory):
+def cross_build(request, prepared_tree, tmp_path_factory):
     """Both .ko's built for x86_64 in a temp dir.
 
     Returns ``(lib_ko, demo_ko, release, build_output)`` — ``build_output`` is
@@ -100,6 +107,15 @@ def cross_build(prepared_tree, tmp_path_factory):
     """
     tmp = tmp_path_factory.mktemp("kgcov_cross")
     release = (prepared_tree / "include" / "config" / "kernel.release").read_text().strip()
+    note_toolchain(
+        request.config,
+        Toolchain(
+            "x86_64-cross",
+            {},
+            compiler_version=compiler_version_string(f"{CROSS}gcc"),
+            kernel_release=release,
+        ),
+    )
     lib_build = _run_full([str(KGCOV / "build.sh"), str(tmp / "build"), release])
     demo = tmp / "demo"
     ignore = shutil.ignore_patterns(

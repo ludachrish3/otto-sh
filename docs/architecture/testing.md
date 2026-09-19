@@ -389,6 +389,12 @@ hermetic venue at its default, and 654 on the bed with every cell selected,
 plus the three bed-opener witness items, which name their own cells rather
 than taking the draw.
 
+The otto_kgcov toolchain proofs keep a sibling of the host support matrix with
+the same rules — only a run writes a verdict, every verdict carries provenance,
+a lost verdict stops the release: the
+{ref}`kgcov compatibility matrix <kgcov-matrix>`, folded by `make kgcov` and
+re-measured by `make release-kgcov-matrix`.
+
 **Not to be confused with `otto.testing.conformance`.** otto ships a second
 thing called conformance and it is unrelated: `src/otto/testing/conformance.py`
 (re-exported as `otto.testing.assert_lab_repository_conforms` and

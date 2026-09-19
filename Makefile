@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot api-snapshot check-breaking hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kgcov support-matrix web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot api-snapshot check-breaking hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kgcov kgcov-matrix release-kgcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -359,12 +359,12 @@ changelog: ## (Build & Release) Regenerate the WHOLE of CHANGELOG.md from conven
 # git-cliff/git-add/bump-my-version commands run for real (version bump +
 # CHANGELOG staged). Never dry-run this target.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) npm ci web/, Python static checks (check-python), otto_kgcov toolchain proofs (kgcov), docs, nox, build web dist, all-browser dashboard e2e, full TS gate (validate-ts, incl. merged coverage), profile, then changelog, bump, build dist (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
+release: ## (Build & Release) npm ci web/, Python static checks (check-python), otto_kgcov toolchain proofs (release-kgcov-matrix), docs, nox, build web dist, all-browser dashboard e2e, full TS gate (validate-ts, incl. merged coverage), profile, then changelog, bump, build dist (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
 	@$(MAKE) clean-dist \
 		&& $(MAKE) web-install \
 		&& $(MAKE) check-python \
 		&& $(MAKE) release-matrix \
-		&& $(MAKE) kgcov \
+		&& $(MAKE) release-kgcov-matrix \
 		&& $(MAKE) docs \
 		&& $(LEAK_DETECT) $(MAKE) nox \
 		&& $(MAKE) web \
@@ -1026,6 +1026,11 @@ conformance: ## Run the host-contract conformance suite (`conformance`-marked; e
 # new serialization together; nowhere near this cap.
 CONFORMANCE_CELLS ?= all
 CONFORMANCE_BED_TIMEOUT := 1200s
+# WARNING: `make -n conformance-bed` is NOT a dry run — the recipe is one
+# semicolon/backslash-continued line containing $(MAKE) (the `support-matrix`
+# fold below), so GNU make executes it under -n; the $(MAKE) sub-call
+# inherits -n and no-ops, but the plain `uv run pytest -m "conformance"`
+# command runs for real. Never dry-run this target.
 conformance-bed: ## Run the host-contract conformance suite against the REAL BED (dev VM only; needs the lab VMs and the Zephyr guests): the same exec/transfer/timeout contracts as `make conformance`, crossed over every (term, transfer) each bed host's menus permit. Exhaustive by default; CONFORMANCE_CELLS=N samples N cells off the session seed instead. Ends by folding what it measured into schemas/support_matrix.json (`make support-matrix`) — review the diff and commit it, or let `make release-matrix` do both when the change is not a downgrade. JUnit XML lands in reports/junit/conformance-bed/.
 	@$(SAY) "pytest: host-contract conformance, BED venue (real lab hosts, cells=$(CONFORMANCE_CELLS))"
 	@OTTO_CONFORMANCE_BED=1 OTTO_CONFORMANCE_CELLS=$(CONFORMANCE_CELLS) \
@@ -1054,11 +1059,39 @@ conformance-bed: ## Run the host-contract conformance suite against the REAL BED
 KGCOV_TOOLCHAINS ?= gcc-9,gcc-10,gcc-11,gcc-12,gcc-13,gcc-14,clang
 KGCOV_CROSS_KDIR ?= /home/vagrant/build/linux-6.8
 KGCOV_TIMEOUT := 3600s
-kgcov: ## Run the otto_kgcov toolchain proofs (`kgcov`-marked; excluded from every default lane): rebuild the kernel-module fixture with each compiler in KGCOV_TOOLCHAINS and run the kmod coverage e2e on the bed per compiler, then cross-build it for x86_64 from the kernel source tree at KGCOV_CROSS_KDIR. Dev VM only; a missing compiler or tree FAILS. Invoked by `make release`. JUnit XML lands in reports/junit/kgcov/.
+# WARNING: `make -n kgcov` is NOT a dry run — the recipe is one
+# semicolon/backslash-continued line containing $(MAKE) (the `kgcov-matrix`
+# fold below), so GNU make executes it under -n; the $(MAKE) sub-call
+# inherits -n and no-ops, but the plain `uv run pytest -m "kgcov"` command
+# runs for real. Never dry-run this target.
+kgcov: ## Run the otto_kgcov toolchain proofs (`kgcov`-marked; excluded from every default lane): rebuild the kernel-module fixture with each compiler in KGCOV_TOOLCHAINS and run the kmod coverage e2e on the bed per compiler, then cross-build it for x86_64 from the kernel source tree at KGCOV_CROSS_KDIR. Dev VM only; a missing compiler or tree FAILS. Invoked through `make release-kgcov-matrix` by `make release`. JUnit XML lands in reports/junit/kgcov/. Ends by folding what it measured into schemas/kgcov_matrix.json (`make kgcov-matrix`) — review the diff and commit it, or let `make release-kgcov-matrix` do both when the change is not a downgrade.
 	@$(SAY) "pytest: otto_kgcov toolchain proofs ($(KGCOV_TOOLCHAINS); cross tree $(KGCOV_CROSS_KDIR))"
 	@OTTO_KGCOV_TOOLCHAINS="$(KGCOV_TOOLCHAINS)" OTTO_KGCOV_CROSS_KDIR="$(KGCOV_CROSS_KDIR)" \
 	    timeout --foreground --kill-after=10s $(KGCOV_TIMEOUT) \
-	    uv run pytest -m "kgcov" -n0 --no-cov $(call junitxml,kgcov)
+	    uv run pytest -m "kgcov" -n0 --no-cov $(call junitxml,kgcov); \
+	  lane=$$?; $(MAKE) --no-print-directory kgcov-matrix; collate=$$?; \
+	  if [ $$lane -ne 0 ]; then exit $$lane; fi; exit $$collate
+
+KGCOV_MATRIX_BASELINE := reports/.kgcov-matrix-baseline.json
+
+kgcov-matrix: ## Fold the kgcov run's observation records into schemas/kgcov_matrix.json (the ONLY writer of a `measured-*` verdict there). Reads reports/kgcov-observations/, discards every record it cannot place loudly, writes a bed cell measured-ok only when the column's control passed in the same run, never downgrades a cell no run drew, and never commits — `make release-kgcov-matrix` commits an auto-acceptable refresh, and a downgrade stays yours to review.
+	@$(SAY) "collate: folding the kgcov run's observations into schemas/kgcov_matrix.json"
+	@uv run python -m scripts.collate_kgcov_matrix --write
+
+release-kgcov-matrix: ## (Build & Release) Re-measure the otto_kgcov toolchain proofs and commit schemas/kgcov_matrix.json, REFUSING a downgrade (a new measured-broken, or a lost measured-ok). The release's kgcov stage; dev VM only. Run it by hand before a release to deal with a downgrade on your own terms.
+	@$(SAY) "release: re-measuring the kgcov compatibility matrix"
+	@mkdir -p $(dir $(KGCOV_MATRIX_BASELINE))
+	@git show HEAD:schemas/kgcov_matrix.json > $(KGCOV_MATRIX_BASELINE)
+	@$(MAKE) --no-print-directory kgcov
+	@uv run python scripts/check_matrix_downgrades.py --baseline $(KGCOV_MATRIX_BASELINE) --candidate schemas/kgcov_matrix.json
+	@rm -f $(KGCOV_MATRIX_BASELINE)
+	@if git diff --quiet -- schemas/kgcov_matrix.json; then \
+	    $(SAY) "release: the kgcov matrix was already current"; \
+	  else \
+	    git add schemas/kgcov_matrix.json \
+	    && git -c core.hooksPath=/dev/null commit -q -m "chore(matrix): re-measure the kgcov matrix" \
+	    && $(SAY) "release: committed a refreshed kgcov matrix"; \
+	  fi
 
 # The collate step -- spec §5's fold of a run's observation records into the
 # committed matrix. THE ONLY WRITER OF A `measured-*` VERDICT.
@@ -1458,12 +1491,20 @@ check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; R
 # schemas/support_matrix.json and its renderer are docs inputs like any page:
 # docs/architecture/support-matrix.md is rendered from them at builder-inited, so a
 # re-collated matrix has to re-trigger the build the same way editing a page does.
+# schemas/kgcov_matrix.json and its renderer are the same shape, for the
+# instrumenting docs' kgcov-matrix page: without both entries here, a release
+# where `release-kgcov-matrix` refreshes the artifact but no docs/** file
+# changed leaves docs/_build/html/index.html newer than every listed input,
+# `make docs` no-ops, and the release publishes a page disagreeing with the
+# artifact it just committed.
 SPHINX_SRCS :=  docs/conf.py                        \
                 $(shell find docs -name '*.rst')    \
                 $(shell find docs -name '*.md')    \
                 $(shell find src/otto -name '*.py') \
                 schemas/support_matrix.json         \
                 scripts/render_support_matrix.py    \
+                schemas/kgcov_matrix.json           \
+                scripts/render_kgcov_matrix.py      \
 
 docs: docs-lint docs-html doctest doctest-src ## (Docs) Build HTML docs + Sphinx & src doctests (sub-targets: docs-lint, docs-html, doctest, doctest-src, docs-inventories)
 

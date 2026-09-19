@@ -2030,23 +2030,34 @@ def test_the_kgcov_tier_still_has_a_lane():
     )
 
 
-def test_release_invokes_the_kgcov_lane():
-    """G12c: the release is what blesses this tier, so its recipe must call the lane.
+def test_release_invokes_the_kgcov_matrix_stage_which_runs_the_lane():
+    """G12c: the release blesses this tier through its re-measure stage.
 
-    Derived at both ends: the lane from the recipe that selects the marker,
-    the call from the release recipe's own text, so either may be renamed and
-    the guard follows.
+    `make release` invokes `release-kgcov-matrix`, and that recipe invokes
+    the lane that selects the marker — derived at both ends from the
+    Makefile's own text, so either may be renamed and the guard follows.
     """
     lanes = _makefile_targets_selecting("kgcov")
     assert lanes, "no Makefile target positively selects `-m kgcov` (G12b covers this)"
-    release = _makefile_recipes().get("release")
+    recipes = _makefile_recipes()
+    release = recipes.get("release")
     assert release, "no `release:` recipe with a body found in the Makefile (guard misparse?)"
+    stage = "release-kgcov-matrix"
+    assert re.search(rf"\$\(MAKE\)\s+{re.escape(stage)}\b(?![-\w])", release), (
+        f"`make release` does not invoke `{stage}`"
+    )
+    stage_recipe = recipes.get(stage)
+    assert stage_recipe, f"no `{stage}:` recipe with a body found in the Makefile"
     invoked = [
-        lane for lane in lanes if re.search(rf"\$\(MAKE\)\s+{re.escape(lane)}\b(?![-\w])", release)
+        lane
+        for lane in lanes
+        if re.search(
+            rf"\$\(MAKE\)\s+(--no-print-directory\s+)?{re.escape(lane)}\b(?![-\w])", stage_recipe
+        )
     ]
-    assert invoked, (
-        f"`make release` invokes none of {lanes} — the otto_kgcov toolchain tier is "
-        f"excluded from every default lane (G12) and blessed by no release"
+    assert invoked, f"`make {stage}` invokes none of {lanes}"
+    assert not re.search(r"\$\(MAKE\)\s+kgcov\b(?![-\w])", release), (
+        "`make release` still invokes `kgcov` directly beside the matrix stage — one run, not two"
     )
 
 

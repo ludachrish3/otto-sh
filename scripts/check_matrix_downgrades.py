@@ -147,7 +147,7 @@ def main(argv: "list[str]") -> int:
         print(
             f"\nmatrix gate: REFUSING to auto-commit {len(blocking)} cell(s). This is either a "
             f"regression the release must not ship, or a gap worth recording on purpose. "
-            f"Review the diff, commit schemas/support_matrix.json yourself, and re-run.",
+            f"Review the diff, commit {args.candidate} yourself, and re-run.",
             file=sys.stderr,
         )
         return 1

@@ -174,7 +174,9 @@ exports only its own family's runtime symbols, so `insmod` fails with
 `Unknown symbol __gcov_init` (a gcc consumer on a clang-built library) or
 `Unknown symbol llvm_gcov_init` (the reverse).
 clang's format does not change across clang versions, so for clang the rule
-is just the family and kbuild's own floor of clang 11.
+is just the family and kbuild's own floor of clang 11. What each installed
+compiler was last measured to do, contract by contract, is the
+{ref}`compatibility matrix <kgcov-matrix>`.
 
 Both build scripts — the library's `build.sh` and the fixture's
 `kmod/build.sh` — take the kernel tree and the toolchain from the

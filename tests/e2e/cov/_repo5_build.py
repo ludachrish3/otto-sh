@@ -39,6 +39,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
+
 from otto.coverage.store.model import CoverageStore, FileRecord
 from tests._fixtures.gitrepo import git_env
 from tests._fixtures.paths import PROJECT_ROOT
@@ -109,9 +111,40 @@ class Toolchain:
     matrix's green is that discovery's proof. :func:`toolchain` still
     requires the tool up front, so a missing one fails naming its package.
     """
+    compiler_version: str = ""
+    """The compiler's own full version (``-dumpfullversion``; clang ``-dumpversion``).
+
+    Provenance for the kgcov matrix: the column is the NAME the lane selects
+    by (``gcc-12``, ``clang``), and this is what that name resolved to on the
+    machine that measured. Empty only on :data:`DEFAULT_TOOLCHAIN`, which is
+    no matrix column.
+    """
+    kernel_release: str = ""
+    """The kernel release the modules were built for (the bed's running kernel
+    for a bed build; the cross tree's ``include/config/kernel.release``)."""
 
 
 DEFAULT_TOOLCHAIN = Toolchain("default", {})
+
+TOOLCHAINS_KEY = pytest.StashKey["dict[str, Toolchain]"]()
+"""``config.stash`` slot: profile id -> the :class:`Toolchain` a fixture built with.
+
+Filled by the ``built_with`` fixture (bed columns) and ``cross_build``
+(``x86_64-cross``), read by the kgcov observation hook
+(``tests/e2e/cov/_kgcov_observation.py``) — the hook has an item and its
+callspec, which carry the NAME, and this is how the name reaches the
+version and release the fixture already measured, without probing again.
+"""
+
+
+def note_toolchain(config: pytest.Config, tc: Toolchain) -> None:
+    """Record *tc* under its name for the observation hook."""
+    slot = config.stash.get(TOOLCHAINS_KEY, None)
+    if slot is None:
+        slot = {}
+        config.stash[TOOLCHAINS_KEY] = slot
+    slot[tc.name] = tc
+
 
 # Why clang, and only clang, needs lcov talked round.
 #
@@ -151,11 +184,15 @@ def kernel_config(kdir: Path) -> str:
     return config.read_text() if config.is_file() else ""
 
 
+def compiler_version_string(cc: str) -> str:
+    """*cc*'s full dotted version, as the compiler prints it: ``12.3.0``, ``18.1.3``."""
+    flag = "-dumpversion" if "clang" in cc else "-dumpfullversion"
+    return subprocess.run([cc, flag], check=True, capture_output=True, text=True).stdout.strip()
+
+
 def compiler_version_number(cc: str) -> int:
     """kbuild's numeric version for *cc*: 18.1.3 -> 180103, 9.5.0 -> 90500."""
-    flag = "-dumpversion" if "clang" in cc else "-dumpfullversion"
-    out = subprocess.run([cc, flag], check=True, capture_output=True, text=True).stdout.strip()
-    parts = [int(x) for x in out.split(".")[:3]] + [0, 0]
+    parts = [int(x) for x in compiler_version_string(cc).split(".")[:3]] + [0, 0]
     return parts[0] * 10000 + parts[1] * 100 + parts[2]
 
 
@@ -185,7 +222,13 @@ def toolchain(name: str, kdir: Path | None = None) -> Toolchain:
         env = {"LLVM": "1"}
         if "CONFIG_CC_IS_GCC=y" in config:
             env["KMAKEFLAGS"] = CLANG_ON_GCC_KERNEL.format(version=compiler_version_number("clang"))
-        return Toolchain(name, env, lcov_args=list(CLANG_LCOV_ARGS))
+        return Toolchain(
+            name,
+            env,
+            lcov_args=list(CLANG_LCOV_ARGS),
+            compiler_version=compiler_version_string("clang"),
+            kernel_release=os.uname().release,
+        )
     _require(name, f"install it (apt install {name}) or drop it from OTTO_KGCOV_TOOLCHAINS")
     gcov = name.replace("gcc", "gcov", 1)
     _require(
@@ -202,7 +245,82 @@ def toolchain(name: str, kdir: Path | None = None) -> Toolchain:
             if actual // 10000 < floor and f"{option}=y" in config
         ]
         env["KMAKEFLAGS"] = " ".join([f"CONFIG_GCC_VERSION={actual}", *off])
-    return Toolchain(name, env)
+    return Toolchain(
+        name,
+        env,
+        compiler_version=compiler_version_string(name),
+        kernel_release=os.uname().release,
+    )
+
+
+def foreign_toolchain(name: str, names: "list[str]") -> Toolchain:
+    """The compiler whose demo *name*'s library must REFUSE, from the lane's own list.
+
+    The control has to exercise the rule the docs state for this column
+    (docs/cli/cov/instrumenting/kernel-modules.md, "Another kernel, ISA or
+    compiler"): for a ``gcc-N`` column the same-major rule, so the foreign
+    compiler is the nearest OTHER gcc major *names* holds; for the ``clang``
+    column the family rule, so it is the system gcc. A gcc column in a list
+    with no second gcc falls back to the family rule too (``clang``), and the
+    ``default`` column takes ``clang`` as well. Every arm goes through
+    :func:`toolchain`, so the foreign build gets the same treatment a column's
+    own does — the unversioned name ``gcc`` included (its ``gcov`` is
+    required, and an older system gcc gets the ``CONFIG_GCC_VERSION``
+    compensation) — and a foreign compiler that is not installed fails there,
+    naming it: the control never skips.
+    """
+    if name == "clang":
+        return toolchain("gcc")
+    if name.startswith("gcc-"):
+        mine = int(name.split("-", 1)[1])
+        others = [int(n.split("-", 1)[1]) for n in names if n.startswith("gcc-") and n != name]
+        if others:
+            return toolchain(f"gcc-{min(others, key=lambda major: (abs(major - mine), major))}")
+    return toolchain("clang")
+
+
+def build_foreign_demo(tc: Toolchain, root: Path) -> Path:
+    """Build a COPY of the demo with *tc* against the library already in ``BUILD/lib``.
+
+    The in-place fixture build belongs to the column under test and stays
+    untouched; the copy is built the way the cross build builds its own copy
+    (``test_kgcov_cross_build.py``). ``KBUILD_MODPOST_WARN=1``: a gcc demo
+    against a clang library (or the reverse) references a runtime symbol the
+    library does not export, and modpost would otherwise FAIL THE BUILD on it
+    — the family rule has to be allowed to reach ``insmod``, where the
+    documented refusal lives. Answers the built ``.ko``.
+    """
+    demo = root / "foreign_demo"
+    ignore = shutil.ignore_patterns(
+        "*.o",
+        "*.ko",
+        "*.mod*",
+        "*.cmd",
+        "*.gcno",
+        "*.gcda",
+        "Module.symvers",
+        "modules.order",
+        ".*",
+    )
+    shutil.copytree(DEMO_SRC, demo, ignore=ignore)
+    env = {**os.environ, **tc.env}
+    env["KMAKEFLAGS"] = f"{tc.env.get('KMAKEFLAGS', '')} KBUILD_MODPOST_WARN=1".strip()
+    try:
+        subprocess.run(
+            ["make", "-C", str(demo), f"KDIR={running_kernel_kdir()}", f"KGCOV={BUILD / 'lib'}"],
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise AssertionError(
+            f"foreign demo build with {tc.name} failed (exit {exc.returncode}):\n"
+            f"stdout:\n{exc.stdout}\nstderr:\n{exc.stderr}"
+        ) from exc
+    ko = demo / "otto_kmod_demo.ko"
+    assert ko.is_file(), f"{tc.name} built no {ko}"
+    return ko
 
 
 def _lcov_wrapper(tc: Toolchain, root: Path) -> str:

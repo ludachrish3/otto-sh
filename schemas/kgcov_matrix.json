@@ -1,0 +1,482 @@
+{
+  "$schema": "./kgcov-matrix.schema.json",
+  "format": 1,
+  "surfaces": [
+    {
+      "id": "build-names-compiler",
+      "title": "build: both modules name the requested compiler",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestBuild::test_both_modules_name_the_requested_compiler",
+      "control": false
+    },
+    {
+      "id": "build-init-array-bracket",
+      "title": "build: the .init_array is bracketed by the sentinels",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestBuild::test_the_init_array_is_bracketed_by_the_sentinels",
+      "control": false
+    },
+    {
+      "id": "refuses-other-compiler",
+      "title": "control: a demo from another compiler is refused at load",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load",
+      "control": true
+    },
+    {
+      "id": "fetch-only-the-demo",
+      "title": "coverage: only the demo is fetched from the two hosts",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_only_the_demo_is_fetched_from_the_two_hosts",
+      "control": false
+    },
+    {
+      "id": "three-gcda-per-host",
+      "title": "coverage: three .gcda per host",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_three_gcda_per_host",
+      "control": false
+    },
+    {
+      "id": "library-uninstrumented",
+      "title": "coverage: the run log says the library is not instrumented",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_is_not_instrumented",
+      "control": false
+    },
+    {
+      "id": "store-three-demo-files",
+      "title": "coverage: the store has the three demo files",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_store_has_the_three_demo_files",
+      "control": false
+    },
+    {
+      "id": "policy-hits",
+      "title": "coverage: policy paths have the expected hits",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_policy_paths_have_the_expected_hits",
+      "control": false
+    },
+    {
+      "id": "parse-hits",
+      "title": "coverage: parse hits",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_parse_hits",
+      "control": false
+    },
+    {
+      "id": "exit-routine-once-per-host",
+      "title": "coverage: exit-routine lines are hit once per host",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_exit_routine_lines_are_hit_once_per_host",
+      "control": false
+    },
+    {
+      "id": "policy-branches",
+      "title": "coverage: branches are recorded for the policy switch",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_branches_are_recorded_for_the_policy_switch",
+      "control": false
+    },
+    {
+      "id": "mid-dump-no-double-count",
+      "title": "coverage: the mid-suite dump does not double count",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_mid_suite_dump_does_not_double_count",
+      "control": false
+    },
+    {
+      "id": "cross-release",
+      "title": "cross: both modules carry the tree's release",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kgcov_cross_build.py::test_both_modules_carry_the_trees_release",
+      "control": false
+    },
+    {
+      "id": "cross-x86_64-objects",
+      "title": "cross: both modules are x86_64 objects",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kgcov_cross_build.py::test_both_modules_are_x86_64_objects",
+      "control": false
+    },
+    {
+      "id": "cross-compiler-built",
+      "title": "cross: the cross compiler built them",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kgcov_cross_build.py::test_the_cross_compiler_built_them",
+      "control": false
+    },
+    {
+      "id": "cross-instrumented-bracketed",
+      "title": "cross: the demo is instrumented and bracketed",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kgcov_cross_build.py::test_the_demo_is_instrumented_and_bracketed",
+      "control": false
+    },
+    {
+      "id": "cross-fixture-untouched",
+      "title": "cross: the in-place fixture build was not touched",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kgcov_cross_build.py::test_the_in_place_fixture_build_was_not_touched",
+      "control": false
+    },
+    {
+      "id": "cross-linked-against-library",
+      "title": "cross: the demo linked against the library",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kgcov_cross_build.py::test_the_demo_linked_against_the_library",
+      "control": false
+    }
+  ],
+  "profiles": [
+    {
+      "id": "gcc-9",
+      "title": "gcc-9",
+      "venue": "bed"
+    },
+    {
+      "id": "gcc-10",
+      "title": "gcc-10",
+      "venue": "bed"
+    },
+    {
+      "id": "gcc-11",
+      "title": "gcc-11",
+      "venue": "bed"
+    },
+    {
+      "id": "gcc-12",
+      "title": "gcc-12",
+      "venue": "bed"
+    },
+    {
+      "id": "gcc-13",
+      "title": "gcc-13",
+      "venue": "bed"
+    },
+    {
+      "id": "gcc-14",
+      "title": "gcc-14",
+      "venue": "bed"
+    },
+    {
+      "id": "clang",
+      "title": "clang",
+      "venue": "bed"
+    },
+    {
+      "id": "x86_64-cross",
+      "title": "x86_64 cross build",
+      "venue": "build"
+    }
+  ],
+  "cells": {
+    "build-names-compiler": {
+      "gcc-9": {
+        "status": "untested"
+      },
+      "gcc-10": {
+        "status": "untested"
+      },
+      "gcc-11": {
+        "status": "untested"
+      },
+      "gcc-12": {
+        "status": "untested"
+      },
+      "gcc-13": {
+        "status": "untested"
+      },
+      "gcc-14": {
+        "status": "untested"
+      },
+      "clang": {
+        "status": "untested"
+      }
+    },
+    "build-init-array-bracket": {
+      "gcc-9": {
+        "status": "untested"
+      },
+      "gcc-10": {
+        "status": "untested"
+      },
+      "gcc-11": {
+        "status": "untested"
+      },
+      "gcc-12": {
+        "status": "untested"
+      },
+      "gcc-13": {
+        "status": "untested"
+      },
+      "gcc-14": {
+        "status": "untested"
+      },
+      "clang": {
+        "status": "untested"
+      }
+    },
+    "refuses-other-compiler": {
+      "gcc-9": {
+        "status": "untested"
+      },
+      "gcc-10": {
+        "status": "untested"
+      },
+      "gcc-11": {
+        "status": "untested"
+      },
+      "gcc-12": {
+        "status": "untested"
+      },
+      "gcc-13": {
+        "status": "untested"
+      },
+      "gcc-14": {
+        "status": "untested"
+      },
+      "clang": {
+        "status": "untested"
+      }
+    },
+    "fetch-only-the-demo": {
+      "gcc-9": {
+        "status": "untested"
+      },
+      "gcc-10": {
+        "status": "untested"
+      },
+      "gcc-11": {
+        "status": "untested"
+      },
+      "gcc-12": {
+        "status": "untested"
+      },
+      "gcc-13": {
+        "status": "untested"
+      },
+      "gcc-14": {
+        "status": "untested"
+      },
+      "clang": {
+        "status": "untested"
+      }
+    },
+    "three-gcda-per-host": {
+      "gcc-9": {
+        "status": "untested"
+      },
+      "gcc-10": {
+        "status": "untested"
+      },
+      "gcc-11": {
+        "status": "untested"
+      },
+      "gcc-12": {
+        "status": "untested"
+      },
+      "gcc-13": {
+        "status": "untested"
+      },
+      "gcc-14": {
+        "status": "untested"
+      },
+      "clang": {
+        "status": "untested"
+      }
+    },
+    "library-uninstrumented": {
+      "gcc-9": {
+        "status": "untested"
+      },
+      "gcc-10": {
+        "status": "untested"
+      },
+      "gcc-11": {
+        "status": "untested"
+      },
+      "gcc-12": {
+        "status": "untested"
+      },
+      "gcc-13": {
+        "status": "untested"
+      },
+      "gcc-14": {
+        "status": "untested"
+      },
+      "clang": {
+        "status": "untested"
+      }
+    },
+    "store-three-demo-files": {
+      "gcc-9": {
+        "status": "untested"
+      },
+      "gcc-10": {
+        "status": "untested"
+      },
+      "gcc-11": {
+        "status": "untested"
+      },
+      "gcc-12": {
+        "status": "untested"
+      },
+      "gcc-13": {
+        "status": "untested"
+      },
+      "gcc-14": {
+        "status": "untested"
+      },
+      "clang": {
+        "status": "untested"
+      }
+    },
+    "policy-hits": {
+      "gcc-9": {
+        "status": "untested"
+      },
+      "gcc-10": {
+        "status": "untested"
+      },
+      "gcc-11": {
+        "status": "untested"
+      },
+      "gcc-12": {
+        "status": "untested"
+      },
+      "gcc-13": {
+        "status": "untested"
+      },
+      "gcc-14": {
+        "status": "untested"
+      },
+      "clang": {
+        "status": "untested"
+      }
+    },
+    "parse-hits": {
+      "gcc-9": {
+        "status": "untested"
+      },
+      "gcc-10": {
+        "status": "untested"
+      },
+      "gcc-11": {
+        "status": "untested"
+      },
+      "gcc-12": {
+        "status": "untested"
+      },
+      "gcc-13": {
+        "status": "untested"
+      },
+      "gcc-14": {
+        "status": "untested"
+      },
+      "clang": {
+        "status": "untested"
+      }
+    },
+    "exit-routine-once-per-host": {
+      "gcc-9": {
+        "status": "untested"
+      },
+      "gcc-10": {
+        "status": "untested"
+      },
+      "gcc-11": {
+        "status": "untested"
+      },
+      "gcc-12": {
+        "status": "untested"
+      },
+      "gcc-13": {
+        "status": "untested"
+      },
+      "gcc-14": {
+        "status": "untested"
+      },
+      "clang": {
+        "status": "untested"
+      }
+    },
+    "policy-branches": {
+      "gcc-9": {
+        "status": "untested"
+      },
+      "gcc-10": {
+        "status": "untested"
+      },
+      "gcc-11": {
+        "status": "untested"
+      },
+      "gcc-12": {
+        "status": "untested"
+      },
+      "gcc-13": {
+        "status": "untested"
+      },
+      "gcc-14": {
+        "status": "untested"
+      },
+      "clang": {
+        "status": "untested"
+      }
+    },
+    "mid-dump-no-double-count": {
+      "gcc-9": {
+        "status": "untested"
+      },
+      "gcc-10": {
+        "status": "untested"
+      },
+      "gcc-11": {
+        "status": "untested"
+      },
+      "gcc-12": {
+        "status": "untested"
+      },
+      "gcc-13": {
+        "status": "untested"
+      },
+      "gcc-14": {
+        "status": "untested"
+      },
+      "clang": {
+        "status": "untested"
+      }
+    },
+    "cross-release": {
+      "x86_64-cross": {
+        "status": "untested"
+      }
+    },
+    "cross-x86_64-objects": {
+      "x86_64-cross": {
+        "status": "untested"
+      }
+    },
+    "cross-compiler-built": {
+      "x86_64-cross": {
+        "status": "untested"
+      }
+    },
+    "cross-instrumented-bracketed": {
+      "x86_64-cross": {
+        "status": "untested"
+      }
+    },
+    "cross-fixture-untouched": {
+      "x86_64-cross": {
+        "status": "untested"
+      }
+    },
+    "cross-linked-against-library": {
+      "x86_64-cross": {
+        "status": "untested"
+      }
+    }
+  }
+}
