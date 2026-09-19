@@ -32,8 +32,10 @@ release.
 - Any change to the host matrix's code (`tests/_fixtures/support_matrix.py`,
   `scripts/collate_support_matrix.py`, `scripts/render_support_matrix.py`). This matrix
   is a sibling with the same three rules, not a second consumer of a shared core.
-  `scripts/check_matrix_downgrades.py` is reused as is: it is pure over two JSON files and
-  reads only `cells[surface][profile].status`, which this artifact spells the same way.
+  `scripts/check_matrix_downgrades.py` is shared, not forked: it is pure over two JSON
+  files and reads only `cells[surface][profile].status`, which this artifact spells the
+  same way. Its one change is a message interpolation — its refusal now names the
+  candidate file it declined to commit, since it is no longer always the host matrix.
 - A CI path. The lane needs the beds and the dev VM's compilers; the observation records
   come from `make kgcov` there, nowhere else.
 
@@ -95,6 +97,7 @@ collation reads as evidence). A record:
 ```json
 {"kind": "observation", "format": 1,
  "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_parse_hits",
+ "item": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_parse_hits[gcc-12]",
  "profile": "gcc-12", "venue": "bed", "outcome": "passed",
  "compiler_version": "12.3.0", "kernel_release": "6.8.0-86-generic",
  "as_of": "2026-09-18", "run_id": "<one id per pytest session>"}
@@ -106,10 +109,23 @@ build helper already probes it, and `kernel_release` is the release the modules 
 for (the bed's running kernel; the cross tree's `include/config/kernel.release`). The hook
 takes both from the fixture's `Toolchain` value through the item's callspec, not by probing
 again. Records from one session share a `run_id`, so the collate step can require the
-control and the contract to come from the same run.
+control and the contract to come from the same run. `item` is the parametrised nodeid,
+which `nodeid` deliberately is not: the collate step's discard report names the item it
+threw away, and a keyed nodeid could not tell one column's record from another's.
 
-The old records of a directory are removed at session start by the same hook, so a folded
-run is never contaminated by an earlier one's leftovers.
+`compiler_version` and `kernel_release` may be null, and are whenever the fixture failed
+before it produced a toolchain — a compiler no longer on the VM's PATH. The collate step
+discards such a record and says so with its reason: a verdict without a version is a
+verdict about nothing, and the artifact's schema cannot carry one. This is the one
+exception to the rule below that an errored contract turns its drawn cell
+`measured-broken`. The consequence is deliberate and worth stating: a column whose
+compiler vanished keeps the cells a previous run drew, and it is the lane's non-zero exit,
+not the artifact, that stops the release.
+
+The old records of a directory are removed by the same hook at its FIRST WRITE, not at
+session start: the e2e conftest that carries the hook is loaded by every routine
+`make coverage` too, and an unconditional session-start clear would wipe a measured run's
+records on the next coverage run that placed no kgcov item at all.
 
 ### 4.3 The positive control
 
@@ -122,8 +138,12 @@ holds, so the same-major rule is what refuses it; for the `clang` column, the sy
 so the family rule is), loads this column's library on one bed host, attempts to load the
 foreign demo, and asserts the load fails and the kernel log carries the documented text
 (the registration refusal "compiled by gcc N, otto_kgcov by gcc M" or the loader's
-`Unknown symbol`), then unloads the library. It runs BEFORE the coverage run, on a library
-the coverage run then reloads, so nothing it leaves behind can leak into the counters.
+`Unknown symbol`), then unloads the library. It is ORDER-INDEPENDENT with respect to the
+coverage run, which is what the randomised test order in this tree requires: both modules
+are unloaded before and after the control, and the coverage run stands up a library and a
+demo of its own, so no counter the control could touch outlives it. The order is not
+enforced and must not be relied on; bed state left resident by a future addition to the
+control would break this and would need its own ordering.
 
 The row `refuses-other-compiler` is both a contract (it appears in the grid) and the
 column's control: the collate step refuses `measured-ok` for any cell in a column whose
@@ -243,5 +263,6 @@ state, and `make docs` renders the page from it.
 ## 7. Compatibility
 
 Nothing existing changes shape. The host matrix, its scripts and its schema are untouched;
-`check_matrix_downgrades.py` gains a second caller, not a change. `make kgcov` keeps its
+`check_matrix_downgrades.py` gains a second caller and, for it, one interpolated word in
+its refusal — the candidate path it declined to commit. `make kgcov` keeps its
 knobs and its exit code and additionally folds.
