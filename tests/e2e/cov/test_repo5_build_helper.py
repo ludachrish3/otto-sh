@@ -30,8 +30,36 @@ def gcc13_kdir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def compilers_present(monkeypatch):
+def compilers_present(monkeypatch) -> dict[str, str]:
+    """Every compiler on PATH, every version probe answered, and NOTHING run.
+
+    Returns the version table the arms fill -- ``compilers_present["gcc-9"] =
+    "9.5.0"`` -- read by the patched :func:`helper.compiler_version_string`,
+    which is the single seam every version goes through: ``toolchain`` asks it
+    once through :func:`helper.compiler_version_number` for kbuild's numeric
+    version and once directly for the stamp on the :class:`helper.Toolchain`.
+    Patching the derived ``compiler_version_number`` instead leaves that second
+    call exec'ing the real compiler, so each arm passed or failed on whether
+    the machine happened to have the gcc it names -- green on a dev box with
+    every gcc installed, red on a CI runner with three of them (issue #405).
+
+    Banning ``subprocess.run`` for the duration is what keeps that from coming
+    back: a probe that escapes the patch is an AssertionError on EVERY machine
+    rather than a red only where the compiler is absent.
+    """
+    versions: dict[str, str] = {}
+
+    def version_of(cc: str) -> str:
+        assert cc in versions, f"no version set for {cc}; compilers_present has {sorted(versions)}"
+        return versions[cc]
+
+    def no_compiler_runs(argv, **kwargs):
+        raise AssertionError(f"this file runs no compiler; {argv} escaped the patched probes")
+
     monkeypatch.setattr(helper.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(helper, "compiler_version_string", version_of)
+    monkeypatch.setattr(helper.subprocess, "run", no_compiler_runs)
+    return versions
 
 
 def test_default_toolchain_adds_nothing_to_the_environment():
@@ -39,17 +67,17 @@ def test_default_toolchain_adds_nothing_to_the_environment():
     assert helper.DEFAULT_TOOLCHAIN.env == {}
 
 
-def test_a_gcc_newer_than_or_equal_to_the_kernels_only_sets_cc(
-    gcc13_kdir, compilers_present, monkeypatch
-):
-    monkeypatch.setattr(helper, "compiler_version_number", lambda cc: 140200)
-    assert helper.toolchain("gcc-14", gcc13_kdir).env == {"CC": "gcc-14"}
+def test_a_gcc_newer_than_or_equal_to_the_kernels_only_sets_cc(gcc13_kdir, compilers_present):
+    compilers_present["gcc-14"] = "14.2.0"
+    tc = helper.toolchain("gcc-14", gcc13_kdir)
+    assert tc.env == {"CC": "gcc-14"}
+    assert tc.compiler_version == "14.2.0"
 
 
 def test_an_older_gcc_tells_kbuild_its_version_and_drops_the_options_it_lacks(
-    gcc13_kdir, compilers_present, monkeypatch
+    gcc13_kdir, compilers_present
 ):
-    monkeypatch.setattr(helper, "compiler_version_number", lambda cc: 110500)
+    compilers_present["gcc-11"] = "11.5.0"
     env = helper.toolchain("gcc-11", gcc13_kdir).env
     assert env["CC"] == "gcc-11"
     flags = env["KMAKEFLAGS"].split()
@@ -59,27 +87,25 @@ def test_an_older_gcc_tells_kbuild_its_version_and_drops_the_options_it_lacks(
     assert set(flags[1:]) == {"CONFIG_SHADOW_CALL_STACK=", "CONFIG_INIT_STACK_ALL_ZERO="}
 
 
-def test_an_older_gcc_drops_only_options_the_kernel_turned_on(
-    tmp_path, compilers_present, monkeypatch
-):
+def test_an_older_gcc_drops_only_options_the_kernel_turned_on(tmp_path, compilers_present):
     (tmp_path / ".config").write_text("CONFIG_CC_IS_GCC=y\nCONFIG_GCC_VERSION=130300\n")
-    monkeypatch.setattr(helper, "compiler_version_number", lambda cc: 90500)
+    compilers_present["gcc-9"] = "9.5.0"
     assert helper.toolchain("gcc-9", tmp_path).env["KMAKEFLAGS"] == "CONFIG_GCC_VERSION=90500"
 
 
 def test_clang_on_a_gcc_kernel_uses_llvm_and_the_gcc_kernel_overrides(
-    gcc13_kdir, compilers_present, monkeypatch
+    gcc13_kdir, compilers_present
 ):
-    monkeypatch.setattr(helper, "compiler_version_number", lambda cc: 180103)
+    compilers_present["clang"] = "18.1.3"
     env = helper.toolchain("clang", gcc13_kdir).env
     assert env["LLVM"] == "1"
     assert "CC" not in env
     assert env["KMAKEFLAGS"] == helper.CLANG_ON_GCC_KERNEL.format(version=180103)
 
 
-def test_clang_on_a_clang_kernel_needs_no_overrides(tmp_path, compilers_present, monkeypatch):
+def test_clang_on_a_clang_kernel_needs_no_overrides(tmp_path, compilers_present):
     (tmp_path / ".config").write_text("CONFIG_CC_IS_CLANG=y\nCONFIG_CLANG_VERSION=170000\n")
-    monkeypatch.setattr(helper, "compiler_version_number", lambda cc: 180103)
+    compilers_present["clang"] = "18.1.3"
     assert helper.toolchain("clang", tmp_path).env == {"LLVM": "1"}
 
 
@@ -227,8 +253,8 @@ def test_init_array_symbols_fails_on_a_module_without_the_section(monkeypatch, t
 # the package, rather than in otto's report.
 
 
-def test_a_gcc_requires_its_gcov_and_configures_nothing(gcc13_kdir, compilers_present, monkeypatch):
-    monkeypatch.setattr(helper, "compiler_version_number", lambda cc: 120300)
+def test_a_gcc_requires_its_gcov_and_configures_nothing(gcc13_kdir, compilers_present):
+    compilers_present["gcc-12"] = "12.3.0"
     tc = helper.toolchain("gcc-12", gcc13_kdir)
     assert tc.lcov_args == []
     assert helper.overlay_lab(tc, gcc13_kdir / "overlay") is None
@@ -236,7 +262,6 @@ def test_a_gcc_requires_its_gcov_and_configures_nothing(gcc13_kdir, compilers_pr
 
 
 def test_a_gcc_whose_gcov_is_missing_fails_naming_the_compiler(gcc13_kdir, monkeypatch):
-    monkeypatch.setattr(helper, "compiler_version_number", lambda cc: 120300)
     monkeypatch.setattr(
         helper.shutil, "which", lambda name: None if "gcov" in name else f"/x/{name}"
     )
@@ -244,15 +269,12 @@ def test_a_gcc_whose_gcov_is_missing_fails_naming_the_compiler(gcc13_kdir, monke
         helper.toolchain("gcc-12", gcc13_kdir)
 
 
-def test_clang_requires_llvm_cov_and_carries_the_ignore_errors_pair(
-    gcc13_kdir, compilers_present, monkeypatch
-):
-    monkeypatch.setattr(helper, "compiler_version_number", lambda cc: 180103)
+def test_clang_requires_llvm_cov_and_carries_the_ignore_errors_pair(gcc13_kdir, compilers_present):
+    compilers_present["clang"] = "18.1.3"
     assert helper.toolchain("clang", gcc13_kdir).lcov_args == ["--ignore-errors", "source"]
 
 
 def test_clang_without_llvm_cov_fails_naming_llvm(gcc13_kdir, monkeypatch):
-    monkeypatch.setattr(helper, "compiler_version_number", lambda cc: 180103)
     monkeypatch.setattr(
         helper.shutil, "which", lambda name: None if name == "llvm-cov" else f"/usr/bin/{name}"
     )
