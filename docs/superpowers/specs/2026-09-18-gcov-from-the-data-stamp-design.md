@@ -112,10 +112,15 @@ trees collected before this change.
   that returns the toolchain the stamp names (or `None` for "the default"), raising the
   named error of §4.2. `discover_toolchain_from_gcno` stays for the embedded build-dir
   path that calls it at collect time.
-- `src/otto/coverage/reporter.py`: `_resolve_toolchains` applies §4.1 per gcda
-  directory; the per-run `.gcno` fallback it has today becomes the per-directory
-  `.gcda` rule (the `.gcno` sample under the source root was the wrong granularity:
-  one run can hold a clang product and a gcc product).
+- `src/otto/coverage/toolchains.py`: `resolve_toolchains(gcda_dirs, recorded)`, the §4.1
+  rule per gcda directory, parallel to `gcda_dirs`. It has TWO consumers, and both must
+  use it: `src/otto/coverage/reporter.py`'s `_resolve_toolchains` (the per-run `.gcno`
+  fallback it had becomes this per-directory `.gcda` rule; the `.gcno` sample under the
+  source root was the wrong granularity: one run can hold a clang product and a gcc
+  product) and `src/otto/coverage/capture/produce.py`'s `produce_captures`, the capture
+  tail `otto test --cov` runs before any report, which resolved the toolchain from the
+  recorded entries alone and so ran the system gcov on every unconfigured host (found by
+  the live matrix, 2026-09-19: only the system-compiler arm passed).
 - `src/otto/coverage/collect.py`: §4.3, and the comment that argued the opposite goes.
 - `src/otto/host/errors.py`: the new error class for §4.2, `CoverageToolMissingError`, an
   `OttoError` rooted at `RuntimeError`. It cannot sit beside `CoverageToolVersionError` in
