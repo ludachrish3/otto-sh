@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * otto_kgcov: the runtime behind kgcov.h. One client per registered module;
- * each client owns an ACCUMULATOR per instrumented object (a private
+ * otto_kgcov: the runtime behind kgcov.h. One client per registered module,
+ * filled by the consumer's own gcov constructors, which kgcov_register()
+ * runs; each client owns an ACCUMULATOR per instrumented object (a private
  * gcov_info copy). A dump adds the live counters into the accumulator,
  * zeroes the live ones and writes the accumulator out, so the file on disk
  * is always the module's total since register (or the last reset) and two
@@ -15,13 +16,14 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/namei.h>
+#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/uaccess.h>
 #include <linux/vmalloc.h>
 
 #include "kgcov.h"
-#include "kgcov_gcc.h"
+#include "kgcov_gcov.h"
 
 struct kgcov_object {
 	struct gcov_info *live; /* the consumer's own, in its .data/.bss */
@@ -34,6 +36,8 @@ struct kgcov_client {
 	char *dir;
 	size_t n_objs;
 	struct kgcov_object *objs;
+	size_t cap; /* objs' capacity: one per constructor between the sentinels */
+	int err; /* first failure while the constructors ran */
 	struct dentry *dent;
 };
 
@@ -41,6 +45,10 @@ static LIST_HEAD(kgcov_clients);
 static DEFINE_MUTEX(kgcov_lock);
 static struct dentry *kgcov_root;
 static unsigned int kgcov_version; /* gcov format of the first consumer; 0 = none yet */
+
+/* The registration in progress and the thread running it: set under kgcov_lock for the walk's duration. */
+static struct kgcov_client *kgcov_registering;
+static struct task_struct *kgcov_registering_task; /* the thread running the walk; a constructor from any other thread registers nothing */
 
 /* ---- file I/O ---------------------------------------------------------- */
 
@@ -117,7 +125,9 @@ static int kgcov_dump_object(struct kgcov_client *c, struct kgcov_object *o)
 		return -ENOMEM;
 	convert_to_gcda(buf, o->acc);
 	/* gcov_info_filename() is the absolute .gcda path the compiler baked in. */
-	path = kasprintf(GFP_KERNEL, "%s%s", c->dir, gcov_info_filename(o->acc));
+	path = kasprintf(GFP_KERNEL, "%s%s%s", c->dir,
+			 gcov_info_filename(o->acc)[0] == '/' ? "" : "/",
+			 gcov_info_filename(o->acc));
 	if (!path) {
 		vfree(buf);
 		return -ENOMEM;
@@ -160,9 +170,11 @@ static void kgcov_free_client(struct kgcov_client *c)
 {
 	size_t i;
 
-	for (i = 0; c->objs && i < c->n_objs; i++)
+	for (i = 0; c->objs && i < c->n_objs; i++) {
 		if (c->objs[i].acc)
 			gcov_info_free(c->objs[i].acc);
+		gcov_info_forget(c->objs[i].live);
+	}
 	kfree(c->objs);
 	kfree(c->dir);
 	kfree(c);
@@ -209,12 +221,71 @@ static const struct file_operations kgcov_reset_fops = {
 
 /* ---- the API ------------------------------------------------------------ */
 
-int kgcov_register(struct module *mod, const struct gcov_info *const *begin,
-		   const struct gcov_info *const *end, const char *dir)
+void kgcov_ctor_info(struct gcov_info *info)
+{
+	struct kgcov_client *c = kgcov_registering_task == current ? kgcov_registering : NULL;
+	struct gcov_info *acc;
+	size_t i;
+	int have, want;
+
+	if (!c || c->err) {
+		/*
+		 * No registration in progress on THIS thread — the kernel's own
+		 * constructor pass on a CONFIG_CONSTRUCTORS kernel, possibly for
+		 * another module while a walk is in flight elsewhere — or one that
+		 * already failed: not ours to keep.
+		 */
+		gcov_info_forget(info);
+		return;
+	}
+	for (i = 0; i < c->n_objs; i++)
+		if (c->objs[i].live == info)
+			return; /* the same unit twice in one walk */
+	if (!gcov_info_built_by_this_compiler(info, c->mod->name, &have, &want)) {
+		/*
+		 * The unit's own filename pointer is NOT read here: this is the
+		 * path where the backend decided it cannot parse *info, so every
+		 * field past the version word may sit at another offset than this
+		 * build expects. The raw version word and the module name are all
+		 * that can be trusted, and they are enough to name the culprit.
+		 */
+		pr_err("%s: a unit with gcov version word %#x was compiled by gcc %d, otto_kgcov by gcc %d; build both with one compiler major\n",
+		       c->mod->name, gcov_info_version(info), have, want);
+		c->err = -EPROTO;
+		gcov_info_forget(info);
+		return;
+	}
+	if (kgcov_version && gcov_info_version(info) != kgcov_version) {
+		pr_err("%s: gcov format %#x differs from the format already registered (%#x); build every consumer and the library with one compiler\n",
+		       c->mod->name, gcov_info_version(info), kgcov_version);
+		c->err = -EPROTO;
+		gcov_info_forget(info);
+		return;
+	}
+	if (c->n_objs == c->cap) {
+		pr_err("%s: more gcov units than constructors between the sentinels\n",
+		       c->mod->name);
+		c->err = -EOVERFLOW;
+		gcov_info_forget(info);
+		return;
+	}
+	acc = gcov_info_dup(info);
+	if (!acc) {
+		c->err = -ENOMEM;
+		gcov_info_forget(info);
+		return;
+	}
+	gcov_info_reset(acc);
+	c->objs[c->n_objs].live = info;
+	c->objs[c->n_objs].acc = acc;
+	c->n_objs++;
+}
+
+int kgcov_register(struct module *mod, const kgcov_ctor_fn *begin,
+		   const kgcov_ctor_fn *end, const char *dir)
 {
 	struct kgcov_client *c;
-	const struct gcov_info *const *p;
-	size_t n = 0, i = 0;
+	const kgcov_ctor_fn *p;
 	int err;
 
 	if (!dir || dir[0] != '/') {
@@ -222,11 +293,8 @@ int kgcov_register(struct module *mod, const struct gcov_info *const *begin,
 		       mod->name);
 		return -EINVAL;
 	}
-	for (p = begin; p < end; p++)
-		if (*p)
-			n++;
-	if (!n) {
-		pr_err("%s: no .gcov_info entries — built without -fprofile-info-section?\n",
+	if (end <= begin) {
+		pr_err("%s: nothing between the kgcov sentinels — are kgcov_begin.o and kgcov_end.o first and last in the link?\n",
 		       mod->name);
 		return -ENOENT;
 	}
@@ -234,36 +302,31 @@ int kgcov_register(struct module *mod, const struct gcov_info *const *begin,
 	if (!c)
 		return -ENOMEM;
 	c->mod = mod;
-	c->objs = kcalloc(n, sizeof(*c->objs), GFP_KERNEL);
+	c->cap = end - begin;
+	c->objs = kcalloc(c->cap, sizeof(*c->objs), GFP_KERNEL);
 	c->dir = kstrdup(dir, GFP_KERNEL);
 	if (!c->objs || !c->dir) {
 		err = -ENOMEM;
 		goto fail;
 	}
 	mutex_lock(&kgcov_lock);
-	for (p = begin; p < end; p++) {
-		struct gcov_info *info = (struct gcov_info *)*p;
-
-		if (!info)
-			continue;
-		if (kgcov_version && gcov_info_version(info) != kgcov_version) {
-			pr_err("%s: gcov format %#x differs from the format already registered (%#x); build every consumer and the library with one compiler\n",
-			       mod->name, gcov_info_version(info), kgcov_version);
-			mutex_unlock(&kgcov_lock);
-			err = -EPROTO;
-			goto fail;
-		}
-		c->objs[i].live = info;
-		c->objs[i].acc = gcov_info_dup(info);
-		if (!c->objs[i].acc) {
-			mutex_unlock(&kgcov_lock);
-			err = -ENOMEM;
-			goto fail;
-		}
-		gcov_info_reset(c->objs[i].acc);
-		i++;
+	kgcov_registering = c;
+	kgcov_registering_task = current;
+	for (p = begin; p < end; p++)
+		if (*p)
+			(*p)();
+	kgcov_registering_task = NULL;
+	kgcov_registering = NULL;
+	err = c->err;
+	if (!err && !c->n_objs) {
+		pr_err("%s: the constructors registered no gcov data — built without $(KGCOV_CFLAGS)?\n",
+		       mod->name);
+		err = -ENOENT;
 	}
-	c->n_objs = n;
+	if (err) {
+		mutex_unlock(&kgcov_lock);
+		goto fail;
+	}
 	if (!kgcov_version)
 		kgcov_version = gcov_info_version(c->objs[0].live);
 	list_add(&c->node, &kgcov_clients);
@@ -272,10 +335,9 @@ int kgcov_register(struct module *mod, const struct gcov_info *const *begin,
 	c->dent = debugfs_create_dir(mod->name, kgcov_root);
 	debugfs_create_file("dump", 0200, c->dent, c, &kgcov_dump_fops);
 	debugfs_create_file("reset", 0200, c->dent, c, &kgcov_reset_fops);
-	pr_info("%s: %zu instrumented object(s), .gcda under %s\n", mod->name, n, dir);
+	pr_info("%s: %zu instrumented object(s), .gcda under %s\n", mod->name, c->n_objs, dir);
 	return 0;
 fail:
-	c->n_objs = i;
 	kgcov_free_client(c);
 	return err;
 }

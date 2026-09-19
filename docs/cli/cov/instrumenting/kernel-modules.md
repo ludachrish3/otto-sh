@@ -17,20 +17,25 @@ is off, so the kernel never runs a module's constructors and plain
 off too, so there is no in-kernel gcov and no
 `/sys/kernel/debug/gcov/` tree to fall back on.
 
-The way through is `-fprofile-info-section`: instead of a constructor call,
-it records each translation unit's `gcov_info` pointer in a `.gcov_info`
-linker section. Two tiny sentinel objects, linked first and last in the
-module's object list, bound that section so a runtime can walk it end to
-end. `otto_kgcov` is that runtime.
+The way through is to run those constructors ourselves. Plain
+`-fprofile-arcs` still emits one per translation unit — gcc's calls
+`__gcov_init`, clang's `llvm_gcov_init` — into the module's `.init_array`;
+the kernel keeps that section, it just never walks it. Two tiny sentinel
+objects, linked first and last in the module's object list, bracket the
+section so a runtime can call every constructor between them at the
+module's own request. `otto_kgcov` is that runtime.
 
 ## The library
 
 `otto_kgcov` (`docs/examples/kgcov/`) is a small GPL kernel module every
 instrumented consumer links against — a "library" in kernel space is just
-another loadable module that exports symbols. It exports empty stand-ins
-for the same `__gcov_*` symbols the in-kernel gcov exports, so any
-`--coverage`-compiled object links against *something*, plus the two calls
-a consumer actually drives:
+another loadable module that exports symbols. It vendors both of the
+kernel's own gcov backends — `gcc_4_7.c` for gcc (every format from gcc 4.7
+to 15) and `clang.c` for clang (11 and newer) — and builds whichever
+matches the compiler building it, exporting that family's runtime symbols
+(`__gcov_init` and the `__gcov_merge_*` set, or `llvm_gcov_init` and the
+`llvm_gcda_*` callbacks) so an instrumented object links, plus the two
+calls a consumer actually drives:
 
 ```{literalinclude} ../../../examples/kgcov/kgcov.h
 :language: c
@@ -64,8 +69,13 @@ A consumer becomes coverage-instrumented in three steps:
 **1. Sentinels.** Link two tiny objects — one built from a file containing
 only `KGCOV_SENTINEL_BEGIN;`, one from a file containing only
 `KGCOV_SENTINEL_END;` — first and last in the object list, so `ld -r`'s
-input-order guarantee keeps them, and only them, outside the
-`.gcov_info` range every other object contributes to. The same Kbuild also
+input-order guarantee (and the module linker script's `SORT(.init_array.*)`
+then `.init_array` layout) keeps them, and only them, outside the
+constructors every instrumented object contributes — `KGCOV_INIT()` calls
+what lies between. That is every constructor, not only gcov's: a module of
+your own with `__attribute__((constructor))` functions linked between the
+sentinels has those run by `KGCOV_INIT()` too, which is what a
+`CONFIG_CONSTRUCTORS` kernel would have done for them. The same Kbuild also
 applies the flags step below to each instrumented object:
 
 ```{literalinclude} ../../../../tests/repo5/kmod/demo/Kbuild
@@ -128,21 +138,130 @@ otto host test1 run --sudo dmesg
 
 `docs/examples/kgcov/build.sh <build-dir> [<release>]` takes that release
 as an argument, defaulting to the build machine's own running kernel when
-none is given, and checks the resulting `.ko`'s `vermagic` against it. The
-library builds **out of tree**: it is never itself a measured product, so
+none is given, and checks the resulting `.ko`'s `vermagic` against it —
+`KDIR` names a different kernel tree to build against instead, and the
+release then comes from that tree (see below). The library builds **out
+of tree**: it is never itself a measured product, so
 `build.sh` copies its sources into a scratch directory and builds them
 there against `/lib/modules/<release>/build`. The consumer builds **in place**, next to
-its own committed sources, for the reason given above. `tests/repo5/build.sh`
+its own committed sources, for the reason given above. `tests/repo5/kmod/build.sh`
 does both, library first, and checks the resulting `vermagic` before calling
 either build a success:
 
-```{literalinclude} ../../../../tests/repo5/build.sh
+```{literalinclude} ../../../../tests/repo5/kmod/build.sh
 :language: bash
 ```
+
+`tests/repo5/build.sh` is the human entry point: it runs that script and
+then the container image's own `docker/build.sh`.
 
 A product repo's own module follows the same shape: build `otto_kgcov` out
 of tree once, then build the module against it in place, checking
 `vermagic` the same way before it ships anywhere.
+
+## Another kernel, ISA or compiler
+
+`otto_kgcov` parses what the consumer's compiler emitted, which fixes the
+one rule that binds every build: **the library and its consumers are built
+by the same compiler family, and for gcc by the same major version.**
+gcc's `gcov_info` layout is chosen by `__GNUC__` when the library is
+compiled, so a consumer from another gcc major is refused at `KGCOV_INIT()`,
+loudly: `dmesg` names both majors, `KGCOV_INIT()` returns `-EPROTO`, and a
+consumer that returns that error from its init routine — the pattern above —
+does not load at all. Nothing quietly reports less coverage than the build
+asked for. A consumer from the other family never gets that far: the library
+exports only its own family's runtime symbols, so `insmod` fails with
+`Unknown symbol __gcov_init` (a gcc consumer on a clang-built library) or
+`Unknown symbol llvm_gcov_init` (the reverse).
+clang's format does not change across clang versions, so for clang the rule
+is just the family and kbuild's own floor of clang 11.
+
+Both build scripts — the library's `build.sh` and the fixture's
+`kmod/build.sh` — take the kernel tree and the toolchain from the
+environment exactly as your own module's build would, and pass them to
+kbuild unchanged:
+
+| Variable | Meaning |
+|---|---|
+| `KDIR` | the kernel tree: a distro headers package or a prepared source tree, anywhere (default `/lib/modules/<release>/build`) |
+| `ARCH`, `CROSS_COMPILE` | the target architecture and the cross toolchain prefix, as kbuild takes them |
+| `LLVM=1` | build with clang, lld and the LLVM binutils |
+| `CC` | one specific compiler, such as `gcc-12` (passed on kbuild's command line, where it overrides the kernel's own choice) |
+| `KMAKEFLAGS` | extra `make` arguments, verbatim: the place for `CONFIG_*` overrides |
+
+A distro headers package ships host tools for its own architecture and
+cannot be used from a different build machine; a foreign target needs a
+source tree prepared for it (and `modules_prepare` builds the kernel's own
+host tools, so the build machine needs `flex`, `bison`, `libelf-dev` and
+`libssl-dev` — the Debian and Ubuntu package names — beside the cross
+compiler). The recipe otto's own proof runs — it also builds a copy of the
+demo module the same way — on an arm64 machine building x86_64 modules (any
+other pair changes only the `ARCH` name and the `CROSS_COMPILE` prefix):
+
+```bash
+tar -xJf linux-6.8.tar.xz
+make -C linux-6.8 ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- defconfig modules_prepare
+KDIR=$PWD/linux-6.8 ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- \
+    KMAKEFLAGS=KBUILD_MODPOST_WARN=1 \
+    docs/examples/kgcov/build.sh build
+```
+
+That `KMAKEFLAGS=KBUILD_MODPOST_WARN=1` is there because a prepared source
+tree like this one has no `Module.symvers`: `make … defconfig
+modules_prepare` never produces one (the kernel's own kbuild docs say a
+full build is needed), so without it modpost fails outright on the
+core-kernel exports (`memcpy`, `kfree`, `_printk`, …) it cannot resolve;
+with it, those become warnings instead. A module meant to be *loaded*, as
+opposed to checked, is built against a fully built tree or the target's
+own headers package — either ships a real `Module.symvers` — never a bare
+`modules_prepare` tree.
+
+The release to check `vermagic` against is the tree's own
+(`cat linux-6.8/include/config/kernel.release`), which is what the script
+reads when `KDIR` is set and no release is given.
+
+A stock kernel's config was written for the compiler that built it, and
+kbuild applies that config's compiler-specific flags to every external
+module. Two cases need `KMAKEFLAGS`, both proven on Ubuntu's
+`6.8.0-86-generic`, configured for gcc 13:
+
+- **clang against a gcc-built kernel**: tell kbuild the compiler is clang
+  and replace the two gcc-only flags it rejects —
+  `LLVM=1 KMAKEFLAGS="CONFIG_CC_IS_GCC= CONFIG_GCC_VERSION=0 CONFIG_CC_IS_CLANG=y CONFIG_CLANG_VERSION=180103 CONFIG_CC_IMPLICIT_FALLTHROUGH=-Wimplicit-fallthrough CONFIG_UBSAN_BOUNDS_STRICT= CONFIG_UBSAN_ARRAY_BOUNDS=y"`
+  (`CONFIG_CLANG_VERSION` is `clang -dumpversion` as one number). A
+  clang-built kernel needs none of this.
+- **a gcc older than the kernel's**: tell kbuild the real version (it gates
+  flags on `CONFIG_GCC_VERSION`) and turn off the options whose flags your
+  gcc names in its error — for gcc 9, 10 and 11 against that kernel,
+  `CC=gcc-11 KMAKEFLAGS="CONFIG_GCC_VERSION=110500 CONFIG_SHADOW_CALL_STACK= CONFIG_INIT_STACK_ALL_ZERO= CONFIG_ZERO_CALL_USED_REGS="`.
+  gcc 12 and newer need nothing there.
+
+What is proven, and where: `make kgcov` (which `make release` runs) rebuilds
+the fixture with gcc 9, 10, 11, 12, 13 and 14 and with clang 18 and runs
+the kernel-module coverage suite on the bed for each, then cross-builds it
+for x86_64 from a 6.8 source tree; every gcc from 4.7 on is in the format
+table, and every clang from 11 on shares one format. `.ctors`-only
+toolchains, which predate `.init_array`, are not supported.
+
+Getting a module to load is not the same as getting its counters read
+back. otto reads a Unix host's counters with the gcov its host record
+names — system gcov when the record is silent; `.gcno` auto-discovery does
+not apply to a Unix host. A module built by `gcc-12` on a `gcc-13`
+machine, or by clang, therefore fails `otto cov report` with geninfo's
+*"Incompatible GCC/GCOV version"* until the bed host's `toolchain.gcov`
+names the matching tool (`/usr/bin/gcov-12`, `llvm-cov`) — see the
+"Coverage toolchain" table in the
+[lab configuration guide](../../../configuration/lab-config.md#coverage-toolchain).
+What naming `llvm-cov` there means for otto is [clang's own page](clang.md).
+
+A clang build needs one more setting for that report to come back clean:
+clang's `.gcno` carries no compilation directory (gcc 9+ records it), so
+the inlined kernel-header records are relative to the kernel tree and lcov
+cannot open them from the fetch directory. Put `ignore_errors = source` in
+`~/.lcovrc`, or name a one-line wrapper (`exec /usr/bin/lcov
+--ignore-errors source "$@"`) as the host's `toolchain.lcov` — those
+records are kernel headers, never the module's own files, and the report
+drops them.
 
 ## Declaring the products
 
@@ -186,6 +305,12 @@ other loaded module's counters along with this one's. See
 table.
 
 ## What the report shows
+
+If `otto cov report` fails outright instead of showing anything below — a
+gcov version mismatch, or clang's unreadable kernel-header records — see
+the remedies under
+[Another kernel, ISA or compiler](kernel-modules.md#another-kernel-isa-or-compiler)
+above.
 
 A run of `TestKmodDemo` produces exactly three tracked files per host —
 `demo_main.c`, `demo_parse.c`, `demo_policy.c`, one per translation unit

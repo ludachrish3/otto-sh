@@ -107,6 +107,20 @@ AMBIENT_OPT_INS: "dict[str, str]" = {
         "upstream — though it now refuses to run rather than reporting a "
         "vacuous pass (scripts/check_busybox_upstream_drift.py)"
     ),
+    "OTTO_KGCOV_TOOLCHAINS": (
+        "which compilers the otto_kgcov toolchain matrix rebuilds the "
+        "kernel-module fixture with, comma-separated "
+        "(tests/e2e/cov/test_kgcov_toolchains_e2e.py, read at collection); set "
+        "by `make kgcov` from KGCOV_TOOLCHAINS. Stripped, the matrix collects "
+        "one `default` parameter and certifies the system compiler alone while "
+        "reporting green for the whole lane"
+    ),
+    "OTTO_KGCOV_CROSS_KDIR": (
+        "the prepared kernel source tree the x86_64 cross build compiles "
+        "against (tests/e2e/cov/test_kgcov_cross_build.py); set by `make "
+        "kgcov` from KGCOV_CROSS_KDIR. Stripped, the default tree path "
+        "/home/vagrant/build/linux-6.8 is used"
+    ),
     "OTTO_TUNNEL_SOAK_CYCLES": (
         "internal soak depth per tunnel stability test "
         "(tests/e2e/tunnel_stability/_harness.py); set by `make "

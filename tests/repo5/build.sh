@@ -1,35 +1,11 @@
 #!/usr/bin/env bash
-# Build repo5's kernel-module products for the running kernel (the bed's:
-# 6.8.0-86-generic, the same release as the dev VM): the library out of
-# tree into build/lib/ (git-ignored — docs/examples/kgcov/build.sh does
-# this half), then the demo IN PLACE under kmod/demo/ against it. The
-# demo's sources are committed here rather than copied: otto's coverage
-# capture anchors every measured file to a committed git blob under the
-# SUT repo, so only the library (never itself directly measured) needs an
-# out-of-tree build.
+# Build every product of the fixture: the kernel-module half (kmod/build.sh:
+# the library out of tree, the demo in place, for the running kernel or the
+# environment's KDIR/toolchain), then the container-image half
+# (docker/build.sh). Each half is its own script so a suite that needs only
+# one builds only that one; this is the human entry point that builds both,
+# sequenced under `set -e` so a failed kernel build stops the image build.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RELEASE="${1:-$(uname -r)}"
-KDIR="/lib/modules/${RELEASE}/build"
-
-"$HERE/../../docs/examples/kgcov/build.sh" "$HERE/build" "$RELEASE"
-make -C "$HERE/kmod/demo" KDIR="$KDIR" KGCOV="$HERE/build/lib"
-
-vermagic="$(modinfo -F vermagic "$HERE/kmod/demo/otto_kmod_demo.ko")"
-case "$vermagic" in
-    "$RELEASE "*) ;;
-    *)
-        echo "kmod/demo/otto_kmod_demo.ko: vermagic '$vermagic' is not for $RELEASE" >&2
-        exit 1
-        ;;
-esac
-ls "$HERE"/kmod/demo/*.gcno >/dev/null
-echo "built: $HERE/build/lib/otto_kgcov.ko $HERE/kmod/demo/otto_kmod_demo.ko (for $RELEASE)"
-
-# The container-image half: a static, --coverage build of the fixture's C
-# product, packaged as a docker save tarball. Unconditional only with
-# respect to RELEASE (it runs the same regardless of which kernel release
-# was requested above) — it is still sequenced after the kmod half under
-# `set -euo pipefail`, so a vermagic mismatch or missing kernel headers
-# stops it from running at all.
+"$HERE/kmod/build.sh" "$@"
 "$HERE/docker/build.sh"

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Vendored from Linux v6.8 kernel/gcov/ for otto_kgcov; unchanged apart from the include name.
+ * Vendored from Linux v6.8 kernel/gcov/ for otto_kgcov; unchanged apart from the include name and the otto_kgcov block at the end.
  *
  *  Profiling infrastructure declarations.
  *
@@ -83,5 +83,36 @@ extern const struct gcov_link gcov_link[];
 
 extern int gcov_events_enabled;
 extern struct mutex gcov_lock;
+
+/*
+ * otto_kgcov's additions to the vendored interface: the one call a backend
+ * makes into kgcov.c, and the two hooks each backend implements for it.
+ */
+
+/*
+ * Hand a translation unit's gcov_info to the registration in progress. A
+ * backend's constructor entry point (__gcov_init, llvm_gcov_init) calls it
+ * from the constructor kgcov_register() is running, on that thread, with
+ * kgcov_register() holding the library's lock — so it takes no lock itself.
+ * Outside the registering thread's own registration it keeps nothing.
+ */
+void kgcov_ctor_info(struct gcov_info *info);
+
+/*
+ * Whether this build of the library can parse *info. On false, *have and
+ * *want name the consumer's and the library's compiler major for the log.
+ * *mod is the consumer module's name, for a backend that logs on its own.
+ * Only *info's version word may be read: nothing else is known to be where
+ * this build expects it until the answer is true.
+ */
+bool gcov_info_built_by_this_compiler(struct gcov_info *info, const char *mod,
+				      int *have, int *want);
+
+/*
+ * Release whatever the backend allocated to present a LIVE unit — never its
+ * counters or filename, which are the consumer's own. A no-op where the
+ * live gcov_info is the consumer's static data (gcc).
+ */
+void gcov_info_forget(struct gcov_info *info);
 
 #endif /* GCOV_H */

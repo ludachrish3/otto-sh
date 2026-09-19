@@ -1982,3 +1982,143 @@ def _assert_lane_collects_the_bed_venue(
         f"narrowed cell budget is the usual cause; the lane is exhaustive by default "
         f"for exactly this reason."
     )
+
+
+# --- The otto_kgcov toolchain tier (tests/e2e/cov/test_kgcov_*) ---------------
+#
+# Two modules carry `kgcov`: the toolchain matrix (integration + kgcov)
+# rebuilds the kernel-module fixture with each compiler OTTO_KGCOV_TOOLCHAINS
+# names and runs the kmod coverage e2e on the bed per compiler; the cross
+# build (hostless + kgcov) builds the fixture from a kernel source tree on the
+# dev VM for another ISA. Neither can run where the compilers, the tree or the
+# bed are absent, and both FAIL there rather than skip — a release must be
+# able to trust a green — which is why every catch-all AND every positive
+# resource selector must exclude the marker: the matrix carries `integration`,
+# so M_UNIX reaches it without `not kgcov`; the cross build carries
+# `hostless`, so CI's hostless lane does. `make kgcov` is the one lane that
+# selects it, and `make release` invokes that lane: the tier runs rarely by
+# hand and always before a release (the principle stated 2026-09-18).
+#
+# G12c differs from G8c/G11c on purpose: nothing in CI runs this lane and
+# nothing should (no compilers, no bed, no source tree there), so the
+# invocation the tier lives by is `make release`'s, and that is what the guard
+# looks for.
+
+
+def test_catchall_lanes_exclude_kgcov():
+    """G12: no default lane may rebuild the kernel-module fixture per compiler."""
+    makefile = _makefile_marker_expressions((PROJECT_ROOT / "Makefile").read_text())
+    nox = _nox_marker_expressions()
+    for label, exprs in (("Makefile", makefile), ("noxfile.py", nox)):
+        catchall = _catchall(exprs)
+        assert catchall, f"no catch-all -m expressions found in {label} (guard misparse?)"
+        offenders = [e for e in catchall if "not kgcov" not in e]
+        assert not offenders, (
+            f"{label} catch-all lanes missing 'not kgcov' — each would rebuild the "
+            f"kernel-module fixture per compiler on the bed, or cross-build it from "
+            f"a kernel source tree, and fail where those are absent: {offenders}"
+        )
+
+
+def test_the_kgcov_tier_still_has_a_lane():
+    """G12b: excluding a tier everywhere and running it nowhere is not a fix."""
+    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    positive = [e for e in _makefile_marker_expressions(makefile) if "kgcov" in e.split(" and ")]
+    assert positive, (
+        "no Makefile lane positively selects `-m kgcov`, so the tier G12 excludes "
+        "from every default lane now runs nowhere"
+    )
+
+
+def test_release_invokes_the_kgcov_lane():
+    """G12c: the release is what blesses this tier, so its recipe must call the lane.
+
+    Derived at both ends: the lane from the recipe that selects the marker,
+    the call from the release recipe's own text, so either may be renamed and
+    the guard follows.
+    """
+    lanes = _makefile_targets_selecting("kgcov")
+    assert lanes, "no Makefile target positively selects `-m kgcov` (G12b covers this)"
+    release = _makefile_recipes().get("release")
+    assert release, "no `release:` recipe with a body found in the Makefile (guard misparse?)"
+    invoked = [
+        lane for lane in lanes if re.search(rf"\$\(MAKE\)\s+{re.escape(lane)}\b(?![-\w])", release)
+    ]
+    assert invoked, (
+        f"`make release` invokes none of {lanes} — the otto_kgcov toolchain tier is "
+        f"excluded from every default lane (G12) and blessed by no release"
+    )
+
+
+def test_no_lane_but_the_kgcov_lane_can_select_the_kgcov_tier():
+    """G12d: stated over what a lane can SELECT, not over the shape of its expression.
+
+    The matrix module carries `integration`, so this is the guard that keeps
+    `M_UNIX` and nox's `tests_unix` honest — G12 sees only negation-only
+    expressions and would pass with those two reaching the bed lane.
+    """
+    tier = _marker_sets_of_modules_carrying("kgcov")
+    assert tier, "no module carries the kgcov marker (tier deleted? guard misparse?)"
+    surfaces = (
+        ("Makefile", _makefile_marker_expressions((PROJECT_ROOT / "Makefile").read_text())),
+        ("noxfile.py", _nox_marker_expressions()),
+        ("scripts/stability_campaign.py", _python_marker_expressions(_STABILITY_CAMPAIGN)),
+    )
+    offenders = []
+    for label, exprs in surfaces:
+        assert exprs, f"no -m expressions found in {label} (guard misparse?)"
+        for expr in exprs:
+            if "kgcov" in {term.strip() for term in expr.split(" and ")}:
+                continue
+            if any(_can_select(expr, markers) for markers in tier):
+                offenders.append(f"{label}: {expr!r}")
+    assert not offenders, (
+        f"these lanes reach the otto_kgcov toolchain tier without asking for it: "
+        f"{offenders}. Add `not kgcov`."
+    )
+
+
+def test_the_kgcov_tier_is_visible_to_a_pathless_run():
+    """G12e: `make kgcov` is a path-less `-m kgcov`; the tier must sit under testpaths."""
+    ini = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    roots = [PROJECT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    directories = _directories_carrying("kgcov")
+    assert directories, "no directory holds a kgcov-marked module (guard misparse?)"
+    invisible = sorted(
+        str(d.relative_to(PROJECT_ROOT))
+        for d in directories
+        if not any(root == d or root in d.parents for root in roots)
+    )
+    assert not invisible, f"{invisible} hold kgcov-marked tests but lie outside `testpaths`"
+
+
+def test_a_lane_that_selects_by_path_cannot_reach_the_kgcov_tier():
+    """G12f: a lane with no `-m` at all is judged by the paths it names."""
+    ini = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    testpaths = [PROJECT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    carrying = _modules_carrying("kgcov")
+    assert carrying, "no module carries the kgcov marker (tier deleted? guard misparse?)"
+    surfaces = (
+        ("Makefile", _makefile_pytest_invocations((PROJECT_ROOT / "Makefile").read_text())),
+        ("noxfile.py", _python_pytest_invocations(_NOXFILE)),
+        ("scripts/stability_campaign.py", _python_pytest_invocations(_STABILITY_CAMPAIGN)),
+    )
+    offenders: "list[str]" = []
+    for label, invocations in surfaces:
+        for tokens in invocations:
+            if "-m" in tokens or "--collect-only" in tokens:
+                continue
+            roots = _selected_roots(tokens) or testpaths
+            reached = sorted(
+                str(module.relative_to(PROJECT_ROOT))
+                for module in carrying
+                for root in roots
+                if root == module or root in module.parents
+            )
+            if reached:
+                argv = " ".join(tokens[tokens.index("pytest") :])
+                offenders.append(f"{label}: `{argv}` reaches {reached}")
+    assert not offenders, (
+        f"these lanes pick their tests by PATH with no `-m` expression, so nothing "
+        f"deselects the otto_kgcov toolchain tier: {offenders}"
+    )

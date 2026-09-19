@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot api-snapshot check-breaking hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed support-matrix web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot api-snapshot check-breaking hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kgcov support-matrix web-install web web-dev test-ts web-clean wheel-check
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -149,9 +149,9 @@ STABILITY_TUNNEL_CYCLES := $(if $(filter command line,$(origin CYCLES)),$(CYCLES
 # the plain stability soak); `not chaos` closes the same hole for the newer
 # chaos lane in the same change. See
 # tests/unit/test_tier_marker_invariants.py's G7.
-M_UNIX := integration and not embedded and not stability and not chaos
-M_EMBEDDED := embedded and not stability and not chaos
-M_HOSTLESS := not integration and not embedded and not stability and not browser and not busybox and not conformance
+M_UNIX := integration and not embedded and not stability and not chaos and not kgcov
+M_EMBEDDED := embedded and not stability and not chaos and not kgcov
+M_HOSTLESS := not integration and not embedded and not stability and not browser and not busybox and not conformance and not kgcov
 
 # `not busybox` rides every CATCH-ALL selector below (and this one), for a
 # reason unrelated to the bed: that tier downloads real artifacts from
@@ -190,6 +190,15 @@ M_HOSTLESS := not integration and not embedded and not stability and not browser
 # Positive selectors need no exclusion TODAY for the same contingent reason
 # G8d re-derives for busybox: nothing under tests/conformance/ is stamped by
 # another tree's conftest. Do not re-derive that claim from this comment.
+
+# `not kgcov` rides every selector here, catch-all AND positive: the otto_kgcov
+# toolchain tier (tests/e2e/cov/test_kgcov_*) carries a resource marker of its
+# own — `integration` for the bed matrix, `hostless` for the cross build — so
+# M_UNIX would reach the matrix and M_HOSTLESS the cross build without it.
+# Both need what only the dev VM has (six gccs and clang, the bed, a kernel
+# source tree) and FAIL where it is absent, because a release must be able to
+# trust a green. `make kgcov` is the opt-in lane; `make release` runs it.
+# Pinned by tests/unit/test_tier_marker_invariants.py's G12 family.
 
 # `browser` (Playwright) tests always run as their own pytest process — sync
 # Playwright keeps an event loop running in the worker main thread for the
@@ -325,11 +334,12 @@ changelog: ## (Build & Release) Regenerate the WHOLE of CHANGELOG.md from conven
 # git-cliff/git-add/bump-my-version commands run for real (version bump +
 # CHANGELOG staged). Never dry-run this target.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) npm ci web/, Python static checks (check-python), docs, nox, build web dist, all-browser dashboard e2e, full TS gate (validate-ts, incl. merged coverage), profile, then changelog, bump, build dist (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
+release: ## (Build & Release) npm ci web/, Python static checks (check-python), otto_kgcov toolchain proofs (kgcov), docs, nox, build web dist, all-browser dashboard e2e, full TS gate (validate-ts, incl. merged coverage), profile, then changelog, bump, build dist (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
 	@$(MAKE) clean-dist \
 		&& $(MAKE) web-install \
 		&& $(MAKE) check-python \
 		&& $(MAKE) release-matrix \
+		&& $(MAKE) kgcov \
 		&& $(MAKE) docs \
 		&& $(LEAK_DETECT) $(MAKE) nox \
 		&& $(MAKE) web \
@@ -701,21 +711,21 @@ build: ## (Build & Release) Build the project with uv
 # Pinned by tests/unit/test_coverage_html_placement.py.
 coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Python) and enforce the 95.5 gate (lines + branches); the browser (Playwright) suite runs first as its own process via the `dashboard` prerequisite — its coverage data is folded in via --cov-append. Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage-python/.
 	@$(SAY) "pytest: all tiers, pinned Python (browser lane folded in)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "not stability and not browser and not busybox and not conformance and not serial_timing" --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "not stability and not browser and not busybox and not conformance and not kgcov and not serial_timing" --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
 	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(COVERAGE_THRESHOLD)% lines+branches on the full fold)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and not stability and not browser and not busybox and not conformance" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) --cov-report=html $(call junitxml,coverage-python-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and not stability and not browser and not busybox and not conformance and not kgcov" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) --cov-report=html $(call junitxml,coverage-python-serial)
 
 coverage: coverage-python coverage-ts ## Run BOTH language coverage gates: coverage-python (full pytest, 95.5 floor over lines and branches) + coverage-ts (merged vitest+e2e floor). The dashboard browser lane runs exactly once — coverage-python triggers it, and coverage-ts's artifact stamp sees it fresh.
 
 coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
 	@$(SAY) "pytest: tests/unit (no gate)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability and not busybox and not conformance and not serial_timing" $(call junitxml,coverage-unit)
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "serial_timing and not stability and not busybox and not conformance" -n0 --cov-append --cov-report=html $(call junitxml,coverage-unit-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability and not busybox and not conformance and not kgcov and not serial_timing" $(call junitxml,coverage-unit)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "serial_timing and not stability and not busybox and not conformance and not kgcov" -n0 --cov-append --cov-report=html $(call junitxml,coverage-unit-serial)
 
 coverage-integration: ## Run the unit + integration level tiers (tests/unit + tests/integration) with a coverage report (no gate). Requires the full lab. JUnit XML in reports/junit/coverage-integration/.
 	@$(SAY) "pytest: tests/unit + tests/integration (no gate)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability and not busybox and not conformance and not serial_timing" $(call junitxml,coverage-integration)
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "serial_timing and not stability and not busybox and not conformance" -n0 --cov-append --cov-report=html $(call junitxml,coverage-integration-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability and not busybox and not conformance and not kgcov and not serial_timing" $(call junitxml,coverage-integration)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "serial_timing and not stability and not busybox and not conformance and not kgcov" -n0 --cov-append --cov-report=html $(call junitxml,coverage-integration-serial)
 
 coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) and enforce the CI coverage gate. No VMs. JUnit XML lands in reports/junit/coverage-hostless/.
 	@$(SAY) "pytest: hostless CI slice, no VMs"
@@ -999,6 +1009,32 @@ conformance-bed: ## Run the host-contract conformance suite against the REAL BED
 	  lane=$$?; $(MAKE) --no-print-directory support-matrix; collate=$$?; \
 	  if [ $$lane -ne 0 ]; then exit $$lane; fi; exit $$collate
 
+# --- otto_kgcov toolchain proofs ---------------------------------------------
+#
+# RARELY BY HAND, ALWAYS BEFORE A RELEASE (Chris, 2026-09-18). The routine
+# kmod and docker coverage e2es already run under `make nox` at release with
+# the system gcc; this lane is the rest of otto_kgcov's promise — any gcc,
+# clang, another ISA — and it is opt-in because it needs what only the dev
+# VM has: gcc 9 to 14 and clang 18 installed, the bed to load each build on,
+# and a prepared kernel source tree for the cross build. A compiler or tree
+# that is missing FAILS the lane naming it; nothing skips, so a green here
+# is one a release can trust. `make release` invokes this target right after
+# `release-matrix` (both need the bed; make stages are sequential).
+# `not kgcov` rides every other selector in this file and noxfile.py —
+# tests/unit/test_tier_marker_invariants.py's G12 family pins all of it.
+#
+# Wall-clock: 85s end to end for the whole lane (83 tests, measured
+# 2026-09-18) — seven builds and bed runs of the kmod e2e plus the cross
+# build; the cap is stated rather than inherited.
+KGCOV_TOOLCHAINS ?= gcc-9,gcc-10,gcc-11,gcc-12,gcc-13,gcc-14,clang
+KGCOV_CROSS_KDIR ?= /home/vagrant/build/linux-6.8
+KGCOV_TIMEOUT := 3600s
+kgcov: ## Run the otto_kgcov toolchain proofs (`kgcov`-marked; excluded from every default lane): rebuild the kernel-module fixture with each compiler in KGCOV_TOOLCHAINS and run the kmod coverage e2e on the bed per compiler, then cross-build it for x86_64 from the kernel source tree at KGCOV_CROSS_KDIR. Dev VM only; a missing compiler or tree FAILS. Invoked by `make release`. JUnit XML lands in reports/junit/kgcov/.
+	@$(SAY) "pytest: otto_kgcov toolchain proofs ($(KGCOV_TOOLCHAINS); cross tree $(KGCOV_CROSS_KDIR))"
+	@OTTO_KGCOV_TOOLCHAINS="$(KGCOV_TOOLCHAINS)" OTTO_KGCOV_CROSS_KDIR="$(KGCOV_CROSS_KDIR)" \
+	    timeout --foreground --kill-after=10s $(KGCOV_TIMEOUT) \
+	    uv run pytest -m "kgcov" -n0 --no-cov $(call junitxml,kgcov)
+
 # The collate step -- spec §5's fold of a run's observation records into the
 # committed matrix. THE ONLY WRITER OF A `measured-*` VERDICT.
 #
@@ -1174,14 +1210,14 @@ stability: ## Run the full stability/soak suite: no-VM concurrency, then real te
 repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repeat (excludes `browser` — see note above M_HOSTLESS; run its soak separately). Local only; requires VMs. JUnit XML in reports/junit/repeat/. Override COUNT=N (default 10).
 	@$(SAY) "pytest soak: full local suite, no browser (x$(COUNT), leak detector on)"
 	@$(LEAK_DETECT) uv run pytest \
-	    -m "not browser and not chaos and not busybox and not conformance and not serial_timing" \
+	    -m "not browser and not chaos and not busybox and not conformance and not kgcov and not serial_timing" \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \
 	    --no-cov \
 	    $(call junitxml,repeat)
 	@$(SAY) "pytest soak: serial_timing discriminators, -n0 (x$(COUNT))"
 	@$(LEAK_DETECT) uv run pytest \
-	    -m "serial_timing and not browser and not chaos and not busybox and not conformance" \
+	    -m "serial_timing and not browser and not chaos and not busybox and not conformance and not kgcov" \
 	    -n0 \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \

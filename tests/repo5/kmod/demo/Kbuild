@@ -1,5 +1,5 @@
-# The sentinels go FIRST and LAST: ld -r keeps this order, and it is what
-# bounds the .gcov_info section otto_kgcov walks.
+# The sentinels go FIRST and LAST: ld -r keeps this order, and that is what
+# brackets the gcov constructors in .init_array that otto_kgcov walks.
 # `-include`, not `include`: `make clean` (KGCOV unset, tests/repo5/build/
 # gone) must still work when consumer.mk can't be found. A real build still
 # fails loudly afterward on the missing $(KGCOV_CFLAGS)/kgcov.h.

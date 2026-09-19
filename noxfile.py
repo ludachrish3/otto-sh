@@ -84,6 +84,11 @@ nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
 # clause here would otherwise catch, so without these clauses every default nox
 # session selects them. `make busybox` and `make conformance` are their opt-in
 # lanes.
+# `not kgcov` rides them too, and the positive `tests_unix`/`tests_embedded`
+# selectors besides: the otto_kgcov toolchain tier carries a resource marker
+# of its own (`integration` for the bed matrix, `hostless` for the cross
+# build), so no catch-all's other clauses deselect it — see the Makefile's
+# `make kgcov`, its opt-in lane.
 
 # Arms the asyncio transport-leak detector's REPORTING on every hostless leg —
 # the same token the Makefile's gate targets use, and deliberately the same
@@ -140,7 +145,7 @@ HOSTLESS_TEST_ARGS = (
     "-m",
     (
         "not integration and not embedded and not stability and not browser "
-        "and not busybox and not conformance and not serial_timing"
+        "and not busybox and not conformance and not kgcov and not serial_timing"
     ),
     "--cov-fail-under=0",
 )
@@ -150,7 +155,7 @@ HOSTLESS_SERIAL_ARGS = (
     "-m",
     (
         "serial_timing and not integration and not embedded and not stability and not browser "
-        "and not busybox and not conformance"
+        "and not busybox and not conformance and not kgcov"
     ),
     "-n0",
     "--cov-append",
@@ -175,7 +180,8 @@ HOSTLESS_MIDDLE_TEST_ARGS = (
     "-m",
     (
         "not integration and not embedded and not stability and not browser "
-        "and not busybox and not conformance and not serial_timing and not interpreter_agnostic"
+        "and not busybox and not conformance and not kgcov and not serial_timing "
+        "and not interpreter_agnostic"
     ),
     "--no-cov",
 )
@@ -184,7 +190,7 @@ HOSTLESS_MIDDLE_SERIAL_ARGS = (
     "-m",
     (
         "serial_timing and not integration and not embedded and not stability and not browser "
-        "and not busybox and not conformance and not interpreter_agnostic"
+        "and not busybox and not conformance and not kgcov and not interpreter_agnostic"
     ),
     "-n0",
     "--no-cov",
@@ -212,7 +218,7 @@ def tests_unit(session: nox.Session) -> None:
         "pytest",
         "tests/unit",
         "-m",
-        "not stability and not busybox and not conformance and not serial_timing",
+        "not stability and not busybox and not conformance and not kgcov and not serial_timing",
         _junitxml(session, "nox-unit"),
         *session.posargs,
     )
@@ -220,7 +226,7 @@ def tests_unit(session: nox.Session) -> None:
         "pytest",
         "tests/unit",
         "-m",
-        "serial_timing and not stability and not busybox and not conformance",
+        "serial_timing and not stability and not busybox and not conformance and not kgcov",
         "-n0",
         "--cov-append",
         _junitxml(session, "nox-unit-serial"),
@@ -241,7 +247,7 @@ def tests_integration(session: nox.Session) -> None:
         "tests/unit",
         "tests/integration",
         "-m",
-        "not stability and not busybox and not conformance and not serial_timing",
+        "not stability and not busybox and not conformance and not kgcov and not serial_timing",
         _junitxml(session, "nox-integration"),
         *session.posargs,
     )
@@ -250,7 +256,7 @@ def tests_integration(session: nox.Session) -> None:
         "tests/unit",
         "tests/integration",
         "-m",
-        "serial_timing and not stability and not busybox and not conformance",
+        "serial_timing and not stability and not busybox and not conformance and not kgcov",
         "-n0",
         "--cov-append",
         _junitxml(session, "nox-integration-serial"),
@@ -362,7 +368,8 @@ def tests_unit_repeat(session: nox.Session) -> None:
         # measured this job at 22 min, the longest in the workflow. Pinned by
         # tests/unit/test_python_matrix_tiering.py.
         "-m",
-        "not stability and not busybox and not conformance and not interpreter_agnostic",
+        "not stability and not busybox and not conformance and not kgcov "
+        "and not interpreter_agnostic",
         # Clearing addopts must still re-state `-p no:tach`: the override drops
         # pyproject's entry whole, and that flag is the only thing protecting
         # plugin LOAD from issue #193 (the conftest stub seeds too late).
@@ -391,14 +398,16 @@ def tests_unix(session: nox.Session) -> None:
     session.run(
         "pytest",
         "-m",
-        "integration and not embedded and not stability and not chaos and not serial_timing",
+        "integration and not embedded and not stability and not chaos and not kgcov "
+        "and not serial_timing",
         _junitxml(session, "nox-unix"),
         *session.posargs,
     )
     session.run(
         "pytest",
         "-m",
-        "serial_timing and integration and not embedded and not stability and not chaos",
+        "serial_timing and integration and not embedded and not stability and not chaos "
+        "and not kgcov",
         "-n0",
         "--cov-append",
         _junitxml(session, "nox-unix-serial"),
@@ -422,7 +431,7 @@ def tests_embedded(session: nox.Session) -> None:
     session.run(
         "pytest",
         "-m",
-        "embedded and not stability and not chaos",
+        "embedded and not stability and not chaos and not kgcov",
         _junitxml(session, "nox-embedded"),
         *session.posargs,
     )
@@ -492,7 +501,8 @@ def tests_all(session: nox.Session) -> None:
     session.run(
         "pytest",
         "-m",
-        "not browser and not stability and not busybox and not conformance and not serial_timing",
+        "not browser and not stability and not busybox and not conformance and not kgcov "
+        "and not serial_timing",
         "--cov-fail-under=0",
         _junitxml(session, "nox"),
         *session.posargs,
@@ -500,7 +510,8 @@ def tests_all(session: nox.Session) -> None:
     session.run(
         "pytest",
         "-m",
-        "serial_timing and not browser and not stability and not busybox and not conformance",
+        "serial_timing and not browser and not stability and not busybox and not conformance "
+        "and not kgcov",
         "-n0",
         "--cov-append",
         "--cov-fail-under=92",

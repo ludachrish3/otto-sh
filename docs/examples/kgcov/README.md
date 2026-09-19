@@ -1,25 +1,29 @@
 # otto_kgcov
 
 A GPL companion kernel module that gives out-of-tree modules gcov coverage
-on a stock kernel built without `CONFIG_GCOV_KERNEL`. It provides the
-`__gcov_*` symbols an instrumented object references, an accumulator per
-instrumented object (a dump never double counts, and two dumps of the same
-run add correctly), and a debugfs control file per registered module.
+on a stock kernel built without `CONFIG_GCOV_KERNEL` or
+`CONFIG_CONSTRUCTORS`. It runs the gcov constructors the kernel never runs,
+provides the runtime symbols those constructors and objects reference (gcc's
+`__gcov_*` or clang's `llvm_gcov_*`/`llvm_gcda_*`, whichever compiler built
+the library), keeps an accumulator per instrumented object (a dump never
+double counts, and two dumps of the same run add correctly), and exposes a
+debugfs control file per registered module. Any gcc from 4.7 to 15, or
+clang 11 and newer; the library and its consumers must be built by the same
+compiler family, and for gcc by the same major.
 
-Build against the running kernel's headers:
-
-```sh
-make -C docs/examples/kgcov
-```
-
-Set `KDIR` to point at a different kernel's build tree.
+`build.sh <build-dir> [<release>]` builds it out of tree; `KDIR`, `ARCH`,
+`CROSS_COMPILE`, `LLVM`, `CC` and `KMAKEFLAGS` pass through to kbuild — see
+the kernel-modules guide page
+(`docs/cli/cov/instrumenting/kernel-modules.md`, "Another kernel, ISA
+or compiler").
 
 A consumer becomes coverage-instrumented in three steps:
 
 1. **Sentinels.** Link two tiny objects — one built from a file containing
    only `KGCOV_SENTINEL_BEGIN;` and one from a file containing only
    `KGCOV_SENTINEL_END;` — first and last in the consumer's object list, so
-   they bound the `.gcov_info` section gcc emits for every other object.
+   they bracket the gcov constructors every other object contributes to
+   `.init_array`.
 2. **Flags.** Compile every instrumented object with `$(KGCOV_CFLAGS)` from
    `consumer.mk`, which also adds `-I$(KGCOV)` via `ccflags-y` so `kgcov.h`
    is on the include path — nothing else to pass.
@@ -35,8 +39,8 @@ coverage is captured by the dump `KGCOV_EXIT()` performs on unregister.
 
 A worked consumer following these three steps lives at
 [`tests/repo5/kmod/demo/`](../../../tests/repo5/kmod/demo/) — a bounded
-queue driven from debugfs, built in place by `tests/repo5/build.sh` against
-the library this directory's own `build.sh` builds out of tree. It lives in
-the SUT repo rather than here because otto's coverage capture anchors every
-measured file to a committed git blob under the repo that declares the
-`[[products]]` entry.
+queue driven from debugfs, built in place by `tests/repo5/kmod/build.sh`
+against the library this directory's own `build.sh` builds out of tree. It
+lives in the SUT repo rather than here because otto's coverage capture
+anchors every measured file to a committed git blob under the repo that
+declares the `[[products]]` entry.

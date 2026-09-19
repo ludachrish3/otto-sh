@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Vendored from Linux v6.8 kernel/gcov/ for otto_kgcov; unchanged apart from the include name.
+ * Vendored from Linux v6.8 kernel/gcov/ for otto_kgcov. Changed from the
+ * original: the include name; the counter table below; and
+ * store_gcov_u32()/store_gcov_u64() at the end of the file, vendored
+ * verbatim from kernel/gcov/base.c — convert_to_gcda() calls them, but
+ * upstream they live in base.c, which is not vendored (see their own
+ * comment).
  *
  *  This code provides functions to handle gcc's profiling data format
  *  introduced with gcc 4.7.
@@ -18,13 +23,25 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/mm.h>
-#include "kgcov_gcc.h"
+#include "kgcov_gcov.h"
 
-#if __GNUC__ >= 14
-#error "otto_kgcov's vendored gcov format table stops at gcc 13; add the gcc-14 arm from kernel/gcov/gcc_4_7.c"
+/*
+ * The counter table, merged from Linux v6.8 (the arms up to gcc 13) and
+ * mainline (the gcc 14 and 15 arms). The arms below gcc 7 are what v6.8
+ * still carried and mainline has since dropped with its compiler floor —
+ * kept here on purpose: this library casts as wide a net as the format
+ * allows. A gcc this table predates must not build silently against the
+ * wrong layout.
+ */
+#if __GNUC__ >= 16
+#error "otto_kgcov's vendored gcov format table stops at gcc 15; add the newer arm from kernel/gcov/gcc_4_7.c"
 #endif
 
-#if (__GNUC__ >= 10)
+#if (__GNUC__ >= 15)
+#define GCOV_COUNTERS			10
+#elif (__GNUC__ >= 14)
+#define GCOV_COUNTERS			9
+#elif (__GNUC__ >= 10)
 #define GCOV_COUNTERS			8
 #elif (__GNUC__ >= 7)
 #define GCOV_COUNTERS			9
@@ -442,7 +459,7 @@ size_t convert_to_gcda(char *buffer, struct gcov_info *info)
 }
 
 /*
- * store_gcov_u32() and store_gcov_u64() are declared in kgcov_gcc.h (the
+ * store_gcov_u32() and store_gcov_u64() are declared in kgcov_gcov.h (the
  * vendored gcov.h) alongside the declarations above and are called by
  * convert_to_gcda(), but in the upstream tree they are DEFINED in
  * kernel/gcov/base.c, not kernel/gcov/gcc_4_7.c — a split this vendoring
