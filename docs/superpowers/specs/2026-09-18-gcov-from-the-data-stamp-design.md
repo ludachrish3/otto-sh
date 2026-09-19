@@ -52,27 +52,35 @@ stays configured.
 For each `<cov>/<host>/<product>` gcda directory the reporter resolves one toolchain,
 in this order:
 
-1. **An explicit host toolchain wins.** A recorded `toolchains[<host>]` whose values
-   differ from `Toolchain()`'s defaults is used as is. A record that disagrees with the
-   data keeps today's outcome: geninfo refuses and the report fails with
-   `CoverageToolVersionError`, which names the remedy. otto does not second-guess a
-   configured gcov.
-2. **A silent record means the data decides.** "Silent" is: no entry for the host, or an
-   entry equal to the defaults (old run trees recorded the default; they benefit
-   without re-collection). The resolver reads the version word from the directory's
-   own `.gcda` headers (bytes 4:8, either byte order — the merger's header reader) and
-   chooses:
+1. **An explicit host gcov wins.** A recorded `toolchains[<host>]` whose gcov
+   (`gcov_bin`, sysroot applied) differs from `Toolchain()`'s is used as is. A record
+   that disagrees with the data keeps today's outcome: geninfo refuses and the report
+   fails with `CoverageToolVersionError`, which names the remedy. otto does not
+   second-guess a configured gcov.
+2. **A record silent on gcov means the data decides.** "Silent" is: no entry for the
+   host, or an entry whose gcov is the default's (old run trees recorded the default;
+   they benefit without re-collection). The rule is about gcov alone: a record that
+   names only an `lcov` (a wrapper carrying lcov arguments, the #385 workaround) or a
+   sysroot is explicit about those and silent about gcov, so the data chooses the gcov
+   and the record's other fields are kept. The resolver reads the version word from
+   the directory's own `.gcda` headers (bytes 4:8, either byte order — the merger's
+   header reader) and chooses:
    - an LLVM stamp (`402*`, `408*`) → `llvm-cov` from PATH (the existing lookup:
      plain name, else the highest `llvm-cov-<N>`);
-   - a GCC stamp whose major equals the system gcov's → the default toolchain;
+   - a GCC stamp whose major equals the system gcov's → the default gcov;
    - a GCC stamp with another major → `gcov-<major>` from PATH;
-   - a stamp that decodes to no major → the default toolchain, with one WARNING naming
+   - a stamp that decodes to no major → the default gcov, with one WARNING naming
      the directory and the raw word.
+   "The default gcov" is what the merger runs with no toolchain: `gcov` from PATH. A
+   chosen tool replaces only the gcov: with a record, the result is that record with
+   its gcov swapped; without one, a toolchain at sysroot `/` naming the tool and the
+   host's `lcov` from PATH (as `discover_toolchain_from_gcno` builds today).
    The GCC major is decoded from the version word as gcc writes it: the first character
    `'A'` plus a digit is major 5–9, `'B'` plus a digit is 10–19 (`'A95*'` = 9.5,
-   `'B24*'` = 12.4). The system gcov's major comes from one `gcov --version` call per
-   report, cached; if that call fails, every GCC stamp is treated as "another major"
-   and resolved by name.
+   `'B24*'` = 12.4; a word whose first character is not a capital letter, gcc 4's
+   `'407*'` form, decodes to no major). The system gcov's major comes from one
+   `gcov --version` call per report, cached; if that call fails, every GCC stamp is
+   treated as "another major" and resolved by name.
 3. **A directory with no readable `.gcda` header** is left to lcov's own diagnostics,
    as today.
 
@@ -154,4 +162,6 @@ which §4.1 treats as silent, so `otto cov report` on an old run now finds the r
 too. A host whose record names the system gcov explicitly is indistinguishable from a
 silent one in the metadata; such a record's data is then read by the gcov its stamp
 names, which is the gcov that can read it — the only behaviour that changes for that
-record is a failure becoming a success.
+record is a failure becoming a success. The same holds for a record that names an
+`lcov` but leaves gcov alone: its lcov is still run, and its gcov now comes from the
+data.
