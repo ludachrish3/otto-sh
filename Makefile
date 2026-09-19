@@ -59,6 +59,31 @@ unexport VIRTUAL_ENV
 # direct run; exporting it here covers every npm/npx any recipe runs.
 export npm_config_update_notifier := false
 
+# Drop the EMPTY colour-forcing variables from every recipe's environment.
+#
+# An empty FORCE_COLOR means "colour off" to a human, but to the programs that
+# read it the variable is SET. GitHub Actions cannot unset an inherited
+# variable, so .github/workflows/ci.yml's top-level env: block neutralises the
+# runner's own settings by pairing NO_COLOR: "1" with FORCE_COLOR: "" (and
+# CLICOLOR_FORCE / PY_COLORS / CLICOLOR: ""). Node's tty.getColorDepth() tests
+# `env.FORCE_COLOR !== undefined`, so the empty string WINS: Node emits colour,
+# IGNORES NO_COLOR, and says so on stderr --
+#   Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+# The web gates fail on any stderr output, so that one line killed five CI jobs
+# in their web build step (#387, check-ts + docs + dashboard-e2e x3) -- and the
+# env block was quietly not doing its job either, which is the worse half. No
+# local shell sets FORCE_COLOR at all, so no local gate could ever see it.
+#
+# Fixing the CAUSE means making "" mean unset before any child starts, which
+# `unexport` does (same mechanism as VIRTUAL_ENV above). A NON-empty value is
+# someone deliberately asking for colour and is left exactly as it is -- hence
+# the per-variable emptiness test rather than a blanket unexport. The three web
+# scripts repeat this for their own direct callers (Read the Docs, humans), and
+# tests/unit/test_ci_color_env.py pins ci.yml's empties against this list, the
+# scripts' lists, and what a recipe's child actually receives.
+COLOR_FORCE_VARS := FORCE_COLOR CLICOLOR_FORCE PY_COLORS CLICOLOR
+$(foreach _cv,$(COLOR_FORCE_VARS),$(if $(value $(_cv)),,$(eval unexport $(_cv))))
+
 # Coverage target invoked by `validate-python`. Defaults to the full Python
 # gate (coverage-python); `ci` overrides this to `coverage-hostless` because
 # GitHub Actions doesn't have the Vagrant VMs that integration/hops tests

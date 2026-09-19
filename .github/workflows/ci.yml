@@ -15,6 +15,24 @@ env:
   # GitHub-Actions runners set PY_COLORS/FORCE_COLOR, which makes Rich emit
   # bold/dim SGR codes that split flag names like '--region' across escapes
   # and break substring assertions in tests.
+  #
+  # THE "" BELOW ARE STILL SET. GitHub Actions has no way to unset an inherited
+  # variable, so the only way to neutralise a runner-provided FORCE_COLOR here
+  # is to assign it the empty string -- and a consumer that asks "is it set?"
+  # rather than "is it truthy?" then reads that as YES. Node is one: its
+  # tty.getColorDepth() tests `env.FORCE_COLOR !== undefined`, so an empty
+  # FORCE_COLOR makes it emit colour, IGNORE the NO_COLOR above, and warn
+  #   Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+  # on stderr. That warning failed five jobs' web build step (#387) under the
+  # any-stderr web gates, and the NO_COLOR above was not taking effect either.
+  #
+  # So the empties are dropped on OUR side of the boundary, before any child
+  # starts: the Makefile unexports them for every recipe, and
+  # scripts/build_web_no_warnings.sh, scripts/gen_web_types.sh and
+  # scripts/typecheck_web.sh unset them for a direct (Read the Docs, human)
+  # call. tests/unit/test_ci_color_env.py reads the empty-valued names out of
+  # THIS block and fails if any of them is not covered there -- so adding a
+  # variable here with a "" value means adding it to that sanitation too.
   NO_COLOR: "1"
   TERM: dumb
   FORCE_COLOR: ""

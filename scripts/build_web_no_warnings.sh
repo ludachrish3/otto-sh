@@ -53,6 +53,24 @@ SCRIPT="${1:?usage: build_web_no_warnings.sh <npm-script>}"
 # and depends on the registry, not on this build; keep it out of the gate.
 export npm_config_update_notifier=false
 
+# Drop the EMPTY colour-forcing variables. An empty FORCE_COLOR reads as
+# "colour off" but is SET as far as the programs that consume it are
+# concerned: Node's tty.getColorDepth() tests `env.FORCE_COLOR !== undefined`,
+# so it emits colour, IGNORES NO_COLOR, and warns
+#   Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+# on stderr -- which the any-stderr rule above then fails the build on (#387).
+# GitHub Actions cannot unset an inherited variable, so
+# .github/workflows/ci.yml's env: block can only set these to "". Making ""
+# mean unset is the fix; filtering the warning text would leave NO_COLOR
+# genuinely ignored. A NON-empty value is a deliberate request for colour and
+# is left alone. The Makefile does this for every recipe; repeated here for a
+# direct call (Read the Docs, a human). Pinned by
+# tests/unit/test_ci_color_env.py.
+for _var in FORCE_COLOR CLICOLOR_FORCE PY_COLORS CLICOLOR; do
+    [ -n "${!_var-}" ] || unset -v "$_var"
+done
+unset -v _var
+
 OUT="$(mktemp)"
 ERR="$(mktemp)"
 trap 'rm -f "$OUT" "$ERR"' EXIT

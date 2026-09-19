@@ -40,6 +40,20 @@ cd "$(dirname "$0")/.."
 # scripts/build_web_no_warnings.sh.
 export npm_config_update_notifier=false
 
+# Drop the EMPTY colour-forcing variables, so "" means unset before uv/python
+# or Node start. Node's tty.getColorDepth() tests `env.FORCE_COLOR !==
+# undefined`, so an empty FORCE_COLOR makes it IGNORE NO_COLOR and warn about
+# that on stderr -- a failure under the any-stderr rule above (#387). GitHub
+# Actions cannot unset an inherited variable, so .github/workflows/ci.yml's
+# env: block can only set these to "". A NON-empty value is a deliberate
+# request for colour and is left alone. Same sanitation as the Makefile (which
+# covers every recipe) and scripts/build_web_no_warnings.sh, repeated for a
+# direct call. Pinned by tests/unit/test_ci_color_env.py.
+for _var in FORCE_COLOR CLICOLOR_FORCE PY_COLORS CLICOLOR; do
+    [ -n "${!_var-}" ] || unset -v "$_var"
+done
+unset -v _var
+
 uv run otto schema export --out schemas
 
 ERR="$(mktemp)"

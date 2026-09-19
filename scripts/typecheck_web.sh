@@ -94,6 +94,19 @@ fi
 # switch as scripts/build_web_no_warnings.sh.
 export npm_config_update_notifier=false
 
+# Drop the EMPTY colour-forcing variables. Node's tty.getColorDepth() tests
+# `env.FORCE_COLOR !== undefined`, so an empty FORCE_COLOR -- which is what
+# .github/workflows/ci.yml's env: block can set, GitHub Actions having no way
+# to unset an inherited variable -- makes Node IGNORE NO_COLOR and warn about
+# that on stderr, failing point 3 above (#387). Making "" mean unset fixes the
+# cause; a NON-empty value is a deliberate request for colour and is left
+# alone. Same sanitation as the Makefile and
+# scripts/build_web_no_warnings.sh. Pinned by tests/unit/test_ci_color_env.py.
+for _var in FORCE_COLOR CLICOLOR_FORCE PY_COLORS CLICOLOR; do
+    [ -n "${!_var-}" ] || unset -v "$_var"
+done
+unset -v _var
+
 TC_TMP="$(mktemp -d)"
 trap 'rm -rf "$TC_TMP"' EXIT
 
