@@ -114,7 +114,10 @@ trees collected before this change.
   `.gcda` rule (the `.gcno` sample under the source root was the wrong granularity:
   one run can hold a clang product and a gcc product).
 - `src/otto/coverage/collect.py`: §4.3, and the comment that argued the opposite goes.
-- `src/otto/coverage/errors.py`: the new error class for §4.2, an `OttoError`.
+- `src/otto/host/errors.py`: the new error class for §4.2, `CoverageToolMissingError`, an
+  `OttoError` rooted at `RuntimeError`. It cannot sit beside `CoverageToolVersionError` in
+  `otto.coverage.errors`: its raiser is in `otto.host`, and `otto.coverage` depends on
+  `otto.host`, never the reverse (`tach.toml`).
 
 ### 4.5 Visibility
 
