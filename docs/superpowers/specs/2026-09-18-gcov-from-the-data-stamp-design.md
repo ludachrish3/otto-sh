@@ -60,9 +60,12 @@ in this order:
 2. **A record silent on gcov means the data decides.** "Silent" is: no entry for the
    host, or an entry whose gcov is the default's (old run trees recorded the default;
    they benefit without re-collection). The rule is about gcov alone: a record that
-   names only an `lcov` (a wrapper carrying lcov arguments, the #385 workaround) or a
-   sysroot is explicit about those and silent about gcov, so the data chooses the gcov
-   and the record's other fields are kept. The resolver reads the version word from
+   names only an `lcov` (a wrapper carrying lcov arguments, the #385 workaround) is
+   explicit about that and silent about gcov, so the data chooses the gcov and the
+   record's other fields are kept. A record that names only a sysroot is NOT silent:
+   `gcov_bin` is `sysroot / gcov`, so `<sysroot>/usr/bin/gcov` is a gcov named on
+   purpose (the documented "setting just `sysroot` is sufficient" cross setup) and step
+   1 takes it. The resolver reads the version word from
    the directory's own `.gcda` headers (bytes 4:8, either byte order — the merger's
    header reader) and chooses:
    - an LLVM stamp (`402*`, `408*`) → `llvm-cov` from PATH (the existing lookup:
