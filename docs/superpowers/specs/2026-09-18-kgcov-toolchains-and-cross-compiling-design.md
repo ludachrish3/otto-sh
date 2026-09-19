@@ -318,25 +318,17 @@ so the routine e2e and the matrix rebuild for each other correctly. The
 routine kmod e2e keeps the system gcc. The gcc 15 arm is compile-checked
 only through the table.
 
-**The matrix names each compiler's gcov in the bed hosts' `toolchain`.**
-For a Unix host the gcov that reads the counters is the one the HOST RECORD
-names, not one inferred from the data: collection records every fetched Unix
-host's toolchain — the default `usr/bin/gcov` under sysroot `/` included —
-the reporter keeps it, and an explicit entry is taken before any `.gcno`
-discovery runs. Auto-discovery therefore applies only to a host whose record
-is silent, which a Unix host's never is once collected. So the matrix does
-what a user with a non-default compiler does and what `lab.json`'s "Coverage
-toolchain" section documents: it gives test1 and test2 the matching gcov
-(`/usr/bin/gcov-N` for a gcc, `llvm-cov` for clang, which otto wraps as
-`llvm-cov gcov`). It does that per compiler with an OVERLAY SUT repo layered
-over repo5 through `OTTO_SUT_DIRS` — the composite lab concatenates every
-repo's `[[lab.sources]]` in that order and replaces elements wholesale by
-slug, later source winning — so the overlay re-declares only the `test1` and
-`test2` elements, copied verbatim from the fixture's lab data with a
-`toolchain` injected into each host entry. The fixture's own lab data and
-repo5's settings are untouched, and the `default` toolchain builds no overlay
-at all, which is why the routine kmod e2e's path is unchanged. Nothing in
-otto changes.
+**The matrix configures no gcov on the bed.** otto reads a Unix host's
+counters with the gcov the host record names when it names one, and
+otherwise with the gcov the counters' own `.gcda` stamp names — `gcov-N`
+for a gcc, `llvm-cov` for clang, from PATH — per product
+(`2026-09-18-gcov-from-the-data-stamp-design.md`, #384). So every gcc arm
+runs against the fixture's lab data exactly as the routine kmod e2e does,
+and a green report on `gcc-9`…`gcc-14` is that discovery's proof on the
+bed: a `gcov-N` the stamp needs that is not installed fails the report
+naming the package, and `tests/e2e/cov/_repo5_build.py` requires it up
+front so the failure names the compiler to install. The `default` toolchain
+builds no overlay and the routine e2e's path is unchanged.
 
 **Clang's arm also needs lcov to ignore the sources it cannot open.** gcc
 records the compile's working directory in the `.gcno` (a gcc-built
@@ -350,10 +342,16 @@ relative to the kernel tree — and geninfo, which resolves a relative path
 against the data directory, refuses: `unable to open <fetch
 dir>/arch/arm64/include/asm/cpucaps.h`. They are kernel headers, never the
 module's own files, and the store keeps only repo files in any case. lcov's
-own remedy is `--ignore-errors source`, so the proof's clang arm passes it
-through a one-line wrapper named as the bed hosts' `toolchain.lcov` — otto
-runs the lcov the host record names for both the capture and the merge —
-while every gcc arm keeps `/usr/bin/lcov`. Still no otto change.
+own remedy is `--ignore-errors source`, so the proof's clang arm passes it through a one-line wrapper named as
+the bed hosts' `toolchain.lcov` — and names nothing else: the record stays
+silent about gcov so otto reads the counters with the `llvm-cov` the stamp
+names. That is the one overlay left, an OVERLAY SUT repo layered over repo5
+through `OTTO_SUT_DIRS` — the composite lab concatenates every repo's
+`[[lab.sources]]` in that order and replaces elements wholesale by slug,
+later source winning — re-declaring only the `test1` and `test2` elements,
+copied verbatim from the fixture's lab data with the `toolchain.lcov`
+injected into each host entry. otto runs the lcov the host record names
+for both the capture and the merge; every gcc arm keeps `/usr/bin/lcov`.
 
 **Cross build-only (dev VM).** A `kgcov`-marked module,
 `tests/e2e/cov/test_kgcov_cross_build.py`, builds the library and the
