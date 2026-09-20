@@ -1,6 +1,7 @@
 """A collection interval below 1s is not meaningful — a host must have time to answer."""
 
 import asyncio
+from contextlib import suppress
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,7 +13,7 @@ from otto.monitor.collector import MetricCollector, MonitorTarget
 from otto.monitor.parsers import MetricDataPoint, MetricParser, ParseContext
 from otto.result import CommandResult, Results
 from otto.suite.suite import OttoSuite
-from otto.utils import Status
+from otto.utils import Status, wait_for_async
 
 
 class TestValidator:
@@ -75,36 +76,56 @@ class TestEngineIsExempt:
         cost real seconds per tick and protect nobody — no real host is polled on
         that path. This asserts the BEHAVIOUR, not source text: a real
         ``MetricCollector.run()`` loop, driven at a sub-second interval against an
-        instant-responding fake host, must land several ticks well inside
-        ``MIN_INTERVAL_SECONDS``'s own time budget. A collector that silently
-        clamped the interval to the floor would need over a second just to
-        complete its *second* tick, blowing every assertion below.
+        instant-responding fake host, must reach several ticks in far less time
+        than the floor would allow. A collector that silently clamped the
+        interval to the floor would need over a second just to complete its
+        *second* tick, and could not reach WANTED_TICKS inside the budget below.
+
+        The budget bounds how long the ticks may TAKE; it is not a window the
+        ticks are counted inside. Counting inside a fixed window is what this
+        test used to do (``duration=0.3s``, then assert on the tally), and a
+        single scheduling stall on a loaded runner made it fail with one tick:
+        ``run()``'s loop re-checks ``now - start < duration`` before every tick
+        after the first, so a stall of a third of a second anywhere in the
+        first collection ended the run there, whatever the interval (#407).
         """
         host = _make_instant_host("h1")
         target = MonitorTarget(host=host, parsers={_StubParser.command: _StubParser()})
         collector = MetricCollector(targets=[target])
 
         requested_interval = 0.05
-        run_duration = 0.3
-        assert run_duration < MIN_INTERVAL_SECONDS, "the point is staying under the floor"
+        wanted_ticks = 5
+        budget = 2.0
+        # The budget has to sit between the two verdicts with room on each
+        # side: honouring the interval reaches wanted_ticks in ~0.2s, clamping
+        # to the floor cannot get there in under 4s. Anything in between is a
+        # pass for the right reason and a timeout for the right reason.
+        floored_cost = (wanted_ticks - 1) * MIN_INTERVAL_SECONDS
+        assert requested_interval < MIN_INTERVAL_SECONDS, "the point is staying under the floor"
+        assert (wanted_ticks - 1) * requested_interval < budget < floored_cost, (
+            f"budget {budget}s no longer discriminates: honouring the interval needs "
+            f"{(wanted_ticks - 1) * requested_interval}s, flooring needs {floored_cost}s"
+        )
 
-        start = asyncio.get_running_loop().time()
-        await collector.run(
-            interval=timedelta(seconds=requested_interval),
-            duration=timedelta(seconds=run_duration),
-        )
-        elapsed = asyncio.get_running_loop().time() - start
+        def ticks() -> int:
+            return len(collector.get_series().get("h1/value", []))
 
-        assert elapsed < MIN_INTERVAL_SECONDS, (
-            f"run() took {elapsed:.2f}s to cover a {run_duration}s duration at a "
-            f"{requested_interval}s interval — looks like the interval was floored "
-            "to MIN_INTERVAL_SECONDS somewhere"
-        )
-        ticks = len(collector.get_series()["h1/value"])
-        assert ticks >= 5, (
-            f"expected several sub-second ticks within {run_duration}s at a "
-            f"{requested_interval}s interval, got {ticks}"
-        )
+        run = asyncio.create_task(collector.run(interval=timedelta(seconds=requested_interval)))
+        try:
+            await wait_for_async(
+                lambda: ticks() >= wanted_ticks,
+                budget,
+                interval=0.01,
+                on_timeout=lambda: (
+                    f"expected {wanted_ticks} ticks at a {requested_interval}s interval "
+                    f"within {budget}s, got {ticks()} — looks like the interval was "
+                    f"floored to MIN_INTERVAL_SECONDS somewhere"
+                ),
+            )
+        finally:
+            run.cancel()
+            with suppress(asyncio.CancelledError):
+                await run
         # The effective interval reported on the wire must be what was asked
         # for, not silently raised.
         assert collector.get_meta_model().interval == requested_interval
