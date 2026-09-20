@@ -184,3 +184,17 @@ def test_unknown_param_names_the_valid_list():
         match=r"valid: artifact, call_after_load, dump_fn, instrumented, debug_log_globs",
     ):
         _build(_Board(), bogus=1)
+
+
+def test_an_extension_stages_no_artifact_and_takes_no_stage_dir():
+    """The load IS the transfer: no destination to name, nothing to collide (issue #368)."""
+    board = _Board()
+    assert _build(board).stages_artifact is False
+    with pytest.raises(ValueError, match=r"(?s)unknown param.*stage_dir"):
+        _build(board, stage_dir="/opt")
+
+
+def test_llext_refuses_the_retired_dest_dir_key_with_the_same_rename_hint():
+    """Every kind answers the rename the same way, even one with no stage_dir."""
+    with pytest.raises(ValueError, match=r"(?s)'dest_dir'.*'stage_dir'"):
+        _build(_Board(), dest_dir="/opt")

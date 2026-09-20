@@ -166,7 +166,7 @@ otto applies them to each host as it is ingested from lab data:
 
     def _provide(host):
         if host.os_type == "unix":
-            return [MyApp(artifact=Path("dist/myapp.tgz"), dest_dir=Path("/opt"))]
+            return [MyApp(artifact=Path("dist/myapp.tgz"), stage_dir=Path("/opt"))]
         return None
 
     register_product_provider(_provide)

@@ -43,7 +43,7 @@ Every path that otto itself interprets is expanded with `~` (your home
 directory), and if it is still relative it resolves against **the repo
 root** — the directory containing `.otto/`.  Absolute paths are used as
 written.  (`ssh_options` values, merged `host_preferences` fields, and any
-path in the *host's* own domain — a `[[products]]` entry's `dest_dir` or
+path in the *host's* own domain — a `[[products]]` entry's `stage_dir` or
 `cov_dir` — are opaque to otto's settings layer; they are handled by
 whatever consumes them.)
 

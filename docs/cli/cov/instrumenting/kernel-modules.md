@@ -6,6 +6,11 @@ from every other kind on this page's siblings, because a kernel module has
 no libc, no process exit, and — on most distribution kernels — no gcov
 runtime to hand counters to in the first place.
 
+The `.ko` still crosses to the host before the `insmod`, and where it lands
+is the entry's `stage_dir` — one field, one rule, on every kind that places
+a file: see {doc}`../../../configuration/declared-products-tools`. The staged
+copy is removed once the module is resident.
+
 ## What a module lacks
 
 A user-space product needs nothing beyond `--coverage`: gcc's own

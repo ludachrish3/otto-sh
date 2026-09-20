@@ -31,6 +31,12 @@ class _Host(SimpleNamespace):
     def __init__(self, *, loaded=(), **attrs):
         super().__init__(**attrs)
         self.id = attrs.get("id", "test1")
+        self.default_dest_dir = attrs.get("default_dest_dir", Path())
+
+        async def _login_home():
+            return Path(attrs.get("home", "/home/tester"))
+
+        self.login_home = _login_home
         self.load = AsyncMock(return_value=Result(Status.Success))
         self.unload = AsyncMock(return_value=Result(Status.Success))
         self.lsmod = AsyncMock(return_value=Result(Status.Success, value=list(loaded)))
@@ -67,7 +73,10 @@ def test_kmod_tool_reads_module_name_and_params():
         ({"params": "{name}"}, "'params' takes no placeholders"),
         (
             {"bogus": 1},
-            "kind 'kmod' got unknown param(s): ['bogus']; valid: artifact, module_name, params",
+            (
+                "kind 'kmod' got unknown param(s): ['bogus']; valid: artifact, stage_dir, "
+                "module_name, params"
+            ),
         ),
     ],
 )
@@ -89,7 +98,9 @@ async def test_kmod_tool_stage_is_a_noop_and_install_loads_with_params():
     tool = _build(host, params="debug=1")
     assert (await tool.stage(host)).is_ok
     assert (await tool.install(host)).is_ok
-    host.load.assert_awaited_once_with(Path("/repo/build/tracer.ko"), "tracer", params="debug=1")
+    host.load.assert_awaited_once_with(
+        Path("/repo/build/tracer.ko"), "tracer", params="debug=1", dest_dir=Path("/home/tester")
+    )
 
 
 @pytest.mark.asyncio
@@ -159,7 +170,7 @@ def test_kgcov_reads_source_anchored_to_the_repo():
     [
         ({"module_name": "x"}, "kind 'kgcov' got unknown param(s): ['module_name']"),
         ({"params": "gcov_dir=/x"}, "'params' must not set gcov_dir"),
-        ({"bogus": 1}, "valid: artifact, params, source"),
+        ({"bogus": 1}, "valid: artifact, stage_dir, params, source"),
     ],
 )
 def test_kgcov_rejects_bad_params_naming_the_entry(params, fragment):
@@ -234,7 +245,9 @@ async def test_kgcov_install_checks_the_interface_before_loading(tmp_path: Path)
     host.load.assert_not_awaited()
     _fake_ko(tmp_path).rename(tmp_path / "later.ko")
     assert (await tool.install(host)).is_ok
-    host.load.assert_awaited_once_with(tmp_path / "later.ko", "otto_kgcov", params="")
+    host.load.assert_awaited_once_with(
+        tmp_path / "later.ko", "otto_kgcov", params="", dest_dir=Path("/home/tester")
+    )
 
 
 @pytest.mark.asyncio
@@ -308,3 +321,52 @@ def test_one_or_no_kgcov_tool_passes_the_binding_check():
     check_kgcov_bindings(host)
     host.dev_tools = [_kgcov(host)]
     check_kgcov_bindings(host)
+
+
+# ── stage_dir (issue #368) ───────────────────────────────────────────────────
+
+
+def _tool(kind, host, tmp_path, **params):
+    """Build either dev-tool kind with an artifact its own install accepts."""
+    if kind == "kgcov":
+        return _kgcov(host, tmp_path=tmp_path, **params)
+    params.setdefault("artifact", str(_fake_ko(tmp_path)))
+    return _build(host, kind="kmod", **params)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["kmod", "kgcov"])
+async def test_dev_tool_install_hands_load_the_resolved_stage_dir(kind, tmp_path: Path):
+    host = _Host(default_dest_dir=Path("/srv/stage"))
+    tool = _tool(kind, host, tmp_path, stage_dir="/opt/mods")
+    assert tool.stage_dir == Path("/opt/mods")
+    assert (await tool.install(host)).is_ok
+    assert host.load.await_args.kwargs["dest_dir"] == Path("/opt/mods")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["kmod", "kgcov"])
+async def test_dev_tool_install_falls_back_to_the_hosts_transfer_default(kind, tmp_path: Path):
+    host = _Host(default_dest_dir=Path("/srv/stage"))
+    assert (await _tool(kind, host, tmp_path).install(host)).is_ok
+    assert host.load.await_args.kwargs["dest_dir"] == Path("/srv/stage")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["kmod", "kgcov"])
+async def test_dev_tool_install_falls_back_to_the_login_home(kind, tmp_path: Path):
+    host = _Host()  # the repo-wide case: no default_dest_dir at all
+    assert (await _tool(kind, host, tmp_path).install(host)).is_ok
+    assert host.load.await_args.kwargs["dest_dir"] == Path("/home/tester")
+
+
+@pytest.mark.parametrize("kind", ["kmod", "kgcov"])
+def test_dev_tool_kinds_refuse_the_retired_dest_dir_key(kind):
+    with pytest.raises(ValueError, match=r"(?s)'dest_dir'.*'stage_dir'"):
+        _build(kind=kind, dest_dir="/tmp")
+
+
+@pytest.mark.parametrize("kind", ["kmod", "kgcov"])
+def test_dev_tool_kinds_refuse_a_relative_stage_dir(kind):
+    with pytest.raises(ValueError, match="absolute"):
+        _build(kind=kind, stage_dir="mods")

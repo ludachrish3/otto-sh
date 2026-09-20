@@ -77,7 +77,7 @@ from .connections import (
     build_term_backend,
     teardown_step,
 )
-from .errors import UnsupportedOnUserlandError
+from .errors import HostCommandError, UnsupportedOnUserlandError
 from .file_ops import PosixFileOps
 from .host import (
     CONCURRENT_HELP,
@@ -287,6 +287,14 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
     impairer: str = "netem"
     """Active impairer used for link-impairment placements on this host."""
+
+    cached_login_home: Path | None = field(default=None, init=False, repr=False)
+    """The login user's home, once :meth:`login_home` has asked for it.
+
+    Discovered lazily and kept for the host's lifetime: the login does not
+    change under a host object (a different ``--user`` opens its own session
+    and never reaches staging), and the probe costs a command. ``None`` means
+    "not asked yet", never "no home" — a probe that cannot answer raises."""
 
     valid_impairers: list[str] = field(default_factory=lambda: ["netem"])
     """Closed menu of impairers this host supports (active is ``impairer``)."""
@@ -970,6 +978,48 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         mods = [line.split()[0] for line in result.value.splitlines() if line.strip()]
         return Result(Status.Success, value=mods)
 
+    async def login_home(self) -> Path:
+        """Return the login user's home directory, discovered once and cached.
+
+        The fallback every staging directory lands on when neither the entry
+        nor the host record names one (:func:`~otto.host.product.resolve_stage_dir`).
+        It is asked for rather than assumed because the answer has to be an
+        ABSOLUTE path: a relative destination is read by the transfer against
+        the login directory and by a command against the SHELL's own, and
+        those are the same place only on a direct SSH exec channel.
+
+        ``printf %s "$HOME"`` rather than ``echo ~`` or ``pwd``: ``pwd``
+        answers where the session happens to BE (a ``session_setup`` hook may
+        have moved it, which is exactly the divergence this exists to close),
+        and ``printf`` emits no trailing newline of its own on any of the
+        measured userlands. Run at ``QUIET`` — it is plumbing, not a step a
+        run's log should carry.
+
+        Raises:
+            ~otto.host.errors.HostCommandError: if the probe fails or answers
+                with anything but an absolute path (an empty ``$HOME``, a
+                login shell that prints a banner). The message names the host
+                and points at ``default_dest_dir`` as the way to stop asking.
+        """
+        if self.cached_login_home is not None:
+            return self.cached_login_home
+        probe = await self.exec('printf %s "$HOME"', log=LogMode.QUIET)
+        answer = probe.value.strip() if probe.status.is_ok else ""
+        # A newline SURVIVES the strip when it is interior — a login shell
+        # that prints a banner after the value, an `exec` that folded two
+        # lines together. `Path("/home/v\nmotd")` is a perfectly legal Path,
+        # so nothing downstream would object; it would simply be cached and
+        # staged into forever.
+        if not probe.status.is_ok or not answer.startswith("/") or "\n" in answer:
+            raise HostCommandError(
+                f"{self.id}: could not read the login user's home directory "
+                f'(`printf %s "$HOME"` answered {answer!r}); otto needs an absolute '
+                "directory to stage artifacts in. Declare `default_dest_dir` on the host, "
+                "or an absolute `stage_dir` on the entry."
+            )
+        self.cached_login_home = Path(answer)
+        return self.cached_login_home
+
     @cli_exposed(success="Module loaded.")
     async def load(
         self,
@@ -978,7 +1028,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         params: Annotated[
             str, Opt(help="insmod parameters (`key=value` tokens), appended verbatim.")
         ] = "",
-        dest_dir: Annotated[Path, Exclude] = Path("/tmp"),  # noqa: S108 — deliberate staging path
+        dest_dir: Annotated[Path | None, Exclude] = None,
         show_progress: Annotated[bool, Exclude] = False,
     ) -> Result:
         """Insert a kernel module: stage the .ko to the host, then ``insmod`` it.
@@ -989,11 +1039,27 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         afterward (the module lives in kernel memory once inserted). ``name``
         defaults to the file stem (``-``→``_``) and is used in error text.
         *params* is appended to the ``insmod`` line as given (stripped of surrounding
-        whitespace) — ``"gcov_dir=/tmp/demo debug=1"`` becomes ``insmod /tmp/demo.ko
-        gcov_dir=/tmp/demo debug=1``. It is appended UNQUOTED, so the caller is
-        responsible for quoting any value that itself contains whitespace.
+        whitespace) — ``"gcov_dir=/tmp/demo debug=1"`` becomes ``insmod
+        <dest_dir>/demo.ko gcov_dir=/tmp/demo debug=1``. It is appended UNQUOTED, so
+        the caller is responsible for quoting any value that itself contains
+        whitespace. *dest_dir* is used EXACTLY as given — a caller that resolved a
+        staging directory owns that answer. ``None`` means "resolve it here",
+        through :func:`~otto.host.product.resolve_stage_dir`: the host's
+        ``default_dest_dir`` when it declares one, else the login user's home
+        (read once per host object; see :meth:`login_home`).
         """
         resolved = (name or file.stem).replace("-", "_")
+        if dest_dir is None:
+            # Nobody upstream owns the answer (the CLI verb, a direct call),
+            # so this call resolves it — ONCE. A caller that passes a
+            # directory has already resolved it and gets it back untouched:
+            # applying the rule at both hops is how a fallback answer became
+            # `<home>/<home>/x.ko` on a real board.
+            from .product import (
+                resolve_stage_dir,
+            )  # local: keeps the product graph off the host import path
+
+            dest_dir = await resolve_stage_dir(Path(), self, who=f"host {self.id}")
         dest = dest_dir / file.name
         put_result = await self.put(file, dest_dir, show_progress=show_progress)
         if not put_result.is_ok:

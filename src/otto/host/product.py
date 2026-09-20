@@ -50,8 +50,135 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+LOGIN_HOME = "the host's login home"
+"""How an undiscovered login home is named in a lab-load message.
+
+:func:`stage_dir_key` runs at lab ingest, where nothing is connected and the
+real home cannot be asked for. It stands in for the answer
+:func:`resolve_stage_dir` gets at run time."""
+
+
+def _refuse_relative(stage_dir: Path, who: str) -> None:
+    """Refuse a staging directory that is not absolute, naming *who* declared it."""
+    raise ValueError(
+        f"{who}: 'stage_dir' must be an absolute path on the host, got {str(stage_dir)!r}. "
+        "A relative path (or a '~' the transfer layer never expands) means a different "
+        "directory to the transfer that puts the artifact and to the command that names it "
+        "afterwards. Leave it empty to stage in the host's default_dest_dir, or in the login "
+        "user's home when the host declares none."
+    )
+
+
+def validate_stage_dir(stage_dir: Path, who: str) -> Path:
+    """Return *stage_dir* if it is empty or absolute; refuse anything else.
+
+    Called by every built-in kind's factory, so a bad value is a lab-load
+    error naming the entry rather than a wrong path discovered on the device.
+    """
+    if str(stage_dir) in ("", "."):
+        return stage_dir
+    if not stage_dir.is_absolute():
+        _refuse_relative(stage_dir, who)
+    return stage_dir
+
+
+def _declared_or_default(stage_dir: Path, host: "Host", who: str) -> Path | None:
+    """Return the staging directory as far as it is knowable without touching *host*.
+
+    An absolute declared value, else the host's ``default_dest_dir`` when it
+    declares one, else ``None`` — meaning "the login user's home", which only
+    a connected host can answer.
+    """
+    if str(stage_dir) not in ("", "."):
+        if not stage_dir.is_absolute():
+            _refuse_relative(stage_dir, who)
+        return stage_dir
+    default = getattr(host, "default_dest_dir", None) or Path()
+    if not isinstance(default, Path):
+        default = Path(default)
+    if str(default) in ("", "."):
+        return None
+    if not default.is_absolute():
+        raise ValueError(
+            f"host {getattr(host, 'id', '?')}: 'default_dest_dir' is {str(default)!r}, which is "
+            "not absolute, so it cannot be used as a staging directory — the transfer joins a "
+            "relative value onto the login directory while a command resolves it against the "
+            "shell's own. Make it absolute, or give the product an absolute 'stage_dir'."
+        )
+    return default
+
+
+def stage_dir_key(stage_dir: Path, host: "Host", who: str) -> str:
+    """Return the staging directory as a comparable KEY, without connecting to *host*.
+
+    The lab-load half of :func:`resolve_stage_dir`, for the per-host collision
+    check: same inputs, same precedence, but an undiscovered login home comes
+    back as :data:`LOGIN_HOME` rather than a path. Two entries that both fall
+    through to the home therefore share a key — which is the collision that
+    matters — and a host whose home IS already known keys on the real path.
+    """
+    known = _declared_or_default(stage_dir, host, who)
+    if known is not None:
+        return str(known)
+    cached = getattr(host, "cached_login_home", None)
+    return str(cached) if cached is not None else LOGIN_HOME
+
+
+async def resolve_stage_dir(stage_dir: Path, host: "Host", who: str = "product") -> Path:
+    """Resolve a declared staging directory to an ABSOLUTE path on *host*.
+
+    One rule, every kind, in precedence order:
+
+    1. a declared ``stage_dir`` — which must be absolute (:func:`validate_stage_dir`);
+    2. the host's ``default_dest_dir``, when it declares one (absolute too);
+    3. the login user's home, discovered once per host object
+       (``host.login_home()``).
+
+    The answer is always absolute, deliberately. A relative destination is
+    resolved by whoever reads it, and the readers disagree: a transfer lands
+    it in the login/SFTP directory while a command resolves it against the
+    SHELL's current directory — the same place only on a direct SSH exec
+    channel, and a different one the moment the host takes the pooled-shell
+    route (telnet, a proxied login, a ``session_setup`` hook that changes
+    directory). An absolute path removes the question instead of encoding an
+    answer that two layers would read differently.
+
+    Raises
+    ------
+    ValueError
+        If a declared value is relative, if ``default_dest_dir`` is relative,
+        or if the host has no login-home concept at all (an embedded target
+        with no filesystem) and declares no ``default_dest_dir`` — there is
+        then nothing this could honestly answer. ``ValueError`` because every
+        one of those is a statement the LAB or the entry made and the reader
+        has to go and edit; the host-side failure of step 3 is a command that
+        did not answer, and ``login_home`` raises
+        :class:`~otto.host.errors.HostCommandError` for it — the taxonomy's
+        own split between "your config is wrong" and "the device said no".
+    """
+    known = _declared_or_default(stage_dir, host, who)
+    if known is not None:
+        return known
+    discover = getattr(host, "login_home", None)
+    if discover is None:
+        raise ValueError(
+            f"host {getattr(host, 'id', '?')}: cannot stage an artifact — this host has no "
+            "login home to fall back on. Declare an absolute 'default_dest_dir' on the host, "
+            "or an absolute 'stage_dir' on the entry."
+        )
+    return await discover()
+
+
 class Product(ABC):
     """A unit of software-under-test deployed to a host (behavior contract)."""
+
+    stage_dir: Path = Path()
+    """Directory on the host this product's artifact is staged into, in the
+    HOST's path domain. Empty (the default) means the host's own
+    ``default_dest_dir`` -- see :meth:`resolved_stage_dir`. Every kind reads
+    the same field: a ``shell`` product's artifact STAYS there (it is the
+    product), while the transient kinds (``kmod``, ``docker_image``, the
+    kernel-module dev tools) delete their staged copy once it is consumed."""
 
     name: str
     """Logical identity — used for logging, ``is_installed`` lookups, dedup,
@@ -75,6 +202,38 @@ class Product(ABC):
     """Host paths (literal or glob) of this product's own debug logs, hauled
     into ``logs/<host>/<name>/debug/`` by :meth:`get_debug_logs`. An immutable
     empty default on the ABC; subclasses assign their own list."""
+
+    @property
+    def stages_artifact(self) -> bool:
+        """Whether this product puts a FILE at ``<stage_dir>/<artifact basename>``.
+
+        False on the base: a product is free to install itself from a package
+        feed, a container registry or the device's own loader and place no
+        file at all. The per-host staging-collision check
+        (:func:`otto.host.factory.apply_providers`) keys on this -- two
+        products that stage nothing cannot overwrite each other.
+        """
+        return False
+
+    async def resolved_stage_dir(self, host: "Host") -> Path:
+        """Return :attr:`stage_dir` resolved against *host* (:func:`resolve_stage_dir`).
+
+        The single seam every kind goes through, so a kind's ``install`` can
+        never name a different directory than its ``stage`` put the artifact
+        in. Async because the fallback is the host's login home, which only
+        the host can answer (read once per host object and cached; see
+        :meth:`~otto.host.unix_host.UnixHost.login_home`).
+
+        THE ONE OWNER of resolution: what this returns is absolute and is
+        handed to ``put`` / ``host.load`` / a command line as-is. Nothing
+        downstream resolves it again — applying the rule twice is how a
+        relative answer became ``<home>/<home>/x.ko``.
+        """
+        return await resolve_stage_dir(self.stage_dir, host, who=f"product {self.name!r}")
+
+    def stage_key(self, host: "Host") -> str:
+        """:attr:`stage_dir` as a comparable key at lab load (:func:`stage_dir_key`)."""
+        return stage_dir_key(self.stage_dir, host, who=f"product {self.name!r}")
 
     @abstractmethod
     async def stage(self, host: "Host") -> Result:
@@ -293,7 +452,7 @@ class ShellProduct(Product):
     the artifact's basename. ``install``/``uninstall``/``is_installed`` remain
     abstract — they are inherently project-specific. Once the remote file-ops
     phase lands, the natural ``is_installed`` is
-    ``await host.exists(self.dest_dir / self.artifact.name)``.
+    ``await host.exists(self.resolved_stage_dir(host) / self.artifact.name)``.
     """
 
     artifact: Path
@@ -302,9 +461,11 @@ class ShellProduct(Product):
     name: str = ""
     """Logical name; defaults to ``artifact.name`` when left empty."""
 
-    dest_dir: Path = field(default_factory=Path)
-    """Destination directory on the host; resolved against the host's
-    ``default_dest_dir`` by :meth:`~otto.host.host.Host.put`."""
+    stage_dir: Path = field(default_factory=Path)
+    """See :attr:`Product.stage_dir <otto.host.product.Product.stage_dir>`; a
+    dataclass field so kinds can pass it. Empty is resolved against the host's
+    ``default_dest_dir`` by :meth:`~otto.host.host.Host.put` and, identically,
+    by :meth:`~otto.host.product.Product.resolved_stage_dir`."""
 
     cov_dir: str | None = None
     """See :attr:`Product.cov_dir <otto.host.product.Product.cov_dir>`; a dataclass
@@ -324,10 +485,22 @@ class ShellProduct(Product):
         if not self.name:
             self.name = self.artifact.name
 
+    @property
+    @override
+    def stages_artifact(self) -> bool:
+        """Answer True — the artifact IS the product, and it lands under :attr:`stage_dir`."""
+        return True
+
     @override
     async def stage(self, host: "Host") -> Result:
-        """Transfer the artifact, returning ``host.put``'s result unchanged."""
-        return await host.put(self.artifact, self.dest_dir)
+        """Transfer the artifact, returning ``host.put``'s result unchanged.
+
+        ``put`` is handed the RESOLVED, absolute directory: ``put``'s own
+        ``_resolve_dest`` knows the host's ``default_dest_dir`` but not the
+        login-home fallback, so passing the raw value would land the artifact
+        somewhere the installing command does not name.
+        """
+        return await host.put(self.artifact, await self.resolved_stage_dir(host))
 
     @override
     def instrumented(self) -> bool | None:

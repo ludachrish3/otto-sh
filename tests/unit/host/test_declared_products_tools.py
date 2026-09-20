@@ -214,15 +214,15 @@ def test_shell_kind_anchors_the_artifact_and_names_the_entry():
     built = product_mod.PRODUCT_KINDS.get("shell")(_shell_entry(), _host())
     assert built.artifact == Path("/repo/build/fw.bin")  # base_dir-anchored
     assert built.name == "fw"
-    assert built.dest_dir == Path()
+    assert built.stage_dir == Path()
 
 
 def test_shell_kind_absolute_artifact_passes_through():
     built = product_mod.PRODUCT_KINDS.get("shell")(
-        _shell_entry(artifact="/abs/fw.bin", dest_dir="/opt/fw"), _host()
+        _shell_entry(artifact="/abs/fw.bin", stage_dir="/opt/fw"), _host()
     )
     assert built.artifact == Path("/abs/fw.bin")
-    assert built.dest_dir == Path("/opt/fw")
+    assert built.stage_dir == Path("/opt/fw")
 
 
 @pytest.mark.parametrize(
@@ -241,7 +241,7 @@ def test_shell_kind_rejects_bad_params_naming_entry_and_seam(params, fragment):
 
 @pytest.mark.asyncio
 async def test_shell_kind_stage_puts_the_artifact():
-    built = product_mod.PRODUCT_KINDS.get("shell")(_shell_entry(dest_dir="/opt"), _host())
+    built = product_mod.PRODUCT_KINDS.get("shell")(_shell_entry(stage_dir="/opt"), _host())
     host = _RunHost()
     result = await built.stage(host)
     assert result.status is Status.Success
@@ -527,8 +527,24 @@ def test_shell_kind_unknown_param_message_lists_the_new_names():
         ValueError,
         match=(
             r"kind 'shell' got unknown param\(s\).*"
-            r"valid: artifact, dest_dir, install, uninstall, check, "
+            r"valid: artifact, stage_dir, install, uninstall, check, "
             r"cov_dir, debug_log_globs, instrumented"
         ),
     ):
+        product_mod.PRODUCT_KINDS.get("shell")(entry, _host())
+
+
+# ── the retired `dest_dir` spelling (issue #368) ─────────────────────────────
+
+
+@pytest.mark.parametrize("seam", ["products", "dev_tools"])
+def test_shell_kind_refuses_the_retired_dest_dir_key_naming_stage_dir(seam):
+    """An old lab fails loudly rather than silently staging somewhere else.
+
+    Falling through to the generic unknown-param message would be enough to
+    stop the load, but not enough to say what to write instead — and the
+    whole point of the rename is that the artifact moves.
+    """
+    entry = _entry("fw", seam, kind="shell", artifact="a", dest_dir="/opt/fw")
+    with pytest.raises(ValueError, match=r"(?s)'fw'.*'dest_dir'.*'stage_dir'"):
         product_mod.PRODUCT_KINDS.get("shell")(entry, _host())

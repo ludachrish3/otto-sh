@@ -40,7 +40,13 @@ from ..result import Result
 from ..utils import Status, anchor_path
 from .kmod_tool_kind import kgcov_tool_for
 from .product import PRODUCT_KINDS, ShellProduct, cov_dir_of, cov_dir_of_name, sudo_gcda_delete
-from .shell_kind import bool_param, str_list_param, str_param, substitute_placeholders
+from .shell_kind import (
+    bool_param,
+    stage_dir_param,
+    str_list_param,
+    str_param,
+    substitute_placeholders,
+)
 
 if TYPE_CHECKING:
     from .host import Host
@@ -57,7 +63,8 @@ COVERAGE_METHODS = ("none", "module", "kernel")
 """The three ``coverage`` values a ``kmod`` product accepts."""
 
 _VALID = (
-    "artifact, module_name, params, coverage, gcov_path, cov_dir, instrumented, debug_log_globs"
+    "artifact, stage_dir, module_name, params, coverage, gcov_path, cov_dir, instrumented, "
+    "debug_log_globs"
 )
 _MODULE_VERBS = ("load", "unload", "lsmod")
 
@@ -110,7 +117,12 @@ class KmodProduct(ShellProduct):
             # cov_dir containing whitespace would otherwise split in two.
             gcov_dir_arg = shlex.quote(f"gcov_dir={cov_dir_of(self)}")
             params = f"{params} {gcov_dir_arg}".strip()
-        result = await host.load(self.artifact, self.module_name, params=params)  # ty: ignore[unresolved-attribute]
+        result = await host.load(  # ty: ignore[unresolved-attribute]
+            self.artifact,
+            self.module_name,
+            params=params,
+            dest_dir=await self.resolved_stage_dir(host),
+        )
         if self.coverage == "module" and not result.is_ok and result.status is not Status.NotRun:
             # The library is in (or was already): this is the CONSUMER's own
             # insmod failing, so the message says so and names the library's
@@ -349,6 +361,7 @@ def _kmod_kind(entry: DeclaredEntry, host: "Host") -> KmodProduct:
     assert artifact is not None  # noqa: S101 — required=True raises above when missing
     if not artifact.endswith(".ko"):
         raise ValueError(f"[[products]] {entry.name!r}: 'artifact' must be a .ko, got {artifact!r}")
+    stage_dir = stage_dir_param(entry, params)
     module_name = str_param(entry, params, "module_name")
     insmod_params = str_param(entry, params, "params") or ""
     coverage = str_param(entry, params, "coverage") or "none"
@@ -392,6 +405,7 @@ def _kmod_kind(entry: DeclaredEntry, host: "Host") -> KmodProduct:
     return KmodProduct(
         artifact=anchor_path(Path(artifact), entry.base_dir),
         name=entry.name,
+        stage_dir=stage_dir,
         cov_dir=cov_dir,
         debug_log_globs=debug_log_globs,
         instrumented_override=instrumented,

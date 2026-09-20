@@ -74,8 +74,8 @@ from in-process state, so it is found even when `uninstall` runs in a
 separate process from the `install` that loaded it — the normal shape of
 `otto install` followed later by `otto uninstall`. A container that is
 already gone has nothing to resolve an image from, so nothing beyond the
-(already-absent) container is removed. The staged tarball under `/tmp` is
-removed right after a successful `docker load`.
+(already-absent) container is removed. The staged tarball under the entry's
+`stage_dir` is removed right after a successful `docker load`.
 
 ## Logs
 

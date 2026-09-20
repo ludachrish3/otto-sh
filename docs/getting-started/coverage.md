@@ -39,7 +39,7 @@ directory it redirects them to — the one place `otto cov` looks:
 name = "agent"
 kind = "shell"
 artifact = "build/agent"
-dest_dir = "/opt/agent"
+stage_dir = "/opt/agent"
 cov_dir = "/var/cov/agent"
 check = "test -x /opt/agent/agent"
 install = "chmod +x /opt/agent/agent && GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 /opt/agent/agent --install"

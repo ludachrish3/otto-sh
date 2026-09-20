@@ -2306,6 +2306,7 @@ async def test_load_stages_then_insmod_sudo_for_nonroot(tmp_path):
     from otto.utils import Status
 
     host = _unix_host()
+    host.default_dest_dir = Path("/tmp")
     host._session_mgr = MagicMock()
     host._session_mgr.current_user = "admin"  # non-root
     ko = tmp_path / "my-mod.ko"
@@ -2331,6 +2332,7 @@ async def test_load_no_sudo_when_current_user_root(tmp_path):
     host = _unix_host()
     host._session_mgr = MagicMock()
     host._session_mgr.current_user = "root"
+    host.default_dest_dir = Path("/tmp")
     ko = tmp_path / "m.ko"
     ko.write_bytes(b"\x00")
     host.put = AsyncMock(return_value=Result(Status.Success, value={}))
@@ -2349,6 +2351,7 @@ async def test_load_appends_insmod_params_verbatim(tmp_path):
     host = _unix_host()
     host._session_mgr = MagicMock()
     host._session_mgr.current_user = "admin"
+    host.default_dest_dir = Path("/tmp")
     ko = tmp_path / "demo.ko"
     ko.write_bytes(b"\x00")
     host.put = AsyncMock(return_value=Result(Status.Success, value={}))
@@ -2356,6 +2359,54 @@ async def test_load_appends_insmod_params_verbatim(tmp_path):
     host.rm = AsyncMock(return_value=Result(Status.Success))
     await host.load(ko, params="  gcov_dir=/tmp/demo debug=1 ")
     assert host.run.await_args.args[0] == "insmod /tmp/demo.ko gcov_dir=/tmp/demo debug=1"
+
+
+@pytest.mark.asyncio
+async def test_load_stages_and_insmods_under_the_hosts_transfer_default(tmp_path):
+    """No hardcoded ``/tmp``: an unset destination is the host's own default (issue #368).
+
+    ``dest_dir=None`` is the "nobody upstream owns this" case — the CLI verb,
+    a direct call — and is the ONLY case ``load`` resolves.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from otto.utils import Status
+
+    host = _unix_host()
+    host.default_dest_dir = Path("/srv/stage")
+    host._session_mgr = MagicMock()
+    host._session_mgr.current_user = "admin"
+    ko = tmp_path / "my-mod.ko"
+    ko.write_bytes(b"\x00")
+    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
+    host.run = AsyncMock(return_value=_run_result("insmod", "", Status.Success, 0))
+    host.rm = AsyncMock(return_value=Result(Status.Success))
+    assert (await host.load(ko)).status is Status.Success
+    assert host.put.await_args.args[1] == Path("/srv/stage")
+    assert host.run.await_args.args[0] == "insmod /srv/stage/my-mod.ko"
+    assert host.rm.await_args.args[0] == Path("/srv/stage/my-mod.ko")
+
+
+@pytest.mark.asyncio
+async def test_load_dest_dir_override_moves_put_insmod_and_cleanup_together(tmp_path):
+    """The three paths are one value — they cannot drift apart (issue #368)."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from otto.utils import Status
+
+    host = _unix_host()
+    host.default_dest_dir = Path("/srv/stage")
+    host._session_mgr = MagicMock()
+    host._session_mgr.current_user = "admin"
+    ko = tmp_path / "my-mod.ko"
+    ko.write_bytes(b"\x00")
+    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
+    host.run = AsyncMock(return_value=_run_result("insmod", "", Status.Success, 0))
+    host.rm = AsyncMock(return_value=Result(Status.Success))
+    assert (await host.load(ko, dest_dir=Path("/opt/mods"))).status is Status.Success
+    assert host.put.await_args.args[1] == Path("/opt/mods")
+    assert host.run.await_args.args[0] == "insmod /opt/mods/my-mod.ko"
+    assert host.rm.await_args.args[0] == Path("/opt/mods/my-mod.ko")
 
 
 @pytest.mark.asyncio
@@ -2367,6 +2418,7 @@ async def test_load_put_failure_short_circuits(tmp_path):
     host = _unix_host()
     host._session_mgr = MagicMock()
     host._session_mgr.current_user = "admin"
+    host.default_dest_dir = Path("/tmp")
     ko = tmp_path / "m.ko"
     ko.write_bytes(b"\x00")
     host.put = AsyncMock(return_value=Result(Status.Error, value={}, msg="scp failed"))
@@ -2386,6 +2438,7 @@ async def test_load_error_message_uses_normalized_name(tmp_path):
     host = _unix_host()
     host._session_mgr = MagicMock()
     host._session_mgr.current_user = "admin"
+    host.default_dest_dir = Path("/tmp")
     ko = tmp_path / "foo-bar.ko"
     ko.write_bytes(b"\x00")
     host.put = AsyncMock(return_value=Result(Status.Success, value={}))
@@ -2940,3 +2993,140 @@ async def test_the_transfer_context_carries_the_sftp_options(monkeypatch: pytest
     )
     host._build_file_transfer()
     assert seen["ctx"].sftp_options.max_concurrent_transfers == 2
+
+
+# ── the kmod staging composition, end to end (issue #368, fix round 2) ───────
+
+
+def _home_probe_host(home="/home/vagrant"):
+    """A real UnixHost with the untouched empty `default_dest_dir`, verbs mocked.
+
+    `exec` answers the login-home probe and nothing else, so a test that
+    reaches for the home has to go through the real discovery path.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    host = _unix_host()
+    assert host.default_dest_dir == Path()  # the repo-wide default; no lab sets one
+    host._session_mgr = MagicMock()
+    host._session_mgr.current_user = "admin"  # non-root: the insmod is sudo'd
+    host.exec = AsyncMock(
+        return_value=CommandResult(Status.Success, value=home, command="printf", retcode=0)
+    )
+    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
+    host.run = AsyncMock(return_value=_run_result("insmod", "", Status.Success, 0))
+    host.rm = AsyncMock(return_value=Result(Status.Success))
+    host.lsmod = AsyncMock(return_value=Result(Status.Success, value=[]))
+    return host
+
+
+@pytest.mark.asyncio
+async def test_login_home_is_probed_once_and_cached():
+    host = _home_probe_host()
+    assert await host.login_home() == Path("/home/vagrant")
+    assert await host.login_home() == Path("/home/vagrant")
+    assert host.exec.await_count == 1  # the login cannot change under one host object
+    assert host.exec.await_args.args[0] == 'printf %s "$HOME"'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "",
+        "relative/home",
+        "   ",
+        # A banner printed after the value: `strip` cannot reach an INTERIOR
+        # newline, and `Path("/home/v\nLast login: ...")` is a legal Path, so
+        # nothing downstream would object — it would just be cached forever.
+        "/home/vagrant\nLast login: Sun Sep 20",
+    ],
+)
+async def test_a_non_absolute_login_home_is_refused_naming_the_host(answer):
+    from otto.host.errors import HostCommandError
+
+    host = _home_probe_host(home=answer)
+    with pytest.raises(HostCommandError, match=r"(?s)box.*home directory.*default_dest_dir"):
+        await host.login_home()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_login_home_probe_is_refused():
+    from unittest.mock import AsyncMock
+
+    from otto.host.errors import HostCommandError
+
+    host = _home_probe_host()
+    host.exec = AsyncMock(
+        return_value=CommandResult(Status.Error, value="", command="printf", retcode=1)
+    )
+    with pytest.raises(HostCommandError, match="home directory"):
+        await host.login_home()
+
+
+def _assert_staged_at(host, directory, basename):
+    """The put, the sudo'd insmod and the cleanup all name one absolute file."""
+    assert host.put.await_args.args[1] == Path(directory)
+    line = host.run.await_args.args[0]
+    assert line == f"insmod {directory}/{basename}"
+    assert host.run.await_args.kwargs["sudo"] is True
+    # `sudo=True` + this line is what the device receives as
+    # `sudo -S -p 'otto-sudo:' insmod <directory>/<basename>` (the composition
+    # itself is PosixPrivilege's, covered in test_privilege.py). The bed's
+    # failing form was `sudo -S -p 'otto-sudo:' insmod ~/'~/otto_kgcov.ko'`:
+    # the staging rule had been applied at BOTH hops, and `insmod` read the
+    # result as a literal `~` directory under the login home.
+    assert host.rm.await_args.args[0] == Path(f"{directory}/{basename}")
+
+
+@pytest.mark.asyncio
+async def test_kmod_dev_tool_install_stages_once_in_the_login_home(tmp_path):
+    """Resolution happens EXACTLY once between the kind and the insmod."""
+    from otto.host.kmod_tool_kind import KmodTool
+
+    host = _home_probe_host()
+    ko = tmp_path / "otto_kgcov.ko"
+    ko.write_bytes(b"\x00")
+    tool = KmodTool(name="kgcov-6.8", artifact=ko, module_name="otto_kgcov")
+    assert (await tool.install(host)).is_ok
+    _assert_staged_at(host, "/home/vagrant", "otto_kgcov.ko")
+
+
+@pytest.mark.asyncio
+async def test_kgcov_dev_tool_install_stages_once_in_the_login_home(tmp_path):
+    """The kind the bed actually failed on; its install is KmodTool's, unchanged."""
+    from otto import kgcov as kgcov_mod
+    from otto.host.kmod_tool_kind import KgcovTool
+
+    host = _home_probe_host()
+    ko = tmp_path / "otto_kgcov.ko"
+    strings = ("srcversion=ABC", "vermagic=6.8.0 SMP", f"version=1.6.0+kgcov{kgcov_mod.INTERFACE}")
+    ko.write_bytes(b"\x7fELF\x00" + b"\x00".join(s.encode() for s in strings) + b"\x00")
+    tool = KgcovTool(name="kgcov-6.8", artifact=ko)
+    assert (await tool.install(host)).is_ok
+    _assert_staged_at(host, "/home/vagrant", "otto_kgcov.ko")
+
+
+@pytest.mark.asyncio
+async def test_kmod_product_install_stages_once_in_the_login_home(tmp_path):
+    from otto.host.kmod_kind import KmodProduct
+
+    host = _home_probe_host()
+    ko = tmp_path / "otto_kmod_demo.ko"
+    ko.write_bytes(b"\x00")
+    product = KmodProduct(artifact=ko, name="demo", module_name="otto_kmod_demo")
+    assert (await product.install(host)).is_ok
+    _assert_staged_at(host, "/home/vagrant", "otto_kmod_demo.ko")
+
+
+@pytest.mark.asyncio
+async def test_a_declared_stage_dir_is_used_as_given_and_never_re_resolved(tmp_path):
+    from otto.host.kmod_tool_kind import KmodTool
+
+    host = _home_probe_host()
+    ko = tmp_path / "tracer.ko"
+    ko.write_bytes(b"\x00")
+    tool = KmodTool(name="tracer", artifact=ko, stage_dir=Path("/opt/mods"))
+    assert (await tool.install(host)).is_ok
+    _assert_staged_at(host, "/opt/mods", "tracer.ko")
+    assert host.exec.await_count == 0  # no home probe: nothing needed it

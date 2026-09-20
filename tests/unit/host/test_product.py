@@ -67,15 +67,138 @@ async def test_get_logs_default_is_successful_noop(tmp_path):
 async def test_shellproduct_stage_delegates_to_host_put():
     from unittest.mock import AsyncMock
 
-    p = _DummyShellProduct(artifact=Path("/builds/app.bin"), dest_dir=Path("/opt"))
+    p = _DummyShellProduct(artifact=Path("/builds/app.bin"), stage_dir=Path("/opt"))
     host = AsyncMock()
+    host.default_dest_dir = Path()
     put_result = Result(Status.Success, value={})
     host.put.return_value = put_result
     result = await p.stage(host)
     # Returned unchanged — the transfer's own per-file mapping reaches the
     # caller instead of being flattened to a status and a message.
     assert result is put_result
+    # The RESOLVED, absolute directory: `put`'s own `_resolve_dest` knows the
+    # host default but not the login-home fallback, so handing it the raw
+    # value would land the artifact somewhere `install` does not name.
     host.put.assert_awaited_once_with(Path("/builds/app.bin"), Path("/opt"))
+
+
+async def _resolve(product, host):
+    return await product.resolved_stage_dir(host)
+
+
+def _double(default=Path(), home="/home/tester"):
+    """A host double: a transfer default, and a login home it can be asked for."""
+    from types import SimpleNamespace
+
+    async def _home():
+        return Path(home)
+
+    return SimpleNamespace(id="h1", default_dest_dir=default, login_home=_home)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stage_dir", "default", "expected"),
+    [
+        (Path("/opt"), Path(), "/opt"),  # declared absolute wins
+        (Path("/opt"), Path("/srv/stage"), "/opt"),  # ...over the host default too
+        (Path(), Path("/srv/stage"), "/srv/stage"),  # empty → the host default
+        (Path(), Path(), "/home/tester"),  # empty + no default → the login home
+    ],
+)
+async def test_resolve_stage_dir_always_answers_an_absolute_path(stage_dir, default, expected):
+    """One rule, three sources, and the answer is absolute every time.
+
+    Absolute is the point, not a detail: a relative destination is resolved by
+    whoever reads it, and a transfer reads it against the login directory
+    while a command reads it against the SHELL's own — the same place only on
+    a direct SSH exec channel, and a different one on the pooled-shell route
+    (telnet, a proxied login, a `session_setup` hook that cd's).
+    """
+    p = _DummyShellProduct(artifact=Path("/builds/app.bin"), stage_dir=stage_dir)
+    assert await _resolve(p, _double(default)) == Path(expected)
+
+
+@pytest.mark.asyncio
+async def test_the_login_home_is_asked_for_only_when_nothing_else_answers():
+    from types import SimpleNamespace
+
+    asked = []
+
+    async def _home():
+        asked.append(1)
+        return Path("/home/tester")
+
+    host = SimpleNamespace(id="h1", default_dest_dir=Path("/srv/stage"), login_home=_home)
+    p = _DummyShellProduct(artifact=Path("/builds/app.bin"))
+    assert await _resolve(p, host) == Path("/srv/stage")
+    assert asked == []  # a declared default is not worth a round trip
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [Path("sub"), Path("~"), Path("~/stage")])
+async def test_a_relative_or_tilde_stage_dir_is_refused_naming_the_product(bad):
+    """`~` is not special to any transfer backend, so it is just a relative path."""
+    p = _DummyShellProduct(artifact=Path("/builds/app.bin"), name="app", stage_dir=bad)
+    with pytest.raises(ValueError, match=r"(?s)product 'app'.*absolute"):
+        await _resolve(p, _double())
+
+
+@pytest.mark.asyncio
+async def test_a_relative_default_dest_dir_is_refused_naming_the_host():
+    p = _DummyShellProduct(artifact=Path("/builds/app.bin"))
+    with pytest.raises(ValueError, match=r"(?s)host h1.*default_dest_dir.*absolute"):
+        await _resolve(p, _double(default=Path("stage")))
+
+
+@pytest.mark.asyncio
+async def test_a_host_with_no_login_home_concept_is_refused():
+    """An embedded target with no filesystem has nothing this could answer."""
+    from types import SimpleNamespace
+
+    p = _DummyShellProduct(artifact=Path("/builds/app.bin"))
+    with pytest.raises(ValueError, match=r"(?s)host board1.*no login home"):
+        await _resolve(p, SimpleNamespace(id="board1", default_dest_dir=Path()))
+
+
+def test_the_lab_load_key_stands_in_for_an_undiscovered_home():
+    """The collision check runs at ingest, where nothing is connected."""
+    from types import SimpleNamespace
+
+    from otto.host.product import LOGIN_HOME
+
+    p = _DummyShellProduct(artifact=Path("/builds/app.bin"))
+    assert p.stage_key(SimpleNamespace(id="h1", default_dest_dir=Path())) == LOGIN_HOME
+    assert p.stage_key(SimpleNamespace(id="h1", default_dest_dir=Path("/srv"))) == "/srv"
+    # ...and keys on the real path once the host has been asked.
+    known = SimpleNamespace(id="h1", default_dest_dir=Path(), cached_login_home=Path("/home/t"))
+    assert p.stage_key(known) == "/home/t"
+
+
+def test_shellproduct_stage_dir_defaults_to_empty():
+    assert _DummyShellProduct(artifact=Path("/builds/app.bin")).stage_dir == Path()
+
+
+def test_a_shell_product_stages_an_artifact_but_a_bare_product_does_not():
+    # The flag the per-host collision check keys on: only a product that puts
+    # a FILE at <stage_dir>/<basename> can collide with another one.
+    class _Bare(Product):
+        name = "bare"
+
+        async def stage(self, host):
+            return Result(Status.Success)
+
+        async def install(self, host):
+            return Result(Status.Success)
+
+        async def uninstall(self, host):
+            return Result(Status.Success)
+
+        async def is_installed(self, host):
+            return True
+
+    assert _DummyShellProduct(artifact=Path("/builds/app.bin")).stages_artifact is True
+    assert _Bare().stages_artifact is False
 
 
 def test_every_host_has_empty_products_by_default():
@@ -248,7 +371,7 @@ async def test_install_under_dry_run_does_not_transfer(tmp_path):
     artifact = tmp_path / "app.bin"
     artifact.write_bytes(b"x")
     dest = tmp_path / "dest"
-    host = _host_with([_StageOnlyProduct(artifact=artifact, dest_dir=dest)])
+    host = _host_with([_StageOnlyProduct(artifact=artifact, stage_dir=dest.absolute())])
     with active_context(dry_run=True):
         result = await host.install(stage_only=True)
     # NOT ok, deliberately: `stage` returns `put`'s result whole, and a dry

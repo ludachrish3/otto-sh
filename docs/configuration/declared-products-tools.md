@@ -93,7 +93,7 @@ param; everything else is optional:
 | Param | Meaning |
 |---|---|
 | `artifact` | **Required.** Local file, forward slashes, anchored to the repo root |
-| `dest_dir` | Destination directory on the *host* (the host's own path rules). The artifact lands at `<dest_dir>/<artifact basename>`. Defaults to empty, which `put` resolves against the host's own `default_dest_dir` — itself empty on a Unix host, where an empty destination is the SSH user's home, and the mount point on an embedded target |
+| `stage_dir` | Staging directory on the *host*, accepted by **every kind that places a file**. Must be an **absolute** path — a relative one (or a `~`, which no transfer backend expands) would mean a different directory to the transfer that puts the artifact and to the command that names it afterwards, so it is refused at lab load. Leave it empty and otto resolves it: the host's `default_dest_dir` when the host record declares one, otherwise the login user's home, read from the host once per host object. The artifact lands at `<stage_dir>/<artifact basename>`; a `shell` product's STAYS there (it is the product), while the transient kinds (`kmod`, `docker_image`, the kernel-module dev tools) delete their copy once it is consumed. Two entries on ONE host — products and dev tools together — that would stage the same basename into the same directory are refused at lab load, naming both. An `llext` entry has no `stage_dir`: the load is the transfer, so there is no directory to name |
 | `install` / `uninstall` / `check` | optional command strings run on the host |
 | `cov_dir` | host directory the product writes its coverage counters under (its `GCOV_PREFIX`); default `/tmp/<name>`, and the empty string is refused |
 | `debug_log_globs` | host paths or globs of the product's own debug logs, hauled into `logs/<host_id>/<product>/debug/` ({ref}`the run tree <run-tree>`) |
@@ -129,7 +129,7 @@ untouched:
 name = "app"
 kind = "shell"
 artifact = "build/app"
-dest_dir = "/opt/app"                # where staging puts the artifact
+stage_dir = "/opt/app"               # where staging puts the artifact
 install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 /opt/app/{name} &"
 ```
 
@@ -141,7 +141,7 @@ never reads the value.
 
 The command runs through `host.run` with **no working directory of its own**,
 so a relative `./app` would resolve against the login shell's directory, not
-against `dest_dir`. Spell the path out, as above.
+against `stage_dir`. Spell the path out, as above.
 
 Expansion is **strict**: any other field name, and any conversion
 (`{cov_dir!r}`), format spec (`{cov_dir:>12}`), attribute or index access, or
@@ -156,7 +156,8 @@ Built in, products only: a Zephyr LLEXT extension as a product. An extension
 has no filesystem home — the load *is* the transfer — so `stage` is a no-op,
 `install` loads the object, and `uninstall` unloads it. The entry's `name` is
 the `<product>` segment of {ref}`the run tree <run-tree>`, and the
-instrumentation scan reads the extension's own `.gcda` strings.
+instrumentation scan reads the extension's own `.gcda` strings. There is no
+`stage_dir` either: nothing is placed on a filesystem to name a directory for.
 
 | Param | Meaning |
 |---|---|
@@ -208,6 +209,7 @@ carries coverage; the dev-tool form is a plain module with none.
 | Param | Meaning |
 |---|---|
 | `artifact` | **Required.** The local `.ko`; `load` transfers it, `insmod`s it, and removes it — no staged copy is left on the host |
+| `stage_dir` | Where that transfer lands before the `insmod`, as the `shell` kind |
 | `module_name` | Defaults to the artifact stem with `-` → `_` (what `/proc/modules` shows) |
 | `params` | Appended to `insmod` **unquoted**, apart from the `gcov_dir=` token otto itself adds for `coverage = "module"` — a value with whitespace is the user's to quote. `{cov_dir}`/`{name}` placeholders, as the `shell` kind |
 | `coverage` | `"none"` (default), `"module"`, or `"kernel"` |
@@ -240,6 +242,7 @@ product's `is_installed` answer.
 | Param | Meaning |
 |---|---|
 | `artifact` | **Required.** The local `.ko`, as the product form |
+| `stage_dir` | Where the `.ko` is staged before the `insmod`, as the product form |
 | `module_name` | Defaults to the artifact stem with `-` → `_`, as the product form |
 | `params` | Appended to `insmod` verbatim — **no placeholders**: a dev tool has no `cov_dir` to substitute |
 
@@ -260,6 +263,7 @@ dev tool.
 | Param | Meaning |
 |---|---|
 | `artifact` | **Required.** The built `.ko`, as the `kmod` form |
+| `stage_dir` | Where the `.ko` is staged before the `insmod`, as the `kmod` form |
 | `params` | Appended to `insmod` verbatim, as the `kmod` form — must not set `gcov_dir=`, which is the consumer's own parameter (see below) |
 | `source` | Optional: the vendored directory (`otto init --kgcov` / `otto cov kgcov export`) this build came from, repo-anchored — named in the interface-mismatch remedy below |
 
@@ -308,6 +312,7 @@ fails loud naming the host when it is not.
 | Param | Meaning |
 |---|---|
 | `image` | **Required.** A `registry/name:tag` reference, or the path of a `docker save` tarball (`.tar`, `.tar.gz`, `.tgz`) |
+| `stage_dir` | Tarball form only: where the tarball is put for `docker load`, as the `shell` kind |
 | `pull` | `false` (default): a reference must already be present (`docker image inspect`, fail loud naming it); `true`: `docker pull` first. Reference form only — declaring `pull = true` on a tarball entry is refused when the product is built |
 | `run_args` | Extra `docker run` arguments; `{cov_dir}`/`{name}` placeholders substituted as the `shell` kind does, but inserted unquoted — quote any value of your own that contains whitespace |
 | `container_name` | `--name`; defaults to the product name |
@@ -318,8 +323,8 @@ fails loud naming the host when it is not.
 coverage story: an instrumented binary inside the container writing under
 `GCOV_PREFIX=<cov_dir>` writes onto the daemon host, where the ordinary
 fetcher and the default hooks already work, no collector and no host class
-needed. A tarball entry's staged copy under `/tmp` is removed right after
-a successful `docker load` — it is an intermediate the load has already
+needed. A tarball entry's staged copy under its `stage_dir` is removed right
+after a successful `docker load` — it is an intermediate the load has already
 consumed, not the product itself. `is_installed` asks the daemon whether
 the container is *running* — one that exists but has exited answers not
 installed, so a re-install then collides with docker's own "name already

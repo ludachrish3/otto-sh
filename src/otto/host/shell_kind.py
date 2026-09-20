@@ -31,7 +31,7 @@ from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
 from .dev_tool import DEV_TOOL_KINDS, DevTool
-from .product import PRODUCT_KINDS, ShellProduct, cov_dir_of_name
+from .product import PRODUCT_KINDS, ShellProduct, cov_dir_of_name, validate_stage_dir
 
 if TYPE_CHECKING:
     from .host import Host
@@ -93,7 +93,42 @@ def str_param(
 
 _COVERAGE_PARAMS = ("cov_dir", "debug_log_globs", "instrumented")
 _PLACEHOLDERS = ("cov_dir", "name")
-_VALID = "artifact, dest_dir, install, uninstall, check, cov_dir, debug_log_globs, instrumented"
+_VALID = "artifact, stage_dir, install, uninstall, check, cov_dir, debug_log_globs, instrumented"
+
+RETIRED_PARAMS = {"dest_dir": "stage_dir"}
+"""Param keys a built-in kind refuses BY NAME, mapped to what replaced them.
+
+A retired key that fell through to the generic unknown-param message would
+stop the load but never say what to write instead -- and the rename moved
+where the artifact lands, so a lab that keeps the old spelling must be told,
+not merely refused."""
+
+
+def reject_retired_params(entry: DeclaredEntry, params: dict[str, Any]) -> None:
+    """Refuse a :data:`RETIRED_PARAMS` key by name, pointing at what replaced it.
+
+    Called by every built-in kind — including the ones that have no
+    ``stage_dir`` of their own — so the rename gets one message everywhere
+    rather than a generic unknown-param list on some kinds.
+    """
+    for old, new in RETIRED_PARAMS.items():
+        if old in params:
+            raise ValueError(
+                f"[[{entry.seam}]] {entry.name!r}: {old!r} was renamed to {new!r} -- "
+                f"rename the key; the artifact lands at <{new}>/<artifact basename> on every kind"
+            )
+
+
+def stage_dir_param(entry: DeclaredEntry, params: dict[str, Any]) -> Path:
+    """Pop ``stage_dir`` off *params*, refusing the retired ``dest_dir`` spelling.
+
+    Shared by every built-in kind that stages an artifact, so the rename is
+    refused identically in both seams and no kind can quietly keep honoring
+    the old key.
+    """
+    reject_retired_params(entry, params)
+    value = str_param(entry, params, "stage_dir")
+    return validate_stage_dir(Path(value) if value else Path(), f"[[{entry.seam}]] {entry.name!r}")
 
 
 _FORMATTER = string.Formatter()
@@ -190,7 +225,7 @@ def _shell_kind(entry: DeclaredEntry, host: "Host") -> DeclaredShell:  # noqa: A
                 )
     artifact = str_param(entry, params, "artifact", required=True)
     assert artifact is not None  # noqa: S101 — internal invariant: required=True makes str_param raise above when missing
-    dest_dir = str_param(entry, params, "dest_dir")
+    stage_dir = stage_dir_param(entry, params)
     install = str_param(entry, params, "install")
     uninstall = str_param(entry, params, "uninstall")
     check = str_param(entry, params, "check")
@@ -211,11 +246,11 @@ def _shell_kind(entry: DeclaredEntry, host: "Host") -> DeclaredShell:  # noqa: A
         check = substitute_placeholders(entry, "check", check, values)
     return DeclaredShell(
         # Local path: forward slashes in TOML, anchored to the declaring repo
-        # (never the CWD); dest_dir stays in the HOST's path domain — host.put
+        # (never the CWD); stage_dir stays in the HOST's path domain — host.put
         # resolves it against the host's default_dest_dir (spec §4).
         artifact=anchor_path(Path(artifact), entry.base_dir),
         name=entry.name,
-        dest_dir=Path(dest_dir) if dest_dir else Path(),
+        stage_dir=stage_dir,
         cov_dir=cov_dir,
         debug_log_globs=debug_log_globs,
         install_cmd=install,

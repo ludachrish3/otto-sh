@@ -1,6 +1,7 @@
 """Host-dict factory: build and validate ``RemoteHost`` instances from raw config dicts."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from ..layout import validate_product_name
@@ -250,6 +251,49 @@ def apply_providers(host: "RemoteHost | Any") -> None:
         except ValueError as e:
             raise ValueError(f"host {host.id}: {e}") from e
         stamp_cov_dir(product)
+    check_stage_collisions(host)
+
+
+def check_stage_collisions(host: "RemoteHost | Any") -> None:
+    """Refuse two things on THIS host that stage one basename into one directory.
+
+    The second ``put`` would land on the first's file, and whichever
+    installed later would silently get the other's build — two ``demo.ko``
+    from different trees, two ``app.tar`` images. The key is the RESOLVED
+    staging directory plus the artifact's basename
+    (:meth:`~otto.host.product.Product.resolved_stage_dir`), so the same
+    basename under different directories is fine, and so is the same product
+    on two hosts: a per-board build of one name is the normal shape, not a
+    collision. Anything that places no file at all
+    (:attr:`~otto.host.product.Product.stages_artifact`) is skipped — an
+    ``llext`` extension and a pulled image have nothing to overwrite.
+
+    BOTH seams are checked together. A ``kmod`` dev tool stages its ``.ko``
+    through the very same ``host.load(dest_dir=...)`` a ``kmod`` product
+    does, and by the time this runs both lists are populated — checking
+    products alone would let a tool and a product overwrite each other in
+    exactly the way this exists to stop. The message names each side's seam
+    so the entry is findable.
+    """
+    seen: dict[tuple[str, str], str] = {}
+    staged = [(p, "product") for p in host.products] + [
+        (t, "dev tool") for t in getattr(host, "dev_tools", [])
+    ]
+    for item, seam in staged:
+        if not getattr(item, "stages_artifact", False):
+            continue
+        artifact = getattr(item, "artifact", None)
+        if artifact is None or not hasattr(item, "stage_key"):
+            continue
+        key = (item.stage_key(host), Path(artifact).name)
+        first = seen.get(key)
+        if first is not None:
+            raise ValueError(
+                f"host {host.id}: {first} and {seam} {item.name!r} both stage "
+                f"{key[1]!r} into {key[0]} — one would overwrite the other; give one of them "
+                "its own 'stage_dir'"
+            )
+        seen[key] = f"{seam} {item.name!r}"
 
 
 def validate_host_dict(host_data: dict[str, Any]) -> None:

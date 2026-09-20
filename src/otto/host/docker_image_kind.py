@@ -37,7 +37,13 @@ from ..declared import DeclaredEntry
 from ..result import CommandResult, Result
 from ..utils import Status, anchor_path
 from .product import PRODUCT_KINDS, ShellProduct, cov_dir_of, cov_dir_of_name, sudo_gcda_delete
-from .shell_kind import bool_param, str_list_param, str_param, substitute_placeholders
+from .shell_kind import (
+    bool_param,
+    stage_dir_param,
+    str_list_param,
+    str_param,
+    substitute_placeholders,
+)
 
 if TYPE_CHECKING:
     from .host import Host
@@ -45,7 +51,7 @@ if TYPE_CHECKING:
 TARBALL_SUFFIXES = (".tar", ".tar.gz", ".tgz")
 """An ``image`` value with one of these suffixes is a ``docker save`` tarball path."""
 
-_VALID = "image, pull, run_args, container_name, cov_dir, instrumented, debug_log_globs"
+_VALID = "image, stage_dir, pull, run_args, container_name, cov_dir, instrumented, debug_log_globs"
 _LOAD_TIMEOUT = 600.0
 _PULL_TIMEOUT = 900.0
 
@@ -110,12 +116,26 @@ class DockerImageProduct(ShellProduct):
         """
         return self.instrumented_override
 
+    @property
+    @override
+    def stages_artifact(self) -> bool:
+        """Answer True for a tarball entry only — a reference is pulled, never staged."""
+        return self.is_tarball
+
+    async def _staged_tarball(self, host: "Host") -> str:
+        """Where the tarball is -- the one path ``stage``, ``docker load`` and the cleanup share."""
+        return str(await self.resolved_stage_dir(host) / self.artifact.name)
+
     @override
     async def stage(self, host: "Host") -> Result:
-        """Put the tarball under ``/tmp`` for ``docker load``; a reference stages nothing."""
+        """Put the tarball under :attr:`stage_dir` for ``docker load``.
+
+        A reference stages nothing. ``put`` is handed the RESOLVED, absolute
+        directory — the same one ``install``'s ``docker load -i`` names.
+        """
         if not self.is_tarball:
             return Result(Status.Success)
-        return await host.put(self.artifact, Path("/tmp"))  # noqa: S108 — the staging path docker load reads
+        return await host.put(self.artifact, await self.resolved_stage_dir(host))
 
     @override
     async def install(self, host: "Host") -> Result:
@@ -125,7 +145,7 @@ class DockerImageProduct(ShellProduct):
         if not probe.status.is_ok:
             return Result(Status.Error, msg=f"{self.name}: docker is not on {host.id}'s PATH")
         if self.is_tarball:
-            staged = f"/tmp/{self.artifact.name}"  # noqa: S108 — where stage() put it
+            staged = await self._staged_tarball(host)  # where stage() put it
             loaded = await host.exec(f"docker load -i {shlex.quote(staged)}", timeout=_LOAD_TIMEOUT)
             if not loaded.status.is_ok:
                 return self._error_from(host, f"{self.name}: docker load", loaded)
@@ -267,6 +287,7 @@ def _docker_image_kind(entry: DeclaredEntry, host: "Host") -> DockerImageProduct
         raise ValueError(
             f"[[products]] {entry.name!r}: 'pull' only applies to a reference image, not a tarball"
         )
+    stage_dir = stage_dir_param(entry, params)
     run_args = str_param(entry, params, "run_args") or ""
     container_name = str_param(entry, params, "container_name")
     cov_dir = str_param(entry, params, "cov_dir")
@@ -288,6 +309,7 @@ def _docker_image_kind(entry: DeclaredEntry, host: "Host") -> DockerImageProduct
     return DockerImageProduct(
         artifact=artifact,
         name=entry.name,
+        stage_dir=stage_dir,
         cov_dir=cov_dir,
         debug_log_globs=debug_log_globs,
         instrumented_override=instrumented,

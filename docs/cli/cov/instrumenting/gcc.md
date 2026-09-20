@@ -35,7 +35,7 @@ to fetch from:
 name = "myproduct"
 kind = "shell"
 artifact = "build/myproduct"
-dest_dir = "/opt/myproduct"          # where staging puts the artifact
+stage_dir = "/opt/myproduct"         # where staging puts the artifact
 cov_dir = "/var/coverage/myproduct"
 install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 /opt/myproduct/myproduct &"
 ```

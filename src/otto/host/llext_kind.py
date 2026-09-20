@@ -24,7 +24,7 @@ from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
 from .product import PRODUCT_KINDS, ShellProduct
-from .shell_kind import bool_param, str_list_param, str_param
+from .shell_kind import bool_param, reject_retired_params, str_list_param, str_param
 
 if TYPE_CHECKING:
     from .binary_loader import BinaryLoader
@@ -62,6 +62,17 @@ class LlextProduct(ShellProduct):
             who = getattr(host, "id", None) or type(host).__name__
             raise ValueError(f"{who} has no binary loader")
         return loader
+
+    @property
+    @override
+    def stages_artifact(self) -> bool:
+        """Answer False — the load IS the transfer, so no file is placed under a directory.
+
+        Which is also why an ``llext`` entry takes no ``stage_dir`` param —
+        there is no destination to name — and why two extensions sharing an
+        object basename are not a staging collision.
+        """
+        return False
 
     @override
     async def stage(self, host: "Host") -> Result:
@@ -121,6 +132,10 @@ def _llext_kind(entry: DeclaredEntry, host: "Host") -> LlextProduct:
             "which has no binary loader — only embedded hosts with a `loader` can carry it"
         )
     params = dict(entry.params)
+    # No `stage_dir` of its own (the load IS the transfer), but the retired
+    # spelling still has to be answered the way every other kind answers it —
+    # a generic "unknown param" would leave the reader guessing at the rename.
+    reject_retired_params(entry, params)
     artifact = str_param(entry, params, "artifact", required=True)
     assert artifact is not None  # noqa: S101 — internal invariant: required=True makes str_param raise above when missing
     call_after_load = str_list_param(entry, params, "call_after_load")

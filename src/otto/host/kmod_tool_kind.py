@@ -25,7 +25,7 @@ library, and how it is loaded on demand, is the product kind's side
 (:mod:`otto.host.kmod_kind`).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -35,7 +35,8 @@ from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
 from .dev_tool import DEV_TOOL_KINDS, DevTool
-from .shell_kind import str_param
+from .product import resolve_stage_dir, stage_dir_key
+from .shell_kind import stage_dir_param, str_param
 
 if TYPE_CHECKING:
     from .host import Host
@@ -43,8 +44,8 @@ if TYPE_CHECKING:
 KGCOV_MODULE_NAME = "otto_kgcov"
 """What ``/proc/modules`` shows for the library; the ``kgcov`` kind fixes it."""
 
-_VALID = "artifact, module_name, params"
-_VALID_KGCOV = "artifact, params, source"
+_VALID = "artifact, stage_dir, module_name, params"
+_VALID_KGCOV = "artifact, stage_dir, params, source"
 _MODULE_VERBS = ("load", "unload", "lsmod")
 
 
@@ -61,6 +62,40 @@ class KmodTool(DevTool):
     """``insmod`` parameters, verbatim (no placeholders: a dev tool has no cov_dir)."""
 
     owner: str | None = None
+
+    stage_dir: Path = field(default_factory=Path)
+    """Directory the ``.ko`` is staged into before ``insmod``, in the host's
+    path domain; empty means the host's ``default_dest_dir``. The same field,
+    the same rule and the same resolution as a product's
+    :attr:`~otto.host.product.Product.stage_dir` -- ``load`` removes the
+    staged file once the module is resident."""
+
+    @property
+    @override
+    def stages_artifact(self) -> bool:
+        """``load`` puts the ``.ko`` at ``<stage_dir>/<basename>`` before the ``insmod``, so True.
+
+        Inherited by :class:`KgcovTool`, which stages the identical way.
+        Without it the per-host collision check would skip every kernel-module
+        dev tool, which is exactly the case a ``.ko`` basename shared with a
+        product would overwrite.
+        """
+        return True
+
+    async def resolved_stage_dir(self, host: "Host") -> Path:
+        """Resolve :attr:`stage_dir` against *host*, absolutely.
+
+        Delegates to :func:`~otto.host.product.resolve_stage_dir`, the one
+        implementation the product side uses too, so a dev tool and a product
+        can never disagree about where a staged artifact lands — and, like
+        the product side, what it returns is handed straight to ``host.load``
+        and never resolved again.
+        """
+        return await resolve_stage_dir(self.stage_dir, host, who=f"dev tool {self.name!r}")
+
+    def stage_key(self, host: "Host") -> str:
+        """:attr:`stage_dir` as a lab-load key (:func:`~otto.host.product.stage_dir_key`)."""
+        return stage_dir_key(self.stage_dir, host, who=f"dev tool {self.name!r}")
 
     def __post_init__(self) -> None:
         if not self.module_name:
@@ -83,7 +118,12 @@ class KmodTool(DevTool):
         """
         if await self.is_installed(host):
             return Result(Status.Success)
-        return await host.load(self.artifact, self.module_name, params=self.params)  # ty: ignore[unresolved-attribute]
+        return await host.load(  # ty: ignore[unresolved-attribute]
+            self.artifact,
+            self.module_name,
+            params=self.params,
+            dest_dir=await self.resolved_stage_dir(host),
+        )
 
     @override
     async def uninstall(self, host: "Host") -> Result:
@@ -131,6 +171,7 @@ def _kmod_tool_kind(entry: DeclaredEntry, host: "Host") -> KmodTool:
     _require_module_verbs(entry, host)
     params = dict(entry.params)
     artifact = _artifact_param(entry, params)
+    stage_dir = stage_dir_param(entry, params)
     module_name = str_param(entry, params, "module_name") or ""
     insmod_params = _params_param(entry, params)
     if params:
@@ -139,7 +180,11 @@ def _kmod_tool_kind(entry: DeclaredEntry, host: "Host") -> KmodTool:
             f"{sorted(params)}; valid: {_VALID}"
         )
     return KmodTool(
-        name=entry.name, artifact=artifact, module_name=module_name, params=insmod_params
+        name=entry.name,
+        artifact=artifact,
+        module_name=module_name,
+        params=insmod_params,
+        stage_dir=stage_dir,
     )
 
 
@@ -259,6 +304,7 @@ def _kgcov_tool_kind(entry: DeclaredEntry, host: "Host") -> KgcovTool:
     _require_module_verbs(entry, host)
     params = dict(entry.params)
     artifact = _artifact_param(entry, params)
+    stage_dir = stage_dir_param(entry, params)
     insmod_params = _params_param(entry, params)
     if "gcov_dir=" in insmod_params:
         raise ValueError(
@@ -275,6 +321,7 @@ def _kgcov_tool_kind(entry: DeclaredEntry, host: "Host") -> KgcovTool:
         name=entry.name,
         artifact=artifact,
         params=insmod_params,
+        stage_dir=stage_dir,
         source=anchor_path(Path(source), entry.base_dir) if source else None,
     )
     if tool.artifact.is_file():

@@ -35,6 +35,13 @@ class _KmodHost(SimpleNamespace):
     def __init__(self, *, loaded=(), run_status=Status.Success, run_value="", **attrs):
         super().__init__(**attrs)
         self.id = attrs.get("id", "test1")
+        attrs.setdefault("default_dest_dir", Path())
+        self.default_dest_dir = attrs["default_dest_dir"]
+
+        async def _login_home():
+            return Path(attrs.get("home", "/home/tester"))
+
+        self.login_home = _login_home
         self.load = AsyncMock(return_value=Result(Status.Success))
         self.unload = AsyncMock(return_value=Result(Status.Success))
         self.lsmod = AsyncMock(return_value=Result(Status.Success, value=list(loaded)))
@@ -170,8 +177,9 @@ def test_kmod_reads_module_name_params_coverage_and_gcov_path():
         (
             {"bogus": 1},
             (
-                "kind 'kmod' got unknown param(s): ['bogus']; valid: artifact, module_name, "
-                "params, coverage, gcov_path, cov_dir, instrumented, debug_log_globs"
+                "kind 'kmod' got unknown param(s): ['bogus']; valid: artifact, stage_dir, "
+                "module_name, params, coverage, gcov_path, cov_dir, instrumented, "
+                "debug_log_globs"
             ),
         ),
         ({"params": "{typo}"}, "unknown placeholder"),
@@ -200,7 +208,10 @@ async def test_kmod_stage_is_a_noop_and_install_loads_with_params():
     assert (await p.stage(host)).is_ok
     assert (await p.install(host)).is_ok
     host.load.assert_awaited_once_with(
-        Path("/repo/build/demo/otto_kmod_demo.ko"), "otto_kmod_demo", params="debug=1"
+        Path("/repo/build/demo/otto_kmod_demo.ko"),
+        "otto_kmod_demo",
+        params="debug=1",
+        dest_dir=Path("/home/tester"),  # no host default: the login home
     )
 
 
@@ -318,7 +329,7 @@ async def test_kmod_module_install_failure_after_the_library_loaded_is_the_consu
     host = _KmodHost(loaded=["ext4"])
     _attach_kgcov(host, tmp_path)
 
-    async def _load(file, name, params=""):
+    async def _load(file, name, params="", dest_dir=None):
         if name == "otto_kgcov":
             host.lsmod.return_value = Result(Status.Success, value=["ext4", "otto_kgcov"])
             return Result(Status.Success)
@@ -691,3 +702,39 @@ async def test_kmod_kernel_reset_error_names_gcov_path():
     assert "find:" in result.msg
     # The script failed outright — no delete follows a failed reset.
     assert len(host.run_calls) == 1
+
+
+# ── stage_dir (issue #368) ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_kmod_install_hands_load_the_resolved_stage_dir():
+    host = _KmodHost(default_dest_dir=Path("/srv/stage"))
+    p = _build(host, stage_dir="/opt/mods")
+    assert p.stage_dir == Path("/opt/mods")
+    assert (await p.install(host)).is_ok
+    assert host.load.await_args.kwargs["dest_dir"] == Path("/opt/mods")
+
+
+@pytest.mark.asyncio
+async def test_kmod_install_falls_back_to_the_hosts_transfer_default():
+    host = _KmodHost(default_dest_dir=Path("/srv/stage"))
+    assert (await _build(host).install(host)).is_ok
+    assert host.load.await_args.kwargs["dest_dir"] == Path("/srv/stage")
+
+
+@pytest.mark.asyncio
+async def test_kmod_install_falls_back_to_the_login_home():
+    host = _KmodHost()  # the repo-wide case: no default_dest_dir at all
+    assert (await _build(host).install(host)).is_ok
+    assert host.load.await_args.kwargs["dest_dir"] == Path("/home/tester")
+
+
+def test_kmod_kind_refuses_the_retired_dest_dir_key():
+    with pytest.raises(ValueError, match=r"(?s)'demo'.*'dest_dir'.*'stage_dir'"):
+        _build(dest_dir="/tmp")
+
+
+def test_kmod_kind_refuses_a_relative_stage_dir():
+    with pytest.raises(ValueError, match=r"(?s)'demo'.*absolute"):
+        _build(stage_dir="mods")

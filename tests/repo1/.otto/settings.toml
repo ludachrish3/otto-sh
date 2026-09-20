@@ -79,7 +79,7 @@ max_filename_len = 32
 name = "product"
 kind = "shell"
 artifact = "product/product"
-dest_dir = "/opt/coverage_product"
+stage_dir = "/opt/coverage_product"
 cov_dir = "/var/coverage/product"
 check = "test -x /opt/coverage_product/product"
 match = { id = "test[1-3]" }

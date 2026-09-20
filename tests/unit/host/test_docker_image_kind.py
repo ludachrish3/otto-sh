@@ -39,6 +39,12 @@ class _DockerHost(SimpleNamespace):
     def __init__(self, answers=None, **attrs):
         super().__init__(**attrs)
         self.id = attrs.get("id", "test3")
+        self.default_dest_dir = attrs.get("default_dest_dir", Path("/tmp"))
+
+        async def _login_home():
+            return Path(attrs.get("home", "/home/tester"))
+
+        self.login_home = _login_home
         self.answers = dict(answers or {})
         self.exec_calls: list[str] = []
         self.run_calls: list[tuple[str, dict]] = []
@@ -131,7 +137,8 @@ def test_run_args_expands_the_name_placeholder_too():
 
 _UNKNOWN_PARAM_FRAGMENT = (
     "kind 'docker_image' got unknown param(s): ['bogus']; valid: "
-    "image, pull, run_args, container_name, cov_dir, instrumented, debug_log_globs"
+    "image, stage_dir, pull, run_args, container_name, cov_dir, instrumented, "
+    "debug_log_globs"
 )
 
 
@@ -536,3 +543,71 @@ async def test_debug_logs_reports_the_haul_failure_even_when_docker_logs_also_fa
     result = await p.get_debug_logs(host, tmp_path)
     assert not result.is_ok
     assert result.msg == "fetch failed"
+
+
+# ── stage_dir (issue #368) ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_tarball_stage_dir_moves_the_put_the_load_and_the_cleanup_together():
+    """One declared directory drives all three paths — they cannot drift."""
+    host = _DockerHost(answers={"docker load": (Status.Success, "Loaded image: app:1.2\n")})
+    p = _build(host, image="docker/app.tar", stage_dir="/srv/images")
+    assert p.stage_dir == Path("/srv/images")
+    assert (await p.stage(host)).is_ok
+    host.put.assert_awaited_once_with(Path("/repo/docker/app.tar"), Path("/srv/images"))
+    assert (await p.install(host)).is_ok
+    assert "docker load -i /srv/images/app.tar" in host.exec_calls[1]
+    assert host.exec_calls[2] == "rm -f /srv/images/app.tar"
+
+
+@pytest.mark.asyncio
+async def test_tarball_stage_falls_back_to_the_hosts_transfer_default():
+    host = _DockerHost(
+        answers={"docker load": (Status.Success, "Loaded image: app:1.2\n")},
+        default_dest_dir=Path("/srv/stage"),
+    )
+    p = _build(host, image="docker/app.tar")
+    assert (await p.stage(host)).is_ok
+    host.put.assert_awaited_once_with(Path("/repo/docker/app.tar"), Path("/srv/stage"))
+    assert (await p.install(host)).is_ok
+    assert "docker load -i /srv/stage/app.tar" in host.exec_calls[1]
+    assert host.exec_calls[2] == "rm -f /srv/stage/app.tar"
+
+
+@pytest.mark.asyncio
+async def test_tarball_put_and_load_name_one_absolute_path_on_a_host_with_no_default():
+    """`stage` hands `put` the RESOLVED directory, resolved exactly once.
+
+    `put`'s own `_resolve_dest` knows `default_dest_dir` but not the
+    login-home fallback, so a declared-empty `stage_dir` handed to it raw
+    would land the tarball relative to the transfer's own directory while
+    `docker load -i` named an absolute path — and resolving at both hops
+    would produce `<home>/<home>/app.tar`.
+    """
+    host = _DockerHost(
+        answers={"docker load": (Status.Success, "Loaded image: app:1.2\n")},
+        default_dest_dir=Path(),
+    )
+    p = _build(host, image="docker/app.tar")
+    assert (await p.stage(host)).is_ok
+    host.put.assert_awaited_once_with(Path("/repo/docker/app.tar"), Path("/home/tester"))
+    assert (await p.install(host)).is_ok
+    assert "docker load -i /home/tester/app.tar" in host.exec_calls[1]
+    assert host.exec_calls[2] == "rm -f /home/tester/app.tar"
+
+
+def test_docker_image_kind_refuses_the_retired_dest_dir_key():
+    with pytest.raises(ValueError, match=r"(?s)'app'.*'dest_dir'.*'stage_dir'"):
+        product_mod.PRODUCT_KINDS.get("docker_image")(_entry(dest_dir="/tmp"), _DockerHost())
+
+
+def test_docker_image_kind_refuses_a_relative_stage_dir():
+    with pytest.raises(ValueError, match=r"(?s)'app'.*absolute"):
+        _build(stage_dir="images")
+
+
+def test_only_a_tarball_entry_stages_an_artifact():
+    host = _DockerHost()
+    assert _build(host, image="docker/app.tar").stages_artifact is True
+    assert _build(host, image="app:1").stages_artifact is False
