@@ -25,6 +25,14 @@ if TYPE_CHECKING:
     import asyncio
 
 
+class LeakedRunningLoopError(AssertionError):
+    """Raised when a test ends with an event loop still registered as *running*
+    on its thread — the state that makes a later, innocent test die with
+    ``RuntimeError: Cannot run the event loop while another loop is running``
+    (issue #381). The raise names the test that left it, not the victim.
+    """
+
+
 class LeakedProductLoopError(AssertionError):
     """Raised when an event loop created by ``otto/`` product code is found
     open at a test boundary — a real product resource leak that must not be
@@ -35,14 +43,62 @@ class LeakedProductLoopError(AssertionError):
 def classify_loop_origin(stack_filenames: Iterable[str]) -> str:
     """Classify a loop's origin from its creation-stack filenames.
 
-    ``"product"`` if any frame is in ``otto/`` source (so a leak of it must be
-    surfaced, not swept); ``"harness"`` otherwise (pytest-asyncio / pytest /
-    stdlib — safe to close).
+    ``"browser"`` for Playwright's sync-API dispatcher loop; ``"product"`` if
+    any frame is in ``otto/`` source (so a leak of it must be surfaced, not
+    swept); ``"harness"`` otherwise (pytest-asyncio / pytest / stdlib — safe to
+    close).
+
+    ``"browser"`` is deliberately not ``"harness"`` (and never outranks
+    ``"product"``):
+    Playwright's sync API runs ``loop.run_until_complete`` inside a greenlet
+    and parks it there, and asyncio's running-loop slot is *thread*-local, not
+    greenlet-local. So for the whole life of the Playwright context that loop
+    reads as running on the main thread — by design, and nothing the harness
+    leaked. :func:`running_loop_leak_reason` allows exactly that one origin.
+
+    Other main-thread ``asyncio.run(...)`` call sites under ``tests/e2e``
+    (``test_tunnel_e2e.py``, ``chaos/conftest.py``, ``test_link_impair_e2e.py``)
+    would die the same way if they were ever scheduled after a browser test on
+    the same xdist worker; today they live in bed lanes that never share a
+    worker with the dashboard lane.
     """
+    browser = False
     for filename in stack_filenames:
+        # ``/otto/`` wins outright: a product loop created on a stack that
+        # happens to pass through a Playwright frame must still be classified
+        # "product", or the guard would exempt it AND the reaper would close it
+        # instead of raising ``LeakedProductLoopError``.
         if "/otto/" in filename:
             return "product"
-    return "harness"
+        if "/playwright/" in filename:
+            browser = True
+    return "browser" if browser else "harness"
+
+
+def running_loop_leak_reason(
+    loop: "asyncio.AbstractEventLoop | None",
+    origin: str,
+    *,
+    describe: Callable[["asyncio.AbstractEventLoop"], str] = repr,
+) -> str | None:
+    """Why *loop*, still registered as running at a test boundary, is a leak.
+
+    Returns ``None`` when nothing leaked (no running loop) or when the running
+    loop is Playwright's dispatcher (``origin == "browser"``), which is running
+    by design for the whole browser session. Otherwise returns the message for
+    :class:`LeakedRunningLoopError`.
+    """
+    if loop is None or origin == "browser":
+        return None
+    return (
+        f"an event loop is still registered as RUNNING on this thread at the "
+        f"test boundary: {describe(loop)} (origin: {origin}). asyncio's "
+        "running-loop slot is thread-local, so every later test on this worker "
+        "that drives a loop of its own dies with 'Cannot run the event loop "
+        "while another loop is running' — a failure attributed to the victim, "
+        "not to here (issue #381). Drive the loop on a thread this test owns, "
+        "or unregister it before returning."
+    )
 
 
 def reap_orphan_loops(

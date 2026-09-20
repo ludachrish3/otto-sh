@@ -173,7 +173,12 @@ from tests._fixtures._coverage_preinit import (
     force_coverage_schema_init,
     preinit_failure_message,
 )
-from tests._fixtures._loop_reaper import classify_loop_origin, reap_or_raise
+from tests._fixtures._loop_reaper import (
+    LeakedRunningLoopError,
+    classify_loop_origin,
+    reap_or_raise,
+    running_loop_leak_reason,
+)
 from tests._fixtures._transport_leaks import (
     describe_referrers,
     install_transport_tracker,
@@ -487,6 +492,18 @@ def pytest_runtest_teardown(item):
     # never masked" invariant local and self-evident.
     reapable = [loop for loop in _LOOP_INFO if loop not in owned or origin_of(loop) == "product"]
     _loops_reaped += reap_or_raise(reapable, origin_of, describe=describe)
+    # A loop left registered as RUNNING on this thread is not reapable (the
+    # reaper skips running loops) and is invisible until some later test tries
+    # to drive a loop of its own and dies with "Cannot run the event loop while
+    # another loop is running" — attributed to that victim, on unchanged code
+    # (issue #381). Fail here instead, naming the test that left it. Playwright's
+    # sync dispatcher loop is running by design for the whole browser session
+    # and is the one allowed origin; see ``classify_loop_origin``.
+    running = asyncio._get_running_loop()
+    origin = origin_of(running) if running is not None else "harness"
+    reason = running_loop_leak_reason(running, origin, describe=describe)
+    if reason is not None:
+        raise LeakedRunningLoopError(f"{item.nodeid}: {reason}")
     # After the reap, so transports bound to a just-reaped function loop are
     # flagged at this very boundary instead of one test later.
     _report_leaked_transports(item)

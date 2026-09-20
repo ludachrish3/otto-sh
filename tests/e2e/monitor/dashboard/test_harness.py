@@ -9,13 +9,14 @@ Plan 5b Task 3 (both modes now hydrate through /api/monitor_sessions).
 
 import asyncio
 import contextlib
+import functools
 import http.client
 import json
 import socket
 import threading
 import time
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -475,6 +476,48 @@ def _build_half_constructed_transport(
     return peer
 
 
+def _on_its_own_thread(fn: "Callable[..., None]") -> "Callable[..., None]":
+    """Run the decorated test's body on a dedicated thread.
+
+    These tests stand in for the harness's own loop thread: the real
+    :class:`DashboardHarness` drives its loop on a thread it owns, and the
+    reap/teardown paths under test call ``run_until_complete`` there. Running
+    them on pytest's main thread made them order-dependent (issue #381),
+    because a Playwright sync test earlier in the same worker leaves *its*
+    dispatcher loop registered as running on that thread — asyncio's
+    running-loop slot is thread-local, Playwright's greenlet parks inside
+    ``run_until_complete``, and the next ``run_until_complete`` on the main
+    thread then raises "Cannot run the event loop while another loop is
+    running" on entirely unchanged code. A thread this test owns has no
+    registered loop, which is both the fix and the truer simulation. The same
+    idiom, for the same reason, is ``_run_on_fresh_loop`` in this package's
+    ``conftest.py``.
+    """
+
+    @functools.wraps(fn)
+    def _wrapper(*args: Any, **kwargs: Any) -> None:
+        raised: list[BaseException] = []
+
+        def _target() -> None:
+            try:
+                fn(*args, **kwargs)
+            except BaseException as exc:  # noqa: BLE001 — re-raised on the calling thread
+                raised.append(exc)
+
+        # daemon: the join below has no timeout, and a pytest-timeout SIGALRM
+        # interrupts it on THIS thread only — the worker keeps running. A
+        # non-daemon worker wedged in a reap would then hold the interpreter
+        # (and the xdist worker) open at exit; a daemon one cannot.
+        thread = threading.Thread(target=_target, name=f"harness-test-{fn.__name__}", daemon=True)
+        thread.start()
+        thread.join()
+        if raised:
+            raise raised[0]
+
+    return _wrapper
+
+
+@_on_its_own_thread
 def test_teardown_never_aborts_a_transport_the_accept_race_half_built() -> None:
     """The reap must not ``abort()`` a transport whose constructor never finished.
 
@@ -542,6 +585,7 @@ def test_teardown_never_aborts_a_transport_the_accept_race_half_built() -> None:
         loop.close()
 
 
+@_on_its_own_thread
 def test_teardown_closes_a_transport_built_after_the_reap_s_last_scan() -> None:
     """A transport built on the loop's *final* turn must still get its fd closed.
 
@@ -646,6 +690,7 @@ def test_sse_event_lifecycle_wire_contract(
         conn.close()
 
 
+@_on_its_own_thread
 def test_teardown_names_a_transport_that_outlived_the_reap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -685,6 +730,7 @@ def test_teardown_names_a_transport_that_outlived_the_reap(
         peer.close()
 
 
+@_on_its_own_thread
 def test_teardown_failure_is_re_raised_on_the_test_s_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -17,6 +17,7 @@ from tests._fixtures._loop_reaper import (
     classify_loop_origin,
     reap_or_raise,
     reap_orphan_loops,
+    running_loop_leak_reason,
 )
 
 
@@ -29,6 +30,28 @@ class TestClassifyLoopOrigin:
         ]
         assert classify_loop_origin(stack) == "product"
 
+    def test_playwright_frame_is_browser(self):
+        """Playwright's sync API parks ``run_until_complete`` in a greenlet, so
+        its loop reads as running on the main thread for the whole browser
+        session — by design, and the one running-loop origin the guard allows.
+        """
+        stack = [
+            "/x/site-packages/playwright/sync_api/_context_manager.py",
+            "/x/_pytest/fixtures.py",
+        ]
+        assert classify_loop_origin(stack) == "browser"
+
+    def test_otto_frame_outranks_a_playwright_frame(self):
+        """A product loop built on a stack that passes through Playwright must
+        stay ``"product"`` — otherwise the running-loop guard would exempt it
+        and the reaper would quietly close it instead of raising.
+        """
+        stack = [
+            "/x/site-packages/playwright/sync_api/_context_manager.py",
+            "/home/u/otto-sh/src/otto/monitor/server.py",
+        ]
+        assert classify_loop_origin(stack) == "product"
+
     def test_no_otto_frame_is_harness(self):
         stack = [
             "/x/_pytest/runner.py",
@@ -36,6 +59,35 @@ class TestClassifyLoopOrigin:
             "/usr/lib/python3.12/asyncio/base_events.py",
         ]
         assert classify_loop_origin(stack) == "harness"
+
+
+class TestRunningLoopLeakReason:
+    """The issue-#381 guard: a loop left *registered as running* on a thread is
+    invisible to the reaper (which skips running loops) and kills the next test
+    that drives a loop of its own, on unchanged code.
+    """
+
+    def test_no_running_loop_is_no_leak(self):
+        assert running_loop_leak_reason(None, "harness") is None
+
+    def test_playwright_dispatcher_loop_is_allowed(self):
+        lp = asyncio.new_event_loop()
+        try:
+            assert running_loop_leak_reason(lp, "browser") is None
+        finally:
+            lp.close()
+
+    @pytest.mark.parametrize("origin", ["harness", "product"])
+    def test_any_other_running_loop_is_reported(self, origin):
+        lp = asyncio.new_event_loop()
+        try:
+            reason = running_loop_leak_reason(lp, origin, describe=lambda _l: "<the loop>")
+        finally:
+            lp.close()
+        assert reason is not None
+        assert "<the loop>" in reason
+        assert origin in reason
+        assert "#381" in reason
 
 
 class TestReapOrphanLoops:
