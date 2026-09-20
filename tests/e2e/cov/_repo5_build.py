@@ -34,7 +34,6 @@ import json
 import os
 import re
 import shutil
-import stat
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,7 +56,6 @@ DOCKER_SRC = DOCKER / "src"
 TARBALL = DOCKER / "otto-cov-demo.tar"
 KMOD_BUILD = REPO5 / "kmod" / "build.sh"
 LAB_DATA = PROJECT_ROOT / "tests" / "_fixtures" / "lab_data" / "tech1"
-SYSTEM_LCOV = "/usr/bin/lcov"
 STAMP = BUILD / "toolchain"
 """Which compiler built the kernel-module half last: its ``Toolchain.name``.
 
@@ -101,10 +99,11 @@ class Toolchain:
     lcov_args: list[str] = field(default_factory=list)
     """Extra arguments this compiler's output needs lcov to carry — usually none.
 
-    A property of the COMPILER, not of one host or one call: whatever is here
-    has to reach both the capture and the merge, which is why
-    :func:`overlay_lab` delivers it as a wrapper named in ``toolchain.lcov``
-    rather than as a flag on one command. See :data:`CLANG_LCOV_ARGS`.
+    A property of the COMPILER, not of one call: whatever is here has to
+    reach the capture of every host this compiler's output lands on, which is
+    what otto's ``toolchain.lcov_args`` host field is for —
+    :func:`overlay_lab` puts it on the bed hosts' records. See
+    :data:`CLANG_LCOV_ARGS`.
 
     No gcov is named anywhere: otto reads a Unix host's counters with the
     gcov the host record names only when it names one, and otherwise with
@@ -164,9 +163,10 @@ def note_toolchain(config: pytest.Config, tc: Toolchain) -> None:
 # They are kernel headers, never the demo's own files, and otto keeps only
 # files it can anchor to a committed blob in the repo, so nothing measured is
 # lost by telling lcov to carry on: `--ignore-errors source` is lcov's own
-# remedy for exactly this. A user would spell it `ignore_errors = source` in
-# ~/.lcovrc; a test that must not touch the developer's home names a wrapper
-# instead.
+# remedy for exactly this. It reaches lcov as the bed hosts' record field
+# `toolchain.lcov_args` (issue #385) — no ~/.lcovrc for a test that must not
+# write into the developer's home, and no wrapper script standing in for the
+# lcov binary.
 CLANG_LCOV_ARGS = ["--ignore-errors", "source"]
 
 # The bed elements the overlay re-declares. The composite lab replaces an
@@ -325,22 +325,8 @@ def build_foreign_demo(tc: Toolchain, root: Path) -> Path:
     return ko
 
 
-def _lcov_wrapper(tc: Toolchain, root: Path) -> str:
-    """An executable that runs the system lcov with *tc*'s extra arguments.
-
-    otto runs the lcov the host record names for BOTH the capture and the
-    merge, and a host record names a command, not a command line — so extra
-    arguments have to travel as an executable, written beside the overlay lab
-    file rather than into the developer's ``~/.lcovrc``.
-    """
-    wrapper = root / "lcov-wrapper.sh"
-    wrapper.write_text(f'#!/bin/sh\nexec {SYSTEM_LCOV} {" ".join(tc.lcov_args)} "$@"\n')
-    wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return str(wrapper)
-
-
 def overlay_lab(tc: Toolchain, root: Path) -> "Path | None":
-    """Write a lab file under *root* giving the bed hosts *tc*'s lcov wrapper, or ``None``.
+    """Write a lab file under *root* giving the bed hosts *tc*'s lcov arguments, or ``None``.
 
     ``None`` when *tc* needs no lcov arguments — every gcc, and the default —
     so those builds run against the fixture's lab data exactly as the routine
@@ -349,11 +335,11 @@ def overlay_lab(tc: Toolchain, root: Path) -> "Path | None":
     Otherwise the file re-declares the two bed elements and nothing else. The
     composite lab replaces an element WHOLESALE by slug, later source winning,
     so each element is copied from the fixture's lab data key for key and only
-    a ``toolchain`` naming the wrapper as ``lcov`` is added to its host
-    entries — no ``gcov``, so the record stays silent about it and otto reads
-    the counters with the tool the stamp names. The ``labs`` TABLE is
-    deliberately absent: re-declaring it would replace the lab's resource
-    lists, and this overlay has nothing to say about them.
+    a ``toolchain`` carrying ``lcov_args`` is added to its host entries — no
+    ``lcov``, so the system one runs, and no ``gcov``, so the record stays
+    silent about it and otto reads the counters with the tool the stamp names.
+    The ``labs`` TABLE is deliberately absent: re-declaring it would replace
+    the lab's resource lists, and this overlay has nothing to say about them.
     """
     if not tc.lcov_args:
         return None
@@ -364,11 +350,10 @@ def overlay_lab(tc: Toolchain, root: Path) -> "Path | None":
         f"expected {list(OVERLAY_ELEMENTS)} — the bed elements were renamed?"
     )
     root.mkdir(parents=True, exist_ok=True)
-    lcov = _lcov_wrapper(tc, root)
     for element in elements:
         assert element.get("hosts"), f"{element['name']} has no host entry to configure"
         for host in element["hosts"]:
-            host["toolchain"] = {"lcov": lcov}
+            host["toolchain"] = {"lcov_args": list(tc.lcov_args)}
     lab = root / "lab.json"
     lab.write_text(json.dumps({"elements": elements}, indent=4) + "\n")
     return lab

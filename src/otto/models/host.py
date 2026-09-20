@@ -120,6 +120,22 @@ class ToolchainSpec(OttoModel):
     lcov: Path = Path("usr/bin/lcov")
     gcov: Path = Path("usr/bin/gcov")
     tools: list[ToolchainToolSpec] = Field(default_factory=list)
+    lcov_args: list[str] = Field(default_factory=list)
+    """Extra arguments for the ``lcov`` capture of this host's coverage data.
+    One argument per entry: otto quotes each one, so a whole command line in a
+    single entry would reach lcov as one unknown argument, which otto refuses
+    at validation."""
+
+    @field_validator("lcov_args")
+    @classmethod
+    def _validate_lcov_args(cls, v: list[str]) -> list[str]:
+        for arg in v:
+            if any(c.isspace() for c in arg):
+                raise ValueError(
+                    f"toolchain.lcov_args: each entry is one argument; {arg!r} "
+                    f'contains whitespace — write it as ["--ignore-errors", "source"]'
+                )
+        return v
 
     def to_runtime(self) -> Toolchain:
         """Build the runtime ``Toolchain`` dataclass from the validated fields."""
@@ -128,6 +144,7 @@ class ToolchainSpec(OttoModel):
             lcov=self.lcov,
             gcov=self.gcov,
             tools=[t.to_runtime() for t in self.tools],
+            lcov_args=list(self.lcov_args),
         )
 
 

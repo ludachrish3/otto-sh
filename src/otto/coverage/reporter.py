@@ -161,13 +161,16 @@ def read_cov_toolchains(cov_dirs: list[Path]) -> "dict[str, Toolchain]":
     raw_toolchains: dict[str, Any] = meta.get("toolchains", {})
     result: "dict[str, Toolchain]" = {}
     for host_id, tc_data in raw_toolchains.items():
-        # Only the three coverage paths are serialized into cov metadata — a
-        # toolchain's installable ``tools`` are not — so start from the
-        # defaults and replace whichever of the three the metadata carries.
+        # Only the three coverage paths and ``lcov_args`` are serialized into
+        # cov metadata — a toolchain's installable ``tools`` are not — so start
+        # from the defaults and replace whichever of them the metadata carries.
         # (Unpacking a ``dict[str, Path]`` straight into the constructor no
         # longer type-checks now that not every field is a Path.)
         paths = {key: Path(tc_data[key]) for key in ("sysroot", "lcov", "gcov") if key in tc_data}
-        result[host_id] = replace(Toolchain(), **paths)
+        # ``lcov_args`` travels too: it is what the capture of this host's
+        # data has to carry, and a deferred report builds that command here.
+        extra = {"lcov_args": list(tc_data["lcov_args"])} if "lcov_args" in tc_data else {}
+        result[host_id] = replace(Toolchain(), **paths, **extra)
     return result
 
 

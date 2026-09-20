@@ -74,6 +74,18 @@ class Toolchain:
     gcov: Path = Path("usr/bin/gcov")
     """Path to ``gcov`` (or ``llvm-cov`` wrapper), relative to *sysroot*."""
 
+    lcov_args: list[str] = field(default_factory=list)
+    """Extra arguments for the ``lcov`` capture of this host's data — none by default.
+
+    NO COLON in the summary line above (see *tools* below for why). One argv
+    token per entry, appended to the capture command.
+
+    A property of the host's COMPILER rather than of one command: a
+    clang-built kernel module's notes files record kernel headers by a path
+    geninfo cannot open, and ``["--ignore-errors", "source"]`` is lcov's own
+    remedy for it. otto applies none of these on its own — a blanket ignore
+    would also hide a genuinely missing SUT source."""
+
     tools: list[ToolchainTool] = field(default_factory=list)
     """Tools this toolchain installs onto the host — none by default.
 

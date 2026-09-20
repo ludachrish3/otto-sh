@@ -38,6 +38,7 @@ from .errors import CoverageConfigError, NoCoverageDataError
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
+    from ..host.toolchain import Toolchain
     from .tiers import TierConfig
 
 logger = logging.getLogger(__name__)
@@ -347,6 +348,24 @@ async def _produce_capture_tail(
     return written
 
 
+def _toolchain_meta(tc: "Toolchain") -> dict[str, Any]:
+    """One host's toolchain as the cov metadata carries it.
+
+    The three coverage paths always; ``lcov_args`` only when the host declares
+    some, so a host that declares none reads back exactly as it did before the
+    field existed. A deferred ``otto cov report`` builds its per-host capture
+    commands from this, which is why the arguments have to travel with it.
+    """
+    meta: dict[str, Any] = {
+        "sysroot": str(tc.sysroot),
+        "lcov": str(tc.lcov),
+        "gcov": str(tc.gcov),
+    }
+    if tc.lcov_args:
+        meta["lcov_args"] = list(tc.lcov_args)
+    return meta
+
+
 async def _write_metadata(
     repos: "list[Repo]",
     cov_config: dict[str, Any],
@@ -372,7 +391,7 @@ async def _write_metadata(
     if not cov_repo:
         return
 
-    toolchains: dict[str, dict[str, str]] = {}
+    toolchains: dict[str, dict[str, Any]] = {}
     for host in fetch_hosts:
         # Only hosts that actually produced coverage — skip infrastructure hosts
         # (e.g. an SSH hop) that are in the lab solely for connectivity.
@@ -385,11 +404,7 @@ async def _write_metadata(
         if host.toolchain == Toolchain():
             continue
         tc = host.toolchain
-        toolchains[host.id] = {
-            "sysroot": str(tc.sysroot),
-            "lcov": str(tc.lcov),
-            "gcov": str(tc.gcov),
-        }
+        toolchains[host.id] = _toolchain_meta(tc)
 
     sut_dir = str(cov_repo.sut_dir.resolve())
 
@@ -454,11 +469,7 @@ async def _write_metadata(
                         discovery_cache[bd_key] = None
                 tc = discovery_cache[bd_key]
             if tc is not None:
-                toolchains[host_id] = {
-                    "sysroot": str(tc.sysroot),
-                    "lcov": str(tc.lcov),
-                    "gcov": str(tc.gcov),
-                }
+                toolchains[host_id] = _toolchain_meta(tc)
         if not fetched_host_ids:
             # Use the single fallback if present; otherwise the first resolved root.
             if embedded_build_dir:

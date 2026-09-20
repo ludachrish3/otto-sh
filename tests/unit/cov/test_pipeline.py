@@ -18,6 +18,7 @@ from otto.coverage.reporter import (
     discover_gcda_dirs,
     read_cov_source_root,
     read_cov_source_roots,
+    read_cov_toolchains,
     run_coverage_report,
 )
 from otto.coverage.tiers import load_tiers
@@ -270,6 +271,20 @@ class TestResolveToolchains:
         assert tc.gcov_bin == str(gcov_12)
         assert tc.lcov_bin == "/tmp/lcov-wrapper.sh"
 
+    def test_a_record_naming_only_lcov_arguments_keeps_them(self, tmp_path, bin_dir):
+        """The stamp replaces only the gcov; the host's extra lcov arguments
+        are what the clang arm configures and must not be dropped."""
+        llvm_cov = _tool(bin_dir, "llvm-cov")
+        d = _gcda_dir(tmp_path, "test1", "app", _CLANG_GCDA)
+        record = Toolchain(lcov_args=["--ignore-errors", "source"])
+        r = self._reporter(tmp_path, [d], {"test1": record})
+
+        (tc,) = r._resolve_toolchains()
+
+        assert tc is not None
+        assert tc.gcov_bin == str(llvm_cov)
+        assert tc.lcov_args == ["--ignore-errors", "source"]
+
     def test_a_mixed_run_resolves_each_directory_on_its_own(self, tmp_path, bin_dir):
         llvm_cov = _tool(bin_dir, "llvm-cov")
         gcov_12 = _tool(bin_dir, "gcov-12")
@@ -302,6 +317,40 @@ class TestResolveToolchains:
 
         with pytest.raises(CoverageToolMissingError, match=r"gcov-12.*apt install gcc-12"):
             r._resolve_toolchains()
+
+
+class TestReadCovToolchains:
+    """The cov metadata is where a deferred ``otto cov report`` gets its
+    toolchains from, so anything a host's capture command needs has to survive
+    the round trip — ``lcov_args`` included (issue #385)."""
+
+    @staticmethod
+    def _meta(tmp_path: Path, toolchains: dict) -> Path:
+        cov_dir = tmp_path / "cov"
+        cov_dir.mkdir()
+        (cov_dir / ".otto_cov_meta.json").write_text(
+            json.dumps({"repo_name": "r", "sut_dir": str(tmp_path), "toolchains": toolchains})
+        )
+        return cov_dir
+
+    def test_extra_lcov_arguments_survive_the_metadata(self, tmp_path):
+        cov_dir = self._meta(
+            tmp_path,
+            {
+                "test1": {
+                    "sysroot": "/",
+                    "lcov": "usr/bin/lcov",
+                    "lcov_args": ["--ignore-errors", "source"],
+                }
+            },
+        )
+        assert read_cov_toolchains([cov_dir])["test1"].lcov_args == ["--ignore-errors", "source"]
+
+    def test_a_record_without_them_stays_at_the_default(self, tmp_path):
+        cov_dir = self._meta(tmp_path, {"test1": {"gcov": "/usr/bin/gcov-12"}})
+        tc = read_cov_toolchains([cov_dir])["test1"]
+        assert tc.lcov_args == []
+        assert tc.gcov == Path("/usr/bin/gcov-12")
 
 
 class TestCoverageReporter:

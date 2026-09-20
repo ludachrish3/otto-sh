@@ -6,6 +6,7 @@ they are fully async with proper logging and timeout handling.
 """
 
 import logging
+import shlex
 import struct
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -183,6 +184,22 @@ def _find_gcno_dirs(gcda_dir: Path, search_root: Path) -> list[Path]:
     return sorted(dirs) if dirs else [search_root]
 
 
+def _extra_args(toolchain: "Toolchain | None") -> str:
+    """Render the host's ``toolchain.lcov_args`` as a leading-space fragment.
+
+    The arguments belong to the lcov CAPTURE of that host's data: they say
+    what reading this host's counters needs, which is why they are a property
+    of its record. Empty — and the command byte-identical to what it was —
+    for a host that declares none, which is every host until one needs lcov
+    told something otto cannot know (a clang-built kernel module's unopenable
+    header records, issue #385). Each entry is quoted: it is one argv token,
+    and the command is a string run through a shell.
+    """
+    if toolchain is None or not toolchain.lcov_args:
+        return ""
+    return " " + " ".join(shlex.quote(arg) for arg in toolchain.lcov_args)
+
+
 class LcovMerger:
     """Merge coverage using ``lcov --capture`` + ``lcov --add-tracefile``.
 
@@ -254,6 +271,7 @@ class LcovMerger:
             f" {build_args}"
             f" --gcov-tool {gcov}"
             f" --rc branch_coverage=1"
+            f"{_extra_args(toolchain)}"
             f" --output-file {output}"
         )
         logger.info("lcov capture: %s -> %s", gcda_dir, output)
@@ -289,6 +307,9 @@ class LcovMerger:
             info_files: List of ``.info`` files to merge.
             output: Path for the merged output ``.info`` file.
             toolchain: Optional toolchain override for the ``lcov`` binary.
+                Its ``lcov_args`` are appended too when one is passed;
+                :meth:`capture_and_merge` passes none, because a merge of
+                already-captured ``.info`` files is not any one host's.
 
         Returns:
             The *output* path on success.
@@ -302,7 +323,10 @@ class LcovMerger:
         lcov = toolchain.lcov_bin if toolchain else self.lcov
 
         add_args = " ".join(f"--add-tracefile {f}" for f in info_files)
-        cmd = f"{lcov} {add_args} --rc branch_coverage=1 --output-file {output}"
+        cmd = (
+            f"{lcov} {add_args} --rc branch_coverage=1"
+            f"{_extra_args(toolchain)} --output-file {output}"
+        )
 
         logger.info("lcov merge: %d files -> %s", len(info_files), output)
         result = await self.localhost.exec(cmd, timeout=300)
@@ -319,6 +343,10 @@ class LcovMerger:
         gcno_dirs: list[Path] | None = None,
     ) -> Path:
         """Capture each host dir to ``.info``, then merge all.
+
+        Each capture runs the host's own toolchain; the merge runs the
+        instance ``lcov`` with no per-host arguments, the ``.info`` files
+        being toolchain-independent by then.
 
         Args:
             host_gcda_dirs: Per-host directories containing ``.gcda`` files.

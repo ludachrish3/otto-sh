@@ -795,6 +795,30 @@ class TestFetchedToolchainMetadata:
             "test1": {"sysroot": "/", "lcov": "usr/bin/lcov", "gcov": "/usr/bin/gcov-12"}
         }
 
+    def test_extra_lcov_arguments_are_recorded_and_an_empty_list_is_not(self, tmp_path):
+        """A deferred report builds its lcov commands from this metadata, so a
+        host's extra lcov arguments have to be in it; an empty list would be
+        noise in every other host's entry (issue #385)."""
+        from otto.host.toolchain import Toolchain
+
+        toolchains = self._collect(
+            tmp_path,
+            [
+                ("test1", "unix", Toolchain(lcov_args=["--ignore-errors", "source"])),
+                ("test2", "unix", Toolchain(gcov=Path("/usr/bin/gcov-12"))),
+            ],
+        )
+
+        assert toolchains == {
+            "test1": {
+                "sysroot": "/",
+                "lcov": "usr/bin/lcov",
+                "gcov": "usr/bin/gcov",
+                "lcov_args": ["--ignore-errors", "source"],
+            },
+            "test2": {"sysroot": "/", "lcov": "usr/bin/lcov", "gcov": "/usr/bin/gcov-12"},
+        }
+
     def test_a_record_naming_only_an_lcov_is_recorded_as_it_was(self, tmp_path):
         """The reporter treats its gcov as silent; what was configured is kept."""
         from otto.host.toolchain import Toolchain

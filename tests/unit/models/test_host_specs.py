@@ -78,6 +78,32 @@ def test_toolchain_spec_declares_no_tools_by_default():
     assert ToolchainSpec().to_runtime().tools == []
 
 
+def test_toolchain_spec_declares_no_lcov_args_by_default():
+    assert ToolchainSpec().to_runtime().lcov_args == []
+
+
+def test_toolchain_spec_lcov_args_reach_runtime():
+    # Kills: adding the spec field but forgetting the to_runtime() mapping —
+    # a lab.json-declared lcov argument would silently vanish before it could
+    # reach the capture command.
+    spec = ToolchainSpec(lcov_args=["--ignore-errors", "source"])
+    assert spec.to_runtime().lcov_args == ["--ignore-errors", "source"]
+
+
+def test_toolchain_spec_rejects_an_entry_holding_a_whole_command_line():
+    # One argv token per entry: otto quotes each entry, so a shell-style
+    # "--ignore-errors source" would reach lcov as ONE unknown argument.
+    with pytest.raises(ValidationError, match=r"'--ignore-errors source' contains whitespace"):
+        ToolchainSpec(lcov_args=["--ignore-errors source"])
+
+
+def test_toolchain_spec_rejects_a_whitespace_entry_naming_the_list_form():
+    with pytest.raises(ValidationError, match="each entry is one argument") as exc:
+        ToolchainSpec(lcov_args=["--rc", "geninfo_adjust_src_path=/a /b"])
+    assert 'write it as ["--ignore-errors", "source"]' in str(exc.value)
+    assert "toolchain.lcov_args" in str(exc.value)
+
+
 def test_toolchain_tool_spec_forbids_unknown():
     with pytest.raises(ValidationError, match=r"dst\s+Extra inputs are not permitted"):
         ToolchainSpec(tools=[{"name": "gdb", "source": "/a", "dst": "/b"}])

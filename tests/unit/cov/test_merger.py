@@ -612,3 +612,131 @@ class TestLcovMergerToolchain:
                 )
         finally:
             await localhost.close()
+
+
+class TestLcovMergerExtraArguments:
+    """``toolchain.lcov_args`` — extra arguments for the capture of this host's data.
+
+    The knob exists because a clang-built kernel module's ``.gcno`` records
+    kernel headers by a path relative to the kernel tree, which geninfo cannot
+    open from the fetched data directory; ``--ignore-errors source`` is lcov's
+    own remedy (issue #385). ``merge_info_files`` applies a toolchain's
+    arguments too when a caller hands it one — pinned below — but
+    ``capture_and_merge`` hands it none: by then the ``.info`` files are no
+    one host's. The strings below are pinned whole: a stray space or a flag
+    landing after ``--output-file`` is a different command line.
+    """
+
+    @staticmethod
+    def _paired(tmp_path: Path) -> "tuple[Path, Path, Path]":
+        gcda_dir = tmp_path / "gcda"
+        gcno_dir = tmp_path / "gcno"
+        _write_pair(gcda_dir, gcno_dir, "prod", gcno_stamp=0x1111AAAA, gcda_stamp=0x1111AAAA)
+        return gcda_dir, gcno_dir, tmp_path / "out.info"
+
+    @staticmethod
+    def _expected_capture(
+        lcov: str, gcda_dir: Path, gcno_dir: Path, gcov: str, extra: str, output: Path
+    ) -> str:
+        return (
+            f"{lcov} --capture --directory {gcda_dir} --build-directory {gcno_dir}"
+            f" --gcov-tool {gcov} --rc branch_coverage=1{extra} --output-file {output}"
+        )
+
+    async def _capture_cmd(self, tmp_path, toolchain):
+        localhost = LocalHost()
+        merger = LcovMerger(localhost, lcov="lcov", gcov="gcov")
+        gcda_dir, gcno_dir, output = self._paired(tmp_path)
+        with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = CommandResult(
+                Status.Success, value="", command="lcov ...", retcode=0
+            )
+            await merger.capture(gcda_dir, gcno_dir, output, toolchain=toolchain)
+            cmd = mock_exec.call_args[0][0]
+        await localhost.close()
+        return cmd, gcda_dir, gcno_dir, output
+
+    async def _merge_cmd(self, tmp_path, toolchain):
+        localhost = LocalHost()
+        merger = LcovMerger(localhost, lcov="lcov")
+        info = tmp_path / "a.info"
+        output = tmp_path / "merged.info"
+        with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = CommandResult(
+                Status.Success, value="", command="lcov ...", retcode=0
+            )
+            await merger.merge_info_files([info], output, toolchain=toolchain)
+            cmd = mock_exec.call_args[0][0]
+        await localhost.close()
+        return cmd, info, output
+
+    @pytest.mark.asyncio
+    async def test_no_toolchain_leaves_both_commands_as_they_were(self, tmp_path):
+        cmd, gcda_dir, gcno_dir, output = await self._capture_cmd(tmp_path, None)
+        assert cmd == self._expected_capture("lcov", gcda_dir, gcno_dir, "gcov", "", output)
+
+        cmd, info, merged = await self._merge_cmd(tmp_path, None)
+        assert cmd == f"lcov --add-tracefile {info} --rc branch_coverage=1 --output-file {merged}"
+
+    @pytest.mark.asyncio
+    async def test_a_toolchain_with_no_extra_arguments_changes_nothing(self, tmp_path):
+        tc = Toolchain(sysroot=Path("/"), lcov=Path("usr/bin/lcov"), gcov=Path("usr/bin/gcov"))
+        cmd, gcda_dir, gcno_dir, output = await self._capture_cmd(tmp_path, tc)
+        assert cmd == self._expected_capture(
+            "/usr/bin/lcov", gcda_dir, gcno_dir, "/usr/bin/gcov", "", output
+        )
+
+        cmd, info, merged = await self._merge_cmd(tmp_path, tc)
+        assert cmd == (
+            f"/usr/bin/lcov --add-tracefile {info} --rc branch_coverage=1 --output-file {merged}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_arguments_land_before_the_output_file_in_both_commands(self, tmp_path):
+        tc = Toolchain(
+            sysroot=Path("/"),
+            lcov=Path("usr/bin/lcov"),
+            gcov=Path("usr/bin/gcov"),
+            lcov_args=["--ignore-errors", "source"],
+        )
+        cmd, gcda_dir, gcno_dir, output = await self._capture_cmd(tmp_path, tc)
+        assert cmd == self._expected_capture(
+            "/usr/bin/lcov",
+            gcda_dir,
+            gcno_dir,
+            "/usr/bin/gcov",
+            " --ignore-errors source",
+            output,
+        )
+
+        cmd, info, merged = await self._merge_cmd(tmp_path, tc)
+        assert cmd == (
+            f"/usr/bin/lcov --add-tracefile {info} --rc branch_coverage=1"
+            f" --ignore-errors source --output-file {merged}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_argument_holding_a_space_is_quoted_for_the_shell(self, tmp_path):
+        # The command is a STRING run through a shell, so a value with a space
+        # in it must reach lcov as one argument.
+        tc = Toolchain(
+            sysroot=Path("/"),
+            lcov=Path("usr/bin/lcov"),
+            gcov=Path("usr/bin/gcov"),
+            lcov_args=["--rc", "geninfo_adjust_src_path=/a b/=/c/"],
+        )
+        cmd, gcda_dir, gcno_dir, output = await self._capture_cmd(tmp_path, tc)
+        assert cmd == self._expected_capture(
+            "/usr/bin/lcov",
+            gcda_dir,
+            gcno_dir,
+            "/usr/bin/gcov",
+            " --rc 'geninfo_adjust_src_path=/a b/=/c/'",
+            output,
+        )
+
+        cmd, info, merged = await self._merge_cmd(tmp_path, tc)
+        assert cmd == (
+            f"/usr/bin/lcov --add-tracefile {info} --rc branch_coverage=1"
+            f" --rc 'geninfo_adjust_src_path=/a b/=/c/' --output-file {merged}"
+        )

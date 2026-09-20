@@ -7,7 +7,6 @@ the ``.init_array`` reader's parse of readelf's table.
 """
 
 import json
-import os
 import subprocess
 from pathlib import Path
 
@@ -248,9 +247,9 @@ def test_init_array_symbols_fails_on_a_module_without_the_section(monkeypatch, t
 # gcov-N for a gcc, llvm-cov for clang, from PATH. So a gcc arm configures
 # nothing on the bed and the matrix's green is the discovery proof. Clang's
 # arm still needs lcov to ignore the kernel headers it cannot open, and that
-# is an lcov argument, not a gcov, so it travels as a wrapper in
-# toolchain.lcov. A compiler whose gcov is not installed fails HERE, naming
-# the package, rather than in otto's report.
+# is an lcov argument, not a gcov, so it travels as the host record's
+# toolchain.lcov_args. A compiler whose gcov is not installed fails HERE,
+# naming the package, rather than in otto's report.
 
 
 def test_a_gcc_requires_its_gcov_and_configures_nothing(gcc13_kdir, compilers_present):
@@ -321,20 +320,16 @@ def test_the_overlay_copies_every_original_key_of_those_elements(clang_overlay):
         assert element["labs"] == original["labs"]
 
 
-def test_the_overlay_names_only_an_lcov_wrapper_in_every_host_entry(clang_overlay, tmp_path):
-    named = set()
+def test_the_overlay_names_only_lcov_arguments_in_every_host_entry(clang_overlay):
     for element in json.loads(clang_overlay.read_text())["elements"]:
         assert element["hosts"]
         for host in element["hosts"]:
-            # No gcov and no sysroot: the record stays silent about the gcov
-            # so otto reads the counters with the llvm-cov the stamp names.
-            assert sorted(host["toolchain"]) == ["lcov"], host["toolchain"]
-            named.add(host["toolchain"]["lcov"])
-    assert len(named) == 1, named
-    wrapper = Path(next(iter(named)))
-    assert wrapper.parent == tmp_path, wrapper
-    assert wrapper.read_text() == '#!/bin/sh\nexec /usr/bin/lcov --ignore-errors source "$@"\n'
-    assert os.access(wrapper, os.X_OK), "otto execs this path; it must be executable"
+            # No lcov, no gcov and no sysroot: the arguments are all the bed
+            # needs told. The record stays silent about the binaries, so the
+            # system lcov runs and otto reads the counters with the llvm-cov
+            # the stamp names.
+            assert sorted(host["toolchain"]) == ["lcov_args"], host["toolchain"]
+            assert host["toolchain"]["lcov_args"] == ["--ignore-errors", "source"]
 
 
 def test_the_overlay_repo_points_a_lab_source_at_that_lab_file(tmp_path):
