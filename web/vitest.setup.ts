@@ -14,6 +14,7 @@
 //   import { allowConsoleOutput } from "../vitest.setup";  // path as needed
 //   allowConsoleOutput();  // inside the test body, scoped to that test
 import { cleanup } from "@testing-library/react";
+import { setInteractionModality } from "react-aria";
 import { afterEach, beforeEach } from "vitest";
 
 // React 19 requires this flag for act() (which Testing Library wraps every
@@ -80,6 +81,25 @@ afterEach(() => {
   // work too, but only under an assumption about the order vitest runs sibling
   // hooks in; this construction needs no such assumption.
   cleanup();
+  // react-aria's CURRENT INTERACTION MODALITY is module-level state, shared by
+  // every test in a file and reset by nothing — `cleanup()` above unmounts
+  // trees, it cannot unmount a module. A jsdom `fireEvent.click()` is a
+  // detail-0 MouseEvent, which react-aria's global click handler classifies as
+  // a VIRTUAL click (a screen reader's), so one such click pins the modality at
+  // "virtual" for the rest of the file. From then on `focusSafely()` — the
+  // focus move react-aria's Dialog/FocusScope make when an overlay opens —
+  // stops focusing synchronously and defers through `runAfterTransition()`
+  // instead, so an overlay can be in the DOM with focus still on <body>, and a
+  // key sent to `document.activeElement` (what user-event does) never reaches
+  // it. That is #357: AppShell's "pressing '?' … Escape closes it" failed under
+  // vitest shuffle seed 15 with the dialog still open, purely because a ⋮-menu
+  // test with `fireEvent.click` had run earlier in the file.
+  //
+  // "keyboard" rather than "pointer": the pristine module value is `null`, and
+  // the two behave alike everywhere (`isFocusVisible()` is true for both, and
+  // only "virtual" changes focusSafely's path) — while "pointer" would silently
+  // turn focus-visible OFF at the start of every test.
+  setInteractionModality("keyboard");
   console.warn = original.warn;
   console.error = original.error;
   if (!allowed && captured.length > 0) {

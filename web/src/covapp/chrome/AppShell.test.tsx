@@ -7,6 +7,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { type ReactNode, useLayoutEffect, useRef } from "react";
+import { setInteractionModality } from "react-aria";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as dataModule from "../data";
@@ -33,6 +34,18 @@ afterEach(() => {
  * the input itself. */
 function ticketSearchInput(): HTMLInputElement {
   return screen.getByRole("textbox", { name: "Pin a ticket by id" }) as HTMLInputElement;
+}
+
+/** A '?' key press the way a browser delivers one: dispatched at the DOCUMENT,
+ * whence it bubbles to `window` (AppShell's listener) AND passes react-aria's
+ * document-level keydown listener, which is what sets its module-level
+ * interaction modality back to "keyboard". Dispatching AT `window` — the
+ * previous spelling — skips document entirely, so a modality left at "virtual"
+ * by an earlier `fireEvent.click` in this file stayed virtual, and the dialog
+ * then opened WITHOUT taking focus (see the injected-hostile guard below and
+ * the note in web/vitest.setup.ts). */
+function pressQuestionMark() {
+  fireEvent.keyDown(document.body, { key: "?" });
 }
 
 function renderShell(children = <div>child content</div>) {
@@ -165,7 +178,28 @@ describe("AppShell", () => {
   it("pressing '?' opens ShortcutsDialog; Escape closes it", async () => {
     const user = userEvent.setup();
     renderShell();
-    fireEvent.keyDown(window, { key: "?" });
+    pressQuestionMark();
+    expect(await screen.findByTestId("shortcuts-dialog")).toBeTruthy();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("shortcuts-dialog")).toBeNull();
+  });
+
+  // #357's guard, with the hostile state INJECTED rather than inherited from
+  // whichever ⋮-menu test the shuffle happened to run first: a jsdom
+  // `fireEvent.click` is a detail-0 MouseEvent, i.e. a VIRTUAL click to
+  // react-aria, which pins its module-level interaction modality at "virtual".
+  // In that modality `focusSafely()` defers the dialog's focus move through
+  // `runAfterTransition()`, so the dialog mounts with focus still on <body> and
+  // an Escape aimed at `document.activeElement` never reaches the overlay.
+  // Red before the fix above (dialog still open), and red again if the '?'
+  // keydown goes back to being dispatched AT `window`, where react-aria's own
+  // document-level keydown listener — the thing that puts the modality back to
+  // "keyboard", exactly as a real browser key press would — cannot see it.
+  it("'?' survives a preceding virtual (detail-0) click leaving react-aria in virtual modality", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    setInteractionModality("virtual");
+    pressQuestionMark();
     expect(await screen.findByTestId("shortcuts-dialog")).toBeTruthy();
     await user.keyboard("{Escape}");
     expect(screen.queryByTestId("shortcuts-dialog")).toBeNull();
@@ -642,7 +676,7 @@ describe("search palette wiring", () => {
 
   it("the shortcuts dialog lists the palette binding", async () => {
     renderShell();
-    fireEvent.keyDown(window, { key: "?" });
+    pressQuestionMark();
     const dialog = await screen.findByTestId("shortcuts-dialog");
     expect(dialog.textContent).toContain("Search code and functions");
     expect(dialog.textContent).toContain("Ctrl K");
