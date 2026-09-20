@@ -40,6 +40,20 @@ updates:
         patterns:
           - "tailwindcss"
           - "@tailwindcss/*"
+      # react and react-dom must be the EXACT same version at runtime --
+      # react-dom refuses to initialise otherwise ("Incompatible React
+      # versions") -- and @types/react-dom peers on "@types/react": "^19.x"
+      # of its own minor. With all four pinned exactly, Dependabot split one
+      # React release into #397 (react + @types/react) and #393 (react-dom +
+      # @types/react-dom); neither half could ever pass, one dying on
+      # ERESOLVE at npm ci and the other on all 83 vitest suites plus every
+      # browser e2e leg. They move as one group.
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
       # The react-aria family ships lockstep releases that all depend on the
       # same @internationalized/date. Bumping one alone leaves our direct
       # @internationalized/date pin behind, so npm installs a SECOND nested
