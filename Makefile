@@ -1342,6 +1342,8 @@ lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependen
 	@uv run --group lint tach check
 	@$(SAY) "ast-grep: architecture pattern rules (.ast-grep/rules/)"
 	@uv run --group lint ast-grep scan src/otto web/src tests
+	@$(SAY) "ast-grep: rule tests (.ast-grep/rule-tests/)"
+	@uv run --group lint ast-grep test --skip-snapshot-tests
 
 # `biome check` = lint rules + formatting + ASSIST actions (organize-imports).
 # `biome lint` + `biome format` together are STRICTLY WEAKER: neither reports

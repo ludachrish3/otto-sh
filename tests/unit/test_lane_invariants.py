@@ -42,7 +42,18 @@ discriminator (the flake returns). The runtime backstop for lanes these
 scanners cannot foresee lives in the root conftest, which fails any marked
 test that reaches an xdist worker; its control is here too.
 
-A third family (the ``_Leg`` block, below the serial_timing pins) asks the
+A third family (the two ``ast-grep test`` pins) holds the Makefile <-> noxfile
+parity that both files' own comments ask for in prose: ``make lint-arch`` and
+the noxfile ``lint`` session must each RUN the architecture rule tests, not
+merely mention them. ``ast-grep scan`` does not execute
+``.ast-grep/rule-tests/`` -- only ``ast-grep test`` does -- so a rule that
+stopped matching its own motivating snippet would fail nothing the day the leg
+is dropped from one of the two files. Both scanners ignore the shapes that
+look like the leg without being it: a ``$(SAY)`` banner and a tab-commented
+recipe line on the Make side, a docstring mention and a non-``session.run``
+statement on the nox side.
+
+A fourth family (the ``_Leg`` block, below the serial_timing pins) asks the
 only lane-leg question the other two cannot: does the leg select ANYTHING?
 Both scanners above audit leg TEXT; neither can see MEMBERSHIP, and an empty
 leg is a hard failure — pytest exits 5 when it collects nothing and make
@@ -519,6 +530,133 @@ def test_root_conftest_refuses_serial_timing_inside_an_xdist_worker(
         root_conftest.pytest_runtest_setup(_MarkedItem())
     monkeypatch.delenv("PYTEST_XDIST_WORKER")
     root_conftest.pytest_runtest_setup(_MarkedItem())  # the -n0 shape must pass
+
+
+# ── ast-grep rule tests: Makefile <-> noxfile parity ────────────────────────
+# sgconfig.yml's `testConfigs` entry makes `.ast-grep/rule-tests/` discoverable;
+# only `ast-grep test` RUNS it. `ast-grep scan` — the leg both build files have
+# always had — walks source and never opens a test file, so a rule quietly
+# losing its own motivating match is invisible until someone runs the other
+# subcommand. Both files therefore need the leg, and both say so only in prose
+# ("keep both in sync"). These two pins are that sentence, enforced.
+_RULE_TEST_ARGV = ("ast-grep", "test")
+
+
+def _is_say_recipe(line: str) -> bool:
+    """A recipe line that only PRINTS — the banner above a leg, not the leg."""
+    body = line.lstrip("\t").lstrip()
+    if body.startswith("@"):
+        body = body[1:].lstrip()
+    return body.startswith("$(SAY)")
+
+
+def makefile_live_recipe(text: str, target: str) -> list[str]:
+    """Recipe lines of *target* that the shell would actually run.
+
+    Commented (``\t# ``) and ``$(SAY)`` lines are dropped: both are how a
+    removed leg most plausibly leaves a trace that still contains its own
+    name, which is the annotated-removal trap every scanner in this module is
+    built against.
+    """
+    lines: list[str] = []
+    in_target = False
+    for line in text.splitlines():
+        if line.startswith("\t"):
+            if in_target and not _is_commented_recipe(line) and not _is_say_recipe(line):
+                lines.append(line)
+            continue
+        matched = re.match(r"^([A-Za-z0-9_.-]+)\s*:", line)
+        if matched:
+            in_target = matched.group(1) == target
+    return lines
+
+
+def noxfile_session_commands(text: str, session: str) -> list[list[str]]:
+    """The literal argv of every ``session.run(...)`` inside *session*.
+
+    Only ``session.run`` calls count, and only their CONSTANT string
+    arguments: a docstring that names the command (this repo's ``lint``
+    session has one) and a comment are text, not a leg.
+    """
+    tree = ast.parse(text)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == session:
+            return [
+                [arg.value for arg in call.args if isinstance(arg, ast.Constant)]
+                for call in ast.walk(node)
+                if isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "run"
+            ]
+    return []
+
+
+def ast_grep_rule_test_gaps(make_text: str, nox_text: str) -> list[str]:
+    """Which of the two build files fails to RUN the ast-grep rule tests."""
+    gaps: list[str] = []
+    joined = " ".join(makefile_live_recipe(make_text, "lint-arch"))
+    if " ".join(_RULE_TEST_ARGV) not in joined:
+        gaps.append("Makefile lint-arch: no live `ast-grep test` recipe line")
+    if not any(
+        argv[: len(_RULE_TEST_ARGV)] == list(_RULE_TEST_ARGV)
+        for argv in noxfile_session_commands(nox_text, "lint")
+    ):
+        gaps.append('noxfile.py lint session: no `session.run("ast-grep", "test", ...)`')
+    return gaps
+
+
+def test_both_build_files_run_the_ast_grep_rule_tests() -> None:
+    gaps = ast_grep_rule_test_gaps(
+        (_REPO / "Makefile").read_text(), (_REPO / "noxfile.py").read_text()
+    )
+    assert not gaps, (
+        "the architecture RULE TESTS (.ast-grep/rule-tests/) are not run by every "
+        "lint surface — `ast-grep scan` does not execute them, so a rule that stops "
+        "matching its own motivating snippet would fail nothing there:\n  " + "\n  ".join(gaps)
+    )
+
+
+def test_rule_test_parity_scanner_flags_a_missing_leg() -> None:
+    """Positive controls: each half observed red, and neither greened by text."""
+    good_make = (
+        "lint-arch: check-breaking\n"
+        '\t@$(SAY) "ast-grep: architecture pattern rules"\n'
+        "\t@uv run --group lint ast-grep scan src/otto web/src tests\n"
+        '\t@$(SAY) "ast-grep: rule tests"\n'
+        "\t@uv run --group lint ast-grep test --skip-snapshot-tests\n"
+    )
+    good_nox = (
+        "def lint(session):\n"
+        '    """Runs ast-grep test on the rule tests."""\n'
+        '    session.run("ast-grep", "scan", "src/otto")\n'
+        '    session.run("ast-grep", "test", "--skip-snapshot-tests")\n'
+    )
+    assert ast_grep_rule_test_gaps(good_make, good_nox) == []
+    # The leg gone from each side in turn, and gone in the two shapes that
+    # leave its name behind: a SAY banner, and a tab-commented recipe line.
+    no_make_leg = good_make.replace(
+        "\t@uv run --group lint ast-grep test --skip-snapshot-tests\n", ""
+    )
+    assert ast_grep_rule_test_gaps(no_make_leg, good_nox) == [
+        "Makefile lint-arch: no live `ast-grep test` recipe line"
+    ]
+    commented_make = good_make.replace(
+        "\t@uv run --group lint ast-grep test", "\t# @uv run --group lint ast-grep test"
+    )
+    assert ast_grep_rule_test_gaps(commented_make, good_nox) != []
+    # no_make_leg still carries its SAY banner naming the rule tests: a line
+    # that only prints must never green the pin.
+    assert "ast-grep: rule tests" in no_make_leg
+    # A leg under a DIFFERENT target does not count as lint-arch having one.
+    other_target = no_make_leg + "\nlint-ts:\n\t@uv run --group lint ast-grep test\n"
+    assert ast_grep_rule_test_gaps(other_target, good_nox) != []
+    # nox: the docstring names the command, and a bare expression is not a run.
+    no_nox_leg = good_nox.replace(
+        '    session.run("ast-grep", "test", "--skip-snapshot-tests")\n',
+        '    print("ast-grep", "test")\n',
+    )
+    (gap,) = ast_grep_rule_test_gaps(good_make, no_nox_leg)
+    assert "noxfile.py lint session" in gap
 
 
 # ── lane-leg membership ─────────────────────────────────────────────────────

@@ -1,0 +1,50 @@
+# Rule test for .ast-grep/rules/no-tick-count-in-a-wall-clock-window.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+id: no-tick-count-in-a-wall-clock-window
+valid:
+# The same test on the virtual clock: sleeps and mock delays ride one
+# timeline, the tally is exact, and no wall-clock stall can reach it.
+- |
+  async def test_slow_host_times_out(self):
+      collector = _build_collector([fast, slow])
+      with _virtual_time() as vt:
+          await vt.drive(
+              collector.run(
+                  interval=timedelta(milliseconds=200),
+                  duration=timedelta(milliseconds=500),
+              )
+          )
+      assert len(collector.get_series()["fast/value"]) == 3
+# A zero duration is not a window — exactly the initial tick runs, whatever
+# the machine is doing, so counting its output is deterministic.
+- |
+  def test_initial_run_spawns_tunnel_loop() -> None:
+      asyncio.run(c.run(interval=timedelta(milliseconds=10), duration=timedelta(0)))
+      assert source.calls >= 1
+# `duration=None` written out rather than omitted: no window at all, so the
+# wait_for_async budget bounds how long the ticks may take, not how many run.
+# This is the spelling the rule's own note recommends — it must not flag it.
+- |
+  async def test_raising_source_never_kills_the_run_loop() -> None:
+      task = asyncio.create_task(
+          c.run(interval=timedelta(milliseconds=20), duration=None)
+      )
+      try:
+          await wait_for_async(lambda: source.calls >= 4, timeout=5.0)
+      finally:
+          task.cancel()
+      assert source.calls >= 4
+invalid:
+# The idiom: a real-clock window, then a count of what happened inside it.
+# One stall ends the run at one tick, so no floor above 1 survives (#407).
+- |
+  async def test_tick_cadence_not_slowed_by_collection_time() -> None:
+      collector = _build_collector([host])
+      await collector.run(
+          interval=timedelta(seconds=0.2),
+          duration=timedelta(seconds=0.9),
+      )
+      batches = _batches_from(host)
+      assert len(batches) >= 4, f"expected >= 4 collection ticks, got {len(batches)}"

@@ -42,9 +42,20 @@ class _VirtualClock:
     CONCURRENT sleepers: each sleeper parks on a heap keyed by wake time and
     the driver advances ``now`` to the EARLIEST pending wake only once every
     runnable task has settled — two buckets sleeping 0.05 and 0.2 advance in
-    parallel, not summed. Only tests whose non-sleep awaits are instant may
-    use this (a real mock delay would mix clocks); the slow-host and
-    cadence-concurrency tests below stay wall-clock for exactly that reason.
+    parallel, not summed.
+
+    A mock host's own delay is NOT a foreign clock: the patch target rebinds
+    ``sleep`` on the global asyncio module (see ``_REAL_SLEEP`` above), so
+    ``_make_mock_host``'s ``asyncio.sleep(delay)`` parks on this same
+    timeline and a collect that "takes" 0.15s costs exactly 0.15 virtual
+    seconds. That is what lets the slow-host and cadence tests below assert
+    exact tick counts instead of counting ticks inside a wall-clock window
+    (#407: a runner stall ends such a window at one tick, so no floor above
+    1 survives). What stays real is the collector's own
+    ``asyncio.wait_for`` on the SNMP path (an event-loop timer, not
+    ``sleep``) and anything that MEASURES elapsed wall time — which is why
+    ``test_slow_host_does_not_block_fast_host`` deliberately does not use
+    this clock: its subject IS the wall clock.
     """
 
     def __init__(self) -> None:
@@ -203,15 +214,23 @@ class TestCollectorRun:
         slow = _make_mock_host("slow", delay=5.0)  # way longer than interval
         collector = _build_collector([fast, slow])
 
-        await collector.run(
-            interval=timedelta(milliseconds=200),
-            duration=timedelta(milliseconds=500),
-        )
+        with _virtual_time() as vt:
+            await vt.drive(
+                collector.run(
+                    interval=timedelta(milliseconds=200),
+                    duration=timedelta(milliseconds=500),
+                )
+            )
 
         series = collector.get_series()
-        # Fast host should have data from multiple ticks
+        # Exact on the virtual clock. The slow host's mock sleeps its whole
+        # `timeout` (the 200ms interval) before returning the timed-out
+        # Results, and that sleep rides the SAME timeline, so every tick
+        # costs 200ms: the initial collect lands at 200ms, then the loop
+        # ticks at 400 and 600ms (the 600ms check fails 600 < 500). 3, not
+        # the 5 of the all-fast tests above.
         assert "fast/value" in series
-        assert len(series["fast/value"]) >= 2
+        assert len(series["fast/value"]) == 3
 
         # Slow host should have no data (timed out every tick)
         assert "slow/value" not in series
@@ -319,21 +338,33 @@ def _batches_from(host: MagicMock) -> list[list[str]]:
 async def test_tick_cadence_not_slowed_by_collection_time() -> None:
     """Sleep and collection run concurrently: period ~= interval, not interval + collect time.
 
-    interval 0.2s, collection takes 0.15s, run 0.9s:
-      concurrent  -> collects at ~0, 0.2, 0.4, 0.6, 0.8  (>= 4 after the initial)
-      serialized  -> collects at ~0, 0.35, 0.7            (2 after the initial)
-    Assert loosely (>= 4 total calls) to stay CI-jitter-proof.
+    interval 0.2s, collection takes 0.15s, duration 0.9s. On the virtual
+    clock both the sleep and the mock host's delay ride one timeline, so the
+    two verdicts are exact integers, not a range:
+      concurrent  -> a tick costs max(0.2, 0.15) = 0.2s: collects finish at
+                     0.15, 0.35, 0.55, 0.75, 0.95  -> 5 batches
+      serialized  -> a tick costs 0.2 + 0.15 = 0.35s: 0.15, 0.5, 0.85, 1.2
+                     -> 4 batches
+    A `>= 4` floor inside a real 0.9s window could not tell those apart AND
+    collapsed to 1 on a stalled runner (#407); the count below discriminates
+    and cannot be moved by scheduling.
     """
     host = _make_mock_host("host", delay=0.15)
     collector = _build_collector([host])
 
-    await collector.run(
-        interval=timedelta(seconds=0.2),
-        duration=timedelta(seconds=0.9),
-    )
+    with _virtual_time() as vt:
+        await vt.drive(
+            collector.run(
+                interval=timedelta(seconds=0.2),
+                duration=timedelta(seconds=0.9),
+            )
+        )
 
     batches = _batches_from(host)
-    assert len(batches) >= 4, f"expected >= 4 collection ticks, got {len(batches)}: {batches}"
+    assert len(batches) == 5, (
+        f"expected 5 concurrent collection ticks (serialized would be 4), "
+        f"got {len(batches)}: {batches}"
+    )
 
 
 @pytest.mark.asyncio

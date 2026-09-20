@@ -12,3 +12,12 @@
 # user-example input data, not otto's tests.
 ruleDirs:
 - .ast-grep/rules
+# Rule tests (`make lint-arch` runs `ast-grep test --skip-snapshot-tests`):
+# each .ast-grep/rule-tests/<rule-id>-test.yml pins one snippet the rule must
+# flag and one it must not, so a rule cannot quietly stop matching -- or start
+# matching the correct spelling it exists to steer people towards. Snapshot
+# tests are deliberately off: the valid/invalid verdict is the contract, the
+# exact matched span is not. A rule with no test file is simply not tested
+# (the pre-2026-09-20 rules have none), so adding one here is additive.
+testConfigs:
+- testDir: .ast-grep/rule-tests

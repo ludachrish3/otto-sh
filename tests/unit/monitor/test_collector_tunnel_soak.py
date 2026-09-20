@@ -5,6 +5,7 @@ are the N-tick extensions. Marked `concurrency`: no-VM, rides stability-unit."""
 
 import asyncio
 import logging
+from contextlib import suppress
 from datetime import timedelta
 from typing import Any
 
@@ -12,6 +13,7 @@ import pytest
 
 from otto.models.monitor import TunnelRecord
 from otto.monitor.collector import MetricCollector
+from otto.utils import wait_for_async
 
 pytestmark = pytest.mark.concurrency
 
@@ -91,7 +93,18 @@ def test_warn_latch_across_repeated_failure_bursts(caplog: pytest.LogCaptureFixt
 
 def test_raising_source_never_kills_the_run_loop() -> None:
     """run() with a source that raises on every other call: the loop keeps
-    ticking to the end of its duration instead of dying at the first raise."""
+    ticking instead of dying at the first raise.
+
+    The budget bounds how long the four scans may TAKE; it is not a window
+    they are counted inside. This test used to spell that the other way
+    round (``duration=120ms``, then ``assert source.calls >= 4``), and
+    ``run()``'s loops re-check ``now - start < duration`` before every tick
+    after the first: one scheduling stall inside that 120ms ended the run at
+    a single scan, so no floor above 1 survived it (#407). Waiting for the
+    scans instead makes a stalled runner slow, not red — and a loop that
+    really died at the first raise still fails, on the timeout, naming the
+    count it reached.
+    """
     from otto.monitor.collector import MonitorTarget
 
     class _Host:
@@ -106,9 +119,29 @@ def test_raising_source_never_kills_the_run_loop() -> None:
         targets=[MonitorTarget(host=_Host(), parsers={})],  # type: ignore[arg-type]
         tunnel_source=source,
     )
-    asyncio.run(c.run(interval=timedelta(milliseconds=10), duration=timedelta(milliseconds=120)))
-    assert source.calls >= 4, f"loop died early: only {source.calls} scans"
-    # The wall-clock loop above can stop on either parity of source.calls (a
+    wanted_scans = 4  # two full success/raise cycles of _Script
+
+    async def _drive() -> None:
+        # No duration: the loop runs until cancelled, so nothing can end it
+        # early but this test.
+        run = asyncio.create_task(c.run(interval=timedelta(milliseconds=10)))
+        try:
+            await wait_for_async(
+                lambda: source.calls >= wanted_scans,
+                5.0,
+                interval=0.005,
+                on_timeout=lambda: (
+                    f"loop died early: only {source.calls} scans in 5.0s at a 10ms "
+                    f"interval (wanted {wanted_scans})"
+                ),
+            )
+        finally:
+            run.cancel()
+            with suppress(asyncio.CancelledError):
+                await run
+
+    asyncio.run(_drive())
+    # The loop above can stop on either parity of source.calls (a
     # success tick or a failure tick), and only stopping on a failure tick
     # exercises the "never blank on failure" path this assertion checks. Land
     # deterministically on a scripted failure by adding one more _tunnel_pass

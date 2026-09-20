@@ -1,0 +1,111 @@
+id: no-tick-count-in-a-wall-clock-window
+language: python
+severity: error
+message: tick count inside a fixed wall-clock window — drive the collector on the virtual clock (`_virtual_time()`), or wait for the ticks with otto.utils.wait_for_async and cancel the run; a `duration=` window with a count assertion after it cannot survive a runner stall.
+note: >
+  `MetricCollector.run(duration=...)`'s loops re-check
+  `now - start < duration` BEFORE every tick after the first, so a
+  scheduling stall anywhere inside the window ends the run right there, at
+  one tick — whatever the interval. A test that counts ticks inside such a
+  window therefore has no threshold above 1 that survives a loaded runner:
+  raising or lowering the floor is never the fix, and "assert loosely to
+  stay CI-jitter-proof" is the false confidence #407 disproved (nightly
+  #359 is the same family). Two spellings are correct instead, both already
+  in tree:
+
+    - the virtual clock (tests/unit/monitor/test_collector_run.py's
+      `_virtual_time()`): sleeps AND mock host delays ride one timeline, so
+      the tally is an exact integer that scheduling cannot move — and an
+      exact count discriminates concurrency from serialization, which a
+      `>= N` floor never did;
+    - `otto.utils.wait_for_async` around a `duration=None` run cancelled in
+      a `finally` (tests/unit/monitor/test_interval_floor.py,
+      test_collector_tunnel_soak.py): the budget then bounds how long the
+      ticks may TAKE. A stall makes that slow, not red, and a loop that
+      really stopped still fails — on the timeout, naming the count reached.
+
+  The honest predicate is multi-node — a `duration=` window, a count
+  assertion downstream, and neither under the virtual clock — so this rule
+  encodes exactly that as a relational rule rather than banning
+  `run(duration=` outright: `duration=` is fine on its own (the shutdown,
+  scoping and meta-model tests use a short window and assert on STATE, not
+  on a tally), and a count is fine on its own.
+
+  Rule-measured t0 (042ea797, before the conversion): 3 hits —
+  test_collector_run.py's `test_slow_host_times_out` (`>= 2` in 500ms) and
+  `test_tick_cadence_not_slowed_by_collection_time` (`>= 4` in 0.9s), and
+  test_collector_tunnel_soak.py's `test_raising_source_never_kills_the_run_loop`
+  (`>= 4` in 120ms). 0 after it.
+
+  The exemption arm below is keyed on the literal `_virtual_time()`, which
+  today lives as a private helper in exactly one test module. Moving or
+  renaming it — promoting `_VirtualClock`/`_virtual_time` to
+  `tests/_fixtures/` for a second consumer, say — MUST move this arm and the
+  rule test's valid snippet with it, or every virtual-clock test starts
+  reading as a violation.
+
+  The arms are a tripwire for the natural spellings, not an exhaustive
+  enumeration — review owns the rest. Known unmatched respellings: a
+  `duration=` that is not the last argument of the call, a window bound to
+  a variable first (`window = timedelta(...)` is still matched — the kwarg
+  VALUE is a metavariable — but `kwargs = {"duration": ...}` + `run(**kwargs)`
+  is not), a count assertion that binds the tally to a local before
+  comparing (`n = len(x)` then `assert n >= 2`), and a tally read through a
+  helper that hides the `len()`/`.calls` (e.g. `_batches_from(host)` is
+  matched via the `len()` around it, but a helper RETURNING the count is
+  not).
+files:
+- tests/**
+ignores:
+# Fixture SUT repos + firmware: user-example input data, not otto's code
+# (sgconfig.yml discipline for tests-scoped rules).
+- tests/repo1/**
+- tests/repo2/**
+- tests/repo3/**
+- tests/repo_broken/**
+- tests/repo_e2e/**
+- tests/firmware/**
+rule:
+  all:
+  # The window: a run() call whose last argument is a duration= budget.
+  - pattern: $COLLECTOR.run($$$ARGS, duration=$D)
+  # ...that is not ZERO. A zero duration is not a window: the loop's
+  # `now - start < duration` is false on the first check, so exactly the
+  # initial tick runs and no stall can change that. Both in-tree uses
+  # (test_collector_tunnels.py, tests/unit/cli/test_monitor.py) count that
+  # one tick's output and are deterministic by construction.
+  - not:
+      any:
+      - pattern: $C0.run($$$A0, duration=timedelta(0))
+      - pattern: $C0.run($$$A0, duration=timedelta(0.0))
+      - pattern: $C0.run($$$A0, duration=timedelta(seconds=0))
+      - pattern: $C0.run($$$A0, duration=timedelta(seconds=0.0))
+      # ...and not the no-window spelling this rule's own note recommends.
+      # `duration=None` runs until cancelled, so there is no window to end
+      # the run early and a wait_for_async budget bounds how long the ticks
+      # may TAKE, not how many there are. Without this arm the rule flags its
+      # own remedy when it is written explicitly rather than by omission.
+      - pattern: $C0.run($$$A0, duration=None)
+  # ...not driven on the virtual clock, where the tally is exact and no
+  # wall-clock stall can reach it.
+  - not:
+      inside:
+        kind: with_statement
+        stopBy: end
+        has:
+          pattern: _virtual_time()
+          stopBy: end
+  # ...and a count assertion somewhere in the same test function: that is
+  # what makes the window a measuring device instead of a stop signal.
+  - inside:
+      kind: function_definition
+      stopBy: end
+      has:
+        stopBy: end
+        any:
+        - pattern: len($$$TALLY) >= $N
+        - pattern: len($$$TALLY) > $N
+        - pattern: len($$$TALLY) == $N
+        - pattern: $OBJ.calls >= $N
+        - pattern: $OBJ.calls > $N
+        - pattern: $OBJ.calls == $N

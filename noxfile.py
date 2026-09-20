@@ -591,7 +591,10 @@ def lint(session: nox.Session) -> None:
     The architecture legs mirror `make lint-arch`'s tach and ast-grep steps:
     tach validates the module dependency contracts in tach.toml (a ratchet
     baseline — see its header); ast-grep enforces the scope-sensitive pattern
-    rules in .ast-grep/rules/. `make lint-arch`'s third leg, `check-breaking`
+    rules in .ast-grep/rules/ and `ast-grep test` checks those rules against
+    the pinned snippets in .ast-grep/rule-tests/ (a rule that stops matching
+    its own motivating example is a silent gate loss).
+    `make lint-arch`'s third leg, `check-breaking`
     (scripts/check_breaking_marks.py), is deliberately NOT run here — it
     needs a resolved commit range, which this session has no opinion about;
     CI's lint-python job runs it as its own step, after this session, with
@@ -601,6 +604,7 @@ def lint(session: nox.Session) -> None:
     session.run("ruff", "format", "--check", ".")
     session.run("tach", "check")
     session.run("ast-grep", "scan", "src/otto", "web/src", "tests")
+    session.run("ast-grep", "test", "--skip-snapshot-tests")
 
 
 @nox_uv.session(uv_groups=["dev"])
