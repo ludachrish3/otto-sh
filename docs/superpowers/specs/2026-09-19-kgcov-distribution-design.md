@@ -124,13 +124,16 @@ detect / validate / scaffold contract:
 - **detect**: a `[[dev_tools]]` entry of kind `kgcov` in
   `.otto/settings.toml`, or a `kgcov.h` at the default path.
 - **validate** (`otto init --validate`): `check_tree` on every directory a
-  kgcov entry's `source` names, reported as advisory drift like the schemas
-  area (never a failure).
+  kgcov entry's `source` names. A copy that `differs` is reported as
+  advisory drift through the command's Warnings channel, like the schemas
+  area (never a failure); a `source` whose directory reads `absent` (no
+  `kgcov.h` there) is a broken declaration and fails validation.
 - **scaffold**: `export_tree` into the directory (the one place the area
   does overwrite, since those files are otto's); append a commented
   `[[dev_tools]]` entry (below) with the artifact and `match` as
   placeholders, only if no kgcov entry exists; write a consumer starter
-  beside the export (`consumer-starter/kgcov_begin.c`,
+  beside the export, outside the otto-owned directory so a refresh never
+  touches it (`<kgcov_dir>-consumer/kgcov_begin.c`,
   `kgcov_end.c`, a `Kbuild.example` showing `KGCOV := $(src)/../otto_kgcov`
   and `include $(KGCOV)/consumer.mk`, and a README pointing at the
   kernel-modules docs page), never overwriting a starter file that exists.
@@ -153,8 +156,10 @@ must not set `gcov_dir`. Bootstrap checks, before any host is contacted:
 
 1. The artifact's `.modinfo` carries `version=<x>+kgcov<n>` with `n ==
    otto.kgcov.INTERFACE`; otherwise an error naming the tool, the artifact,
-   the version it carries, and `otto cov kgcov export <source or dir>` as
-   the remedy. The strings are read from the file's `.modinfo` section in
+   the version it carries, and the remedy: `otto cov kgcov export
+   <source>` when the entry declares `source`, otherwise an instruction to
+   re-export the vendored library and declare `source` (the artifact's own
+   directory is a build output and is never suggested). The strings are read from the file's `.modinfo` section in
    Python (NUL-separated `key=value`), so no host tool is needed and a
    foreign-ISA `.ko` reads the same.
 2. No host matches two kgcov entries (error naming both entries and the
