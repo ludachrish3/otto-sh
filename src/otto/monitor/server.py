@@ -701,6 +701,40 @@ async def _run_uvicorn_translated(server: uvicorn.Server, bind_host: str, port: 
         ) from exc
 
 
+async def _settle_lifespan(server: uvicorn.Server) -> None:
+    """Send the ASGI ``lifespan.shutdown`` uvicorn's force path skips.
+
+    ``uvicorn.Server.shutdown()`` ends with ``if not self.force_exit:
+    await self.lifespan.shutdown()`` — so every ``force_stop()`` leaves
+    uvicorn's ``LifespanOn.main()`` task suspended in ``receive()``, with
+    Starlette's ``lifespan()`` still inside its ``async with`` body. It is a
+    live coroutine nothing will ever resume, and whoever closes the loop must
+    cancel it; Starlette catches that cancellation, formats it and answers
+    ``lifespan.shutdown.failed`` with the traceback text, which uvicorn logs
+    at ERROR. Exit code 0, a traceback on stderr — exactly what the no-stderr
+    gates exist to catch (issue #383).
+
+    otto owns this server's lifecycle (see :class:`_LifecycleOwnedServer`), so
+    otto finishes the handshake uvicorn declined to: once the serve task is
+    done, drive the lifespan to its terminal state so no coroutine is left
+    suspended. Idempotent and safe on every path — a graceful shutdown has
+    already set ``shutdown_event`` (and a lifespan that never started, or one
+    whose app raised, has nothing to say), so this is a no-op there.
+
+    Deliberately unbounded, like uvicorn's own call: ``force_stop`` promises
+    not to wait for *connections*, and this app's lifespan has no shutdown
+    work at all. A hypothetical wedge here is a real bug in otto's own ASGI
+    app, and surfaces loudly as the caller's join/teardown deadline rather
+    than being papered over.
+    """
+    lifespan = getattr(server, "lifespan", None)
+    if lifespan is None:
+        return  # serve() never reached its prologue
+    if not lifespan.startup_event.is_set() or lifespan.shutdown_event.is_set():
+        return
+    await lifespan.shutdown()
+
+
 async def _uvicorn_signalled_started(task: "asyncio.Task[None]", server: uvicorn.Server) -> bool:
     """Startup-wait predicate: readiness, or a loud re-raise if serve() died.
 
@@ -973,6 +1007,20 @@ class MonitorServer:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
             raise
+        finally:
+            # EVERY exit, including the ones that raise. `lifespan.shutdown()`
+            # is the LAST statement of uvicorn's own `shutdown()`, so any
+            # serve task that dies after `lifespan.startup()` completed —
+            # not the bind failure, which uvicorn does settle itself before
+            # its `sys.exit`, but e.g. that `shutdown()` raising part-way —
+            # leaves Starlette's `lifespan()` parked in `receive()` exactly as
+            # the force path does, and so leaves the same ERROR traceback for
+            # whoever cancels it at loop close. Only once the serve task is
+            # finished, though: while it still runs uvicorn owns the lifespan
+            # and will drive its own shutdown, and sending `lifespan.shutdown`
+            # under a live server would tear the app down beneath it.
+            if server is not None and (task is None or task.done()):
+                await _settle_lifespan(server)
 
     def stop(self) -> None:
         """Signal the server to shut down (thread-safe)."""

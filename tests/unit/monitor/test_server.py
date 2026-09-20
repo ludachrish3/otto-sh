@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import fcntl
 import json
+import logging
 import os
 import socket
 import ssl
@@ -617,6 +618,96 @@ def test_force_stop_before_serve_is_noop() -> None:
     server = MonitorServer(MetricCollector(hosts=[]))
     server.force_stop()  # must not raise: nothing started yet
     assert server.started is False
+
+
+@pytest.mark.asyncio
+async def test_force_stop_leaves_no_lifespan_coroutine_for_the_loop_owner_to_cancel(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """After ``force_stop``, nothing is left suspended in the ASGI lifespan.
+
+    Regression for issue #383. ``uvicorn.Server.shutdown()`` ends with
+    ``if not self.force_exit: await self.lifespan.shutdown()``, so uvicorn's
+    force path deliberately skips the ``lifespan.shutdown`` message. Starlette's
+    ``lifespan()`` is then still parked in ``receive()`` when ``serve()``
+    returns. Whoever owns the loop must cancel it before closing (that is what
+    ``DashboardHarness._drain_pending_tasks`` does, and what ``asyncio.run``
+    does not), Starlette catches that cancellation and answers
+    ``lifespan.shutdown.failed`` carrying the formatted traceback, and uvicorn
+    logs that text at ERROR — a CancelledError traceback on stderr under a
+    zero exit code, on every dashboard teardown and in ``make docs``.
+
+    The hostile condition is injected, not waited for: ``force_stop`` IS the
+    condition, and the drain below is the loop owner's cancel-everything pass
+    verbatim. Pre-fix this logs the starlette/uvicorn ``CancelledError``
+    traceback at ERROR; post-fix the lifespan has already reached its terminal
+    state, so the drain finds nothing to cancel.
+    """
+    server = MonitorServer(_empty_collector(), host="127.0.0.1", port=0)
+    serve_task = asyncio.create_task(server.serve())
+    await server.wait_started()
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        server.force_stop()
+        await serve_task
+        leftovers = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for task in leftovers:
+            task.cancel()
+        await asyncio.gather(*leftovers, return_exceptions=True)
+
+    # The gate's own contract first: nothing on this path may shout.
+    shouted = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert not shouted, f"force_stop teardown logged at ERROR: {shouted}"
+    lifespan = server._server.lifespan  # type: ignore[union-attr]
+    # ...and for the mechanism itself: the drain above would ALSO set
+    # shutdown_event (LifespanOn.main's finally does), so the discriminator
+    # between "shut down" and "cancelled" is which answer the app sent.
+    assert not lifespan.shutdown_failed, (
+        "the lifespan was cancelled mid-receive(), not shut down: it answered "
+        "lifespan.shutdown.failed"
+    )
+    assert lifespan.shutdown_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_a_serve_task_that_raises_after_startup_still_settles_the_lifespan(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same settle must happen on the paths that raise, not just the clean one.
+
+    Companion to the ``force_stop`` guard above (issue #383).
+    ``await self.lifespan.shutdown()`` is the LAST statement of uvicorn's
+    ``Server.shutdown()``, so a serve task that dies anywhere after
+    ``lifespan.startup()`` completed leaves Starlette's ``lifespan()`` parked in
+    ``receive()`` just as the force path does — and ``serve()``'s own unwind is
+    then the only place left that can finish the handshake. (Not the bind
+    failure: uvicorn's ``OSError`` branch awaits ``lifespan.shutdown()`` itself
+    before ``sys.exit``. This injects the hostile condition instead — uvicorn's
+    ``shutdown()`` raising part-way, past the startup, before the lifespan.)
+    """
+
+    async def _exploding_shutdown(self: object, sockets: object = None) -> None:
+        raise RuntimeError("uvicorn shutdown blew up")
+
+    monkeypatch.setattr(
+        server_module._LifecycleOwnedServer, "shutdown", _exploding_shutdown, raising=True
+    )
+    server = MonitorServer(_empty_collector(), host="127.0.0.1", port=0)
+    serve_task = asyncio.create_task(server.serve())
+    await server.wait_started()
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        server.force_stop()
+        with pytest.raises(RuntimeError, match="uvicorn shutdown blew up"):
+            await serve_task
+        leftovers = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for task in leftovers:
+            task.cancel()
+        await asyncio.gather(*leftovers, return_exceptions=True)
+
+    shouted = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert not shouted, f"a raising serve task left the lifespan to be cancelled: {shouted}"
+    lifespan = server._server.lifespan  # type: ignore[union-attr]
+    assert not lifespan.shutdown_failed
+    assert lifespan.shutdown_event.is_set()
 
 
 def test_force_stop_aborts_connection_registered_after_first_pass() -> None:
