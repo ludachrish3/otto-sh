@@ -507,3 +507,251 @@ def test_declared_bound_scanners_observe_red() -> None:
         "set_default_timeout must never satisfy this pin — it is exactly the "
         "call that does NOT reach expect()"
     )
+
+
+# ── Part B: a campaign's guard is sized to the campaign ─────────────────────
+#
+# Part A pins the bounds a LANE declares. This part pins one thing Part A
+# cannot see: whether a per-item guard is sized to the work the item actually
+# does. `@pytest.mark.timeout(N)` bounds one pytest item, but a Hypothesis
+# `@given` item is a whole campaign — `max_examples` bodies, plus generation
+# and shrinking. A guard written for one unit of work and then attached to
+# thirty has an effective per-example margin thirty times smaller than its
+# number suggests, and that is a bug in the guard, not in the number: it makes
+# a runner stall (the recorded fingerprint is every xdist worker parked in
+# `io.read` for ~12.6 s while a shared host freezes) land as red.
+#
+# It is the fourth recurrence in one file — issues #229, #305, #359, #408, all
+# in tests/unit/host/test_session_concurrency.py — and the previous three were
+# fixed one bound at a time, which is why the fourth found a bound nobody had
+# reread. So the rule is written down instead: every `@given` test declares a
+# `timeout` mark worth at least `max_examples * _HYPOTHESIS_PER_EXAMPLE_FLOOR_S`,
+# and never below Part A's per-test floor.
+#
+# The per-example floor is orders of magnitude above the measured cost, and
+# deliberately so: it is sized for a STALLED runner, not a slow one. A whole
+# campaign costs ~0.07 s (30 examples, ~1-2 ms each; measured -n0) against
+# in-memory fakes, and Part A's TS derivation measured only ~18x inflation from
+# machine contention on this hardware — contention was never the mechanism. 5 s
+# per example means a freeze as long as the worst on record (~12.6 s) can land
+# anywhere in a campaign without reddening it, while a genuine hang in a
+# 30-example campaign is still caught inside three minutes.
+#
+# The bound this gate enforces is a frequency reduction, not an impossibility
+# proof: a stall longer than the whole budget still reddens the run. What it
+# removes is the class of red where the budget was never sized for the work in
+# the first place.
+_HYPOTHESIS_PER_EXAMPLE_FLOOR_S = 5
+# Hypothesis's own default when a test declares no `max_examples`. A campaign
+# that never says how big it is is the largest campaign, and is gated as one.
+_HYPOTHESIS_DEFAULT_MAX_EXAMPLES = 100
+
+
+def _module_int_env(tree: ast.Module) -> "dict[str, int]":
+    """Module-level names bound to an int, including products of other names.
+
+    The arithmetic that sizes a campaign guard is the point of this gate, so it
+    has to survive being written as arithmetic: `_TIMEOUT_S = _EXAMPLES * _BUDGET_S`
+    is exactly the spelling that makes the derivation visible in the test file,
+    and a scanner that only read `ast.Constant` would report it as undeclared.
+    """
+    env: dict[str, int] = {}
+
+    def value_of(node: ast.expr) -> int | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, int):
+            return node.value
+        if isinstance(node, ast.Name):
+            return env.get(node.id)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+            left, right = value_of(node.left), value_of(node.right)
+            return None if left is None or right is None else left * right
+        return None
+
+    for node in tree.body:
+        if not isinstance(node, ast.Assign | ast.AnnAssign) or node.value is None:
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        resolved = value_of(node.value)
+        if resolved is None:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                env[target.id] = resolved
+    return env
+
+
+def _decorator_call(node: ast.expr) -> "ast.Call | None":
+    return node if isinstance(node, ast.Call) else None
+
+
+def _is_given(node: ast.expr) -> bool:
+    """True for a ``@given(...)`` decorator, by the name as written.
+
+    An aliased import (``from hypothesis import given as g``) is out of scope:
+    the repo does not spell it that way, and following aliases means resolving
+    imports, which this file deliberately does not do.
+    """
+    call = _decorator_call(node)
+    if call is None:
+        return False
+    func = call.func
+    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+    return name == "given"
+
+
+def _settings_max_examples(node: ast.expr, env: "dict[str, int]") -> int | None:
+    call = _decorator_call(node)
+    if call is None:
+        return None
+    func = call.func
+    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+    if name != "settings":
+        return None
+    for kw in call.keywords:
+        if kw.arg != "max_examples":
+            continue
+        if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, int):
+            return kw.value.value
+        if isinstance(kw.value, ast.Name):
+            return env.get(kw.value.id)
+    return None
+
+
+def _timeout_mark(node: ast.expr, env: "dict[str, int]") -> int | None:
+    """The value of a positional ``@pytest.mark.timeout(N)`` decorator, if this is one.
+
+    Only that form counts. A keyword spelling, a class-level ``pytestmark`` or a
+    module-level one reports as *missing* — a false RED, which is the direction
+    this gate is allowed to be wrong in. It is never a hole: nothing greens a
+    campaign whose bound this reader could not see.
+    """
+    call = _decorator_call(node)
+    if call is None or not call.args:
+        return None
+    func = call.func
+    if not isinstance(func, ast.Attribute) or func.attr != "timeout":
+        return None
+    owner = func.value
+    if not isinstance(owner, ast.Attribute) or owner.attr != "mark":
+        return None
+    arg = call.args[0]
+    if isinstance(arg, ast.Constant) and isinstance(arg.value, int):
+        return arg.value
+    if isinstance(arg, ast.Name):
+        return env.get(arg.id)
+    return None
+
+
+def hypothesis_campaign_names(text: str) -> "list[str]":
+    """Every ``@given``-decorated test function in *text*, by name."""
+    return [
+        node.name
+        for node in ast.walk(ast.parse(text))
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        and any(_is_given(dec) for dec in node.decorator_list)
+    ]
+
+
+def hypothesis_campaign_gaps(text: str) -> "list[str]":
+    """One complaint per ``@given`` test whose timeout does not cover its campaign."""
+    tree = ast.parse(text)
+    env = _module_int_env(tree)
+    gaps: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if not any(_is_given(dec) for dec in node.decorator_list):
+            continue
+        examples = next(
+            (
+                found
+                for dec in node.decorator_list
+                if (found := _settings_max_examples(dec, env)) is not None
+            ),
+            _HYPOTHESIS_DEFAULT_MAX_EXAMPLES,
+        )
+        required = max(examples * _HYPOTHESIS_PER_EXAMPLE_FLOOR_S, _PYTEST_TIMEOUT_FLOOR_S)
+        declared = next(
+            (
+                found
+                for dec in node.decorator_list
+                if (found := _timeout_mark(dec, env)) is not None
+            ),
+            None,
+        )
+        if declared is None:
+            gaps.append(
+                f"{node.name}: no @pytest.mark.timeout — a {examples}-example campaign "
+                f"inherits pyproject's per-test default, which is sized for one example; "
+                f"declare at least {required}s"
+            )
+        elif declared < required:
+            gaps.append(
+                f"{node.name}: @pytest.mark.timeout({declared}) covers one unit of work "
+                f"but the item runs {examples} examples; needs at least {required}s "
+                f"({examples} x {_HYPOTHESIS_PER_EXAMPLE_FLOOR_S}s)"
+            )
+    return gaps
+
+
+def test_every_hypothesis_campaign_declares_a_campaign_sized_timeout() -> None:
+    campaigns = 0
+    offenders: list[str] = []
+    for path in sorted(TESTS_ROOT.rglob("test_*.py")):
+        text = path.read_text()
+        if "given" not in text:
+            continue
+        campaigns += len(hypothesis_campaign_names(text))
+        offenders.extend(
+            f"{path.relative_to(PROJECT_ROOT)}::{gap}" for gap in hypothesis_campaign_gaps(text)
+        )
+    # The premise counts what the SCANNER found, not what the files mention: 77
+    # modules contain the word "given" and one holds an actual `@given` test, so
+    # a file-level count would green a scanner that had stopped recognising the
+    # decorator entirely.
+    assert campaigns >= 1, (
+        "premise: the scanner found no `@given` test anywhere under tests/ — "
+        "either the last property test was deleted (then delete this gate) or "
+        "the decorator is no longer recognised (then fix `_is_given`)"
+    )
+    assert not offenders, "\n  ".join(["", *offenders])
+
+
+def test_hypothesis_campaign_scanner_observes_red() -> None:
+    """Positive controls: the Part B scanner seen failing on its own shape."""
+    good = (
+        "import pytest\n"
+        "from hypothesis import given, settings\n"
+        "@settings(max_examples=30)\n"
+        "@given(x=st.integers())\n"
+        "@pytest.mark.timeout(150)\n"
+        "def test_p(x): pass\n"
+    )
+    assert hypothesis_campaign_gaps(good) == []
+    # The #408 shape: a per-unit guard at Part A's floor over a 30x campaign.
+    assert len(hypothesis_campaign_gaps(good.replace("timeout(150)", "timeout(60)"))) == 1
+    # No mark at all inherits pyproject's default, which is sized for one item.
+    assert len(hypothesis_campaign_gaps(good.replace("@pytest.mark.timeout(150)\n", ""))) == 1
+    # Implicit settings are the DEFAULT campaign (100), not an exemption.
+    implicit = good.replace("@settings(max_examples=30)\n", "")
+    assert len(hypothesis_campaign_gaps(implicit)) == 1
+    assert hypothesis_campaign_gaps(implicit.replace("timeout(150)", "timeout(500)")) == []
+    # The derivation written as arithmetic is the spelling this gate wants, so
+    # it must read: named constants, a product of them, and an aliased mark.
+    named = (
+        "import pytest\n"
+        "_EXAMPLES = 30\n"
+        "_BUDGET_S = 5\n"
+        "_TIMEOUT_S = _EXAMPLES * _BUDGET_S\n"
+        "@settings(max_examples=_EXAMPLES)\n"
+        "@given(x=st.integers())\n"
+        "@pytest.mark.timeout(_TIMEOUT_S)\n"
+        "def test_p(x): pass\n"
+    )
+    assert hypothesis_campaign_gaps(named) == []
+    assert len(hypothesis_campaign_gaps(named.replace("_BUDGET_S = 5", "_BUDGET_S = 1"))) == 1
+    # A non-@given test is not a campaign and is Part A's business, not this one.
+    assert (
+        hypothesis_campaign_gaps("import pytest\n@pytest.mark.timeout(1)\ndef test_q(): pass\n")
+        == []
+    )

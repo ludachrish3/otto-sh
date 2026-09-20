@@ -32,6 +32,14 @@ They used to sit at 5 s and 10 s, and issue #305 is what that cost:
 ``test_exec_pool_high_fanout`` costs 0.05 s (0.14 s worst of 300 consecutive
 runs) and was killed at 10 s in the nightly.
 
+One mark is NOT at that floor: ``test_session_manager_property``'s, because
+one item there is a whole Hypothesis campaign rather than one unit of work.
+Its bound is a raised threshold WITH a derivation — the example count times a
+per-example allowance, stated where the test is defined and gated by Part B of
+``test_declared_harness_bounds.py`` — rather than a number any measurement of
+this test produces; the comment above the campaign says why nothing else is
+available. See issue #408 — the fourth visit of this family to this file.
+
 What stalled it was the RUNNER, not contention and not this code, which is
 worth writing down because the obvious reading is wrong. In-guest CPU
 saturation was measured at only ~1.5x on this test (4 spinners on 4 cores,
@@ -523,6 +531,42 @@ async def test_ensure_default_session_recreation_race() -> None:
 
 _OPS = ["open_a", "open_b", "exec", "run_default", "kill_default", "kill_a", "kill_b", "close_a"]
 
+# The campaign's size and its guard, written as the arithmetic that relates
+# them. One pytest item here is not one unit of work: it is a whole Hypothesis
+# campaign of ``_PROPERTY_MAX_EXAMPLES`` bodies plus generation and shrinking.
+#
+# What the measurements actually say, because the obvious story does not fit
+# them: the WHOLE campaign costs ~0.07 s (30 examples, ~1-2 ms each; measured
+# -n0) against these in-memory fakes, so neither the campaign nor any single
+# example comes near even the old 60 s mark. What fired it on the 2026-09-17
+# and 2026-09-20 nightlies (issue #408, the fourth recurrence of this family in
+# this file after #229, #305 and #359) was a shared-runner freeze — the worst
+# one recorded here is 12.63 s — that parked every xdist worker in ``io.read``;
+# SIGALRM landed on resume, and where it landed decided the costume: inside
+# ``gc.get_referrers`` under Hypothesis's ``deterministic_PRNG`` it came back
+# as ``FlakyFailure`` ("failed on the first run but now succeeds"), inside a
+# ``WeakKeyDictionary`` remove callback as an unraisable warning. Neither
+# diagnostic names the stall, which is why it took four visits.
+#
+# So this IS a raised threshold, 60 s -> 150 s, and the example count is not
+# the mechanism: a one-example campaign under the same stall reds identically,
+# because what an item timeout measures on a frozen runner is the hypervisor.
+# No work-derived number survives a wall-clock stall longer than itself; 150 s
+# only widens the window a freeze must exceed. That reduces the frequency, not
+# the possibility — a freeze longer than 150 s reds again.
+#
+# The number is nevertheless DERIVED rather than picked. ``max_examples`` is
+# stated rather than left implicit so the multiplication is visible here, and
+# the per-example budget is sized for a STALLED runner rather than a slow one,
+# which is why it sits orders of magnitude above the measured cost. Both the
+# factor and the product are gated by
+# ``tests/unit/test_declared_harness_bounds.py`` (Part B), which holds the
+# per-example floor for every ``@given`` test in the suite — a rule that earns
+# its keep on a FUTURE campaign whose per-example cost is not trivial.
+_PROPERTY_MAX_EXAMPLES = 30
+_PROPERTY_PER_EXAMPLE_BUDGET_S = 5
+_PROPERTY_TIMEOUT_S = _PROPERTY_MAX_EXAMPLES * _PROPERTY_PER_EXAMPLE_BUDGET_S
+
 
 async def _exec_ops(ops: list[str]) -> None:
     factory = _Factory()
@@ -578,13 +622,13 @@ async def _exec_ops(ops: list[str]) -> None:
 
 
 @settings(
-    max_examples=30,
+    max_examples=_PROPERTY_MAX_EXAMPLES,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
 )
 @given(ops=st.lists(st.sampled_from(_OPS), min_size=3, max_size=20))
 @pytest.mark.asyncio
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(_PROPERTY_TIMEOUT_S)
 async def test_session_manager_property(ops: list[str]) -> None:
     """Random sequences of operations must preserve manager invariants."""
     await _exec_ops(ops)
