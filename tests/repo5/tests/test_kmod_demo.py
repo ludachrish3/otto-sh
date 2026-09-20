@@ -7,8 +7,8 @@ the queue is non-empty when teardown unloads the module — otherwise
 ``demo_exit``'s ``if (queue.len)`` drain branch is never taken and the exit
 dump only proves a free. Two paths stay uncovered on purpose (``drain`` with
 an argument; ``limit`` below the queue length) so the report has something to
-show as missed. Teardown UNINSTALLS the products — that is what makes the
-exit routine's coverage reach the post-run fetch.
+show as missed. Teardown UNINSTALLS the products and unloads the library —
+that is what makes the exit routine's coverage reach the post-run fetch.
 
 The common mix runs once per host inside the class-scoped ``_modules``
 fixture, right after install, rather than as its own test — the two ONLY
@@ -81,7 +81,7 @@ async def _ctl(host: UnixHost, command: str) -> str:
 
 
 async def _install(host: UnixHost) -> None:
-    for product in host.products:  # declaration order: the library first
+    for product in host.products:  # the demo alone: its install loads the library
         if not await product.is_installed(host):
             result = await product.install(host)
             if not result.is_ok:
@@ -91,16 +91,23 @@ async def _install(host: UnixHost) -> None:
 async def _uninstall(host: UnixHost) -> None:
     # Product logs first, while the products still exist: otto test never
     # calls Host.uninstall()/get_product_logs() itself (that pairing is a
-    # project-CLI-only action), so a suite that hand-rolls its own reverse
-    # teardown — required here too, the demo before the library it depends
-    # on — must re-honour that contract itself, matching test_cov_container.py.
+    # project-CLI-only action), so a suite that hand-rolls its own teardown
+    # must re-honour that contract itself, matching test_cov_container.py.
     hauled = await host.get_product_logs()
     if not hauled.is_ok:
         raise RuntimeError(f"{host.id}: hauling product logs failed: {hauled.msg}")
-    for product in reversed(host.products):  # the demo before the library it depends on
+    for product in reversed(host.products):
         result = await product.uninstall(host)
         if not result.is_ok:
             raise RuntimeError(f"{host.id}: uninstalling {product.name} failed: {result.msg}")
+    # The library is a dev tool the demo loaded on demand; otto test never runs
+    # cleanup, so this teardown removes it — after the demo, which depends on
+    # it — the way `cleanup` would. Left resident, the NEXT run's demo (built
+    # by another compiler under `make kgcov`) would load against a library it
+    # cannot use.
+    removed = await host.uninstall_dev_tools()
+    if not removed.is_ok:
+        raise RuntimeError(f"{host.id}: unloading otto_kgcov failed: {removed.msg}")
 
 
 class TestKmodDemo(OttoSuite):

@@ -278,15 +278,31 @@ def test_the_page_names_every_row_and_column_and_the_three_states(committed):
 
 def test_a_measured_cell_renders_its_symbol_and_provenance(committed):
     doc = json.loads(json.dumps(committed))
-    doc["cells"]["parse-hits"]["gcc-12"] = dict(_OK)
-    doc["cells"]["refuses-other-compiler"]["gcc-12"] = {**_OK, "nodeid": CONTROL_SURFACE.contract}
-    # A render date the cells do NOT carry: `_OK["as_of"]` is 2026-09-19, so a page
-    # rendered that same day could not tell the two dates apart.
+    # Sentinel provenance no real measurement can carry: `as_of` is picked as the
+    # MAX across a column's cells (scripts/render_kgcov_matrix.py's `_provenance`),
+    # so a real date already on the committed column's other cells would win
+    # instead of the injected one; a date past any real run guarantees this cell's
+    # date is the one that surfaces. The compiler version and kernel release are
+    # unioned, not maxed, but a sentinel keeps them just as unmistakably injected.
+    sentinel = {
+        **_OK,
+        "as_of": "2031-01-02",
+        "compiler_version": "99.9.9-sentinel",
+        "kernel_release": "9.99.9-sentinel",
+    }
+    doc["cells"]["parse-hits"]["gcc-12"] = dict(sentinel)
+    doc["cells"]["refuses-other-compiler"]["gcc-12"] = {
+        **sentinel,
+        "nodeid": CONTROL_SURFACE.contract,
+    }
+    # A render date distinct from the sentinel `as_of`, so the two are told apart:
+    # the provenance table reads the sentinel back, the trailing "Rendered ..."
+    # line reads `rendered_on`.
     page = render(doc, rendered_on=datetime.date(2026, 9, 20))
     assert "✅" in page
-    assert "12.3.0" in page
-    assert "6.8.0-86-generic" in page
-    assert "2026-09-19" in page
+    assert "99.9.9-sentinel" in page
+    assert "9.99.9-sentinel" in page
+    assert "2031-01-02" in page
     assert "2026-09-20" in page
 
 

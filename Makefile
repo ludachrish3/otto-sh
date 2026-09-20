@@ -638,6 +638,17 @@ wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + w
 		exit 1; \
 	fi; \
 	echo "wheel-check: OK — no *.map files in the wheel."
+	@if ! unzip -l dist/*.whl | grep -q 'otto/kgcov/kgcov\.h$$'; then \
+		echo "wheel-check: FAIL — otto/kgcov/kgcov.h missing from dist/*.whl; the otto_kgcov sources ship inside the package (otto cov kgcov export/check read them from there), so an installed otto could export nothing." >&2; \
+		exit 1; \
+	fi; \
+	echo "wheel-check: OK — otto/kgcov/ library sources embedded (incl. kgcov.h)."
+	@mode=$$(uv run python -c "import glob, zipfile; z = zipfile.ZipFile(glob.glob('dist/*.whl')[0]); i = z.NameToInfo.get('otto/kgcov/build.sh'); print(oct(i.external_attr >> 16 & 0o777) if i else 'absent')"); \
+	if [ "$$mode" != "0o755" ]; then \
+		echo "wheel-check: FAIL — otto/kgcov/build.sh is stored in dist/*.whl as $$mode, not 0o755; an exported copy would not be executable and the documented 'build.sh <build-dir>' could not be run." >&2; \
+		exit 1; \
+	fi; \
+	echo "wheel-check: OK — otto/kgcov/build.sh stored executable (0o755)."
 
 docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, clips, termynal blocks) in docs/_static/generated/
 	@$(SAY) "capturing docs GUI media (screenshots + clips)"

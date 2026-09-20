@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Vendored from Linux v6.8 kernel/gcov/ for otto_kgcov; unchanged apart from the include name and the otto_kgcov block at the end.
+ * Vendored from Linux v6.8 kernel/gcov/ for otto_kgcov; unchanged apart from
+ * the include name, the otto_kgcov block at the end, and the KGCOV_ macro set
+ * that closes the file — every kernel-facing allocation, lock and debugfs name
+ * the library uses goes through one of those, so a build may replace it.
  *
  *  Profiling infrastructure declarations.
  *
@@ -19,6 +22,10 @@
 
 #include <linux/module.h>
 #include <linux/types.h>
+#include <linux/debugfs.h>
+#include <linux/mutex.h>
+#include <linux/slab.h>
+#include <linux/vmalloc.h>
 
 /*
  * Profiling data types used for gcc 3.4 and above - these are defined by
@@ -114,5 +121,70 @@ bool gcov_info_built_by_this_compiler(struct gcov_info *info, const char *mod,
  * live gcov_info is the consumer's static data (gcc).
  */
 void gcov_info_forget(struct gcov_info *info);
+
+/*
+ * Kernel-facing names a build may replace. Every allocation, lock and
+ * debugfs call the library makes goes through one of these, each defined
+ * here only when nothing defined it first — and Kbuild force-includes a
+ * kgcov_local.h beside the sources when one exists, so a kernel whose
+ * allocator, lock or debugfs API differs is adapted in that one file,
+ * which otto never exports and never compares. Replace one name at a
+ * time; the defaults are the kernel's ordinary calls.
+ *
+ * Three requirements the library relies on and never checks, so an override
+ * that breaks one shows it only on a rare error path, on the target kernel.
+ * KGCOV_ALLOC and KGCOV_ALLOC_ARRAY must return ZEROED memory: the client
+ * struct's error and object fields are read before anything writes them,
+ * and the unwind that frees a half-built object array tests its entries for
+ * NULL. KGCOV_FREE and KGCOV_BIG_FREE must accept NULL, because those
+ * failure paths free structures whose members were never allocated. And
+ * whatever KGCOV_ALLOC, KGCOV_ALLOC_ARRAY, KGCOV_STRDUP, KGCOV_MEMDUP and
+ * KGCOV_ASPRINTF return must be releasable by KGCOV_FREE, since that is the
+ * only thing that frees them — replacing an allocator without its matching
+ * free is a wrong-pool free, which corrupts rather than fails.
+ */
+#ifndef KGCOV_ALLOC
+#define KGCOV_ALLOC(size) kzalloc((size), GFP_KERNEL)
+#endif
+#ifndef KGCOV_ALLOC_ARRAY
+#define KGCOV_ALLOC_ARRAY(n, size) kcalloc((n), (size), GFP_KERNEL)
+#endif
+#ifndef KGCOV_STRDUP
+#define KGCOV_STRDUP(s) kstrdup((s), GFP_KERNEL)
+#endif
+#ifndef KGCOV_MEMDUP
+#define KGCOV_MEMDUP(p, size) kmemdup((p), (size), GFP_KERNEL)
+#endif
+#ifndef KGCOV_ASPRINTF
+#define KGCOV_ASPRINTF(...) kasprintf(GFP_KERNEL, __VA_ARGS__)
+#endif
+#ifndef KGCOV_FREE
+#define KGCOV_FREE(p) kfree(p)
+#endif
+#ifndef KGCOV_BIG_ALLOC
+#define KGCOV_BIG_ALLOC(size) kvmalloc((size), GFP_KERNEL)
+#endif
+#ifndef KGCOV_BIG_FREE
+#define KGCOV_BIG_FREE(p) kvfree(p)
+#endif
+#ifndef KGCOV_DEFINE_LOCK
+#define KGCOV_DEFINE_LOCK(name) static DEFINE_MUTEX(name)
+#endif
+#ifndef KGCOV_LOCK
+#define KGCOV_LOCK(l) mutex_lock(l)
+#endif
+#ifndef KGCOV_UNLOCK
+#define KGCOV_UNLOCK(l) mutex_unlock(l)
+#endif
+#ifndef KGCOV_DEBUGFS_DIR
+#define KGCOV_DEBUGFS_DIR(name, parent) debugfs_create_dir((name), (parent))
+#endif
+#ifndef KGCOV_DEBUGFS_FILE
+#define KGCOV_DEBUGFS_FILE(name, mode, parent, data, fops)                     \
+	debugfs_create_file((name), (mode), (parent), (data), (fops))
+#endif
+#ifndef KGCOV_DEBUGFS_REMOVE
+#define KGCOV_DEBUGFS_REMOVE(d) debugfs_remove_recursive(d)
+#endif
 
 #endif /* GCOV_H */

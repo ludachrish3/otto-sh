@@ -8,22 +8,26 @@
  * is always the module's total since register (or the last reset) and two
  * dumps never double count — no .gcda is ever parsed.
  */
+/*
+ * Kbuild force-includes a kgcov_local.h before this file when one exists, and
+ * such a header pulls kernel headers of its own, so printk.h's own pr_fmt may
+ * already be defined here. Undefine it first: without one, this redefinition
+ * warns.
+ */
+#undef pr_fmt
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/debugfs.h>
 #include <linux/fs.h>
 #include <linux/list.h>
 #include <linux/module.h>
-#include <linux/mutex.h>
 #include <linux/namei.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/uaccess.h>
-#include <linux/vmalloc.h>
 
 #include "kgcov.h"
 #include "kgcov_gcov.h"
+#include "kgcov_version.h"
 
 struct kgcov_object {
 	struct gcov_info *live; /* the consumer's own, in its .data/.bss */
@@ -42,7 +46,7 @@ struct kgcov_client {
 };
 
 static LIST_HEAD(kgcov_clients);
-static DEFINE_MUTEX(kgcov_lock);
+KGCOV_DEFINE_LOCK(kgcov_lock);
 static struct dentry *kgcov_root;
 static unsigned int kgcov_version; /* gcov format of the first consumer; 0 = none yet */
 
@@ -72,7 +76,7 @@ static int kgcov_mkdir_parents(const char *file_path)
 	char *buf, *p;
 	int err = 0;
 
-	buf = kstrdup(file_path, GFP_KERNEL);
+	buf = KGCOV_STRDUP(file_path);
 	if (!buf)
 		return -ENOMEM;
 	for (p = buf + 1; *p && !err; p++) {
@@ -82,7 +86,7 @@ static int kgcov_mkdir_parents(const char *file_path)
 		err = kgcov_mkdir(buf);
 		*p = '/';
 	}
-	kfree(buf);
+	KGCOV_FREE(buf);
 	return err;
 }
 
@@ -120,16 +124,16 @@ static int kgcov_dump_object(struct kgcov_client *c, struct kgcov_object *o)
 	gcov_info_add(o->acc, o->live);
 	gcov_info_reset(o->live);
 	size = convert_to_gcda(NULL, o->acc);
-	buf = vmalloc(size);
+	buf = KGCOV_BIG_ALLOC(size);
 	if (!buf)
 		return -ENOMEM;
 	convert_to_gcda(buf, o->acc);
 	/* gcov_info_filename() is the absolute .gcda path the compiler baked in. */
-	path = kasprintf(GFP_KERNEL, "%s%s%s", c->dir,
-			 gcov_info_filename(o->acc)[0] == '/' ? "" : "/",
-			 gcov_info_filename(o->acc));
+	path = KGCOV_ASPRINTF("%s%s%s", c->dir,
+			      gcov_info_filename(o->acc)[0] == '/' ? "" : "/",
+			      gcov_info_filename(o->acc));
 	if (!path) {
-		vfree(buf);
+		KGCOV_BIG_FREE(buf);
 		return -ENOMEM;
 	}
 	err = kgcov_mkdir_parents(path);
@@ -137,8 +141,8 @@ static int kgcov_dump_object(struct kgcov_client *c, struct kgcov_object *o)
 		err = kgcov_write_file(path, buf, size);
 	if (err)
 		pr_err("%s: writing %s failed: %d\n", c->mod->name, path, err);
-	kfree(path);
-	vfree(buf);
+	KGCOV_FREE(path);
+	KGCOV_BIG_FREE(buf);
 	return err;
 }
 
@@ -175,9 +179,9 @@ static void kgcov_free_client(struct kgcov_client *c)
 			gcov_info_free(c->objs[i].acc);
 		gcov_info_forget(c->objs[i].live);
 	}
-	kfree(c->objs);
-	kfree(c->dir);
-	kfree(c);
+	KGCOV_FREE(c->objs);
+	KGCOV_FREE(c->dir);
+	KGCOV_FREE(c);
 }
 
 /* ---- debugfs: /sys/kernel/debug/otto_kgcov/<module>/{dump,reset} -------- */
@@ -188,9 +192,9 @@ static ssize_t kgcov_dump_write(struct file *f, const char __user *ubuf, size_t 
 	struct kgcov_client *c = f->private_data;
 	int err;
 
-	mutex_lock(&kgcov_lock);
+	KGCOV_LOCK(&kgcov_lock);
 	err = kgcov_dump_client(c);
-	mutex_unlock(&kgcov_lock);
+	KGCOV_UNLOCK(&kgcov_lock);
 	return err ? err : n;
 }
 
@@ -199,9 +203,9 @@ static ssize_t kgcov_reset_write(struct file *f, const char __user *ubuf, size_t
 {
 	struct kgcov_client *c = f->private_data;
 
-	mutex_lock(&kgcov_lock);
+	KGCOV_LOCK(&kgcov_lock);
 	kgcov_reset_client(c);
-	mutex_unlock(&kgcov_lock);
+	KGCOV_UNLOCK(&kgcov_lock);
 	return n;
 }
 
@@ -298,18 +302,18 @@ int kgcov_register(struct module *mod, const kgcov_ctor_fn *begin,
 		       mod->name);
 		return -ENOENT;
 	}
-	c = kzalloc(sizeof(*c), GFP_KERNEL);
+	c = KGCOV_ALLOC(sizeof(*c));
 	if (!c)
 		return -ENOMEM;
 	c->mod = mod;
 	c->cap = end - begin;
-	c->objs = kcalloc(c->cap, sizeof(*c->objs), GFP_KERNEL);
-	c->dir = kstrdup(dir, GFP_KERNEL);
+	c->objs = KGCOV_ALLOC_ARRAY(c->cap, sizeof(*c->objs));
+	c->dir = KGCOV_STRDUP(dir);
 	if (!c->objs || !c->dir) {
 		err = -ENOMEM;
 		goto fail;
 	}
-	mutex_lock(&kgcov_lock);
+	KGCOV_LOCK(&kgcov_lock);
 	kgcov_registering = c;
 	kgcov_registering_task = current;
 	for (p = begin; p < end; p++)
@@ -324,17 +328,17 @@ int kgcov_register(struct module *mod, const kgcov_ctor_fn *begin,
 		err = -ENOENT;
 	}
 	if (err) {
-		mutex_unlock(&kgcov_lock);
+		KGCOV_UNLOCK(&kgcov_lock);
 		goto fail;
 	}
 	if (!kgcov_version)
 		kgcov_version = gcov_info_version(c->objs[0].live);
 	list_add(&c->node, &kgcov_clients);
-	mutex_unlock(&kgcov_lock);
+	KGCOV_UNLOCK(&kgcov_lock);
 
-	c->dent = debugfs_create_dir(mod->name, kgcov_root);
-	debugfs_create_file("dump", 0200, c->dent, c, &kgcov_dump_fops);
-	debugfs_create_file("reset", 0200, c->dent, c, &kgcov_reset_fops);
+	c->dent = KGCOV_DEBUGFS_DIR(mod->name, kgcov_root);
+	KGCOV_DEBUGFS_FILE("dump", 0200, c->dent, c, &kgcov_dump_fops);
+	KGCOV_DEBUGFS_FILE("reset", 0200, c->dent, c, &kgcov_reset_fops);
 	pr_info("%s: %zu instrumented object(s), .gcda under %s\n", mod->name, c->n_objs, dir);
 	return 0;
 fail:
@@ -347,7 +351,7 @@ void kgcov_unregister(struct module *mod)
 {
 	struct kgcov_client *c, *found = NULL;
 
-	mutex_lock(&kgcov_lock);
+	KGCOV_LOCK(&kgcov_lock);
 	list_for_each_entry(c, &kgcov_clients, node) {
 		if (c->mod == mod) {
 			found = c;
@@ -359,29 +363,32 @@ void kgcov_unregister(struct module *mod)
 		kgcov_dump_client(found);
 		list_del(&found->node);
 	}
-	mutex_unlock(&kgcov_lock);
+	KGCOV_UNLOCK(&kgcov_lock);
 	if (!found)
 		return;
 	/* Outside the lock: a writer blocked on the lock must be able to finish. */
-	debugfs_remove_recursive(found->dent);
+	KGCOV_DEBUGFS_REMOVE(found->dent);
 	kgcov_free_client(found);
 }
 EXPORT_SYMBOL_GPL(kgcov_unregister);
 
 static int __init kgcov_init(void)
 {
-	kgcov_root = debugfs_create_dir("otto_kgcov", NULL);
+	kgcov_root = KGCOV_DEBUGFS_DIR("otto_kgcov", NULL);
 	return 0;
 }
 
 static void __exit kgcov_exit(void)
 {
 	/* No client can be left: every consumer holds a reference to this module. */
-	debugfs_remove_recursive(kgcov_root);
+	KGCOV_DEBUGFS_REMOVE(kgcov_root);
 }
 
 module_init(kgcov_init);
 module_exit(kgcov_exit);
+#define KGCOV_STR_(x) #x
+#define KGCOV_STR(x) KGCOV_STR_(x)
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("gcov runtime for out-of-tree modules on a kernel without CONFIG_GCOV_KERNEL");
 MODULE_AUTHOR("otto");
+MODULE_VERSION(KGCOV_OTTO_VERSION "+kgcov" KGCOV_STR(KGCOV_INTERFACE));

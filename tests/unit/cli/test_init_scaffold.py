@@ -11,7 +11,14 @@ BY_NAME = {a.name: a for a in AREAS}
 
 
 def test_area_order_is_settings_first() -> None:
-    assert [a.name for a in AREAS] == ["settings", "schemas", "lab", "tests", "instructions"]
+    assert [a.name for a in AREAS] == [
+        "settings",
+        "schemas",
+        "lab",
+        "tests",
+        "instructions",
+        "kgcov",
+    ]
 
 
 def test_settings_scaffold_parses_via_settings_model(tmp_path: Path) -> None:
@@ -389,3 +396,82 @@ def test_lab_files_empty_when_settings_declare_no_lab_table(tmp_path: Path) -> N
     (repo / "lab_data" / "lab.json").write_text("{}")
 
     assert _lab_files(repo) == []
+
+
+def test_area_order_ends_with_the_opt_in_kgcov_area() -> None:
+    from otto.cli.init import OPT_IN_AREAS
+
+    assert [a.name for a in AREAS] == [
+        "settings",
+        "schemas",
+        "lab",
+        "tests",
+        "instructions",
+        "kgcov",
+    ]
+    assert frozenset({"kgcov"}) == OPT_IN_AREAS
+
+
+def test_kgcov_scaffold_exports_the_library_and_wires_the_repo(tmp_path: Path) -> None:
+    import tomli
+
+    from otto import kgcov
+
+    BY_NAME["settings"].scaffold(tmp_path, CFG)
+    created = BY_NAME["kgcov"].scaffold(tmp_path, CFG)
+    vendored = tmp_path / "third_party" / "otto_kgcov"
+    assert kgcov.check_tree(vendored).state == "current"
+    assert vendored / "kgcov.h" in created
+    settings = (tmp_path / ".otto" / "settings.toml").read_text()
+    assert '#kind = "kgcov"' in settings
+    assert '#source = "third_party/otto_kgcov"' in settings
+    tomli.loads(settings)  # the appended block is commented, so the file still parses
+    starter = tmp_path / "third_party" / "otto_kgcov-consumer"
+    assert (starter / "kgcov_begin.c").read_text().strip().endswith("KGCOV_SENTINEL_BEGIN;")
+    assert (starter / "kgcov_end.c").read_text().strip().endswith("KGCOV_SENTINEL_END;")
+    assert "include $(KGCOV)/consumer.mk" in (starter / "Kbuild.example").read_text()
+    assert "kernel-modules" in (starter / "README.md").read_text()
+    assert BY_NAME["kgcov"].detect(tmp_path)
+
+
+def test_kgcov_scaffold_refreshes_the_library_but_never_the_starter_or_a_second_entry(
+    tmp_path: Path,
+) -> None:
+    from otto import kgcov
+
+    BY_NAME["settings"].scaffold(tmp_path, CFG)
+    BY_NAME["kgcov"].scaffold(tmp_path, CFG)
+    vendored = tmp_path / "third_party" / "otto_kgcov"
+    (vendored / "kgcov.c").write_text("// edited\n")
+    starter = tmp_path / "third_party" / "otto_kgcov-consumer" / "README.md"
+    starter.write_text("mine\n")
+    before = (tmp_path / ".otto" / "settings.toml").read_text()
+    BY_NAME["kgcov"].scaffold(tmp_path, CFG)
+    assert kgcov.check_tree(vendored).state == "current"
+    assert starter.read_text() == "mine\n"
+    assert (tmp_path / ".otto" / "settings.toml").read_text() == before
+
+
+def test_kgcov_scaffold_honours_the_configured_directory(tmp_path: Path) -> None:
+    cfg = InitConfig(name="widget", version="0.1.0", kgcov_dir="vendor/kgcov")
+    BY_NAME["settings"].scaffold(tmp_path, cfg)
+    BY_NAME["kgcov"].scaffold(tmp_path, cfg)
+    assert (tmp_path / "vendor" / "kgcov" / "kgcov.h").is_file()
+    assert '#source = "vendor/kgcov"' in (tmp_path / ".otto" / "settings.toml").read_text()
+
+
+def test_kgcov_detects_a_declared_entry_without_the_default_directory(tmp_path: Path) -> None:
+    bare = tmp_path / "bare"
+    make_sut_repo(bare, name=CFG.name, version=CFG.version)
+    assert not BY_NAME["kgcov"].detect(bare)
+    declared = tmp_path / "declared"
+    make_sut_repo(
+        declared,
+        name=CFG.name,
+        version=CFG.version,
+        extra=(
+            '[[dev_tools]]\nname = "kgcov-6.8"\nkind = "kgcov"\n'
+            'artifact = "build/otto_kgcov.ko"\nsource = "vendor/kgcov"\nmatch = { id = ".*" }\n'
+        ),
+    )
+    assert BY_NAME["kgcov"].detect(declared)

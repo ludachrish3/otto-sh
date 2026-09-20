@@ -103,7 +103,10 @@ path = "otto.cli"
 # otto.inventory: invoke.py's `build_lab_from_repos` resolves the process
 # inventory once and hands it to the load (spec 2026-08-28 host-inventory §8).
 # Function-local, because this module is on the budgeted import surfaces.
-depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors"]
+# otto.kgcov: cov.py's `kgcov export`/`kgcov check` leaves call
+# export_tree()/check_tree() to vendor or compare the otto_kgcov library.
+# Function-local, same import-budget reason as otto.inventory above.
+depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kgcov", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors"]
 
 [[modules]]
 path = "otto.config"
@@ -246,6 +249,12 @@ depends_on = [
     "otto.config",
     "otto.registry",
     "otto.errors",
+    # otto.kgcov: kmod_tool_kind.py's interface_problem() reads INTERFACE /
+    # modinfo_version / interface_of to check a built otto_kgcov .ko against
+    # this otto's interface number. Function-local (inside interface_problem),
+    # same import-budget reason as otto.cli's otto.kgcov edge above — the
+    # host package must not pull the kgcov package in at module import time.
+    "otto.kgcov",
 ]
 
 [[modules]]
@@ -290,6 +299,13 @@ depends_on = [
     "otto.tls",
     "otto.utils",
 ]
+
+[[modules]]
+path = "otto.kgcov"
+# otto.version: export_tree() writes the exporting otto's version into the
+# vendored copy's generated header. Function-local (this package sits inside
+# an import-budgeted CLI surface, see otto.cli below).
+depends_on = ["otto.version"]
 
 [[modules]]
 path = "otto.labs"

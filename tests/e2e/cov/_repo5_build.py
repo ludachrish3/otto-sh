@@ -49,7 +49,9 @@ from tests.e2e._otto_subprocess import REPO5
 
 BUILD = REPO5 / "build"
 DEMO_SRC = REPO5 / "kmod" / "demo"
-KGCOV = PROJECT_ROOT / "docs" / "examples" / "kgcov"
+KGCOV = REPO5 / "third_party" / "otto_kgcov"
+"""The demo repo's vendored copy, held ``current`` against ``otto.kgcov`` by a guard — what a
+user's repo holds."""
 DOCKER = REPO5 / "docker"
 DOCKER_SRC = DOCKER / "src"
 TARBALL = DOCKER / "otto-cov-demo.tar"

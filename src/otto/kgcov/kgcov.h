@@ -18,6 +18,14 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 
+/*
+ * The library interface otto drives: the debugfs layout, the gcov_dir
+ * parameter and the macros below. otto reads it back off a built module's
+ * MODULE_VERSION ("<otto version>+kgcov<n>") and refuses a library whose
+ * number is not the one it expects. Bump it only when one of those changes.
+ */
+#define KGCOV_INTERFACE 1
+
 typedef void (*kgcov_ctor_fn)(void);
 
 int kgcov_register(struct module *mod, const kgcov_ctor_fn *begin,

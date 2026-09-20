@@ -1,0 +1,18 @@
+obj-m := otto_kgcov.o
+otto_kgcov-y := kgcov.o
+# The backend follows the compiler building THIS module, not the kernel's
+# CONFIG_CC_IS_*: a clang build against a gcc-built kernel must parse what
+# clang emits. gcc's gcov_info is laid out by __GNUC__ at compile time
+# (kgcov_gcc.c, one arm per gcc major); clang's is rebuilt from the
+# callbacks its constructor drives (kgcov_clang.c). Only the matching
+# family's entry points are exported, so a consumer built by the other
+# family fails to load with `Unknown symbol` rather than register garbage.
+ifneq ($(findstring clang,$(shell $(CC) --version 2>/dev/null)),)
+otto_kgcov-y += kgcov_clang.o
+else
+otto_kgcov-y += kgcov_gcc.o kgcov_gcc_abi.o
+endif
+# A kgcov_local.h beside the sources replaces kernel-facing names (see the
+# KGCOV_ macros in kgcov_gcov.h); force-included first so it wins the
+# #ifndef defaults. Absent, nothing changes.
+ccflags-y += $(if $(wildcard $(src)/kgcov_local.h),-include $(src)/kgcov_local.h)

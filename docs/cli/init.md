@@ -12,7 +12,7 @@ again after upgrading otto to refresh the generated editor schemas.
 
 ```text
 otto init [--all | --schemas | --lab | --tests | --instructions] [--name NAME]
-          [--version X.Y.Z] [--path DIR]
+          [--version X.Y.Z] [--path DIR] [--kgcov [--kgcov-dir DIR]]
 ```
 
 `otto init` is **lab-free**: it needs no `--lab` and no `OTTO_SUT_DIRS`, and
@@ -25,6 +25,8 @@ it never creates an output directory.
 | `--lab` | `False` | Scaffold the lab area (`lab_data/lab.json` + `inventory.json` + `creds.json` + README) |
 | `--tests` | `False` | Scaffold the tests area (example suite + conftest) |
 | `--instructions` | `False` | Scaffold the instructions area (`pylib/<name>_instructions/`) |
+| `--kgcov` | `False` | Scaffold (or refresh) the kgcov area: vendor the `otto_kgcov` library at `--kgcov-dir` (default `third_party/otto_kgcov`), append a commented `[[dev_tools]]` entry of kind `kgcov`, and write a consumer starter beside it. Never scaffolded by `--all` or the prompts |
+| `--kgcov-dir DIR` | `third_party/otto_kgcov` | Where `--kgcov` vendors the library (repo-relative) |
 | `--name NAME` | directory name | Product name for `settings.toml` |
 | `--version X.Y.Z` | `0.1.0` | Product version for `settings.toml` |
 | `--path DIR` | current dir | Repo root to operate on (must already exist) |
@@ -34,11 +36,14 @@ missing area (prompting for `--name`/`--version` only when
 `.otto/settings.toml` itself is missing). `--all` scaffolds every missing
 area with no prompts. Passing one or more of `--lab`/`--tests`/
 `--instructions` scaffolds exactly those areas, plus `settings` automatically
-whenever it's missing — every other area depends on it.
+whenever it's missing — every other area depends on it. `--kgcov` is
+**opt-in**: it is never scaffolded by `--all` and never offered by the
+interactive prompt, only by its own flag.
 
 Areas that already exist are never modified — except the otto-owned schemas
-area, which `otto init --schemas` refreshes (e.g. after upgrading otto).
-Instead, `otto init` validates them with the same ingestion code otto uses
+area, which `otto init --schemas` refreshes (e.g. after upgrading otto), and
+the otto-owned kgcov library, which `otto init --kgcov` refreshes the same
+way. Instead, `otto init` validates them with the same ingestion code otto uses
 elsewhere and reports each one `✓` or `✗` in a summary table; the command
 exits with code 1 if any existing area fails validation. The name used for areas scaffolded on a later run is
 read from the existing `settings.toml`'s `name` field, falling back to the
@@ -101,6 +106,29 @@ Alongside the schemas, `otto init --schemas` writes
 `.vscode/otto.code-snippets` — generated `lab.json` skeletons for a `labs`
 entry, an element, a cred, and each registered host type.  See
 {doc}`schema/editors`.
+
+## kgcov
+
+`otto init --kgcov` vendors the `otto_kgcov` kernel-module coverage library
+into the repo (`--kgcov-dir`, default `third_party/otto_kgcov`), appends a
+commented `[[dev_tools]]` entry of kind `kgcov` naming that directory as
+`source` (only when the repo declares no `kgcov` dev tool yet, commented or
+not), and writes a consumer starter beside it — two sentinel translation
+units (`kgcov_begin.c`, `kgcov_end.c`), a `Kbuild.example` fragment, and a
+`README.md` — each written only where absent. Re-running `--kgcov` always
+refreshes the vendored library itself (it is otto-owned), but never touches
+the `[[dev_tools]]` entry once one exists, nor the starter files once
+written.
+
+Validating an existing kgcov area checks every declared `[[dev_tools]]` entry
+of kind `kgcov`: a `source` naming a directory with no library there at all
+is a *problem* (the run exits 1), while a vendored copy that differs from the
+installed otto's library is only a *warning* — advisory, like the lab
+findings above, and naming the differing files and the `otto cov kgcov
+export` remedy.
+
+See {doc}`cov/instrumenting/kernel-modules` for how the library attaches to a
+module and how otto loads/removes it around a run.
 
 For a full first-repo walkthrough, see {doc}`../getting-started/index`, then
 {doc}`../getting-started/running-instructions` and

@@ -1,5 +1,6 @@
 """The built-in ``kmod`` kind: params, the three verbs, the two hooks per method."""
 
+import logging
 import shlex
 from pathlib import Path
 from types import SimpleNamespace
@@ -39,6 +40,8 @@ class _KmodHost(SimpleNamespace):
         self.lsmod = AsyncMock(return_value=Result(Status.Success, value=list(loaded)))
         self.run_calls: list[tuple[str, dict]] = []
         self.exec_calls: list[tuple[str, dict]] = []
+        self.dev_tools: list = []
+        self.products: list = []
         self._run_status = run_status
         self._run_value = run_value
 
@@ -57,6 +60,28 @@ class _KmodHost(SimpleNamespace):
 
 def _build(host=None, **params) -> KmodProduct:
     return product_mod.PRODUCT_KINDS.get("kmod")(_entry(**params), host or _KmodHost())
+
+
+def _attach_kgcov(host, tmp_path: Path, *, version=None):
+    """A kgcov dev tool on *host* whose .ko carries this otto's interface (or *version*)."""
+    from otto import kgcov as kgcov_mod
+    from otto.host.dev_tool import DEV_TOOL_KINDS
+
+    ko = tmp_path / "otto_kgcov.ko"
+    v = version or f"1.6.0+kgcov{kgcov_mod.INTERFACE}"
+    ko.write_bytes(b"\x7fELF\x00" + f"version={v}".encode() + b"\x00vermagic=6.8 SMP\x00")
+    entry = DeclaredEntry(
+        name="kgcov-6.8",
+        kind="kgcov",
+        seam="dev_tools",
+        owner="r",
+        base_dir=Path("/repo"),
+        match={},
+        params={"artifact": str(ko)},
+    )
+    tool = DEV_TOOL_KINDS.get("kgcov")(entry, host)
+    host.dev_tools.append(tool)
+    return tool
 
 
 def _expected_kernel_prepare_cmd(gcov_path: str, cov_dir: str) -> str:
@@ -101,11 +126,13 @@ def _expected_kernel_reset_cmds(gcov_path: str, cov_dir: str) -> tuple[str, str]
 # ── builder ──────────────────────────────────────────────────────────────────
 
 
-def test_kmod_is_a_product_kind_only():
+def test_kmod_is_registered_in_both_seams_with_its_own_factory_each():
+    from otto.host import kmod_tool_kind  # noqa: F401 — registers the dev-tool side
     from otto.host.dev_tool import DEV_TOOL_KINDS
 
     assert "kmod" in product_mod.PRODUCT_KINDS
-    assert "kmod" not in DEV_TOOL_KINDS
+    assert "kmod" in DEV_TOOL_KINDS
+    assert product_mod.PRODUCT_KINDS.get("kmod") is not DEV_TOOL_KINDS.get("kmod")
 
 
 def test_kmod_defaults_module_name_to_the_stem_with_underscores():
@@ -178,8 +205,9 @@ async def test_kmod_stage_is_a_noop_and_install_loads_with_params():
 
 
 @pytest.mark.asyncio
-async def test_kmod_module_method_appends_gcov_dir_to_the_params():
-    host = _KmodHost()
+async def test_kmod_module_method_appends_gcov_dir_to_the_params(tmp_path):
+    host = _KmodHost(loaded=["otto_kgcov"])
+    _attach_kgcov(host, tmp_path)
     p = _build(host, coverage="module", cov_dir="/var/cov/demo", params="debug=1")
     await p.install(host)
     assert host.load.await_args.kwargs["params"] == "debug=1 gcov_dir=/var/cov/demo"
@@ -189,11 +217,12 @@ async def test_kmod_module_method_appends_gcov_dir_to_the_params():
 
 
 @pytest.mark.asyncio
-async def test_kmod_module_method_quotes_a_cov_dir_containing_whitespace():
+async def test_kmod_module_method_quotes_a_cov_dir_containing_whitespace(tmp_path):
     # UnixHost.load appends `params` to the insmod line UNQUOTED, so the
     # gcov_dir=<cov_dir> token must be shlex.quote()d as ONE token when
     # cov_dir itself contains whitespace.
-    host = _KmodHost()
+    host = _KmodHost(loaded=["otto_kgcov"])
+    _attach_kgcov(host, tmp_path)
     p = _build(host, coverage="module", cov_dir="/var/cov/my demo", params="debug=1")
     await p.install(host)
     assert host.load.await_args.kwargs["params"] == "debug=1 'gcov_dir=/var/cov/my demo'"
@@ -209,6 +238,132 @@ async def test_kmod_is_installed_reads_lsmod_and_uninstall_unloads():
     assert await p.is_installed(host) is False
     assert (await p.uninstall(host)).is_ok
     host.unload.assert_awaited_once_with("otto_kmod_demo")
+
+
+@pytest.mark.asyncio
+async def test_kmod_module_install_loads_the_library_first_when_absent(tmp_path):
+    host = _KmodHost(loaded=["ext4"])
+    tool = _attach_kgcov(host, tmp_path)
+    p = _build(host, coverage="module", cov_dir="/var/cov/demo")
+    assert (await p.install(host)).is_ok
+    calls = host.load.await_args_list
+    assert calls[0].args == (tool.artifact, "otto_kgcov")
+    assert calls[1].args == (Path("/repo/build/demo/otto_kmod_demo.ko"), "otto_kmod_demo")
+    assert calls[1].kwargs["params"] == "gcov_dir=/var/cov/demo"
+
+
+@pytest.mark.asyncio
+async def test_kmod_module_install_announces_the_library_load_at_info(tmp_path, caplog):
+    # The one line a lane reads back out of verbose.log to prove the demo
+    # loaded the library itself; nothing is said when it was already there.
+    host = _KmodHost(loaded=["ext4"])
+    tool = _attach_kgcov(host, tmp_path)
+    p = _build(host, coverage="module")
+    with caplog.at_level(logging.INFO, logger="otto.host.kmod_kind"):
+        assert (await p.install(host)).is_ok
+    lines = [r.getMessage() for r in caplog.records if "otto_kgcov" in r.getMessage()]
+    assert lines == [f"test1: demo: loading otto_kgcov ({tool.name})"]
+
+
+@pytest.mark.asyncio
+async def test_kmod_module_install_says_nothing_when_the_library_is_resident(tmp_path, caplog):
+    host = _KmodHost(loaded=["otto_kgcov"])
+    _attach_kgcov(host, tmp_path)
+    p = _build(host, coverage="module")
+    with caplog.at_level(logging.INFO, logger="otto.host.kmod_kind"):
+        assert (await p.install(host)).is_ok
+    assert [r.getMessage() for r in caplog.records if "otto_kgcov" in r.getMessage()] == []
+
+
+@pytest.mark.asyncio
+async def test_kmod_module_install_skips_the_library_when_resident(tmp_path):
+    host = _KmodHost(loaded=["otto_kgcov"])
+    _attach_kgcov(host, tmp_path)
+    p = _build(host, coverage="module")
+    assert (await p.install(host)).is_ok
+    assert host.load.await_count == 1
+    assert host.load.await_args.args[1] == "otto_kmod_demo"
+
+
+@pytest.mark.asyncio
+async def test_kmod_module_install_fails_naming_the_missing_kgcov_tool():
+    host = _KmodHost()
+    p = _build(host, coverage="module")
+    result = await p.install(host)
+    assert result.status is Status.Error
+    assert "demo" in result.msg
+    assert "test1" in result.msg
+    assert "kind 'kgcov'" in result.msg
+    host.load.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_kmod_module_install_reports_a_library_load_failure_as_the_tools(tmp_path):
+    host = _KmodHost(loaded=[])
+    tool = _attach_kgcov(host, tmp_path)
+    host.load.return_value = Result(Status.Error, msg="insmod otto_kgcov failed: vermagic")
+    p = _build(host, coverage="module")
+    result = await p.install(host)
+    assert result.status is Status.Error
+    assert tool.name in result.msg
+    assert "vermagic" in result.msg
+    assert host.load.await_count == 1  # the consumer's own insmod never ran
+
+
+@pytest.mark.asyncio
+async def test_kmod_module_install_failure_after_the_library_loaded_is_the_consumers(tmp_path):
+    # The library went in; the consumer's own insmod is what failed. The
+    # result is the PRODUCT's failure, with the library named as resident so
+    # nobody goes looking for a missing otto_kgcov.
+    host = _KmodHost(loaded=["ext4"])
+    _attach_kgcov(host, tmp_path)
+
+    async def _load(file, name, params=""):
+        if name == "otto_kgcov":
+            host.lsmod.return_value = Result(Status.Success, value=["ext4", "otto_kgcov"])
+            return Result(Status.Success)
+        return Result(Status.Error, msg="insmod otto_kmod_demo failed: Unknown symbol in module")
+
+    host.load = AsyncMock(side_effect=_load)
+    p = _build(host, coverage="module", cov_dir="/var/cov/demo")
+    result = await p.install(host)
+    assert result.status is Status.Error
+    assert result.msg.startswith("demo: ")
+    assert "insmod otto_kmod_demo failed: Unknown symbol in module" in result.msg
+    assert "otto_kgcov: 'kgcov-6.8' dev tool, resident" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_kmod_module_install_propagates_a_dry_run_decline_from_the_library(tmp_path):
+    # A declined library load must NOT stop the consumer's own insmod from
+    # being announced: a dry run exists to show the whole plan, and the
+    # decline of the second line is what carries the NotRun back.
+    host = _KmodHost()
+    _attach_kgcov(host, tmp_path)
+    host.lsmod.return_value = NotRunResult(
+        status=Status.NotRun, command="lsmod", retcode=-1, host_name=host.id
+    )
+    host.load.return_value = NotRunResult(
+        status=Status.NotRun, command="insmod", retcode=-1, host_name=host.id
+    )
+    p = _build(host, coverage="module", cov_dir="/var/cov/demo")
+    result = await p.install(host)
+    assert result.status is Status.NotRun
+    assert host.load.await_count == 2
+    assert host.load.await_args.args == (
+        Path("/repo/build/demo/otto_kmod_demo.ko"),
+        "otto_kmod_demo",
+    )
+    assert host.load.await_args.kwargs["params"] == "gcov_dir=/var/cov/demo"
+
+
+@pytest.mark.asyncio
+async def test_kmod_none_and_kernel_methods_never_touch_the_library():
+    for coverage, extra in (("none", {}), ("kernel", {"gcov_path": "/sys/kernel/debug/gcov/x"})):
+        host = _KmodHost()
+        p = _build(host, coverage=coverage, **extra)
+        assert (await p.install(host)).is_ok
+        assert host.load.await_count == 1
 
 
 # ── hooks ────────────────────────────────────────────────────────────────────
@@ -252,6 +407,25 @@ async def test_kmod_module_prepare_failure_names_the_debugfs_path():
     assert not result.is_ok
     assert "/sys/kernel/debug/otto_kgcov/otto_kmod_demo/dump" in result.msg
     assert "otto_kgcov" in result.msg
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("loaded", "expected"),
+    [
+        (["otto_kmod_demo", "otto_kgcov"], "otto_kgcov: 'kgcov-6.8' dev tool, resident"),
+        (["otto_kmod_demo"], "otto_kgcov: 'kgcov-6.8' dev tool, not resident"),
+    ],
+)
+async def test_kmod_module_prepare_failure_names_the_kgcov_tool(tmp_path, loaded, expected):
+    # The message STATES whether the library is resident rather than asking:
+    # residency is one lsmod away, and this is already an error path.
+    host = _KmodHost(loaded=loaded, run_status=Status.Error, run_value="No such file")
+    _attach_kgcov(host, tmp_path)
+    p = _build(host, coverage="module")
+    result = await p.prepare_coverage(host)
+    assert result.status is Status.Error
+    assert expected in result.msg
 
 
 @pytest.mark.asyncio
@@ -335,6 +509,20 @@ async def test_kmod_module_reset_fails_when_lsmod_itself_fails():
     assert result.status is not Status.NotRun
     assert "lsmod" in result.msg
     assert host.run_calls == []  # neither the debugfs write nor the delete
+
+
+@pytest.mark.asyncio
+async def test_kmod_module_reset_failure_names_the_kgcov_tool_and_its_residency(tmp_path):
+    host = _KmodHost(
+        loaded=["otto_kmod_demo", "otto_kgcov"], run_status=Status.Error, run_value="No such file"
+    )
+    _attach_kgcov(host, tmp_path)
+    p = _build(host, coverage="module", cov_dir="/var/cov/demo")
+    result = await p.reset_coverage(host)
+    assert result.status is Status.Error
+    assert "otto_kgcov: 'kgcov-6.8' dev tool, resident" in result.msg
+    assert f"{KGCOV_DEBUGFS}/otto_kmod_demo/reset" in result.msg
+    assert len(host.run_calls) == 1  # the failed write; no delete followed
 
 
 @pytest.mark.asyncio

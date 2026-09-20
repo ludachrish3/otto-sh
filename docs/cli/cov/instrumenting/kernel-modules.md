@@ -27,17 +27,17 @@ module's own request. `otto_kgcov` is that runtime.
 
 ## The library
 
-`otto_kgcov` (`docs/examples/kgcov/`) is a small GPL kernel module every
-instrumented consumer links against — a "library" in kernel space is just
-another loadable module that exports symbols. It vendors both of the
-kernel's own gcov backends — `gcc_4_7.c` for gcc (every format from gcc 4.7
-to 15) and `clang.c` for clang (11 and newer) — and builds whichever
-matches the compiler building it, exporting that family's runtime symbols
-(`__gcov_init` and the `__gcov_merge_*` set, or `llvm_gcov_init` and the
-`llvm_gcda_*` callbacks) so an instrumented object links, plus the two
-calls a consumer actually drives:
+`otto_kgcov` (`src/otto/kgcov/` in otto's tree; shipped in the wheel) is a
+small GPL kernel module every instrumented consumer links against — a
+"library" in kernel space is just another loadable module that exports
+symbols. It vendors both of the kernel's own gcov backends — `gcc_4_7.c`
+for gcc (every format from gcc 4.7 to 15) and `clang.c` for clang (11 and
+newer) — and builds whichever matches the compiler building it, exporting
+that family's runtime symbols (`__gcov_init` and the `__gcov_merge_*` set,
+or `llvm_gcov_init` and the `llvm_gcda_*` callbacks) so an instrumented
+object links, plus the two calls a consumer actually drives:
 
-```{literalinclude} ../../../examples/kgcov/kgcov.h
+```{literalinclude} ../../../../src/otto/kgcov/kgcov.h
 :language: c
 :start-at: "int kgcov_register"
 :end-at: "void kgcov_unregister(struct module *mod);"
@@ -53,6 +53,53 @@ time, two dumps in one run add correctly instead of double-counting.
 Writing to `reset` zeroes both. `otto_kgcov` never parses a `.gcda` itself
 — it only ever writes one.
 
+## Getting the library
+
+- **In a repo otto scaffolds**: `otto init --kgcov` vendors the sources into
+  `third_party/otto_kgcov` (`--kgcov-dir` names another directory), appends a
+  commented `[[dev_tools]]` entry of kind `kgcov` to fill in, and writes a
+  consumer starter beside it — the two sentinel files, a `Kbuild.example`,
+  and a `README.md`. Re-run `otto init --kgcov` after upgrading otto to
+  refresh the vendored library. See {doc}`../../init` for the area's full
+  detect/validate/scaffold contract.
+- **Just the sources**: `otto cov kgcov export <dir>` writes the same
+  sources with none of the rest of that scaffolding; commit the directory. A
+  machine that only builds the module needs no otto at all. See
+  {doc}`../index`.
+- **Staying current**: `otto cov kgcov check <dir>` exits 0 when the
+  directory is current, 1 when it differs (naming the files and the otto
+  that exported them), or 2 when it is absent; run it in CI. `otto init`
+  reports the same drift as a warning for every declared kgcov `source`.
+  Neither command notices a file that a later otto no longer ships — both
+  walk only the list of files this otto currently ships — so a re-export
+  after an upgrade can leave such a file behind, for the repo's own diff to
+  catch.
+- **Kernel differences**: a `kgcov_local.h` beside the sources takes effect
+  with no flag — `Kbuild` force-includes it with `-include` whenever it
+  exists, ahead of `kgcov_gcov.h`'s own `#ifndef` guards, so a rebuild is
+  all that is needed. It replaces one kernel-facing name at a time —
+  `KGCOV_ALLOC`, `KGCOV_ALLOC_ARRAY`, `KGCOV_STRDUP`, `KGCOV_MEMDUP`,
+  `KGCOV_ASPRINTF`, `KGCOV_FREE`, `KGCOV_BIG_ALLOC`, `KGCOV_BIG_FREE`,
+  `KGCOV_DEFINE_LOCK`, `KGCOV_LOCK`, `KGCOV_UNLOCK`, `KGCOV_DEBUGFS_DIR`,
+  `KGCOV_DEBUGFS_FILE`, and `KGCOV_DEBUGFS_REMOVE` — under a contract the
+  library relies on and never checks: `KGCOV_ALLOC`/`KGCOV_ALLOC_ARRAY`
+  must return zeroed memory, `KGCOV_FREE`/`KGCOV_BIG_FREE` must accept
+  `NULL`, and whatever an allocator returns must be releasable by its
+  matching `KGCOV_FREE` — a mismatched pair corrupts rather than fails.
+  `check` ignores the file and `export` never overwrites it. Proving a
+  customised library against the matrix's own contracts is issue #406.
+- **What otto checks**: the built `.ko`'s `MODULE_VERSION`
+  (`<otto version>+kgcov<n>`, read directly off the file, no host tool)
+  must carry this otto's interface number — checked at lab load when the
+  file already exists, and checked again, unconditionally, at every
+  `install` — the load driven by the `[[dev_tools]]` entry of
+  [Declaring the module and its library](#declaring-the-module-and-its-library)
+  below — before the library is loaded. `vermagic` and the compiler are
+  what the module itself already reports: see [Building](#building) for the
+  `vermagic` rule and
+  [Another kernel, ISA or compiler](#another-kernel-isa-or-compiler) for the
+  compiler-family one.
+
 ## Instrumenting a module
 
 The worked example throughout this page is `tests/repo5/kmod/demo/`, a
@@ -60,9 +107,10 @@ small bounded queue driven from a debugfs control file, living inside the
 repo that declares it as a product. A repo that reports coverage for a
 module must own that module's sources and build them in place: coverage
 capture anchors every measured file to a committed git blob under the SUT
-repo. The library's own
-`docs/examples/kgcov/README.md` documents the same three steps that follow,
-in more general terms, for any consumer.
+repo. The library's own `README.md` — the copy you hold, e.g.
+`third_party/otto_kgcov/README.md` (`src/otto/kgcov/README.md` in otto's
+own source tree) — documents the same three steps that follow, in more
+general terms, for any consumer.
 
 A consumer becomes coverage-instrumented in three steps:
 
@@ -85,14 +133,14 @@ applies the flags step below to each instrumented object:
 **2. Flags.** Compile every instrumented object with `$(KGCOV_CFLAGS)`,
 defined by the library's own Kbuild fragment:
 
-```{literalinclude} ../../../examples/kgcov/consumer.mk
+```{literalinclude} ../../../../src/otto/kgcov/consumer.mk
 :language: make
 ```
 
 **3. Macros.** Call `KGCOV_DECLARE()` at file scope, `KGCOV_INIT()` first in
 the module's init routine, and `KGCOV_EXIT()` last in its exit routine:
 
-```{literalinclude} ../../../examples/kgcov/kgcov.h
+```{literalinclude} ../../../../src/otto/kgcov/kgcov.h
 :language: c
 :start-at: "/* File scope, once per consumer"
 :end-at: "#define KGCOV_EXIT() kgcov_unregister(THIS_MODULE)"
@@ -136,17 +184,19 @@ mismatch fails `insmod` with a message that only the kernel log explains:
 otto host test1 run --sudo dmesg
 ```
 
-`docs/examples/kgcov/build.sh <build-dir> [<release>]` takes that release
-as an argument, defaulting to the build machine's own running kernel when
-none is given, and checks the resulting `.ko`'s `vermagic` against it —
-`KDIR` names a different kernel tree to build against instead, and the
-release then comes from that tree (see below). The library builds **out
-of tree**: it is never itself a measured product, so
-`build.sh` copies its sources into a scratch directory and builds them
-there against `/lib/modules/<release>/build`. The consumer builds **in place**, next to
-its own committed sources, for the reason given above. `tests/repo5/kmod/build.sh`
-does both, library first, and checks the resulting `vermagic` before calling
-either build a success:
+The vendored copy's own `build.sh <build-dir> [<release>]`
+(`third_party/otto_kgcov/build.sh` in a user's repo; `src/otto/kgcov/build.sh`
+in otto's own tree — the same script, copied verbatim by `export`) takes
+the release as its second, optional argument, defaulting to the build
+machine's own running kernel when none is given, and checks the resulting
+`.ko`'s `vermagic` against it — `KDIR` names a different
+kernel tree to build against instead, and the release then comes from that
+tree (see below). The library builds **out of tree**: it is never itself a
+measured product, so `build.sh` copies its sources into a scratch directory
+and builds them there against `/lib/modules/<release>/build`. The consumer
+builds **in place**, next to its own committed sources, for the reason
+given above. `tests/repo5/kmod/build.sh` does both, library first, and
+checks the resulting `vermagic` before calling either build a success:
 
 ```{literalinclude} ../../../../tests/repo5/kmod/build.sh
 :language: bash
@@ -157,7 +207,12 @@ then the container image's own `docker/build.sh`.
 
 A product repo's own module follows the same shape: build `otto_kgcov` out
 of tree once, then build the module against it in place, checking
-`vermagic` the same way before it ships anywhere.
+`vermagic` the same way before it ships anywhere. Only the library's `.ko`
+carries `modinfo -F version`: `<otto version>+kgcov<n>`, naming the otto
+that exported the sources and the interface they implement — the
+consumer's own `.ko` carries no such stamp, and otto never looks for one
+there, only on the kgcov dev tool's own artifact (see
+[Getting the library](#getting-the-library) above for what otto checks).
 
 ## Another kernel, ISA or compiler
 
@@ -205,7 +260,7 @@ tar -xJf linux-6.8.tar.xz
 make -C linux-6.8 ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- defconfig modules_prepare
 KDIR=$PWD/linux-6.8 ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- \
     KMAKEFLAGS=KBUILD_MODPOST_WARN=1 \
-    docs/examples/kgcov/build.sh build
+    src/otto/kgcov/build.sh build
 ```
 
 That `KMAKEFLAGS=KBUILD_MODPOST_WARN=1` is there because a prepared source
@@ -262,31 +317,37 @@ cannot open them from the fetch directory. Put `ignore_errors = source` in
 records are kernel headers, never the module's own files, and the report
 drops them.
 
-## Declaring the products
+## Declaring the module and its library
 
-The library and the consumer are each their own `[[products]]` entry, the
-library declared first — products install in declaration order, so the
-consumer's `insmod` always finds the library already resident. That
-ordering is otto's own guarantee; unloading is not reversed for you — a
-repo whose products have a load-order dependency, like this one, unloads in
-reverse in its own teardown, the way `tests/repo5/tests/test_kmod_demo.py`'s
-suite does:
+The two live in different seams. The library is a `[[dev_tools]]` entry of
+kind `kgcov` — repo tooling nothing measures, one entry per kernel, pointed
+at the hosts running it by its `match` table — and the consumer is an
+ordinary `kmod` product with `coverage = "module"`:
 
 ```{literalinclude} ../../../../tests/repo5/.otto/settings.toml
 :language: toml
-:start-at: "[[products]]"
+:start-at: "[[dev_tools]]"
 :end-before: "# The container-image products"
 ```
 
-`otto_kgcov` declares `instrumented = false` — overriding the artifact
-scan, for the reason its own entry comment gives. `otto_kmod_demo` sets
-`coverage = "module"` and a `cov_dir` for `otto_kgcov` to write under. A
-module built with the sentinel/macro snippet above refuses to load without
-that `gcov_dir=` argument — `KGCOV_INIT()` returns `-EINVAL` — so
-`coverage = "none"` on such a module, or a manual `insmod`, fails with a
-message only `dmesg --sudo` shows. See
+otto loads the library on demand, at the consumer's own `install`, when it
+is not already resident — so an `install-tools` before the run costs
+nothing, and nothing depends on declaration order. Both halves of the
+binding are checked at lab load: a host carrying a `coverage = "module"`
+product with no matching `kgcov` entry is refused, naming the products, the
+host and the kind, and so is a host matching two of them. `cleanup` unloads
+the library after the products, which is the order dev tools always come
+down in; a suite that drives the products itself and never runs `cleanup`
+unloads it in its own teardown, the way
+`tests/repo5/tests/test_kmod_demo.py`'s suite does.
+
+`otto_kmod_demo` sets `coverage = "module"` and a `cov_dir` for `otto_kgcov`
+to write under. A module built with the sentinel/macro snippet above refuses
+to load without that `gcov_dir=` argument — `KGCOV_INIT()` returns `-EINVAL`
+— so `coverage = "none"` on such a module, or a manual `insmod`, fails with
+a message only `dmesg --sudo` shows. See
 {doc}`../../../configuration/declared-products-tools` for every parameter
-this kind takes — this page only walks the build the params point at.
+these kinds take — this page only walks the build the params point at.
 
 ## The `kernel` method
 

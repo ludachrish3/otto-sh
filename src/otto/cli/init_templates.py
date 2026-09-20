@@ -611,3 +611,47 @@ VSCODE_EXTENSIONS_TEMPLATE = """\
   "recommendations": ["tamasfe.even-better-toml"]
 }
 """
+
+KGCOV_DEV_TOOL_TEMPLATE = """\
+
+# otto_kgcov: the kernel-module coverage library, vendored at {kgcov_dir} by
+# `otto init --kgcov` (re-run it, or `otto cov kgcov export {kgcov_dir}`, after
+# upgrading otto). Your build system builds it against each kernel your
+# lab's hosts run — see docs/cli/cov/instrumenting/kernel-modules.md — and
+# one [[dev_tools]] entry per kernel names the built .ko and the hosts it
+# belongs on. A `coverage = "module"` [[products]] kmod entry loads it on
+# demand; `cleanup` removes it after the products. Uncomment and fill in:
+#[[dev_tools]]
+#name = "kgcov-<kernel release>"
+#kind = "kgcov"
+#artifact = "build/kgcov-<kernel release>/lib/otto_kgcov.ko"
+#source = "{kgcov_dir}"
+#match = {{ id = "<host id regex>" }}
+"""
+
+KGCOV_STARTER_KBUILD_TEMPLATE = """\
+# A consumer of otto_kgcov, next to its own sources. The sentinels go FIRST
+# and LAST in the object list (they bracket the gcov constructors the
+# library walks), every instrumented object takes $(KGCOV_CFLAGS), and the
+# module's Makefile passes KGCOV=<the built library's directory> and
+# KBUILD_EXTRA_SYMBOLS=$(KGCOV)/Module.symvers. Copy beside your module,
+# rename to Kbuild, and replace <module> and the object list.
+KGCOV ?= $(src)/../{kgcov_dir_name}
+-include $(KGCOV)/consumer.mk
+obj-m := <module>.o
+<module>-y := kgcov_begin.o <your objects> kgcov_end.o
+CFLAGS_<your first object>.o += $(KGCOV_CFLAGS)
+"""
+
+KGCOV_STARTER_README_TEMPLATE = """\
+# otto_kgcov consumer starter
+
+`kgcov_begin.c` and `kgcov_end.c` are the two sentinel translation units a
+coverage-instrumented module links first and last. `Kbuild.example` shows
+the Kbuild fragment. The library itself is vendored at `{kgcov_dir}`
+(`otto cov kgcov check {kgcov_dir}` compares it with the installed otto).
+
+The three steps a module takes — sentinels, flags, macros — and how otto
+loads the library before the module and removes it at cleanup are on the
+kernel-modules page of otto's docs (docs/cli/cov/instrumenting/kernel-modules.md).
+"""

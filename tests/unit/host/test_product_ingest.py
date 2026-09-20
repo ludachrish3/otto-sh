@@ -122,3 +122,13 @@ def test_apply_providers_runs_all_four_seams_in_order(monkeypatch):
     monkeypatch.setattr(factory, "apply_dev_tool_providers", lambda h: order.append("tp"))
     factory.apply_providers(_host())
     assert order == ["dp", "pp", "dt", "tp"]
+
+
+def test_apply_providers_runs_the_kgcov_binding_check(monkeypatch):
+    from otto.host import kmod_tool_kind
+
+    seen = []
+    monkeypatch.setattr(kmod_tool_kind, "check_kgcov_bindings", lambda host: seen.append(host.id))
+    host = SimpleNamespace(id="h1", products=[], dev_tools=[], source_lab="", inventory_ref=None)
+    factory.apply_providers(host)
+    assert seen == ["h1"]

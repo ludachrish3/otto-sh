@@ -95,24 +95,36 @@ docs/superpowers/plans/
 # the repo, so an ignore rule for them would match nothing and read as though
 # the tree could contain them.
 
-# kernel build products of the coverage example and the repo5 fixture
-docs/examples/kgcov/**/*.o
-docs/examples/kgcov/**/*.ko
-docs/examples/kgcov/**/*.mod
-docs/examples/kgcov/**/*.mod.c
-docs/examples/kgcov/**/*.cmd
-docs/examples/kgcov/**/.*.cmd
-docs/examples/kgcov/**/.*.o.d
-docs/examples/kgcov/**/Module.symvers
-docs/examples/kgcov/**/modules.order
-docs/examples/kgcov/**/*.gcno
+# kernel build products of the repo5 fixture
 tests/repo5/build/
+
+# repo5's vendored copy of the library (tests/repo5/third_party/otto_kgcov/)
+# is committed source, exported by `otto cov kgcov export`. The package copy
+# at src/otto/kgcov/ is never built in place — its build.sh builds out of
+# tree — so it carries no ignore patterns of its own: a git-ignored file
+# under src/otto/ would ship silently in the uv_build sdist/wheel, and
+# tests/unit/test_webassets_guard.py's in-package-ignores guard holds
+# src/otto/ to exactly the webassets glob for that reason. A hand build in
+# place under this vendored copy (mirroring the library's own out-of-tree
+# build.sh) must not commit objects either, so the same ten patterns apply
+# here, and tests/unit/test_kgcov_export.py's package-hygiene guard fails on
+# any stray file left behind by one.
+tests/repo5/third_party/otto_kgcov/**/*.o
+tests/repo5/third_party/otto_kgcov/**/*.ko
+tests/repo5/third_party/otto_kgcov/**/*.mod
+tests/repo5/third_party/otto_kgcov/**/*.mod.c
+tests/repo5/third_party/otto_kgcov/**/*.cmd
+tests/repo5/third_party/otto_kgcov/**/.*.cmd
+tests/repo5/third_party/otto_kgcov/**/.*.o.d
+tests/repo5/third_party/otto_kgcov/**/Module.symvers
+tests/repo5/third_party/otto_kgcov/**/modules.order
+tests/repo5/third_party/otto_kgcov/**/*.gcno
 
 # repo5's own demo product builds in place (tests/repo5/kmod/demo/) rather
 # than out of tree, so its build products need their own per-extension
-# list (mirroring docs/examples/kgcov/**'s shape above), scoped to that
-# directory instead of a blanket build/ (the demo's sources live right
-# beside these outputs).
+# list (mirroring tests/repo5/third_party/otto_kgcov/**'s shape above),
+# scoped to that directory instead of a blanket build/ (the demo's sources
+# live right beside these outputs).
 tests/repo5/kmod/**/*.o
 tests/repo5/kmod/**/*.ko
 tests/repo5/kmod/**/*.mod

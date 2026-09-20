@@ -334,7 +334,10 @@ cross-repo subclassing.
 
 - **Build-up walks dependencies first.** `install` and `install-tools` take the
   order bootstrap computed. An optional dependency that is present is simply in
-  the walk; an absent one simply is not.
+  the walk; an absent one simply is not. A `coverage = "module"` kernel-module
+  product also loads its host's `otto_kgcov` dev tool at `install` when it is
+  not resident, so `install-tools` before it costs nothing, and `cleanup`'s
+  products-then-dev-tools order unloads the library after its consumers.
 - **Teardown walks it reversed.** `uninstall` and `cleanup` bring the dependent
   down before the thing it depends on.
 - **Building is fail-fast, tearing down is best-effort.** On teardown every

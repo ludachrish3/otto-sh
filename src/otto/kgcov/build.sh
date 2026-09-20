@@ -4,8 +4,8 @@
 #   build.sh <build-dir> [<kernel-release>]
 #
 # Copies the library into <build-dir>/lib and builds it there, so the source
-# tree under docs/examples/ stays clean. The kernel tree is $KDIR when set (a
-# distro headers package or a prepared source tree, anywhere), else
+# tree stays clean. The kernel tree is $KDIR when set (a distro headers
+# package or a prepared source tree, anywhere), else
 # /lib/modules/<release>/build for <release> (default: the running kernel).
 # ARCH, CROSS_COMPILE, LLVM, CC and KMAKEFLAGS reach kbuild unchanged, so a
 # cross build or a clang build is the same command with the environment a
@@ -46,7 +46,8 @@ if [ -e "$BUILD_DIR/lib" ] && [ ! -e "$BUILD_DIR/lib/kgcov.c" ]; then
 fi
 rm -rf "$BUILD_DIR/lib"
 mkdir -p "$BUILD_DIR/lib"
-cp "$SRC_DIR"/{Kbuild,Makefile,consumer.mk,kgcov.c,kgcov.h,kgcov_gcov.h,kgcov_gcc.c,kgcov_gcc_abi.c,kgcov_clang.c} "$BUILD_DIR/lib/"
+cp "$SRC_DIR"/{Kbuild,Makefile,consumer.mk,kgcov.c,kgcov.h,kgcov_gcov.h,kgcov_gcc.c,kgcov_gcc_abi.c,kgcov_clang.c,kgcov_version.h} "$BUILD_DIR/lib/"
+[ -f "$SRC_DIR/kgcov_local.h" ] && cp "$SRC_DIR/kgcov_local.h" "$BUILD_DIR/lib/"
 
 # CC goes on the command line: the kernel's own Makefile assigns CC and only
 # a command-line value overrides that. ARCH, CROSS_COMPILE and LLVM are read

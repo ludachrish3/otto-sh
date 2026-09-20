@@ -63,19 +63,20 @@ def assert_three_gcda_per_host(cov_dir: Path) -> None:
         assert all(p.stat().st_size > 0 for p in (cov_dir / host / DEMO).glob("*.gcda"))
 
 
-def assert_run_log_reports_the_library_uninstrumented(log_dir: Path) -> None:
-    # otto_kgcov's settings.toml entry declares `instrumented = false` (its
-    # .ko legitimately contains "__gcov_"/"llvm_gcov" bytes — it implements
-    # gcov's own runtime callbacks for consumers — which otherwise trips the
-    # generic byte-scan into a false instrumented=True). That makes it a
-    # `report.missing()` row on both hosts even under forced --cov, so
-    # decide_coverage()'s partial-instrumentation warning fires and is
-    # captured in the run's verbose.log (a root-logger handler floored at
-    # INFO, so a WARNING always lands there regardless of --log-level).
+def assert_run_log_reports_the_library_loaded_on_demand(log_dir: Path) -> None:
+    # otto_kgcov is a DEV TOOL here, not a product: nothing measures it, so it
+    # can never be a `report.missing()` row and no partial-instrumentation
+    # warning can name it. What the run log proves instead is the positive
+    # fact — the demo pulled its own library up at install, on both hosts.
+    # KmodProduct._ensure_library says so at INFO once per real load (never
+    # when the library was already resident), and the run's verbose.log holds
+    # it: a root-logger handler floored at INFO, so the line lands there
+    # regardless of --log-level. The demo repo names its kgcov entry
+    # `otto_kgcov`, which is the name in the parentheses.
     verbose = (log_dir / "verbose.log").read_text()
     collapsed = " ".join(verbose.split())
-    assert "test1: otto_kgcov — no" in collapsed, verbose[-3000:]
-    assert "test2: otto_kgcov — no" in collapsed, verbose[-3000:]
+    assert f"test1: {DEMO}: loading otto_kgcov (otto_kgcov)" in collapsed, verbose[-3000:]
+    assert f"test2: {DEMO}: loading otto_kgcov (otto_kgcov)" in collapsed, verbose[-3000:]
 
 
 def assert_store_has_the_three_demo_files(store: CoverageStore) -> None:

@@ -39,9 +39,9 @@
     },
     {
       "id": "library-uninstrumented",
-      "title": "coverage: the run log says the library is not instrumented",
+      "title": "coverage: the run log says the library was loaded for the demo",
       "venue": "bed",
-      "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_is_not_instrumented",
+      "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
       "control": false
     },
     {
@@ -535,7 +535,7 @@
     "library-uninstrumented": {
       "gcc-9": {
         "status": "measured-ok",
-        "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_is_not_instrumented",
+        "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
         "venue": "bed",
         "as_of": "2026-09-19",
         "outcome": "passed",
@@ -545,7 +545,7 @@
       },
       "gcc-10": {
         "status": "measured-ok",
-        "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_is_not_instrumented",
+        "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
         "venue": "bed",
         "as_of": "2026-09-19",
         "outcome": "passed",
@@ -555,7 +555,7 @@
       },
       "gcc-11": {
         "status": "measured-ok",
-        "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_is_not_instrumented",
+        "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
         "venue": "bed",
         "as_of": "2026-09-19",
         "outcome": "passed",
@@ -565,7 +565,7 @@
       },
       "gcc-12": {
         "status": "measured-ok",
-        "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_is_not_instrumented",
+        "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
         "venue": "bed",
         "as_of": "2026-09-19",
         "outcome": "passed",
@@ -575,7 +575,7 @@
       },
       "gcc-13": {
         "status": "measured-ok",
-        "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_is_not_instrumented",
+        "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
         "venue": "bed",
         "as_of": "2026-09-19",
         "outcome": "passed",
@@ -585,7 +585,7 @@
       },
       "gcc-14": {
         "status": "measured-ok",
-        "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_is_not_instrumented",
+        "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
         "venue": "bed",
         "as_of": "2026-09-19",
         "outcome": "passed",
@@ -595,7 +595,7 @@
       },
       "clang": {
         "status": "measured-ok",
-        "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_is_not_instrumented",
+        "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
         "venue": "bed",
         "as_of": "2026-09-19",
         "outcome": "passed",

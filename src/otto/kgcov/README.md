@@ -11,6 +11,23 @@ debugfs control file per registered module. Any gcc from 4.7 to 15, or
 clang 11 and newer; the library and its consumers must be built by the same
 compiler family, and for gcc by the same major.
 
+This directory reaches a user's repo one of two ways: `otto init --kgcov`
+vendors it (default `third_party/otto_kgcov`) alongside a commented
+`[[dev_tools]]` entry and a consumer starter, or `otto cov kgcov export
+<dir>` vendors just the sources with none of the rest of that scaffolding.
+`otto cov kgcov check <dir>` compares a vendored copy with the library this
+otto ships (exit 0 current, 1 differs, 2 absent) and `otto init` reports
+the same drift as a warning. Every build reports a `MODULE_VERSION` of
+`<otto version>+kgcov<n>`, `n` being the interface number
+(`KGCOV_INTERFACE` in `kgcov.h`) this build implements — the debugfs
+layout, the `gcov_dir` parameter and the consumer macros below all move
+together with it, and otto refuses to load a `.ko` whose `n` does not match
+its own. A `kgcov_local.h` beside the sources, never exported nor compared,
+lets a build replace the kernel-facing allocation, lock and debugfs names
+`kgcov_gcov.h` isolates for it, one name at a time. See
+[the kernel-modules guide page](../../../docs/cli/cov/instrumenting/kernel-modules.md#getting-the-library)
+for all of the above in more detail.
+
 `build.sh <build-dir> [<release>]` builds it out of tree; `KDIR`, `ARCH`,
 `CROSS_COMPILE`, `LLVM`, `CC` and `KMAKEFLAGS` pass through to kbuild — see
 the kernel-modules guide page

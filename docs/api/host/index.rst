@@ -44,6 +44,7 @@ local and remote machines.
    shell_kind
    llext_kind
    kmod_kind
+   kmod_tool_kind
    docker_image_kind
    power
    privilege

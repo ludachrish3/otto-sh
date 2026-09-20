@@ -13,28 +13,24 @@ lab_patterns = [".*"]
 backend = "json"
 paths = ["../_fixtures/lab_data/tech1"]
 
-# The library builds out of tree into build/lib/ (git-ignored — see
-# docs/examples/kgcov/build.sh, run by this repo's own build.sh). The demo
-# builds IN PLACE under kmod/demo/, alongside its committed sources: a
-# capture anchors every measured file to a committed git blob under this
-# repo, so the demo's .c/.h files (and the .gcno files gcc emits beside
-# them) must live here rather than in a git-ignored copy. The library is
-# declared FIRST: products install in declaration order and the demo
-# links against it. Unloading in reverse (the demo before the library it
-# depends on) is this suite's own teardown, not an otto guarantee — otto's
-# own uninstall walks products in declaration order like everything else.
-[[products]]
+# The library builds out of tree into build/lib/ (git-ignored) from this
+# repo's vendored copy, third_party/otto_kgcov/ (an `otto cov kgcov export`,
+# held current against the installed otto by a guard), by this repo's own
+# build.sh. It is a DEV TOOL, not a product: nothing measures it, and the
+# demo below loads it on demand at install — `install-tools` beforehand
+# costs nothing, and `cleanup` removes it after the products. One entry per
+# kernel; both bed hosts run the same one.
+[[dev_tools]]
 name = "otto_kgcov"
-kind = "kmod"
+kind = "kgcov"
 artifact = "build/lib/otto_kgcov.ko"
-coverage = "none"
-# otto_kgcov itself implements the __gcov_* runtime callbacks its
-# consumers call, so its .ko legitimately contains "__gcov_" bytes and
-# the instrumentation byte-scan misreads it as instrumented. It carries
-# no .gcda output of its own, so this override is simply correct.
-instrumented = false
+source = "third_party/otto_kgcov"
 match = { id = "test[12]" }
 
+# The demo builds IN PLACE under kmod/demo/, alongside its committed sources:
+# a capture anchors every measured file to a committed git blob under this
+# repo, so the demo's .c/.h files (and the .gcno files gcc emits beside
+# them) must live here rather than in a git-ignored copy.
 [[products]]
 name = "otto_kmod_demo"
 kind = "kmod"

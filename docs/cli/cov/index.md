@@ -34,6 +34,8 @@ validity, and why only manual captures are committed.
 otto cov get    [OPTIONS]
 otto cov clean
 otto cov report [OUTPUT_DIR...] [OPTIONS]
+otto cov kgcov export DIR
+otto cov kgcov check DIR
 ```
 
 | Subcommand | Description |
@@ -41,6 +43,7 @@ otto cov report [OUTPUT_DIR...] [OPTIONS]
 | `get` | Fetch `.gcda` counters from each coverage host's instrumented products and write one `capture.json` per host per product, anchored to `base_commit` (also run implicitly by `otto test --cov`) |
 | `clean` | Zero each product's remote `.gcda` counters ahead of a fresh session (Unix coverage hosts only) |
 | `report` | Assemble every tier — e2e captures, unit harvest, committed manual store — into an HTML report |
+| `kgcov` | Vendor the `otto_kgcov` kernel-module library into a repo (`export`), or compare a vendored copy with this otto (`check`: exit 0 current, 1 differs, 2 absent). Lab-free. See {doc}`instrumenting/kernel-modules`. |
 
 ## Examples
 

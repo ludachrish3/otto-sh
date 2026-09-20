@@ -1038,3 +1038,87 @@ def clean() -> None:
 
 # `clean` zeroes remote counters and writes nothing locally — no output dir.
 clean.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
+
+
+# ---------------------------------------------------------------------------
+# otto cov kgcov — vendor the otto_kgcov library and check a vendored copy
+# ---------------------------------------------------------------------------
+
+kgcov_app = typer.Typer(
+    name="kgcov",
+    no_args_is_help=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+    help="Vendor the otto_kgcov kernel-module library into a repo, or check a vendored copy.",
+)
+
+
+@kgcov_app.callback()
+def kgcov_callback(ctx: typer.Context) -> None:
+    """Vendor the otto_kgcov library (`export`) or compare a vendored copy with this otto (`check`).
+
+    The library is a kernel module a user's own build system builds against
+    each of their kernels; otto never builds it. `export` writes the sources
+    this otto ships, overwriting (the copy is committed, so the repo's own
+    diff is the review); `check` compares byte for byte, ignoring the
+    `kgcov_local.h` override, and exits 0 current / 1 differs / 2 absent.
+    """
+    if ctx.resilient_parsing:
+        return
+
+
+@kgcov_app.command("export")
+def kgcov_export(
+    directory: Annotated[
+        Path, typer.Argument(help="Where the vendored copy lives (created if absent).")
+    ],
+) -> None:
+    """Write the otto_kgcov sources this otto ships into DIRECTORY."""
+    from ..kgcov import export_tree
+
+    result = export_tree(directory)
+    if result.changed:
+        typer.echo(
+            f"{result.directory}: {len(result.changed)} file(s) written "
+            f"(otto {result.version}): {', '.join(result.changed)}"
+        )
+    else:
+        typer.echo(f"{result.directory}: already current (otto {result.version})")
+
+
+kgcov_export.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
+kgcov_export.__cli_lab_free__ = True  # ty: ignore[unresolved-attribute]
+
+
+@kgcov_app.command("check")
+def kgcov_check(
+    directory: Annotated[Path, typer.Argument(help="The vendored copy to compare.")],
+) -> None:
+    """Compare DIRECTORY with the library this otto ships; exit 0 current, 1 differs, 2 absent."""
+    from ..kgcov import check_tree
+
+    result = check_tree(directory)
+    if result.state == "absent":
+        typer.echo(f"{result.directory}: no otto_kgcov there (no kgcov.h)")
+    elif result.state == "current":
+        origin = f", exported by otto {result.exported_by}" if result.exported_by else ""
+        override = "; kgcov_local.h present" if result.local_override else ""
+        typer.echo(f"{result.directory}: current{origin}{override}")
+    else:
+        origin = f" (exported by otto {result.exported_by})" if result.exported_by else ""
+        parts = []
+        if result.differing:
+            parts.append(f"differs: {', '.join(result.differing)}")
+        if result.missing:
+            parts.append(f"missing: {', '.join(result.missing)}")
+        typer.echo(
+            f"{result.directory}: not this otto's library{origin} — {'; '.join(parts)}. "
+            f"Re-export with `otto cov kgcov export {result.directory}` and review the diff."
+        )
+    if result.exit_code:
+        raise typer.Exit(result.exit_code)
+
+
+kgcov_check.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
+kgcov_check.__cli_lab_free__ = True  # ty: ignore[unresolved-attribute]
+
+cov_app.add_typer(kgcov_app, name="kgcov")

@@ -23,7 +23,7 @@ from tests.e2e.cov._kmod_assertions import (
     assert_parse_hits_that_do_not_depend_on_folding,
     assert_policy_paths_have_the_expected_hits,
     assert_policy_switch_records_branches,
-    assert_run_log_reports_the_library_uninstrumented,
+    assert_run_log_reports_the_library_loaded_on_demand,
     assert_store_has_the_three_demo_files,
     assert_three_gcda_per_host,
 )
@@ -79,8 +79,8 @@ class TestKmodFetchTree:
     def test_three_gcda_per_host_one_per_translation_unit(self, coverage_run):
         assert_three_gcda_per_host(coverage_run[1])
 
-    def test_the_run_log_says_the_library_is_not_instrumented(self, coverage_run):
-        assert_run_log_reports_the_library_uninstrumented(coverage_run[2])
+    def test_the_run_log_says_the_library_was_loaded_for_the_demo(self, coverage_run):
+        assert_run_log_reports_the_library_loaded_on_demand(coverage_run[2])
 
 
 @pytest.mark.integration

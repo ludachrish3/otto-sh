@@ -115,9 +115,9 @@ SURFACES: "tuple[Surface, ...]" = (
     ),
     Surface(
         "library-uninstrumented",
-        "coverage: the run log says the library is not instrumented",
+        "coverage: the run log says the library was loaded for the demo",
         BED,
-        f"{_BED_MODULE}::TestCoverage::test_the_run_log_says_the_library_is_not_instrumented",
+        f"{_BED_MODULE}::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
     ),
     Surface(
         "store-three-demo-files",
@@ -336,8 +336,13 @@ def validation_errors(matrix: dict) -> "list[str]":
 def axes_mismatch(matrix: dict) -> "list[str]":
     """Every way *matrix*'s axes disagree with the tree's (rows) and the Makefile's (columns)."""
     problems: "list[str]" = []
-    want_rows = [(s.id, s.contract, s.venue, s.control) for s in SURFACES]
-    have_rows = [(s["id"], s["contract"], s["venue"], s["control"]) for s in matrix["surfaces"]]
+    # The TITLE is compared too: it is the row label the page renders from the
+    # artifact, so a title left behind when the table's moved on is a caption
+    # that describes a contract the row no longer holds.
+    want_rows = [(s.id, s.title, s.contract, s.venue, s.control) for s in SURFACES]
+    have_rows = [
+        (s["id"], s["title"], s["contract"], s["venue"], s["control"]) for s in matrix["surfaces"]
+    ]
     if have_rows != want_rows:
         problems.append(f"surfaces differ from the table: {have_rows} != {want_rows}")
     declared = set(discover_contracts())

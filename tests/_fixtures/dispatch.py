@@ -10,12 +10,15 @@ contract sub-app unit tests mean to exercise.
 
 ``DispatchRunner`` is typer's ``CliRunner`` with one substitution: the app is
 resolved and wrapped exactly the way the root dispatch composes it
-(``resolve_spec_command`` + ``wrap_leaf_callbacks`` on a ``lab_free`` spec), so
+(``resolve_spec_command`` + ``wrap_leaf_callbacks`` on a synthetic spec), so
 command bodies run under the real bridge while the runner's isolation, input
-feeding, and ``Result`` API stay untouched. ``lab_free=True``/``output_dir=False``
-keep the preamble to its bootstrap gate — which is stubbed clean here, since
-these tests exercise command bodies, not repo discovery (the gate has its own
-tests in ``tests/unit/cli/test_bootstrap_gate.py``).
+feeding, and ``Result`` API stay untouched. The spec defaults to
+``lab_free=True``/``output_dir=False``, which keep the preamble to its
+bootstrap gate — which is stubbed clean here, since most sub-app tests
+exercise command bodies, not repo discovery (the gate has its own tests in
+``tests/unit/cli/test_bootstrap_gate.py``). Pass ``invoke(..., lab_free=False)``
+to drive a test through the preamble's lab slice instead — e.g. to exercise a
+leaf's own ``__cli_lab_free__`` opt-out under a lab-bound group.
 """
 
 from collections.abc import Mapping, Sequence
@@ -81,6 +84,7 @@ class DispatchRunner(CliRunner):
         spec_name: str | None = None,
         async_leaves: bool = False,
         dry_run_preview: bool | None = None,
+        lab_free: bool = True,
         **extra: Any,
     ) -> Result:
         """Invoke *app* (a Typer app or plain/async function loader) dispatched.
@@ -100,6 +104,23 @@ class DispatchRunner(CliRunner):
         *spec_name* names the ``CommandSpec`` (and so the resolved command);
         it defaults to the Typer app's own name. Function loaders (which have
         no app name) must pass it.
+
+        *lab_free* is the synthetic spec's own ``CommandSpec.lab_free`` —
+        default ``True`` (unchanged from before this parameter existed, so
+        every existing caller keeps its current behavior: the preamble's lab
+        slice never runs, the same simplification the module docstring
+        describes). Pass ``False`` to drive a test through the real lab
+        slice — e.g. to prove a leaf's own ``__cli_lab_free__`` marker (read
+        by ``otto.cli.invoke.command_preamble``) is what exempts it, rather
+        than this harness's spec already being lab-free regardless of the
+        leaf. Since this harness substitutes a synthetic ``CommandSpec``
+        instead of running the real root dispatch, nothing else stashes
+        ``ctx.meta['_otto_root_options']`` — ``ensure_cli_session`` and
+        ``ensure_lab_context`` both read it unconditionally (a bare
+        ``KeyError`` otherwise) — so ``lab_free=False`` also seeds a minimal
+        one (:func:`tests._fixtures.rootoptions.make_root_options`, ``labs``
+        left at its ``None`` default: no ``--lab`` given), the exact case the
+        lab slice must refuse.
         """
         from otto.cli.invoke import wrap_leaf_callbacks
         from otto.cli.registry import CommandSpec, resolve_spec_command
@@ -110,7 +131,7 @@ class DispatchRunner(CliRunner):
         spec = CommandSpec(
             name=name,
             loader=app,
-            lab_free=True,
+            lab_free=lab_free,
             output_dir=False,
             async_leaves=async_leaves,
             dry_run_preview=(
@@ -118,6 +139,19 @@ class DispatchRunner(CliRunner):
             ),
         )
         cmd = wrap_leaf_callbacks(resolve_spec_command(spec), spec)
+        if not lab_free:
+            from tests._fixtures.rootoptions import make_root_options
+
+            original_invoke = cmd.invoke
+
+            def _invoke_with_seeded_root_options(inner_ctx: typer.Context) -> Any:
+                # Seeded on the OUTERMOST context `cmd.invoke` ever receives —
+                # `ctx.meta` is one dict shared by reference down the whole
+                # context chain, so a leaf several groups deep sees it too.
+                inner_ctx.meta.setdefault("_otto_root_options", make_root_options())
+                return original_invoke(inner_ctx)
+
+            cmd.invoke = _invoke_with_seeded_root_options
         with (
             # CliRunner.invoke's only use of `app` is `_get_command(app)`;
             # substituting the dispatched command there keeps every other

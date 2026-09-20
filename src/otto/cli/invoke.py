@@ -1128,6 +1128,12 @@ def ensure_help_banner(ctx: typer.Context) -> None:
     print_banner()
 
 
+LAB_FREE_ATTR = "__cli_lab_free__"
+"""Per-leaf opt-out from the lab slice of the preamble, for a leaf under a
+lab-bound group that needs no lab (``otto cov kgcov export``). Read the same
+way as ``__cli_output_dir__``; the dry-run seam still applies."""
+
+
 def command_preamble(ctx: typer.Context) -> None:
     """Run once when a real (non-help) command invocation starts.
 
@@ -1159,7 +1165,11 @@ def command_preamble(ctx: typer.Context) -> None:
     fail_loud_on_bootstrap_errors(ctx)
 
     spec = command_spec(ctx)
-    if not spec.lab_free:
+    # A leaf under a lab-bound group may opt out of the lab slice with the
+    # same per-leaf mechanism ``ensure_lab_session`` reads for the output dir:
+    # ``otto cov kgcov export`` writes a local directory and touches no host.
+    leaf_lab_free = bool(getattr(ctx.command.callback, LAB_FREE_ATTR, False))
+    if not spec.lab_free and not leaf_lab_free:
         ensure_lab_session(ctx, spec)
         # After the session (the lab verdicts it installs ARE the input) and
         # before the gate: a run that is being refused must not first be

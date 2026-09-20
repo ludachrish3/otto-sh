@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Vendored from Linux v6.8 kernel/gcov/ for otto_kgcov. Changed from the
- * original: the include name; the counter table below; and
- * store_gcov_u32()/store_gcov_u64() at the end of the file, vendored
- * verbatim from kernel/gcov/base.c — convert_to_gcda() calls them, but
- * upstream they live in base.c, which is not vendored (see their own
- * comment).
+ * original: the include name; the counter table below; every allocation and
+ * free routed through the KGCOV_ macros in kgcov_gcov.h, so a build may
+ * replace them; and store_gcov_u32()/store_gcov_u64() at the end of the
+ * file, vendored verbatim from kernel/gcov/base.c — convert_to_gcda() calls
+ * them, but upstream they live in base.c, which is not vendored (see their
+ * own comment).
  *
  *  This code provides functions to handle gcc's profiling data format
  *  introduced with gcc 4.7.
@@ -309,7 +310,7 @@ struct gcov_info *gcov_info_dup(struct gcov_info *info)
 	size_t fi_size; /* function info size */
 	size_t cv_size; /* counter values size */
 
-	dup = kmemdup(info, sizeof(*dup), GFP_KERNEL);
+	dup = KGCOV_MEMDUP(info, sizeof(*dup));
 	if (!dup)
 		return NULL;
 
@@ -317,12 +318,12 @@ struct gcov_info *gcov_info_dup(struct gcov_info *info)
 	dup->filename = NULL;
 	dup->functions = NULL;
 
-	dup->filename = kstrdup(info->filename, GFP_KERNEL);
+	dup->filename = KGCOV_STRDUP(info->filename);
 	if (!dup->filename)
 		goto err_free;
 
-	dup->functions = kcalloc(info->n_functions,
-				 sizeof(struct gcov_fn_info *), GFP_KERNEL);
+	dup->functions = KGCOV_ALLOC_ARRAY(info->n_functions,
+				sizeof(struct gcov_fn_info *));
 	if (!dup->functions)
 		goto err_free;
 
@@ -331,7 +332,7 @@ struct gcov_info *gcov_info_dup(struct gcov_info *info)
 	fi_size += sizeof(struct gcov_ctr_info) * active;
 
 	for (fi_idx = 0; fi_idx < info->n_functions; fi_idx++) {
-		dup->functions[fi_idx] = kzalloc(fi_size, GFP_KERNEL);
+		dup->functions[fi_idx] = KGCOV_ALLOC(fi_size);
 		if (!dup->functions[fi_idx])
 			goto err_free;
 
@@ -344,7 +345,7 @@ struct gcov_info *gcov_info_dup(struct gcov_info *info)
 
 			cv_size = sizeof(gcov_type) * sci_ptr->num;
 
-			dci_ptr->values = kvmalloc(cv_size, GFP_KERNEL);
+			dci_ptr->values = KGCOV_BIG_ALLOC(cv_size);
 
 			if (!dci_ptr->values)
 				goto err_free;
@@ -386,15 +387,15 @@ void gcov_info_free(struct gcov_info *info)
 		ci_ptr = info->functions[fi_idx]->ctrs;
 
 		for (ct_idx = 0; ct_idx < active; ct_idx++, ci_ptr++)
-			kvfree(ci_ptr->values);
+			KGCOV_BIG_FREE(ci_ptr->values);
 
-		kfree(info->functions[fi_idx]);
+		KGCOV_FREE(info->functions[fi_idx]);
 	}
 
 free_info:
-	kfree(info->functions);
-	kfree(info->filename);
-	kfree(info);
+	KGCOV_FREE(info->functions);
+	KGCOV_FREE(info->filename);
+	KGCOV_FREE(info);
 }
 
 /**

@@ -6,7 +6,9 @@
  * kgcov_ctor_info() instead of the in-kernel gcov's list, lock and event
  * (otto_kgcov keeps its own per-client list in kgcov.c); local
  * prototypes for the llvm_* entry points; the two backend hooks
- * kgcov_gcov.h declares, at the end of the file; and store_gcov_u32()/
+ * kgcov_gcov.h declares, at the end of the file; every allocation, free and
+ * lock operation routed through the KGCOV_ macros in kgcov_gcov.h, so a
+ * build may replace them; and store_gcov_u32()/
  * store_gcov_u64(), vendored verbatim from Linux v6.8 kernel/gcov/base.c —
  * convert_to_gcda() below calls them, but upstream they live in base.c, not
  * clang.c, and this backend has no base.c-equivalent translation unit of its
@@ -57,6 +59,13 @@
  * GCOVProfiler::insertFlush().
  */
 
+/*
+ * Kbuild force-includes a kgcov_local.h before this file when one exists, and
+ * such a header pulls kernel headers of its own, so printk.h's own pr_fmt may
+ * already be defined here. Undefine it first: without one, this redefinition
+ * warns.
+ */
+#undef pr_fmt
 #define pr_fmt(fmt)	"gcov: " fmt
 
 #include <linux/kernel.h>
@@ -109,13 +118,13 @@ static struct gcov_info *current_info;
  * only one that occurs, the registering thread holding the library's lock
  * across the walk that reaches this writeout.
  */
-static DEFINE_MUTEX(llvm_gcov_writeout_lock);
+KGCOV_DEFINE_LOCK(llvm_gcov_writeout_lock);
 
 static LIST_HEAD(clang_gcov_list);
 
 void llvm_gcov_init(llvm_gcov_callback writeout, llvm_gcov_callback flush)
 {
-	struct gcov_info *info = kzalloc(sizeof(*info), GFP_KERNEL);
+	struct gcov_info *info = KGCOV_ALLOC(sizeof(*info));
 
 	if (!info)
 		return;
@@ -123,11 +132,11 @@ void llvm_gcov_init(llvm_gcov_callback writeout, llvm_gcov_callback flush)
 	INIT_LIST_HEAD(&info->head);
 	INIT_LIST_HEAD(&info->functions);
 
-	mutex_lock(&llvm_gcov_writeout_lock);
+	KGCOV_LOCK(&llvm_gcov_writeout_lock);
 	current_info = info;
 	writeout();
 	current_info = NULL;
-	mutex_unlock(&llvm_gcov_writeout_lock);
+	KGCOV_UNLOCK(&llvm_gcov_writeout_lock);
 	kgcov_ctor_info(info);
 }
 EXPORT_SYMBOL(llvm_gcov_init);
@@ -142,7 +151,7 @@ EXPORT_SYMBOL(llvm_gcda_start_file);
 
 void llvm_gcda_emit_function(u32 ident, u32 func_checksum, u32 cfg_checksum)
 {
-	struct gcov_fn_info *info = kzalloc(sizeof(*info), GFP_KERNEL);
+	struct gcov_fn_info *info = KGCOV_ALLOC(sizeof(*info));
 
 	if (!info)
 		return;
@@ -318,16 +327,15 @@ void gcov_info_add(struct gcov_info *dst, struct gcov_info *src)
 static struct gcov_fn_info *gcov_fn_info_dup(struct gcov_fn_info *fn)
 {
 	size_t cv_size; /* counter values size */
-	struct gcov_fn_info *fn_dup = kmemdup(fn, sizeof(*fn),
-			GFP_KERNEL);
+	struct gcov_fn_info *fn_dup = KGCOV_MEMDUP(fn, sizeof(*fn));
 	if (!fn_dup)
 		return NULL;
 	INIT_LIST_HEAD(&fn_dup->head);
 
 	cv_size = fn->num_counters * sizeof(fn->counters[0]);
-	fn_dup->counters = kvmalloc(cv_size, GFP_KERNEL);
+	fn_dup->counters = KGCOV_BIG_ALLOC(cv_size);
 	if (!fn_dup->counters) {
-		kfree(fn_dup);
+		KGCOV_FREE(fn_dup);
 		return NULL;
 	}
 
@@ -347,12 +355,12 @@ struct gcov_info *gcov_info_dup(struct gcov_info *info)
 	struct gcov_info *dup;
 	struct gcov_fn_info *fn;
 
-	dup = kmemdup(info, sizeof(*dup), GFP_KERNEL);
+	dup = KGCOV_MEMDUP(info, sizeof(*dup));
 	if (!dup)
 		return NULL;
 	INIT_LIST_HEAD(&dup->head);
 	INIT_LIST_HEAD(&dup->functions);
-	dup->filename = kstrdup(info->filename, GFP_KERNEL);
+	dup->filename = KGCOV_STRDUP(info->filename);
 	if (!dup->filename)
 		goto err;
 
@@ -380,12 +388,12 @@ void gcov_info_free(struct gcov_info *info)
 	struct gcov_fn_info *fn, *tmp;
 
 	list_for_each_entry_safe(fn, tmp, &info->functions, head) {
-		kvfree(fn->counters);
+		KGCOV_BIG_FREE(fn->counters);
 		list_del(&fn->head);
-		kfree(fn);
+		KGCOV_FREE(fn);
 	}
-	kfree(info->filename);
-	kfree(info);
+	KGCOV_FREE(info->filename);
+	KGCOV_FREE(info);
 }
 
 /**
@@ -484,7 +492,7 @@ void gcov_info_forget(struct gcov_info *info)
 
 	list_for_each_entry_safe(fn, tmp, &info->functions, head) {
 		list_del(&fn->head);
-		kfree(fn);
+		KGCOV_FREE(fn);
 	}
-	kfree(info);
+	KGCOV_FREE(info);
 }

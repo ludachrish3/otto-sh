@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 # Build repo5's kernel-module products: the library out of tree into
-# build/lib/ (git-ignored — docs/examples/kgcov/build.sh does that half),
+# build/lib/ (git-ignored — third_party/otto_kgcov/build.sh does that half),
 # then the demo IN PLACE under kmod/demo/ against it. The demo's sources are
 # committed here rather than copied: otto's coverage capture anchors every
 # measured file to a committed git blob under the SUT repo, so only the
 # library (never itself directly measured) needs an out-of-tree build.
 #
+# The library is the repo's OWN vendored copy at third_party/otto_kgcov/,
+# written by `otto cov kgcov export` — exactly what a user's repo holds,
+# never a reach into otto's package sources.
+#
 #   kmod/build.sh [<kernel-release>]
 #
 # The kernel tree and toolchain are the environment's, exactly as
-# docs/examples/kgcov/build.sh takes them: KDIR (default
+# third_party/otto_kgcov/build.sh takes them: KDIR (default
 # /lib/modules/<release>/build), ARCH, CROSS_COMPILE, LLVM, CC, KMAKEFLAGS.
 # <release> defaults to the running kernel, or to the tree's own release
 # when KDIR is set; both modules' vermagic is checked against it.
@@ -30,7 +34,7 @@ else
 fi
 export KDIR
 
-"$REPO/../../docs/examples/kgcov/build.sh" "$REPO/build" "$RELEASE"
+"$REPO/third_party/otto_kgcov/build.sh" "$REPO/build" "$RELEASE"
 # The demo builds IN PLACE (unlike the library, which build.sh always starts
 # from a clean copy) so a previous run's objects for another compiler or
 # ARCH must be cleaned first, or they can survive into this one's link.

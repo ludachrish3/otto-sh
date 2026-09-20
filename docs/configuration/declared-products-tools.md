@@ -200,8 +200,10 @@ from the entry above it.
 
 ## The `kmod` kind
 
-Built in, products only: a Linux kernel module, loaded with `insmod` and
-unloaded with `rmmod`.
+Built in, in both seams: a Linux kernel module, loaded with `insmod` and
+unloaded with `rmmod`. A product's `kmod` and a dev tool's `kmod` are two
+separate factories, each registered in its own registry — the product form
+carries coverage; the dev-tool form is a plain module with none.
 
 | Param | Meaning |
 |---|---|
@@ -212,8 +214,7 @@ unloaded with `rmmod`.
 | `gcov_path` | Required with `coverage = "kernel"`: the module's own subtree under `/sys/kernel/debug/gcov/`, as a full path; refused outside it |
 | `cov_dir`, `instrumented`, `debug_log_globs` | As the `shell` kind, and likewise products only |
 
-Registered for products only — a kernel module is never a dev tool — and
-refused at lab load on any host missing `load`/`unload`/`lsmod` (today only a
+Refused at lab load on any host missing `load`/`unload`/`lsmod` (today only a
 `UnixHost`), naming the host. With `coverage = "module"` otto appends
 `gcov_dir=<cov_dir>` to `params` itself so the `otto_kgcov` runtime
 ({doc}`../cli/cov/instrumenting/kernel-modules`) knows where to write; a
@@ -227,6 +228,75 @@ is what a suite's teardown does. The kernel wrote the counter files as root, so
 every delete a `kmod` product's coverage hooks issue runs under sudo. See
 {doc}`../cli/cov/instrumenting/kernel-modules` for the runtime, the worked
 example, and how a report reads back what it captured.
+
+### As a dev tool
+
+A `[[dev_tools]]` entry of `kind = "kmod"` is a kernel module a repo places on
+a host as tooling — a tracer, a test driver — rather than as software under
+test: `install-tools` loads it with `insmod` before any product, `cleanup`
+unloads it with `rmmod` after every product, and it is never part of a
+product's `is_installed` answer.
+
+| Param | Meaning |
+|---|---|
+| `artifact` | **Required.** The local `.ko`, as the product form |
+| `module_name` | Defaults to the artifact stem with `-` → `_`, as the product form |
+| `params` | Appended to `insmod` verbatim — **no placeholders**: a dev tool has no `cov_dir` to substitute |
+
+Refused at lab load on any host missing `load`/`unload`/`lsmod`, naming the
+host — the same check as the product form. There is no `coverage`,
+`gcov_path`, `cov_dir`, `instrumented` or `debug_log_globs` param here: a dev
+tool has no coverage of its own.
+
+The `kgcov` subtype — otto's own coverage library declared as a `kmod` dev
+tool — is documented next.
+
+### The kgcov subtype
+
+`kind = "kgcov"` is the `kmod` dev tool with `module_name` fixed to
+`otto_kgcov`: one entry per kernel, matched by `match` exactly as any other
+dev tool.
+
+| Param | Meaning |
+|---|---|
+| `artifact` | **Required.** The built `.ko`, as the `kmod` form |
+| `params` | Appended to `insmod` verbatim, as the `kmod` form — must not set `gcov_dir=`, which is the consumer's own parameter (see below) |
+| `source` | Optional: the vendored directory (`otto init --kgcov` / `otto cov kgcov export`) this build came from, repo-anchored — named in the interface-mismatch remedy below |
+
+`module_name` is not a kgcov key: it is fixed to `otto_kgcov`, and declaring
+it is an unknown-param error.
+
+```toml
+[[dev_tools]]
+name = "kgcov-6.8"
+kind = "kgcov"
+artifact = "build/lib/otto_kgcov.ko"
+source = "third_party/otto_kgcov"
+match = { id = "test[12]" }
+```
+
+Two refusals, on top of the `kmod` kind's own:
+
+- **Wrong interface.** A built `.ko`'s `MODULE_VERSION` reports
+  `<version>+kgcov<n>`; when `n` does not match this otto's own interface
+  number, the entry is refused at lab load if the file already exists, and
+  the same check always runs again at `install` — so a `.ko` built later,
+  after lab load found no file to check, is still refused before the
+  library is ever loaded — naming the tool, the artifact, both interface
+  numbers, and the re-export remedy: `otto cov kgcov export <source>` when
+  the entry declares `source`, and otherwise an instruction to re-export the
+  vendored library and declare `source` so it can be named. The artifact's
+  own directory is never offered: that is the build directory, and exporting
+  into it would put sources where the `.ko` lands. A `.ko` with no
+  `MODULE_VERSION` at all is refused the same way, naming it as not built
+  from exported sources.
+- **Two kgcov entries on one host.** A host runs one kernel and holds one
+  otto_kgcov; a host whose `match` tables select two `kgcov` entries is
+  refused at lab load, naming the host and both entries.
+
+Which product needs the library, and how otto loads it on demand before that
+product's own module, is the consumer's side — see
+{doc}`../cli/cov/instrumenting/kernel-modules`.
 
 ## The `docker_image` kind
 
