@@ -10,8 +10,10 @@ the cases that exercise otto's own control flow (refusal, delegation, the
 dry-run seam, ``--force``) deliberately do NOT build twice -- and the refusal
 case does not build at all, because "an environment already exists" is a
 question about a path, not about a venv. The pip arm is exercised exactly
-twice: one create (which also checks the recorded backend) and the
-passthrough contrast, each backend's own argv path.
+ONCE: one create, which also checks the recorded backend. Pip's own argv path
+-- the passthrough after ``--`` -- is pinned offline and in milliseconds by
+``tests/unit/env/test_backends.py::TestInstallerArgv`` rather than by a second
+real pip build, whose wall time belongs to pip and the index (#402).
 
 Every case pins OTTO_HOME at a tmp_path: without it these would build into the
 developer's real ~/.otto.
@@ -33,8 +35,11 @@ pytestmark = pytest.mark.hostless
 REPO4 = PROJECT_ROOT / "tests" / "repo4"
 
 # A real installer run, not otto's own logic: pip needs room (measured 9.5s
-# warm, and a cold wheel cache on CI is slower).
-BUILD_TIMEOUT = 300
+# warm, and a cold wheel cache on CI is slower). MUST STAY UNDER pyproject's
+# per-item `timeout = 180`: at 300 the item's own budget always fired first, so
+# a stalled installer arrived as pytest-timeout's blunt signal kill instead of
+# the subprocess's own TimeoutExpired, which names the command and its output.
+BUILD_TIMEOUT = 150
 
 BACKENDS = ("uv", "pip")
 
@@ -183,8 +188,7 @@ class TestSync:
         assert env is not None, f"sync built nothing under {home}"
         assert (env / ".otto-env.json").is_file()
 
-    @pytest.mark.parametrize("backend", BACKENDS)
-    def test_passthrough_after_a_double_dash_reaches_the_installer(self, tmp_path, backend, repo4):
+    def test_passthrough_after_a_double_dash_reaches_the_installer(self, tmp_path, repo4):
         """The contrast IS the assertion: same command, only the passthrough differs.
 
         repo4 requires ``otto-fixture-beetroot``, which exists on no index (that
@@ -192,10 +196,24 @@ class TestSync:
         the same create with ``-- --find-links`` must succeed -- which is proof
         the arguments after ``--`` travelled all the way to the resolver, not
         merely that otto parsed them.
+
+        THE CHEAP BACKEND ONLY, deliberately (#402). This case buys one thing
+        the installer owns -- that a real resolver honours the tokens -- and the
+        successful arm pays for it twice over, because a create that succeeds
+        also installs otto itself with its whole dependency closure. Measured
+        2026-09-20 with a warm cache on an idle machine: uv 2.65 s, pip 13.70 s
+        (the failing arm 4.0 s, the succeeding arm 9.5 s, both dominated by
+        index round-trips); the issue reports 156 s for the pair on a cold CI
+        cache and a timeout past 180 s under the coverage gate. That budget was
+        measuring pip and the network, never otto. What is otto's -- that the
+        tokens reach PIP'S argv, verbatim and last -- is pinned offline and in
+        milliseconds by ``tests/unit/env/test_backends.py::TestInstallerArgv``,
+        and pip's end-to-end build contract stays with
+        ``test_it_builds_an_env_holding_otto_and_the_installable_repo[pip]``.
         """
         home = tmp_path / "home"
         without = _run(
-            ["env", "create", "--backend", backend],
+            ["env", "create", "--backend", "uv"],
             home=home,
             sut_dirs=f"{REPO1},{repo4}",
             timeout=BUILD_TIMEOUT,
@@ -211,7 +229,7 @@ class TestSync:
                 "create",
                 "--force",
                 "--backend",
-                backend,
+                "uv",
                 "--",
                 "--find-links",
                 str(WHEELS_DIR),
