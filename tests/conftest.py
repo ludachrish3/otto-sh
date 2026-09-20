@@ -105,6 +105,106 @@ def pytest_collection_modifyitems(config, items) -> None:  # type: ignore[no-unt
 
 
 import os
+import sys
+import tempfile
+from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Bytecode hermeticity: NO test process writes __pycache__ into src/otto.
+#
+# CPython's FileFinder caches a sys.path directory's listing and re-lists it
+# whenever that directory's st_mtime moved. The import-budget child
+# (scripts/import_budget.py) imports otto from the EDITABLE install, i.e. the
+# same src/otto tree the rest of the run shares — so a SIBLING xdist worker
+# importing a module for the first time creates src/otto/<pkg>/__pycache__/,
+# bumps that package directory's mtime, and buys the child's audited
+# listdir/open counters exactly one extra call. That is a fact about who else
+# was running, and it reddened a different surface's golden each time it
+# landed: #321, #343, #360, #361 — one defect, filed four times.
+#
+# 5fc5c97b made the MEASUREMENT tolerant (listdir counts directories, not
+# calls; open left the goldens entirely). This closes the same hole at the
+# WRITER instead: point every test process's bytecode cache at a tree outside
+# the repo, and no package directory's mtime moves during a run at all.
+#
+# WHY HERE, and not in the Makefile or nox:
+# * This block runs at conftest IMPORT — during pytest's initial-conftest load
+#   in the controller, which is before xdist creates any worker. execnet spawns
+#   workers with the controller's os.environ, so every worker starts with
+#   PYTHONPYCACHEPREFIX already set, and so does every subprocess a test spawns
+#   from an inherited environment (including the import-budget child, whose
+#   _sanitized_env() copies os.environ minus OTTO_*, so it needs no explicit
+#   re-export and still reads ONE warm cache rather than a cold one per call).
+# * It therefore covers bare `pytest`, every Makefile target, nox and `otto
+#   test` from one place, instead of N invocation sites that drift apart.
+# * sys.pycache_prefix is assigned too, because the ENV VAR is only read at
+#   interpreter startup: the controller has already started, and
+#   importlib re-reads sys.pycache_prefix on every cache_from_source call. The
+#   limit that leaves is honest and small — modules the CONTROLLER imported
+#   before this line (pytest and its plugins, from site-packages) were already
+#   cached wherever they were cached; nothing under src/otto is imported this
+#   early.
+# * An already-set PYTHONPYCACHEPREFIX is honoured, so a CI job can redirect it
+#   without fighting this line.
+#
+# The prefix lives OUTSIDE the checkout (beside ~/.cache/otto/busybox), which
+# is what keeps it out of .gitignore, `make clean` and the uv_build sdist/wheel
+# — a cache directory inside src/otto would ship. Paths are mirrored under the
+# prefix by absolute source path, so worktrees never collide.
+#
+# Pinned by pytest_sessionfinish below.
+# ---------------------------------------------------------------------------
+def _resolve_pycache_prefix() -> str:
+    """Where this session's bytecode cache goes: an inherited value, else a cache dir."""
+    inherited = os.environ.get("PYTHONPYCACHEPREFIX")
+    if inherited:
+        return inherited
+    try:
+        base = Path(os.environ.get("XDG_CACHE_HOME") or "~/.cache").expanduser()
+    except RuntimeError:
+        # No $HOME and no pwd entry for this uid (scratch container, pruned
+        # passwd file). This runs at conftest IMPORT, so an escaping exception
+        # aborts the whole session rather than failing a test.
+        base = Path(tempfile.gettempdir())
+    return str(base / "otto" / "pytest-pycache")
+
+
+_PYCACHE_PREFIX = _resolve_pycache_prefix()
+os.environ["PYTHONPYCACHEPREFIX"] = _PYCACHE_PREFIX
+sys.pycache_prefix = _PYCACHE_PREFIX
+
+# Safe above the NO_COLOR/TERM block below, which must precede any typer,
+# click or rich import: tests/_fixtures/__init__.py is empty and paths.py
+# imports only sys and pathlib, so nothing coloured is pulled in early. An
+# otto import growing into paths.py would break that — move this line (and
+# the two below) under the colour block if it ever does.
+from tests._fixtures.paths import PROJECT_ROOT
+
+_SRC_OTTO = PROJECT_ROOT / "src" / "otto"
+
+
+def _src_otto_pycache_dirs() -> "frozenset[Path]":
+    """Every ``__pycache__`` directory currently under ``src/otto``."""
+    return frozenset(
+        Path(dirpath) / name
+        for dirpath, dirnames, _ in os.walk(_SRC_OTTO)
+        for name in dirnames
+        if name == "__pycache__"
+    )
+
+
+# A SNAPSHOT, not an absolute "there are none": a developer tree carries
+# __pycache__ dirs written by a plain `python -c import otto`, and this guard
+# has no business failing on those. Only directories that appear DURING the
+# session are the guard's business — and directory CREATION is precisely the
+# event that moves a package directory's mtime, so a rewrite inside a
+# __pycache__ that already existed is correctly not counted. Taken in the
+# controller only (a worker re-walking the tree buys nothing) and at import
+# time, which is the earliest moment available.
+_PYCACHE_AT_SESSION_START = (
+    frozenset() if os.environ.get("PYTEST_XDIST_WORKER") else _src_otto_pycache_dirs()
+)
 
 # Disable colored CLI output before typer/click/rich are imported anywhere.
 # CI runners (e.g. GitHub Actions) set FORCE_COLOR, which causes Rich to embed
@@ -146,12 +246,10 @@ import errno
 import gc
 import ipaddress
 import logging
-import sys
 import types
 import weakref
 from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -508,6 +606,76 @@ def pytest_runtest_teardown(item):
     # flagged at this very boundary instead of one test later.
     _report_leaked_transports(item)
     return result
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session, exitstatus):  # type: ignore[no-untyped-def]
+    """Fail the session if it wrote a NEW ``__pycache__`` under ``src/otto``.
+
+    The invariant the ``PYTHONPYCACHEPREFIX`` block at the top of this module
+    buys: a test process that writes bytecode into the editable source tree
+    bumps a package directory's mtime, and CPython's ``FileFinder`` then
+    re-lists that directory in every OTHER process importing from it — which
+    is how one worker's first import moved the import-budget child's audited
+    counters by one (#321, #343, #360, #361).
+
+    Controller-only under xdist: workers have finished and been collected by
+    the time the controller's ``pytest_sessionfinish`` runs, so one walk here
+    sees everything all of them wrote. ``trylast`` puts the report after the
+    other ``pytest_sessionfinish`` implementations, but NOT after the terminal
+    reporter's summary line: the terminal reporter's own hook is a
+    HOOKWRAPPER, so every plain impl — ``trylast`` included — runs inside it,
+    before its post-yield ``= N passed in Xs =``. The report therefore prints
+    just above that line. ``pytest_unconfigure`` is the hook to move to if
+    being literally last ever matters.
+
+    Reports by NAMING the directories, because the useful question is which
+    subprocess env lost the prefix, and the directory says which package it
+    was importing.
+
+    TWO STATED HOLES, both of them windows outside the walk rather than gaps
+    in it:
+
+    * A writer that runs BEFORE this conftest is imported — the controller's
+      plugins, loaded ahead of the initial conftests — is already in the
+      snapshot, so its directories read as pre-existing. Nothing under
+      ``src/otto`` is imported that early today.
+    * A writer that runs AFTER this hook — a daemon, a detached subprocess, or
+      anything a test left running past session end — writes into a tree
+      nobody walks again. Its bytecode still lands in ``src/otto`` and still
+      perturbs the NEXT run's first measurement; this guard simply cannot
+      attribute it to the session that spawned it.
+    """
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        return
+    created = sorted(_src_otto_pycache_dirs() - _PYCACHE_AT_SESSION_START)
+    if not created:
+        return
+    reporter = session.config.pluginmanager.getplugin("terminalreporter")
+    lines = [
+        (
+            f"{len(created)} __pycache__ director(ies) were created under "
+            f"src/otto during this session:"
+        ),
+        *(f"  {path}" for path in created),
+        (
+            "A test process wrote bytecode into the editable source tree. That "
+            "bumps the package directory's mtime, so CPython's FileFinder "
+            "re-lists it in every other process importing from src/otto and the "
+            "import-budget child's audited I/O counters move by one "
+            "(#321/#343/#360/#361). tests/conftest.py exports "
+            "PYTHONPYCACHEPREFIX for the whole session; the process that wrote "
+            "these was spawned with an env that dropped it."
+        ),
+    ]
+    if reporter is not None:
+        reporter.write_sep("=", "bytecode escaped into src/otto", red=True)
+        for line in lines:
+            reporter.write_line(line)
+    else:  # pragma: no cover - only without the terminal reporter (e.g. -p no:terminal)
+        print("\n".join(lines))  # noqa: T201 — test diagnostic output
+    if exitstatus == 0:
+        session.exitstatus = 1
 
 
 def pytest_terminal_summary(terminalreporter):  # type: ignore[no-untyped-def]

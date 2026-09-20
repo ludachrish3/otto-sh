@@ -254,6 +254,44 @@ def test_repo_bearing_surface_isolates_home_and_repo():
     )
 
 
+def test_a_repo_bearing_surface_never_inherits_a_bytecode_cache_prefix(monkeypatch):
+    """``PYTHONPYCACHEPREFIX`` is DROPPED for a repo surface and KEPT for the rest.
+
+    ``tests/conftest.py`` exports a session-wide prefix so no test process
+    writes ``__pycache__`` into the editable ``src/otto`` tree (#321, #343,
+    #360, #361). ``_sanitized_env`` copies the ambient environment, so every
+    child inherits it unless something says otherwise — and for a repo-bearing
+    surface that inheritance is not neutral: it moves the fixture modules'
+    ``.pyc`` PROBE out of the fixture root, so the gated ``open_fixture``
+    drops one per module (7 -> 4, 11 -> 8, 61 -> 58) against unchanged product
+    code. See :func:`scripts.import_budget.surface_env`.
+
+    The variable is SET here rather than read off the runner: under a bare
+    ``python scripts/import_budget.py`` no prefix exists, so a test that only
+    inherited one would be green on every machine with the pop deleted.
+    Asserting the non-repo half in the same breath keeps the pop from widening
+    into "strip it everywhere", which would put those children's writes back
+    into ``src/otto``.
+    """
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", "/nowhere/a-prefix-a-child-must-not-see")
+
+    repo_bearing = [s for s in harness.SURFACES if s.sut_files is not None]
+    plain = [s for s in harness.SURFACES if s.sut_files is None]
+    assert repo_bearing, "the repo-bearing half of the claim needs at least one surface"
+    assert plain, "the non-repo half of the claim needs at least one surface"
+
+    leaked = [s.key for s in repo_bearing if "PYTHONPYCACHEPREFIX" in harness.surface_env(s)]
+    assert not leaked, (
+        f"repo-bearing surfaces inherited a bytecode-cache prefix: {leaked} — their "
+        f"gated open_fixture loses the in-tree .pyc probe the goldens describe"
+    )
+    dropped = [s.key for s in plain if "PYTHONPYCACHEPREFIX" not in harness.surface_env(s)]
+    assert not dropped, (
+        f"non-repo surfaces lost the session bytecode-cache prefix: {dropped} — they "
+        f"write bytecode, and without it they write it into src/otto"
+    )
+
+
 def test_every_surface_pins_a_private_otto_home():
     """``OTTO_HOME`` is pinned on EVERY surface, not only the repo-bearing ones.
 

@@ -44,6 +44,19 @@ def coverage_subprocess_env(
     ``sitecustomize`` bootstrap on ``PYTHONPATH`` — enough for any plain
     ``python`` child process to fold its lines into the combined report.
     Use :func:`otto_subprocess_env` for children that run ``otto`` itself.
+
+    ``PYTHONPYCACHEPREFIX`` IS A PASSTHROUGH, for the same reason ``PATH`` and
+    ``HOME`` are: this env is built from scratch, so a variable not named here
+    does not reach the child. ``tests/conftest.py`` exports that prefix for the
+    whole session precisely so no test process writes ``__pycache__`` into the
+    editable ``src/otto`` tree — a directory created there bumps its mtime, and
+    CPython's ``FileFinder`` then re-lists it in every other process importing
+    from ``src/otto``, moving the import-budget child's audited I/O counters by
+    one (#321, #343, #360, #361). These children import otto, so dropping the
+    prefix here put the writes straight back: measured, one ``-n 4`` run of
+    ``tests/unit/host`` against a cold tree created six of them. Absent when
+    nothing set one (a bare ``python -m pytest`` outside this conftest, or a
+    direct call), which leaves the child's default behaviour untouched.
     """
     env: dict[str, str] = {
         "PATH": os.environ.get("PATH", ""),
@@ -53,6 +66,9 @@ def coverage_subprocess_env(
             [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
         ).rstrip(os.pathsep),
     }
+    pycache_prefix = os.environ.get("PYTHONPYCACHEPREFIX")
+    if pycache_prefix:
+        env["PYTHONPYCACHEPREFIX"] = pycache_prefix
     if extra_env:
         env.update(extra_env)
     return env

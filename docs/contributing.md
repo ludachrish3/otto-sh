@@ -163,6 +163,15 @@ uv run pytest         # run the test suite
 
 `make dev` places `otto` at `otto-sh/.venv/bin/otto`.
 
+The test suite caches its bytecode under `$XDG_CACHE_HOME/otto/pytest-pycache`
+(falling back to `~/.cache`, then the system temp dir), never in `src/otto` —
+`tests/conftest.py` exports `PYTHONPYCACHEPREFIX` for you, so there is nothing
+to set, and a session that does write a `__pycache__` under `src/otto` fails
+with the directory named. Bytecode written into the editable tree bumps a
+package directory's mtime and moves another process's audited import counters
+(#321/#343/#360/#361). That cache also lives outside the checkout, which is why
+`make clean` does not empty it.
+
 ### Node (the monitor dashboard's web lane)
 
 The monitor dashboard's frontend (`web/`) is a separate React + Vite +

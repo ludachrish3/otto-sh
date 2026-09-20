@@ -734,6 +734,27 @@ def surface_env(surface: Surface) -> dict[str, str]:
     Only these need to be fresh. The repo tree stays cached: generating a
     200-file corpus per call is pure cost, and with no bytecode written it
     never warms.
+
+    A REPO-BEARING SURFACE ALSO DROPS ANY INHERITED ``PYTHONPYCACHEPREFIX``,
+    and the write pin is why it can afford to. ``tests/conftest.py`` exports a
+    prefix for the whole pytest session so that no test process writes
+    ``__pycache__`` into the editable ``src/otto`` tree a sibling worker's
+    child is importing from. That is the right answer for a child that WRITES
+    bytecode — a non-repo surface, which pins no ``PYTHONDONTWRITEBYTECODE``:
+    its writes land in the prefix tree, which nothing imports from and nobody
+    lists, instead of in ``src/otto``, and no gated counter moves (measured:
+    every non-repo surface's gated four are identical either way).
+
+    A repo-bearing surface is the opposite case. It writes nothing anywhere,
+    so it has nothing to relocate — and a prefix would relocate its READS. A
+    module with no cached ``.pyc`` costs TWO audited opens (the probe fires the
+    audit event before it fails, then the source is read) where a cached one
+    costs one, and for a fixture module BOTH land inside the fixture root, so
+    both are ``open_fixture`` — a GATED counter. Pointing the cache elsewhere
+    moves the probe out of the tree and silently drops one open per fixture
+    module: measured, ``bootstrap_repo`` 7 -> 4, ``completion_repo_handover``
+    11 -> 8, ``help_repo`` 61 -> 58, on unchanged product code. The goldens
+    describe an in-tree probe, so the child that produces them must see one.
     """
     env = _sanitized_env()
     if surface.sut_files is not None:
@@ -741,6 +762,7 @@ def surface_env(surface: Surface) -> dict[str, str]:
         env["OTTO_SUT_DIRS"] = str(repo)
         env[FIXTURE_ROOT_ENV_VAR] = str(repo.parent)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env.pop("PYTHONPYCACHEPREFIX", None)
         home_parent = repo.parent
     else:
         home_parent = _home_parent_for_non_repo_surfaces()
@@ -885,6 +907,14 @@ the goldens on #360/#361 and the repeat comparison on #343. Counting the
 directory set drops the refill and keeps the signal: a new directory in the
 import graph still moves the number. The raw calls survive as ``listdir_calls``
 — context beside ``open``, never gated.
+
+That made the MEASUREMENT tolerant of the race. The race itself is closed at
+the WRITER: ``tests/conftest.py`` exports ``PYTHONPYCACHEPREFIX`` for the whole
+session, so no test process creates a ``__pycache__`` under ``src/otto`` and no
+package directory's mtime moves while a child is importing from it (pinned by
+that module's ``pytest_sessionfinish``). Both halves are wanted — the counters
+stay honest about what otto imports, and the tolerance stops being the only
+thing standing between a sibling's first import and a red golden.
 """
 
 
