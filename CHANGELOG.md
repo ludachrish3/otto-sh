@@ -5,6 +5,123 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-09-21
+
+### Added
+
+- **BREAKING** **host**: one stage_dir for every product kind, resolved against the host's default_dest_dir
+- **cov**: a per-host toolchain.lcov_args carried to every lcov capture of that host's data
+- **kgcov**: the library ships in the wheel; kmod and kgcov dev-tool kinds load it on demand
+- **kgcov**: a published compatibility matrix for the otto_kgcov toolchain proofs
+- **cov**: read each product's counters with the gcov its .gcda stamp names
+- **kgcov**: any gcc, clang, and other kernels or ISAs
+- **host**: docker_image product kind
+- **host**: kmod product kind and the otto_kgcov coverage runtime
+- **BREAKING** **host**: rename the file kind to shell; Product coverage hooks; archive artifacts scan unknown; load takes insmod params
+- **BREAKING** **cov**: coverage and logs are per product — cov_dir, one run tree, a product filter, instrumentation detection
+- **cov**: Ctrl+K search palette with a report-wide text index and function jump
+
+
+### Dependencies
+
+- **deps-dev**: bump the vitest group across 1 directory with 2 updates
+- **deps-dev**: bump tach from 0.35.0 to 0.35.1
+- **deps-dev**: bump @testing-library/dom from 10.4.1 to 10.4.2 in /web
+- **deps-dev**: bump jsdom from 30.0.1 to 30.1.0 in /web
+- **deps**: bump tailwind-merge from 3.6.0 to 3.7.0 in /web
+- **deps-dev**: bump knip from 6.35.1 to 6.36.0 in /web
+- **deps-dev**: bump @types/node from 26.5.0 to 26.6.1 in /web
+- **deps-dev**: bump vite from 8.2.2 to 8.3.0 in /web
+- **deps-dev**: bump @biomejs/biome from 2.5.12 to 2.5.14 in /web
+- **deps**: bump astral-sh/setup-uv from 10.0.1 to 10.1.0
+- **deps-dev**: bump ty from 0.0.79 to 0.0.82
+- **deps-dev**: bump ruff from 0.16.6 to 0.16.8
+- **deps**: override lightningcss to 1.33.0 for ::highlight() support
+
+
+### Documentation
+
+- **spec**: the kgcov distribution spec matches what landed
+- **spec**: otto_kgcov distribution and the kernel-module dev-tool kinds
+- **spec**: the kgcov matrix spec matches what landed
+- **spec**: the stamp rule has two consumers, the capture tail and the reporter
+- **spec**: the kgcov matrix leaves the bed's gcov to discovery
+- **spec**: a record that names only a sysroot is explicit about gcov
+- **spec**: the otto_kgcov compatibility matrix
+- **spec**: the named error lives in otto.host.errors
+- **spec**: a record that names only an lcov is silent about gcov
+- **spec**: the gcov that reads a product's counters comes from the data's own stamp
+- **cov**: show tiers, runs, pins, the legend and asserted coverage
+- **monitor**: lead with a clipped metrics shot and add element and events views
+- **spec**: correct the gcc-mismatch outcome, the sentinel alignment and the cross-link proof
+- **spec**: the product-kinds §6.2 API block shows the constructor-walk signature
+- **spec**: the release comes from include/config/kernel.release, not make kernelrelease
+- **spec**: otto_kgcov registers through constructors; two backends
+- **spec**: the cross build proves the link on a tree with no Module.symvers
+- **spec**: clang's kernel-header records need lcov to ignore unreadable sources
+- **spec**: the kgcov matrix names each compiler's gcov in the bed hosts' toolchain
+- **spec**: the dev VM is arm64, so the x86_64 cross build is a real one
+- **spec**: kgcov consumer macros keep their spelling; matrix knobs are env vars
+- **spec**: the kgcov toolchain proofs run in a release-invoked lane
+- **spec**: otto_kgcov registers constructors itself, so any gcc or clang works
+- **reorg**: fold the User Guide into the CLI reference's host pages
+- **reorg**: dissolve the Python library section into the Cookbook
+- **library**: correct examples and cred params that disagree with otto
+- **library**: keep the Python library and Cookbook to what and how
+- **cli**: state --probe once on the dry-run page
+- **cli**: drop the duplicated selection-run sections
+- **config**: keep Configuration and the host guide to what and how
+- **cli**: keep the remaining CLI reference to what and how
+- **cli**: keep the coverage, host and monitor reference to what and how
+- **getting-started**: keep Getting Started, Installation and the overview to what and how
+- **getting-started**: dissolve the Docker services tour
+- **getting-started**: fold "Running things" into the Worked Example
+- **reorg**: gather the library recipes into a top-level Cookbook
+- **reorg**: move startup performance into the architecture tree
+- **reorg**: promote the configuration pages to a top-level tree
+- **reorg**: promote the CLI reference to a top-level tree
+- **spec**: each repo5 e2e ensures only its own family's artifacts
+- **spec**: only pull = true is refused on a tarball entry
+- **spec**: the container image is built from sources committed under tests/repo5
+- **spec**: a docker tarball answers unknown under the archive rule; pull is refused on a tarball
+- **spec**: a kmod artifact is transferred by load, not staged
+- **spec**: the kmod e2e bullet matches what the run asserts
+- **spec**: the demo module lives in tests/repo5 and builds in place
+- **spec**: consumer.mk delegates ordering and symvers to the consumer; both topn stubs
+- **spec**: the retired kind name is refused at lab ingest, not settings parse
+- **spec**: product kinds -- library accumulator semantics, repo5, bed facts, headers provenance
+- **spec**: product kinds -- rename file to shell, add kmod and docker_image, coverage hooks, otto_kgcov runtime
+- **spec**: per-product coverage and logs -- cov_dir, one run tree, product filter, instrumentation detection
+- **spec**: coverage report search — ⌘K palette, report-wide text index, function jump
+
+
+### Fixed
+
+- **test**: test processes never write bytecode into the editable source tree
+- **test**: the collector tests count ticks on a virtual clock, never inside a wall-clock window
+- **web**: a synthetic click no longer leaks react-aria's virtual interaction modality between AppShell tests
+- **test**: the env passthrough e2e no longer waits on a real pip resolve against the index
+- **monitor**: the force_stop shutdown path no longer prints a CancelledError on teardown
+- **test**: the dashboard teardown tests no longer inherit a running event loop
+- **test**: the session-concurrency property test's timeout is sized to its 30-example campaign
+- **test**: the interval-floor tick check bounds duration, not a window
+- **test**: the toolchain arms patch the version probe, not its parse
+- **ci**: drop the empty colour env vars before Node sees them
+- **test**: the import-budget listdir counter gates directories, not calls
+- **cov**: BRDA block ids carry lcov's exception tag; exception branches are dropped
+- **test**: the concurrency fake answers the recovery probe, and its property test drops its last wall clock
+- **cov**: keep Ctrl+K live across loading, navigation and first paint
+
+
+### Maintenance
+
+- **matrix**: re-measure the bed support matrix
+- **BREAKING** **matrix**: the library row is keyed library-loaded-on-demand, re-measured under its name
+- **web**: react, react-dom and their types move to 19.3.0 together
+- **matrix**: the kgcov compatibility matrix re-measured with the library as a dev tool
+- **matrix**: the kgcov compatibility matrix's first measured state
+
+
 ## [0.14.0] - 2026-09-15
 
 ### Added
@@ -1802,7 +1919,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/ludachrish3/otto-sh/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/ludachrish3/otto-sh/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/ludachrish3/otto-sh/compare/v0.12.2...v0.13.0
 [0.12.2]: https://github.com/ludachrish3/otto-sh/compare/v0.12.1...v0.12.2
