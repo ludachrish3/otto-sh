@@ -746,6 +746,70 @@ print(json.dumps({{"before": _before, "after": dict(_io_counts)}}))
     assert after["listdir_calls"] - before["listdir_calls"] == 2, measured
 
 
+def test_the_child_runs_in_a_private_empty_cwd(tmp_path, monkeypatch):
+    """The child's cwd is the harness's own empty directory, never the caller's.
+
+    ``python -c`` puts the cwd on ``sys.path``, so whatever directory the child
+    starts in is one it imports from. Inheriting the caller's cwd hands it the
+    repo root, which every other test process in the run writes into.
+    """
+    import json
+
+    monkeypatch.chdir(tmp_path)
+    body = """
+import json, os
+print(json.dumps({"cwd": os.getcwd(), "entries": os.listdir(".")}))
+"""
+    child = json.loads(harness._run_child(harness._CHILD_IO_PREAMBLE + body))
+
+    assert Path(child["cwd"]).resolve() != tmp_path.resolve(), child
+    assert child["entries"] == [], child
+
+
+def test_a_caller_writing_into_its_cwd_does_not_move_a_golden(tmp_path, monkeypatch):
+    """A sibling writing into the caller's cwd mid-measurement must not reach the child.
+
+    The distinct-directory count (see ``test_gated_listdir_counts_directories_not_calls``)
+    absorbs a ``FileFinder`` refill only for a directory already IN the set.
+    From CPython 3.13 the cwd is the one import directory that never is:
+    ``FileFinder`` lists it during interpreter startup, before the preamble's
+    audit hook exists. With an inherited cwd, a sibling bumping its mtime made
+    the child re-list it AFTER the hook was live, and the absolute cwd joined
+    the set as a NEW directory: ``help_repo_warm`` read 62 against its golden
+    61 on CPython 3.14 (#428). On 3.10-3.12 the cwd is first listed after the
+    hook, so its goldens already count it and this test cannot go red there;
+    it is the 3.13/3.14 lanes that prove it.
+
+    The hostile condition is INJECTED rather than left to chance: a thread
+    moves the caller's cwd mtime forward every few milliseconds for the whole
+    measurement, seed run included.
+    """
+    import os
+    import threading
+    import time
+
+    surface = harness.surface_by_key("help_repo_warm")
+    monkeypatch.chdir(tmp_path)
+    stop = threading.Event()
+
+    def bump() -> None:
+        stamp = time.time()
+        while not stop.is_set():
+            stamp += 1
+            os.utime(tmp_path, (stamp, stamp))
+            time.sleep(0.005)
+
+    bumper = threading.Thread(target=bump)
+    bumper.start()
+    try:
+        result = harness.measure_surface(surface)
+    finally:
+        stop.set()
+        bumper.join()
+
+    assert harness.gated_io(result["io"]) == harness.read_io_snapshot(surface.key), result["io"]
+
+
 def test_open_fixture_is_the_gated_half_of_open():
     """The scoped counter must count the workspace, and only the workspace.
 

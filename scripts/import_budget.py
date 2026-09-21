@@ -623,6 +623,8 @@ def _run_child(code: str, env: dict[str, str] | None = None) -> str:
     right baseline for a direct ``measure`` call. A SURFACE always passes
     :func:`surface_env` instead (via :func:`measure_surface`), so its private
     ``OTTO_HOME`` — and, when it has one, its generated repo — reach the child.
+
+    The child never inherits the caller's cwd; it starts in :func:`_quiet_cwd`.
     """
     out = subprocess.run(  # noqa: S603 (fixed interpreter + measured argv, no shell)
         [sys.executable, "-c", code],
@@ -630,6 +632,7 @@ def _run_child(code: str, env: dict[str, str] | None = None) -> str:
         text=True,
         check=True,
         env=_sanitized_env() if env is None else env,
+        cwd=_quiet_cwd(),
     )
     return out.stdout.strip().splitlines()[-1]
 
@@ -661,6 +664,30 @@ def _home_parent_for_non_repo_surfaces() -> Path:
     rather than a directory the harness creates.
     """
     root = Path(tempfile.mkdtemp(prefix="otto-budget-homes-"))
+    _FIXTURE_ROOTS.append(root)
+    return root
+
+
+@functools.cache
+def _quiet_cwd() -> Path:
+    """Return the empty directory every measured child starts in.
+
+    ``python -c`` puts the cwd on ``sys.path``, so the child imports from it,
+    and the gated ``listdir`` counter cannot tolerate a shared one. That
+    counter counts DIRECTORIES, which absorbs a ``FileFinder`` refill (see
+    :data:`GATED_IO_COUNTERS`) only for a directory already in the set — and
+    from CPython 3.13 the cwd is not: ``FileFinder`` lists it during
+    interpreter startup, before the preamble's audit hook exists. Inheriting
+    the caller's cwd handed the child the repo root, which every other test
+    process in the run writes into; one such write mid-measurement made the
+    child re-list it with the hook live, and the absolute cwd joined the set
+    as a new directory (``help_repo_warm`` 61 -> 62 on 3.14, issue #428).
+
+    Nothing writes here — the child writes only into its ``OTTO_HOME`` — so
+    this directory's mtime never moves while a child is importing from it.
+    Made ONCE per process and swept with the fixture roots.
+    """
+    root = Path(tempfile.mkdtemp(prefix="otto-budget-cwd-"))
     _FIXTURE_ROOTS.append(root)
     return root
 
@@ -907,6 +934,12 @@ the goldens on #360/#361 and the repeat comparison on #343. Counting the
 directory set drops the refill and keeps the signal: a new directory in the
 import graph still moves the number. The raw calls survive as ``listdir_calls``
 — context beside ``open``, never gated.
+
+The directory count only absorbs a refill of a directory it has already
+counted, and one import directory is listed BEFORE the audit hook exists: the
+child's cwd, which ``FileFinder`` fills during startup from CPython 3.13 on. So
+the cwd is not shared at all — every child starts in :func:`_quiet_cwd`, which
+nothing writes to (issue #428).
 
 That made the MEASUREMENT tolerant of the race. The race itself is closed at
 the WRITER: ``tests/conftest.py`` exports ``PYTHONPYCACHEPREFIX`` for the whole
