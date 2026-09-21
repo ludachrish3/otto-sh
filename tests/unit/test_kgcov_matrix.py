@@ -102,6 +102,23 @@ def test_a_renamed_contract_is_a_row_mismatch(committed):
     assert any(renamed in p for p in problems), problems
 
 
+def test_the_retired_library_row_id_is_gone_from_the_table_and_the_artifact(committed):
+    """The row is keyed `library-loaded-on-demand` (#414), in BOTH places or neither.
+
+    The id and the cells key are written separately; a half-rename leaves the
+    seven measured cells filed under a row nothing names any more, and the
+    collator would quietly re-measure into a second row.
+    """
+    retired = "library-uninstrumented"
+    current = "library-loaded-on-demand"
+    assert retired not in {s.id for s in SURFACES}
+    assert retired not in {s["id"] for s in committed["surfaces"]}
+    assert retired not in committed["cells"]
+    assert current in {s.id for s in SURFACES}
+    assert current in {s["id"] for s in committed["surfaces"]}
+    assert current in committed["cells"]
+
+
 def test_rebuilding_the_axes_keeps_every_verdict_and_mints_none(committed):
     """``build_matrix`` copies an existing verdict across and never writes one itself."""
     injected = json.loads(json.dumps(committed))

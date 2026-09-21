@@ -38,7 +38,7 @@
       "control": false
     },
     {
-      "id": "library-uninstrumented",
+      "id": "library-loaded-on-demand",
       "title": "coverage: the run log says the library was loaded for the demo",
       "venue": "bed",
       "contract": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
@@ -532,7 +532,7 @@
         "control": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
       }
     },
-    "library-uninstrumented": {
+    "library-loaded-on-demand": {
       "gcc-9": {
         "status": "measured-ok",
         "nodeid": "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",

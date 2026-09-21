@@ -114,7 +114,7 @@ SURFACES: "tuple[Surface, ...]" = (
         f"{_BED_MODULE}::TestCoverage::test_three_gcda_per_host",
     ),
     Surface(
-        "library-uninstrumented",
+        "library-loaded-on-demand",
         "coverage: the run log says the library was loaded for the demo",
         BED,
         f"{_BED_MODULE}::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
