@@ -10,6 +10,7 @@ List available sessions:
     uv run nox --list
 """
 
+import os
 from pathlib import Path
 
 import nox
@@ -629,8 +630,19 @@ def docs(session: nox.Session) -> None:
     # `-p no:tach` re-stated: the override drops pyproject's addopts whole, and
     # only an addopts/CLI `-p` protects plugin load (issue #193). Pinned by
     # tests/unit/test_lane_invariants.py.
+    #
+    # Hermetic and without live logging, for the reasons at the Makefile's
+    # `doctest-src` twin: a `None` value makes nox unset the variable.
     session.run(
-        "pytest", "-p", "no:cacheprovider", "-o", "addopts=--doctest-modules -p no:tach", "src/otto"
+        "pytest",
+        "-p",
+        "no:cacheprovider",
+        "-o",
+        "addopts=--doctest-modules -p no:tach",
+        "-o",
+        "log_cli=false",
+        "src/otto",
+        env={name: None for name in os.environ if name.startswith("OTTO_")},
     )
 
 
