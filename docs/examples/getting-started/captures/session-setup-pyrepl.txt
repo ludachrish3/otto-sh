@@ -1,4 +1,4 @@
-$ otto --lab pyrepl host test1-py run '1 + 1'
+$ otto --lab pyrepl host test1-py exec '1 + 1'
 INFO     fleet of interest: 0 of 2 lab hosts (1 repo(s), 1 excluded)                                
 INFO     @test1-py   | command -v python3                                                           
 INFO     @test1-py > | /usr/bin/python3                                                             
@@ -11,4 +11,4 @@ INFO     @test1-py > |
 INFO     @test1-py   | 1 + 1                                                                        
 INFO     @test1-py > | 2                                                                            
 
-Output directory: /tmp/otto-gs/xdir/host/<run>_run
+Output directory: /tmp/otto-gs/xdir/host/<run>_exec

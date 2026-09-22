@@ -59,13 +59,19 @@ is genuinely open, past handshake. A single `kernel version` round-trip
 against zephyr37_fat was live-measured at ~45ms end-to-end (see task-10-report.md)
 -- far too close to the driver's own 50ms poll interval to trust a bare
 single-command SIGKILL not to land after otto has already finished and
-started exiting (the exact Task 5 lesson the brief calls out). So the kill
-phase drives `kernel version` chained many times in ONE `otto host zephyr37-fat
-run` invocation (the persistent-session, multi-command form the CLI already
-supports) and gates the SIGKILL on the marker for the FIRST copy: with
-dozens more queued behind it at that measured per-round-trip rate, the
-session is still provably mid-flight, by a wide and deterministic margin,
-regardless of the exact instant the signal lands.
+started exiting (the exact Task 5 lesson the brief calls out). A Zephyr
+shell has no `&&`, so chaining copies of that sub-second command in one
+`otto host zephyr37-fat exec` invocation cannot be joined into one longer
+wait either. So the kill phase instead drives ONE genuinely long-running
+command, `kernel sleep 5000` (live-measured ~6.3s end-to-end, task-8 probe
+2026-09-21, re-measured for fix round 1 -- an earlier `kernel sleep 20000`
+draft left a board still ~19s into the sleep when a FRESH post-kill client
+tried its readiness handshake, racing `embedded_host.py`'s
+`_EMBEDDED_INIT_TIMEOUT` = 15.0s and timing out for a non-wedge reason), and
+gates the SIGKILL on that command's own dispatch marker: with several
+seconds still to run at that point, the session is provably mid-flight, by
+a wide and deterministic margin, regardless of the exact instant the signal
+lands.
 """
 
 import contextlib
@@ -100,10 +106,18 @@ _BOARD_IP = "192.0.2.1"
 _BOARD_NAME = f"{_HOST_ID}/{_BOARD_IP}"
 
 _PROBE_CMD = "kernel version"
-# Live-measured ~45ms/round-trip on this same session (task-10-report.md) ->
-# ~40 copies queues roughly 1.5-2s of genuine in-flight work behind the FIRST
-# marker match, a wide margin against local poll/flush jitter (Task 5's lesson).
-_KEEP_BUSY_REPEATS = 40
+# Live-measured ~6.3s end-to-end on this same session (task-8 probe,
+# 2026-09-21, re-measured for fix round 1) -- a Zephyr shell has no `&&`, so
+# chaining copies of the sub-second `_PROBE_CMD` (Task 5's lesson) cannot
+# fill a mid-command SIGKILL window. One `kernel sleep 5000` command instead
+# stays busy on the console for genuine wall-clock seconds -- still ~100x
+# the probe's round-trip, a wide margin for the kill to land inside -- while
+# staying safely UNDER embedded_host.py's `_EMBEDDED_INIT_TIMEOUT` (15.0s):
+# a longer busy window (the original `kernel sleep 20000`, ~21.2s) leaves a
+# FRESH client's post-kill readiness handshake racing a board still deep in
+# the old sleep, timing out for a non-wedge reason and misreporting "the
+# wedge reproduced".
+_KEEP_BUSY_CMD = "kernel sleep 5000"
 _MARKER_TIMEOUT = 60.0
 _KILL_WAIT_TIMEOUT = 30.0
 _ROUND_TRIP_TIMEOUT = 60.0
@@ -182,7 +196,7 @@ def _round_trip(target: ChaosTarget, xdir: Path) -> None:
     criterion is about.
     """
     xdir.mkdir()
-    p = spawn_otto(["host", target.host_id, "run", _PROBE_CMD], xdir=xdir, target=target)
+    p = spawn_otto(["host", target.host_id, "exec", _PROBE_CMD], xdir=xdir, target=target)
     rc = p.wait(timeout=_ROUND_TRIP_TIMEOUT)
     out = p.stdout_text()
     failure = (
@@ -196,7 +210,7 @@ def _round_trip(target: ChaosTarget, xdir: Path) -> None:
 def test_console_client_death_leaves_next_client_a_shell(tmp_path):
     """SIGKILL otto mid-console-session (mid-command variant; see module
     docstring for the parked mid-handshake case), then assert a SUSTAINED
-    shell from fresh clients: 3 consecutive `run` round-trips over a short
+    shell from fresh clients: 3 consecutive `exec` round-trips over a short
     settle window, not one lucky accept. NEVER reboots or power-cycles the
     board -- only the local otto subprocess is killed. If any round-trip
     fails, this FAILS naming the board (zephyr37-fat/192.0.2.1): that is the wedge
@@ -209,18 +223,20 @@ def test_console_client_death_leaves_next_client_a_shell(tmp_path):
     kill_xdir = tmp_path / "kill"
     kill_xdir.mkdir()
     p = spawn_otto(
-        ["host", target.host_id, "run", *([_PROBE_CMD] * _KEEP_BUSY_REPEATS)],
+        ["host", target.host_id, "exec", _KEEP_BUSY_CMD, "--timeout", "60"],
         xdir=kill_xdir,
         target=target,
     )
     try:
-        # phase: the persistent session's handshake completed and the FIRST
-        # of the chained commands has been dispatched (Host._log_command
-        # fires only after SessionManager._ensure_session()'s handshake --
-        # see otto.host.session.SessionManager.run_cmd). ~39 more copies are
-        # still queued behind this marker at this point, so the console
-        # session is provably still open by a wide margin when we signal.
-        p.wait_for_log(re.escape(f"| {_PROBE_CMD}"), timeout=_MARKER_TIMEOUT)
+        # phase: the persistent session's handshake completed and the
+        # command's own dispatch has been logged (Host._log_command fires
+        # only after SessionManager._ensure_session()'s handshake -- see
+        # otto.host.session.SessionManager.run_cmd). The command itself then
+        # stays busy on the console for ~6s (measured), so the session is
+        # provably still open by a wide margin when we signal -- and well
+        # clear of the fresh-client readiness handshake by the time the
+        # sustained-recovery round-trips below open their own sessions.
+        p.wait_for_log(re.escape(f"| {_KEEP_BUSY_CMD}"), timeout=_MARKER_TIMEOUT)
         p.signal(9)  # SIGKILL -- no teardown possible; this IS the client-death being characterized
         p.wait(timeout=_KILL_WAIT_TIMEOUT)
     finally:

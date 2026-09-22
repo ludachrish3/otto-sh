@@ -5,7 +5,7 @@ Covers:
   - Help / no-args behaviour
   - Callback sets the logger output directory and resolves host to ctx.obj
   - Host resolution (success and failure)
-  - The run, put, and get commands invoke the correct host methods
+  - The exec, put, and get commands invoke the correct host methods
 """
 
 import asyncio
@@ -26,7 +26,7 @@ from otto.host.session import SessionManager, ShellSession
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.reservations import Reservation, ReservationBackendBase
-from otto.result import Result
+from otto.result import CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.dispatch import DispatchRunner
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
@@ -99,22 +99,29 @@ class FakeSession(ShellSession):
 def _make_host_with_session(
     responses: list[tuple[str, int]],
     name: str = "router1",
+    term: str = "telnet",
 ) -> UnixHost:
     """Build a UnixHost whose SessionManager uses a FakeSession.
 
-    The full chain ``run -> _run_one -> SessionManager.run_cmd ->
-    ShellSession.run_cmd`` runs for real; only the transport is faked.
-    Logging callbacks are suppressed to avoid interfering with CliRunner's
-    stdout capture.
+    ``term="telnet"`` by default: ``exec``'s ``_exec_route`` takes the
+    ``POOLED_SHELL`` route (the same ``FakeSession``) only off SSH's fast
+    path — a plain ``exec`` on an SSH host with no hops takes the
+    ``SSH_CHANNEL`` route instead and would try a real
+    ``_connections.ssh()``. The full chain ``exec -> _exec_one ->
+    SessionManager.exec -> _exec_pooled -> ShellSession.run_cmd`` runs for
+    real; only the transport is faked. Logging callbacks are suppressed to
+    avoid interfering with CliRunner's stdout capture.
     """
     host = UnixHost(
         ip="10.0.0.1",
         element=Element(name),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.NORMAL,
+        term=term,
     )
     fake = FakeSession(responses)
     host._session_mgr = SessionManager(
+        connections=host._connections,
         session_factory=lambda: fake,
         name=host.name,
     )
@@ -138,14 +145,31 @@ class TestHostHelp:
         result = runner.invoke(host_app, ["-h"])
         assert result.exit_code == 0
 
-    def test_run_listed_in_help(self):
+    def test_exec_listed_in_help(self):
         result = runner.invoke(host_app, ["--help"])
-        assert "run" in result.output
+        assert "exec" in result.output
 
-    def test_login_and_run_exposed_in_help(self):
+    def test_login_and_exec_exposed_in_help(self):
         result = runner.invoke(host_app, ["--help"])
         assert "login" in result.output
-        assert "run" in result.output
+        assert "exec" in result.output
+
+    def test_run_is_not_a_verb(self):
+        with patch.object(host_module, "get_host", return_value=_make_host()):
+            result = runner.invoke(host_app, ["router1", "run", "ls"])
+        assert result.exit_code == 2
+        assert "No such command" in result.output
+
+    def test_exec_offers_timeout_sudo_and_user(self):
+        with patch.object(host_module, "get_host", return_value=_make_host()):
+            result = runner.invoke(host_app, ["router1", "exec", "--help"])
+        assert result.exit_code == 0, result.output
+        flat = " ".join(result.output.split())
+        assert "COMMAND" in flat
+        assert "--timeout" in flat
+        assert "--sudo --no-sudo" in flat
+        assert "--user" in flat
+        assert "join steps with &&" in flat
 
     def test_put_listed_in_help(self):
         result = runner.invoke(host_app, ["--help"])
@@ -205,9 +229,9 @@ class TestHostCallback:
             patch("otto.logger.management.create_output_dir") as p_create,
             patch.object(host_module, "get_host", return_value=mock_host),
         ):
-            root_runner.invoke(app, ["--lab", "x", "host", "router1", "run", "ls"])
+            root_runner.invoke(app, ["--lab", "x", "host", "router1", "exec", "ls"])
 
-        p_create.assert_called_once_with("host", "run")
+        p_create.assert_called_once_with("host", "exec")
 
 
 # ── Host resolution ──────────────────────────────────────────────────────────
@@ -227,7 +251,7 @@ class TestResolveHost:
         # tests/unit/config/test_fleet_scoping.py owns the unscoped-listing
         # guard itself.
         with patch.object(host_module, "get_host", side_effect=KeyError("nope")):
-            result = runner.invoke(host_app, ["nonexistent", "run", "ls"])
+            result = runner.invoke(host_app, ["nonexistent", "exec", "ls"])
 
         assert result.exit_code == 1
         assert "No host with ID" in result.output
@@ -516,38 +540,52 @@ def test_an_out_of_fleet_host_with_no_slot_of_its_own_is_never_queried(monkeypat
     assert calls == []
 
 
-# ── run command ───────────────────────────────────────────────────────────────
+# ── exec command ──────────────────────────────────────────────────────────────
 
 
-class TestHostRun:
-    def test_run_success(self):
-        mock_host = _make_host_with_session([("", 0), ("", 0)])
-
+class TestHostExec:
+    def test_exec_success(self):
+        mock_host = _make_host_with_session([("", 0)])
         with patch.object(host_module, "get_host", return_value=mock_host):
-            result = runner.invoke(host_app, ["router1", "run", "ls", "pwd"])
+            result = runner.invoke(host_app, ["router1", "exec", "ls"])
+        assert result.exit_code == 0, result.output
 
-        assert result.exit_code == 0
-
-    def test_run_failure_exits_nonzero(self):
+    def test_exec_failure_exits_with_the_commands_retcode(self):
         mock_host = _make_host_with_session([("command not found", 127)])
-
         with patch.object(host_module, "get_host", return_value=mock_host):
-            result = runner.invoke(host_app, ["router1", "run", "bad_cmd"])
-
-        # Results.exit_code is ssh-like: it propagates the failing command's
-        # own return code (127) rather than a flat 1.
+            result = runner.invoke(host_app, ["router1", "exec", "bad_cmd"])
         assert result.exit_code == 127
 
-    def test_run_closes_host_on_exception(self):
+    def test_two_commands_are_a_usage_error(self):
+        """One command, as one argument — click rejects the second positional
+        before the verb runs, and the argument's help says how to join steps."""
+        with patch.object(host_module, "get_host", return_value=_make_host()):
+            result = runner.invoke(host_app, ["router1", "exec", "cd /tmp", "ls"])
+        assert result.exit_code == 2
+        assert "unexpected extra argument" in result.output
+
+    def test_exec_closes_host_on_exception(self):
         mock_host = _make_host()
-        mock_host.run = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_host.exec = AsyncMock(side_effect=RuntimeError("boom"))
         mock_host.close = AsyncMock()
-
         with patch.object(host_module, "get_host", return_value=mock_host):
-            result = runner.invoke(host_app, ["router1", "run", "ls"])
-
+            result = runner.invoke(host_app, ["router1", "exec", "ls"])
         assert result.exit_code != 0
         mock_host.close.assert_awaited_once()
+
+    def test_exec_user_and_sudo_reach_the_method(self):
+        mock_host = _make_host()
+        mock_host.exec = AsyncMock(
+            return_value=CommandResult(status=Status.Success, value="", command="id", retcode=0)
+        )
+        mock_host.close = AsyncMock()
+        with patch.object(host_module, "get_host", return_value=mock_host):
+            result = runner.invoke(host_app, ["router1", "exec", "id", "--user", "root", "--sudo"])
+        assert result.exit_code == 0, result.output
+        kw = mock_host.exec.await_args.kwargs
+        assert kw["user"] == "root"
+        assert kw["sudo"] is True
+        assert kw["cmd"] == "id"
 
 
 # ── put command ───────────────────────────────────────────────────────────────
@@ -608,7 +646,7 @@ class TestHostTermAndTransfer:
                 host_module, "_apply_option_overrides", return_value=mock_host
             ) as mock_override,
         ):
-            result = runner.invoke(host_app, ["--term", "telnet", "router1", "run", "ls"])
+            result = runner.invoke(host_app, ["--term", "telnet", "router1", "exec", "ls"])
 
         assert result.exit_code == 0, result.output
         mock_override.assert_any_call(mock_host, term="telnet")
@@ -623,7 +661,7 @@ class TestHostTermAndTransfer:
                 host_module, "_apply_option_overrides", return_value=mock_host
             ) as mock_override,
         ):
-            result = runner.invoke(host_app, ["--transfer", "ftp", "router1", "run", "ls"])
+            result = runner.invoke(host_app, ["--transfer", "ftp", "router1", "exec", "ls"])
 
         assert result.exit_code == 0, result.output
         mock_override.assert_any_call(mock_host, transfer="ftp")
@@ -631,14 +669,14 @@ class TestHostTermAndTransfer:
     def test_invalid_term_exits(self):
         mock_host = _make_host()
         with patch.object(host_module, "get_host", return_value=mock_host):
-            result = runner.invoke(host_app, ["--term", "bogus", "router1", "run", "ls"])
+            result = runner.invoke(host_app, ["--term", "bogus", "router1", "exec", "ls"])
 
         assert result.exit_code != 0
 
     def test_invalid_transfer_exits(self):
         mock_host = _make_host()
         with patch.object(host_module, "get_host", return_value=mock_host):
-            result = runner.invoke(host_app, ["--transfer", "bogus", "router1", "run", "ls"])
+            result = runner.invoke(host_app, ["--transfer", "bogus", "router1", "exec", "ls"])
 
         assert result.exit_code != 0
 
@@ -649,7 +687,7 @@ class TestHostTermAndTransfer:
             patch.object(host_module, "get_host", return_value=mock_host),
             patch.object(host_module, "_apply_option_overrides") as mock_override,
         ):
-            result = runner.invoke(host_app, ["router1", "run", "ls"])
+            result = runner.invoke(host_app, ["router1", "exec", "ls"])
 
         assert result.exit_code == 0
         mock_override.assert_not_called()
@@ -665,7 +703,7 @@ class TestHostTermAndTransfer:
             patch.object(host_module, "get_host", return_value=base),
             patch.object(host_module, "_apply_option_overrides", return_value=switched),
         ):
-            result = runner.invoke(host_app, ["--term", "telnet", "router1", "run", "ls"])
+            result = runner.invoke(host_app, ["--term", "telnet", "router1", "exec", "ls"])
 
         assert result.exit_code == 0, result.output
 
@@ -678,7 +716,7 @@ class TestHostTermAndTransfer:
             patch.object(host_module, "get_host", return_value=base),
             patch.object(host_module, "_apply_option_overrides", return_value=switched),
         ):
-            result = runner.invoke(host_app, ["--transfer", "sftp", "router1", "run", "ls"])
+            result = runner.invoke(host_app, ["--transfer", "sftp", "router1", "exec", "ls"])
 
         assert result.exit_code == 0, result.output
 
@@ -692,7 +730,7 @@ class TestHostTermAndTransfer:
             ) as mock_override,
         ):
             result = runner.invoke(
-                host_app, ["--term", "ssh", "--transfer", "sftp", "router1", "run", "ls"]
+                host_app, ["--term", "ssh", "--transfer", "sftp", "router1", "exec", "ls"]
             )
 
         assert result.exit_code == 0

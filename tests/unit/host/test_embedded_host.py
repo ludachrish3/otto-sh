@@ -199,6 +199,19 @@ class TestNotImplemented:
             await host.exec("id", timeout=5.0, user="root")
 
     @pytest.mark.asyncio
+    async def test_exec_sudo_refused_on_embedded(self, host: EmbeddedHost):
+        """The refusal is `_refuse_exec_sudo`'s, which `exec()` calls ABOVE its
+        own dry-run arm — so a dry run refuses too rather than declining as
+        though the call could have been honoured."""
+        with pytest.raises(NotImplementedError, match="no sudo"):
+            await host.exec("kernel version", sudo=True)
+        with (
+            active_context(dry_run=True),
+            pytest.raises(NotImplementedError, match="no sudo"),
+        ):
+            await host.exec("kernel version", sudo=True)
+
+    @pytest.mark.asyncio
     async def test_run_user_refused_on_embedded(self, host: EmbeddedHost):
         """Inherited from `RemoteHost._run_one`, so the message names the
         CONCRETE class — this fixture is a ZephyrHost. Call `_run_one`
@@ -211,7 +224,7 @@ class TestNotImplemented:
             await host._run_one("id", timeout=5.0, user="root")
         with pytest.raises(
             NotImplementedError,
-            match=r"a persistent session's identity is as_user's job.*on unix, exec/put/get",
+            match=r"this family has no user to switch to",
         ):
             await host._run_one("id", timeout=5.0, user="root")
 
@@ -423,6 +436,7 @@ class TestDelegation:
     async def test_exec_runs_on_persistent_session(self, host: EmbeddedHost):
         """exec shares the single console — it goes through run_cmd, not a pool."""
         host._session_mgr = AsyncMock()
+        host._session_mgr.ambient_user = None
         host._session_mgr.run_cmd.return_value = CommandResult(
             status=Status.Success,
             value="42",
@@ -432,6 +446,23 @@ class TestDelegation:
         result = await host.exec("kernel uptime")
         assert result.value == "42"
         host._session_mgr.run_cmd.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_exec_forwards_expects_to_run_cmd(self, host: EmbeddedHost):
+        """`exec(expects=...)` already reaches the shared shell's `run_cmd` —
+        the embedded family has no bare exec primitive to answer a prompt on
+        of its own, so it always runs on the persistent console."""
+        host._session_mgr = AsyncMock()
+        host._session_mgr.ambient_user = None
+        host._session_mgr.run_cmd.return_value = CommandResult(
+            status=Status.Success,
+            value="ok",
+            command="kernel uptime",
+            retcode=0,
+        )
+        await host.exec("kernel uptime", expects=[("more", " ")])
+        _, kwargs = host._session_mgr.run_cmd.await_args
+        assert kwargs["expects"] == [("more", " ")]
 
     @pytest.mark.asyncio
     async def test_send_delegates(self, host: EmbeddedHost):
@@ -470,6 +501,7 @@ class TestDelegation:
     async def test_exec_forwards_log_false(self, host):
 
         host._session_mgr = AsyncMock()
+        host._session_mgr.ambient_user = None
         host._session_mgr.run_cmd.return_value = CommandResult(
             status=Status.Success,
             value="",
@@ -480,6 +512,7 @@ class TestDelegation:
         await host.exec("llext load_hex foo DEADBEEF", log=LogMode.QUIET)
         host._session_mgr.run_cmd.assert_awaited_once_with(
             "llext load_hex foo DEADBEEF",
+            expects=None,
             timeout=DEFAULT_COMMAND_TIMEOUT,
             log=LogMode.QUIET,
         )
@@ -682,3 +715,40 @@ class TestUnload:
         host.loader = None
         with pytest.raises(ValueError, match="no binary loader"):
             await host.unload("x")
+
+
+# ---------------------------------------------------------------------------
+# D11 on the embedded side: an ambient identity is still an identity, and a
+# serial console has no user to switch to.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_exec_refuses_an_ambient_user_on_an_embedded_host(host: EmbeddedHost):
+    """`exec` with no `user=` inherits the default session's switched identity
+    (spec D11) — and on this family that inheritance has to hit the SAME
+    refusal an explicit `user=` does, rather than quietly running the command.
+
+    Driven through a real ``SessionManager`` (stub transport): a mocked
+    manager would let the ambient lookup return whatever the mock pleased,
+    which is exactly the hole this pins.
+    """
+    from otto.host.session import SessionManager
+    from tests.unit.host.test_session import _proxy_connections, _StubExecSession
+
+    conn = _proxy_connections([], login_target="admin", credentials=("admin", "pw"))
+    conn.term = "telnet"
+    mgr = SessionManager(
+        connections=conn,
+        session_factory=_StubExecSession,
+        exec_factory=None,
+        host_id="z",
+    )
+    host._session_mgr = mgr
+
+    await mgr.run_cmd("kernel version")  # opens the default session; baseline = admin
+    assert await host.exec("kernel uptime")  # no ambient user yet: the call goes through
+
+    mgr._set_current_user("root")
+    with pytest.raises(NotImplementedError, match=r"exec\(user=\.\.\.\)"):
+        await host.exec("kernel uptime")

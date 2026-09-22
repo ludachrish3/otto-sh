@@ -30,7 +30,7 @@ def test_read_only_verbs_declare_no_dir() -> None:
 
 def test_work_verbs_declare_dir() -> None:
     flags = _declared_flags()
-    for verb in ("run", "get", "put", "login"):
+    for verb in ("exec", "get", "put", "login"):
         assert flags[verb] is True, verb
 
 
@@ -65,7 +65,7 @@ def test_marker_survives_synthesis_to_the_resolved_callback() -> None:
     from otto.cli.expose import _synthesize_command, iter_exposed_verbs
 
     by_name = {cli: (attr, help_, fn) for cli, attr, help_, fn in iter_exposed_verbs()}
-    for verb, expected in (("ls", False), ("run", True)):
+    for verb, expected in (("ls", False), ("exec", True)):
         attr, help_, fn = by_name[verb]
         cmd = _synthesize_command(verb, attr, help_, fn)
         assert getattr(cmd.callback, "__cli_output_dir__", True) is expected, verb

@@ -10,15 +10,15 @@ For what the resulting verbs *do*, see
 
 Any host coroutine method decorated with `@cli_exposed` is automatically an
 `otto host` subcommand, scoped to the host's class.  This includes all four
-core commands — `run`, `put`, `get`, and `login` — as well as every capability
+core commands — `exec`, `put`, `get`, and `login` — as well as every capability
 verb listed above.  They all share the same signature-driven synthesizer with
 no special casing.
 
 Example invocations:
 
 ```text
-otto host <id> run "systemctl restart x" "journalctl -n5"
-otto host <id> run --sudo --timeout 30 "apt-get update"
+otto host <id> exec "systemctl restart x && journalctl -n5"
+otto host <id> exec "apt-get update" --sudo --timeout 30
 otto host <id> put a.txt b.txt /tmp/
 otto host <id> get /var/log/syslog /tmp/
 otto host <id> login
@@ -89,7 +89,7 @@ from otto.utils import Arg, Opt, Exclude, cli_exposed
 **`Arg(variadic=True, type=T)`** — make a union-typed (or otherwise
 Typer-incompatible) list a space-separated positional variadic.  `type`
 specifies the element type the CLI receives; the method gets a `list[T]`.
-Used by `run` (`cmds`), `put` (`src_files`), and `get` (`src_files`):
+Used by `put` (`src_files`) and `get` (`src_files`):
 
 ```python
 cmds: Annotated[str | Sequence[str], Arg(variadic=True, type=str)]
@@ -105,7 +105,7 @@ path: Annotated[str | Path, Arg()] = "."  # otto host <id> ls /var/log
 ```
 
 **`Opt(...)`** — force a parameter to an `--option` regardless of whether it
-has a default.  Used by `run`'s `timeout`:
+has a default.  Used by `exec`'s `timeout`:
 
 ```python
 timeout: Annotated[
@@ -136,7 +136,7 @@ mark a completable path list as `Arg(variadic=True, remote_path=...)` instead.
 
 **`Exclude`** — drop a parameter from the CLI entirely; the method receives its
 default value.  Use this for SDK-only parameters that make no sense as CLI
-flags — `run`'s `expects` and `log` are the canonical examples:
+flags — `exec`'s `expects` and `log` are the canonical examples:
 
 ```python
 expects: Annotated[Expect | None, Exclude] = None
@@ -147,7 +147,7 @@ log: Annotated[bool, Exclude] = True
 
 | Verb | Positional args | Notable options | Notes |
 | --- | --- | --- | --- |
-| `run` | `COMMANDS...` (variadic) | `--sudo`, `--timeout SECS` | `expects`/`log` excluded from CLI |
+| `exec` | `COMMAND` | `--sudo`, `--timeout SECS`, `--user NAME` | `expects`/`log` excluded from CLI |
 | `put` | `SRC... DEST` (variadic src + positional dest) | — | `show_progress` excluded |
 | `get` | `SRC... DEST` (variadic src + positional dest) | — | `show_progress` excluded |
 | `login` | — | — | Opens interactive shell |

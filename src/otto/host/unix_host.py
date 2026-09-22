@@ -81,6 +81,7 @@ from .errors import HostCommandError, UnsupportedOnUserlandError
 from .file_ops import PosixFileOps
 from .host import (
     CONCURRENT_HELP,
+    Expect,
     Host,
     SuppressCommandOutput,
     _validate_user,
@@ -253,18 +254,19 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     """
 
     capabilities = HostCapabilities(
-        run_user=UserSupport.refused,
-        exec_user=UserSupport.authenticate,
+        run_user=UserSupport.switch,
+        exec_user=UserSupport.switch,
         put_user=UserSupport.authenticate,
         get_user=UserSupport.authenticate,
         show_progress=True,
         session_identity=SessionIdentity.as_user_scoped,
         transfer_family="unix",
         note=(
-            "Direct-cred users only, and never over the `ftp` backend, which "
-            "authenticates separately with its own credentials; `exec(user=)` "
-            'additionally requires `term="ssh"`. '
-            "`scp`, `sftp` and `nc` fan a batch out under "
+            "`exec --user` reaches any login — direct creds authenticate on "
+            "their own SSH connection, proxy logins and telnet hosts switch a "
+            "pooled shell. `put`/`get --user` are direct-cred users only, and "
+            "never over the `ftp` backend, which authenticates separately with "
+            "its own credentials. `scp`, `sftp` and `nc` fan a batch out under "
             "`max_concurrent_transfers`; `shell` and `ftp` move one file at a "
             "time."
         ),
@@ -363,9 +365,16 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     ####################
 
     @override
-    def _sudo_password(self) -> str | None:
-        """Return the current user's password, used for ``sudo -S``."""
-        c = cred_for(self.creds, self.current_user, self.term)
+    def _sudo_password(self, user: str | None = None) -> str | None:
+        """Return the password ``sudo -S`` must be answered with.
+
+        *user* is the identity the elevated command runs as — an
+        ``exec(user=X)`` switches a pooled session to X before the command,
+        so it is X's password sudo prompts for. ``None`` (every ``run``, and
+        an ``exec`` with no user) falls back to the default session's current
+        user.
+        """
+        c = cred_for(self.creds, user or self.current_user, self.term)
         return c.password if c else None
 
     @override
@@ -714,6 +723,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         timeout: float,
         log: LogMode = LogMode.NORMAL,
         user: str | None = None,
+        *,
+        expects: "list[Expect] | None" = None,
+        needs_shell: bool = False,
     ) -> CommandResult:
         """Run a single command concurrent-safely, independent of the persistent shell.
 
@@ -729,7 +741,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         +==================+==============================+============================+
         | Shell state      | Persistent (cd, env persist) | Stateless (fresh each call)|
         | Concurrency      | Sequential only              | Safe for asyncio.gather()  |
-        | Expect support   | Yes                          | No                         |
+        | Expect support   | Yes                          | Yes (forces needs_shell)   |
         | Connection cost  | Reuses existing session      | Reuses cached exec pool    |
         | Best for         | Multi-step workflows, state  | One-off / parallel cmds    |
         +------------------+------------------------------+----------------------------+
@@ -755,51 +767,42 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 Defaults to :data:`~otto.host.host.DEFAULT_COMMAND_TIMEOUT`;
                 pass ``float("inf")`` for a deliberately unbounded command such
                 as a netcat listener awaiting a connection.
-            user: Run the command AUTHENTICATED AS this unix user (spec
-                2026-09-01 §4) — the exec channel is opened on the connection
-                :meth:`~otto.host.connections.ConnectionManager.ssh_as` holds
-                for *user*, so the command runs with that user's real
-                credentials rather than an elevation from the login user.
-                DIRECT-CRED users only: the connection layer refuses a user
-                reachable only through a proxy hop, because a raw exec channel
-                cannot replay hops. Requires ``term="ssh"`` — telnet has no
-                stateless exec primitive to authenticate separately.
-                ``None`` (the default) is unaffected: a plain exec still routes
-                through the pooled path, so a PROXIED LOGIN TARGET keeps
-                running as that target exactly as before.
+            user: Run the command as this user. A user with a DIRECT cred on
+                an ssh host is authenticated on a connection of their own
+                (:meth:`~otto.host.connections.ConnectionManager.ssh_as`), so
+                the command runs with their real credentials — unless the
+                call also needs a shell (*expects*, *sudo*), which a raw
+                channel cannot provide. Every other case — a user reachable
+                only through proxy hops, or any user on a telnet host — runs
+                on a pooled shell session switched to that user for the call
+                and back after (spec 2026-09-21 §4.2). ``None`` inherits an
+                enclosing ``as_user()``'s identity, else the login target.
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
-
-        Raises:
-            NotImplementedError: ``user`` was given on a non-SSH host. Raised by
-                :meth:`_refuse_exec_user`, above ``exec``'s dry-run arm.
 
         See Also:
             :meth:`~otto.host.host.BaseHost.run`: stateful, sequential alternative
             with expect support.
         """
-        if user is not None:
+        if (
+            user is not None
+            and self.term == "ssh"
+            and not needs_shell
+            and self._connections.has_direct_cred(user)
+        ):
             conn = await self._connections.ssh_as(user)
             return await self._session_mgr.exec_on(
                 conn, cmd, timeout=timeout, log=self._effective_log(log)
             )
-        return await self._session_mgr.exec(cmd, timeout=timeout, log=self._effective_log(log))
-
-    @override
-    def _refuse_exec_user(self, user: str) -> None:
-        """Refuse ``exec(user=...)`` on a host whose term has no exec channel to authenticate on.
-
-        Only ``term="ssh"`` has a stateless exec primitive that can be opened
-        as another user; telnet has none. Reads this host's own ``term``, so
-        the answer costs no round trip.
-        """
-        if self.term != "ssh":
-            raise NotImplementedError(
-                f"{self.name}: exec(user=...) on a {self.term!r} host — "
-                f"per-user exec needs an SSH exec channel (v1 scope); "
-                f"use as_user() on the session instead"
-            ) from None
+        return await self._session_mgr.exec(
+            cmd,
+            timeout=timeout,
+            log=self._effective_log(log),
+            expects=expects,
+            user=user,
+            needs_shell=needs_shell,
+        )
 
     ####################
     #  File transfer

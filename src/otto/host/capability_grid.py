@@ -61,6 +61,16 @@ class UserSupport(str, Enum):
             "credentials are never needed."
         ),
     )
+    switch = (
+        "switch",
+        (
+            "The verb runs in a shell session switched to that user, reached "
+            "the way an interactive login reaches them -- directly, or by "
+            "replaying the proxy hops their cred declares. On an SSH host, a "
+            "user with a direct cred is instead authenticated on a connection "
+            "of their own."
+        ),
+    )
     ignored = (
         "ignored",
         "The argument is accepted and validated, and has no other effect.",

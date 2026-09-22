@@ -41,7 +41,7 @@ pytestmark = [
 def test_clean_run_on_leased_host(chaos_bed, tmp_path):
     cmd = "echo CHAOS-CERT"
     p = spawn_otto(
-        ["host", chaos_bed.target.host_id, "run", cmd],
+        ["host", chaos_bed.target.host_id, "exec", cmd],
         xdir=tmp_path,
         target=chaos_bed.target,
     )
@@ -85,7 +85,7 @@ def test_clean_run_on_the_busybox_guest(busybox_chaos_bed, tmp_path):
     p = None
     try:
         p = spawn_otto(
-            ["host", busybox_chaos_bed.target.host_id, "run", cmd],
+            ["host", busybox_chaos_bed.target.host_id, "exec", cmd],
             xdir=tmp_path,
             target=busybox_chaos_bed.target,
         )

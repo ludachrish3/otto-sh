@@ -94,6 +94,15 @@ class TestTheDeclarationItself:
     def test_every_shipped_family_declares_its_capabilities(self, family):
         assert isinstance(family.capabilities, HostCapabilities)
 
+    def test_switch_is_a_member_with_its_own_meaning(self):
+        assert UserSupport.switch.value == "switch"
+        assert "switched to that user" in (UserSupport.switch.__doc__ or "")
+
+    def test_unix_answers_exec_user_with_switch(self):
+        from otto.host.unix_host import UnixHost
+
+        assert UnixHost.capabilities.exec_user is UserSupport.switch
+
     def test_a_declaration_naming_no_transfer_at_all_is_refused(self):
         with pytest.raises(ValueError, match="exactly one of transfer_family"):
             _capabilities(transfer_family="")

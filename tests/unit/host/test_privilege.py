@@ -942,6 +942,37 @@ async def test_a_host_with_neither_refuses_rather_than_guessing():
     assert host.name in message, f"the refusal does not say which host: {message}"
 
 
+@pytest.mark.asyncio
+async def test_exec_as_another_user_answers_sudo_with_that_users_password():
+    """``exec(user=X, sudo=True)`` switches FIRST and elevates AS X (spec §4.2).
+
+    The command runs on a pooled session switched to X, where ``sudo -S``
+    prompts for X's password — not the login user's. Two different passwords
+    on purpose: an elevation that read ``current_user`` (the default session's
+    identity, still ``admin``) would type ``adminpw`` and be rejected.
+    """
+    host = _host_wired_to(
+        None,
+        creds=[Cred(login="admin", password="adminpw"), Cred(login="alice", password="alicepw")],
+    )
+    seen: list[dict] = []
+
+    async def _record(cmd, timeout, log=LogMode.NORMAL, user=None, **kw):
+        seen.append({"cmd": cmd, "user": user, "expects": kw.get("expects")})
+        return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
+
+    host._exec_one = _record
+
+    await host.exec("id", sudo=True, user="alice")
+    assert seen[-1]["user"] == "alice"
+    assert seen[-1]["expects"] == [("otto-sudo:", "alicepw\n")]
+
+    # No user: the ambient/login identity still answers, exactly as `run` does.
+    await host.exec("id", sudo=True)
+    assert seen[-1]["user"] is None
+    assert seen[-1]["expects"] == [("otto-sudo:", "adminpw\n")]
+
+
 def _declared_elevations() -> set[str]:
     """The ``elevation`` vocabulary, read from the boundary spec that owns it.
 

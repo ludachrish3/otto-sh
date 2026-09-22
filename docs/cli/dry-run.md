@@ -18,10 +18,10 @@ and exits **0 before the command body runs**:
 - it prints what would run: the command, its target, and the arguments you gave
 
 ```console
-$ otto --lab my_lab -n host dut1 run "systemctl restart nginx"
+$ otto --lab my_lab -n host dut1 exec "systemctl restart nginx"
 [DRY RUN] Commands and file transfers will be skipped. No device will be contacted.
 dry run: no command body was run and no device was contacted
-  would run: otto host dut1 run 'systemctl restart nginx'
+  would run: otto host dut1 exec 'systemctl restart nginx'
   lab: my_lab (3 hosts); references resolve: host 'dut1'
 ```
 
@@ -33,7 +33,7 @@ printed *after* the references resolve, so a dry run never reports that a
 command "would run" against a host that does not exist:
 
 ```console
-$ otto --lab my_lab -n host nosuchbox run "uptime"
+$ otto --lab my_lab -n host nosuchbox exec "uptime"
 No host with ID 'nosuchbox'.
 Available hosts:
   - router1
@@ -98,11 +98,11 @@ and stops.  Adding `--probe` buys exactly one extra thing — otto opens a
 connection to each host in that resolved set and prints whether it answered:
 
 ```console
-$ otto --lab my_lab --dry-run --probe host router1 run "make install"
+$ otto --lab my_lab --dry-run --probe host router1 exec "make install"
 probe: a connection only -- no command was run
   router1: unreachable
 dry run: no command body was run; --probe opened a connection only, and ran no command
-  would run: otto host router1 run 'make install'
+  would run: otto host router1 exec 'make install'
   lab: my_lab (3 hosts); references resolve: host 'router1'
 ```
 
@@ -116,14 +116,14 @@ dry run exits 0 either way — **reachability is information, not a gate.**
 With the full dry-run banner, the same probe reads:
 
 ```console
-$ otto --lab my_lab -n --probe host router1 run "make install"
+$ otto --lab my_lab -n --probe host router1 exec "make install"
 [DRY RUN] Commands and file transfers will be skipped. --probe will open a
 connection to each named host, and run no command.
 probe: a connection only -- no command was run
   router1: unreachable
 @router1   | [DRY RUN] Connection FAILED: [Errno 111] Connect call failed ('127.0.0.1', 23) — a real connection; no command was run
 dry run: no command body was run; --probe opened a connection only, and ran no command
-  would run: otto host router1 run 'make install'
+  would run: otto host router1 exec 'make install'
   lab: my_lab (3 hosts); references resolve: host 'router1'
 ```
 
@@ -176,11 +176,11 @@ The built-in `local` host is reachable without a socket — otto is already
 running there — and says so:
 
 ```console
-$ otto --lab my_lab -n --probe host local run "uptime"
+$ otto --lab my_lab -n --probe host local exec "uptime"
 probe: a connection only -- no command was run
   local: reachable -- no transport to open
 dry run: no command body was run and no device was contacted
-  would run: otto host local run uptime
+  would run: otto host local exec uptime
   lab: my_lab (3 hosts); references resolve: host 'local'
 ```
 
@@ -240,4 +240,4 @@ One exception: otto reads **its own** SUT checkout's git HEAD under a dry run,
 to stamp the run's provenance — a local, read-only query about the machine otto
 is already running on, not a command on a device. It is the only such
 exemption, and it does not extend to anything else — including
-`otto host local run`, which declines under `-n` exactly like every other host.
+`otto host local exec`, which declines under `-n` exactly like every other host.

@@ -444,6 +444,16 @@ class ConnectionManager:
             logger.debug(f"SFTP client connected for {self._name}")
             return sftp
 
+    def has_direct_cred(self, user: str) -> bool:
+        """Whether *user* can authenticate an SSH transport of their own.
+
+        The question ``_direct_cred_for`` answers by raising. A caller
+        choosing between a raw channel authenticated as *user* and a
+        switched shell needs the answer without the exception.
+        """
+        direct, hops = resolve_chain(self._creds, user, "ssh")
+        return not hops and direct.login == user
+
     def _direct_cred_for(self, user: str) -> Cred:
         """Resolve the cred to authenticate an SSH transport as *user* — zero hops or refuse.
 

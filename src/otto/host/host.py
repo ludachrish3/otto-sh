@@ -25,6 +25,7 @@ from typing import (
     Any,
     ClassVar,
     Protocol,
+    TypeGuard,
     TypeVar,
     cast,
 )
@@ -48,6 +49,7 @@ from ..utils import (
 # callables on :class:`BaseHost`'s dataclass fields, so they must exist when the
 # class body executes. All three are leaf modules (stdlib-only imports), so they
 # add no edge to the host package's import graph beyond themselves.
+from .capability_grid import UserSupport
 from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
 from .log_haul import haul_globs
@@ -317,19 +319,56 @@ class ShellCommand:
     """Per-command logging disposition. ``None`` inherits the run-level ``log`` value."""
 
 
+_EXPECT_PAIR_LEN = 2
+"""An ``Expect`` is exactly ``(pattern, response)`` — see :data:`Expect`."""
+
+
+def _is_expect_pair(item: object) -> "TypeGuard[Expect]":
+    """Whether *item* is one ``Expect`` — a ``(pattern, response)`` 2-tuple."""
+    return (
+        isinstance(item, tuple)
+        and len(item) == _EXPECT_PAIR_LEN
+        and isinstance(item[0], (str, re.Pattern))
+        and isinstance(item[1], str)
+    )
+
+
+def _expects_refusal(value: object) -> str:
+    """Build the refusal ``_normalize_expects`` raises: the parameter, then the move."""
+    return (
+        f"expects must be a (pattern, response) pair or a sequence of them, not "
+        f"{value!r}. `exec`'s positional order is now (cmd, expects, timeout, "
+        f"log, sudo, user) — pass timeout= by keyword."
+    )
+
+
 def _normalize_expects(
     expects: "Expect | list[Expect] | None",
 ) -> list["Expect"] | None:
     """Wrap a scalar ``Expect`` (a 2-tuple) into a one-element list.
 
-    ``None`` and existing lists pass through unchanged. Disambiguation is by
-    ``isinstance(expects, tuple)`` — tuples and lists don't overlap.
+    ``None`` and existing lists pass through; a tuple is either one pair or a
+    tuple of them.
+
+    ANYTHING ELSE RAISES ``TypeError`` NAMING THE PARAMETER. ``exec``'s
+    positional order is ``(cmd, expects, timeout, log, sudo, user)``, so a
+    caller written against 0.15.0's ``exec(cmd, timeout)`` now binds a float
+    to *expects*. Passing it through would send a number into the run and
+    fail somewhere inside a pooled session, naming neither the parameter nor
+    the change; refusing here says both, at the call.
     """
     if expects is None:
         return None
-    if isinstance(expects, tuple):
+    if _is_expect_pair(expects):
         return [expects]
-    return expects
+    if not isinstance(expects, (list, tuple)):
+        raise TypeError(_expects_refusal(expects))
+    pairs: list["Expect"] = []
+    for item in expects:
+        if not _is_expect_pair(item):
+            raise TypeError(_expects_refusal(expects))
+        pairs.append(item)
+    return pairs
 
 
 def _resolve_command(
@@ -629,12 +668,14 @@ class Host(Protocol):
 
     async def exec(
         self,
-        cmd: str,
+        cmd: str | ShellCommand,
+        expects: Expect | list[Expect] | None = None,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
+        sudo: bool = False,
         user: str | None = None,
     ) -> CommandResult:
-        """Run a single command outside the typical stateful ``run`` workflow.
+        """Run ONE command on a session this host does not keep.
 
         Concurrency safety is implementation-dependent. Host families with an
         independent exec primitive (e.g.
@@ -646,17 +687,21 @@ class Host(Protocol):
         session and are **not** concurrency-safe — see the concrete class.
 
         Args:
-            cmd: Shell command to run.
+            cmd: The command, or a :class:`ShellCommand` carrying its own
+                expects/timeout/log (call-level values are its defaults).
+            expects: ``(pattern, response)`` pair(s) for interactive prompts.
+                Families whose raw channel has no pty to answer one on
+                refuse; ``run(expects=...)`` answers on the persistent shell
+                instead.
             timeout: Seconds before the command is abandoned.
             log: Logging disposition for this call.
-            user: Run the command as this user. Containers act via
-                ``docker exec -u``; ssh-term unix hosts AUTHENTICATE as the
-                user — the command runs over that user's own SSH connection,
-                so direct-cred users only (a login reachable only through
-                proxy hops refuses). Every other family (telnet-term unix,
-                embedded, local) refuses loudly. ``None`` means the
-                container's declared default, or the connection's own
-                identity elsewhere.
+            sudo: Elevate through the host's resolved mechanism. Families
+                that cannot elevate refuse; containers run as root instead.
+            user: Run as this user — a direct login (its own credentials) or
+                a proxy login (a switched pooled shell). ``None`` inherits an
+                enclosing ``as_user()``'s identity, else the connection's own.
+                Which families accept it, and how, is declared per family on
+                :class:`~otto.host.capability_grid.HostCapabilities`.
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
@@ -1348,11 +1393,16 @@ class BaseHost(ABC):
     #  Privilege
     ####################
 
-    def _elevate(self, cmd: str) -> tuple[str, list["Expect"]]:
+    def _elevate(self, cmd: str, user: str | None = None) -> tuple[str, list["Expect"]]:
         """Return *(wrapped_cmd, extra_expects)* to run *cmd* with elevation.
 
         Default raises — only posix-shell hosts (via the ``PosixPrivilege``
         mixin) can elevate. Embedded/RTOS hosts have no ``sudo``.
+
+        *user* is the identity the elevated command will run AS — the effective
+        user of an ``exec(user=...)``, whose switch happens before the command
+        and therefore before the elevation prompt. ``None`` means the session's
+        own current identity, which is what ``run`` always passes.
 
         Synchronous by contract, which is why :meth:`_prepare_elevation`
         exists: an implementation needing an awaited answer resolves it there.
@@ -1416,12 +1466,17 @@ class BaseHost(ABC):
         """
         return self._session_mgr.current_user
 
-    def _apply_sudo(self, sc: "ShellCommand") -> "ShellCommand":
+    def _apply_sudo(self, sc: "ShellCommand", user: str | None = None) -> "ShellCommand":
         """Rewrite a ``ShellCommand`` to run under sudo.
 
         Merges in the password ``Expect`` ahead of any caller-supplied expects.
+
+        *user* threads ``exec(user=...)``'s effective identity through to
+        :meth:`_elevate`, so the prompt is answered with the password of the
+        user the command actually runs as. ``run``'s two call sites pass
+        ``None`` — their commands run as the session's current user.
         """
-        wrapped, extra = self._elevate(sc.cmd)
+        wrapped, extra = self._elevate(sc.cmd, user)
         base = _normalize_expects(sc.expects) or []
         return replace(sc, cmd=wrapped, expects=extra + base)
 
@@ -1485,29 +1540,14 @@ class BaseHost(ABC):
             return
         await self._login(user)
 
-    @cli_exposed
     async def run(
         self,
-        cmds: Annotated[
-            str | ShellCommand | Sequence[str | ShellCommand],
-            Arg(variadic=True, elem_type=str, help="Command(s) to run."),
-        ],
-        expects: Annotated[Expect | list[Expect] | None, Exclude] = None,
-        timeout: Annotated[
-            float,
-            Opt(help="Per-command/cumulative timeout (seconds); use inf for unbounded.", min=0.0),
-        ] = DEFAULT_COMMAND_TIMEOUT,
-        log: Annotated[LogMode, Exclude] = LogMode.NORMAL,
+        cmds: str | ShellCommand | Sequence[str | ShellCommand],
+        expects: Expect | list[Expect] | None = None,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
+        log: LogMode = LogMode.NORMAL,
         sudo: bool = False,
-        user: Annotated[
-            str | None,
-            Opt(
-                help="Run as this user — containers only; every other family "
-                "refuses a per-call user. On unix, put/get take --user; from "
-                "Python use as_user() or exec(user=...). The persistent "
-                "channel binds its user when it opens."
-            ),
-        ] = None,
+        user: str | None = None,
     ) -> Results:
         """Execute one or more commands on the host via the persistent shell session.
 
@@ -1543,16 +1583,12 @@ class BaseHost(ABC):
                 userland offers neither mechanism raises
                 :exc:`~otto.host.errors.UnsupportedOnUserlandError` rather than
                 emitting a command that cannot work — see ``_elevate``.
-            user: Run each command as this user. Containers implement this
-                (``docker exec -u``); every other family refuses loudly — a
-                persistent session's identity is
-                :meth:`~otto.host.privilege.PosixPrivilege.as_user`'s job,
-                and the stateless :meth:`exec`/:meth:`put`/:meth:`get` take
-                ``user=`` directly on unix. ``None`` means the container's
-                declared default, or the connection's own identity elsewhere.
-                On containers the persistent channel binds its user at open;
-                a later run() naming a different user refuses — close() or
-                rebuild_connections() to rebind.
+            user: Run the commands as this user. Families whose persistent
+                session switches identity (unix) run the whole call inside
+                ``as_user(user)`` and restore the previous identity after;
+                containers bind the user when the channel opens; embedded and
+                local refuse. Which is which is declared per family on
+                :class:`~otto.host.capability_grid.HostCapabilities`.
 
         Returns:
             A :class:`~otto.result.Results` aggregating one :class:`~otto.result.CommandResult`
@@ -1572,10 +1608,26 @@ class BaseHost(ABC):
         See Also:
             :meth:`exec`: stateless, concurrent-safe alternative for one-off commands.
         """
-        if user is not None:
-            _validate_user(user)
         timeout = _validate_timeout(timeout)
         default_expects = _normalize_expects(expects)
+        if user is not None:
+            _validate_user(user)
+            if type(self).capabilities.run_user is UserSupport.switch and not is_dry_run():
+                # A per-call user on a family whose persistent session switches
+                # identity: the whole call runs inside as_user(), which restores
+                # the previous user after. Under a dry run the call declines
+                # below exactly as a plain dry-run run does — as_user's own
+                # dry-run arm refuses, and a decline is the right answer here.
+                # Only switch families reach this, and they mix in PosixPrivilege.
+                # Argument validation above already ran, so the recursive call's
+                # own re-validation is harmless — nothing here should switch
+                # before an invalid argument has had the chance to raise.
+                async with self.as_user(user):
+                    return await self.run(
+                        cmds, expects=expects, timeout=timeout, log=log, sudo=sudo
+                    )
+            if type(self).capabilities.run_user is UserSupport.switch:
+                user = None
         if sudo:
             # ABOVE the single-vs-sequence split, not inside either arm. This is
             # the only async point above `_elevate`, which is synchronous and so
@@ -1635,41 +1687,94 @@ class BaseHost(ABC):
         """Per-command runner for the persistent shell session. Subclasses override."""
         raise NotImplementedError from None
 
+    @cli_exposed
     async def exec(
         self,
-        cmd: str,
-        timeout: float = DEFAULT_COMMAND_TIMEOUT,
-        log: LogMode = LogMode.NORMAL,
-        user: str | None = None,
+        cmd: Annotated[
+            str | ShellCommand,
+            Arg(
+                name="COMMAND",
+                help="One command, quoted as one arg; join steps with && on a POSIX shell.",
+            ),
+        ],
+        expects: Annotated[Expect | list[Expect] | None, Exclude] = None,
+        timeout: Annotated[
+            float,
+            Opt(help="Seconds before the command is abandoned; use inf for unbounded.", min=0.0),
+        ] = DEFAULT_COMMAND_TIMEOUT,
+        log: Annotated[LogMode, Exclude] = LogMode.NORMAL,
+        sudo: bool = False,
+        user: Annotated[
+            str | None,
+            Opt(
+                help="Run as this user — a direct or proxy login. Which families "
+                "accept it, and how, is declared per family in `otto host` docs."
+            ),
+        ] = None,
     ) -> CommandResult:
-        """Run a single command outside the persistent shell session.
+        """Run ONE command on a session this host does not keep.
 
-        Validates *timeout* and *user* and delegates to ``_exec_one``, which
-        each host family implements. Do not override this method — override
-        ``_exec_one``, so the validation cannot be bypassed.
+        ``run`` is the same execution on the session it does keep; this is
+        the single-command shape of ``run``'s signature, parameter for
+        parameter. A family may satisfy it with a raw channel (an ssh exec
+        channel, a subprocess, ``docker exec``) when the call needs nothing a
+        shell provides — that is what makes ``exec`` concurrency-safe and
+        byte-exact where ``run`` is neither. Anything a raw channel cannot do
+        (answer *expects*, elevate, switch user, replay proxy hops) runs on a
+        pooled shell session the way ``run`` would.
+
+        Validation and refusals sit ABOVE the dry-run arm, so a dry run of a
+        call the family could never honour refuses rather than declining as
+        though it could have. Do not override this method — override
+        ``_exec_one``, so that ordering cannot be bypassed — the container
+        family rewrites its arguments and delegates, which is the one
+        permitted shape.
 
         Args:
-            cmd: Shell command to run.
+            cmd: The command, or a :class:`ShellCommand` carrying its own
+                expects/timeout/log (call-level values are its defaults).
+            expects: ``(pattern, response)`` pair(s) for interactive prompts.
+                Families whose raw channel has no pty to answer one on
+                refuse; ``run(expects=...)`` answers on the persistent shell
+                instead.
             timeout: Seconds before the command is abandoned. Defaults to
-                :data:`DEFAULT_COMMAND_TIMEOUT`; pass ``float("inf")`` for a
+                :data:`DEFAULT_COMMAND_TIMEOUT`; ``float("inf")`` for a
                 deliberately unbounded command.
             log: Logging disposition for this call.
-            user: Run the command as this user. Containers act via
-                ``docker exec -u``; ssh-term unix hosts AUTHENTICATE as the
-                user — the command runs over that user's own SSH connection,
-                so direct-cred users only (a login reachable only through
-                proxy hops refuses). Every other family (telnet-term unix,
-                embedded, local) refuses loudly. ``None`` means the
-                container's declared default, or the connection's own
-                identity elsewhere.
+            sudo: Elevate through the host's resolved mechanism. Families
+                that cannot elevate refuse; containers run as root instead.
+            user: Run as this user — a direct login (its own credentials) or
+                a proxy login (a switched pooled shell). ``None`` inherits an
+                enclosing ``as_user()``'s identity, else the connection's own.
+                Which families accept it, and how, is declared per family on
+                :class:`~otto.host.capability_grid.HostCapabilities`.
         """
+        if user is None:
+            user = self._ambient_user()
         if user is not None:
             _validate_user(user)
             self._refuse_exec_user(user)
+        if sudo:
+            self._refuse_exec_sudo()
         timeout = _validate_timeout(timeout)
+        sc = _resolve_command(cmd, _normalize_expects(expects), timeout, log)
+        if sc.expects:
+            self._refuse_exec_expects()
+        if sudo:
+            await self._prepare_elevation()
+        if sudo:
+            sc = self._apply_sudo(sc, user)
         if is_dry_run():
-            return self._dry_run_result(cmd, log)
-        return await self._exec_one(cmd, timeout=timeout, log=log, user=user)
+            return self._dry_run_result(sc.cmd, log)
+        sc_expects = _normalize_expects(sc.expects)
+        return await self._exec_one(
+            sc.cmd,
+            timeout=sc.timeout if sc.timeout is not None else timeout,
+            log=sc.log if sc.log is not None else log,
+            user=user,
+            expects=sc_expects,
+            needs_shell=sudo or bool(sc_expects),
+        )
 
     def _refuse_exec_user(self, user: str) -> None:  # noqa: B027 — an empty default is the POINT: most families honour user= and have nothing to refuse
         """Refuse an ``exec(user=...)`` this family can never honour, before anything else.
@@ -1688,14 +1793,53 @@ class BaseHost(ABC):
         no I/O. The default has nothing to refuse.
         """
 
+    def _refuse_exec_sudo(self) -> None:  # noqa: B027 — an empty default is the POINT: most families honour sudo and have nothing to refuse
+        """Refuse an ``exec(sudo=True)`` this family can never honour, above the dry-run arm.
+
+        The same contract as :meth:`_refuse_exec_user`: synchronous, no I/O,
+        answered from the host's own configuration. The default refuses
+        nothing; a family whose ``exec`` has no pty to answer a prompt on
+        overrides it naming ``run(sudo=True)``.
+        """
+
+    def _refuse_exec_expects(self) -> None:  # noqa: B027 — an empty default is the POINT: most families honour expects and have nothing to refuse
+        """Refuse an ``exec(expects=...)`` this family can never honour, above the dry-run arm.
+
+        The same contract as :meth:`_refuse_exec_sudo`: synchronous, no I/O,
+        answered from the host's own configuration. The default refuses
+        nothing; a family whose ``exec`` has no pty to answer a prompt on
+        overrides it naming ``run(expects=...)``.
+        """
+
+    def _ambient_user(self) -> str | None:  # noqa: B027 — an empty default is the POINT: most families have no switchable default session
+        """Report the user an enclosing ``as_user()`` switched the default session to, or ``None``.
+
+        ``exec`` runs on a session it does not keep, so a switch made on the
+        default session is invisible to it unless the family reports it here.
+        FAMILIES WHOSE DEFAULT SESSION CAN SWITCH IDENTITY REPORT IT — the
+        remote families and the container family both do, because both have a
+        real ``as_user``. The default is no ambient identity, which is right
+        for a family that cannot switch at all and for
+        :class:`~otto.host.local_host.LocalHost`, whose ``exec`` refuses
+        ``user=`` outright.
+        """
+
     async def _exec_one(
         self,
         cmd: str,
         timeout: float,
         log: LogMode = LogMode.NORMAL,
         user: str | None = None,
+        *,
+        expects: "list[Expect] | None" = None,
+        needs_shell: bool = False,
     ) -> CommandResult:
-        """Family-specific stateless command runner. Subclasses override."""
+        """Family-specific runner for one command. Subclasses override.
+
+        *expects* and *needs_shell* are the call's own reasons to want a
+        shell; a family whose raw channel cannot honour them routes to its
+        pooled shell (see :meth:`~otto.host.session.SessionManager.exec`).
+        """
         raise NotImplementedError from None
 
     async def open_session(

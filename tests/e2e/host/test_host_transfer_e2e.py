@@ -1,5 +1,5 @@
 """End-to-end CLI tests for ``otto host <vm> put/get`` (file transfer) and
-``otto host <target> --hop <hop> run`` (multi-hop execution) driven through the
+``otto host <target> --hop <hop> exec`` (multi-hop execution) driven through the
 real ``otto`` subprocess entry-point.
 
 These tests require the live Vagrant bed (``vagrant up test1 test2 test3``).
@@ -117,7 +117,7 @@ def test_host_put_get_roundtrip(unix_host: str, tmp_path: Path) -> None:
 
     try:
         # --- Create remote staging directory ---
-        mkdir = _run_otto("host", unix_host, "run", f"mkdir -p {remote_dir}", xdir=tmp_path)
+        mkdir = _run_otto("host", unix_host, "exec", f"mkdir -p {remote_dir}", xdir=tmp_path)
         assert mkdir.returncode == 0, (
             f"Failed to create remote staging dir {remote_dir!r} on {unix_host!r}:\n"
             f"stdout: {mkdir.stdout}\nstderr: {mkdir.stderr}"
@@ -153,16 +153,16 @@ def test_host_put_get_roundtrip(unix_host: str, tmp_path: Path) -> None:
         assert_output_dir(tmp_path, "host")
     finally:
         # --- best-effort cleanup of remote staging dir (always runs) ---
-        _run_otto("host", unix_host, "run", f"rm -rf {remote_dir}", xdir=tmp_path)
+        _run_otto("host", unix_host, "exec", f"rm -rf {remote_dir}", xdir=tmp_path)
 
 
 # ---------------------------------------------------------------------------
-# Test: --hop run (single-hop SSH: otto → test1 → test2)
+# Test: --hop exec (single-hop SSH: otto → test1 → test2)
 # ---------------------------------------------------------------------------
 
 
 def test_host_hop_run(tmp_path: Path) -> None:
-    """``otto host <target> --hop <hop> run "echo <token>"`` must execute the
+    """``otto host <target> --hop <hop> exec "echo <token>"`` must execute the
     command on the TARGET (test2) via the SSH hop (test1) and include the
     echo token in the output.
 
@@ -178,12 +178,12 @@ def test_host_hop_run(tmp_path: Path) -> None:
         "--hop",
         _HOP_HOST,
         _HOP_TARGET,
-        "run",
+        "exec",
         f"echo {token}",
         xdir=tmp_path,
     )
     assert result.returncode == 0, (
-        f"``otto host --hop {_HOP_HOST} {_HOP_TARGET} run 'echo {token}'`` failed:\n"
+        f"``otto host --hop {_HOP_HOST} {_HOP_TARGET} exec 'echo {token}'`` failed:\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
     assert token in result.stdout, f"Expected echo token {token!r} in output, got:\n{result.stdout}"

@@ -41,7 +41,7 @@ id = "zephyr37-debug-run"
 labless = false
 project = "getting-started"
 timeout = 300
-argv = ["{otto}", "--log-level", "DEBUG", "--lab", "embedded", "host", "zephyr37-fat", "run", "kernel uptime"]
+argv = ["{otto}", "--log-level", "DEBUG", "--lab", "embedded", "host", "zephyr37-fat", "exec", "kernel uptime"]
 # The uptime value varies every run. DEBUG logging turned out to carry five
 # more things that vary run to run: the per-session random ids threaded
 # through every handshake/marker/framed-write line, the local hop's ephemeral
@@ -63,7 +63,7 @@ redact = [
     ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
     ["in \\d+\\.\\d+s", "in <duration>s"],
     ["after \\d+\\.\\d+s", "after <duration>s"],
-    ["\\d{8}_\\d{6}_\\d{3}_run", "<run>_run"],
+    ["\\d{8}_\\d{6}_\\d{3}_exec", "<run>_exec"],
 ]
 
 [[capture]]
@@ -100,7 +100,7 @@ id = "zephyr27-run"
 labless = false
 project = "getting-started"
 timeout = 300
-argv = ["{otto}", "--lab", "embedded", "host", "zephyr27-fat", "run", "kernel uptime"]
+argv = ["{otto}", "--lab", "embedded", "host", "zephyr27-fat", "exec", "kernel uptime"]
 # Same uptime-casing and run-directory fixes as zephyr37-debug-run; this one
 # runs at the default log level so none of the DEBUG-only noise appears. The
 # telnet client's own "Connected to <Peer ...>" line is INFO, not DEBUG-only,
@@ -108,7 +108,7 @@ argv = ["{otto}", "--lab", "embedded", "host", "zephyr27-fat", "run", "kernel up
 # capture regardless of log level.
 redact = [
     ["Uptime: \\d+ ms", "Uptime: <n> ms"],
-    ["\\d{8}_\\d{6}_\\d{3}_run", "<run>_run"],
+    ["\\d{8}_\\d{6}_\\d{3}_exec", "<run>_exec"],
     ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
 ]
 
@@ -132,10 +132,10 @@ id = "session-setup-test1"
 labless = false
 project = "getting-started"
 timeout = 300
-argv = ["{otto}", "--lab", "unix", "host", "test1", "run", "echo $APP_ENV"]
+argv = ["{otto}", "--lab", "unix", "host", "test1", "exec", "echo $APP_ENV"]
 redact = [
     ["__OTTO_[0-9a-f]+_", "__OTTO_<session>_"],
-    ["\\d{8}_\\d{6}_\\d{3}_run", "<run>_run"],
+    ["\\d{8}_\\d{6}_\\d{3}_exec", "<run>_exec"],
 ]
 
 [[capture]]
@@ -143,10 +143,10 @@ id = "session-setup-pyrepl"
 labless = false
 project = "getting-started"
 timeout = 300
-argv = ["{otto}", "--lab", "pyrepl", "host", "test1-py", "run", "1 + 1"]
+argv = ["{otto}", "--lab", "pyrepl", "host", "test1-py", "exec", "1 + 1"]
 redact = [
     ["__OTTO_[0-9a-f]+_", "__OTTO_<session>_"],
-    ["\\d{8}_\\d{6}_\\d{3}_run", "<run>_run"],
+    ["\\d{8}_\\d{6}_\\d{3}_exec", "<run>_exec"],
 ]
 
 [[capture]]
@@ -154,7 +154,7 @@ id = "session-setup-zephyr37-lfs"
 labless = false
 project = "getting-started"
 timeout = 300
-argv = ["{otto}", "--lab", "embedded", "host", "zephyr37-lfs", "run", "kernel version"]
+argv = ["{otto}", "--lab", "embedded", "host", "zephyr37-lfs", "exec", "kernel version"]
 # The native_posix QEMU instance's peer socket binds an ephemeral port that
 # varies every run. This is the only capture with a raw ANSI escape byte in
 # its output (the device shell's own colorized prompt) rather than a textual
@@ -163,7 +163,7 @@ argv = ["{otto}", "--lab", "embedded", "host", "zephyr37-lfs", "run", "kernel ve
 # page renders it, so it is stripped here.
 redact = [
     ["__OTTO_[0-9a-f]+_", "__OTTO_<session>_"],
-    ["\\d{8}_\\d{6}_\\d{3}_run", "<run>_run"],
+    ["\\d{8}_\\d{6}_\\d{3}_exec", "<run>_exec"],
     ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
     ["\\x1b\\[[0-9;]*m", ""],
 ]

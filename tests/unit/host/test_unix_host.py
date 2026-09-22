@@ -10,6 +10,7 @@ ssh / telnet / local).
 
 import asyncio
 import contextlib
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.host import HostSession, UnixHost
+from otto.host.capability_grid import UserSupport
 from otto.host.connections import _UserConnections
 from otto.host.element import Element
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
@@ -30,6 +32,7 @@ from otto.logger.mode import LogMode
 from otto.result import CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.chaos import ChaosPoints, Surface, sweep_cancellation
+from tests.conftest import active_context
 
 
 def _cs(
@@ -706,12 +709,16 @@ class TestExec:
         assert result.retcode == 1
 
     @pytest.mark.asyncio
-    async def test_exec_user_runs_on_that_users_connection(
-        self, host: UnixHost, monkeypatch: pytest.MonkeyPatch
-    ):
+    async def test_exec_user_runs_on_that_users_connection(self, monkeypatch: pytest.MonkeyPatch):
         """`exec(user=X)` authenticates as X (spec 2026-09-01 §4): the exec
         channel must ride the connection `ssh_as(X)` hands back, not the
         login-target connection the pooled/plain path uses."""
+        host = UnixHost(
+            ip="10.0.0.1",
+            element=Element("box"),
+            creds=[Cred(login="user", password="pass"), Cred(login="postgres", password="pw")],
+            log=LogMode.QUIET,
+        )
         seen: dict[str, object] = {}
         user_conn = MagicMock(name="conn-postgres")
 
@@ -742,43 +749,80 @@ class TestExec:
         assert result.value == "uid=70"
 
     @pytest.mark.asyncio
-    async def test_exec_user_refused_on_telnet(self):
-        """The refusal is `_refuse_exec_user`'s, which `exec()` calls ABOVE its
-        own dry-run arm — so a dry run refuses too rather than declining as
-        though the call could have been honoured."""
+    async def test_exec_user_on_telnet_switches_on_the_pooled_shell(self):
+        """Telnet has no exec channel to authenticate on, so a per-user exec is a
+        switched pooled shell — the same path a proxy-only user takes on ssh."""
         h = UnixHost(
             ip="10.0.0.1",
             element=Element("box"),
-            creds=[Cred(login="user", password="pass")],
+            creds=[Cred(login="user", password="pass"), Cred(login="root", password="rootpw")],
             term="telnet",
             log=LogMode.QUIET,
         )
-        from tests.conftest import active_context
-
-        with pytest.raises(NotImplementedError, match=r"per-user exec needs an SSH exec channel"):
-            await h.exec("id", timeout=5.0, user="root")
-        with (
-            active_context(dry_run=True),
-            pytest.raises(NotImplementedError, match=r"per-user exec needs an SSH exec channel"),
-        ):
-            await h.exec("id", timeout=5.0, user="root")
-
-    @pytest.mark.asyncio
-    async def test_run_user_refused_on_unix(self, host: UnixHost):
-        """Call `_run_one` directly — `run()`'s dry-run/timeout layers must
-        not be able to short-circuit the branch under test."""
-        with pytest.raises(
-            NotImplementedError, match=r"run\(user=\.\.\.\) is not supported on UnixHost"
-        ):
-            await host._run_one("id", timeout=5.0, user="root")
+        h._session_mgr.exec = AsyncMock(
+            return_value=CommandResult(status=Status.Success, value="root", command="id", retcode=0)
+        )
+        h._connections.ssh_as = AsyncMock()
+        result = await h.exec("id", user="root")
+        assert result.value == "root"
+        h._session_mgr.exec.assert_awaited_once()
+        assert h._session_mgr.exec.await_args.kwargs["user"] == "root"
+        h._connections.ssh_as.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_run_user_refusal_points_at_as_user(self, host: UnixHost):
-        with pytest.raises(
-            NotImplementedError,
-            match=r"a persistent session's identity is as_user's job.*on unix, exec/put/get",
-        ):
-            await host._run_one("id", timeout=5.0, user="root")
+    async def test_exec_user_with_a_direct_cred_on_ssh_authenticates(self):
+        h = UnixHost(
+            ip="10.0.0.1",
+            element=Element("box"),
+            creds=[Cred(login="user", password="pass"), Cred(login="root", password="rootpw")],
+            term="ssh",
+            log=LogMode.QUIET,
+        )
+        conn = object()
+        h._connections.ssh_as = AsyncMock(return_value=conn)
+        h._session_mgr.exec_on = AsyncMock(
+            return_value=CommandResult(status=Status.Success, value="root", command="id", retcode=0)
+        )
+        h._session_mgr.exec = AsyncMock()
+        await h.exec("id", user="root")
+        h._connections.ssh_as.assert_awaited_once_with("root")
+        h._session_mgr.exec_on.assert_awaited_once()
+        h._session_mgr.exec.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_exec_user_behind_a_hop_on_ssh_switches_instead_of_refusing(self):
+        h = UnixHost(
+            ip="10.0.0.1",
+            element=Element("box"),
+            creds=[Cred(login="user", password="pass"), Cred(login="root", proxy="su", via="user")],
+            term="ssh",
+            log=LogMode.QUIET,
+        )
+        h._connections.ssh_as = AsyncMock()
+        h._session_mgr.exec = AsyncMock(
+            return_value=CommandResult(status=Status.Success, value="root", command="id", retcode=0)
+        )
+        await h.exec("id", user="root")
+        h._connections.ssh_as.assert_not_awaited()
+        assert h._session_mgr.exec.await_args.kwargs["user"] == "root"
+
+    @pytest.mark.asyncio
+    async def test_exec_user_with_a_direct_cred_but_a_prompt_takes_the_shell(self):
+        """A direct cred can authenticate on a raw channel — but not answer a prompt."""
+        h = UnixHost(
+            ip="10.0.0.1",
+            element=Element("box"),
+            creds=[Cred(login="user", password="pass"), Cred(login="root", password="rootpw")],
+            term="ssh",
+            log=LogMode.QUIET,
+        )
+        h._connections.ssh_as = AsyncMock()
+        h._session_mgr.exec = AsyncMock(
+            return_value=CommandResult(status=Status.Success, value="", command="cat", retcode=0)
+        )
+        await h.exec("cat", user="root", expects=[("more", " ")])
+        h._connections.ssh_as.assert_not_awaited()
+        assert h._session_mgr.exec.await_args.kwargs["needs_shell"] is True
 
     @pytest.mark.asyncio
     async def test_exec_telnet_success(self):
@@ -929,6 +973,7 @@ class TestExec:
             log=LogMode.QUIET,
         )
         h._session_mgr = AsyncMock()
+        h._session_mgr.ambient_user = None
         h._session_mgr.exec.return_value = CommandResult(
             command="c",
             value="",
@@ -941,6 +986,9 @@ class TestExec:
             "base64 /bin/ls",
             timeout=DEFAULT_COMMAND_TIMEOUT,
             log=LogMode.QUIET,
+            expects=None,
+            user=None,
+            needs_shell=False,
         )
 
 
@@ -1140,20 +1188,25 @@ class TestPutGetUser:
         assert seen == {"cmd": "id -un", "user": None}
 
     @pytest.mark.asyncio
-    async def test_per_user_exec_cmd_on_telnet_surfaces_the_exec_refusal(self):
-        """On a telnet host that same binding hits Task 2's gate. The refusal
-        is loud and names the reason — nc's per-file collector then reports it
-        verbatim rather than flattening it into a generic transfer failure."""
+    async def test_per_user_exec_cmd_on_telnet_switches_the_pooled_shell(self):
+        """On a telnet host that same binding has no exec channel to
+        authenticate on, so it switches a pooled shell instead of refusing —
+        nc's per-file collector rides that switched session exactly as ssh's
+        proxy-only users do."""
         h = UnixHost(
             ip="10.0.0.1",
             element=Element("box"),
-            creds=[Cred(login="user", password="pass")],
+            creds=[Cred(login="user", password="pass"), Cred(login="root", password="rootpw")],
             term="telnet",
             transfer="nc",
             log=LogMode.QUIET,
         )
-        with pytest.raises(NotImplementedError, match=r"per-user exec needs an SSH exec channel"):
-            await h._transfer_for("root")._exec_cmd("true")
+        h._session_mgr.exec = AsyncMock(
+            return_value=CommandResult(status=Status.Success, value="", command="true", retcode=0)
+        )
+        result = await h._transfer_for("root")._exec_cmd("true")
+        assert h._session_mgr.exec.await_args.kwargs["user"] == "root"
+        assert result.status == Status.Success
 
 
 # ---------------------------------------------------------------------------
@@ -2234,7 +2287,7 @@ async def test_unix_switch_user_updates_host_current_user():
 # ---------------------------------------------------------------------------
 
 
-def _unix_host():
+def _unix_host(*, term="ssh"):
     from otto.host.unix_host import UnixHost
 
     return UnixHost(
@@ -2242,7 +2295,87 @@ def _unix_host():
         element=Element("box"),
         creds=[Cred(login="admin", password="secret")],
         log=LogMode.QUIET,
+        term=term,
     )
+
+
+@pytest.mark.asyncio
+async def test_run_user_switches_for_the_call_and_restores():
+    h = _unix_host(term="ssh")  # the module's builder
+    # A real SessionManager (stub transport) so the host has a real identity
+    # to switch and restore: the fake `as_user` below records the switch the
+    # way `PosixPrivilege.as_user` does, which is what makes the RESTORE
+    # assertion at the end mean anything at all.
+    h._session_mgr = _real_session_mgr()
+    await h._session_mgr.run_cmd("whoami")  # default session opens as admin
+    assert h.current_user == "admin"
+    entered: list[str] = []
+
+    @asynccontextmanager
+    async def _fake_as_user(user, password=None):
+        entered.append(f"enter {user}")
+        h._session_mgr._set_current_user(user)
+        try:
+            yield h
+        finally:
+            h._session_mgr._set_current_user("admin")
+            entered.append(f"exit {user}")
+
+    h.as_user = _fake_as_user
+    ran_as: list[str] = []
+
+    async def _record_run(*_a, **_kw):
+        entered.append("run")
+        ran_as.append(h.current_user)
+        return CommandResult(status=Status.Success, value="root", command="id", retcode=0)
+
+    h._run_one = AsyncMock(side_effect=_record_run)
+    result = await h.run("id", user="root")
+    assert result.only.value == "root"
+    # The command's own marker sits BETWEEN the two switch markers: a `run`
+    # that entered and exited the switch and ran the command outside it would
+    # satisfy `entered == ["enter root", "exit root"]` just as well.
+    assert entered == ["enter root", "run", "exit root"]
+    assert ran_as == ["root"], "the command did not run under the switched identity"
+    assert h.current_user == "admin", (
+        "`run(user=...)` switched for the CALL — the host must be back on its "
+        "own identity once the call returns"
+    )
+    assert h._run_one.await_args.kwargs["user"] is None, (
+        "the switch, not _run_one, carries the identity"
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_user_validates_arguments_before_switching():
+    """A real switch (and its undo) is a live cost — an invalid argument must
+    raise before that cost is paid, not after."""
+    h = _unix_host(term="ssh")
+    entered: list[str] = []
+
+    @asynccontextmanager
+    async def _fake_as_user(user, password=None):
+        entered.append(f"enter {user}")
+        yield h
+        entered.append(f"exit {user}")
+
+    h.as_user = _fake_as_user
+    with pytest.raises(ValueError, match="timeout"):
+        await h.run("id", user="root", timeout=-1)
+    assert entered == []
+
+
+@pytest.mark.asyncio
+async def test_run_user_under_dry_run_declines_without_entering_as_user():
+    h = _unix_host(term="ssh")
+    h.as_user = MagicMock(side_effect=AssertionError("as_user must not be entered under a dry run"))
+    with active_context(dry_run=True):
+        result = await h.run("id", user="root")
+    assert result.only.status is Status.NotRun
+
+
+def test_unix_answers_run_user_with_switch():
+    assert UnixHost.capabilities.run_user is UserSupport.switch
 
 
 @pytest.mark.asyncio
@@ -2699,6 +2832,199 @@ class TestSshExecKillEscalation:
         assert elapsed < 1.0
 
 
+class TestSshExecCancelReap:
+    """Regression: an INTERRUPTED exec ends its remote command too — by HANGUP.
+
+    A CLI one-shot has a concrete end. The timeout arm escalates
+    ``terminate()`` → ``kill()``; the graceful-teardown arm (a signal cancels
+    the running task, so ``CancelledError`` unwinds the drain) used to walk
+    away and leave the remote command running, because closing a pty-less
+    exec channel does not signal it. It now hangs up first — the same end a
+    command meets on the shell route when its pty closes — and escalates to
+    ``kill()`` only if the command itself outlives the hangup. The fake
+    processes below mirror ``TestSshExecKillEscalation``: ``stdout`` never
+    yields, and every signal is recorded in order.
+    """
+
+    @staticmethod
+    def _rigged_host(element: str):
+        return UnixHost(
+            ip="10.0.0.1",
+            element=Element(element),
+            creds=[Cred(login="u", password="p")],
+            term="ssh",
+            log=LogMode.QUIET,
+        )
+
+    @staticmethod
+    def _wire(h, process):
+        class _Conn:
+            async def create_process(self, cmd, **kw):
+                return process
+
+        h._session_mgr._connections = MagicMock()
+        h._session_mgr._connections.term = "ssh"
+        h._session_mgr._connections.proxy_hops = []
+        h._session_mgr._connections.ssh = AsyncMock(return_value=_Conn())
+        h._session_mgr._exec_factory = None
+
+    @pytest.mark.serial_timing
+    @pytest.mark.asyncio
+    async def test_ssh_exec_hangs_up_then_kills_when_the_hangup_is_ignored(self, monkeypatch):
+        """The signal ORDER is the contract: HUP first, KILL only as escalation."""
+        # Patched where the name is *used* -- see TestSshExecKillEscalation.
+        monkeypatch.setattr("otto.host.session._EXEC_REAP_TIMEOUT", 0.2)
+
+        h = self._rigged_host("cancelled")
+
+        class _StalledStdout:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                await asyncio.sleep(3600)  # never yields, never returns
+                raise StopAsyncIteration
+
+        class _IgnoresHangupProcess:
+            stdout = _StalledStdout()
+
+            def __init__(self):
+                self.signals: list[str] = []
+                self._killed_event = asyncio.Event()
+
+            def send_signal(self, signal):
+                # A command that ignores the hangup: recorded, but wait()
+                # below stays blocked until kill() is called.
+                self.signals.append(signal)
+
+            def terminate(self):
+                self.signals.append("TERM")
+
+            def kill(self):
+                self.signals.append("KILL")
+                self._killed_event.set()
+
+            async def wait(self):
+                await self._killed_event.wait()
+                return SimpleNamespace(exit_status=-1)
+
+        process = _IgnoresHangupProcess()
+        self._wire(h, process)
+
+        # A long timeout: the ONLY thing that ends this call is the cancel.
+        task = asyncio.create_task(h.exec("sleep 3600", timeout=3600))
+        await asyncio.sleep(0.2)  # the drain is running on the channel
+        task.cancel()
+
+        _done, pending = await asyncio.wait({task}, timeout=5.0)
+        assert not pending, "cancelled exec never finished — the reap is unbounded"
+        assert task.cancelled(), "CancelledError must still propagate out of exec"
+        assert process.signals == ["HUP", "KILL"], (
+            "an interrupted exec must hang up first and escalate to kill() only after"
+        )
+
+    @pytest.mark.serial_timing
+    @pytest.mark.asyncio
+    async def test_ssh_exec_does_not_escalate_when_the_hangup_is_obeyed(self, monkeypatch):
+        """A command that dies on HUP is never killed — that is what keeps a
+        deliberately nohup'd child (which ignores HUP) alive, since the signal
+        reaches the command's whole process group."""
+        monkeypatch.setattr("otto.host.session._EXEC_REAP_TIMEOUT", 0.2)
+
+        h = self._rigged_host("hangs-up")
+
+        class _StalledStdout:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                await asyncio.sleep(3600)
+                raise StopAsyncIteration
+
+        class _ObeysHangupProcess:
+            stdout = _StalledStdout()
+
+            def __init__(self):
+                self.signals: list[str] = []
+                self._done = asyncio.Event()
+
+            def send_signal(self, signal):
+                self.signals.append(signal)
+                self._done.set()  # the command dies on the hangup
+
+            def terminate(self):
+                self.signals.append("TERM")
+
+            def kill(self):
+                self.signals.append("KILL")
+                self._done.set()
+
+            async def wait(self):
+                await self._done.wait()
+                return SimpleNamespace(exit_status=-1)
+
+        process = _ObeysHangupProcess()
+        self._wire(h, process)
+
+        task = asyncio.create_task(h.exec("sleep 3600", timeout=3600))
+        await asyncio.sleep(0.2)
+        task.cancel()
+
+        _done, pending = await asyncio.wait({task}, timeout=5.0)
+        assert not pending
+        assert task.cancelled()
+        assert process.signals == ["HUP"], (
+            "a command that obeys the hangup must never be killed — its nohup'd "
+            "children would go with it"
+        )
+
+    @pytest.mark.serial_timing
+    @pytest.mark.asyncio
+    async def test_a_reap_that_fails_on_a_dead_channel_never_swallows_the_cancel(self):
+        """The channel can be GONE by the time the reap signals it — asyncssh
+        raises ``OSError`` there. That failure is a footnote (debug-logged);
+        the CANCEL is the story, and it must still propagate, or an
+        interrupted otto would exit 0 because its teardown broke.
+        """
+        h = self._rigged_host("reap-explodes")
+
+        class _StalledStdout:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                await asyncio.sleep(3600)
+                raise StopAsyncIteration
+
+        class _DeadChannelProcess:
+            stdout = _StalledStdout()
+
+            def __init__(self):
+                self.signals: list[str] = []
+
+            def send_signal(self, signal):
+                self.signals.append(signal)
+                raise OSError("channel closed")
+
+            def kill(self):  # pragma: no cover — the hangup never got that far
+                self.signals.append("KILL")
+
+            async def wait(self):  # pragma: no cover — same
+                return SimpleNamespace(exit_status=-1)
+
+        process = _DeadChannelProcess()
+        self._wire(h, process)
+
+        task = asyncio.create_task(h.exec("sleep 3600", timeout=3600))
+        await asyncio.sleep(0.2)
+        task.cancel()
+
+        _done, pending = await asyncio.wait({task}, timeout=5.0)
+        assert not pending
+        assert task.cancelled(), "a failed reap swallowed the CancelledError"
+        assert process.signals == ["HUP"]
+
+
 # ---------------------------------------------------------------------------
 # interactive() telnet teardown (G15: no awaited close in a bare finally)
 # ---------------------------------------------------------------------------
@@ -3130,3 +3456,101 @@ async def test_a_declared_stage_dir_is_used_as_given_and_never_re_resolved(tmp_p
     assert (await tool.install(host)).is_ok
     _assert_staged_at(host, "/opt/mods", "tracer.ko")
     assert host.exec.await_count == 0  # no home probe: nothing needed it
+
+
+# ---------------------------------------------------------------------------
+# D11: `exec` inherits the identity an enclosing `as_user()` put on the
+# DEFAULT session. `exec` never touches that session, so the only thing that
+# carries the switch across is `RemoteHost._ambient_user` — and every other
+# test of this path mocks `_session_mgr` away, which makes the ambient lookup
+# unobservable. These two drive a REAL SessionManager (stub transport) so the
+# identity has somewhere real to live.
+# ---------------------------------------------------------------------------
+
+
+def _real_session_mgr(*, creds=None):
+    """A real ``SessionManager`` over the stub shell session the pooled-exec
+    tests use — telnet term, so every route lands on the pooled shell."""
+    from otto.host.session import SessionManager
+    from tests.unit.host.test_session import _proxy_connections, _StubExecSession
+
+    conn = _proxy_connections([], login_target="admin", credentials=("admin", "pw"))
+    conn.term = "telnet"
+    conn.ssh = AsyncMock()
+    return SessionManager(
+        connections=conn,
+        session_factory=_StubExecSession,
+        exec_factory=None,
+        host_id="h",
+        creds=creds,
+    )
+
+
+def _recording_stub_factory(seen: list[tuple[str, str]]):
+    """Stub-session subclass recording ``(cmd, user-it-ran-as)`` per command."""
+    from tests.unit.host.test_session import _StubExecSession
+
+    class _Recording(_StubExecSession):
+        async def run_cmd(self, cmd, **kw):
+            seen.append((cmd, self.current_user))
+            return await super().run_cmd(cmd, **kw)
+
+    return _Recording
+
+
+@pytest.mark.asyncio
+async def test_exec_runs_as_the_ambient_user_of_the_switched_default_session(monkeypatch):
+    """`exec` with NO `user=` still runs as the user the default session was
+    switched to (spec D11) — that is what makes `exec` inside
+    `async with host.as_user("root")` mean what it says.
+
+    Asserted on the identity the pooled session actually ran the command as,
+    not on the argument `_session_mgr.exec` was handed: a host that read the
+    ambient user and then dropped it on the floor would satisfy the latter.
+    """
+    monkeypatch.setattr("otto.host.login_proxy._RESYNC_SETTLE", 0.0)
+    h = UnixHost(
+        ip="10.0.0.1",
+        element=Element("box"),
+        creds=[Cred(login="admin", password="pw"), Cred(login="root", password="rootpw")],
+        term="telnet",
+        log=LogMode.QUIET,
+    )
+    seen: list[tuple[str, str]] = []
+    mgr = _real_session_mgr(creds=[Cred(login="root", password="rootpw")])
+    mgr._session_factory = _recording_stub_factory(seen)
+    h._session_mgr = mgr
+
+    await mgr.run_cmd("whoami")  # opens the default session; baseline = admin
+    assert seen == [("whoami", "admin")]
+    mgr._set_current_user("root")  # what PosixPrivilege.as_user records after a real su
+
+    result = await h.exec("id")
+
+    assert result.value == "OUT"
+    assert seen[-1] == ("id", "root"), "exec ignored the ambient identity and ran as the login user"
+
+
+@pytest.mark.asyncio
+async def test_exec_without_an_ambient_user_runs_as_the_login_user(monkeypatch):
+    """The control: no switch on the default session means no promotion, so a
+    test asserting the switched case cannot be passed by a host that simply
+    always switches."""
+    monkeypatch.setattr("otto.host.login_proxy._RESYNC_SETTLE", 0.0)
+    h = UnixHost(
+        ip="10.0.0.1",
+        element=Element("box"),
+        creds=[Cred(login="admin", password="pw"), Cred(login="root", password="rootpw")],
+        term="telnet",
+        log=LogMode.QUIET,
+    )
+    seen: list[tuple[str, str]] = []
+    mgr = _real_session_mgr(creds=[Cred(login="root", password="rootpw")])
+    mgr._session_factory = _recording_stub_factory(seen)
+    h._session_mgr = mgr
+
+    await mgr.run_cmd("whoami")
+    result = await h.exec("id")
+
+    assert result.value == "OUT"
+    assert seen[-1] == ("id", "admin")

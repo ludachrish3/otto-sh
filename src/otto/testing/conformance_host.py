@@ -241,14 +241,15 @@ def assert_host_conforms(cls: type, *, instance: "Host | None" = None) -> None:
     :class:`~otto.host.capability_grid.HostCapabilities` has one row per family
     and no dimension for a host's own configuration, so a class whose answer
     depends on how the instance is configured will conform on one instance and
-    report a violation on another — both truthfully. otto's own ``unix`` row is
-    the in-tree example: it declares ``exec_user=authenticate``, which holds
-    over ``term="ssh"``, while a ``term="telnet"`` ``UnixHost`` refuses (telnet
-    has no stateless exec channel to authenticate on) and is reported here. A
-    violation on such a class is a statement about THAT INSTANCE's
-    configuration, not a defect in the class; probe the configuration your
-    declaration speaks for, and read the note on your family's row for the
-    conditions it carries.
+    report a violation on another — both truthfully. A shipped example: before
+    otto's ``unix`` row declared ``exec_user=switch``, it declared
+    ``exec_user=authenticate``, which held over ``term="ssh"`` while a
+    ``term="telnet"`` ``UnixHost`` refused (telnet has no stateless exec
+    channel to authenticate on) — exactly the shape this rule exists to catch,
+    pinned by ``tests/unit/testing/test_conformance_host.py``. A violation on
+    such a class is a statement about THAT INSTANCE's configuration, not a
+    defect in the class; probe the configuration your declaration speaks for,
+    and read the note on your family's row for the conditions it carries.
 
     Construct *instance* the way otto's own suite does: a host is built from
     lab data or directly (``UnixHost(ip=..., element=..., creds=[...])``,

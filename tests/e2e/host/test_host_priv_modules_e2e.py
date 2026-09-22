@@ -1,4 +1,4 @@
-"""End-to-end CLI tests for ``otto host <vm> run --sudo`` elevation and
+"""End-to-end CLI tests for ``otto host <vm> exec --sudo`` elevation and
 ``otto host <vm> lsmod`` kernel-module listing driven through the real
 ``otto`` subprocess entry-point.
 
@@ -7,7 +7,7 @@ On bed-unreachable they FAIL with a clear host-named error — they never skip.
 
 Scope
 -----
-- ``run --sudo``: elevation to root via passwordless sudo on the Vagrant hosts.
+- ``exec --sudo``: elevation to root via passwordless sudo on the Vagrant hosts.
   Verified: the beds use passwordless sudo (``sudo -S -p 'otto-sudo:'``);
   no password is echoed in stdout/stderr.
 - ``lsmod``: read-only listing of loaded kernel modules from ``/proc/modules``.
@@ -93,12 +93,12 @@ def unix_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
 
 
 # ---------------------------------------------------------------------------
-# Test: run --sudo elevation
+# Test: exec --sudo elevation
 # ---------------------------------------------------------------------------
 
 
 def test_host_run_sudo_elevates(unix_host: str, tmp_path: Path) -> None:
-    """``otto host <vm> run --sudo "id"`` must exit 0 and show ``uid=0`` in
+    """``otto host <vm> exec "id" --sudo`` must exit 0 and show ``uid=0`` in
     the output — confirming that the Vagrant host grants passwordless sudo
     and that otto's ``--sudo`` flag actually elevates the command.
 
@@ -109,9 +109,9 @@ def test_host_run_sudo_elevates(unix_host: str, tmp_path: Path) -> None:
     - No "password" or "passwd" appears in captured stdout/stderr (extra
       guard against credential leaks from a misconfigured host).
     """
-    result = _run_otto("host", unix_host, "run", "--sudo", "id", xdir=tmp_path)
+    result = _run_otto("host", unix_host, "exec", "id", "--sudo", xdir=tmp_path)
     assert result.returncode == 0, (
-        f"``otto host {unix_host} run --sudo 'id'`` failed (exit {result.returncode}):\n"
+        f"``otto host {unix_host} exec 'id' --sudo`` failed (exit {result.returncode}):\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
 
@@ -123,12 +123,13 @@ def test_host_run_sudo_elevates(unix_host: str, tmp_path: Path) -> None:
     # Passwordless sudo should NOT echo a password prompt or credential text.
     lower = combined.lower()
     assert "password" not in lower, (
-        f"Unexpected 'password' text in output of 'run --sudo id' on {unix_host!r}:\n{combined}"
+        f"Unexpected 'password' text in output of 'exec \"id\" --sudo' on "
+        f"{unix_host!r}:\n{combined}"
     )
     assert "passwd" not in lower, (
-        f"Unexpected 'passwd' text in output of 'run --sudo id' on {unix_host!r}:\n{combined}"
+        f"Unexpected 'passwd' text in output of 'exec \"id\" --sudo' on {unix_host!r}:\n{combined}"
     )
-    assert_output_dir(tmp_path, "host")  # `host run` does real work — output dir created
+    assert_output_dir(tmp_path, "host")  # `host exec` does real work — output dir created
 
 
 # ---------------------------------------------------------------------------

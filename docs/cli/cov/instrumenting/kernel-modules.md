@@ -186,7 +186,7 @@ into** — a `.ko`'s `vermagic` string must match that release exactly, and a
 mismatch fails `insmod` with a message that only the kernel log explains:
 
 ```bash
-otto host test1 run --sudo dmesg
+otto host test1 exec --sudo dmesg
 ```
 
 The vendored copy's own `build.sh <build-dir> [<release>]`

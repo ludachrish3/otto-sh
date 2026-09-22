@@ -100,11 +100,11 @@ class TestDockerImageCoverage:
         xdir = tmp_path / "hygiene"
         xdir.mkdir()
         containers = _run_otto(
-            ["host", "test3", "run", "docker ps -a --format '{{.Names}}'"], xdir=xdir, timeout=120
+            ["host", "test3", "exec", "docker ps -a --format '{{.Names}}'"], xdir=xdir, timeout=120
         )
         assert "cov_container" not in containers.stdout
         images = _run_otto(
-            ["host", "test3", "run", "docker images --format '{{.Repository}}:{{.Tag}}'"],
+            ["host", "test3", "exec", "docker images --format '{{.Repository}}:{{.Tag}}'"],
             xdir=xdir,
             timeout=120,
         )

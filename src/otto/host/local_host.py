@@ -193,7 +193,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     keeps the default and declines.
 
     It exists because ``LocalHost`` does double duty. It is a lab host (``otto
-    host local run …``, which must decline under ``-n`` like any other host)
+    host local exec …``, which must decline under ``-n`` like any other host)
     AND it is otto's subprocess runner for questions about its own environment
     (:meth:`otto.config.repo.Repo.run_git_command` reads the SUT checkout's
     HEAD to stamp provenance on the run). The dry-run guard sits at the command
@@ -264,9 +264,9 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         """
         if user is not None:
             raise NotImplementedError(
-                f"{self.name}: run(user=...) is not supported on "
-                f"{type(self).__name__} — the persistent shell has no "
-                f"user-switching semantics"
+                f"{self.name}: run(user=...) is not supported on LocalHost — otto "
+                f"already runs as the invoking user; as_user() still switches the "
+                f"persistent session"
             ) from None
         if is_dry_run() and not self.dry_run_exempt:
             return self._dry_run_result(cmd, log)
@@ -281,6 +281,9 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         timeout: float,
         log: LogMode = LogMode.NORMAL,
         user: str | None = None,
+        *,
+        expects: "list[Expect] | None" = None,
+        needs_shell: bool = False,
     ) -> CommandResult:
         """Run a command in a fresh subprocess (stateless, concurrent-safe).
 
@@ -289,7 +292,9 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         asyncio.gather().
 
         The *user* refusal is :meth:`_refuse_exec_user`'s, not this method's,
-        so it lands above ``exec``'s dry-run arm.
+        so it lands above ``exec``'s dry-run arm. *expects* and *needs_shell*
+        are accepted here for signature parity; this family's behaviour is
+        unchanged until a later task.
         """
         return await self._exec_subprocess(cmd, timeout, log=self._effective_log(log))
 
@@ -299,6 +304,24 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         raise NotImplementedError(
             f"{self.name}: exec(user=...) is not supported on LocalHost — "
             f"otto already runs as the invoking user"
+        ) from None
+
+    @override
+    def _refuse_exec_sudo(self) -> None:
+        """Refuse ``exec(sudo=True)``: a bare subprocess has no pty to answer sudo on."""
+        raise NotImplementedError(
+            f"{self.name}: exec(sudo=True) is not supported on LocalHost — a bare "
+            f"subprocess has no pty to answer sudo on; run(sudo=True) elevates on "
+            f"the persistent session"
+        ) from None
+
+    @override
+    def _refuse_exec_expects(self) -> None:
+        """Refuse ``exec(expects=...)``: a bare subprocess has no pty to answer a prompt on."""
+        raise NotImplementedError(
+            f"{self.name}: exec(expects=...) is not supported on LocalHost — a bare "
+            f"subprocess has no pty to answer a prompt on; run(expects=...) answers "
+            f"prompts on the persistent shell"
         ) from None
 
     async def _exec_subprocess(

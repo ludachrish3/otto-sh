@@ -1,4 +1,4 @@
-$ otto --lab embedded host zephyr37-lfs run 'kernel version'
+$ otto --lab embedded host zephyr37-lfs exec 'kernel version'
 INFO     fleet of interest: 0 of 9 lab hosts (1 repo(s), 1 excluded)                                
 INFO     Connected to <Peer 127.0.0.1 <port>>                                                        
 INFO     @zephyr37_lfs   |                                                                          
@@ -8,4 +8,4 @@ INFO     @zephyr37_lfs   | kernel version
 INFO     @zephyr37_lfs > | Zephyr version 3.7.2                                                     
 INFO     Connection closed to <Peer 127.0.0.1 <port>>                                                
 
-Output directory: /tmp/otto-gs/xdir/host/<run>_run
+Output directory: /tmp/otto-gs/xdir/host/<run>_exec

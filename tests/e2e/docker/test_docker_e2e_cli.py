@@ -266,13 +266,13 @@ def test_e2e_host_run_against_running_container(
     run = _run_otto(
         "host",
         f"{docker_host}.repo1.api",
-        "run",
+        "exec",
         "cat /etc/repo1-marker.txt",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
     assert run.returncode == 0, (
-        f"`otto host <container> run` should reach the running container\n"
+        f"`otto host <container> exec` should reach the running container\n"
         f"stdout:\n{run.stdout}\nstderr:\n{run.stderr}"
     )
     assert "repo1-fixture" in run.stdout, run.stdout
@@ -318,7 +318,7 @@ def test_e2e_host_put_get_roundtrip(teardown_role_host_after, role_docker_host, 
     stat = _run_otto(
         "host",
         f"{docker_host}.repo1.api",
-        "run",
+        "exec",
         "stat -c %a /tmp/payload.bin",
         xdir=tmp_path,
         compose_suffix=suffix,
@@ -540,7 +540,7 @@ def test_e2e_run_against_unstarted_container_auto_starts(
     result = _run_otto(
         "host",
         f"{docker_host}.repo1.api",
-        "run",
+        "exec",
         "true",
         xdir=tmp_path,
         compose_suffix=suffix,

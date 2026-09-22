@@ -44,7 +44,7 @@ accepts, because there is no second validator to drift. A repo that passes
 Composing every repo into one process has a cost: before activation
 ({doc}`../../cli/projects`), every repo named in `OTTO_SUT_DIRS` was equally
 present in every invocation. A colleague's half-finished repo with an
-unimportable `init` module took down `otto host dut1 run uptime` for
+unimportable `init` module took down `otto host dut1 exec uptime` for
 everybody, and the only cure was to edit the environment variable. Activation
 makes "which projects is this run about?" a question otto answers per
 invocation, from the labs the user already had to name, so a repo that is not

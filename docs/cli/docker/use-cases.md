@@ -347,8 +347,8 @@ mid-session; `close()` or `rebuild_connections()` tears the channel down so
 the next call rebinds. `login` is not part of that channel at all: each call
 opens its own fresh `docker exec -it` over the parent connection, so it is
 never subject to the bind refusal — a `login --user postgres` succeeds even
-while the run channel is bound to `root`. See {doc}`../host/run` and
-{doc}`../host/login`.
+while the run channel is bound to `root`. See {meth}`~otto.host.host.BaseHost.run`
+and {doc}`../host/login`.
 
 `put` chowns the landed files to the effective user — the per-call value, or
 the declared default when the call names none — as root, in one batched

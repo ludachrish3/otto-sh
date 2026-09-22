@@ -59,7 +59,7 @@ def _wait_remote_running(target, cmd: str, timeout: float = 20.0) -> None:
 
 def _interrupt_mid_run(chaos_target, tmp_path, *, tag: str, sig: int, expected_rc: int) -> None:
     cmd = _sleep_cmd(tag)
-    p = spawn_otto(["host", chaos_target.host_id, "run", cmd], xdir=tmp_path, target=chaos_target)
+    p = spawn_otto(["host", chaos_target.host_id, "exec", cmd], xdir=tmp_path, target=chaos_target)
     p.wait_for_log(re.escape(f"| {cmd}"), timeout=_MARKER_TIMEOUT)  # phase: command running
     _wait_remote_running(chaos_target, cmd)
     p.signal(sig)
@@ -85,7 +85,7 @@ def _forced_mid_run(chaos_target, tmp_path, *, tag: str, sig: int, expected_rc: 
     """
     cmd = _sleep_cmd(tag)
     p = spawn_otto(
-        ["host", chaos_target.host_id, "run", cmd],
+        ["host", chaos_target.host_id, "exec", cmd],
         xdir=tmp_path,
         target=chaos_target,
         extra_env={"OTTO_TEARDOWN_DEADLINE": "0"},
@@ -123,7 +123,7 @@ def test_second_signal_still_exits_promptly(chaos_target, tmp_path) -> None:
     """
     cmd = _sleep_cmd("05")
     p = spawn_otto(
-        ["host", chaos_target.host_id, "run", cmd],
+        ["host", chaos_target.host_id, "exec", cmd],
         xdir=tmp_path,
         target=chaos_target,
         extra_env={"OTTO_TEARDOWN_DEADLINE": "600"},

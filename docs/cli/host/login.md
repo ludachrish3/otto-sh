@@ -10,7 +10,7 @@ Stdin and stdout are bridged to the remote terminal in raw mode, so full-screen
 TUIs (`vi`, `top`, `less`) work the same as under a native `ssh` or `telnet`
 client.  While the session runs, every remote byte is also appended to the
 invocation's `session.log` so the transcript is preserved alongside the normal
-`otto host run` output.
+`otto host exec` output.
 
 **Ending the session.**  Exit the remote shell normally (`exit`, `logout`, or
 `Ctrl+D`) or press `Ctrl+]` — the classic `telnet(1)` escape byte — to disconnect

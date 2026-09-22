@@ -629,5 +629,5 @@ reaches the console and the log files.
 - `never` — redacts the I/O from every sink.
 
 Warnings and errors are never suppressed by the log mode, whichever one you
-pass. See {doc}`../../cli/host/run` for the CLI-side view of the same
+pass. See {doc}`../../cli/host/exec` for the CLI-side view of the same
 output.

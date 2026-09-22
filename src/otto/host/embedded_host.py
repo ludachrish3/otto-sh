@@ -66,6 +66,7 @@ from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .host import (
     CONCURRENT_HELP,
     DEFAULT_COMMAND_TIMEOUT,
+    Expect,
     Host,
     SuppressCommandOutput,
     is_dry_run,
@@ -310,6 +311,9 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         timeout: float,
         log: LogMode = LogMode.NORMAL,
         user: str | None = None,
+        *,
+        expects: "list[Expect] | None" = None,
+        needs_shell: bool = False,
     ) -> CommandResult:
         """Run a single command on the embedded host.
 
@@ -320,9 +324,12 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         workflows.
 
         The *user* refusal is :meth:`_refuse_exec_user`'s, not this method's,
-        so it lands above ``exec``'s dry-run arm.
+        so it lands above ``exec``'s dry-run arm. *needs_shell* is accepted
+        for signature parity — this family always runs on the shared shell.
         """
-        return await self._session_mgr.run_cmd(cmd, timeout=timeout, log=self._effective_log(log))
+        return await self._session_mgr.run_cmd(
+            cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
+        )
 
     @override
     def _refuse_exec_user(self, user: str) -> None:
@@ -330,6 +337,14 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         raise NotImplementedError(
             f"{self.name}: exec(user=...) is not supported on EmbeddedHost — "
             f"a serial console has no user to switch to"
+        ) from None
+
+    @override
+    def _refuse_exec_sudo(self) -> None:
+        """Refuse ``exec(sudo=True)``: a serial console has no sudo."""
+        raise NotImplementedError(
+            f"{self.name}: exec(sudo=True) is not supported on EmbeddedHost — a "
+            f"serial console has no sudo"
         ) from None
 
     def _require_loader(self) -> BinaryLoader:

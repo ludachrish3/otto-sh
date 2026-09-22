@@ -23,7 +23,7 @@ def test_probe_round_trips(chaos_target: ChaosTarget) -> None:
 
 def test_untouched_run_completes_cleanly(chaos_target: ChaosTarget, tmp_path: Path) -> None:
     p = spawn_otto(
-        ["host", chaos_target.host_id, "run", "true"], xdir=tmp_path, target=chaos_target
+        ["host", chaos_target.host_id, "exec", "true"], xdir=tmp_path, target=chaos_target
     )
     rc = p.wait(timeout=90)
     assert rc == 0, f"stderr:\n{p.stderr_text()}\nstdout:\n{p.stdout_text()}"

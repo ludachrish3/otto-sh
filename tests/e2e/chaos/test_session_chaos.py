@@ -2,13 +2,15 @@
 inside the command-running phase window; force via a SIGINT-immune remote;
 characterize the nohup survivor. BedHygiene (autouse) asserts the leased
 host is left clean; here we add the remote-reaped / remote-survives assertions the
-hygiene diff cannot express (a foreground child reaped by PTY-HUP is gone
-either way; a nohup'd one is SUPPOSED to remain, so it is not a leftover).
+hygiene diff cannot express (a foreground child reaped by the teardown's HUP is
+gone either way; a nohup'd one is SUPPOSED to remain, so it is not a leftover).
 
-otto's ``run`` verb types commands into a persistent PTY *shell*
-(``SshSession._open`` in ``src/otto/host/session.py`` opens a bare shell with
-no command; commands are written to its stdin). That shell parses each line
-like any interactive shell would -- including stripping everything after a
+These scenarios drive the ``exec`` verb, which on a hop-less ssh host takes a
+raw SSH exec channel: no pty, so a teardown hangs the remote command up
+explicitly (``SessionManager._reap_exec_process``) instead of inheriting the
+pty's own hangup the way the ``run`` verb's persistent shell does. Either way
+a *shell* parses each command line like any interactive shell would --
+including stripping everything after a
 ``#`` -- before exec'ing it, so a trailing ``# marker`` comment is invisible
 in the spawned remote process's argv and can NEVER be grepped for (verified
 live: ``printf 'sleep 5 # marker\\n' | bash`` spawns argv ``sleep 5``, no
@@ -25,6 +27,7 @@ import time
 import pytest
 
 from otto.logger.mode import LogMode
+from otto.utils import wait_for
 from tests._fixtures.bed_hygiene import argv_pattern
 from tests.e2e.chaos._bed import busybox_probe_text, probe_text, run_probe
 from tests.integration.chaos._driver import BANNER, spawn_otto
@@ -45,7 +48,7 @@ pytestmark = [
 # markers land on 301-305 (`sleep 3{tag}.{pid}`) -- close enough in the same
 # "sleep 3xx" family that reusing that range risked a substring collision if
 # that tier-2 suite is ever pointed at the same live bed concurrently.
-_SLEEP = "sleep 311"  # seeded-SIGINT test: PTY-HUP-reaped foreground child
+_SLEEP = "sleep 311"  # seeded-SIGINT test: HUP-reaped foreground child
 _GUEST_SLEEP = "sleep 315"  # busybox guest twin of _SLEEP; 315 is clear of 311-314 above
 
 
@@ -53,6 +56,23 @@ def _remote_pids(element: str, needle: str) -> list:
     # bracket-trick so the probe's own shell never self-matches
     out = probe_text(element, f"pgrep -af '{argv_pattern(needle)}' || true")
     return [ln for ln in out.splitlines() if ln.strip()]
+
+
+def _wait_remote_running(element: str, needle: str, timeout: float = 20.0) -> None:
+    """Phase gate: block until *needle* is REALLY a live process on the bed.
+
+    A log marker says the remote shell reached a point in the script; it does
+    not say the process that line spawned has finished forking and exec'ing.
+    The nohup case below needs the stronger statement, because a ``nohup``'d
+    child is an ordinary fork until ``nohup`` itself execs -- before that it
+    still carries the shell's HUP disposition and dies with the group.
+    """
+    wait_for(
+        lambda: bool(_remote_pids(element, needle)),
+        timeout,
+        interval=0.2,
+        on_timeout=f"remote command never appeared: {needle!r}",
+    )
 
 
 def _guest_pids(needle: str) -> list:
@@ -73,7 +93,7 @@ def test_seeded_sigint_mid_command_cleans_up(chaos_bed, chaos_rng, tmp_path):
     from tests.e2e.chaos._seed import offset_in
 
     p = spawn_otto(
-        ["host", chaos_bed.target.host_id, "run", _SLEEP, "--timeout", "300"],
+        ["host", chaos_bed.target.host_id, "exec", _SLEEP, "--timeout", "300"],
         xdir=tmp_path,
         target=chaos_bed.target,
     )
@@ -110,7 +130,7 @@ def test_sigint_immune_remote_hits_deadline_force(chaos_bed, tmp_path):
     """
     trap = "trap '' INT; sleep 312"
     p = spawn_otto(
-        ["host", chaos_bed.target.host_id, "run", trap, "--timeout", "300"],
+        ["host", chaos_bed.target.host_id, "exec", trap, "--timeout", "300"],
         xdir=tmp_path,
         target=chaos_bed.target,
         extra_env={"OTTO_TEARDOWN_DEADLINE": "3"},
@@ -124,15 +144,24 @@ def test_sigint_immune_remote_hits_deadline_force(chaos_bed, tmp_path):
 
 
 def test_nohup_remote_survives_graceful_teardown(chaos_bed, tmp_path):
-    """Characterization (todo/chaos-realsignal-followups.md §5): otto reaps by
-    PTY HUP, not by signalling the remote. A nohup'd command has no controlling
-    terminal to lose, so it SURVIVES a graceful teardown — documented contract,
-    not a leak. Teardown must clean up otto's OWN session state regardless.
+    """Characterization (todo/chaos-realsignal-followups.md §5): a teardown
+    HANGS UP on the remote command; it does not terminate it. A command the
+    user deliberately ``nohup``'d ignores SIGHUP, so it SURVIVES a graceful
+    teardown — documented contract, not a leak. Teardown must clean up otto's
+    OWN session state regardless.
+
+    The mechanism moved when the CLI verb became ``exec``: this argv now takes
+    the raw SSH exec channel, which has no pty, so there is no terminal whose
+    close would hang the command up for free. otto sends the HUP itself (see
+    ``SessionManager._reap_exec_process``), which lands on the remote
+    command's whole process group — the foreground hold below dies of it, the
+    nohup'd child ignores it and lives. The contract a reader can hold onto is
+    unchanged from the pty days; only who sends the signal is new.
 
     Deviation from the brief's literal transcription (recorded per the live-bed
     rule: root-cause first, never paper over with a widened assertion): a bare
     ``nohup sleep 313 & echo LAUNCHED-...`` returns control to the shell (and the
-    whole ``otto host run`` invocation, and the local process) in well under
+    whole invocation, and the local process) in well under
     50ms of the marker printing (measured: ~35ms) — faster than this driver's
     wait_for_log poll (50ms) plus test-side scheduling can react, so SIGTERM
     consistently lands AFTER otto's ``_main`` has already removed its signal
@@ -142,25 +171,38 @@ def test_nohup_remote_survives_graceful_teardown(chaos_bed, tmp_path):
     rc 0 (natural exit outran the signal) and rc -15 (raw kill after handler
     teardown), never the graceful rc 143 the docstring describes. Appending a
     foreground ``sleep 314`` after the nohup'd launch keeps the remote session
-    (and otto's ``run`` verb) genuinely mid-command — the same mechanism the
+    genuinely mid-command — the same mechanism the
     first two tests rely on — so SIGTERM has a real window while handlers are
     installed. The distinct duration (314 vs 313, and both distinct from the
     311/312 used earlier in this module) is deliberate: it keeps the
     foreground hold's process name out of the ``sleep 313`` pgrep pattern used
     below, so that pattern can only ever match the nohup survivor — and (the
     bug this whole fix wave addresses) so that survivor can never be confused
-    with an orphan left behind by a sibling test. The "expected alive" assert
-    below is itself the positive control for this test: it only passes if the
-    probe can genuinely see a live process by this argv-visible needle.
+    with an orphan left behind by a sibling test.
+
+    The log marker alone is NOT a sufficient phase gate here, and gating on it
+    alone made this test fail 100% of the time on the exec transport: the
+    marker only says the remote shell got as far as ``echo``. Measured on the
+    bed, signalling at that instant kills BOTH sleeps — the ``nohup`` child is
+    still a plain fork carrying the shell's HUP disposition until ``nohup``
+    execs, and the foreground hold has not started at all — while a signal
+    delivered 0.25s later leaves the survivor alive at every delay out to 2s.
+    So both processes are waited for by their real argv before the signal, and
+    those two waits are this test's positive control: they only pass if the
+    probe can genuinely see a live process by an argv-visible needle.
     """
     marker = "otto-chaos-nohup"
     survivor = f"nohup sleep 313 >/dev/null 2>&1 & echo LAUNCHED-{marker}; sleep 314"
     p = spawn_otto(
-        ["host", chaos_bed.target.host_id, "run", survivor, "--timeout", "300"],
+        ["host", chaos_bed.target.host_id, "exec", survivor, "--timeout", "300"],
         xdir=tmp_path,
         target=chaos_bed.target,
     )
-    p.wait_for_log(f"LAUNCHED-{marker}", timeout=120.0)  # nohup launched; now blocked on the hold
+    p.wait_for_log(f"LAUNCHED-{marker}", timeout=120.0)  # phase: the shell reached the echo
+    # phase: both processes REALLY exist (see the docstring — the marker alone
+    # is a race against nohup's own exec).
+    _wait_remote_running(chaos_bed.element, "sleep 313")
+    _wait_remote_running(chaos_bed.element, "sleep 314")
     p.signal(15)  # SIGTERM
     rc = p.wait(timeout=60.0)
     assert rc == 143, p.stderr_text()
@@ -219,7 +261,7 @@ def test_seeded_sigint_mid_command_reaps_the_busybox_guest(busybox_chaos_bed, ch
     from tests.e2e.chaos._seed import offset_in
 
     p = spawn_otto(
-        ["host", busybox_chaos_bed.target.host_id, "run", _GUEST_SLEEP, "--timeout", "300"],
+        ["host", busybox_chaos_bed.target.host_id, "exec", _GUEST_SLEEP, "--timeout", "300"],
         xdir=tmp_path,
         target=busybox_chaos_bed.target,
     )

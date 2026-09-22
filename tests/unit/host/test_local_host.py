@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -171,6 +172,35 @@ async def test_exec_user_refused_on_local():
 
 
 @pytest.mark.asyncio
+async def test_exec_sudo_refused_on_local_naming_run():
+    host = LocalHost()
+    with pytest.raises(NotImplementedError, match=r"run\(sudo=True\)"):
+        await host.exec("id", timeout=5.0, sudo=True)
+    with (
+        active_context(dry_run=True),
+        pytest.raises(NotImplementedError, match=r"run\(sudo=True\)"),
+    ):
+        await host.exec("id", timeout=5.0, sudo=True)
+
+
+@pytest.mark.asyncio
+async def test_exec_expects_refused_on_local():
+    """A bare subprocess has no pty to answer a prompt on — the refusal
+    sits above `exec`'s dry-run arm, like `sudo` and `user`, and
+    `_exec_subprocess` must never be reached."""
+    host = LocalHost()
+    with patch.object(host, "_exec_subprocess", wraps=host._exec_subprocess) as subprocess_spy:
+        with pytest.raises(NotImplementedError, match=r"run\(expects=\.\.\.\)"):
+            await host.exec("id", timeout=5.0, expects=[("more", " ")])
+        with (
+            active_context(dry_run=True),
+            pytest.raises(NotImplementedError, match=r"run\(expects=\.\.\.\)"),
+        ):
+            await host.exec("id", timeout=5.0, expects=[("more", " ")])
+        subprocess_spy.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_run_user_refused_on_local():
     """Call `_run_one` directly — `run()`'s dry-run/timeout layers must not
     be able to short-circuit the branch under test. The refusal also sits
@@ -180,9 +210,7 @@ async def test_run_user_refused_on_local():
         NotImplementedError, match=r"run\(user=\.\.\.\) is not supported on LocalHost"
     ):
         await host._run_one("id", timeout=5.0, user="root")
-    with pytest.raises(
-        NotImplementedError, match="the persistent shell has no user-switching semantics"
-    ):
+    with pytest.raises(NotImplementedError, match="otto already runs as the invoking user"):
         await host._run_one("id", timeout=5.0, user="root")
 
 
@@ -584,10 +612,12 @@ async def test_timed_out_exec_does_not_leak_its_pipe_fds():
     at any load — there is no race here to lose, and nothing to widen.
     """
     host = LocalHost()
-    await host.exec("true", 5.0, LogMode.NEVER)  # let the loop take its own fds first
+    await host.exec("true", timeout=5.0, log=LogMode.NEVER)  # let the loop take its own fds first
     before = _open_fds()
 
-    result = await host.exec("while true; do echo tick; sleep 0.05; done", 0.5, LogMode.NEVER)
+    result = await host.exec(
+        "while true; do echo tick; sleep 0.05; done", timeout=0.5, log=LogMode.NEVER
+    )
     assert result.timed_out is True, "premise: this must take the timeout path"
 
     # Closing a pipe transport schedules the descriptor's actual close through

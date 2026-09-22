@@ -125,9 +125,9 @@ class TestTheShippedRegistrationCarriesTheFlag:
     def test_everything_else_keeps_the_safe_default(self, name: str) -> None:
         """POSITIVE CONTROL for the two above: the flag is not simply universal.
 
-        `otto host <id> exec 'uptime' -n` deliberately does NOT opt in — the
-        echoed command IS the whole announcement, so there is nothing a body
-        run could add — and `test`'s opt-in lives on the suite LEAF, not here.
+        `otto host <id> exec 'uptime' -n` does not opt in — the echoed
+        command IS the whole announcement, so there is nothing a body run
+        could add — and `test`'s opt-in lives on the suite LEAF, not here.
         """
         assert _shipped(name).dry_run_preview is False
 
@@ -167,8 +167,8 @@ class TestTheHostVerbsThatOwnTheirDryRun:
     library-layer arm AND keep the stop, because they are the verbs that touch
     power. See the comment on the negative loop.
 
-    (The verb is `run`, not `exec` — `BaseHost.exec` carries no `@cli_exposed`
-    stamp and reaches no CLI surface, whatever the plan text calls it.)
+    (The verb is `exec`; `BaseHost.run` carries no `@cli_exposed` stamp and
+    reaches no CLI surface.)
     """
 
     def test_the_opted_in_verbs_are_exactly_the_ones_with_a_shipped_preview(self) -> None:
@@ -225,7 +225,7 @@ class TestTheHostVerbsThatOwnTheirDryRun:
         # instead of raising. Both are reclaimable seam-side later (see
         # `todo/dry-run-followups-2026-08-15.md`).
         for verb in (
-            UnixHost.run,
+            UnixHost.exec,
             PosixFileOps.exists,
             PosixFileOps.ls,
             UnixHost.load,
@@ -893,9 +893,9 @@ def _spy_transport_and_commands(
     the attributes the probe would have had to use, rather than asserting an
     empty list against a spy that could never have filled.
 
-    ``functools.wraps`` is load-bearing, not tidiness: ``run`` is a
+    ``functools.wraps`` is load-bearing, not tidiness: ``exec`` is a
     ``@cli_exposed`` verb, and a bare replacement drops the marker so
-    ``HostGroup`` stops offering ``otto host <id> run`` at all — the spy would
+    ``HostGroup`` stops offering ``otto host <id> exec`` at all — the spy would
     silently change the surface it is supposed to be watching.
     """
     import functools
@@ -1226,7 +1226,7 @@ class TestProbeDialsAndNeverCommands:
             return app
 
         with active_context(lab=lab, dry_run=True):
-            overridden = runner.invoke(_app("telnet"), ["dut1", "run", "uptime"])
+            overridden = runner.invoke(_app("telnet"), ["dut1", "exec", "uptime"])
         assert overridden.exit_code == 0, overridden.output
         assert telnet_opens == [host.ip], f"--term telnet did not dial telnet: {telnet_opens}"
         assert opened.opens == [], "--term telnet dialed SSH — the override was dropped"
@@ -1239,7 +1239,7 @@ class TestProbeDialsAndNeverCommands:
         # above.
         telnet_opens.clear()
         with active_context(lab=lab, dry_run=True):
-            plain = runner.invoke(_app(None), ["dut1", "run", "uptime"])
+            plain = runner.invoke(_app(None), ["dut1", "exec", "uptime"])
         assert plain.exit_code == 0, plain.output
         assert len(opened.opens) == 1, "the un-overridden probe did not dial ssh"
         assert telnet_opens == [], "the un-overridden probe dialed telnet"
@@ -1290,7 +1290,7 @@ class TestProbeDialsAndNeverCommands:
             return app
 
         with active_context(lab=lab, dry_run=True):
-            probed = runner.invoke(_app(probe=True), ["dut1", "run", "uptime"])
+            probed = runner.invoke(_app(probe=True), ["dut1", "exec", "uptime"])
         assert probed.exit_code == 0, probed.output
         assert "dut1: reachable" in flat(probed.output), (
             "otto host's own reference did not reach the probe"
@@ -1302,7 +1302,7 @@ class TestProbeDialsAndNeverCommands:
         # identical invocation dials nothing.
         opened.opens.clear()
         with active_context(lab=lab, dry_run=True):
-            plain = runner.invoke(_app(probe=False), ["dut1", "run", "uptime"])
+            plain = runner.invoke(_app(probe=False), ["dut1", "exec", "uptime"])
         assert plain.exit_code == 0, plain.output
         assert opened.opens == []
 

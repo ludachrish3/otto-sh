@@ -66,7 +66,7 @@ A verb's return value is rendered by one shared path: members of the
 (`result.exit_code`, ssh-like semantics — {doc}`../utilities/results`);
 `None` means side-effect-only success; any other value is the documented
 third-party fallback, printed as-is with exit `0`. Command output itself
-streams live during execution, so a successful `run` verb prints nothing
+streams live during execution, so a successful `exec` verb prints nothing
 extra at the end — the user-facing exit-code table lives in
 {doc}`../../cli/host/index`.
 

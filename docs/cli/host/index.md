@@ -19,7 +19,7 @@ otto host <host_id> <command> [ARGS...] [OPTIONS]
 Run commands, transfer files, log in, and invoke capability verbs on lab hosts.
 
 ```text
-otto host <HOST_ID> run [--sudo] [--timeout SECS] <COMMANDS...>
+otto host <HOST_ID> exec [--sudo] [--timeout SECS] [--user NAME] "COMMAND"
 otto host <HOST_ID> put <SRC...> <DEST>
 otto host <HOST_ID> get <SRC...> <DEST>
 otto host <HOST_ID> login
@@ -46,7 +46,7 @@ reached needs, and hopping through a host still means holding the hop
 ## The host verb model
 
 Every `otto host` action is a **verb** on the host, backed by an
-`@cli_exposed` host method. `run`, `put`, `get` and `login` are the ones
+`@cli_exposed` host method. `exec`, `put`, `get` and `login` are the ones
 every host class carries; anything else is a **capability verb**, scoped to the
 host's class, so `otto host <host_id> --help` lists exactly what the chosen host
 supports and nothing more.
@@ -58,35 +58,30 @@ your own is {doc}`../../cookbook/extending/cli-exposed-verbs`.
 
 ### Persistent and stateless verbs
 
-Beyond the CLI verbs above, the host API splits into a persistent verb and
-stateless ones:
+The host API splits between the CLI's `exec` and the Python-only `run`:
 
-- **`run`** — a command on the host's *persistent* shell, where `cd`,
-  environment variables and shell state survive from one call to the next
-  ({doc}`run`).
-- **`exec`** — one command, statelessly, in a fresh channel; safe to run
-  several at once. `exec` is Python-only; it is not a CLI verb.
+- **`exec`** — one command on a session the host does not keep ({doc}`exec`).
+  `run`, the persistent-session verb, is Python-only: a CLI invocation ends,
+  so a session it kept would end with it.
 - **`put`** / **`get`** — files up and down ({doc}`put`, {doc}`get`).
 
-(host-run-as)=
+(host-exec-as)=
 ### Who a command runs as
 
-That split decides where identity lives.  A persistent session *already has* a
-user, so changing it is a scoped operation on the session — `as_user`,
-described in {doc}`capabilities/privilege` — and `run` refuses a per-call
-`user=` on the families that work this way.  A stateless verb has no such history: `exec`,
-`put` and `get` can each take a user directly, because each call opens its own
-channel and can open it as somebody else.
+Both verbs take `user=`, and what it does is a question about the *family*,
+not the verb: unix switches the session to the named user, containers
+`chown` (files already landed, or the channel opened as that user), and
+embedded and local refuse. {doc}`families` is the authority for exactly
+which family does what — this page does not restate its cells.
 
-What "can" means there depends on the family.  Not every host has a second
-user to become, and the ones that do reach it by different routes.  Each
-family declares its own answers, and {doc}`families` renders them.
+`exec` additionally inherits an enclosing `as_user()`'s identity ambiently,
+when called from Python with no explicit `user=` of its own.
 
 ## Subcommands
 
 | Subcommand | Description |
 | ---------- | ----------- |
-| `run` | Execute one or more commands on the host |
+| `exec` | Execute one command on the host |
 | `put` | Upload local files to the host |
 | `get` | Download files from the host |
 | `login` | Open an interactive shell session on the host |
@@ -161,26 +156,28 @@ Like all otto commands, `--dry-run` (or `-n`) previews what would happen without
 executing commands or transferring files:
 
 ```bash
-otto --lab my_lab --dry-run host router1 run "make install"
+otto --lab my_lab --dry-run host router1 exec "make install"
 ```
 
 Add `--probe` to also learn whether the host is up before committing to a real
 run.  That opens a connection and nothing else — no command is issued over it,
 and an unreachable host is reported rather than treated as a failure.  See
 {doc}`../index` for the full rules.
+
+(host-exit-codes)=
 ## Exit codes
 
 Every `otto host <name> <verb>` invocation derives its exit code from the
 verb's returned {class}`~otto.result.Result` family, via `Result.exit_code`.
 Command results are ssh-like: the shell's retcode when the command ran,
-255 when it never ran.  (`run` only — see
+255 when it never ran.  (`exec` only — see
 [Persistent and stateless verbs](#persistent-and-stateless-verbs) above.)
 
 | Situation | Exit code |
 | --- | --- |
 | Verb succeeded (incl. `Status.Skipped`) | 0 |
-| `run`: a command failed | that command's shell retcode (ssh-like: `run 'exit 42'` exits 42) |
-| `run`: the command never ran (connection failure) | 255 (matches ssh's convention) |
+| `exec`: the command failed | that command's shell retcode (ssh-like: `exec 'exit 42'` exits 42) |
+| `exec`: the command never returned one (a timeout, a dropped connection) | 255 (matches ssh's convention) |
 | Any other verb: `Status.Failed` | 1 |
 | Any other verb: `Status.Error` | 2 (note: Click also uses 2 for CLI usage errors) |
 | Any other verb: `Status.Unstable` | 3 |
@@ -204,7 +201,7 @@ seam is described in
 :caption: Subcommands
 :hidden:
 
-run
+exec
 put
 get
 login

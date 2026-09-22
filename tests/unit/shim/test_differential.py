@@ -294,7 +294,7 @@ HAND_WRITTEN = [
     ('otto test -m "smoke and "', 3),
     ("otto test --tests=te", 2),
     ("otto test --markers=sl", 2),
-    ("otto host dut1 run -- -", 5),
+    ("otto host dut1 exec -- -", 5),
     ("otto -- -", 2),
     ("otto -- host -", 3),
     ("otto -- host dut1 --term ", 5),

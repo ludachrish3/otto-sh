@@ -26,7 +26,7 @@ account:
 A proxy is exercised wherever otto becomes another account: `otto host test1
 login --user root` opens the interactive shell through it, and the
 library's `host.as_user()` runs a block through it and unwinds afterwards.
-(`otto host test1 run --sudo` is different — it prefixes each command with
+(`otto host test1 exec --sudo` is different — it prefixes the command with
 the host's elevation and never changes the session's user.) The example
 project carries the shortest script that proves the round trip:
 
@@ -81,6 +81,12 @@ session only — `ctx.kind` tells it which session it is on — does the
 one-time work, here through the `python3` REPL as an `AppShell`. When it
 returns, otto runs the shell's readiness handshake once more: that repeat is
 the confirmation that the hook left a shell fit to use.
+
+The capture below runs `exec`, whose pooled session is never the default
+one, so it shows only the export — `APP_ENV` reaching `echo`. The one-time
+REPL work (and the handshake repeat that follows it) runs once, on the
+default session that `otto host test1 login` or the library's persistent
+`host.run` opens:
 
 ```{literalinclude} ../examples/getting-started/captures/session-setup-test1.txt
 :language: text

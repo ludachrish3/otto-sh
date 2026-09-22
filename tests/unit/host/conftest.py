@@ -50,7 +50,7 @@ import pytest
 import pytest_asyncio
 
 from otto.host.file_ops import PosixFileOps
-from otto.host.host import BaseHost, is_dry_run, refuse_declined_elevation
+from otto.host.host import BaseHost, Expect, is_dry_run, refuse_declined_elevation
 from otto.host.lab_info import LabInfo
 from otto.host.toolchain import Toolchain
 from otto.logger.mode import LogMode
@@ -191,8 +191,11 @@ class RecordingHost(BaseHost):
         timeout: float,
         log: LogMode = LogMode.NORMAL,
         user: str | None = None,
+        *,
+        expects: "list[Expect] | None" = None,
+        needs_shell: bool = False,
     ) -> CommandResult:
-        del timeout, log, user
+        del timeout, log, user, expects, needs_shell
         self.exec_calls.append(cmd)
         self.event_log.append(f"exec:{cmd}")
         return self._next_exec_result(cmd)

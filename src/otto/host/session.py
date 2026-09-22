@@ -1560,6 +1560,11 @@ class HostSession:
         return self._session.alive
 
     @property
+    def name(self) -> str:
+        """The name this session was opened under (``open_session``'s argument)."""
+        return self._name
+
+    @property
     def current_user(self) -> str:
         """User this named session is currently running as.
 
@@ -2231,6 +2236,11 @@ class SessionManager:
         # wall-clock wait without changing the retry logic itself.
         self._retry_backoff = _HANDSHAKE_RETRY_BACKOFF if retry_backoff is None else retry_backoff
         self._session: ShellSession | None = None
+        # The user the DEFAULT session was opened as (the login target, after
+        # proxy hops), recorded when the session comes up. `ambient_user`
+        # compares the live identity against it: anything else is a switch
+        # some as_user()/switch_user() made, which `exec` then inherits.
+        self._baseline_user: str | None = None
         self._named_sessions: dict[str, HostSession] = {}
         # Free-list of idle shell sessions used by `exec()` for terminals
         # (e.g. telnet) that lack a stateless exec primitive.  Serial callers
@@ -2437,6 +2447,21 @@ class SessionManager:
             return self._session.current_user
         return self._login_user()
 
+    @property
+    def ambient_user(self) -> str | None:
+        """The user the default session was SWITCHED to, or ``None``.
+
+        ``None`` when there is no default session, or when it runs as the
+        user it was opened as — the login target, after proxy hops. This is
+        what lets ``exec`` inside ``async with host.as_user(X)`` run as X: the
+        switch lives on the default session, and ``exec`` never touches that
+        session, so it has to be told.
+        """
+        if self._session is None or self._baseline_user is None:
+            return None
+        current = self._session.current_user
+        return current if current != self._baseline_user else None
+
     def _set_current_user(self, user: str) -> None:
         """Private bookkeeping for the default session.
 
@@ -2543,6 +2568,7 @@ class SessionManager:
                         await new_session.close()
                     raise
                 self._session = new_session
+                self._baseline_user = new_session.current_user
                 break
             else:  # pragma: no cover - the loop always breaks or raises
                 assert last_exc is not None  # noqa: S101 — internal invariant: for-else only reached when loop ran at least once
@@ -2633,6 +2659,10 @@ class SessionManager:
         cmd: str,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
+        *,
+        expects: "list[Expect] | None" = None,
+        user: str | None = None,
+        needs_shell: bool = False,
     ) -> CommandResult:
         """Run *cmd* without sharing state with the default session.
 
@@ -2662,8 +2692,17 @@ class SessionManager:
         same answer: :attr:`exec_line_budget` has to know whether this command
         will be TYPED into a pty, and a caller that re-derived that from
         ``term`` would get the proxied case wrong in the expensive direction.
+
+        *expects*, *user* and *needs_shell* are all reasons the call needs a
+        real shell rather than a stateless channel: answering a prompt,
+        switching identity for the one command, or an explicit ask. Any of
+        them forces ``needs_shell`` true before the route is read, so the
+        pooled path is taken even when the fast path would otherwise apply
+        (see ``_exec_route``). *user* switches the pooled session for the
+        call only — see ``_exec_pooled``.
         """
-        route = self._exec_route()
+        needs_shell = needs_shell or bool(expects) or user is not None
+        route = self._exec_route(needs_shell=needs_shell)
         if route is _ExecRoute.FACTORY:
             assert self._exec_factory is not None  # noqa: S101 — internal invariant: this route is defined by the factory's presence
             return await self._exec_factory(cmd, timeout)
@@ -2675,25 +2714,9 @@ class SessionManager:
         # both (as it did on the pooled route before `exec_on` was extracted).
         match route:
             case _ExecRoute.POOLED_SHELL:
-                # Telnet has no stateless exec primitive (unlike SSH which
-                # multiplexes channels over one connection), and a proxied
-                # login cannot use SSH's either — the raw exec channel
-                # authenticates as the direct cred and cannot replay the proxy
-                # steps, so exec/nc would run as the via-user rather than the
-                # target. Both therefore ride a pooled full shell session,
-                # which `open_session` builds through `_apply_login_proxy` and
-                # so ends up as the effective user (files land owned by the
-                # proxied target). Rather than open a fresh TCP+auth for every
-                # exec call — 1-2 s each on real hardware — we keep a free-list
-                # of idle persistent sessions and reuse them. Serial callers
-                # churn one session; concurrent callers (e.g. `_put_files_nc`
-                # launching multiple `nc -l` listeners in parallel) each get
-                # their own, preserving the documented concurrency contract.
-                exec_session = await self._acquire_exec_session()
-                try:
-                    return (await exec_session.run(cmd, timeout=timeout, log=log)).only
-                finally:
-                    self._exec_pool.append(exec_session)
+                return await self._exec_pooled(
+                    cmd, timeout=timeout, log=log, expects=expects, user=user
+                )
             case _ExecRoute.SSH_CHANNEL:
                 ssh_conn = await self._connections.ssh()
                 return await self.exec_on(ssh_conn, cmd, timeout=timeout, log=log)
@@ -2744,18 +2767,7 @@ class SessionManager:
         try:
             await asyncio.wait_for(_drain(), timeout=timeout)
         except asyncio.TimeoutError:
-            # asyncssh's terminate() sends a signal to the *remote*
-            # command, which (like a local subprocess) can ignore it —
-            # so the reap must be bounded, and if it doesn't complete
-            # in time we escalate to kill() (untrappable) rather than
-            # leave the channel open indefinitely.
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=_EXEC_REAP_TIMEOUT)
-            except asyncio.TimeoutError:
-                process.kill()
-                with suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(process.wait(), timeout=_EXEC_REAP_TIMEOUT)
+            await self._reap_exec_process(process)
             return CommandResult(
                 status=Status.Error,
                 value=f"Command timed out after {timeout}s\n" + "\n".join(lines),
@@ -2763,6 +2775,27 @@ class SessionManager:
                 retcode=-1,
                 timed_out=True,
             )
+        except BaseException:
+            # An INTERRUPT unwinds the drain (a signal cancels the running
+            # task, and cancellation is not an Exception) — and a one-shot
+            # command has a concrete end: it must not outlive the process
+            # that asked for it. Closing a pty-less exec channel signals
+            # nothing, so the reap has to be explicit here, and it hangs up
+            # rather than terminating: this is the terminal going away, the
+            # same end the shell route's commands meet when their pty
+            # closes, which keeps a deliberately nohup'd child alive. It runs
+            # shielded because this teardown is ITSELF running under
+            # cancellation, and stays bounded by the reap deadline, so a host
+            # that never answers cannot hold the exit open.
+            reap = asyncio.ensure_future(self._reap_exec_process(process, hangup=True))
+            try:
+                await asyncio.shield(reap)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                # A second interrupt: give up the reap, never the exit.
+                reap.cancel()
+            except (OSError, asyncssh.Error) as exc:
+                logger.debug("%s: reap after interrupt failed: %s", self._name, exc)
+            raise
         result = await process.wait()
         status = Status.Success if result.exit_status == 0 else Status.Failed
         return CommandResult(
@@ -2772,18 +2805,149 @@ class SessionManager:
             retcode=result.exit_status or 0,
         )
 
-    def _exec_route(self) -> _ExecRoute:
+    @staticmethod
+    async def _reap_exec_process(process: Any, *, hangup: bool = False) -> None:
+        """Bounded first-signal → kill escalation for one raw exec channel.
+
+        The single escalation both of :meth:`exec_on`'s losing arms run.
+        They differ only in what the FIRST signal means, and so in which
+        signal it is:
+
+        * a timeout is "you took too long" — ``TERM``, the ordinary ask to
+          stop (``hangup`` false, the default);
+        * an interrupted teardown is "the terminal went away" — ``HUP``,
+          which is exactly what the shell-session route's commands receive
+          when their pty is closed, so the two routes end a command the same
+          way (``hangup`` true).
+
+        The distinction is load-bearing, not cosmetic: the signal reaches the
+        remote command's whole PROCESS GROUP, so a background child the
+        command launched is signalled too. Under ``HUP`` a child the user
+        deliberately ``nohup``'d ignores it and survives — the documented
+        contract of the shell route. Under ``TERM``/``KILL`` nothing survives.
+
+        Either way the remote command can ignore the first signal (it is a
+        signal to a *remote* process, exactly like one to a local
+        subprocess), so each wait is bounded by ``_EXEC_REAP_TIMEOUT`` and
+        escalates to ``kill()`` (untrappable) rather than leaving the channel
+        open indefinitely. The escalation fires only if the COMMAND itself
+        outlived the first signal, so a hangup the command obeys never
+        reaches its nohup'd children.
+        """
+        if hangup:
+            process.send_signal("HUP")
+        else:
+            process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=_EXEC_REAP_TIMEOUT)
+        except asyncio.TimeoutError:
+            process.kill()
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(process.wait(), timeout=_EXEC_REAP_TIMEOUT)
+
+    async def _exec_pooled(
+        self,
+        cmd: str,
+        *,
+        timeout: float,
+        log: LogMode,
+        expects: "list[Expect] | None",
+        user: str | None,
+    ) -> CommandResult:
+        """One command on a pooled shell session, switched to *user* for the call.
+
+        Telnet has no stateless exec primitive (unlike SSH which multiplexes
+        channels over one connection), and a proxied login cannot use SSH's
+        either — the raw exec channel authenticates as the direct cred and
+        cannot replay the proxy steps, so exec/nc would run as the via-user
+        rather than the target. Both therefore ride a pooled full shell
+        session, which ``open_session`` builds through ``_apply_login_proxy``
+        and so ends up as the effective user. Rather than open a fresh
+        TCP+auth for every exec call — 1-2 s each on real hardware — a
+        free-list of idle persistent sessions is kept and reused. Serial
+        callers churn one session; concurrent callers (e.g. ``_put_files_nc``
+        launching multiple ``nc -l`` listeners in parallel) each get their
+        own, preserving the documented concurrency contract.
+
+        The session goes back to the free-list only when it is alive, is
+        running as the user it was acquired as, and — when a switch was asked
+        for — both the switch and its undo completed. Anything else closes
+        it: a session whose switch-back failed, or half applied, would let
+        the next pooled ``exec`` run silently as *user*. ``alive`` alone was
+        the old test, and it also left dead handles on the list for the next
+        acquire to skip.
+
+        A failed switch-back costs the SESSION, never the RESULT. The command
+        has already run by then, so its result is returned and the undo's
+        failure is logged as a warning naming host, user and error — see the
+        handler below.
+        """
+        session = await self._acquire_exec_session()
+        acquired_as = session.current_user
+        switched_ok = user is None
+        try:
+            if user is None:
+                return (await session.run(cmd, expects=expects, timeout=timeout, log=log)).only
+            result: CommandResult | None = None
+            try:
+                async with session.as_user(user):
+                    switched_ok = True
+                    ran = await session.run(cmd, expects=expects, timeout=timeout, log=log)
+                    result = ran.only
+            except Exception as exc:
+                # A failure BEFORE the command produced a result -- the switch
+                # itself, or the command -- is the call's failure and
+                # propagates. Afterwards there is only one thing left that can
+                # raise: the undo, run under `compensate` in `as_user`'s
+                # `finally`. The command RAN, so its result is what the caller
+                # is owed; losing it would make a successful command look like
+                # a failed one because the way back was broken. The session
+                # pays instead -- it is still running as *user*, so the
+                # keep-or-discard rule below closes it rather than handing the
+                # next exec a silently elevated shell. Only `Exception`: a
+                # cancellation `compensate` re-raises must still reach the
+                # caller.
+                if result is None:
+                    raise
+                logger.warning(
+                    "%s: exec as %r ran, but switching the pooled session back "
+                    "failed (%r) -- returning the command's result and "
+                    "discarding the session",
+                    self._name or self._host_id,
+                    user,
+                    exc,
+                )
+            return result
+        finally:
+            if session.alive and switched_ok and session.current_user == acquired_as:
+                self._exec_pool.append(session)
+            else:
+                logger.warning(
+                    "%s: not pooling exec session %s "
+                    "(alive=%s, switched_ok=%s, user=%r, acquired as %r)",
+                    self._name,
+                    session.name,
+                    session.alive,
+                    switched_ok,
+                    session.current_user,
+                    acquired_as,
+                )
+                with suppress(Exception):
+                    await session.close()
+
+    def _exec_route(self, *, needs_shell: bool = False) -> _ExecRoute:
         """Which primitive :meth:`exec` would run a command on right now.
 
-        THE THREE CONDITIONS LIVE HERE AND NOWHERE ELSE, because :meth:`exec`
+        THE CONDITIONS LIVE HERE AND NOWHERE ELSE, because :meth:`exec`
         and :attr:`exec_line_budget` both need the answer and a second copy
         would be a prediction of this method rather than a reading of it.
 
         Order matters and is :meth:`exec`'s own: a raw exec primitive wins
-        unless the login is PROXIED or the host declares a ``session_setup``
-        hook (the raw channel cannot run setup), in which case nothing raw can
-        be used at all (neither the factory nor ssh's channel can replay the
-        hops, and neither is a shell a hook could manoeuvre -- see
+        unless the login is PROXIED, the host declares a ``session_setup``
+        hook (the raw channel cannot run setup), or the call itself needs a
+        shell, in which case nothing raw can be used at all (neither the
+        factory nor ssh's channel can replay the hops, and neither is a shell
+        a hook — or a switched user, or a prompt — could manoeuvre; see
         :meth:`exec`), and everything else falls to the term. Read fresh on
         every call rather than cached at construction: ``term`` has a setter,
         and ``proxy_hops`` is derived from creds that a ``login_target`` change
@@ -2792,12 +2956,18 @@ class SessionManager:
         ``UNSUPPORTED`` is a real answer rather than a raise, because one of
         the two callers is a QUERY. :meth:`exec` raises on it, exactly as it
         always did, at the point where it has a term to name.
+
+        *needs_shell* is the call's own reason for a pty: a prompt to answer,
+        a user to switch to, an elevation. A raw channel cannot do any of
+        those, so it is skipped for the pooled shell — the fast path is an
+        optimization for calls that need nothing a shell provides, never a
+        second meaning of ``exec``.
         """
         hops = getattr(self._connections, "proxy_hops", []) if self._connections is not None else []
         hooked = self._session_setup is not None
-        if self._exec_factory is not None and not hops and not hooked:
+        if self._exec_factory is not None and not hops and not hooked and not needs_shell:
             return _ExecRoute.FACTORY
-        if hops or hooked:
+        if hops or hooked or needs_shell:
             return _ExecRoute.POOLED_SHELL
         match getattr(self._connections, "term", None):
             case "ssh":
@@ -3019,6 +3189,7 @@ class SessionManager:
         if self._session:
             await self._session.close()
             self._session = None
+            self._baseline_user = None
 
         if self._named_sessions:
             await asyncio.gather(

@@ -401,6 +401,10 @@ class RemoteHost(BaseHost):
     ####################
 
     @override
+    def _ambient_user(self) -> str | None:
+        return self._session_mgr.ambient_user
+
+    @override
     async def _run_one(
         self,
         cmd: str,
@@ -434,9 +438,11 @@ class RemoteHost(BaseHost):
                 Ctrl+C is sent and ``Status.Error`` is returned. Pass
                 ``float("inf")`` for a deliberately unbounded command.
             user: Accepted for signature parity with the container family and
-                REFUSED — see Raises below. A persistent session already has
-                an identity; changing it is
-                :meth:`~otto.host.privilege.PosixPrivilege.as_user`'s job.
+                REFUSED — see Raises below. Families that *can* switch
+                identity (unix) never reach this parameter: ``run()`` wraps
+                the whole call in :meth:`~otto.host.privilege.PosixPrivilege.as_user`
+                and calls back in with ``user=None``. Only a family with no
+                user to switch to (embedded) reaches this refusal.
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
@@ -446,16 +452,12 @@ class RemoteHost(BaseHost):
             NotImplementedError: *user* is not None. The refusal is the FIRST
                 line of the body, above the dry-run arm, so a dry run refuses
                 too rather than reporting a decline for a call this family
-                could never honour. It names the alternatives: ``as_user`` for
-                the session's own identity, and, on unix, the stateless
-                ``exec``/``put``/``get``, which take ``user=`` directly.
+                could never honour.
         """
         if user is not None:
             raise NotImplementedError(
                 f"{self.name}: run(user=...) is not supported on "
-                f"{type(self).__name__} — a persistent session's identity is "
-                f"as_user's job (async with host.as_user(...)); on unix, "
-                f"exec/put/get accept user= directly"
+                f"{type(self).__name__} — this family has no user to switch to"
             ) from None
         if is_dry_run():
             return self._dry_run_result(cmd, log)

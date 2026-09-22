@@ -73,7 +73,7 @@ placeholder `ip` in `lab_data/inventory.json` and placeholder `creds` in
 field; {doc}`../configuration/inventory` is the home for how the three
 files compose) before anything connects to it. Every lab also carries a built-in
 `local` host — the machine otto runs on — which needs no lab edit at all:
-`otto --lab example_lab host local run "uname -a"`.
+`otto --lab example_lab host local exec "uname -a"`.
 
 Every command that contacts a host writes a run directory under `--xdir` —
 your current directory unless you say otherwise — and prints its path as

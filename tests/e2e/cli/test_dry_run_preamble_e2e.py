@@ -62,7 +62,7 @@ def _flat(text: str) -> str:
 
 
 def test_a_host_verb_under_dry_run_exits_0_and_runs_no_body(tmp_path: Path) -> None:
-    """``otto host local run -n`` prints the seam block; the same command runs without ``-n``.
+    """``otto host local exec -n`` prints the seam block; the same command runs without ``-n``.
 
     Both halves in one test, because either alone is worthless. "The body did
     not run" passes just as happily against a command that is broken end to
@@ -80,7 +80,7 @@ def test_a_host_verb_under_dry_run_exits_0_and_runs_no_body(tmp_path: Path) -> N
     marker = tmp_path / "body-ran.marker"
 
     dry = run_otto(
-        ["-n", "host", "local", "run", f"touch {marker}"],
+        ["-n", "host", "local", "exec", f"touch {marker}"],
         xdir=xdir,
         sut_dirs=repo,
         lab="unix",
@@ -90,15 +90,15 @@ def test_a_host_verb_under_dry_run_exits_0_and_runs_no_body(tmp_path: Path) -> N
     assert "CommandNotRunError" not in combined, (
         f"the dry run tracebacked out of the CLI preamble instead of reaching the seam:\n{combined}"
     )
-    assert dry.returncode == 0, f"`otto host local run -n` exited {dry.returncode}:\n{combined}"
+    assert dry.returncode == 0, f"`otto host local exec -n` exited {dry.returncode}:\n{combined}"
     assert DRY_RUN_HEADLINE in _flat(dry.stdout), f"the dry-run block never printed:\n{combined}"
     assert not marker.exists(), "the dry run RAN THE COMMAND BODY: the marker file exists"
 
     # POSITIVE CONTROL — the same command, the same host, the same seam,
     # without `-n`. Without this the assertions above are satisfied by an otto
-    # that cannot run `host local run` at all.
+    # that cannot run `host local exec` at all.
     real = run_otto(
-        ["host", "local", "run", f"touch {marker}"],
+        ["host", "local", "exec", f"touch {marker}"],
         xdir=xdir,
         sut_dirs=repo,
         lab="unix",

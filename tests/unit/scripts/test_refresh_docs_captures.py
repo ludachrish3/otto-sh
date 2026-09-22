@@ -110,8 +110,8 @@ def test_shell_active_arguments_are_quoted_so_a_reader_can_copy_them():
     # unquoted rendering of `run echo $APP_ENV` tells a copier to run `echo`
     # and then expand `$APP_ENV` in their own shell -- and `run 1 + 1` reads
     # as three commands. Only the argument that actually needs it gets quoted.
-    line = rdc.render_command(["{otto}", "--lab", "unix", "host", "test1", "run", "echo $APP_ENV"])
-    assert line == "$ otto --lab unix host test1 run 'echo $APP_ENV'"
+    line = rdc.render_command(["{otto}", "--lab", "unix", "host", "test1", "exec", "echo $APP_ENV"])
+    assert line == "$ otto --lab unix host test1 exec 'echo $APP_ENV'"
 
     line = rdc.render_command(["{otto}", "run", "1 + 1"])
     assert line == "$ otto run '1 + 1'"

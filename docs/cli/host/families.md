@@ -20,6 +20,7 @@ A class registered from your own repository must declare one too:
 |---|---|
 | `authenticate` | The verb rides a connection opened AS that user, so it runs with that user's real credentials and permissions rather than an elevation from the login user. |
 | `chown` | The verb runs under the login identity's privilege and switches the result to the named user -- a `chown` over files that have landed, or `docker exec -u` for a command. The named user's own credentials are never needed. |
+| `switch` | The verb runs in a shell session switched to that user, reached the way an interactive login reaches them -- directly, or by replaying the proxy hops their cred declares. On an SSH host, a user with a direct cred is instead authenticated on a connection of their own. |
 | `ignored` | The argument is accepted and validated, and has no other effect. |
 | `refused` | The verb raises `NotImplementedError` naming the alternative, and refuses under a dry run too. |
 
@@ -43,12 +44,12 @@ are published with the backends themselves, in {ref}`matrix-progress-promises`.
 
 | family | how selected | `run(user=)` | `exec(user=)` | `put(user=)` | `get(user=)` | progress bar | session identity | transfer | note |
 |---|---|---|---|---|---|---|---|---|---|
-| `unix` | `os_type: unix` | `refused` | `authenticate` | `authenticate` | `authenticate` | yes | as_user scoped | `ftp`, `nc`, `scp`, `sftp` and `shell` | Direct-cred users only, and never over the `ftp` backend, which authenticates separately with its own credentials; `exec(user=)` additionally requires `term="ssh"`. `scp`, `sftp` and `nc` fan a batch out under `max_concurrent_transfers`; `shell` and `ftp` move one file at a time. |
+| `unix` | `os_type: unix` | `switch` | `switch` | `authenticate` | `authenticate` | yes | as_user scoped | `ftp`, `nc`, `scp`, `sftp` and `shell` | `exec --user` reaches any login — direct creds authenticate on their own SSH connection, proxy logins and telnet hosts switch a pooled shell. `put`/`get --user` are direct-cred users only, and never over the `ftp` backend, which authenticates separately with its own credentials. `scp`, `sftp` and `nc` fan a batch out under `max_concurrent_transfers`; `shell` and `ftp` move one file at a time. |
 | `embedded` | `os_type: embedded` | `refused` | `refused` | `refused` | `refused` | yes | none | `console` and `tftp` | A serial console has no user to switch to, and transfer ownership follows the connection's own identity. Refuses `put`/`get` with `--recursive`; moves one file at a time, so `--concurrent` is a no-op. |
 | `zephyr` | `os_type: zephyr` | `refused` | `refused` | `refused` | `refused` | yes | none | `console` and `tftp` | A serial console has no user to switch to, and transfer ownership follows the connection's own identity. Refuses `put`/`get` with `--recursive`; moves one file at a time, so `--concurrent` is a no-op. |
 | `container` | a `[docker]` service, started by `otto docker up` (see {doc}`../docker/index`) | `chown` | `chown` | `chown` | `ignored` | no | bound at open | the parent host's own backend for the staging leg, then `docker cp` across the container boundary, `--concurrent` governing the staging leg | `user=` defaults to the service's declared user, and falls back to the image's own `USER` when neither is set. |
 | `local` | implicit -- the machine otto itself runs on | `refused` | `refused` | `refused` | `refused` | no | as_user scoped | `shutil.copy2` on the machine's own filesystem, one file at a time | otto already runs as the invoking user and local copies keep that user's ownership, so no verb takes `user=`; `as_user()` still switches the persistent session. |
 
-The CLI pages for the verbs themselves — {doc}`run`,
+The CLI pages for the verbs themselves — {doc}`exec`,
 {doc}`put`, {doc}`get` — say how to pass `--user`; this
 page says what each family will do with it.

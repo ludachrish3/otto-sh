@@ -186,7 +186,7 @@ a bug: a preview with no product is useless, and one with an invented product
 is dangerous. The announcement is printed from the renderer as well as the
 library layer so that a console product is guaranteed even for a host whose
 standing log mode is quiet. A verb opts into `dry_run_preview` only when it
-has a real plan to show. `otto host run` does not opt in — running its body
+has a real plan to show. `otto host exec` does not opt in — running its body
 would widen the surface for no gain — and neither does `ls`, because a
 directory listing is precisely what a dry run cannot honestly produce.
 

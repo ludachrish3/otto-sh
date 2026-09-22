@@ -7,6 +7,7 @@ donate surplus to slower ones.
 
 import asyncio
 import contextlib
+import inspect
 import os
 from unittest.mock import AsyncMock, patch
 
@@ -486,16 +487,57 @@ class TestExecTemplate:
         mock.assert_not_awaited()
 
     def test_no_subclass_overrides_exec(self):
-        """exec is final; family behavior belongs in _exec_one."""
+        """exec is final; the container family may only rewrite its
+        arguments and delegate — see TestContainerExecOverride below for the
+        shape that override is held to."""
         from otto.host.docker_host import DockerContainerHost
         from otto.host.embedded_host import EmbeddedHost
         from otto.host.host import BaseHost
         from otto.host.local_host import LocalHost
 
-        for cls in (LocalHost, UnixHost, EmbeddedHost, DockerContainerHost):
+        for cls in (LocalHost, UnixHost, EmbeddedHost):
             assert "exec" not in vars(cls), f"{cls.__name__} must override _exec_one, not exec"
             assert "_exec_one" in vars(cls), f"{cls.__name__} must implement _exec_one"
             assert BaseHost.exec is cls.exec
+
+        assert "exec" in vars(DockerContainerHost), (
+            "DockerContainerHost is the one family that overrides exec, to "
+            "rewrite sudo=True into user='root' before delegating"
+        )
+        assert "_exec_one" in vars(DockerContainerHost), (
+            "DockerContainerHost must still implement _exec_one"
+        )
+
+
+class TestContainerExecOverride:
+    """DockerContainerHost.exec: same signature as BaseHost.exec, and its body
+    only rewrites arguments before delegating to the core — spec §4.3."""
+
+    def test_signature_matches_base_host_exec(self):
+        from otto.host.docker_host import DockerContainerHost
+        from otto.host.host import BaseHost
+
+        base_params = inspect.signature(BaseHost.exec).parameters
+        container_params = inspect.signature(DockerContainerHost.exec).parameters
+        assert list(container_params) == list(base_params)
+        for name in base_params:
+            assert container_params[name].kind == base_params[name].kind, name
+            assert container_params[name].default == base_params[name].default, name
+
+    @pytest.mark.asyncio
+    async def test_sudo_rewrites_to_user_root_and_delegates(self):
+        from otto.host.host import BaseHost
+        from tests.unit.host.test_docker_host import _make_container
+
+        container = _make_container()
+        with patch.object(BaseHost, "exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = CommandResult(
+                status=Status.Success, value="root", command="id", retcode=0
+            )
+            await container.exec("id", sudo=True)
+        mock_exec.assert_awaited_once()
+        assert mock_exec.await_args.kwargs["user"] == "root"
+        assert mock_exec.await_args.kwargs.get("sudo", False) is False
 
 
 class TestLoginTemplate:

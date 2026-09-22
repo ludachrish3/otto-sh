@@ -263,6 +263,49 @@ async def test_exec_uses_declared_default_user_when_none_given():
 
 
 @pytest.mark.asyncio
+async def test_exec_sudo_runs_as_root_in_the_container():
+    """No pty on the parent's exec channel to answer `sudo -S` on, so `sudo` on a
+    container is `docker exec -u root` — what elevation means there."""
+    parent = _mock_parent()
+    container = _make_container(parent)
+    container.parent.exec = AsyncMock(
+        return_value=CommandResult(status=Status.Success, value="uid=0", command="x", retcode=0)
+    )
+    container._ensure_running = AsyncMock()
+    await container.exec("id", sudo=True)
+    wrapped = container.parent.exec.await_args.args[0]
+    assert " -u root " in wrapped
+    assert "sudo" not in wrapped
+
+
+@pytest.mark.asyncio
+async def test_exec_user_and_sudo_together_refuse_above_the_dry_run_arm():
+    parent = _mock_parent()
+    container = _make_container(parent)
+    with pytest.raises(NotImplementedError, match="both choose the user"):
+        await container.exec("id", user="app", sudo=True)
+    with (
+        active_context(dry_run=True),
+        pytest.raises(NotImplementedError, match="both choose the user"),
+    ):
+        await container.exec("id", user="app", sudo=True)
+
+
+@pytest.mark.asyncio
+async def test_exec_forwards_expects_to_the_parents_exec():
+    """The parent's own pooled shell answers prompts; `docker exec -i` keeps
+    stdin open for that hop. `_exec_via_parent` must pass `expects` through
+    rather than silently dropping it."""
+    parent = _mock_parent()
+    h = _make_container(parent)
+    parent.exec.return_value = _ok(out="0")
+
+    await h.exec("id", expects=[("assword", "pw\n")])
+
+    assert parent.exec.await_args.kwargs["expects"] == [("assword", "pw\n")]
+
+
+@pytest.mark.asyncio
 async def test_mkdir_all_creates_every_directory_as_root_in_one_command():
     """``_mkdir_all`` delegates to the base ``PosixFileOps`` implementation with
     ``user="root"`` — one ``parent.exec`` call, the container's ``docker exec
@@ -470,6 +513,46 @@ async def test_send_opens_the_channel_and_a_differing_run_then_refuses():
         # the refused call left no intent behind: a channel opened after it
         # still opens as the declared user, not as the user that was refused
         assert host._pending_run_user is None
+
+
+@pytest.mark.asyncio
+async def test_exec_inherits_an_enclosing_as_user_like_run_does(monkeypatch):
+    """D11 on the container family: a switch on the default session is what
+    ``exec`` runs as too.
+
+    The container's ``as_user`` is real (``PosixPrivilege`` → ``su`` on the
+    persistent channel), so without an ``_ambient_user`` of its own
+    ``async with container.as_user("app")`` would run ``run`` as ``app`` and
+    ``exec`` as the declared default — the silent split D11 removes.
+    """
+    from otto.host.unix_host import UnixHost
+
+    host = _channel_container(user="postgres")
+    sent: list[str] = []
+
+    async def _parent_exec(self, cmd, **kwargs):
+        sent.append(cmd)
+        return _ok(cmd)
+
+    monkeypatch.setattr(UnixHost, "exec", _parent_exec)
+
+    with _stubbed_docker_channel():
+        await host.run("id")  # opens the default session
+        mgr = host._session_mgr
+        assert mgr._baseline_user is not None, (
+            "the container's default session records no baseline user, so no "
+            "switch on it could ever be reported as ambient"
+        )
+        assert host._ambient_user() is None, "an unswitched session has no ambient identity"
+        await host.exec("id")
+        assert " -u postgres " in sent[-1], "outside a switch: the declared default"
+
+        # What `PosixPrivilege.as_user` records once the real `su` has run.
+        mgr._set_current_user("app")
+        assert host._ambient_user() == "app"
+        await host.exec("id")
+        assert " -u app " in sent[-1]
+        assert " -u postgres " not in sent[-1]
 
 
 @pytest.mark.asyncio

@@ -96,8 +96,12 @@ class PosixPrivilege(UserlandHost):
 
     __slots__ = ()
 
-    def _sudo_password(self) -> str | None:
-        """Password for ``sudo -S``, or None when sudo is passwordless here."""
+    def _sudo_password(self, user: str | None = None) -> str | None:  # noqa: ARG002 — the parameter belongs to the seam: this default knows no passwords for any user
+        """Password for ``sudo -S``, or None when sudo is passwordless here.
+
+        *user* is the identity the elevated command runs as; ``None`` means the
+        session's own current user. The default knows no passwords either way.
+        """
         return None
 
     def _switch_creds(self) -> list[Cred]:
@@ -183,8 +187,15 @@ class PosixPrivilege(UserlandHost):
         if userland is not None:
             await userland.resolve()
 
-    def _elevate(self, cmd: str) -> tuple[str, list["Expect"]]:
+    def _elevate(self, cmd: str, user: str | None = None) -> tuple[str, list["Expect"]]:
         """Wrap *cmd* in this host's elevation mechanism, with its password expect.
+
+        **Whose password.** ``sudo`` authenticates as the user running the
+        command, so *user* — the effective identity of an ``exec(user=...)``,
+        switched to before the command runs — decides which cred answers the
+        prompt. ``None`` (every ``run``) keeps the session's current user. The
+        ``su`` arm does not read it: ``su -c`` authenticates as the account
+        being ENTERED (root), which no caller-side switch changes.
 
         The mechanism is a MEASUREMENT, not an assumption:
         :attr:`~otto.host.userland.Userland.elevation` decides it. BusyBox
@@ -237,7 +248,7 @@ class PosixPrivilege(UserlandHost):
         # the return type.
         expects: "list[Expect]"
         if elevation == "sudo":
-            pw = self._sudo_password()
+            pw = self._sudo_password(user)
             expects = [] if pw is None else [(_SUDO_PROMPT, f"{pw}\n")]
             return f"sudo -S -p '{_SUDO_PROMPT}' {cmd}", expects
         if elevation == "su":

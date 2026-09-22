@@ -346,16 +346,16 @@ def test_lifecycle_and_fileops_verbs_are_exposed():
     } <= unix
 
 
-def test_run_and_login_exposed_on_base_host():
-    """login and run appear in collect_exposed_methods(BaseHost)."""
+def test_exec_and_login_exposed_on_base_host():
+    """login and exec appear in collect_exposed_methods(BaseHost)."""
     from otto.host.host import BaseHost
 
     base = collect_exposed_methods(BaseHost)
-    # login maps to the 'login' attribute; run maps to 'run'
+    # login maps to the 'login' attribute; exec maps to 'exec'
     assert "login" in base
     assert base["login"] == "login"
-    assert "run" in base
-    assert base["run"] == "run"
+    assert "exec" in base
+    assert base["exec"] == "exec"
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +412,7 @@ def test_login_user_flag_dispatches_end_to_end(monkeypatch):
 
 def test_host_verbs_synthesize_user_flag(monkeypatch):
     """Task 8 pin: every host verb Tasks 1-7 threaded `user=` through
-    (login/run/put/get) synthesizes a `--user` CLI option, and none of them
+    (login/exec/put/get) synthesizes a `--user` CLI option, and none of them
     resurrect the old `--as-user` spelling the login proxy retired in Task 1.
 
     Two real (not fake) host classes, deliberately: UnixHost's put/get accept
@@ -437,11 +437,36 @@ def test_host_verbs_synthesize_user_flag(monkeypatch):
     monkeypatch.setenv("COLUMNS", "300")
     app = _make_app(monkeypatch, {"u1": UnixHost, "d1": DockerContainerHost})
     for host_id in ("u1", "d1"):
-        for verb in ("login", "run", "put", "get"):
+        for verb in ("login", "exec", "put", "get"):
             r = CliRunner().invoke(app, [host_id, verb, "--help"])
             assert r.exit_code == 0, (host_id, verb, r.output)
             assert "--user" in r.output, (host_id, verb)
             assert "--as-user" not in r.output, (host_id, verb)
+
+
+def test_docker_exec_override_mirrors_the_base_hosts_cli_overlays(monkeypatch):
+    """``DockerContainerHost.exec`` is its OWN function object (it rewrites
+    ``sudo`` -> ``user="root"`` and delegates), so ``@cli_exposed`` and the
+    ``Annotated`` overlays on ``BaseHost.exec`` do not carry over through the
+    override — CLI synthesis reads the marker off whichever function object
+    the resolved class actually holds (see ``collect_exposed_methods``). This
+    pins that the container family mirrors them exactly, so ``otto host <id>
+    exec`` renders the identical surface on both families.
+    """
+    from otto.host.docker_host import DockerContainerHost
+
+    monkeypatch.setenv("COLUMNS", "300")
+    app = _make_app(monkeypatch, {"u1": UnixHost, "d1": DockerContainerHost})
+
+    unix_help = CliRunner().invoke(app, ["u1", "exec", "--help"]).output
+    docker_help = CliRunner().invoke(app, ["d1", "exec", "--help"]).output
+
+    for flat in (unix_help, docker_help):
+        assert "COMMAND" in flat
+        assert "--timeout" in flat
+        assert "--sudo" in flat
+        assert "--no-sudo" in flat
+        assert "--user" in flat
 
 
 def test_probe_renders_user_and_scan_ports_options(monkeypatch):
@@ -467,11 +492,11 @@ def test_probe_renders_user_and_scan_ports_options(monkeypatch):
         assert "--scan-ports" in r.output, (host_id, r.output)
 
 
-def test_run_cli_binding_markers():
-    """build_cli_binding resolves the @cli_exposed markers on BaseHost.run.
+def test_exec_cli_binding_markers():
+    """build_cli_binding resolves the @cli_exposed markers on BaseHost.exec.
 
     Validates:
-    - cmds is a positional variadic list[str]
+    - cmd is a positional scalar (union normalises to str)
     - timeout is an option
     - sudo is an option (flag-style, bool default False)
     - expects and log are in binding.excluded
@@ -481,21 +506,21 @@ def test_run_cli_binding_markers():
     from otto.cli.param_synth import build_cli_binding
     from otto.host.host import BaseHost
 
-    binding = build_cli_binding(BaseHost.run)
+    binding = build_cli_binding(BaseHost.exec)
 
     param_names = [p.name for p in binding.params]
     by_name = {p.name: p for p in binding.params}
 
-    # cmds: variadic list[str] positional
-    assert "cmds" in param_names
-    cmds_p = by_name["cmds"]
-    # Annotated[list[str], typer.Argument(...)] — origin is list or annotation is Annotated
-    ann_args = getattr(cmds_p.annotation, "__args__", ())
-    assert ann_args, f"Expected list[str] base, got {ann_args}"
-    assert ann_args[0] == list[str], f"Expected list[str] base, got {ann_args}"
-    meta = getattr(cmds_p.annotation, "__metadata__", ())
+    # cmd: scalar positional, union normalised to str
+    assert "cmd" in param_names
+    cmd_p = by_name["cmd"]
+    # Annotated[str, typer.Argument(...)] — origin is str or annotation is Annotated
+    ann_args = getattr(cmd_p.annotation, "__args__", ())
+    assert ann_args, f"Expected str base, got {ann_args}"
+    assert ann_args[0] is str, f"Expected str base, got {ann_args}"
+    meta = getattr(cmd_p.annotation, "__metadata__", ())
     assert any(isinstance(m, typer.models.ArgumentInfo) for m in meta), (
-        "cmds must be a positional Argument"
+        "cmd must be a positional Argument"
     )
 
     # timeout: option  # noqa: ERA001 — structural assertion label, not code
@@ -1053,23 +1078,23 @@ def test_cli_bad_octal_mode_exits_nonzero_with_the_parse_message(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Task 10: `otto host <id> run --timeout` bound + advertised default
+# Task 10: `otto host <id> exec --timeout` bound + advertised default
 # ---------------------------------------------------------------------------
 
 
-def test_run_timeout_advertises_default_and_range(monkeypatch):
-    """The synthesized --timeout carries BaseHost.run's default and a >=0 bound."""
+def test_exec_timeout_advertises_default_and_range(monkeypatch):
+    """The synthesized --timeout carries BaseHost.exec's default and a >=0 bound."""
     app = _make_app(monkeypatch, {"u1": UnixHost})
-    r = CliRunner().invoke(app, ["u1", "run", "--help"])
+    r = CliRunner().invoke(app, ["u1", "exec", "--help"])
     assert r.exit_code == 0, r.output
     assert "30.0" in r.output, "the default must be advertised in help"
     assert "x>=0" in r.output, "the range bound must be advertised in help"
 
 
-def test_run_rejects_a_negative_timeout(monkeypatch):
+def test_exec_rejects_a_negative_timeout(monkeypatch):
     """A negative --timeout is a clean click usage error, not a traceback."""
     app = _make_app(monkeypatch, {"u1": UnixHost})
-    r = CliRunner().invoke(app, ["u1", "run", "--timeout", "-5", "echo hi"])
+    r = CliRunner().invoke(app, ["u1", "exec", "--timeout", "-5", "echo hi"])
     assert r.exit_code == 2, r.output
     assert "not in the range" in r.output
 

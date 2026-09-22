@@ -393,31 +393,22 @@ class TestTheSessionIdentityRule:
 
 
 class TestTheDeclarationIsPerClassNotPerInstance:
-    """A KNOWN, DOCUMENTED divergence, pinned here rather than left to surprise.
+    """`HostCapabilities` has one row per family and no term dimension.
 
-    `HostCapabilities` has one row per family and no term dimension, so a class
-    whose answer depends on the instance's own configuration conforms on one
-    instance and reports a violation on another -- both truthfully. otto ships
-    exactly such a class, and the probe above passes only because `_unix()`
-    takes the default `term="ssh"`; without this test nothing would say so.
+    A class whose answer depended on the instance's own configuration would
+    conform on one instance and report a violation on another, both
+    truthfully -- `unix` used to be exactly such a class: `exec_user` held
+    over `term="ssh"` while a `term="telnet"` host refused. Task 4 (spec
+    2026-09-21 §4.2) closed that gap by declaring `exec_user=switch`, which
+    both terms honour, so both instances below now conform; this class keeps
+    a regression pin on that rather than leaving the possibility untested.
     """
 
-    def test_a_telnet_unix_host_reports_the_divergence_its_row_cannot_carry(self):
-        """`unix` declares `exec_user=authenticate`; telnet has no exec channel.
-
-        The violation is a statement about THIS INSTANCE's configuration, not a
-        defect in `UnixHost`. `assert_host_conforms`'s docstring and
-        `docs/cookbook/extending/custom-host-classes.md` say so where an author reads
-        them; this is the executable half.
-        """
-        with pytest.raises(
-            AssertionError,
-            match=(
-                r"Host\.exec: declared exec_user='authenticate', but "
-                r"exec\(user=\.\.\.\) raised NotImplementedError"
-            ),
-        ):
-            assert_host_conforms(UnixHost, instance=_unix(term="telnet"))
+    def test_a_telnet_unix_host_conforms_same_as_ssh(self):
+        """`unix` declares `exec_user=switch`, which both `term="ssh"` and
+        `term="telnet"` honour -- telnet on a pooled shell switched to the
+        named user, ssh on its own connection or the same pooled switch."""
+        assert_host_conforms(UnixHost, instance=_unix(term="telnet"))
 
     def test_the_ssh_instance_the_row_speaks_for_still_conforms(self):
         """The control: without it the test above would pass on a broken asserter."""

@@ -43,8 +43,10 @@ from .errors import MountNotFoundError
 from .file_ops import PosixFileOps
 from .host import (
     CONCURRENT_HELP,
+    DEFAULT_COMMAND_TIMEOUT,
     BaseHost,
     Host,
+    ShellCommand,
     _validate_user,
     is_dry_run,
     refuse_declined_fact,
@@ -472,6 +474,21 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """Per-call beats declared; neither → ``None`` (the image's ``USER`` prevails)."""
         return user if user is not None else self.user
 
+    @override
+    def _ambient_user(self) -> "str | None":
+        """Report a switch made on the container's persistent channel.
+
+        The container's ``as_user`` is real — ``PosixPrivilege`` runs ``su``
+        on the in-container shell and records it on the session manager — so
+        an enclosing ``async with container.as_user("app")`` must reach
+        ``exec`` as well, which runs on a fresh ``docker exec`` of its own and
+        would otherwise land on the DECLARED default while ``run`` ran as
+        ``app``. ``None`` (no default channel, or one still running as the
+        user it opened as) leaves :meth:`_effective_user` to apply the
+        declared default exactly as before.
+        """
+        return self._session_mgr.ambient_user
+
     def mount_for(self, container_path: "str | Path") -> "Mount | None":
         """Return the mount covering *container_path*, or ``None`` if it is not shared.
 
@@ -616,20 +633,87 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         return f"docker exec {flags}{u} {self.container_id} sh -c {shlex.quote(cmd)}"
 
     @override
+    def _refuse_exec_sudo(self) -> None:
+        # Nothing to refuse: sudo on a container is `docker exec -u root`.
+        # user+sudo is refused in `exec` below, where both values are known.
+        return
+
+    @override
+    @cli_exposed
+    async def exec(
+        self,
+        cmd: Annotated[
+            "str | ShellCommand",
+            Arg(
+                name="COMMAND",
+                help="One command, quoted as one arg; join steps with && on a POSIX shell.",
+            ),
+        ],
+        expects: Annotated["Expect | list[Expect] | None", Exclude] = None,
+        timeout: Annotated[
+            float,
+            Opt(help="Seconds before the command is abandoned; use inf for unbounded.", min=0.0),
+        ] = DEFAULT_COMMAND_TIMEOUT,
+        log: Annotated[LogMode, Exclude] = LogMode.NORMAL,
+        sudo: bool = False,
+        user: Annotated[
+            "str | None",
+            Opt(
+                help="Run as this user — a direct or proxy login. Which families "
+                "accept it, and how, is declared per family in `otto host` docs."
+            ),
+        ] = None,
+    ) -> CommandResult:
+        """See :meth:`~otto.host.host.BaseHost.exec`.
+
+        On a container ``sudo`` is ``docker exec -u root`` — the parent's
+        exec channel has no pty to answer a ``sudo -S`` prompt on, and root
+        in the container is what elevation means there. ``user`` and
+        ``sudo`` together refuse: both choose the ``-u``.
+
+        Explicit two-argument ``super()`` — see ``_mkdir_all`` for why a
+        bare ``super()`` raises on this ``@dataclass(slots=True)`` class.
+
+        Mirrors :meth:`~otto.host.host.BaseHost.exec`'s ``@cli_exposed``
+        stamp and CLI overlays exactly, so ``otto host <id> exec`` renders
+        the same options on the container family (an override is a fresh
+        function object; the marker does not inherit through it). See
+        ``tests/unit/cli/test_dynamic_host_commands.py`` for the pin.
+        """
+        if sudo:
+            if user is not None:
+                raise NotImplementedError(
+                    f"{self.name}: exec(user=..., sudo=True) — on a container both "
+                    f"choose the user; pass one"
+                ) from None
+            return await super(DockerContainerHost, self).exec(
+                cmd, expects=expects, timeout=timeout, log=log, user="root"
+            )
+        return await super(DockerContainerHost, self).exec(
+            cmd, expects=expects, timeout=timeout, log=log, user=user
+        )
+
+    @override
     async def _exec_one(
         self,
         cmd: str,
         timeout: float,
         log: LogMode = LogMode.NORMAL,
         user: "str | None" = None,
+        *,
+        expects: "list[Expect] | None" = None,
+        needs_shell: bool = False,
     ) -> CommandResult:
         """Run a single command in the container via the parent.
 
         Stateless and concurrent-safe — each call spawns a fresh
         ``docker exec``. ``run()`` is the stateful counterpart that
-        preserves shell state across calls.
+        preserves shell state across calls. *needs_shell* is accepted here
+        for signature parity — the parent's own ``exec`` decides whether it
+        needs a shell to honour *expects*. ``docker exec -i`` keeps stdin
+        open, so the parent's pooled shell can answer a prompt across it.
         """
-        return await self._exec_via_parent(cmd, timeout, log=log, user=user)
+        return await self._exec_via_parent(cmd, timeout, log=log, user=user, expects=expects)
 
     async def _exec_via_parent(
         self,
@@ -637,6 +721,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         timeout: float,
         log: LogMode = LogMode.NORMAL,
         user: "str | None" = None,
+        expects: "list[Expect] | None" = None,
     ) -> CommandResult:
         """Wrap *cmd* in ``docker exec`` and dispatch through the parent.
 
@@ -657,12 +742,21 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         route, and a seam that dispatches to a device answers for itself.
         SessionManager's exec_factory reaches here without a user — the
         declared default applies, which is the spec's effective-user rule,
-        not an accident.
+        not an accident. It also reaches here without *expects*: that route
+        already runs on a pooled shell of its own, so the default ``None``
+        is correct there too.
+
+        *expects* forwards to the parent's own ``exec``, which answers
+        prompts on its pooled shell — ``docker exec -i`` (never ``-t``) keeps
+        stdin open across that hop so a response written there reaches the
+        container.
         """
         if is_dry_run():
             return self._dry_run_result(cmd, log)
         wrapped = await self._docker_exec(cmd, user=self._effective_user(user))
-        result = await self.parent.exec(wrapped, timeout=timeout, log=self._effective_log(log))
+        result = await self.parent.exec(
+            wrapped, timeout=timeout, log=self._effective_log(log), expects=expects
+        )
         # Replace the wrapped command in the result so callers see what they
         # asked for, not the docker-exec wrapper. `replace` rather than a field
         # list so new CommandResult fields are carried through automatically.

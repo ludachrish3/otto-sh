@@ -34,6 +34,7 @@ from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
 from otto.host.errors import HostUnreachableError, UnsupportedOnUserlandError
 from otto.host.file_ops import PosixFileOps, refuse_if_base64_is_absent
+from otto.host.host import Expect
 from otto.host.local_host import LocalHost
 from otto.host.options import UserlandOptions
 from otto.host.privilege import PosixPrivilege
@@ -166,8 +167,11 @@ class _Host(UnixHost):
         timeout: float = 0.0,
         log: LogMode = LogMode.NORMAL,
         user: str | None = None,
+        *,
+        expects: "list[Expect] | None" = None,
+        needs_shell: bool = False,
     ) -> CommandResult:
-        del user
+        del user, expects, needs_shell
         return self.device.answer(cmd)
 
 

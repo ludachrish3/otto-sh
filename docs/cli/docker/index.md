@@ -55,7 +55,7 @@ host the stack runs on. Use them anywhere a host id is expected:
 
 ```text
 otto host test3.integration.api login
-otto host test3.integration.api run "uname -a"
+otto host test3.integration.api exec "uname -a"
 otto host test3.integration.api put ./local /remote/path
 otto host test3.integration.api get /etc/os-release ./
 ```

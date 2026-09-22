@@ -47,6 +47,15 @@ def test_credentials_empty_creds_loginless():
     assert mgr.proxy_hops == []
 
 
+def test_has_direct_cred_is_the_question_direct_cred_for_answers_by_raising():
+    creds = [Cred(login="alice", password="pw"), Cred(login="root", proxy="su", via="alice")]
+    mgr = _mgr(creds)
+    assert mgr.has_direct_cred("alice") is True
+    assert mgr.has_direct_cred("root") is False, "reachable only through a hop"
+    with pytest.raises(LoginProxyError):
+        mgr._direct_cred_for("root")
+
+
 @pytest.mark.asyncio
 async def test_ssh_as_opens_and_caches_per_user(monkeypatch):
     calls: list[str] = []

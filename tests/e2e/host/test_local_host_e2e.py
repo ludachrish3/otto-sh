@@ -1,4 +1,4 @@
-"""End-to-end tests for ``otto host local run/put/get/login`` (no bed required).
+"""End-to-end tests for ``otto host local exec/put/get/login`` (no bed required).
 
 ``LocalHost`` spawns local subprocesses and copies files on the local
 filesystem, so the full CLI dispatch path runs end-to-end — repo discovery,
@@ -31,14 +31,14 @@ pytestmark = pytest.mark.hostless
 
 
 # ---------------------------------------------------------------------------
-# run
+# exec
 # ---------------------------------------------------------------------------
 
 
 def test_local_run_echo(tmp_path: Path) -> None:
-    """``otto host local run "echo hello-e2e"`` exits 0 and prints the token."""
+    """``otto host local exec "echo hello-e2e"`` exits 0 and prints the token."""
     r = run_otto(
-        ["host", "local", "run", "echo hello-e2e"],
+        ["host", "local", "exec", "echo hello-e2e"],
         xdir=tmp_path,
         sut_dirs=REPO_E2E,
         lab="unix",

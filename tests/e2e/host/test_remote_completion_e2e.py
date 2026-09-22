@@ -59,7 +59,7 @@ def _run_on_host(host_id: str, command: str, xdir: Path) -> subprocess.Completed
     shared ``run_otto`` harness.
     """
     return run_otto(
-        ["host", host_id, "run", command],
+        ["host", host_id, "exec", command],
         xdir=xdir,
         sut_dirs=REPO1,
         lab=_LAB,

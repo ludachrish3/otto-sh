@@ -254,7 +254,7 @@ def test_ssh_blackhole_mid_command_is_survivable_and_repairs_clean(chaos_rng, tm
         run_xdir.mkdir()
         target = _make_hop_target(tmp_path)
         p = spawn_otto(
-            ["host", target.host_id, "run", _CMD, "--timeout", str(int(_RUN_TIMEOUT))],
+            ["host", target.host_id, "exec", _CMD, "--timeout", str(int(_RUN_TIMEOUT))],
             xdir=run_xdir,
             target=target,
         )

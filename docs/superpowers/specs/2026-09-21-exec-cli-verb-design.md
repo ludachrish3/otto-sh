@@ -71,7 +71,7 @@ D9–D12).
 | D6 | `exec` keeps its `user=` for Python callers (it was never in question); `run(user=)` keeps its current behaviour (docker `chown`, refused elsewhere). |
 | D7 | The CLI takes **one command as one quoted string**, mirroring `exec(cmd: str)`. |
 | D8 | New `UserSupport.switch`; unix `exec_user` becomes `switch`. |
-| D9 | `BaseHost.exec`'s **default implementation is session-based**: acquire a throwaway session, `run` the command on it, release it (or discard it, D4). Raw channels are per-family fast paths that `_exec_route` selects only when the call needs nothing a shell provides. Validation, dry-run, `sudo`, `user` and `expects` therefore share one core. |
+| D9 | **One shared core, and the session-based route is the fallback.** `BaseHost.exec` owns normalisation, elevation, refusal ordering and the dry-run arm for every family, and hands `_exec_one` a resolved command plus the call's *needs_shell*. For every session-bearing family that lands in `SessionManager.exec`, whose pooled arm is literally `run` on a throwaway session (acquire, `run`, release — or discard, D4); the raw channels are per-family fast paths `_exec_route` selects only when the call needs nothing a shell provides. Families with no shell session behind `exec` (local, docker) keep their own primitive and refuse what it cannot do. |
 | D10 | `exec` accepts `expects=` and a single `ShellCommand`, the same single-command shape `run` accepts. `expects` forces the pooled route. Sequences and the cumulative timeout stay `run`-only — they are what a kept session is *for*. |
 | D11 | **Ambient identity applies to `exec`.** Inside `async with host.as_user(X)`, `exec(cmd)` with `user=None` runs as X, exactly as `run` does. Today it silently runs as the login user. |
 | D12 | **`run(user=X)` on unix becomes a scoped switch for that call** — `async with as_user(X): run(cmds)` — instead of a refusal, and unix `run_user` becomes `switch`. Additive and separable; it is the mirror of D3 so that both verbs answer `user=` the same way on every family (docker `chown`, unix `switch`, embedded/local refused). |
@@ -164,14 +164,20 @@ switched here is visible to a later `run`.
 | unix, ssh term | direct cred → `ssh_as`; otherwise switch | pooled shell |
 | unix, telnet term | switch (**new** — was refused) | pooled shell |
 | docker | `docker exec -u` (`chown`) — unchanged | open — see below |
-| embedded, local | refused — unchanged | refused, as `run(sudo=True)` is |
+| embedded | refused — unchanged | refused, as `run(sudo=True)` is (no `_elevate`) |
+| local | refused — unchanged | **refused**, naming `run(sudo=True)`, which keeps working |
 
-**Open for the plan: docker `exec(sudo=True)`.** `DockerContainerHost` mixes
-in `PosixPrivilege`, so it can elevate, but its `exec` is a `docker exec`, not
-a `SessionManager` route, so §4.1 does not decide it. The recommendation is
-`docker exec -u root`, which needs no password prompt and so no pty. The plan
-confirms that against the container family's `run(sudo=True)` before it
-commits to the rule.
+**Local.** `LocalHost.run(sudo=True)` elevates today (`PosixPrivilege._elevate`
+with no userland wraps the command in `sudo -S`). `exec` on local is a bare
+subprocess with no pty to answer a prompt on, so `exec(sudo=True)` refuses and
+its message points at `run(sudo=True)`.
+
+**Docker.** `exec` is `docker exec … sh -c <cmd>` sent through the PARENT
+host's `exec` — a raw channel with no pty — so the `sudo -S` wrap `run` uses
+cannot answer a prompt there. `exec(sudo=True)` on a container is therefore
+**`docker exec -u root`**: no prompt, no `_elevate`, and the result runs as
+root in the container, which is what `sudo` means there. `exec(user=X,
+sudo=True)` on a container is a refusal: the two both choose the `-u`.
 
 ## 5. The CLI
 
@@ -192,7 +198,12 @@ on `BaseHost.exec`:
 | `--sudo` | off | Elevate through the host's resolved mechanism. |
 
 The verb keeps `run`'s per-verb output-dir behaviour. Two positional commands
-are a usage error: *"exec takes one command — join steps with &&"*.
+are a usage error — click's own, exit 2, *"Got unexpected extra argument
+(…)"*, raised before the verb runs (the synthesized verbs have no hook that
+runs earlier, and a hand-raised `UsageError` escapes Typer's vendored click).
+The guidance lives where the user looks next: the argument's `--help` text
+says *one shell command, quoted as one argument; join steps with `&&` on a
+POSIX shell*.
 
 ## 6. Errors
 
@@ -215,7 +226,18 @@ New member:
 
 Unix `exec_user`: `authenticate` → `switch`, and with D12 unix `run_user`:
 `refused` → `switch` too, so the two verbs read the same on every row. Unix
-`put`/`get` stay `authenticate`; docker stays `chown`. The support-matrix page renders member meanings from the enum, so it
+`put`/`get` stay `authenticate`; docker stays `chown`. The unix row's `note`
+drops "`exec(user=)` additionally requires `term="ssh"`".
+
+The conformance probe (`src/otto/testing/conformance_host.py`) already treats
+every non-`refused` member as "a dry-run call with `user=` completes
+cleanly", so `switch` needs no new probe arm — but it constrains D12: under a
+dry run, `run(user=X)` on unix must decline the way a plain dry-run `run`
+does, **not** enter `as_user` (whose dry-run arm raises
+`CommandNotRunError`). The switch happens only on a live run.
+`docs/cli/host/families.md` is generated from the enum by
+`scripts/render_support_matrix.py`, so the new member's meaning reaches the
+page without a hand edit. The support-matrix page renders member meanings from the enum, so it
 follows without a hand edit; the conformance probe must learn the new member.
 
 ## 8. Migration
@@ -247,7 +269,16 @@ Two of those need care:
 
 Sites that exercise the persistent session *across multiple commands in one
 invocation* (the old `run "cd /tmp" "ls"` shape) are rewritten with `&&`, not
-dropped — they are the behaviour D7's usage error replaces.
+dropped — they are the behaviour D7's usage error replaces. **One site cannot
+be:** `tests/e2e/chaos/test_console_chaos.py:212` queues **forty** copies of
+`kernel version` in one `run` on a Zephyr console so that a SIGKILL lands
+with work still queued, and a Zephyr shell has no `&&`. That test is
+redesigned rather than joined: the keep-busy becomes one `exec` of a command
+that stays busy on the console for the window the test needs, and the test's
+own assertions (kill lands mid-command; the console recovers) are what it
+keeps. The usage error's "join with `&&`" wording is right for the POSIX
+shells every other site targets, and the docs page says so rather than
+implying a Zephyr shell can join.
 
 **Docs:** `docs/cli/host/run.md` → `exec.md`; `docs/cli/host/index.md`,
 `docs/cli/dry-run.md` and `docs/cli/host/capabilities/privilege.md`; nav and

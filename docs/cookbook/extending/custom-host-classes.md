@@ -132,11 +132,9 @@ it from a synchronous test — the probes drive their own event loop.
 Your `capabilities` are read per **class**, while behaviour can depend on the
 **instance**: there is no dimension in the declaration for a host's own
 configuration.  A class whose answer varies that way conforms on one instance
-and reports a violation on another, both truthfully — otto's own `unix` row
-declares `exec_user=authenticate`, which holds over `term="ssh"` while a
-`term="telnet"` host refuses.  Probe the configuration your declaration speaks
-for, and put the conditions in your row's `note` so a reader of
-{doc}`../../cli/host/families` sees them too.
+and reports a violation on another, both truthfully.  Probe the configuration
+your declaration speaks for, and put the conditions in your row's `note` so a
+reader of {doc}`../../cli/host/families` sees them too.
 
 ## Composition
 

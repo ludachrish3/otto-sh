@@ -6,7 +6,7 @@ as someone else:
 
 ```bash
 otto --holder alice test TestSmoke
-otto --holder alice host router1 run "uname -a"
+otto --holder alice host router1 exec "uname -a"
 ```
 
 When `--holder` is on the command line, otto prints a bold-magenta

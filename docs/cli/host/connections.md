@@ -11,7 +11,7 @@ To change the final hop before a target host, use `--hop` to choose an
 intermediate SSH jump host:
 
 ```bash
-otto --lab my_lab host --hop jumpbox target_seed run "uname -a"
+otto --lab my_lab host --hop jumpbox target_seed exec "uname -a"
 ```
 
 The hop host must support SSH. The target host can use any terminal
@@ -62,7 +62,7 @@ Use `--term` to override the terminal protocol and `--transfer` to override
 the file transfer protocol for a single invocation without editing `lab.json`:
 
 ```bash
-otto --lab my_lab host --term telnet router1 run "show version"
+otto --lab my_lab host --term telnet router1 exec "show version"
 otto --lab my_lab host --transfer sftp router1 put firmware.bin /tmp/
 ```
 
