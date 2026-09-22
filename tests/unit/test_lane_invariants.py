@@ -666,13 +666,15 @@ def test_rule_test_parity_scanner_flags_a_missing_leg() -> None:
 # load-bearing for the one assertion in
 # `test_every_lane_leg_selects_at_least_one_test`.
 
-# The three surfaces that spell pytest lanes, the same set
-# `test_no_lane_but_the_busybox_lane_can_select_the_busybox_tier` covers. A
+# The two surfaces that spell pytest lanes, the same set
+# `test_no_lane_but_the_busybox_lane_can_select_the_busybox_tier` covers
+# (`scripts/stability_campaign.py` delegates to them — pinned by
+# `test_the_stability_campaign_spells_no_lane_of_its_own`). A
 # lane written straight into a GitHub workflow step is NOT seen here; that is
 # the SURFACE BOUND `test_a_lane_that_selects_by_path_cannot_reach_the_busybox_tier`
 # states, and it names the live sightings.
 _MAKEFILE = "Makefile"
-_PYTHON_LANE_SURFACES = ("noxfile.py", "scripts/stability_campaign.py")
+_PYTHON_LANE_SURFACES = ("noxfile.py",)
 
 # NOT `OTTO_`-prefixed, and that is not a style choice: the root conftest
 # strips ambient `OTTO_*` variables at IMPORT time (all but a named opt-in
@@ -730,6 +732,8 @@ class _Leg:
     surface: str
     expr: str
     roots: "tuple[str, ...]"
+    # Carries pytest-repeat's `--count`, which multiplies what `roots` COLLECT.
+    repeated: bool = False
 
     def __str__(self) -> str:
         where = " ".join(self.roots) if self.roots else "<testpaths>"
@@ -764,12 +768,13 @@ def _legs_from_invocations(
         if variables is not None:
             expr = _expand_makefile_variables(expr, variables)
         roots = tuple(str(path.relative_to(_REPO)) for path in _selected_roots(tokens))
-        legs.append(_Leg(surface, expr, roots))
+        repeated = any(token == "--count" or token.startswith("--count=") for token in tokens)
+        legs.append(_Leg(surface, expr, roots, repeated))
     return legs
 
 
 def lane_legs() -> "list[_Leg]":
-    """Every `-m` lane leg in the repo's three lane-spelling surfaces."""
+    """Every `-m` lane leg in the repo's lane-spelling surfaces."""
     makefile = (_REPO / _MAKEFILE).read_text()
     legs = _legs_from_invocations(
         _MAKEFILE,
@@ -1010,8 +1015,106 @@ def test_the_lane_leg_gate_reddens_on_the_issue_229_leg(collect_marker_sets) -> 
     assert _lane_leg_offenders([live], collect_marker_sets) == []
 
 
+def _count_leg_offenders(legs: "list[_Leg]", collect) -> "list[str]":
+    """The `--count` legs that multiply more than they soak, or soak less than they say.
+
+    Two rules, one per failure direction:
+
+    * A `--count` leg must NAME its roots. pytest-repeat multiplies every
+      collected item before `-m` deselects anything, so a path-less leg pays
+      COUNT x the whole tree to run its slice.
+    * A leg whose roots are FILES is an enumeration standing in for its marker,
+      so those files must hold every test the expression selects tree-wide —
+      otherwise marking a new test enrolls it nowhere, silently. A leg whose
+      roots are DIRECTORIES is scoped by intent (`tests_unit_repeat` soaks
+      `tests/unit` under a broad `-m`), and the tree-wide selection says
+      nothing about what it should hold.
+    """
+    offenders: "list[str]" = []
+    for leg in legs:
+        if not leg.repeated:
+            continue
+        if not leg.roots:
+            offenders.append(
+                f"{leg} — a `--count` leg with no paths multiplies the whole collected "
+                f"tree before `-m` deselects (issue #429)"
+            )
+            continue
+        if not all((_REPO / root).is_file() for root in leg.roots):
+            continue
+        compiled = Expression.compile(leg.expr)
+        tree_wide = sum(1 for markers in collect(()) if compiled.evaluate(_marker_matcher(markers)))
+        named = sum(
+            1 for markers in collect(leg.roots) if compiled.evaluate(_marker_matcher(markers))
+        )
+        if named != tree_wide:
+            offenders.append(
+                f"{leg} — its files hold {named} of the {tree_wide} tests `-m {leg.expr}` "
+                f"selects tree-wide; add the missing tests' files to the leg"
+            )
+    return offenders
+
+
+@pytest.mark.xdist_group("lane_leg_membership")
+def test_every_count_leg_names_the_files_holding_its_selection(collect_marker_sets) -> None:
+    """A `--count` soak names its paths, and a file list misses no marked test — issue #429.
+
+    The nightly `make stability-unit COUNT=100` ran `-m concurrency` with no
+    path: 1.24M items collected per xdist worker to run 1,700, ~4.3 GB each on
+    a 16 GB runner. Collection took 12m40s, and the swapped heap stalled
+    Hypothesis's first `gc.collect()` for minutes on some workers — the
+    "runner freeze" timeouts #408 raised a threshold for. Naming the files
+    brings the same collection to ~1 s and ~145 MB, but a file list can go
+    stale where a marker could not, hence the second rule in
+    `_count_leg_offenders`.
+    """
+    offenders = _count_leg_offenders(lane_legs(), collect_marker_sets)
+    assert not offenders, (
+        "these `--count` legs either multiply the whole tree or miss tests their "
+        "marker selects:\n  " + "\n  ".join(offenders)
+    )
+
+
+@pytest.mark.xdist_group("lane_leg_membership")
+def test_the_count_leg_gate_reddens_on_both_rules(collect_marker_sets) -> None:
+    """Positive control: the issue #429 leg itself, a file list short one file, and a pass.
+
+    The legs are synthetic but the tree is real, as in the #229 control above:
+    `test_collector_tunnel_soak.py` holds `concurrency` tests today, so a list
+    without it must be reported. The inventory half pins that the real
+    `stability-unit` leg is still seen as repeated — a scanner that stopped
+    reading `--count` would green the gate by judging nothing.
+    """
+    files = (
+        "tests/unit/host/test_app_shell_concurrency.py",
+        "tests/unit/host/test_session_concurrency.py",
+        "tests/unit/host/test_unix_host.py",
+    )
+    missing_one = _Leg("synthetic", "concurrency", files, repeated=True)
+    pathless = _Leg("synthetic (issue #429)", "concurrency", (), repeated=True)
+    complete = _Leg(
+        "synthetic",
+        "concurrency",
+        (*files, "tests/unit/monitor/test_collector_tunnel_soak.py"),
+        repeated=True,
+    )
+    directory = _Leg("synthetic", "concurrency", ("tests/unit/host",), repeated=True)
+
+    reports = _count_leg_offenders([pathless, missing_one], collect_marker_sets)
+    assert len(reports) == 2, reports
+    assert "no paths" in reports[0], reports[0]
+    assert "add the missing tests' files" in reports[1], reports[1]
+    assert _count_leg_offenders([complete, directory], collect_marker_sets) == []
+
+    stability_unit = [
+        leg for leg in lane_legs() if leg.surface == _MAKEFILE and leg.expr == "concurrency"
+    ]
+    assert stability_unit, "the scanner no longer finds `make stability-unit`'s leg"
+    assert all(leg.repeated for leg in stability_unit), stability_unit
+
+
 def test_the_lane_leg_inventory_sees_every_surface() -> None:
-    """The scan finds legs on all three surfaces, and recovers each `-m` value.
+    """The scan finds legs on every surface, and recovers each `-m` value.
 
     A membership gate whose inventory silently empties is green forever, so
     every surface must contribute. The `-m` value check is the specific

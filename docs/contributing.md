@@ -505,7 +505,11 @@ is ever powered off). `COUNT=N` repeats the whole suite (default 1);
 smoke setting). These tests carry `stability + integration + hops`;
 `stability-unix` excludes them via `not hops`. The no-VM collector tick soak
 (`tests/unit/monitor/test_collector_tunnel_soak.py`) is marked `concurrency`
-instead — it rides `make stability-unit` and stays in coverage. The suite also
+instead — it rides `make stability-unit` and stays in coverage. A marker alone
+does not enroll a test in a soak: pytest-repeat multiplies everything pytest
+collects before `-m` deselects, so each `--count` target names the files it
+soaks, and a newly marked test needs its file added there too.
+`tests/unit/test_lane_invariants.py` fails until it is. The suite also
 proves the recovery contract: a degraded or uncertain tunnel is plainly visible
 in `otto tunnel list` output, and misbehaving tunnels remove cleanly whenever
 their hosts are reachable — including completing a partial reap after a host

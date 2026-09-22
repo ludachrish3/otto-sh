@@ -538,22 +538,26 @@ _OPS = ["open_a", "open_b", "exec", "run_default", "kill_default", "kill_a", "ki
 # What the measurements actually say, because the obvious story does not fit
 # them: the WHOLE campaign costs ~0.07 s (30 examples, ~1-2 ms each; measured
 # -n0) against these in-memory fakes, so neither the campaign nor any single
-# example comes near even the old 60 s mark. What fired it on the 2026-09-17
-# and 2026-09-20 nightlies (issue #408, the fourth recurrence of this family in
-# this file after #229, #305 and #359) was a shared-runner freeze — the worst
-# one recorded here is 12.63 s — that parked every xdist worker in ``io.read``;
-# SIGALRM landed on resume, and where it landed decided the costume: inside
-# ``gc.get_referrers`` under Hypothesis's ``deterministic_PRNG`` it came back
-# as ``FlakyFailure`` ("failed on the first run but now succeeds"), inside a
-# ``WeakKeyDictionary`` remove callback as an unraisable warning. Neither
-# diagnostic names the stall, which is why it took four visits.
+# example comes near even the old 60 s mark. What fired it on the 2026-09-20
+# and -21 nightlies (issues #408 and #429, after #229, #305 and #359; 7m37s and
+# 12m40s of collection before either run's first test) was the soak's own
+# collection: `make stability-unit` named no path, so
+# pytest-repeat multiplied the whole tree at COUNT=100 — ~4.3 GB per xdist
+# worker on a 16 GB runner — and the swapped heap made the one-time
+# ``gc.collect()`` in Hypothesis's ``register_random`` (the first ``@given``
+# test on each worker) run for 4-14 MINUTES on some workers while their
+# siblings kept passing tests. #408 read that as a shared-runner freeze. SIGALRM
+# landed inside the collect, and where decided the costume: inside
+# ``gc.get_referrers`` it came back as ``FlakyFailure`` ("failed on the first
+# run but now succeeds"), inside a ``WeakKeyDictionary`` remove callback as an
+# unraisable warning. Neither diagnostic names memory, which is why it took
+# five visits. The fix is the Makefile naming its files (#429); the gate that
+# keeps it named is in tests/unit/test_lane_invariants.py.
 #
-# So this IS a raised threshold, 60 s -> 150 s, and the example count is not
-# the mechanism: a one-example campaign under the same stall reds identically,
-# because what an item timeout measures on a frozen runner is the hypervisor.
-# No work-derived number survives a wall-clock stall longer than itself; 150 s
-# only widens the window a freeze must exceed. That reduces the frequency, not
-# the possibility — a freeze longer than 150 s reds again.
+# The threshold stays 60 s -> 150 s, raised under #408's misreading, because
+# it is a runaway guard for a campaign that costs ~0.07 s: loosening it costs
+# a healthy run nothing, and the example count is not the mechanism either way
+# — a one-example campaign under the same stall reds identically.
 #
 # The number is nevertheless DERIVED rather than picked. ``max_examples`` is
 # stated rather than left implicit so the multiplication is visible here, and

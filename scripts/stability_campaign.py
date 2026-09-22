@@ -103,9 +103,7 @@ def build_tiers(count: int, *, breadth: bool) -> list[Tier]:
 
     breadth=True adds the all-Pythons full-suite pass (Stage 1 only).
     """
-    cdir = f"reports/junit/campaign/count{count}"
     repeat = [f"--count={count}", "--repeat-scope=session"]
-    leak_env = {"OTTO_DETECT_ASYNCIO_LEAKS": "1"}
 
     tiers: list[Tier] = [
         # T1 unit — all Pythons via nox (no VMs); nox writes per-session JUnit.
@@ -120,41 +118,21 @@ def build_tiers(count: int, *, breadth: bool) -> list[Tier]:
             argv=["uv", "run", "nox", "-s", f"tests_all-{DEEP_PYTHON}", "--", *repeat],
             junit=[f"reports/junit/nox/tests_all-{DEEP_PYTHON}.xml"],
         ),
-        # T3a concurrency soak — direct pytest, marker-selected, controlled JUnit.
+        # T3a/T3b — via make, like T3c, never a hand-copied argv. The make
+        # targets NAME the files they soak (issue #429: pytest-repeat multiplies
+        # the whole collected tree before `-m` deselects, so a path-less
+        # `--count` soak OOMs its box), and a copy here is a second list to
+        # drift — T3b's copy had already widened to the chaos and tunnel tiers
+        # `make stability-unix` excludes.
         Tier(
             name="concurrency",
-            argv=[
-                "uv",
-                "run",
-                "pytest",
-                "-m",
-                "concurrency",
-                f"--count={count}",
-                "-p",
-                "no:cacheprovider",
-                f"--junitxml={cdir}/concurrency.xml",
-            ],
-            junit=[f"{cdir}/concurrency.xml"],
-            env=leak_env,
+            argv=["make", "stability-unit", f"COUNT={count}"],
+            junit=["reports/junit/stability-unit/stability-unit.xml"],
         ),
-        # T3b unix stability (real telnet/SSH) — direct pytest, marker.
-        # No -n0: the suite self-serializes (docker via xdist_group, etc.),
-        # mirroring `make stability-unix`.
         Tier(
             name="integration-stability",
-            argv=[
-                "uv",
-                "run",
-                "pytest",
-                "-m",
-                "stability and integration and not embedded",
-                f"--count={count}",
-                "-p",
-                "no:cacheprovider",
-                f"--junitxml={cdir}/integration-stability.xml",
-            ],
-            junit=[f"{cdir}/integration-stability.xml"],
-            env=leak_env,
+            argv=["make", "stability-unix", f"COUNT={count}"],
+            junit=["reports/junit/stability-unix/stability-unix.xml"],
         ),
         # T3c embedded contract — via make (COUNT knob from Phase 1).
         Tier(

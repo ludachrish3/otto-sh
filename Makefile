@@ -1195,9 +1195,25 @@ release-matrix: ## (Build & Release) Re-measure the bed and commit schemas/suppo
 # the root conftest, which errors any serial_timing test that reaches an xdist
 # worker, so a future `concurrency`-and-`serial_timing` test fails here loudly
 # rather than running where load can counterfeit it.
+#
+# Every `--count` soak below NAMES THE FILES it soaks, and that is load, not
+# style (issue #429). pytest-repeat multiplies every COLLECTED item before `-m`
+# deselects anything, so a path-less `-m concurrency --count=100` built 1.24M
+# items per xdist worker to run 1,700 — ~4.3 GB each, four workers on a 16 GB
+# runner. Collection alone took 12m40s, and the swapped heap then stalled
+# Hypothesis's first gc.collect() for minutes on some workers, which is what
+# the "runner freeze" timeouts on test_session_manager_property were (#408).
+# Named, the same run collects in ~1 s at ~145 MB. Marking a new test
+# `concurrency` (or `stability`) does NOT enroll it in a soak by itself — add
+# its file here too. `test_every_count_leg_names_the_files_holding_its_selection`
+# in tests/unit/test_lane_invariants.py reddens on a marked test these paths miss.
 stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JUnit XML lands in reports/junit/stability-unit/. Override iterations with COUNT=N (default 50).
 	@$(SAY) "pytest soak: concurrency marker, no VMs (x$(STABILITY_UNIT_COUNT), leak detector on)"
 	@$(LEAK_DETECT) uv run pytest \
+	    tests/unit/host/test_app_shell_concurrency.py \
+	    tests/unit/host/test_session_concurrency.py \
+	    tests/unit/host/test_unix_host.py \
+	    tests/unit/monitor/test_collector_tunnel_soak.py \
 	    -m "concurrency" \
 	    --count=$(STABILITY_UNIT_COUNT) \
 	    -p no:cacheprovider \
@@ -1207,6 +1223,10 @@ stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JU
 stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. multi-hop). Requires lab VMs. JUnit XML in reports/junit/stability-unix/. Override iterations with COUNT=N (default 10).
 	@$(SAY) "pytest soak: real telnet/SSH on the Unix VMs (x$(STABILITY_UNIX_COUNT), leak detector on)"
 	@$(LEAK_DETECT) uv run pytest \
+	    tests/integration/host/test_app_shell_stability_integration.py \
+	    tests/integration/host/test_host_stability_contract.py \
+	    tests/integration/host/test_proxy_user_stability_integration.py \
+	    tests/integration/host/test_session_stability_integration.py \
 	    -m "stability and integration and not embedded and not hops and not chaos" \
 	    --count=$(STABILITY_UNIX_COUNT) \
 	    -p no:cacheprovider \
@@ -1233,6 +1253,7 @@ stability-tunnel: ## Tunnel soak against the live bed (churn/concurrency/traffic
 stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/stability-embedded/. Override iterations with COUNT=N (default 1).
 	@$(SAY) "pytest soak: cross-OS contract incl. Zephyr (x$(STABILITY_EMBEDDED_COUNT), leak detector on)"
 	@$(LEAK_DETECT) uv run pytest \
+	    tests/integration/host/test_host_stability_contract.py \
 	    -m "stability and embedded and not chaos" \
 	    -p no:cacheprovider \
 	    --no-cov \
@@ -1276,9 +1297,15 @@ stability: ## Run the full stability/soak suite: no-VM concurrency, then real te
 	@$(SAY) "Tier 3 — cross-OS stability contract (includes embedded)"
 	@$(MAKE) stability-embedded COUNT=$(COUNT)
 
+# `repeat` names its trees for the same reason as the stability soaks above
+# (issue #429): only the three its `-m` can select from, so the busybox and
+# conformance trees are not multiplied just to be deselected. The serial leg
+# names the same three because a serial twin must share its parallel leg's
+# roots (tests/unit/test_lane_invariants.py).
 repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repeat (excludes `browser` — see note above M_HOSTLESS; run its soak separately). Local only; requires VMs. JUnit XML in reports/junit/repeat/. Override COUNT=N (default 10).
 	@$(SAY) "pytest soak: full local suite, no browser (x$(COUNT), leak detector on)"
 	@$(LEAK_DETECT) uv run pytest \
+	    tests/unit tests/integration tests/e2e \
 	    -m "not browser and not chaos and not busybox and not conformance and not kgcov and not serial_timing" \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \
@@ -1286,6 +1313,7 @@ repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repe
 	    $(call junitxml,repeat)
 	@$(SAY) "pytest soak: serial_timing discriminators, -n0 (x$(COUNT))"
 	@$(LEAK_DETECT) uv run pytest \
+	    tests/unit tests/integration tests/e2e \
 	    -m "serial_timing and not browser and not chaos and not busybox and not conformance and not kgcov" \
 	    -n0 \
 	    --count=$(COUNT) \

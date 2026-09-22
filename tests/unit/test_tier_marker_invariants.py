@@ -217,15 +217,15 @@ def _python_marker_expressions(source: Path) -> list[str]:
     """Every marker expression passed via ``-m`` anywhere in *source*.
 
     Scans argument sequences (call args, tuple/list literals — the latter
-    catches shared arg bundles like ``HOSTLESS_TEST_ARGS``, and the ``Tier``
-    argv lists in scripts/stability_campaign.py) for a ``"-m"`` constant and
+    catches shared arg bundles like ``HOSTLESS_TEST_ARGS``) for a ``"-m"`` constant and
     takes the string that follows it; a name reference is resolved from
     module-level assignments (``DASHBOARD_MARKER_EXPR``).
 
-    Takes a path rather than reading noxfile.py directly because noxfile.py is
-    not the only Python file that builds pytest lanes: the stability campaign
-    driver spells its own, and a guard that cannot see a file cannot protect
-    it.
+    Takes a path rather than reading noxfile.py directly because noxfile.py
+    need not be the only Python file that builds pytest lanes. The stability
+    campaign driver used to spell its own; it now delegates every tier to make
+    or nox, and ``test_the_stability_campaign_spells_no_lane_of_its_own`` keeps
+    it that way, because a guard that cannot see a file cannot protect it.
     """
     tree = ast.parse(source.read_text())
     assigns = _string_constants(tree)
@@ -570,11 +570,6 @@ def test_no_lane_but_the_busybox_lane_can_select_the_busybox_tier():
     surfaces = (
         ("Makefile", _makefile_marker_expressions((PROJECT_ROOT / "Makefile").read_text())),
         ("noxfile.py", _nox_marker_expressions()),
-        # Not a live offender today (`-m concurrency` and `-m "stability and
-        # integration and not embedded"` reach no busybox-marked test), and
-        # that is exactly why it is listed: a lane this guard cannot SEE is
-        # protected only by nobody having written the wrong selector there yet.
-        ("scripts/stability_campaign.py", _python_marker_expressions(_STABILITY_CAMPAIGN)),
     )
     offenders = []
     for label, exprs in surfaces:
@@ -842,8 +837,9 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_busybox_tier():
     out of every path such a lane names.
 
     SURFACE BOUND, stated here because a guard that reads as complete is how
-    the next offender gets in. This parses ``Makefile``, ``noxfile.py`` and
-    ``scripts/stability_campaign.py``. It does NOT see a raw ``pytest``
+    the next offender gets in. This parses ``Makefile`` and ``noxfile.py``
+    (``scripts/stability_campaign.py`` delegates to them, pinned by
+    ``test_the_stability_campaign_spells_no_lane_of_its_own``). It does NOT see a raw ``pytest``
     written directly into a GitHub workflow step, and two such invocations
     are live right now — the ``chaos-tier2`` and ``chaos-docker`` jobs in
     ``.github/workflows/nightly.yml``, which run ``pytest`` on a path
@@ -867,7 +863,6 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_busybox_tier():
     surfaces = (
         ("Makefile", _makefile_pytest_invocations((PROJECT_ROOT / "Makefile").read_text())),
         ("noxfile.py", _python_pytest_invocations(_NOXFILE)),
-        ("scripts/stability_campaign.py", _python_pytest_invocations(_STABILITY_CAMPAIGN)),
     )
     markerless: "list[tuple[str, list[str]]]" = []
     for label, invocations in surfaces:
@@ -1326,15 +1321,13 @@ def test_no_lane_but_the_conformance_lane_can_select_the_conformance_tier():
     outside the opt-in one can reach them; that premise is re-derived on every
     run rather than remembered.
 
-    Covers `scripts/stability_campaign.py` alongside the two build files for
-    G8d's stated reason: a lane this guard cannot see is protected only by
-    nobody having written the wrong selector there yet.
+    Reads the two build files only: `scripts/stability_campaign.py` spells no
+    lane of its own (`test_the_stability_campaign_spells_no_lane_of_its_own`).
     """
     tier = _marker_sets_of_modules_carrying("conformance")
     surfaces = (
         ("Makefile", _makefile_marker_expressions((PROJECT_ROOT / "Makefile").read_text())),
         ("noxfile.py", _nox_marker_expressions()),
-        ("scripts/stability_campaign.py", _python_marker_expressions(_STABILITY_CAMPAIGN)),
     )
     offenders = []
     for label, exprs in surfaces:
@@ -1397,8 +1390,8 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_conformance_tier():
     which since Task 3 includes `tests/conformance`. So the widest possible lane
     is the one none of G11/G11d/G11e can judge.
 
-    Inherits G8f's surface bound verbatim: this parses `Makefile`,
-    `noxfile.py` and `scripts/stability_campaign.py`, and does NOT see a raw
+    Inherits G8f's surface bound verbatim: this parses `Makefile` and
+    `noxfile.py`, and does NOT see a raw
     `pytest` written into a GitHub workflow step or one buried inside
     `bash -c "..."`.
     """
@@ -1412,7 +1405,6 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_conformance_tier():
     surfaces = (
         ("Makefile", _makefile_pytest_invocations((PROJECT_ROOT / "Makefile").read_text())),
         ("noxfile.py", _python_pytest_invocations(_NOXFILE)),
-        ("scripts/stability_campaign.py", _python_pytest_invocations(_STABILITY_CAMPAIGN)),
     )
     markerless: "list[tuple[str, list[str]]]" = []
     for label, invocations in surfaces:
@@ -2073,7 +2065,6 @@ def test_no_lane_but_the_kgcov_lane_can_select_the_kgcov_tier():
     surfaces = (
         ("Makefile", _makefile_marker_expressions((PROJECT_ROOT / "Makefile").read_text())),
         ("noxfile.py", _nox_marker_expressions()),
-        ("scripts/stability_campaign.py", _python_marker_expressions(_STABILITY_CAMPAIGN)),
     )
     offenders = []
     for label, exprs in surfaces:
@@ -2112,7 +2103,6 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_kgcov_tier():
     surfaces = (
         ("Makefile", _makefile_pytest_invocations((PROJECT_ROOT / "Makefile").read_text())),
         ("noxfile.py", _python_pytest_invocations(_NOXFILE)),
-        ("scripts/stability_campaign.py", _python_pytest_invocations(_STABILITY_CAMPAIGN)),
     )
     offenders: "list[str]" = []
     for label, invocations in surfaces:
@@ -2133,3 +2123,31 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_kgcov_tier():
         f"these lanes pick their tests by PATH with no `-m` expression, so nothing "
         f"deselects the otto_kgcov toolchain tier: {offenders}"
     )
+
+
+def test_the_stability_campaign_spells_no_lane_of_its_own(tmp_path: Path) -> None:
+    """Every campaign tier runs a make target or a nox session, never a raw ``pytest``.
+
+    The lane guards in this file and in tests/unit/test_lane_invariants.py
+    read ``Makefile`` and ``noxfile.py``. The campaign used to hand-copy two
+    soak argvs, and both copies had drifted: path-less (issue #429 — a
+    ``--count`` soak with no path multiplies the whole tree), and one widened
+    to tiers ``make stability-unix`` excludes. Delegating removed the copies;
+    this keeps them removed. If a tier ever needs its own ``pytest`` argv,
+    put ``scripts/stability_campaign.py`` back on those guards' surfaces
+    rather than relaxing this.
+    """
+    remedy = "the lane guards no longer read it — delegate to make/nox, or re-add the surface"
+    invocations = _python_pytest_invocations(_STABILITY_CAMPAIGN)
+    assert not invocations, f"scripts/stability_campaign.py runs pytest {invocations}; {remedy}"
+    expressions = _python_marker_expressions(_STABILITY_CAMPAIGN)
+    assert not expressions, f"scripts/stability_campaign.py passes -m {expressions}; {remedy}"
+
+    # Positive control: the scanners still SEE the shape the campaign used to
+    # spell, so the emptiness above is the file's, not a parser gone blind.
+    probe = tmp_path / "campaign_shaped.py"
+    probe.write_text(
+        'Tier(name="concurrency", argv=["uv", "run", "pytest", "-m", "concurrency"])\n'
+    )
+    assert _python_pytest_invocations(probe) == [["uv", "run", "pytest", "-m", "concurrency"]]
+    assert _python_marker_expressions(probe) == ["concurrency"]
