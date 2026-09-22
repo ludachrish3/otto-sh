@@ -494,29 +494,33 @@ jobs:
     env:
       # The interpreter one past PYTHON_VERSIONS' ceiling in noxfile.py.
       CANARY_PYTHON: "3.15"
-      # The rung the canary is EXPECTED to reach today. 7 = the hostless
-      # suite, the concurrency soak and both chaos lanes all pass on 3.15.
-      # Set 2026-09-17 from the FIRST honest run of rungs 6-9: every earlier
-      # run of them was secretly on 3.10 (#334), so this is the first nightly
-      # whose upper rungs mean anything. Two things stop it there, and only
-      # one of them is ours:
-      #   - rung 8 (dashboard + covapp browser suites) dies with `Fatal
-      #     Python error: Segmentation fault` on all four workers within 5 s,
-      #     i.e. a native crash somewhere in the Playwright stack under 3.15.
-      #     The cause is NOT a missing build of greenlet (3.5.3 ships cp315
-      #     wheels) and has not been identified further; the xdist
-      #     `KeyError: <WorkerController gw4>` INTERNALERROR that follows is
-      #     xdist failing to recover from the segfaults, not the cause.
+      # The rung the canary is EXPECTED to reach today. 4 = the hostless
+      # suite collects; rung 5 (the hostless session) now fails on 3.15.
+      # Lowered 7 -> 4 on 2026-09-21 (#429), and not because anything of ours
+      # regressed: rung 5 gained a test (tests/unit/test_running_loop_leak_guard.py,
+      # d7ef3d66) whose inner session parks an event loop in a greenlet, and
+      # greenlet segfaults on 3.15.0rc2. Rung 5 is left whole on purpose — a
+      # 3.15-only skip is a hole nobody would remember to fill. What stops it:
+      #   - rungs 5 and 8 share ONE native crash: `Fatal Python error:
+      #     Segmentation fault` in greenlet's `Greenlet::g_switchstack`.
+      #     greenlet 3.5.3 ships cp315 wheels, so this is not a missing build;
+      #     rung 5's probe reproduces it with a bare greenlet switch, no
+      #     Playwright, which is why rung 8 (the dashboard + covapp browser
+      #     suites, all four workers within 5 s) dies the same way. The xdist
+      #     `KeyError: <WorkerController gw4>` INTERNALERROR that follows on
+      #     rung 8 is xdist failing to recover from the segfaults, not the cause.
       #   - rung 10 has no 3.15 goldens, and CPython 3.15 leaves its own
       #     `_missing_stdlib_info` out of sys.stdlib_module_names so the guard
       #     charges it to otto -- both deliberately parked until 3.15.0 final
       #     (#333).
-      # Rung 9 passes but cannot lift this number: `reached` is the highest
-      # CONSECUTIVE rung, and 8 is the gap. Do NOT pre-bump to 8 -- it is
-      # gated on someone else's fix, so expecting it would red this job every
-      # night until that lands. Bump when this job reds with "climbed"; a red
-      # "regressed" is a real regression.
-      CANARY_EXPECTED_RUNG: "7"
+      # Rungs 6, 7 and 9 pass (last seen 2026-09-21) but cannot lift this
+      # number: `reached` is the highest CONSECUTIVE rung, and 5 is the gap.
+      # When a greenlet release fixes the crash, expect the climb to reach 7
+      # (rung 8 may then pass too). Do NOT pre-bump -- it is gated on someone
+      # else's fix, so expecting it would red this job every night until that
+      # lands. Bump when this job reds with "climbed"; a red "regressed" is a
+      # real regression.
+      CANARY_EXPECTED_RUNG: "4"
     steps:
       - uses: actions/checkout@v7.0.1
 
