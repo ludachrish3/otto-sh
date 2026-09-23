@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-09-23
+
+### Added
+
+- **cli**: otto host <id> <verb> --user tab-completes to the logins the host accepts
+- **BREAKING** **host**: otto host <id> exec replaces run as the host CLI verb, and reaches every user
+
+
+### Documentation
+
+- **spec**: host --user completes to the logins the host accepts
+- **spec**: exec is the host CLI verb, and it reaches every user
+
+
+### Fixed
+
+- **test**: every --count soak names the files it soaks
+- **build**: the src doctest lanes strip OTTO_* and turn live logging off
+- **test**: import-budget children start in a private cwd, not the caller's
+
+
+### Maintenance
+
+- **matrix**: re-measure the kgcov matrix
+- **matrix**: re-measure the bed support matrix
+
+
 ## [0.15.0] - 2026-09-21
 
 ### Added
@@ -1919,7 +1946,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/ludachrish3/otto-sh/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/ludachrish3/otto-sh/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/ludachrish3/otto-sh/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/ludachrish3/otto-sh/compare/v0.12.2...v0.13.0
