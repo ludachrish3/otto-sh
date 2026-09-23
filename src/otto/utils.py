@@ -328,6 +328,15 @@ class Opt:
     Consumed by ``otto.cli.param_synth``, which attaches the remote-path
     completer; carries no typer import itself.
     """
+    host_user: 'Literal["any", "direct"] | None' = None
+    """Complete this option as a login the typed host declares (None = no completion).
+
+    ``"any"`` offers every login (the verb replays proxy hops); ``"direct"``
+    offers only logins with no proxy hop (``get``/``put`` authenticate as the
+    user). A ``--term`` typed before the cursor narrows to creds scoped to
+    that protocol. Consumed by ``otto.cli.param_synth``; carries no typer
+    import itself.
+    """
 
 
 class _Exclude:

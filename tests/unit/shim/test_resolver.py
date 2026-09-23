@@ -34,7 +34,22 @@ def _tree():
     }
     # The host verbs are shared node dicts: the union menu and each class view
     # point at the same objects, as the serialiser's views do (Task 6).
-    run = _leaf("run", [_param([], "cmd", nargs=-1, source={"kind": "none"})])
+    user_any = {
+        "kind": "payload",
+        "key": "logins_by_host",
+        "host_scoped": True,
+        "term_scoped": True,
+        "flavour": "any",
+        "sort": True,
+    }
+    user_direct = {**user_any, "flavour": "direct"}
+    run = _leaf(
+        "run",
+        [
+            _param(["--user"], "user", source=user_any),
+            _param([], "cmd", nargs=-1, source={"kind": "none"}),
+        ],
+    )
     lsmod = _leaf("lsmod")
     put = _leaf(
         "put",
@@ -44,6 +59,7 @@ def _tree():
         ],
     )
     reboot = _leaf("reboot")
+    get = _leaf("get", [_param(["--user"], "user", source=user_direct)])
     return {
         "name": "otto",
         # `group` mirrors isinstance(cmd, TyperGroup) — the ONE flag that decides
@@ -107,7 +123,7 @@ def _tree():
                     # textual pending rule (after the group's positional) all reach it.
                     _param(["--pair"], "pair", nargs=2),
                 ],
-                "commands": {"run": run, "lsmod": lsmod, "put": put, "reboot": reboot},
+                "commands": {"run": run, "lsmod": lsmod, "put": put, "get": get, "reboot": reboot},
             },
             "test": _leaf(
                 "test",
@@ -140,7 +156,7 @@ def _tree():
             ),  # nargs>1 is not modelled: hand over
         },
         "host_classes": {
-            "unix": {"run": run, "lsmod": lsmod, "put": put},
+            "unix": {"run": run, "lsmod": lsmod, "put": put, "get": get},
             "zephyr": {"run": run, "reboot": reboot},
         },
     }
@@ -152,6 +168,14 @@ NAMES = {
     "labs": ["east", "west"],
     "term_backends": ["ssh", "telnet"],
     "host_classes_by_id": {"z1": "zephyr", "a1": "unix"},
+    "logins_by_host": {
+        "a1": [
+            {"login": "root", "protocols": [], "proxy": True},
+            {"login": "tel", "protocols": ["telnet"], "proxy": False},
+            {"login": "u", "protocols": [], "proxy": False},
+            {"login": "u", "protocols": ["telnet"], "proxy": False},
+        ],
+    },
 }
 TESTS = {"tests": ["test_a", "test_b"], "markers": ["slow", "smoke"]}
 COLLECTED = {"names": ["test_gen"], "markers": ["deep"]}
@@ -250,14 +274,45 @@ def test_host_positional_then_class_scoped_verbs():
     assert _answer("otto host ", 2) == ["a1", "local", "z1"]
     assert _answer("otto -l east host ", 4) == ["a1", "local"]
     assert _answer("otto host z1 ", 3) == ["run", "reboot"]
-    assert _answer("otto host a1 ", 3) == ["run", "lsmod", "put"]
-    assert _answer("otto host ghost ", 3) == ["run", "lsmod", "put", "reboot"]
+    assert _answer("otto host a1 ", 3) == ["run", "lsmod", "put", "get"]
+    assert _answer("otto host ghost ", 3) == ["run", "lsmod", "put", "get", "reboot"]
     assert _answer("otto host z1 -", 3) == ["--term", "--pair"]
     assert _answer("otto host a1 --term ", 4) == ["ssh", "telnet"]
     assert (
         _answer("otto host a1 put x y ", 6) == []
     )  # the variadic (a Path) wins and offers nothing
     assert _answer("otto host a1 put x y /e", 6) == []
+
+
+def test_user_completes_to_the_typed_hosts_logins_by_flavour():
+    # `a1`'s `u` login has two entries (one unscoped, one telnet-scoped): a
+    # login scoped to several protocols is still offered once.
+    answer = _answer("otto host a1 run --user ", 5)
+    assert answer == ["root", "tel", "u"]
+    assert len(answer) == len(set(answer))
+    assert _answer("otto host a1 get --user ", 5) == ["tel", "u"]
+    assert _answer("otto host a1 run --user r", 5) == ["root"]
+    assert _answer("otto host a1 run --user=", 4) == ["root", "tel", "u"]
+
+
+def test_user_narrows_by_the_typed_term():
+    # `--term` is the host GROUP's own option: `allow_interspersed_args=False`
+    # (TyperGroup) means it must come BEFORE the `host_id` positional to be
+    # recognised at all — one AFTER it is never parsed as an option (click's
+    # `resolve_command` under resilient parsing just leaves the context on the
+    # group; verified against the real `otto.cli.host.host_app`). So `--term`
+    # precedes `a1` here.
+    assert _answer("otto host --term telnet a1 run --user ", 7) == ["root", "tel", "u"]
+    assert _answer("otto host --term ssh a1 run --user ", 7) == ["root", "u"]
+    assert _answer("otto host --term=ssh a1 get --user ", 6) == ["u"]
+    # `--term` typed AFTER the host id is not the group's option: the walk
+    # stays on the group and offers the verb menu, unnarrowed.
+    assert _answer("otto host a1 --term ssh run --user ", 7) == ["run", "lsmod", "put", "get"]
+
+
+def test_user_is_empty_for_an_unknown_or_loginless_host():
+    assert _answer("otto host ghost run --user ", 5) == []
+    assert _answer("otto host z1 run --user ", 5) == []
 
 
 def test_lab_from_env_when_no_flag_is_given():

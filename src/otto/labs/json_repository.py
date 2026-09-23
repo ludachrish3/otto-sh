@@ -18,7 +18,7 @@ from .errors import (
     LabNotFoundError,
     LabRepositoryError,
 )
-from .protocol import HostSummary
+from .protocol import HostSummary, logins_of_host_data
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -535,6 +535,7 @@ class JsonFileLabRepository:
                         ip=identity.ip,
                         docker_capable=identity.docker_capable,
                         os_type=str(host_data.get("os_type", "unix")),
+                        logins=logins_of_host_data(host_data),
                     )
 
         return sorted(by_id.values(), key=lambda s: s.id)

@@ -27,7 +27,7 @@ import time
 from typing import Any
 
 CACHE_FILENAME = "completion_cache.json"
-SCHEMA = 19
+SCHEMA = 20
 """Must equal ``otto.config.completion_cache.SCHEMA_VERSION`` (pinned by tests/unit/shim)."""
 WINDOW_SECONDS = 60
 MARKER_FILENAMES = {"names": "completion_cache.names.ok", "tests": "completion_cache.tests.ok"}
@@ -143,6 +143,7 @@ class Resolution:
         "positionals",
         "root_lab_values",
         "seen_dashdash",
+        "term",
     )
 
     def __init__(
@@ -151,6 +152,7 @@ class Resolution:
         *,
         host_id: str | None = None,
         root_lab_values: list[str] | None = None,
+        term: str | None = None,
     ) -> None:
         self.node = node
         self.given: set[str] = set()  # options given a value on THIS command (COMMANDLINE source)
@@ -159,6 +161,7 @@ class Resolution:
         self.seen_dashdash = False  # `"--" in args`, textual: set once by resolve()
         self.host_id = host_id
         self.root_lab_values = root_lab_values
+        self.term = term
         self.last_token: str | None = None  # last complete word: click's textual pending rule
 
 
@@ -340,7 +343,9 @@ def _descend(
     child = _view(tree, res.node, res, classes).get(word)
     if child is None:
         raise Handover(f"unknown command {word!r}")
-    return Resolution(child, host_id=res.host_id, root_lab_values=res.root_lab_values)
+    return Resolution(
+        child, host_id=res.host_id, root_lab_values=res.root_lab_values, term=res.term
+    )
 
 
 def _note_value(res: Resolution, param: dict[str, Any], value: str) -> None:
@@ -348,6 +353,9 @@ def _note_value(res: Resolution, param: dict[str, Any], value: str) -> None:
     res.given.add(param["name"])
     if param["name"] == "labs" and res.node["name"] == "otto":
         res.root_lab_values = [*(res.root_lab_values or []), value]
+    if param["name"] == "term" and res.node.get("scoped_by"):
+        # the host group's --term: `--user` narrows by it (cli.completers.filter_logins)
+        res.term = value
 
 
 # --- the answer (spec sections 3.4 and 4.3, fragment rules) ----------------------
@@ -383,7 +391,41 @@ def _lab_host_set(names: dict[str, Any], labs: list[str], always: list[str]) -> 
     return hosts
 
 
-def _payload_values(source: dict[str, Any], names: dict[str, Any], labs: list[str]) -> list[str]:
+def _host_logins(
+    source: dict[str, Any], names: dict[str, Any], host_id: str | None, term: str | None
+) -> list[str]:
+    """Mirror ``otto.cli.completers.filter_logins`` for the typed host, before the prefix cut.
+
+    A login may appear under several protocol-scoped entries — one entry per
+    login in the result.
+    """
+    if not host_id:
+        return []
+    entries = names.get("logins_by_host", {}).get(host_id, [])
+    flavour = source.get("flavour")
+    out = []
+    for e in entries:
+        if flavour == "direct" and e.get("proxy"):
+            continue
+        protocols = e.get("protocols") or []
+        if source.get("term_scoped") and term and protocols and term not in protocols:
+            continue
+        login = str(e.get("login", ""))
+        if login:
+            out.append(login)
+    return list(dict.fromkeys(out))
+
+
+def _payload_values(
+    source: dict[str, Any],
+    names: dict[str, Any],
+    labs: list[str],
+    host_id: str | None = None,
+    term: str | None = None,
+) -> list[str]:
+    if source.get("host_scoped"):
+        values = _host_logins(source, names, host_id, term)
+        return sorted(values) if source.get("sort") else values
     key = source["key"]
     scoped = None
     if labs and source.get("lab_scoped"):
@@ -422,7 +464,11 @@ def _collected(payloads: Payloads, what: str) -> list[str]:
 
 
 def _source_values(
-    param: dict[str, Any], frag: str, labs: list[str], payloads: Payloads
+    param: dict[str, Any],
+    frag: str,
+    labs: list[str],
+    payloads: Payloads,
+    res: "Resolution | None" = None,
 ) -> list[str]:
     """Produce a parameter's candidates; each kind filters by the fragment as a prefix."""
     source = param["source"]
@@ -450,7 +496,9 @@ def _source_values(
         sep = source.get("sep")
         if sep and source.get("live_past_sep") and sep in frag:
             raise Handover("list fragment past its first separator")
-        values = _payload_values(source, payloads.names, labs)
+        values = _payload_values(
+            source, payloads.names, labs, res.host_id if res else None, res.term if res else None
+        )
         if sep:
             return complete_separated_list(values, frag, sep)
         return [v for v in values if v.startswith(frag)]
@@ -508,7 +556,7 @@ def complete(
     labs = selected_labs(res.root_lab_values, environ)
     kind, param, frag = _target(res, frag)
     if kind == "param" and param is not None:
-        return _source_values(param, frag, labs, payloads)
+        return _source_values(param, frag, labs, payloads, res=res)
     # TyperGroup.shell_complete: visible subcommands by prefix, then Command.shell_complete's
     # option names for a non-alphanumeric fragment (given non-multiple options excluded).
     view = _view(tree, res.node, res, payloads.names.get("host_classes_by_id", {}))

@@ -76,6 +76,22 @@ def _remote_completer(marker: "Arg | Opt | None") -> Any:
     return _complete
 
 
+def _user_completer(marker: "Arg | Opt | None") -> Any:
+    """Return the autocompletion callback for a ``host_user``-marked param, else ``None``."""
+    flavour = getattr(marker, "host_user", None)
+    if flavour is None:
+        return None
+
+    from .completers import host_user_completer
+
+    return host_user_completer(flavour)
+
+
+def _completer_for(marker: "Arg | Opt | None") -> Any:
+    """Return the one completer a marker asks for: remote path, host user, or none."""
+    return _remote_completer(marker) or _user_completer(marker)
+
+
 def _opt_decls(opt: "Opt", param_name: str, norm_type: Any = None) -> "list[str]":
     """Build the typer param_decls an ``Opt`` asks for: long flag first, short alias second.
 
@@ -239,15 +255,21 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
 
         # --- list/dict OPTION (comma / key=value), forward-looking ---
         if origin in (list, dict) and arg is None:
-            if getattr(opt, "remote_path", None) is not None:
-                # This branch renders one comma/key=value STRING, so a path completer
-                # would complete the whole field, not the element under the cursor.
-                # Fail loud rather than accept a marker that silently does nothing.
-                raise ValueError(
-                    f"{getattr(func, '__name__', func)!r}: {name!r} — remote_path is not "
-                    f"supported on a comma-list/key=value option; use "
-                    f"Arg(variadic=True, remote_path=...) for a completable path list"
-                )
+            # This branch renders one comma/key=value STRING, so a per-element
+            # completer (a path, a host login) would complete the whole field,
+            # not the element under the cursor. Fail loud rather than accept a
+            # marker that silently does nothing.
+            for marker_field in ("remote_path", "host_user"):
+                if getattr(opt, marker_field, None) is not None:
+                    raise ValueError(
+                        f"{getattr(func, '__name__', func)!r}: {name!r} — {marker_field} is not "
+                        f"supported on a comma-list/key=value option"
+                        + (
+                            "; use Arg(variadic=True, remote_path=...) for a completable path list"
+                            if marker_field == "remote_path"
+                            else ""
+                        )
+                    )
             elem = (get_args(base) or (str,))[-1]
             if origin is list:
                 binding.converters[name] = lambda raw, e=elem: parse_comma_list(raw, e)
@@ -292,7 +314,7 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
                     *opt_decls,
                     help=opt.help,
                     min=opt.min,
-                    autocompletion=_remote_completer(opt),
+                    autocompletion=_completer_for(opt),
                 ),
             ]
             kind = inspect.Parameter.KEYWORD_ONLY

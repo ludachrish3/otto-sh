@@ -1,5 +1,6 @@
 """``LabRepository`` protocol — the DB-agnostic interface all lab-repository backends satisfy."""
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
@@ -77,12 +78,30 @@ class LabRepository(Protocol):
 
 
 @dataclass(frozen=True)
+class LoginSummary:
+    """One login a host's record declares — identity only, never a secret.
+
+    ``protocols`` is the cred's scope (empty = every protocol); ``proxy`` is
+    whether reaching this login takes a login-proxy hop. That is exactly what
+    ``otto host <id> <verb> --user <TAB>`` needs to offer the logins the verb
+    accepts (``get``/``put`` take direct logins only; ``exec``/``login`` replay
+    hops) and to narrow by ``--term``. Password, ``via``, ``params`` and the
+    proxy key stay in the record.
+    """
+
+    login: str
+    protocols: list[str] = field(default_factory=list)
+    proxy: bool = False
+
+
+@dataclass(frozen=True)
 class HostSummary:
     """Identity and addressing for one host, without constructing it.
 
     What tab completion and tunnel path-narrowing need to *name* and *reach*
-    a host. Deliberately small: anything requiring creds, interfaces,
-    transports, or options is a job for
+    a host. Deliberately small: identity and addressing only. Login *names*
+    are identity (``logins``); passwords, proxy chains, interfaces,
+    transports and options are a job for
     :meth:`~otto.labs.protocol.LabRepository.load_lab`, not for a second host
     model growing here.
 
@@ -121,6 +140,50 @@ class HostSummary:
     no ``os_type`` does. A backend that implements
     :class:`SupportsHostSummaries` is expected to fill this in — the
     conformance suite compares it against the constructed host."""
+
+    logins: list[LoginSummary] = field(default_factory=list)
+    """The record's login identities (:class:`LoginSummary`), or ``[]`` when
+    the backend does not fill them — then ``--user`` completes to nothing on
+    that host, and nothing else changes."""
+
+
+def logins_of_creds(creds: "Iterable[Any]") -> list[LoginSummary]:
+    """Summarise cred entries (``Cred`` or ``CredSpec``) to login identities, record order.
+
+    Reads the three public identity fields every cred shape carries and
+    nothing else, so a password can never ride along.
+    """
+    return [
+        LoginSummary(
+            login=str(c.login),
+            protocols=[str(p) for p in (getattr(c, "protocols", None) or [])],
+            proxy=getattr(c, "proxy", None) is not None,
+        )
+        for c in creds
+    ]
+
+
+def logins_of_host_data(host_data: "Mapping[str, Any]") -> list[LoginSummary]:
+    """Login identities from a raw record's ``creds`` list — the fast path's data-only read.
+
+    A backend calls this on the SAME record it handed
+    :func:`~otto.host.factory.host_identity`, which already applied the host
+    spec's validation; anything odd left is skipped rather than raised, as
+    every summary field is.
+    """
+    out: list[LoginSummary] = []
+    for entry in host_data.get("creds") or []:
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("login"), str):
+            continue
+        protocols = entry.get("protocols") or []
+        out.append(
+            LoginSummary(
+                login=entry["login"],
+                protocols=[str(p) for p in protocols] if isinstance(protocols, list) else [],
+                proxy=entry.get("proxy") is not None,
+            )
+        )
+    return out
 
 
 @runtime_checkable

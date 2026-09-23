@@ -42,7 +42,7 @@ from ..config.lab import Lab
 from ..host.element import Element
 from ..host.factory import create_host_from_dict, host_identity
 from ..inventory import InventoryError, resolve_host_entry
-from ..labs import HostSummary, LabNotFoundError
+from ..labs import HostSummary, LabNotFoundError, logins_of_host_data
 
 if TYPE_CHECKING:
     from ..inventory import Inventory
@@ -232,5 +232,6 @@ class ExampleLabRepository:
                         ip=identity.ip,
                         docker_capable=identity.docker_capable,
                         os_type=str(resolved.get("os_type", "unix")),
+                        logins=logins_of_host_data(resolved),
                     )
         return sorted(by_id.values(), key=lambda s: s.id)

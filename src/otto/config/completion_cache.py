@@ -230,7 +230,12 @@ CACHE_FILENAME = "completion_cache.json"
 #      repo's lab files, which did not change, so without the bump a warm v18
 #      entry would keep offering handles that no longer dispatch and ids that
 #      no host reports, for up to the full TTL after the fix ships.
-SCHEMA_VERSION = 19
+# v20: names key logins_by_host — the per-host login map ``otto host <id>
+#      <verb> --user <TAB>`` reads (login, protocols, proxy off each host's
+#      HostSummary, never a password). A surviving v19 entry simply lacks the
+#      key; the bump exists so a reader pinned to the schema does not have to
+#      special-case its absence on an old entry.
+SCHEMA_VERSION = 20
 
 # One home, two readers: `collect_test_names` decides which files to PARSE for
 # names, and `compute_fingerprint` decides which files to STAT for
@@ -1039,8 +1044,8 @@ def read_cache(
     merged — with ``instructions``, ``suites``, ``hosts``, ``hosts_by_lab``,
     ``docker_hosts``, ``docker_use_cases``, ``term_backends``,
     ``transfer_backends``, ``usernames``, ``commands``, ``labs``,
-    ``host_classes_by_id``, ``projects``, ``links``, ``tests`` and
-    ``markers`` keys:
+    ``host_classes_by_id``, ``projects``, ``links``, ``logins_by_host``,
+    ``tests`` and ``markers`` keys:
     exactly the view the completion fast path consumed when all of it lived
     in one fingerprint-keyed entry. The first three are required; the rest
     default to empty when a payload omits them.
@@ -1075,6 +1080,7 @@ def read_cache(
     host_classes_by_id = merged.get("host_classes_by_id", {})
     projects = merged.get("projects", [])
     links = merged.get("links", [])
+    logins_by_host = merged.get("logins_by_host", {})
     if (
         not isinstance(instructions, list)
         or not isinstance(suites, list)
@@ -1093,6 +1099,7 @@ def read_cache(
         or not isinstance(host_classes_by_id, dict)
         or not isinstance(projects, list)
         or not isinstance(links, list)
+        or not isinstance(logins_by_host, dict)
     ):
         return None
     return {
@@ -1111,6 +1118,7 @@ def read_cache(
         "host_classes_by_id": host_classes_by_id,
         "projects": projects,
         "links": links,
+        "logins_by_host": logins_by_host,
         "tests": tests,
         "markers": markers,
     }
@@ -1167,6 +1175,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     host_classes_by_id: dict[str, str] | None = None,
     projects: list[str] | None = None,
     links: list[dict[str, Any]] | None = None,
+    logins_by_host: dict[str, list[dict[str, Any]]] | None = None,
     shim: dict[str, Any] | None = None,
     digests: dict[str, str] | None = None,
     tainted: bool = False,
@@ -1227,6 +1236,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
             "host_classes_by_id": host_classes_by_id or {},
             "projects": projects or [],
             "links": links or [],
+            "logins_by_host": logins_by_host or {},
         },
         "tests": {"tests": tests or [], "markers": markers or []},
     }
@@ -2150,6 +2160,32 @@ def collect_host_classes_by_id(repos: list["Repo"]) -> dict[str, str]:
             if profile is not None:
                 classes[summary.id] = profile.base  # the registered class NAME
     return dict(sorted(classes.items()))
+
+
+def collect_logins_by_host(repos: list["Repo"]) -> dict[str, list[dict[str, Any]]]:
+    """Map every enumerable host id to its login identities, data-only.
+
+    ``otto host <id> <verb> --user <TAB>`` reads this map: each entry is
+    ``{"login", "protocols", "proxy"}`` straight off the host's
+    :class:`~otto.labs.protocol.HostSummary` — never a password. Hosts whose
+    summary carries no logins are omitted, so the completer offers nothing for
+    them exactly as it does for an unknown id. Sorted by login so the shim and
+    the live completer agree without re-sorting.
+    """
+    by_host: dict[str, list[dict[str, Any]]] = {}
+    resolution = resolve_process_inventory(repos)
+    for repo in repos:
+        for summary in repo_host_summaries(repo, resolution):
+            if not summary.logins:
+                continue
+            by_host[summary.id] = sorted(
+                (
+                    {"login": ls.login, "protocols": list(ls.protocols), "proxy": bool(ls.proxy)}
+                    for ls in summary.logins
+                ),
+                key=lambda e: e["login"],
+            )
+    return dict(sorted(by_host.items()))
 
 
 def collect_project_names() -> list[str]:

@@ -150,11 +150,11 @@ import re
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
-from ..utils import Status, cli_exposed
+from ..utils import Opt, Status, cli_exposed
 from .errors import UnsupportedOnUserlandError
 from .host import is_dry_run
 from .options import UserlandOptions
@@ -1483,7 +1483,17 @@ class UserlandHost:
         return self._userland()
 
     @cli_exposed(output_dir=False)
-    async def probe(self, user: "str | None" = None, scan_ports: "str | None" = None) -> Result:
+    async def probe(
+        self,
+        user: Annotated[
+            "str | None",
+            Opt(
+                host_user="any",
+                help="Open the probing session as this login (no sudo/su wrapping).",
+            ),
+        ] = None,
+        scan_ports: "str | None" = None,
+    ) -> Result:
         """Resolve this host's userland capabilities and survey the protocols it serves.
 
         RECON ONCE, THEN PIN -- that is the whole point, and it is why the

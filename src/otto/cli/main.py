@@ -814,21 +814,25 @@ DELEGATED_NAMES_KEYS: frozenset[str] = frozenset(
         "host_classes_by_id",
         "projects",
         "links",
+        "logins_by_host",
     }
 )
 """The remaining ``names`` payload keys. Each is consumed by a completer that
 does its own ``isinstance`` check and falls back to a live collection —
 verified, not assumed — except ``host_drops``, ``projects`` and ``links``,
-which no Typer completer reads at all. ``host_drops`` is the outlet's payload:
-read by ``otto cache info`` straight from the cache file.
-``host_classes_by_id`` is consumed by
+which no Typer completer reads at all. ``host_drops`` is
+the outlet's payload: read by ``otto cache info`` straight from the cache
+file. ``host_classes_by_id`` is consumed by
 ``otto.cli.expose.cached_host_class_for_id`` to scope a host
 verb's TAB menu without building the host; ``projects`` and ``links`` are
 consumed by the shim's resolver, which reads the whole payload behind one
 broad ``except`` and hands over — their Typer-side completers
 (``_project_completer`` and the link-id completer) stay live, spec §5 lists
-no change to them. A further key, ``tests``, lives in its own cache section
-that ``_cached_names_payload`` never loads.
+no change to them. ``logins_by_host`` is read by
+``otto.cli.completers.host_user_completer``, which scopes a host verb's
+``--user`` menu to the typed host's logins. A further
+key, ``tests``, lives in its own cache section that ``_cached_names_payload``
+never loads.
 
 ``tests/unit/config/test_cache_sections.py`` pins that
 :data:`RAW_ITERATED_NAMES_KEYS` and this constant together equal the ``names``
@@ -987,6 +991,7 @@ def entry() -> None:
                 collect_host_ids_by_lab,
                 collect_lab_names,
                 collect_links,
+                collect_logins_by_host,
                 collect_marker_names,
                 collect_project_names,
                 collect_reservation_usernames,
@@ -1022,6 +1027,7 @@ def entry() -> None:
                     host_classes_by_id=collect_host_classes_by_id(result.repos),
                     projects=collect_project_names(),
                     links=collect_links(result.repos),
+                    logins_by_host=collect_logins_by_host(result.repos),
                     # No explicit `app`: the Section's `_collect_shim` and this
                     # call both default to `otto.cli.main.app`, so the tree
                     # has one source and cannot drift between the two.

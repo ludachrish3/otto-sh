@@ -96,6 +96,7 @@ def _write_cache_like_entry(repos) -> None:
         host_classes_by_id=cc.collect_host_classes_by_id(repos),
         projects=cc.collect_project_names(),
         links=cc.collect_links(repos),
+        logins_by_host=cc.collect_logins_by_host(repos),
         shim=build_shim_payload(repos),
     )
 
@@ -345,6 +346,20 @@ HAND_WRITTEN = [
     ("otto ho", 1),
     ("otto --bogus ", 2),
     ("otto nope ", 2),
+    ("otto host dut1 exec --user ", 5),
+    ("otto host dut1 exec --user r", 5),
+    ("otto host dut1 exec --user=", 4),
+    ("otto host dut1 get --user ", 5),
+    ("otto host dut1 put --user ", 5),
+    ("otto host dut1 login --user ", 5),
+    ("otto host dut1 probe --user ", 5),
+    ("otto host --term ssh dut1 exec --user ", 7),
+    ("otto host --term telnet dut1 exec --user ", 7),
+    ("otto host --term=ssh dut1 get --user ", 6),
+    ("otto host dut2 exec --user ", 5),
+    ("otto host box get --user ", 5),
+    ("otto host ghost exec --user ", 5),
+    ("otto -l west host dut1 exec --user ", 7),
 ]
 ENVS = [{}, {"OTTO_LAB": "east"}, {"OTTO_LAB": "west east"}, {"OTTO_LAB": ""}]
 

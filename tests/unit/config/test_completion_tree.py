@@ -93,3 +93,30 @@ def test_tests_and_markers_sites_are_classified():
     assert by_flag["--tests"]["source"] == {"kind": "tests", "sep": ","}
     assert by_flag["--tests"]["sep"] == ","
     assert by_flag["-m"]["source"] == {"kind": "markers"}
+
+
+def test_user_options_are_host_scoped_login_sources_per_verb_and_family():
+    """Spec 2026-09-22 host-user-completion §3.3: the override's marker decides."""
+    tree = serialize_tree(_cli()).tree
+    views = tree["host_classes"]
+
+    def source(view, verb):
+        node = views[view][verb]
+        return next(p for p in node["params"] if "--user" in p["flags"])["source"]
+
+    any_ = {
+        "kind": "payload",
+        "key": "logins_by_host",
+        "host_scoped": True,
+        "term_scoped": True,
+        "flavour": "any",
+        "sort": True,
+    }
+    direct = {**any_, "flavour": "direct"}
+    assert source("unix", "exec") == any_
+    assert source("unix", "login") == any_
+    assert source("unix", "probe") == any_
+    assert source("unix", "get") == direct
+    assert source("unix", "put") == direct
+    assert source("embedded", "get") == {"kind": "none"}
+    assert source("zephyr", "put") == {"kind": "none"}

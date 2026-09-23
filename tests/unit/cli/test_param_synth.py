@@ -362,3 +362,21 @@ def test_opt_without_name_or_short_gets_no_explicit_decls():
     param = next(p for p in binding.params if p.name == "dest_dir")
     typer_meta = param.annotation.__metadata__[0]
     assert typer_meta.param_decls == ()
+
+
+def test_host_user_marker_attaches_the_login_completer():
+    from otto.cli.completers import host_user_completer
+
+    async def verb(self, user: Annotated[str | None, Opt(host_user="direct")] = None):
+        """Verb."""
+
+    completer = _autocompletion_of(_by_name(build_cli_binding(verb), "user"))
+    assert completer.__completion_source__ == host_user_completer("direct").__completion_source__
+
+
+def test_host_user_on_a_comma_list_option_is_rejected():
+    async def verb(self, users: Annotated[list[str], Opt(host_user="any")] = []):  # noqa: B006 — function never called; type must stay list[str] for the comma-list synthesizer branch
+        """Verb."""
+
+    with pytest.raises(ValueError, match="host_user is not supported"):
+        build_cli_binding(verb)

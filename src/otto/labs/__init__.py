@@ -25,7 +25,16 @@ from .protocol import (
     LabRepository as LabRepository,
 )
 from .protocol import (
+    LoginSummary as LoginSummary,
+)
+from .protocol import (
     SupportsHostSummaries as SupportsHostSummaries,
+)
+from .protocol import (
+    logins_of_creds as logins_of_creds,
+)
+from .protocol import (
+    logins_of_host_data as logins_of_host_data,
 )
 from .registry import (
     register_lab_repository as register_lab_repository,
@@ -90,6 +99,7 @@ def host_summaries(
                 ip=getattr(host, "ip", "") or "",
                 docker_capable=bool(getattr(host, "docker_capable", False)),
                 os_type=getattr(host, "os_type", None),
+                logins=logins_of_creds(getattr(host, "creds", None) or []),
             )
     return sorted(by_id.values(), key=lambda s: s.id)
 

@@ -71,7 +71,12 @@ separator, and a `Source` describing how to answer it (`static`, `payload`,
 layer: the root node carries a `host_classes` map from each host class name
 to that class's verb nodes, since a verb shared across classes can have a
 different signature per class; the resolver picks the right map once it
-knows the typed host id's class.
+knows the typed host id's class. A `payload` source may also be
+`host_scoped`: the resolver keeps the typed host id and the host group's
+`--term`, and the source reads that host's bucket of `logins_by_host`
+(`--user` on the host verbs), filtered by the source's `flavour` and the
+term. The filter is written once, in `otto.cli.completers.filter_logins`,
+and mirrored in the shim.
 
 Every completer in the CLI declares its `Source` with the
 `completion_source` decorator (`otto.cli.completers`); the tree serialiser

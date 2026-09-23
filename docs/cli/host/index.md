@@ -139,6 +139,14 @@ only the verbs the chosen host actually supports:
 :file: ../../_static/generated/termynal/complete-host-verbs.html
 ```
 
+`--user` completes to the logins the host's record declares, filtered to
+what the verb accepts: `exec`, `login` and `probe` offer every login (proxy
+hops are replayed), `get` and `put` offer only logins with a direct
+credential, and `--term` drops credentials scoped to a different protocol;
+credentials with no protocol scope are always offered. A host family that
+refuses `--user` offers nothing. Only login names reach the completion
+cache — never passwords.
+
 See {doc}`../../architecture/subsystems/hosts` for how completion is
 synthesized from the same class-scoped mechanism as the verbs themselves.
 ## Host-level options

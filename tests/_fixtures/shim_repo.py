@@ -6,12 +6,23 @@ from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
 
 CREDS = [{"login": "u", "password": "p"}]
+DUT1_CREDS = [
+    *CREDS,
+    {"login": "root", "password": "r", "proxy": "su"},
+    {"login": "tel", "password": "t", "protocols": ["telnet"]},
+    {"login": "u", "password": "p2", "protocols": ["telnet"]},
+]
+"""dut1 carries the two cred shapes `--user` completion must tell apart: a proxied login
+(dropped by `get`/`put`'s direct flavour) and a telnet-scoped login (dropped by --term ssh);
+`u` also appears twice, once unscoped and once telnet-scoped (different password per
+protocol — `cred_identity` differs by scope) — a login scoped to several protocols is
+offered once."""
 HOSTS = [
     {
         "ip": "10.0.0.1",
         "element": "dut1",
         "labs": ["east"],
-        "creds": CREDS,
+        "creds": DUT1_CREDS,
         "docker_capable": True,
     },
     {

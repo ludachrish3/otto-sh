@@ -1,9 +1,10 @@
 """The `SupportsHostSummaries` contract is about FIELDS, not just ids.
 
-A summary drives four completion surfaces — `--lab` scoping (`labs`), `otto
-docker --on` (`docker_capable`), tunnel narrowing (`ip`) and the class-scoped
-verb menu (`os_type`). A backend that fills in only `id` used to pass every
-rule while silently breaking all of them.
+A summary drives five completion surfaces — `--lab` scoping (`labs`), `otto
+docker --on` (`docker_capable`), tunnel narrowing (`ip`), the class-scoped
+verb menu (`os_type`) and `--user` login completion (`logins`). A backend
+that fills in only `id` used to pass every rule while silently breaking all
+of them.
 """
 
 import pytest
@@ -11,7 +12,7 @@ import pytest
 from otto.config.lab import Lab
 from otto.host.element import Element
 from otto.host.unix_host import UnixHost
-from otto.labs import HostSummary, LabNotFoundError
+from otto.labs import HostSummary, LabNotFoundError, LoginSummary, logins_of_creds
 from otto.models.host import Cred
 from otto.testing.conformance import assert_lab_repository_conforms
 
@@ -57,6 +58,7 @@ class _Backend:
                 ip=h.ip,
                 docker_capable=h.docker_capable,
                 os_type=h.os_type,
+                logins=logins_of_creds(h.creds),
             )
             for h in self._hosts.values()
         ]
@@ -148,3 +150,26 @@ def test_claiming_a_lab_that_does_not_contain_the_host_is_a_violation() -> None:
     )
     with pytest.raises(AssertionError, match="cannot dispatch"):
         assert_lab_repository_conforms(_Backend(summaries), expected_labs=["unix", "unix_alt"])
+
+
+def test_a_summary_with_wrong_logins_fails_conformance():
+    wrong = [
+        HostSummary(
+            id="test1",
+            labs=["unix"],
+            ip="10.0.0.1",
+            docker_capable=True,
+            os_type="unix",
+            logins=[LoginSummary(login="nobody", protocols=[], proxy=False)],
+        ),
+        HostSummary(
+            id="test2",
+            labs=["unix"],
+            ip="10.0.0.1",
+            docker_capable=False,
+            os_type="unix",
+            logins=[LoginSummary(login="u", protocols=[], proxy=False)],
+        ),
+    ]
+    with pytest.raises(AssertionError, match=r"test1.*\.logins"):
+        assert_lab_repository_conforms(_Backend(summaries=wrong))

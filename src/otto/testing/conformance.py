@@ -38,7 +38,13 @@ from ..config.lab import Lab
 from ..creds import CredsStore
 from ..host.remote_host import RemoteHost
 from ..inventory import Inventory, InventoryKeyError
-from ..labs import HostSummary, LabNotFoundError, LabRepository, SupportsHostSummaries
+from ..labs import (
+    HostSummary,
+    LabNotFoundError,
+    LabRepository,
+    SupportsHostSummaries,
+    logins_of_creds,
+)
 from ..models.host import CredSpec
 from ..models.inventory import (
     FILLABLE_INVENTORY_FIELDS,
@@ -379,17 +385,23 @@ def _expect_host_summaries_conform(
             # it to "unix"), so a summary leaving it None is a backend that did
             # not record it, not a host that has none.
             ("os_type", summary.os_type, getattr(host, "os_type", None)),
+            (
+                "logins",
+                list(summary.logins),
+                logins_of_creds(getattr(host, "creds", None) or []),
+            ),
         ):
+            hint = {
+                "os_type": (
+                    " — `otto host <id> <TAB>` would offer every class's verbs "
+                    "instead of this host's"
+                ),
+                "logins": " — `--user <TAB>` would offer the wrong logins",
+            }.get(field, "")
             c.expect(
                 summarized == built,
                 f"SupportsHostSummaries: {summary.id!r}.{field} is {summarized!r} in the "
-                f"summary but {built!r} on the constructed host"
-                + (
-                    " — `otto host <id> <TAB>` would offer every class's verbs "
-                    "instead of this host's"
-                    if field == "os_type"
-                    else ""
-                ),
+                f"summary but {built!r} on the constructed host" + hint,
             )
         produced_in = labs_of.get(summary.id, set())
         claimed = set(summary.labs)

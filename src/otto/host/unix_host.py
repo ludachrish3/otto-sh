@@ -824,7 +824,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         dest_dir: Path,
         user: Annotated[
             str | None,
-            Opt(help="Read as this user (authenticates as them). Direct-cred users only."),
+            Opt(
+                host_user="direct",
+                help="Read as this user (authenticates as them). Direct-cred users only.",
+            ),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,
         recursive: Annotated[bool, Opt(short="-r", help="Recurse into directory sources.")] = False,
@@ -886,8 +889,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         user: Annotated[
             str | None,
             Opt(
+                host_user="direct",
                 help="Transfer as this user (authenticates as them; files land "
-                "with their ownership). Direct-cred users only."
+                "with their ownership). Direct-cred users only.",
             ),
         ] = None,
         show_progress: Annotated[bool, Exclude] = True,

@@ -160,6 +160,7 @@ def _collect_names(repos: list[Repo]) -> dict[str, Any]:
         "host_classes_by_id": _cc.collect_host_classes_by_id(repos),
         "projects": _cc.collect_project_names(),
         "links": _cc.collect_links(repos),
+        "logins_by_host": _cc.collect_logins_by_host(repos),
     }
 
 

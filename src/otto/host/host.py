@@ -1495,8 +1495,9 @@ class BaseHost(ABC):
         user: Annotated[
             str | None,
             Opt(
+                host_user="any",
                 help="Land the session as this user (containers via docker exec -u; "
-                "unix replays login-proxy hops)."
+                "unix replays login-proxy hops).",
             ),
         ] = None,
     ) -> None:
@@ -1707,8 +1708,9 @@ class BaseHost(ABC):
         user: Annotated[
             str | None,
             Opt(
+                host_user="any",
                 help="Run as this user — a direct or proxy login. Which families "
-                "accept it, and how, is declared per family in `otto host` docs."
+                "accept it, and how, is declared per family in `otto host` docs.",
             ),
         ] = None,
     ) -> CommandResult:
