@@ -85,8 +85,8 @@ otto --lab my_lab --show-lab       # full lab details (use -v for expanded outpu
 ## Environment variables
 
 Most environment variables below back a global option; where one does, the
-flag always wins when both are present.  `OTTO_SUT_DIRS`, `OTTO_HOME` and
-`OTTO_TEARDOWN_DEADLINE` have no flag.
+flag always wins when both are present.  `OTTO_SUT_DIRS`, `OTTO_HOME`,
+`OTTO_TEARDOWN_DEADLINE` and `OTTO_SSH_DEBUG` have no flag.
 
 | Variable | Backs | Notes |
 | --- | --- | --- |
@@ -99,6 +99,7 @@ flag always wins when both are present.  `OTTO_SUT_DIRS`, `OTTO_HOME` and
 | `OTTO_SUT_DIRS` | *(no flag)* | Paths to the repo roots under test, separated by `,` or the OS path separator (`:` on Linux/macOS, `;` on Windows). Required when a development repo is under test |
 | `OTTO_HOME` | *(no flag)* | otto's user-level home; defaults to `~/.otto`.  Holds one workspace home per `OTTO_SUT_DIRS` set — see [The workspace home](#the-workspace-home) |
 | `OTTO_TEARDOWN_DEADLINE` | *(no flag)* | Seconds an interrupted command's graceful cleanup may run before it is abandoned; defaults to `10` — see {doc}`../architecture/lifecycle` |
+| `OTTO_SSH_DEBUG` | *(no flag)* | asyncssh's own debug level, `1`..`3`; `2` prints the offered and chosen key-exchange, host-key, cipher and MAC lists under `--log-level DEBUG` (a valid value also lifts otto's own `asyncssh` logger floor to `DEBUG`) — see [Legacy SSH servers](../configuration/settings.md#legacy-ssh-servers) |
 
 ## Shell completion
 

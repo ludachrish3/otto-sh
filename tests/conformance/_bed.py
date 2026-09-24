@@ -185,7 +185,7 @@ def build_bed_host(cell: "Cell") -> "RemoteHost":
     THE CALL IS NOT THE WHOLE STORY, and the difference cost this item a task.
     The bed's own fixtures make that call INSIDE an installed ``OttoContext``
     whose lab holds the hop targets, and a host this function builds carries
-    no lab of its own -- so for the 17 hopped cells the call alone produces a
+    no lab of its own -- so for the 19 hopped cells the call alone produces a
     host that cannot resolve its hop. ``_opener_for`` below supplies the
     context; ``tests/conformance/_lab_context.py`` is where it comes from.
 
@@ -204,7 +204,7 @@ def build_bed_host(cell: "Cell") -> "RemoteHost":
       host's term menu ['telnet']``, and ``{"transfer": "scp"}`` on
       ``zephyr37_fat`` raises the transfer analogue.
     - that check cannot see a pin that is wrong but IN the menu -- passing
-      ``host.valid_terms[0]`` for every cell would satisfy it on all 49 --
+      ``host.valid_terms[0]`` for every cell would satisfy it on all 51 --
       so the built host is asked what pair it came out with and compared
       against the cell's. ``tests/unit/test_conformance_bed.py`` runs that
       comparison over the whole space with no bed.
@@ -416,7 +416,7 @@ def _opener_for(cell: "Cell") -> "Callable[[], AbstractAsyncContextManager[BaseH
     order the sampler drew them. The host is entered as a context manager so
     its transports are closed even when the probe below raises.
 
-    THE LAB CONTEXT WRAPS THE WHOLE OPEN, and 17 of the 49 cells cannot open
+    THE LAB CONTEXT WRAPS THE WHOLE OPEN, and 19 of the 51 cells cannot open
     without it. A host `create_host_from_dict` builds from one lab entry has
     no `_lab` back-reference, so `RemoteHost._build_hop_transport` falls back
     to the active `OttoContext` to resolve its hop -- and this tree installs
@@ -462,7 +462,7 @@ def bed_space() -> "list[ResolvedCell]":
     identical cells get identical ranks and take two of the budget's slots
     between them -- one contract asserted twice while another goes unasserted,
     with the run's own ``drew N of M`` line still reading correctly. They
-    would also collide as pytest parametrization ids. 57 raw, 49 after.
+    would also collide as pytest parametrization ids. 59 raw, 51 after.
 
     Exclusions: none. Every cell the lab data permits is offered, because
     nothing has been shown to be unbuildable -- and the spec's rule is that a
@@ -471,7 +471,7 @@ def bed_space() -> "list[ResolvedCell]":
     have landed, and it went the other way: the seven single-client console
     cells are SERIALIZED rather than dropped
     (``tests/conformance/_console_safety.py`` argues why), so the space is all
-    49 and the docs page has no exclusion to state.
+    51 and the docs page has no exclusion to state.
 
     Nor is a cell that has NOWHERE TO PUT A FILE an exclusion from here. The
     three guests declaring ``filesystem: "none"`` carry
@@ -499,7 +499,7 @@ def bed_space() -> "list[ResolvedCell]":
                 # Per ELEMENT because the QUESTION is per element --
                 # `bed_scratch_dir` and `bed_vocabulary` take no cell, and
                 # their docstrings give the measurement. 16 host builds at
-                # resolve time rather than 49.
+                # resolve time rather than 51.
                 scratch[cell.element] = bed_scratch_dir(cell.element)
                 words[cell.element] = bed_vocabulary(cell.element)
             resolved.append(

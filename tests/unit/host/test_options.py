@@ -66,6 +66,43 @@ class TestSshOptions:
         kw = opts._kwargs()
         assert kw["known_hosts"] == "/etc/ssh/known_hosts"
 
+    @pytest.mark.parametrize("key", ["username", "password", "tunnel"])
+    def test_extra_overriding_an_identity_key_warns_once_and_names_the_key(self, caplog, key):
+        """M6: before the options layer existed, duplicating username/password/
+        tunnel as a kwarg was a TypeError; extra now overrides them silently.
+        A warning naming the key keeps the old loudness without the crash —
+        and must never print a password VALUE, only the key name."""
+        import logging
+
+        opts = SshOptions(extra={key: "s3cret-value"})
+        with caplog.at_level(logging.WARNING, logger="otto.host.options"):
+            opts._kwargs()
+        assert key in caplog.text
+        assert "s3cret-value" not in caplog.text
+
+    def test_extra_without_an_identity_key_is_silent(self, caplog):
+        import logging
+
+        opts = SshOptions(extra={"config": ["/tmp/ssh_config"]})
+        with caplog.at_level(logging.WARNING, logger="otto.host.options"):
+            opts._kwargs()
+        assert caplog.text == ""
+
+    def test_kex_and_mac_lists_reach_asyncssh_only_when_set(self):
+        """A legacy sshd needs SHA-1-era key exchange and MACs listed by name.
+
+        Both are asyncssh kwargs; both were reachable only through ``extra``
+        before they were curated. Unset means asyncssh's own default list.
+        """
+        assert "kex_algs" not in SshOptions()._kwargs()
+        assert "mac_algs" not in SshOptions()._kwargs()
+        kw = SshOptions(
+            kex_algs=["diffie-hellman-group14-sha1", "diffie-hellman-group1-sha1"],
+            mac_algs=["hmac-sha1", "hmac-md5"],
+        )._kwargs()
+        assert kw["kex_algs"] == ["diffie-hellman-group14-sha1", "diffie-hellman-group1-sha1"]
+        assert kw["mac_algs"] == ["hmac-sha1", "hmac-md5"]
+
 
 class TestSshPostConnect:
     @pytest.mark.asyncio

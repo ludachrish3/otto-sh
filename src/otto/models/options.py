@@ -20,9 +20,10 @@ class SshOptionsSpec(OttoModel):
     """Boundary spec for the SSH connection options table (``[ssh_options]`` in lab data).
 
     Validates the asyncssh-facing tunables: port, authentication settings,
-    cipher/host-key/compression algorithm lists, keepalive, local/remote/SOCKS port forwards,
-    and an open ``extra`` dict for pass-through kwargs. Builds a ``SshOptions`` runtime
-    dataclass via ``to_runtime()``.
+    cipher/host-key/compression/key-exchange/MAC algorithm lists, keepalive,
+    local/remote/SOCKS port forwards, and an open ``extra`` dict for
+    pass-through kwargs. Builds a ``SshOptions`` runtime dataclass via
+    ``to_runtime()``.
     """
 
     port: int = 22
@@ -37,6 +38,8 @@ class SshOptionsSpec(OttoModel):
     encryption_algs: list[str] | None = None
     server_host_key_algs: list[str] | None = None
     compression_algs: list[str] | None = None
+    kex_algs: list[str] | None = None
+    mac_algs: list[str] | None = None
     local_forwards: list[rt.LocalPortForward] = Field(default_factory=list)
     remote_forwards: list[rt.RemotePortForward] = Field(default_factory=list)
     socks_forwards: list[rt.SocksForward] = Field(default_factory=list)
@@ -57,6 +60,8 @@ class SshOptionsSpec(OttoModel):
             encryption_algs=self.encryption_algs,
             server_host_key_algs=self.server_host_key_algs,
             compression_algs=self.compression_algs,
+            kex_algs=self.kex_algs,
+            mac_algs=self.mac_algs,
             local_forwards=list(self.local_forwards),
             remote_forwards=list(self.remote_forwards),
             socks_forwards=list(self.socks_forwards),

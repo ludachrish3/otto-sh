@@ -1,14 +1,15 @@
 """The lab context a HOPPED bed cell needs before it can open at all.
 
-17 of the bed venue's 49 cells name a host that is only reachable through
-another one: the five BusyBox guests hop ``test1`` and the seven Zephyr
-guests hop ``test4`` (measured, ``tests/_fixtures/lab_data/tech1/lab.json``).
+19 of the bed venue's 51 cells name a host that is only reachable through
+another one: the five BusyBox guests hop ``test1`` (bb1350 twice, over
+telnet and over ssh) and the seven Zephyr guests hop ``test4`` (measured,
+``tests/_fixtures/lab_data/tech1/lab.json``).
 :meth:`otto.host.remote_host.RemoteHost._build_hop_transport` resolves that
 hop id against the host's own ``_lab`` back-reference and, when there is
 none, against the active :class:`~otto.context.OttoContext`. A host built by
 ``create_host_from_dict`` from a single lab entry has neither -- measured,
 ``create_host_from_dict(host_data("bb1161"), element=...)._lab is None`` -- so every one
-of those 17 cells failed BEFORE any transport was created:
+of those cells failed BEFORE any transport was created:
 
     RuntimeError: Host 'bb1161 qemu' cannot resolve hop 'test1': the host has
     no lab back-reference and there is no active OttoContext. Add the host to

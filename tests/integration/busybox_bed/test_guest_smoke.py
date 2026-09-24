@@ -22,11 +22,13 @@ device would make you take.
   userland with only what BusyBox ships. A stray ``/usr/bin/sed`` or
   ``/bin/bash`` would silently satisfy probes that must fall back, and the
   suite would certify capabilities the device does not have.
-* **ssh is dead by construction.** The guests run telnetd and nothing
-  else, which makes them otto's only standing true negative for the
-  ssh-shaped assumptions — see the probe-survey design. If an sshd ever
-  appears here, that negative is gone and the tests that rely on it are
-  quietly lying.
+* **ssh is dead by construction on four of them.** Those four run telnetd
+  and nothing else, which makes them otto's standing true negative for the
+  ssh-shaped assumptions — see the probe-survey design. If an sshd appears
+  on one of them, that negative is gone and the tests that rely on it are
+  quietly lying. ``bb1350`` is the deliberate exception: its ``GUEST_TABLE``
+  row declares a dropbear, so the image must actually carry one at
+  ``/bin/dropbear``.
 
 Cheap by design: three commands per guest, no transfers, no files. They
 are the module a bed problem should surface in first, so the parametrized
@@ -35,7 +37,11 @@ backends in the generic suites are debugging otto instead of the bed.
 
 import pytest
 
+from scripts.build_busybox_guest_images import GUEST_TABLE
+
 pytestmark = [pytest.mark.asyncio]
+
+SSHD_GUESTS = {g.element for g in GUEST_TABLE if g.sshd == "dropbear"}
 
 
 async def test_telnet_login_reaches_this_versions_own_ash(guest):
@@ -65,12 +71,19 @@ async def test_no_gnu_userland_hides_behind_the_guest(guest):
     )
 
 
-async def test_ssh_is_dead_by_construction(guest):
-    """No sshd on the guest: the bed's standing ssh-shaped true negative."""
+async def test_ssh_is_dead_by_construction_except_where_the_image_carries_a_dropbear(guest):
+    """Four guests keep the bed's standing ssh-shaped true negative; the one
+    whose GUEST_TABLE row declares an sshd must actually have it on disk."""
     host, _version = guest
-    result = (await host.run("command -v sshd || echo no-sshd")).only
+    result = (await host.run("command -v dropbear || command -v sshd || echo no-sshd")).only
     assert result.retcode == 0
-    assert "no-sshd" in result.value, (
-        f"{host.element.name} has an sshd at {result.value.strip()!r}; the bed's "
-        "only ssh-absent guests just stopped being ssh-absent"
-    )
+    if host.element.name in SSHD_GUESTS:
+        assert result.value.strip() == "/bin/dropbear", (
+            f"{host.element.name} declares an sshd but the guest has none at /bin/dropbear "
+            f"(probe said {result.value!r}); the image was built without its dropbear inputs"
+        )
+    else:
+        assert "no-sshd" in result.value, (
+            f"{host.element.name} has an sshd at {result.value.strip()!r}; the bed's "
+            "ssh-absent guests just stopped being ssh-absent"
+        )

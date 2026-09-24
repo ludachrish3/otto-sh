@@ -128,9 +128,13 @@ matters is the RELATIONSHIP, not either number.
 
 THAT MEASUREMENT NO LONGER HAS A TEST, AND CANNOT GET ONE BACK HERE. The rig
 was a dropbear this repo grafted onto a BusyBox-only chroot, retired with the
-rest of the artifact harness; the live BusyBox bed cannot replace it, because its
-guests have no sshd at all by construction -- which is the point of the
-ssh-shaped true negative they pin. What survives is hostless: the emitted
+rest of the artifact harness; the live BusyBox bed cannot replace it: four of
+its five guests run no sshd at all and the fifth (bb1350) runs a 2012 dropbear
+whose ``MAX_STRING_LEN`` of 1400 rejects a full chunk command outright
+('String too long', measured 2026-09-24 by the conformance bed's progress
+contract, declared there as a known failure, follow-up #437) -- so it
+measures the CAP, not the headroom this paragraph is about. What survives
+is hostless: the emitted
 line lengths are computed and bounded by
 ``tests/unit/host/transfer/test_shell_transfer.py``'s
 ``TestShellChunkLineLength``. So after the harness's deletion NO test puts a

@@ -277,7 +277,10 @@ def busybox_target() -> ChaosTarget:
     ``spawn_otto`` reads ``sut_dir``/``lab`` and nothing else (see
     ``tests/integration/chaos/_driver.py::_otto_env``); the ``ssh_*`` fields
     exist to feed the asyncssh oracle in ``tests.integration.chaos._target``,
-    which CANNOT be used here — the guest has no sshd at all, by construction.
+    which is not used here: the chaos target drives the guest over telnet
+    through the hop, the path every guest has, even though bb1350 also
+    carries a 2012 dropbear for the legacy-crypto cell
+    (`tests/integration/busybox_bed/test_legacy_dropbear.py`).
     They are populated from the HOP's real creds for shape parity with
     ``make_bed_target``, and the oracle for this target is
     :func:`busybox_probe_text`, which goes through otto's own telnet-over-hop
@@ -347,8 +350,10 @@ def busybox_probe(coro_factory):
 
     The host is built by the FACTORY from the committed lab entry, never by
     hand: ``UnixHost(...)`` direct would default ``term="ssh"`` on a guest
-    that has no sshd, and the point of driving the committed record is that
-    the chaos arm exercises what an ``otto host`` user exercises.
+    whose committed record puts ``telnet`` first (bb1350 answers ssh too,
+    which is exactly why the default must not be guessed), and the point of
+    driving the committed record is that the chaos arm exercises what an
+    ``otto host`` user exercises.
     """
 
     async def _go():

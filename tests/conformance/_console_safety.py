@@ -19,7 +19,7 @@ inherits nothing, and the venue's default ``-n auto --dist loadgroup``
 (``pyproject.toml`` addopts) would put two workers on one console.
 
 WHAT THE COLLISION ACTUALLY LOOKS LIKE HERE, measured rather than assumed,
-because it is not the shape the integration tree faces. The bed space is 49
+because it is not the shape the integration tree faces. The bed space is 51
 cells of which 7 are ``bed-zephyr`` -- ONE cell per guest, since a Zephyr host
 reports a single ``(telnet, console)`` pair. So two cells can never name the
 same guest. The collision is between the CONTRACT ITEMS of ONE cell: every
@@ -38,7 +38,7 @@ worker, so the shared holders are never two clients of one console. This tree
 has no such stamp (see below), so SHARED would permit exactly the collision
 above. EXCLUSIVE costs the parallelism of running two DIFFERENT guests at
 once, which is 7 cells' worth of the space and, at the default budget of 8
-drawn from 49, usually one.
+drawn from 51, usually one.
 
 WHAT THIS DOES NOT PROTECT AGAINST, stated here rather than discovered later:
 
@@ -108,15 +108,15 @@ survive the correction:
   inferring it from a nodeid suffix.
 - THERE IS ALMOST NO PARALLELISM TO PRESERVE. A group's whole advantage over
   an exclusive lock is that two DIFFERENT guests can still run at once; 7 of
-  the 49 cells are console cells, one per guest, and at the default budget of
+  the 51 cells are console cells, one per guest, and at the default budget of
   8 a run draws about one of them.
 
 WHY NOT DROP THE CONSOLE CELLS FROM THE SPACE. That is the safest option and
 it was rejected on what it costs: spec s4 names the Zephyr guests as bed
-hosts, and a venue that resolves 42 of 49 cells would ship without ever
+hosts, and a venue that resolves 44 of 51 cells would ship without ever
 reaching the one host family whose contract nothing else crosses. The
 exclusion would also have to be argued down in the docs as deliberate rather
-than accidental. The lock keeps all 49.
+than accidental. The lock keeps all 51.
 """
 
 import fcntl
@@ -141,7 +141,7 @@ from tests.conformance._resolved import ResolvedCell
 # what otto actually builds. `tests/unit/test_conformance_bed.py` holds this
 # set against otto's OWN answer -- `isinstance(host, EmbeddedHost)`, the class
 # whose `__post_init__` is the only place in `src/` that sets
-# `TelnetOptions.single_client_console=True` -- over the whole 49-cell space,
+# `TelnetOptions.single_client_console=True` -- over the whole 51-cell space,
 # so a renamed kind reddens there instead of silently unprotecting a guest.
 SINGLE_CLIENT_CONSOLE_KINDS = frozenset({BED_ZEPHYR})
 

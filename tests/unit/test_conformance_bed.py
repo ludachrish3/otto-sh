@@ -57,6 +57,7 @@ from tests.conformance import _bed, _console_safety, _lab_context
 from tests.conformance import _vocabulary as _vocabulary_module
 from tests.conformance import conftest as _conformance_conftest
 from tests.conformance import test_exec_contract as _exec_contract
+from tests.conformance import test_progress_contract as _progress_contract
 from tests.conformance import test_timeout_contract as _timeout_contract
 from tests.conformance._bed import (
     _POSIX_SCRATCH_DIR,
@@ -147,6 +148,8 @@ RECORDED_ORDER = [
     ("bb1310", "telnet", "nc"),
     ("bb1350", "telnet", "shell"),
     ("bb1350", "telnet", "nc"),
+    ("bb1350", "ssh", "shell"),
+    ("bb1350", "ssh", "nc"),
     ("test4", "ssh", "scp"),
     ("test4", "ssh", "sftp"),
     ("test4", "ssh", "ftp"),
@@ -690,9 +693,10 @@ def test_a_cell_builds_even_when_the_out_of_tree_frame_was_evicted():
 
 # --- The lab context a hopped cell needs (Task 4b) --------------------------
 #
-# 17 of the 49 bed cells name a host that is only reachable THROUGH another
-# one: the five BusyBox guests hop `test1` and the seven Zephyr guests hop
-# `test4` (measured, `tests/_fixtures/lab_data/tech1/lab.json`).
+# 19 of the 51 bed cells name a host that is only reachable THROUGH another
+# one: the five BusyBox guests hop `test1` (bb1350 twice, over telnet and over
+# ssh) and the seven Zephyr guests hop `test4` (measured,
+# `tests/_fixtures/lab_data/tech1/lab.json`).
 # `RemoteHost._build_hop_transport` resolves that hop id against the host's
 # own `_lab` back-reference or, failing that, against the active
 # `OttoContext` -- and `create_host_from_dict` hands back a host with
@@ -727,10 +731,11 @@ class _DialRefusedError(Exception):
 def _dial_recorder(monkeypatch) -> "list[str]":
     """Replace ``asyncssh.connect`` with a stub; return the list of dialled IPs.
 
-    ``RemoteHost._build_hop_transport`` imports ``connect`` from ``asyncssh``
-    inside the method body, so patching the attribute on the module reaches
-    the call the tunnel factory actually makes -- confirmed by the recorder
-    filling in at all, which is itself one of the assertions below.
+    The hop tunnel goes through ``otto.host.connections.ssh_connect``, which
+    imports ``connect`` from ``asyncssh`` at call time, so patching the
+    attribute on the module still reaches the call the tunnel factory makes
+    -- confirmed by the recorder filling in at all, which is itself one of
+    the assertions below.
     """
     dialled: "list[str]" = []
 
@@ -858,7 +863,7 @@ async def test_a_hopped_cell_with_no_context_cannot_resolve_its_hop_at_all(monke
     never needed resolving. It builds the same cell's host by the same
     factory call and drives the same transport with the context taken away --
     which is precisely the state ``create_host_from_dict`` leaves a host in,
-    and precisely what 17 of the 49 cells hit on the first day anyone opened
+    and precisely what 19 of the 51 cells hit on the first day anyone opened
     one.
 
     The absence of a context is INJECTED rather than inherited: whether one
@@ -925,9 +930,10 @@ def test_the_venues_lab_resolves_the_hop_of_every_hopped_cell_in_the_space():
     assert not unresolvable, (
         f"the venue's lab {sorted(lab.hosts)} cannot resolve these cells' hops: {unresolvable}"
     )
-    assert len(hopped) == 17, (
-        f"expected the 17 hopped cells this task was written for (the 5 BusyBox guests "
-        f"crossed by 2 transfers, plus the 7 Zephyr guests), got {len(hopped)}: {hopped}"
+    assert len(hopped) == 19, (
+        f"expected the 19 hopped cells this task was written for (the 5 BusyBox guests "
+        f"crossed by 2 transfers, plus bb1350's 2 ssh cells, plus the 7 Zephyr guests), "
+        f"got {len(hopped)}: {hopped}"
     )
 
 
@@ -1246,7 +1252,7 @@ def test_every_host_otto_builds_as_embedded_is_serialized():
     ``SINGLE_CLIENT_CONSOLE_KINDS`` is spelled in this suite's own kind
     vocabulary, so on its own it can only ever agree with itself: rename the
     kind and the protection would switch off with every assertion about it
-    still green. This asks otto instead, over all 49 cells, and it is the
+    still green. This asks otto instead, over all 51 cells, and it is the
     reason the predicate is allowed to stay a cheap string membership.
     """
     assert not _unprotected_console_cells()
@@ -1622,12 +1628,12 @@ def test_the_transfer_domain_excludes_exactly_the_filesystem_less_guests():
     one does) fails the element comparison, and a domain that quietly NARROWS
     (a `fat-ram` guest losing its mount) fails it the other way.
 
-    46 of 49, not "most of them": the count is written down because the set
+    48 of 51, not "most of them": the count is written down because the set
     comparison alone would still pass if a fourth guest were added with no
     filesystem and this list were updated to match without anyone asking why.
     """
     space = bed_space()
-    assert len(space) == 49
+    assert len(space) == 51
 
     outside = _outside_the_domain(space)
     assert sorted({rc.cell.element for rc in outside}) == sorted(NO_FILESYSTEM_GUESTS)
@@ -1635,7 +1641,7 @@ def test_the_transfer_domain_excludes_exactly_the_filesystem_less_guests():
         f"a Zephyr host reports a single (telnet, console) pair, so each excluded guest "
         f"contributes exactly one cell -- got {[cell_label(rc) for rc in outside]}"
     )
-    assert len(_inside_the_domain(space)) == 46
+    assert len(_inside_the_domain(space)) == 48
 
 
 def test_the_excluded_guests_are_the_ones_otto_says_have_nowhere_to_put_a_file():
@@ -1884,7 +1890,7 @@ def test_a_declared_domain_narrows_the_parametrization_to_its_cells(monkeypatch)
 def test_a_domain_that_narrows_the_draw_to_nothing_raises_rather_than_skipping(monkeypatch):
     """INJECTED: pytest's answer to an empty parameter set is a SKIP.
 
-    Unreachable from real data -- 3 of 49 bed cells and 0 of 8 hermetic ones
+    Unreachable from real data -- 3 of 51 bed cells and 0 of 8 hermetic ones
     are outside the only domain that exists, so no draw of 8 can miss every
     applicable cell. That is exactly why it is injected here instead of being
     left as a check nothing has ever reached: a skipped contract reports
@@ -1900,7 +1906,7 @@ def test_a_domain_that_narrows_the_draw_to_nothing_raises_rather_than_skipping(m
     assert metafunc.parametrized is None
 
 
-# --- The declared-failure hook: MECHANISM ONLY, no declaration to pin ---
+# --- The declared-failure hook: one declaration, restored 2026-09-24 ---
 #
 # There was one to pin until 2026-08-25: `tests/conformance/test_transfer_contract.py`
 # declared an `expected_failure` hook over the five `bed-busybox[*:telnet:nc]`
@@ -1910,11 +1916,13 @@ def test_a_domain_that_narrows_the_draw_to_nothing_raises_rather_than_skipping(m
 # declaration was repaid with it, and the pin naming those cells went with its
 # subject (see that module's note under `applicable_cell`, and
 # `docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md`).
-# RESTORE IT WITH THE NEXT DECLARATION: a hook nothing pins can widen to cells
-# that pass, and a strict xfail on a passing cell is a red lane for the wrong
-# reason. What it asserted -- which cells are claimed, by kind and by transfer
-# and by count, failing in BOTH directions -- is the shape to bring back, keyed
-# on the resolver's answer rather than on a guest's name.
+# THE DECLARATION AND ITS PIN ARE BACK AS OF 2026-09-24:
+# `tests/conformance/test_progress_contract.py` now declares an
+# `expected_failure` hook over `bed-busybox[bb1350:ssh:shell]`, and
+# `test_the_progress_contract_declares_exactly_the_dropbear_shell_cell` below
+# pins WHICH cell it claims, by kind and by transfer and by count, failing in
+# BOTH directions -- exactly the shape the note above asked to bring back,
+# keyed on the resolver's answer rather than on a guest's name.
 # The nightly's protection did NOT go with it: see
 # `test_no_hermetic_cell_is_declared_a_known_failure` below, which sweeps every
 # contract module and so covers the next declaration without being edited.
@@ -1963,16 +1971,23 @@ def test_no_hermetic_cell_is_declared_a_known_failure():
     for a defect that is not in that venue at all, and nobody with a lab is
     watching. The bed lane can afford that conversation; the nightly cannot.
 
-    VACUOUS TODAY, AND IT SAYS SO. Since 2026-08-25 no contract module defines
-    `expected_failure` at all, so the inner loop asserts over nothing. That is
-    why the sweep is the SHAPE it is: it enumerates every contract module and
-    fails if it enumerated none, so the emptiness that makes it quiet today is
-    the tree's answer rather than a broken enumerator's. It RE-ARMS by itself
-    the day any module declares a hook -- no edit here, which is the property
-    the deleted per-cell pin did not have. Proved able to fail by injecting a
-    hook onto a real module and watching it red (recorded in the item's task
-    report; the injection is not left behind, because a permanent one would be
-    asserting against a fabricated module the conftest never reads).
+    NO LONGER VACUOUS. Since 2026-09-24 one contract module,
+    `test_progress_contract.py`, defines `expected_failure` -- over a bed-only
+    kind (`bed-busybox`), so the inner loop below now asserts over a REAL
+    hook rather than over nothing. It still answers empty here, by
+    construction rather than by absence: no hermetic cell is ever kind
+    `bed-busybox` (see that module's banner), so the kind check alone keeps
+    every hermetic cell out of what the hook claims. That is why the sweep is
+    the SHAPE it is regardless of which case applies: it enumerates every
+    contract module and fails if it enumerated none, so an empty result below
+    is the tree's answer rather than a broken enumerator's, whether the reason
+    is that nothing declares or that what declares never reaches this venue.
+    It RE-ARMS by itself the day any module declares a hook that DOES reach a
+    hermetic cell -- no edit here, which is the property the deleted per-cell
+    pin did not have. Proved able to fail by injecting a hook onto a real
+    module and watching it red (recorded in the item's task report; the
+    injection is not left behind, because a permanent one would be asserting
+    against a fabricated module the conftest never reads).
     """
     modules = _contract_modules()
     assert len(modules) >= 3, (
@@ -1992,6 +2007,36 @@ def test_no_hermetic_cell_is_declared_a_known_failure():
             f"{sorted(cell_label(rc) for rc in declared)} -- on the lane CI runs "
             f"nightly with no lab, a strict xfail there is an XPASS and a red job"
         )
+
+
+def test_the_progress_contract_declares_exactly_the_dropbear_shell_cell():
+    """RESTORED 2026-09-24: WHICH cell ``test_progress_contract.py`` claims, and only it.
+
+    Fails in BOTH directions, the same shape the deleted ``nc``-on-BusyBox pin
+    had: a predicate that WIDENED to a cell that passes would strict-xfail
+    something that works, which is a red lane for the wrong reason; one that
+    NARROWED to zero would let the declaration go quiet with nothing here to
+    notice.
+    """
+    declared = [
+        (resolved.kind, resolved.cell.term, resolved.cell.transfer, resolved)
+        for resolved in bed_space()
+        if _progress_contract.expected_failure(resolved)
+    ]
+    triples = {(kind, term, transfer) for kind, term, transfer, _resolved in declared}
+    assert triples == {(BED_BUSYBOX, "ssh", "shell")}, (
+        f"test_progress_contract.expected_failure claims {sorted(triples)} -- widening to "
+        f"a passing cell is a red lane for the wrong reason, narrowing to zero is the "
+        f"declaration going quiet"
+    )
+    assert len(declared) == 1, (
+        f"expected exactly one declared cell, got {len(declared)}: "
+        f"{[cell_label(resolved) for *_rest, resolved in declared]}"
+    )
+    _kind, _term, _transfer, resolved = declared[0]
+    reason = _progress_contract.expected_failure(resolved)
+    assert reason, "an empty reason is not a reason"
+    assert "MAX_STRING_LEN" in reason, reason
 
 
 def test_a_declared_failure_becomes_a_strict_xfail_on_that_cell_alone(monkeypatch):

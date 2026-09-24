@@ -2925,28 +2925,6 @@ GAPS: list[Gap] = [
         ),
     ),
     Gap(
-        surface="legacy-dropbear-crypto",
-        status=UNTESTED,
-        reason=(
-            "real BusyBox devices run dropbear, and an OLD dropbear negotiates only "
-            "SHA-1-era algorithms that modern asyncssh disables by default. otto carries "
-            "cipher/host-key/kex lists in `ssh_options`, so the spec calls this "
-            "configuration rather than code -- UNVERIFIED in either direction. Nothing "
-            "is blocked and nothing should be: otto connects, and the outcome is the "
-            "measurement this entry is waiting for"
-        ),
-        measured_on="",
-        queued_for=(
-            "Tier 3 fidelity item C, `todo/busybox-tier3-fidelity-2026-08-13.md`: measure a "
-            "period-appropriate dropbear instead of 2022.83. NOTE WHAT MOVED UNDER "
-            "THAT ITEM: the phase-5 harness it named has been retired, and the live "
-            "BusyBox guests that replaced it run no ssh daemon at all, so closing "
-            "this now needs a rig of its own. Two things it must measure first -- "
-            "whether an old dropbear even builds on a modern toolchain, and whether "
-            "`ssh_options` really suffices"
-        ),
-    ),
-    Gap(
         surface="busybox-over-a-real-network",
         status=UNTESTED,
         reason=(

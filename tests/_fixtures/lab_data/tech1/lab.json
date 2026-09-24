@@ -430,7 +430,7 @@
                     "os_type": "unix",
                     "board": "qemu",
                     "sw_version": "1.35.0",
-                    "valid_terms": ["telnet"],
+                    "valid_terms": ["telnet", "ssh"],
                     "valid_transfers": ["shell", "nc"],
                     "is_virtual": true,
                     "hop": "test1",

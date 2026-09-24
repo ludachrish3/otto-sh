@@ -158,8 +158,9 @@ listener spelling made those cells pass -- see that module's note under
 of the ten ``measured-broken`` cells stopped mid-sentence, discarding the half
 a reader most needs -- that ``shell`` transfer passed on those same five guests
 and ``nc`` on every GNU cell, i.e. exactly how narrow the gap was. The cap
-stays sized for a reason of that length: the tree declares none today, but a
-real failure's ``longrepr`` line is under no smaller bound.
+stays sized for a reason of that length: the tree declares one today
+(``test_progress_contract.py``, bb1350 over ssh with ``shell``, well under the
+cap), and a real failure's ``longrepr`` line is under no smaller bound.
 """
 
 

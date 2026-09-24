@@ -22,7 +22,7 @@ is worse than none:
   that.
 - ``bed-zephyr`` is NOT, and deliberately. Its opener takes the identical path
   -- one factory call, one ``verify_connection``, both inside that same lab
-  context -- and that path is asserted hostlessly over all 49 cells in
+  context -- and that path is asserted hostlessly over the whole bed space in
   ``tests/unit/test_conformance_bed.py``. One ``bed-zephyr`` cell
   (``zephyr37_fat``) HAS been opened against hardware, by hand, during Task
   4b; nothing committed repeats it, and that is the right trade rather than an

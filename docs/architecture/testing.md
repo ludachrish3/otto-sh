@@ -428,13 +428,14 @@ venue's cells:
 - **Bed (`OTTO_CONFORMANCE_BED=1`).** Real hardware, built from the bed's own
   lab data by `tests/conformance/_bed.py`: the Unix VMs across
   `{ssh, telnet} × {scp, sftp, ftp, nc}`, the five BusyBox guests over hopped
-  telnet, and the seven Zephyr guests over their single-client consoles.
-  49 cells over 16 elements — 32 `bed-unix`, 10 `bed-busybox`, 7
+  telnet, bb1350 also over hopped ssh (its 2012 dropbear), and the seven
+  Zephyr guests over their single-client consoles.
+  51 cells over 16 elements — 32 `bed-unix`, 12 `bed-busybox`, 7
   `bed-zephyr`. `make conformance-bed` is its only lane; it is **dev VM
   only** (nothing in CI runs it, and `tests/unit/test_tier_marker_invariants.py`
   asserts that no other lane can set the knob), and it is **exhaustive by
-  default** rather than sampled, because a budget of 8 against a space of 49
-  measures one cell in six and the crossing is this venue's whole claim.
+  default** rather than sampled, because a budget of 8 against a space of 51
+  measures roughly one cell in six and the crossing is this venue's whole claim.
   `make conformance-bed CONFORMANCE_CELLS=N` samples off the session seed
   instead.
 
@@ -662,7 +663,7 @@ resolving its loopback `sshd` visible rather than silent. Measured on the
 dev VM today, the hermetic space holds 8 cells and the default budget is 8 —
 so at the hermetic default the draw *is* the whole space, and sampling only
 starts to bite at a smaller budget. The bed venue is where the space is
-genuinely bigger than a budget (49 against 8), which is why its lane sets
+genuinely bigger than a budget (51 against 8), which is why its lane sets
 `OTTO_CONFORMANCE_CELLS=all` and draws every one.
 
 ### Why it is nightly, not per-push

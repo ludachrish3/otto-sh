@@ -15,6 +15,8 @@ Usage (the Vagrantfile's busybox-qemu provisioner is the caller):
     python3 scripts/build_busybox_guest_images.py \
         --dest /home/vagrant/busybox-bed \
         --kernel-module /home/vagrant/busybox-bed/e1000.ko \
+        --dropbear /home/vagrant/busybox-bed/dropbear \
+        --dropbear-host-key /home/vagrant/busybox-bed/dropbear_rsa_host_key \
         --emit-changed /home/vagrant/busybox-bed/changed.txt
 """
 
@@ -74,6 +76,11 @@ class Guest:
     tap: str
     """The TAP device on ``test1`` this guest's QEMU attaches to."""
 
+    sshd: str = "none"
+    """``"dropbear"`` for the one guest that carries the 2012-era daemon
+    (spec 2026-09-23), ``"none"`` for the rest — whose ssh absence is the
+    bed's standing drift-table true-negative."""
+
 
 # The bed identity table (spec §2/§4, re-cut 2026-08-22 when the guests moved
 # off QEMU user-mode networking onto real TAP NICs).
@@ -92,8 +99,35 @@ GUEST_TABLE = [
     Guest("1.21.1", "bb1211", "198.51.100.5", "198.51.100.6", "bbeth-1211"),
     Guest("1.28.1", "bb1281", "198.51.100.9", "198.51.100.10", "bbeth-1281"),
     Guest("1.31.0", "bb1310", "198.51.100.13", "198.51.100.14", "bbeth-1310"),
-    Guest("1.35.0", "bb1350", "198.51.100.17", "198.51.100.18", "bbeth-1350"),
+    Guest("1.35.0", "bb1350", "198.51.100.17", "198.51.100.18", "bbeth-1350", sshd="dropbear"),
 ]
+
+
+@dataclass(frozen=True)
+class DropbearPin:
+    """The dropbear source release the bed builds, by checksum."""
+
+    version: str
+    sha256: str
+    url: str
+
+
+# 2012.55 is the last release with no elliptic-curve support at all: its whole
+# offer is diffie-hellman-group{1,14}-sha1, ssh-rsa/ssh-dss, CTR/CBC ciphers
+# and SHA-1/MD5 MACs. 2013.56 grew ECC and 2013.62 turns it on by default;
+# asyncssh prefers it, so any later release exercises the modern path behind
+# an old banner. Upstream publishes no signature for this release; the
+# checksum was taken on 2026-09-23 and the Vagrantfile carries the same pin.
+DROPBEAR_PIN = DropbearPin(
+    version="2012.55",
+    sha256="04982af2a10b220fa940f9f72f276d612c9bb643cfbb5ee1416e5a0f00de9b0f",
+    url="https://matt.ucc.asn.au/dropbear/releases/dropbear-2012.55.tar.bz2",
+)
+
+DROPBEAR_INITTAB_LINE = "::respawn:/bin/dropbear -F -E -r /etc/dropbear/dropbear_rsa_host_key -p 22"
+"""Foreground under BusyBox init, log to stderr (the serial console, so a
+refused login is readable in the unit's journal), the baked host key, the
+honest port."""
 
 
 @dataclass(frozen=True)
@@ -178,15 +212,24 @@ done
 """
 
 
-_INITTAB = """::sysinit:/bin/busybox sh /etc/init.d/rcS
-::respawn:/bin/busybox telnetd -F -l /bin/login
-::restart:/bin/busybox init
-::ctrlaltdel:/bin/busybox reboot
-"""
+def _inittab(sshd: str) -> str:
+    lines = [
+        "::sysinit:/bin/busybox sh /etc/init.d/rcS",
+        "::respawn:/bin/busybox telnetd -F -l /bin/login",
+    ]
+    if sshd == "dropbear":
+        lines.append(DROPBEAR_INITTAB_LINE)
+    lines += ["::restart:/bin/busybox init", "::ctrlaltdel:/bin/busybox reboot"]
+    return "".join(line + "\n" for line in lines)
 
 
 def cpio_newc_entries(
-    busybox: Path, kernel_module: Path, hostname: str, ip: str
+    busybox: Path,
+    kernel_module: Path,
+    hostname: str,
+    ip: str,
+    dropbear: "Path | None" = None,
+    dropbear_host_key: "Path | None" = None,
 ) -> "list[CpioEntry]":
     """Build the full member list for one guest image.
 
@@ -194,6 +237,10 @@ def cpio_newc_entries(
     login-probe needle precedence RELIES on that: a pre-login banner could
     carry a needle substring and change a probe verdict. Adding one means
     re-checking that probe's needle handling first.
+
+    A guest whose table row says ``sshd="dropbear"`` also gets the daemon,
+    its key and a respawn line; every other guest ignores the two dropbear
+    inputs entirely, so offering them changes nothing about those images.
     """
     dirs = [
         "bin",
@@ -208,25 +255,60 @@ def cpio_newc_entries(
         "sys",
         "tmp",
     ]
+    try:
+        sshd = next(g.sshd for g in GUEST_TABLE if g.element == hostname)
+    except StopIteration:
+        raise ValueError(
+            f"{hostname!r} is not a bed guest in GUEST_TABLE; the sshd column "
+            "decides what goes in the image"
+        ) from None
     entries = [CpioEntry(d, 0o040755) for d in dirs]
     entries += [
         CpioEntry("bin/busybox", 0o100755, busybox.read_bytes()),
         CpioEntry("init", 0o120777, b"bin/busybox"),
         CpioEntry("dev/console", 0o020600, rdev=(5, 1)),
         CpioEntry("dev/null", 0o020666, rdev=(1, 3)),
-        CpioEntry("etc/inittab", 0o100644, _INITTAB.encode()),
+        CpioEntry("etc/inittab", 0o100644, _inittab(sshd).encode()),
         CpioEntry("etc/init.d/rcS", 0o100755, _rcs(hostname, ip).encode()),
         CpioEntry("etc/passwd", 0o100644, b"root:x:0:0:root:/root:/bin/sh\n"),
         CpioEntry("etc/shadow", 0o100600, f"root:{ROOT_SHADOW_HASH}:0:0:99999:7:::\n".encode()),
         CpioEntry("etc/group", 0o100644, b"root:x:0:\n"),
         CpioEntry("lib/modules/e1000.ko", 0o100644, kernel_module.read_bytes()),
     ]
+    if sshd == "dropbear":
+        if dropbear is None or dropbear_host_key is None:
+            raise ValueError(
+                f"{hostname} declares sshd={sshd!r} but no dropbear binary/host key was given"
+            )
+        entries += [
+            CpioEntry("etc/dropbear", 0o040755),
+            CpioEntry(
+                "etc/dropbear/dropbear_rsa_host_key", 0o100600, dropbear_host_key.read_bytes()
+            ),
+            CpioEntry("bin/dropbear", 0o100755, dropbear.read_bytes()),
+        ]
     return entries
 
 
-def build_initramfs_bytes(busybox: Path, kernel_module: Path, hostname: str, ip: str) -> bytes:
+def build_initramfs_bytes(
+    busybox: Path,
+    kernel_module: Path,
+    hostname: str,
+    ip: str,
+    dropbear: "Path | None" = None,
+    dropbear_host_key: "Path | None" = None,
+) -> bytes:
     """One guest's gzipped initramfs, byte-deterministic for stamping."""
-    archive = cpio_newc(cpio_newc_entries(busybox, kernel_module, hostname, ip))
+    archive = cpio_newc(
+        cpio_newc_entries(
+            busybox,
+            kernel_module,
+            hostname,
+            ip,
+            dropbear=dropbear,
+            dropbear_host_key=dropbear_host_key,
+        )
+    )
     return gzip.compress(archive, mtime=0)
 
 
@@ -237,17 +319,35 @@ def main(argv: "list[str] | None" = None) -> int:
     parser.add_argument("--kernel-module", type=Path, required=True)
     parser.add_argument("--emit-changed", type=Path, default=None)
     parser.add_argument("--only", default=None, help="build a single version")
+    parser.add_argument(
+        "--dropbear", type=Path, default=None, help="static x86_64 dropbear for the sshd guest"
+    )
+    parser.add_argument("--dropbear-host-key", type=Path, default=None)
     args = parser.parse_args(argv)
 
     args.dest.mkdir(parents=True, exist_ok=True)
     by_version = {r.version: r for r in BUSYBOX_MATRIX}
+    selected = [g for g in GUEST_TABLE if not args.only or g.version == args.only]
+    needs_sshd = [g.element for g in selected if g.sshd == "dropbear"]
+    if needs_sshd and (args.dropbear is None or args.dropbear_host_key is None):
+        print(
+            f"{', '.join(needs_sshd)} declare(s) an sshd: pass --dropbear and "
+            "--dropbear-host-key (see the busybox-qemu provisioner in the Vagrantfile)",
+            file=sys.stderr,
+        )
+        return 2
     changed: "list[str]" = []
-    for guest in GUEST_TABLE:
-        if args.only and guest.version != args.only:
-            continue
+    for guest in selected:
         release = by_version[guest.version]
         binary = busybox_binary(release)  # fetch + sha-pin verify (cached)
-        blob = build_initramfs_bytes(binary, args.kernel_module, guest.element, guest.ip)
+        blob = build_initramfs_bytes(
+            binary,
+            args.kernel_module,
+            guest.element,
+            guest.ip,
+            dropbear=args.dropbear,
+            dropbear_host_key=args.dropbear_host_key,
+        )
         digest = hashlib.sha256(blob).hexdigest()
         image = args.dest / f"initramfs-{guest.version}.cpio.gz"
         stamp = args.dest / f"initramfs-{guest.version}.sha256"

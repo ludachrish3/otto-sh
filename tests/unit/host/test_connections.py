@@ -14,6 +14,7 @@ slot that authenticates as ``login_target``.
 from unittest.mock import AsyncMock
 
 import pytest
+from asyncssh import SSHClientConnection
 
 from otto.host.connections import ConnectionManager
 from otto.host.login_proxy import Cred, LoginProxyError
@@ -62,7 +63,7 @@ async def test_ssh_as_opens_and_caches_per_user(monkeypatch):
 
     async def fake_connect(ip, username, password, tunnel=None, **kw):
         calls.append(username)
-        return AsyncMock(name=f"conn-{username}")
+        return AsyncMock(spec=SSHClientConnection, name=f"conn-{username}")
 
     mgr = _mgr(creds=[Cred(login="vagrant", password="v"), Cred(login="postgres", password="p")])
     monkeypatch.setattr("otto.host.connections.ssh_connect", fake_connect)
@@ -94,7 +95,7 @@ async def test_ssh_as_unknown_login_uses_resolve_chains_error():
 @pytest.mark.asyncio
 async def test_sftp_as_opens_over_ssh_as_and_caches_per_user(monkeypatch):
     async def fake_connect(ip, username, password, tunnel=None, **kw):
-        conn = AsyncMock(name=f"conn-{username}")
+        conn = AsyncMock(spec=SSHClientConnection, name=f"conn-{username}")
         conn.start_sftp_client = AsyncMock(return_value=AsyncMock(name=f"sftp-{username}"))
         return conn
 
@@ -278,7 +279,7 @@ async def test_ssh_under_a_telnet_term_authenticates_as_the_ssh_pick(monkeypatch
 
     async def fake_ssh_connect(ip, username, password, tunnel=None, **kw):
         seen["auth"] = (username, password)
-        return AsyncMock()
+        return AsyncMock(spec=SSHClientConnection)
 
     monkeypatch.setattr("otto.host.connections.ssh_connect", fake_ssh_connect)
     ssh_ops = Cred(login="ops", password="ops-pw", protocols=["ssh"])
@@ -294,7 +295,7 @@ async def test_ssh_as_resolves_against_ssh(monkeypatch):
 
     async def fake_ssh_connect(ip, username, password, tunnel=None, **kw):
         seen["auth"] = (username, password)
-        return AsyncMock()
+        return AsyncMock(spec=SSHClientConnection)
 
     monkeypatch.setattr("otto.host.connections.ssh_connect", fake_ssh_connect)
     ssh_admin = Cred(login="admin", password="ssh-pw", protocols=["ssh"])

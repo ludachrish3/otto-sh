@@ -55,5 +55,6 @@ reworded, that split is the wording to use.
 
 - `todo/busybox-tier3-fidelity-2026-08-13.md` — item B, the original queue entry.
 - `docs/architecture/subsystems/busybox-support.md` — the rendered gap table.
-- `tests/unit/host/test_gap_registry.py:452` — pins this surface and
-  `legacy-dropbear-crypto` as the two `untested` records.
+- `tests/unit/host/test_gap_registry.py::test_the_tier3_fidelity_gap_is_recorded_as_untested_and_blocks_nothing` — pins this surface as an
+  `untested` record. `legacy-dropbear-crypto` sat beside it here until it
+  closed on 2026-09-23 (`docs/superpowers/specs/2026-09-23-legacy-dropbear-guest-design.md`); this surface is unaffected.

@@ -21,12 +21,15 @@ Example::
     )
 """
 
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
@@ -68,6 +71,14 @@ class SocksForward:
 
     listen_host: str
     listen_port: int
+
+
+_EXTRA_IDENTITY_OVERRIDE_KEYS = frozenset({"username", "password", "tunnel"})
+"""``extra`` keys that collide with what the SSH call sites pass explicitly
+(the credential and the hop tunnel). Before this options layer existed,
+duplicating one of these as a kwarg was a ``TypeError``; ``extra`` now wins
+silently on conflict (see ``SshOptions.extra``'s docstring), so ``_kwargs()``
+logs once instead of staying quiet about it."""
 
 
 @dataclass(slots=True)
@@ -121,21 +132,42 @@ class SshOptions:
     compression_algs: list[str] | None = None
     """Allowed compression algorithms."""
 
+    kex_algs: list[str] | None = None
+    """Allowed key-exchange algorithms, in preference order, by asyncssh name
+    (e.g. ``"diffie-hellman-group14-sha1"``). The client's first entry the
+    server also supports is what the handshake uses, so a legacy server that
+    speaks only SHA-1 groups needs those listed. ``None`` = asyncssh default.
+    See docs/configuration/settings.md, "Legacy SSH servers", for the full
+    ``ssh_options`` TOML shape."""
+
+    mac_algs: list[str] | None = None
+    """Allowed MAC algorithms, in preference order (e.g. ``"hmac-sha1"``,
+    ``"hmac-md5"``). ``None`` = asyncssh default."""
+
     local_forwards: list[LocalPortForward] = field(default_factory=list)
-    """Local port forwards to set up after the connection is established."""
+    """Local port forwards to set up after the connection is established.
+    Applied on the host's own sessions only, never on a tunnel connection
+    opened through this host acting as a hop."""
 
     remote_forwards: list[RemotePortForward] = field(default_factory=list)
-    """Remote port forwards to set up after the connection is established."""
+    """Remote port forwards to set up after the connection is established.
+    Applied on the host's own sessions only, never on a tunnel connection
+    opened through this host acting as a hop."""
 
     socks_forwards: list[SocksForward] = field(default_factory=list)
-    """Dynamic SOCKS forwards to set up after the connection is established."""
+    """Dynamic SOCKS forwards to set up after the connection is established.
+    Applied on the host's own sessions only, never on a tunnel connection
+    opened through this host acting as a hop."""
 
     extra: dict[str, Any] = field(default_factory=dict)
     """Arbitrary extra kwargs forwarded directly to ``asyncssh.connect()``.
 
     Anything kwarg-shaped on asyncssh's connect (``config``, ``proxy_command``,
     ``x509_trusted_certs``, ``gss_host``, etc.) can be set here. Values in
-    ``extra`` override curated fields on conflict."""
+    ``extra`` override curated fields on conflict. The call sites spread these
+    after their own ``username``, ``password`` and ``tunnel``, so an ``extra``
+    key with one of those names replaces the credential or the hop tunnel
+    silently."""
 
     post_connect: Callable[["SSHClientConnection"], Awaitable[None]] | None = None
     """Optional async hook called with the freshly opened connection,
@@ -175,6 +207,16 @@ class SshOptions:
             kw["server_host_key_algs"] = self.server_host_key_algs
         if self.compression_algs is not None:
             kw["compression_algs"] = self.compression_algs
+        if self.kex_algs is not None:
+            kw["kex_algs"] = self.kex_algs
+        if self.mac_algs is not None:
+            kw["mac_algs"] = self.mac_algs
+        overridden = sorted(self.extra.keys() & _EXTRA_IDENTITY_OVERRIDE_KEYS)
+        if overridden:
+            logger.warning(
+                f"SshOptions.extra sets {overridden}, silently overriding the caller's own "
+                "connect kwarg(s) of the same name (the credential or the hop tunnel)"
+            )
         kw.update(self.extra)
         return kw
 

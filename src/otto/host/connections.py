@@ -24,9 +24,11 @@ transport with a test double — no monkeypatching of library functions needed.
 import asyncio
 import contextlib
 import logging
+import os
+import warnings
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from typing_extensions import override
 
@@ -190,16 +192,196 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+FFDH_DEPRECATION_MESSAGE = r"Diffie-Hellman over finite fields \(FFDH\) is deprecated"
+"""Regex for the one cryptography deprecation otto silences, as a prefix.
+
+cryptography 50 deprecates finite-field Diffie-Hellman and asyncssh routes
+every ``diffie-hellman-group*`` key exchange through it
+(``asyncssh/crypto/dh.py``), so the warning fires twice per handshake
+exactly when the peer is a legacy sshd that speaks nothing else. otto can do
+nothing about the peer's algorithm set; the removal the message announces is
+guarded by ``tests/unit/host/test_legacy_ssh_algorithms.py`` instead.
+"""
+
+FFDH_DEPRECATION_MODULE = r"asyncssh\.crypto\.dh"
+"""The module the warning is attributed to. The filter is scoped to it on
+purpose: the same deprecation reached from anywhere else still surfaces."""
+
+_REDACTED_CONNECT_KEYS = frozenset({"password", "passphrase"})
+
+
+def install_asyncssh_warning_filters() -> None:
+    """Silence the FFDH deprecation as raised through asyncssh's DH module.
+
+    Idempotent by content and position rather than by a module flag:
+    ``warnings.filters`` is process state that tests reset with
+    ``catch_warnings`` (a flag would then report "installed" for a list that
+    no longer holds the entry), and anyone can push an ``error`` entry in
+    front of an installed copy afterwards — pytest does exactly that per test
+    — which shadows it. So the entry is kept exactly once, and first.
+    """
+    from cryptography.utils import CryptographyDeprecationWarning
+
+    def is_ours(entry: Any) -> bool:
+        action, message, category, module, _lineno = entry
+        return (
+            action == "ignore"
+            and message is not None
+            and message.pattern == FFDH_DEPRECATION_MESSAGE
+            and category is CryptographyDeprecationWarning
+            and module is not None
+            and module.pattern == FFDH_DEPRECATION_MODULE
+        )
+
+    if warnings.filters and is_ours(warnings.filters[0]):
+        return
+    warnings.filterwarnings(
+        "ignore",
+        message=FFDH_DEPRECATION_MESSAGE,
+        category=CryptographyDeprecationWarning,
+        module=FFDH_DEPRECATION_MODULE,
+    )
+    # typeshed declares warnings.filters as a read-only Sequence; at runtime it
+    # is the live list the C module reads, and the slice keeps the entry just
+    # inserted at index 0 while dropping every stale copy behind it.
+    filter_list = cast("list[Any]", warnings.filters)
+    # This slice assignment mutates warnings.filters IN PLACE without calling
+    # warnings._filters_mutated(): harmless here because every entry the
+    # comprehension removes is a duplicate of the one already at index 0, so
+    # no filter's match outcome changes either way. Assumes warnings.filters
+    # is the live list this venv's C module reads (true on 3.10 and on GIL
+    # builds of 3.14); a free-threaded 3.14 with context-aware warnings reads
+    # the active context's list instead, not this module attribute.
+    filter_list[1:] = [entry for entry in filter_list[1:] if not is_ours(entry)]
+
+
+_SSH_DEBUG_LEVELS = range(1, 4)
+"""asyncssh's own accepted debug levels: 1..3."""
+
+
+def _parse_ssh_debug_level(raw: str) -> int | None:
+    """Parse *raw* as an asyncssh debug level, or ``None`` if it is not one of 1..3."""
+    try:
+        level = int(raw)
+    except ValueError:
+        return None
+    return level if level in _SSH_DEBUG_LEVELS else None
+
+
+def apply_ssh_debug_level() -> None:
+    """Raise asyncssh's own logger level from ``OTTO_SSH_DEBUG`` (1..3).
+
+    Raising asyncssh's internal debug level alone is not enough for a user to
+    SEE level 2's "Key exchange alg" line: otto pins the ``asyncssh`` library
+    logger at WARNING by default (``logger.management.DEFAULT_LIBRARY_LEVELS``),
+    which drops every DEBUG record asyncssh emits before it reaches a handler.
+    So a valid value also lifts otto's own ``asyncssh`` logger floor to DEBUG
+    via :func:`otto.logger.management.apply_library_levels`, which remembers
+    the override on its state — a later ``install_console`` re-applies it
+    rather than reverting to the WARNING default. This runs on every connect
+    (inside :func:`ssh_connect`), which is AFTER the CLI applies a repo's
+    ``[logging.levels]`` once at startup, so from the first connect on a
+    valid ``OTTO_SSH_DEBUG`` overrides a repo's ``asyncssh`` entry for the
+    rest of the process — by design: an explicit per-invocation opt-in to a
+    trace beats a standing noise-floor entry. Unset ``OTTO_SSH_DEBUG`` to get
+    the repo's floor back. A value outside 1..3 is reported and ignored
+    rather than turned into a ValueError on every connect, and lifts nothing.
+    """
+    from ..config.env import SSH_DEBUG_ENV_VAR
+
+    raw = os.environ.get(SSH_DEBUG_ENV_VAR)
+    if raw is None:
+        return
+    level = _parse_ssh_debug_level(raw)
+    if level is None:
+        logger.warning(
+            f"{SSH_DEBUG_ENV_VAR}={raw!r} is not an asyncssh debug level (1..3); ignored"
+        )
+        return
+    import asyncssh
+
+    asyncssh.set_debug_level(level)
+
+    from ..logger import management
+
+    management.apply_library_levels({"asyncssh": "DEBUG"})
+
+
+def describe_connect_kwargs(name: str, host: str, kwargs: dict[str, Any]) -> str:
+    """One DEBUG line showing exactly what leaves otto for ``asyncssh.connect``.
+
+    Secrets are replaced by ``'***'`` when present; an absent password is
+    shown as ``None`` because a login-less connect is worth seeing. Only
+    ``password`` and ``passphrase`` are redacted; otto's curated
+    ``client_keys`` field carries paths, but key DATA handed in through
+    ``extra`` would be printed verbatim at DEBUG.
+    """
+    shown = {
+        k: ("***" if k in _REDACTED_CONNECT_KEYS and v is not None else v)
+        for k, v in kwargs.items()
+    }
+    return f"{name}: asyncssh.connect({host!r}) kwargs={shown!r}"
+
+
+def describe_negotiated(name: str, conn: Any) -> str:
+    """One DEBUG line with what the handshake agreed to, from ``get_extra_info``.
+
+    asyncssh exposes the ciphers, MACs, compression and the peer's version
+    banner; it does not expose the key-exchange algorithm after the exchange,
+    which is what ``OTTO_SSH_DEBUG=2`` is for.
+    """
+    info = conn.get_extra_info
+    return (
+        f"{name}: negotiated server={info('server_version')!r} "
+        f"cipher={info('send_cipher')}/{info('recv_cipher')} "
+        f"mac={info('send_mac')}/{info('recv_mac')} "
+        f"compression={info('send_compression')}/{info('recv_compression')}"
+    )
+
+
 async def ssh_connect(*args: Any, **kwargs: Any) -> Any:
     """Lazy, patchable wrapper around :func:`asyncssh.connect`.
 
     Kept as a module-level seam (tests monkeypatch it) while deferring the heavy
     ``asyncssh`` import to connect-time — see
-    ``tests/unit/host/test_lazy_network_imports.py``.
+    ``tests/unit/host/test_lazy_network_imports.py``. Every connect otto makes
+    comes through here, including the hop tunnels, which is what makes it the
+    right place for the two pieces of process-wide asyncssh state otto sets:
+    the FFDH deprecation filter and the ``OTTO_SSH_DEBUG`` level.
     """
+    install_asyncssh_warning_filters()
+    apply_ssh_debug_level()
     from asyncssh import connect
 
     return await connect(*args, **kwargs)
+
+
+async def connect_and_describe(
+    name: str,
+    host: str,
+    kwargs: dict[str, Any],
+    options: SshOptions,
+    *,
+    apply_post_connect: bool = True,
+) -> "SSHClientConnection":
+    """Open one SSH connection through the seam and say what happened.
+
+    Logs the redacted kwargs before the connect and the negotiated
+    server/cipher/MAC/compression tuple after it, with *options*' post-connect
+    hook run in between — so every connect otto makes (target, per-user, hop)
+    answers "were my options respected" in the same two DEBUG lines.
+
+    *apply_post_connect* is ``False`` for a hop tunnel connection: a tunnel is
+    a transport to the hop, not a session on it, so the hop host's structured
+    forwards and ``post_connect`` hook belong to the hop's own session and
+    must not run once per hopped target — see ``RemoteHost._build_hop_transport``.
+    """
+    logger.debug(describe_connect_kwargs(name, host, kwargs))
+    conn = await ssh_connect(host, **kwargs)
+    if apply_post_connect:
+        await options._apply_post_connect(conn)  # noqa: SLF001 — intra-package access to SshOptions._apply_post_connect
+    logger.debug(describe_negotiated(name, conn))
+    return conn
 
 
 class ConnectionManager:
@@ -418,14 +600,13 @@ class ConnectionManager:
             tunnel = None
             if self._hop is not None:
                 tunnel = await self._ensure_tunnel()
-            conn = await ssh_connect(
-                self._ip,
-                username=cred.login,
-                password=cred.password,
-                tunnel=tunnel,
+            kwargs: dict[str, Any] = {
+                "username": cred.login,
+                "password": cred.password,
+                "tunnel": tunnel,
                 **self._ssh_options._kwargs(),  # noqa: SLF001 — intra-package access to SshOptions._kwargs
-            )
-            await self._ssh_options._apply_post_connect(conn)  # noqa: SLF001 — intra-package access to SshOptions._apply_post_connect
+            }
+            conn = await connect_and_describe(self._name, self._ip, kwargs, self._ssh_options)
             self._ssh_conn = conn
             logger.debug(f"Connected to {self._name} via SSH")
             return conn
@@ -493,14 +674,14 @@ class ConnectionManager:
             tunnel = None
             if self._hop is not None:
                 tunnel = await self._ensure_tunnel()
-            conn = await ssh_connect(
-                self._ip,
-                username=direct.login,
-                password=direct.password,
-                tunnel=tunnel,
+            kwargs: dict[str, Any] = {
+                "username": direct.login,
+                "password": direct.password,
+                "tunnel": tunnel,
                 **self._ssh_options._kwargs(),  # noqa: SLF001 — intra-package access to SshOptions._kwargs
-            )
-            await self._ssh_options._apply_post_connect(conn)  # noqa: SLF001 — intra-package access to SshOptions._apply_post_connect
+            }
+            tag = f"{self._name} as {user!r}"
+            conn = await connect_and_describe(tag, self._ip, kwargs, self._ssh_options)
             self._user_ssh_conns[user] = conn
             return conn
 

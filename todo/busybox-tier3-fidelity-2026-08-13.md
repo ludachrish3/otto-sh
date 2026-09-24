@@ -35,6 +35,12 @@ So the one risk the tier was named for is the one it does not cover.
 
 ## C — an old dropbear on loopback
 
+**Closed 2026-09-23** by `docs/superpowers/specs/2026-09-23-legacy-dropbear-guest-design.md`:
+dropbear 2012.55 runs on bb1350; the wire proof is
+`tests/integration/busybox_bed/test_legacy_dropbear.py`. It closed by
+converting the bb1350 bed guest rather than the phase-5 harness described
+below — the plan below is superseded, not carried out.
+
 Run the phase-5 harness against a period-appropriate dropbear (the 2013-era
 range matching the BusyBox artifact matrix) instead of 2022.83. Hermetic, stays
 in CI, and attacks the actual named risk.

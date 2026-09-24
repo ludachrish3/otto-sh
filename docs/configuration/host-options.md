@@ -89,6 +89,11 @@ curated field is reachable via ``extra``, which is forwarded verbatim:
 }
 ```
 
+The algorithm lists (`kex_algs`, `server_host_key_algs`, `encryption_algs`,
+`mac_algs`, `compression_algs`) accept the names on the
+{doc}`SSH algorithm matrix <../architecture/ssh-algorithms>`; a name not on
+it is refused by asyncssh at connect time.
+
 #### Port forwarding
 
 Structured forwards are declarative and applied right after the

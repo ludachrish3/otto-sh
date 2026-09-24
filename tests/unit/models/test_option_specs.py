@@ -118,6 +118,19 @@ def test_ssh_spec_has_no_post_connect_field():
     assert "post_connect" not in SshOptionsSpec.model_fields
 
 
+def test_ssh_spec_carries_kex_and_mac_lists_to_runtime():
+    spec = SshOptionsSpec(kex_algs=["diffie-hellman-group1-sha1"], mac_algs=["hmac-md5"])
+    rt_obj = spec.to_runtime()
+    assert rt_obj.kex_algs == ["diffie-hellman-group1-sha1"]
+    assert rt_obj.mac_algs == ["hmac-md5"]
+    kw = rt_obj._kwargs()
+    assert kw["kex_algs"] == ["diffie-hellman-group1-sha1"]
+    assert kw["mac_algs"] == ["hmac-md5"]
+    # Unset on the spec stays unset at runtime, so asyncssh's defaults apply.
+    assert "kex_algs" not in SshOptionsSpec().to_runtime()._kwargs()
+    assert "mac_algs" not in SshOptionsSpec().to_runtime()._kwargs()
+
+
 def test_telnet_spec_defaults_match_runtime():
     rt_obj = TelnetOptionsSpec().to_runtime()
     assert isinstance(rt_obj, TelnetOptions)

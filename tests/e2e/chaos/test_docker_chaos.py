@@ -17,12 +17,14 @@ races that daemon.
 NO BUSYBOX GUEST ARM: every scenario here needs one of the venue's two
 roles, and a bed guest can hold neither. The PARENT role runs a docker
 daemon and is driven over SSH (``compose_up``/``compose_down`` stage a
-project on it); the guest has no docker and no sshd at all, and 49 MB of
-usable RAM in an initramfs. The CHILD role is a ``DockerContainerHost``,
-i.e. a ``docker exec`` target inside that parent -- a QEMU guest reached by
-telnet through a hop is not one. This is the one disposition in the lane
-that needs no measurement to argue, but it was measured anyway (no
-``docker`` on the anchor guest) rather than assumed from the OS profile.
+project on it); a bed guest has no docker at all and 49 MB of usable RAM in
+an initramfs. (Four of the five run no sshd; the fifth, bb1350, runs a 2012
+dropbear -- neither is a docker daemon.) The CHILD role is a
+``DockerContainerHost``, i.e. a ``docker exec`` target inside that parent --
+a QEMU guest reached by telnet through a hop is not one. This is the one
+disposition in the lane that needs no measurement to argue, but it was
+measured anyway (no ``docker`` on the anchor guest) rather than assumed from
+the OS profile.
 """
 
 import asyncio

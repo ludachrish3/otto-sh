@@ -365,6 +365,11 @@ timeout_func_only = true
 faulthandler_timeout = 300
 filterwarnings = [
     "error",
+    # cryptography 50 deprecates finite-field DH and asyncssh raises it through
+    # asyncssh/crypto/dh.py on every diffie-hellman-group* key exchange — the
+    # one warning a legacy-sshd handshake cannot avoid. Same scope as the
+    # runtime filter in otto.host.connections; anything else stays an error.
+    "ignore:Diffie-Hellman over finite fields \\(FFDH\\) is deprecated:cryptography.utils.CryptographyDeprecationWarning:asyncssh\\.crypto\\.dh",
 ]
 markers = [
     "integration: requires running Vagrant VMs (deselect with -m 'not integration')",

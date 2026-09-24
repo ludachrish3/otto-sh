@@ -40,10 +40,10 @@ from typing_extensions import override
 from ..logger.mode import LogMode
 from ..result import CommandResult
 from ..utils import Status
-from .connections import LOGINLESS
+from .connections import LOGINLESS, connect_and_describe
 from .host import BaseHost, is_dry_run
 from .login_proxy import Cred
-from .options import TelnetOptions
+from .options import SshOptions, TelnetOptions
 
 if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
@@ -631,7 +631,13 @@ class RemoteHost(BaseHost):
         The transport wraps a factory coroutine that lazily resolves the hop
         host ID via the config module and opens a dedicated SSH connection to
         it. Each target host gets its own tunnel connection (not shared with
-        the hop's own connections).
+        the hop's own connections). The hop host's ``ssh_options`` kwargs
+        (kex, MAC, ciphers, host-key algs, ``extra``) are honoured on that
+        connection exactly as they would be on the hop's own session, but its
+        structured forwards and ``post_connect`` hook are not applied — a
+        tunnel is a transport to the hop, not a session on it, so a hop
+        record with a fixed ``local_forwards`` port does not try to rebind
+        it once per hopped target.
 
         For multi-hop chains the transport holds a reference to its parent
         :class:`SshHopTransport`, so ``close()`` cascades down the entire
@@ -647,8 +653,6 @@ class RemoteHost(BaseHost):
 
         Cycle detection prevents infinite loops (e.g. A hops through B, B hops through A).
         """
-        from asyncssh import connect as _ssh_connect
-
         from .transport import SshHopTransport
 
         hop_id = self.hop
@@ -701,13 +705,25 @@ class RemoteHost(BaseHost):
             # are applied post-handshake by the hop host's own session, not
             # here).
             cred = hop_host._connections.transport_cred_for("ssh") or LOGINLESS  # noqa: SLF001 — intra-package access to RemoteHost._connections for hop-auth resolution
+            # The hop host's OWN ssh_options: its port, algorithm lists, keys
+            # and timeouts apply to the tunnel exactly as they would to a
+            # direct login. A RemoteHost family without the field (an
+            # embedded console can never be a hop) falls back to defaults.
+            # Its structured forwards and post_connect hook are NOT applied
+            # here (apply_post_connect=False below) — those belong to the
+            # hop host's own session; applying them per tunnel would try to
+            # rebind a fixed local_forwards port once per hopped target.
+            hop_options = getattr(hop_host, "ssh_options", None) or SshOptions()
+            kwargs: dict[str, Any] = {
+                "username": cred.login,
+                "password": cred.password,
+                "tunnel": parent_tunnel,
+                **hop_options._kwargs(),  # noqa: SLF001 — intra-package access to SshOptions._kwargs
+            }
+            tag = f"{host_name} via {hop_id}"
             logger.debug(f"Opening SSH tunnel through {hop_id} for {host_name}")
-            return await _ssh_connect(
-                hop_host.ip,
-                username=cred.login,
-                password=cred.password,
-                known_hosts=None,
-                tunnel=parent_tunnel,
+            return await connect_and_describe(
+                tag, hop_host.ip, kwargs, hop_options, apply_post_connect=False
             )
 
         outer._factory = _create_tunnel  # noqa: SLF001 — intra-package assignment to SshHopTransport._factory closure

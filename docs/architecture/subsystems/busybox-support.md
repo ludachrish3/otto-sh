@@ -210,7 +210,6 @@ error prints it verbatim; the sections below are its readable form.
 | [`shutdown-command`](#shutdown-command) | `measured-broken` | Nothing, on any measured device: `Host.shutdown()` asks which spelling your device has and emits `poweroff` where there is no `shutdown`. Only a device with neither is refused. `Host.reboot()` is unaffected. |
 | [`run-command-line-length`](#run-command-line-length) | `measured-broken` | `Host.run()` refuses a command whose typed line would exceed 1022 characters, rather than let ash truncate it. `Host.exec()` is safe and is not refused. |
 | [`product-lifecycle`](#product-lifecycle) | `untested` | otto's `stage`/`install`/`uninstall` verbs emit no command of their own. Whether they work on your device is decided by your own product code. |
-| [`legacy-dropbear-crypto`](#legacy-dropbear-crypto) | `untested` | An old dropbear may need `ssh_options` to negotiate at all. Nobody has tried. |
 | [`busybox-over-a-real-network`](#busybox-over-a-real-network) | `untested` | Every target is local or on host-local virtual wire, so nothing has met a physical path's latency or loss. |
 
 ### shell-transfer-base64
@@ -692,26 +691,6 @@ accept.
 here to fix. What would close it is a project taking a real `Product` to a real
 BusyBox device and reporting what its `install` emitted. Any gap that turns up
 then belongs to the command that failed, and gets recorded under *that* surface.
-
-### legacy-dropbear-crypto
-
-**Status:** `untested` — otto attempts it, and the outcome is the measurement.
-
-Real BusyBox devices run dropbear, and an old dropbear negotiates only
-SHA-1-era algorithms that modern asyncssh disables by default. otto carries
-cipher, host-key and kex lists in `ssh_options`, so the design calls this
-configuration rather than code — unverified in either direction. Nothing is
-blocked and nothing should be.
-
-**Measured:** nothing yet. That is what `untested` means here, and it is why
-this row does not refuse.
-
-**Queued for:** Tier 3 fidelity item C, `todo/busybox-tier3-fidelity-2026-08-13.md`:
-measure a period-appropriate dropbear instead of 2022.83. Note what moved under
-that item: the phase-5 harness it named has been retired, and the live BusyBox
-guests that replaced it run no ssh daemon at all, so closing this now needs a rig
-of its own. Two things it has to measure first — whether an old dropbear even
-builds on a modern toolchain, and whether `ssh_options` really suffices.
 
 ### busybox-over-a-real-network
 

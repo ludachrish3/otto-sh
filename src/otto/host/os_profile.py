@@ -461,12 +461,16 @@ def _register_builtin_os_profiles() -> None:
     BusyBox applet itself (measured: ``busybox-1.35.0-x86_64 --list`` names
     none of its 402 applets ``sshd``/``ssh``/``scp``/``sftp``/``dropbear``)
     — and dropbear ships no ``sftp-server`` (``docs/superpowers/specs/
-    2026-08-11-busybox-host-support-design.md``, "The dropbear risk"). That
-    same design doc's "Known entries at design time" names ``sftp``/``scp``
-    against dropbear as an identified, *untested* risk — not a measured
-    break — so they are not pruned from ``valid_transfers``: a lab entry
-    that knows its device runs a real OpenSSH-compatible server can still
-    opt into ``scp``/``sftp``/``ftp``/``nc`` by pinning ``transfer`` itself.
+    2026-08-11-busybox-host-support-design.md``, "The dropbear risk"). A
+    2012-era dropbear (SHA-1-only key exchange, ``ssh-rsa``, ``hmac-sha1``)
+    is measured on the bb1350 bed guest (``docs/architecture/subsystems/
+    busybox-bed.md``): stock ``ssh_options`` negotiate it, and a per-host
+    ``kex_algs`` or ``encryption_algs`` reaches the wire for a device that
+    needs a narrower list; which algorithms need an ``ssh_options`` list at
+    all is ``docs/architecture/ssh-algorithms.md``. ``scp``/``sftp``/``ftp``/
+    ``nc`` stay in ``valid_transfers`` even so — a lab entry whose device
+    runs a real OpenSSH-compatible server opts into one by pinning
+    ``transfer`` itself.
     **Keeping ``scp`` here is what makes the refusal a question about the
     DEVICE rather than about this profile.**
     ``otto.host.transfer.scp.refuse_if_scp_is_absent`` declines a transfer

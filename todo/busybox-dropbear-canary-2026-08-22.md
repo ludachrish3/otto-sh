@@ -16,6 +16,10 @@
 > the tier was built to test does not exist for asyncssh 2.24. What remains is
 > whether to build a *canary* that keeps it that way, which is Options A/B/C
 > below.
+>
+> **Decided 2026-09-23:** converted bb1350 rather than a sixth guest (test1
+> has ~500 MB free with five guests resident). Provisioner block:
+> `Vagrantfile` `provision_busybox_bed`; spec above.
 
 ---
 

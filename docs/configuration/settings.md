@@ -37,6 +37,38 @@ paths = ["../lab_data"]
 ssh_options = { connect_timeout = 5.0, keepalive_interval = 30 }
 ```
 
+### Legacy SSH servers
+
+`ssh_options` carries asyncssh's algorithm lists as preference-ordered
+lists: the client's first entry the server also supports is what the
+handshake uses. An old sshd (a 2012-era dropbear, for example) speaks only
+SHA-1-era algorithms, some of which are not in the default offer;
+[SSH algorithm matrix](../architecture/ssh-algorithms.md) lists every algorithm
+otto can negotiate and which ones are. An option table may sit under a
+selector, so one block can cover a family of hosts:
+
+```toml
+[host_preferences."legacy-.*".ssh_options]
+kex_algs = ["diffie-hellman-group14-sha1", "diffie-hellman-group1-sha1"]
+server_host_key_algs = ["ssh-rsa", "ssh-dss"]
+encryption_algs = ["aes128-ctr", "aes128-cbc", "3des-cbc"]
+mac_algs = ["hmac-sha1", "hmac-md5"]
+```
+
+The same table sits on a host's own record as `ssh_options` in lab data.
+Names are asyncssh's; an unknown one is refused by asyncssh at connect time.
+To see what left otto and what the server agreed to, run with
+`--log-level DEBUG`: otto logs the connect keyword arguments before each
+handshake (secrets redacted) and the negotiated cipher, MAC, compression
+and server banner after it. `OTTO_SSH_DEBUG=2` adds asyncssh's own trace,
+which is the only place the chosen key-exchange algorithm is printed — a
+valid value also lifts otto's own `asyncssh` logger floor to `DEBUG` (otto
+pins it at `WARNING` by default), so the trace actually reaches the console
+under `--log-level DEBUG`. The `[logging.levels] asyncssh = "DEBUG"` entry
+below does the same without the env var — but a valid `OTTO_SSH_DEBUG`
+overrides it from the first connect on, for the rest of the process; unset
+the env var to get the repo entry back.
+
 ### Path resolution
 
 Every path that otto itself interprets is expanded with `~` (your home

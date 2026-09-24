@@ -74,7 +74,7 @@ _CONFORMANCE_ROOT = Path(__file__).parent
 # Cheap enough to sit on the collection path of every path-less run in the
 # repo: measured at 0.01s for the hermetic venue's 8 cells, because
 # `_cells.resolve_space` deliberately starts no daemon and fetches nothing at
-# resolve time. The BED venue's 49 cells measure 0.06s on a cold interpreter
+# resolve time. The BED venue's 51 cells measure 0.06s on a cold interpreter
 # and 0.011s warm — RE-MEASURED, and the host-build count in this comment was
 # wrong before: it is 65 builds through otto's factory over 16 distinct
 # elements, not nineteen. Three questions are asked per element (its kind, its
@@ -171,8 +171,10 @@ _DOMAIN_HOOK = "applicable_cell"
 #: drawn cell is EXPECTED TO FAIL, returning the reason or None. Applied as
 #: ``xfail(strict=True)``, which is an ASSERTION and not a suppression: the
 #: item must fail, an unexpected pass (``XPASS``) is a hard error, and the
-#: marker's own removal is what a fixed product forces. NO MODULE DECLARES ONE
-#: TODAY: ``test_transfer_contract.py`` did until 2026-08-25, for a root-caused
+#: marker's own removal is what a fixed product forces. ONE MODULE DECLARES ONE
+#: TODAY: ``test_progress_contract.py``, over the bed's ``bb1350:ssh:shell``
+#: cell (dropbear 2012.55's 1400-byte string cap; see that module's banner).
+#: ``test_transfer_contract.py`` did until 2026-08-25, for a root-caused
 #: defect in otto's ``nc`` listener spelling on BusyBox, and the universal
 #: ``nc -l -p PORT`` spelling repaid it -- which is the removal this strictness
 #: exists to force. The mechanism stays for the next declaration, and the
@@ -208,14 +210,14 @@ def pytest_generate_tests(metafunc):
     A CONTRACT MAY ALSO DECLARE A CELL A KNOWN FAILURE, by defining a
     module-level :data:`_XFAIL_HOOK` function returning a reason or ``None``.
     That becomes ``xfail(strict=True)`` on that cell's items -- see
-    :func:`_expected_failure_marks` for why the strictness is not optional. No
-    module declares one today; one did until 2026-08-25, for a root-caused
-    defect in otto's own ``nc`` listener, and the fix removed the declaration
-    along with the defect. The two hooks say DIFFERENT things and must not be
-    confused: a domain says the contract is not ABOUT this cell, so nothing is
-    asserted and nothing is claimed; an expected failure says the contract IS
-    about it and otto currently breaks it, so the failure is asserted and the
-    fix is what removes the declaration.
+    :func:`_expected_failure_marks` for why the strictness is not optional. One
+    does today (``test_progress_contract.py``); one did until 2026-08-25, for a
+    root-caused defect in otto's own ``nc`` listener, and the fix removed the
+    declaration along with the defect. The two hooks say DIFFERENT things and
+    must not be confused: a domain says the contract is not ABOUT this cell, so
+    nothing is asserted and nothing is claimed; an expected failure says the
+    contract IS about it and otto currently breaks it, so the failure is
+    asserted and the fix is what removes the declaration.
 
     Declaring a domain is NOT skipping and NOT shrinking the space. A skip
     inside a drawn cell reports success for a contract nobody ran, which is
@@ -231,7 +233,7 @@ def pytest_generate_tests(metafunc):
     set is to mark the item SKIPPED, which would put back exactly the silent
     green this whole venue is built against -- and the failure would be
     invisible in a report that already contains the draw line. Unreachable
-    from real data (of the 49 bed cells, 3 are outside the transfer domain and
+    from real data (of the 51 bed cells, 3 are outside the transfer domain and
     7 outside the timeout one; 0 of the 8 hermetic cells is outside either), so
     it is exercised by injection in
     ``tests/unit/test_conformance_bed.py`` rather than left as a check nothing
@@ -349,7 +351,7 @@ def _single_client_console(request: pytest.FixtureRequest, tmp_path_factory):
     every contract here opens and closes inside the body, well within it.
 
     A no-op for every other cell. That is the whole point of a lock rather than
-    an ``-n0`` lane: the bed venue's 49 cells include 7 single-client console
+    an ``-n0`` lane: the bed venue's 51 cells include 7 single-client console
     ones, and only those seven pay for the serialization. Full one-group
     serialization of the bed measured >450s against the Makefile's 240s cap
     (``tests/integration/host/conftest.py``'s grouping note), which is the

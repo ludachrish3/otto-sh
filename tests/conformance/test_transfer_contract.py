@@ -162,7 +162,7 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
     Read by ``tests/conformance/conftest.py``'s ``pytest_generate_tests``,
     which parametrizes ``resolved_cell`` over the drawn cells this answers
     True for. Today it narrows nothing in the hermetic venue (all 8 cells are
-    a runner filesystem) and excludes exactly three of the bed's 49:
+    a runner filesystem) and excludes exactly three of the bed's 51:
     ``zephyr37_nofs``, ``zephyr37_llext`` and ``zephyr44_llext``, which
     declare ``filesystem: "none"``.
 

@@ -15,6 +15,8 @@ from pathlib import Path
 import pytest
 
 from scripts.build_busybox_guest_images import (
+    DROPBEAR_INITTAB_LINE,
+    DROPBEAR_PIN,
     GUEST_TABLE,
     ROOT_SHADOW_HASH,
     build_initramfs_bytes,
@@ -54,12 +56,19 @@ cannot drift from the bed's own first row; the table itself is pinned by
 """
 
 
-def _build(tmp_path: Path, guest) -> dict[str, dict]:
+def _build(tmp_path: Path, guest, *, dropbear: bool = False) -> dict[str, dict]:
     fake_busybox = tmp_path / f"busybox-{guest.version}"
     fake_busybox.write_bytes(b"\x7fELF-fake-busybox")
     fake_ko = tmp_path / "e1000.ko"
     fake_ko.write_bytes(b"fake-module")
-    blob = build_initramfs_bytes(fake_busybox, fake_ko, guest.element, guest.ip)
+    extra = {}
+    if dropbear:
+        binary = tmp_path / "dropbear"
+        binary.write_bytes(b"\x7fELF-fake-dropbear")
+        key = tmp_path / "dropbear_rsa_host_key"
+        key.write_bytes(b"fake-dropbear-rsa-key")
+        extra = {"dropbear": binary, "dropbear_host_key": key}
+    blob = build_initramfs_bytes(fake_busybox, fake_ko, guest.element, guest.ip, **extra)
     return _parse_newc(gzip.decompress(blob))
 
 
@@ -140,7 +149,7 @@ def test_every_guest_image_carries_its_own_address(tmp_path: Path):
     """
     seen = {}
     for guest in GUEST_TABLE:
-        rcs = _build(tmp_path, guest)["etc/init.d/rcS"]["data"].decode()
+        rcs = _build(tmp_path, guest, dropbear=True)["etc/init.d/rcS"]["data"].decode()
         assert f"ifconfig eth0 {guest.ip} netmask 255.255.255.252 up" in rcs, (
             f"{guest.element}'s rcS does not configure {guest.ip}:\n{rcs}"
         )
@@ -177,13 +186,113 @@ def test_the_guest_table_matches_the_pinned_bed_identities():
     # The /30 arithmetic (guest = 4n+1, tap = 4n+2) is spelled out literally
     # rather than computed: a generated expectation would agree with a
     # generator that had the same off-by-one as the table.
-    assert [(g.version, g.element, g.ip, g.host_ip, g.tap) for g in GUEST_TABLE] == [
-        ("1.16.1", "bb1161", "198.51.100.1", "198.51.100.2", "bbeth-1161"),
-        ("1.21.1", "bb1211", "198.51.100.5", "198.51.100.6", "bbeth-1211"),
-        ("1.28.1", "bb1281", "198.51.100.9", "198.51.100.10", "bbeth-1281"),
-        ("1.31.0", "bb1310", "198.51.100.13", "198.51.100.14", "bbeth-1310"),
-        ("1.35.0", "bb1350", "198.51.100.17", "198.51.100.18", "bbeth-1350"),
+    assert [(g.version, g.element, g.ip, g.host_ip, g.tap, g.sshd) for g in GUEST_TABLE] == [
+        ("1.16.1", "bb1161", "198.51.100.1", "198.51.100.2", "bbeth-1161", "none"),
+        ("1.21.1", "bb1211", "198.51.100.5", "198.51.100.6", "bbeth-1211", "none"),
+        ("1.28.1", "bb1281", "198.51.100.9", "198.51.100.10", "bbeth-1281", "none"),
+        ("1.31.0", "bb1310", "198.51.100.13", "198.51.100.14", "bbeth-1310", "none"),
+        ("1.35.0", "bb1350", "198.51.100.17", "198.51.100.18", "bbeth-1350", "dropbear"),
     ]
+
+
+_DROPBEAR_GUEST = next((g for g in GUEST_TABLE if g.sshd == "dropbear"), None)
+if _DROPBEAR_GUEST is None:
+    raise AssertionError("GUEST_TABLE has no guest with sshd == 'dropbear'")
+
+
+def test_exactly_one_guest_declares_an_sshd_and_it_is_the_newest():
+    """One legacy-crypto cell, on the guest cheapest to make non-comparable:
+    bb1350 is the chaos anchor and the newest pin. The other four keep the
+    bed's ssh true-negative (spec 2026-09-23)."""
+    assert [g.element for g in GUEST_TABLE if g.sshd == "dropbear"] == ["bb1350"]
+    assert all(g.sshd in {"none", "dropbear"} for g in GUEST_TABLE)
+
+
+def test_the_dropbear_pin_is_the_last_sha1_only_release():
+    """2013.56 grew ECC and 2013.62 turns it on by default; asyncssh prefers it,
+    so anything later tests the modern path with an old banner."""
+    assert DROPBEAR_PIN.version == "2012.55"
+    assert re.fullmatch(r"[0-9a-f]{64}", DROPBEAR_PIN.sha256)
+    assert DROPBEAR_PIN.url == (
+        "https://matt.ucc.asn.au/dropbear/releases/dropbear-2012.55.tar.bz2"
+    )
+
+
+def test_a_dropbear_guest_image_carries_the_daemon_its_key_and_a_respawn_line(tmp_path):
+    image = _build(tmp_path, _DROPBEAR_GUEST, dropbear=True)
+    assert image["bin/dropbear"]["mode"] == 0o100755
+    assert image["bin/dropbear"]["data"] == b"\x7fELF-fake-dropbear"
+    assert image["etc/dropbear"]["mode"] == 0o040755
+    assert image["etc/dropbear/dropbear_rsa_host_key"]["mode"] == 0o100600
+    assert image["etc/dropbear/dropbear_rsa_host_key"]["data"] == b"fake-dropbear-rsa-key"
+    inittab = image["etc/inittab"]["data"].decode()
+    assert DROPBEAR_INITTAB_LINE in inittab
+    assert (
+        DROPBEAR_INITTAB_LINE
+        == "::respawn:/bin/dropbear -F -E -r /etc/dropbear/dropbear_rsa_host_key -p 22"
+    )
+    # telnetd stays: the guest's term is still telnet-first.
+    assert "::respawn:/bin/busybox telnetd -F -l /bin/login" in inittab
+
+
+def test_a_guest_without_an_sshd_ships_no_dropbear_even_when_given_one(tmp_path):
+    """The COLUMN decides, not the arguments: the provisioner passes the
+    dropbear inputs unconditionally, and four guests must ignore them."""
+    image = _build(tmp_path, _ANCHOR, dropbear=True)
+    assert "bin/dropbear" not in image
+    assert "etc/dropbear" not in image
+    assert "dropbear" not in image["etc/inittab"]["data"].decode()
+
+
+def test_an_unknown_hostname_is_refused_not_built_without_an_sshd(tmp_path):
+    """A typo'd or stale hostname must not silently fall back to sshd="none":
+    that fallback is how a guest could ship without its dropbear and nobody
+    would notice until a live probe found the port closed."""
+    with pytest.raises(ValueError, match="bb9999"):
+        build_initramfs_bytes(tmp_path / "nope", tmp_path / "nope", "bb9999", "198.51.100.253")
+
+
+def test_the_other_images_are_byte_identical_with_and_without_the_dropbear_inputs(tmp_path):
+    for guest in GUEST_TABLE:
+        if guest.sshd == "dropbear":
+            continue
+        kwargs = {}
+        binary = tmp_path / "dropbear"
+        binary.write_bytes(b"\x7fELF-fake-dropbear")
+        key = tmp_path / "hostkey"
+        key.write_bytes(b"k")
+        busybox = tmp_path / f"busybox-{guest.version}"
+        busybox.write_bytes(b"\x7fELF-fake-busybox")
+        ko = tmp_path / "e1000.ko"
+        ko.write_bytes(b"fake-module")
+        plain = build_initramfs_bytes(busybox, ko, guest.element, guest.ip, **kwargs)
+        given = build_initramfs_bytes(
+            busybox, ko, guest.element, guest.ip, dropbear=binary, dropbear_host_key=key
+        )
+        assert plain == given, f"{guest.element}'s image changed when dropbear inputs were offered"
+
+
+def test_main_refuses_the_dropbear_guest_without_its_inputs(tmp_path, monkeypatch, capsys):
+    """Fail loud before building anything: a provisioner that forgot the two
+    flags must not ship a bb1350 without its sshd while the stamps say fresh."""
+    dest = tmp_path / "bed"
+    kernel_module = tmp_path / "e1000.ko"
+    kernel_module.write_bytes(b"fake-module")
+
+    def fake_busybox_binary(release):
+        artifact = tmp_path / f"busybox-{release.version}"
+        artifact.write_bytes(b"\x7fELF-fake")
+        return artifact
+
+    monkeypatch.setattr("scripts.build_busybox_guest_images.busybox_binary", fake_busybox_binary)
+    rc = main(["--dest", str(dest), "--kernel-module", str(kernel_module)])
+    assert rc == 2
+    assert "bb1350" in capsys.readouterr().err
+    assert not list(dest.glob("initramfs-*")), "nothing may be built on a refused run"
+    # --only a non-sshd guest is fine without the inputs.
+    assert (
+        main(["--dest", str(dest), "--kernel-module", str(kernel_module), "--only", "1.16.1"]) == 0
+    )
 
 
 def test_the_guest_slash_30s_do_not_collide_with_the_zephyr_beds():
@@ -215,7 +324,7 @@ def test_the_guest_slash_30s_do_not_collide_with_the_zephyr_beds():
 # expected shape, so a malformed, extra or missing-quote entry fails the whole
 # match rather than being quietly skipped by a findall over the file. The
 # separator class allows the line continuations the table is wrapped with.
-_QUAD = r'"\d+\.\d+\.\d+:\d+\.\d+\.\d+\.\d+:\d+\.\d+\.\d+\.\d+:[a-z0-9-]+"'
+_QUAD = r'"\d+\.\d+\.\d+:\d+\.\d+\.\d+\.\d+:\d+\.\d+\.\d+\.\d+:[a-z0-9-]+:(?:none|dropbear)"'
 _PROVISIONER_QUADS = re.compile(rf"for entry in\s+((?:{_QUAD}[\s\\]*)+);\s*do")
 _PROVISIONER_ENABLE_LIST = re.compile(r'for entry in\s+((?:"\d+\.\d+\.\d+"[\s\\]*)+);\s*do')
 
@@ -249,6 +358,7 @@ _PROVISIONER_BINDINGS = re.compile(
     r'\s*gip=\$\(echo "\$entry" \| cut -d: -f2\)\s*\n'
     r'\s*hip=\$\(echo "\$entry" \| cut -d: -f3\)\s*\n'
     r'\s*tap=\$\(echo "\$entry" \| cut -d: -f4\)'
+    r'\s*\n\s*sshd=\$\(echo "\$entry" \| cut -d: -f5\)'
 )
 
 
@@ -265,7 +375,7 @@ def test_the_vagrantfile_provisioner_mirrors_the_guest_table():
     ``GUEST_TABLE`` is mirrored by the lab data (guarded by
     ``tests/unit/host/test_busybox_bed_lab_entries.py``) and again, in shell,
     by the ``busybox-qemu`` provisioner: the
-    ``version:guest_ip:tap_ip:tap_name`` quads it builds each guest's TAP and
+    ``version:guest_ip:tap_ip:tap_name:sshd`` quads it builds each guest's TAP and
     unit from, and the version list the ``systemctl enable`` loop walks. That
     third copy is the one Chris provisions the bed FROM. A transposed digit
     there ships a bed whose addresses disagree with lab.json and with the
@@ -290,15 +400,15 @@ def test_the_vagrantfile_provisioner_mirrors_the_guest_table():
 
     quad_lists = _PROVISIONER_QUADS.findall(body)
     assert len(quad_lists) == 1, (
-        "expected exactly one version:guest_ip:tap_ip:tap_name list in the "
+        "expected exactly one version:guest_ip:tap_ip:tap_name:sshd list in the "
         f"busybox-qemu provisioner, found {len(quad_lists)} — the table moved, "
-        "changed shape, or grew an entry that is not a well-formed quad"
+        "changed shape, or grew an entry that is not a well-formed five-field entry"
     )
     provisioned = re.findall(
-        r'"(\d+\.\d+\.\d+):(\d+\.\d+\.\d+\.\d+):(\d+\.\d+\.\d+\.\d+):([a-z0-9-]+)"',
+        r'"(\d+\.\d+\.\d+):(\d+\.\d+\.\d+\.\d+):(\d+\.\d+\.\d+\.\d+):([a-z0-9-]+):([a-z]+)"',
         quad_lists[0],
     )
-    assert provisioned == [(g.version, g.ip, g.host_ip, g.tap) for g in GUEST_TABLE], (
+    assert provisioned == [(g.version, g.ip, g.host_ip, g.tap, g.sshd) for g in GUEST_TABLE], (
         "Vagrantfile busybox-qemu identity table drifted from GUEST_TABLE in "
         "scripts/build_busybox_guest_images.py — the bed would stand up TAPs "
         "and addresses the lab data does not address"
@@ -315,13 +425,13 @@ def test_the_vagrantfile_provisioner_mirrors_the_guest_table():
     )
     # Stated separately from the two comparisons above so the failure names
     # the real accident: the two shell lists disagreeing with each other.
-    assert enabled == [version for version, _gip, _hip, _tap in provisioned], (
+    assert enabled == [version for version, _gip, _hip, _tap, _sshd in provisioned], (
         "the provisioner's own two copies disagree: enable list "
-        f"{enabled} vs identity table {[v for v, _g, _h, _t in provisioned]}"
+        f"{enabled} vs identity table {[v for v, _g, _h, _t, _s in provisioned]}"
     )
 
     for name, pattern in (
-        ("the four cut -d: field bindings, in table order", _PROVISIONER_BINDINGS),
+        ("the five cut -d: field bindings, in table order", _PROVISIONER_BINDINGS),
         ("the qemu -nic tap line", _PROVISIONER_NIC),
         ("the unit's ExecStartPre TAP setup", _PROVISIONER_TAP_UP),
         ("the unit's ExecStopPost TAP teardown", _PROVISIONER_TAP_DOWN),
@@ -332,6 +442,35 @@ def test_the_vagrantfile_provisioner_mirrors_the_guest_table():
             f"provisioner, found {len(found)} — it was edited away, hardcoded "
             "against something other than the loop's own row, or duplicated"
         )
+
+    assert f'DROPBEAR_SHA256="{DROPBEAR_PIN.sha256}"' in body, (
+        "the provisioner's dropbear checksum drifted from DROPBEAR_PIN in "
+        "scripts/build_busybox_guest_images.py"
+    )
+    assert f"dropbear-{DROPBEAR_PIN.version}.tar.bz2" in body
+    assert '--dropbear "$BED/dropbear" --dropbear-host-key "$BED/dropbear_rsa_host_key"' in body, (
+        "the provisioner does not hand the builder its dropbear inputs; bb1350 would be "
+        "refused (or, worse, built without its sshd by an older builder)"
+    )
+    assert 'install -d -o vagrant -g vagrant "$BED/cache"' in body, (
+        "the provisioner's cache directory must be created vagrant-owned — this block "
+        "runs as root and the builder later writes into it as vagrant"
+    )
+    assert 'mkdir -p "$BED/cache"' not in body, (
+        "a plain mkdir -p leaves $BED/cache root-owned on a fresh VM, which fails the "
+        "vagrant-run builder's first write into it"
+    )
+
+
+def test_the_provisioner_builds_dropbear_only_when_absent_and_never_regenerates_a_key():
+    """A re-provision must be cheap and must keep the guest's host key: the
+    build is skipped when both artifacts exist, and the key is minted only
+    when there is none — a guest whose key changed on every provision would
+    look like a different device to anything that pins host keys."""
+    body = _busybox_provisioner_text()
+    assert '[ ! -x "$BED/dropbear" ] || [ ! -f "$BED/dropbear_rsa_host_key" ]' in body
+    assert '[ -f "$BED/dropbear_rsa_host_key" ] || ' in body
+    assert "dropbearkey -t rsa -f" in body
 
 
 def test_the_provisioner_keeps_no_user_mode_networking_behind():
@@ -427,6 +566,10 @@ def test_main_rebuilds_and_announces_only_what_the_stamps_say_changed(tmp_path, 
     changed = tmp_path / "changed.txt"
     kernel_module = tmp_path / "e1000.ko"
     kernel_module.write_bytes(b"fake-module")
+    dropbear = tmp_path / "dropbear"
+    dropbear.write_bytes(b"\x7fELF-fake-dropbear")
+    dropbear_host_key = tmp_path / "dropbear_rsa_host_key"
+    dropbear_host_key.write_bytes(b"fake-dropbear-rsa-key")
 
     def fake_busybox_binary(release):
         # Version-distinct bytes: a builder that fed one artifact to every
@@ -445,6 +588,10 @@ def test_main_rebuilds_and_announces_only_what_the_stamps_say_changed(tmp_path, 
             str(kernel_module),
             "--emit-changed",
             str(changed),
+            "--dropbear",
+            str(dropbear),
+            "--dropbear-host-key",
+            str(dropbear_host_key),
         ]
         assert main(argv) == 0
         return changed.read_text().splitlines()

@@ -78,6 +78,7 @@ from tests._fixtures.progress import (
     assert_progress_invariants,
     capture_progress,
 )
+from tests.conformance._bed import BED_BUSYBOX
 from tests.conformance._controls import assert_bed_left_clean, remove_landed
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._transfer import transfer_backend_of
@@ -116,6 +117,80 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
     account of why this is a declared domain and not a skip.
     """
     return resolved.remote_scratch is not None
+
+
+# ==========================================================================
+# A REGISTERED, MEASURED-BROKEN CELL -- bb1350's ssh `shell` at full stride
+# ==========================================================================
+# The whole decision lives here, under its own banner, so that reversing it is
+# a single-file change (the convention `tests/conformance/conftest.py`'s
+# `_XFAIL_HOOK` docstring asks for).
+#
+# MEASURED 2026-09-24, on the real guest. dropbear 2012.55 (`bb1350`'s sshd)
+# caps any SSH string at `MAX_STRING_LEN` (`sysoptions.h:118` -- 1400 bytes)
+# and exits the connection rather than truncating
+# (`buffer.c:211` -- ``dropbear_exit("String too long")``). An SSH `exec`
+# request carries the whole command as ONE string, and `ShellFileTransfer`
+# puts a full chunk on one command line: `_SHELL_CHUNK_BYTES = 4096`
+# plaintext becomes a ~5.5 KB base64 line, four times the cap. Only this
+# contract's payload forces a full-size chunk (`_size_for` sizes it from the
+# backend's declared stride); the exec, transfer and timeout contracts on the
+# same cell move far less and pass.
+#
+# KEYED ON THE RESOLVER'S ANSWER, not on a guest's name -- `resolved.kind` is
+# what `tests/conformance/_bed.py`'s `bed_kind` derives from the host's
+# declared userland, and `resolved.cell.term`/`.transfer` are the pair the
+# venue crossed this cell for. A future BusyBox guest running a newer dropbear
+# over ssh would XPASS and RED THE LANE until someone narrows this predicate
+# -- that is the strictness working as designed, not a defect in the
+# predicate.
+#
+# MUST ANSWER None FOR EVERY HERMETIC CELL, and does, by construction:
+# `tests/unit/test_conformance_bed.py`'s
+# `test_no_hermetic_cell_is_declared_a_known_failure` sweeps every contract
+# module's hook against the hermetic space, and no hermetic cell is ever kind
+# `bed-busybox` (the hermetic venue's BusyBox rows are `busybox-artifact`,
+# built as local subprocesses with no sshd at all), so the `kind` check alone
+# already excludes the whole hermetic space -- this predicate cannot reach a
+# hermetic cell no matter what it checks after that.
+#
+# WHY IT IS NOT FIXED HERE. `SessionManager.exec_line_budget` answers `None`
+# for the bare ssh exec route by design (`session.py:2981-3006`), so
+# `ShellFileTransfer._fitted_chunk_bytes` has no budget to fit the chunk to;
+# only the pooled-shell (telnet/pty) route reports one. Giving the exec route
+# a per-host budget is a product change that needs a new host field, which
+# needs its own spec (repo rule) -- out of this branch's spec scope. The
+# follow-up issue the lead files is that spec's trigger: #437.
+_DROPBEAR_SHELL_AT_FULL_STRIDE = (
+    "shell put at full stride over the ssh exec channel: dropbear 2012.55 caps any SSH "
+    "string at MAX_STRING_LEN 1400 (sysoptions.h:118, buffer.c:211 'String too long') and "
+    "exits the connection, while a full 4096-byte chunk command is ~5.5 KB on one line; "
+    "measured 2026-09-24 on bb1350 (guest journal: 'Exit (root): String too long' at each "
+    "failure). exec, transfer and timeout contracts pass on this cell (the transfer payload "
+    "is 78 bytes, one short command). otto's SessionManager.exec_line_budget answers None "
+    "for the bare exec route by design, so ShellFileTransfer has no budget to fit the chunk "
+    "to; a per-host exec line budget is the follow-up, #437."
+)
+
+
+def expected_failure(resolved: ResolvedCell) -> "str | None":
+    """The reason this cell's progress contract is KNOWN to fail, or None.
+
+    Read by ``tests/conformance/conftest.py``'s ``pytest_generate_tests``, which
+    turns a reason into ``xfail(strict=True)`` on that cell's items. Exactly one
+    cell today: ``bed-busybox[bb1350:ssh:shell]``. See the banner above this
+    function for the measurement and why it is not fixed here.
+    """
+    if (
+        resolved.kind == BED_BUSYBOX
+        and resolved.cell.term == "ssh"
+        and resolved.cell.transfer == "shell"
+    ):
+        return _DROPBEAR_SHELL_AT_FULL_STRIDE
+    return None
+
+
+# ==========================================================================
 
 
 def _payload(size: int) -> bytes:

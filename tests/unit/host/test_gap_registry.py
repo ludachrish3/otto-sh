@@ -449,17 +449,27 @@ class TestThePhase4And5MeasurementsAreRecorded:
         assert gap.refuses is False
         assert refuse_if_gapped("product-lifecycle") is None
 
-    @pytest.mark.parametrize("surface", ["legacy-dropbear-crypto", "busybox-over-a-real-network"])
-    def test_the_tier3_fidelity_gaps_are_recorded_as_untested_and_block_nothing(
+    def test_legacy_dropbear_crypto_is_no_longer_a_gap(self) -> None:
+        """Measured on the bed on 2026-09-23
+        (``docs/superpowers/specs/2026-09-23-legacy-dropbear-guest-design.md``):
+        otto negotiates with dropbear 2012.55 with stock options and with a
+        per-host kex_algs, `tests/integration/busybox_bed/test_legacy_dropbear.py`.
+        A record that stays open after its measurement is the drift the
+        docs-sync test exists to catch, so the surface is asserted gone, not
+        relabelled."""
+        assert gap_for("legacy-dropbear-crypto") is None
+
+    @pytest.mark.parametrize("surface", ["busybox-over-a-real-network"])
+    def test_the_tier3_fidelity_gap_is_recorded_as_untested_and_blocks_nothing(
         self, surface: str
     ) -> None:
         """``todo/busybox-tier3-fidelity-2026-08-13.md`` §D, and its own insistence.
 
-        That queue file says it plainly: these two "must be worded as what is
-        *untested* rather than what is broken", because blocking them would
-        convert "we do not know" into "does not work". Declaring either
-        measured-broken would make otto refuse a connection nobody has ever
-        watched fail.
+        §C closed on 2026-09-23, so item B is the one left: it must be worded
+        as what is *untested* rather than what is broken, because blocking it
+        would convert "we do not know" into "does not work". The parametrize
+        stays a list of one because this is the shape the next `untested`
+        surface slots into.
         """
         gap = gap_for(surface)
         assert gap is not None, f"{surface!r} is not in GAPS"

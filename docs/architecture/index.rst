@@ -24,6 +24,7 @@ cross-cutting spines; the principles are the recurring design rules.
    testing
    quality-gates
    support-matrix
+   ssh-algorithms
 
 .. toctree::
    :caption: Design by area

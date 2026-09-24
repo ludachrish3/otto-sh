@@ -6,6 +6,7 @@ pattern to verify hop wiring without real SSH connections.
 """
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,7 +15,7 @@ from asyncssh import SSHClientConnection
 from otto.host.connections import ConnectionManager
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
-from otto.host.options import NcOptions
+from otto.host.options import LocalPortForward, NcOptions, SshOptions
 from otto.host.session import SessionManager
 from otto.host.transport import SshHopTransport
 from otto.host.unix_host import UnixHost
@@ -150,6 +151,48 @@ class TestConnectionManagerTunnel:
             assert result is mock_ssh
 
     @pytest.mark.asyncio
+    async def test_ssh_logs_the_redacted_connect_kwargs_and_the_negotiated_tuple(self, caplog):
+        import logging
+
+        cm = ConnectionManager(
+            ip="10.0.0.1",
+            creds=[Cred(login="user", password="s3cret")],
+            term="ssh",
+            name="legacy",
+            ssh_options=SshOptions(kex_algs=["diffie-hellman-group1-sha1"]),
+        )
+        info = {
+            "server_version": "SSH-2.0-dropbear_2012.55",
+            "send_cipher": "aes256-ctr",
+            "recv_cipher": "aes256-ctr",
+            "send_mac": "hmac-sha1",
+            "recv_mac": "hmac-sha1",
+            "send_compression": "none",
+            "recv_compression": "none",
+        }
+        with patch("otto.host.connections.ssh_connect", new_callable=AsyncMock) as mock_connect:
+            mock_ssh = MagicMock(spec=SSHClientConnection)
+            mock_ssh.get_extra_info.side_effect = lambda key, default=None: info.get(key, default)
+            mock_connect.return_value = mock_ssh
+            with caplog.at_level(logging.DEBUG, logger="otto.host.connections"):
+                await cm.ssh()
+        assert "legacy: asyncssh.connect('10.0.0.1') kwargs=" in caplog.text
+        assert "'kex_algs': ['diffie-hellman-group1-sha1']" in caplog.text
+        assert "s3cret" not in caplog.text
+        negotiated_line = (
+            "legacy: negotiated server='SSH-2.0-dropbear_2012.55' "
+            "cipher=aes256-ctr/aes256-ctr mac=hmac-sha1/hmac-sha1 compression=none/none"
+        )
+        assert negotiated_line in caplog.text
+
+        messages = [r.getMessage() for r in caplog.records]
+        kwargs_index = next(
+            i for i, m in enumerate(messages) if m.startswith("legacy: asyncssh.connect(")
+        )
+        negotiated_index = messages.index(negotiated_line)
+        assert kwargs_index < negotiated_index
+
+    @pytest.mark.asyncio
     async def test_ssh_no_tunnel_when_not_configured(self):
         cm = ConnectionManager(
             ip="10.0.0.1",
@@ -240,6 +283,148 @@ class TestConnectionManagerTunnel:
             await transport.get_tunnel()
 
         assert seen["auth"] == ("ops", "ops-pw")
+
+    @pytest.mark.asyncio
+    async def test_the_tunnel_connect_carries_the_hop_host_s_own_ssh_options(self, caplog):
+        """A hop host's port, algorithm lists and keys used to be dropped on the
+        floor: the tunnel connect passed ip, creds, known_hosts=None and tunnel,
+        nothing else. A legacy jumpbox on port 2222 with SHA-1 kex is exactly
+        the host that needs them. Also proves the hop path logs the same two
+        DEBUG lines as every other connect, tagged with the hop chain — but
+        applies NONE of the hop host's post-connect hook: a tunnel is a
+        transport to the hop, not a session on it (see
+        test_a_jumpbox_with_local_forwards_does_not_bind_them_on_its_tunnels
+        for why that matters)."""
+        import logging
+
+        from otto.config.lab import Lab
+
+        info = {
+            "server_version": "SSH-2.0-dropbear_2012.55",
+            "send_cipher": "aes256-ctr",
+            "recv_cipher": "aes256-ctr",
+            "send_mac": "hmac-sha1",
+            "recv_mac": "hmac-sha1",
+            "send_compression": "none",
+            "recv_compression": "none",
+        }
+        mock_ssh_conn = MagicMock(spec=SSHClientConnection)
+        mock_ssh_conn.get_extra_info.side_effect = lambda key, default=None: info.get(key, default)
+        with (
+            patch("asyncssh.connect", AsyncMock(return_value=mock_ssh_conn)) as mock_connect,
+            patch(
+                "otto.host.options.SshOptions._apply_post_connect", new_callable=AsyncMock
+            ) as mock_post_connect,
+        ):
+            jumpbox = UnixHost(
+                ip="10.10.0.1",
+                element=Element("jumpbox"),
+                creds=[Cred(login="admin", password="secret")],
+                ssh_options=SshOptions(port=2222, kex_algs=["diffie-hellman-group14-sha1"]),
+                log=LogMode.QUIET,
+            )
+            target = UnixHost(
+                ip="10.10.0.2",
+                element=Element("target"),
+                creds=[Cred(login="user", password="pass")],
+                hop="jumpbox",
+                log=LogMode.QUIET,
+            )
+            lab = Lab(name="hop_options")
+            lab.add_host(jumpbox)
+            lab.add_host(target)
+            # connect_and_describe (the two tagged DEBUG lines) lives in
+            # connections.py and logs through ITS OWN module logger even when
+            # called from the hop factory here; "otto.host" is the lowest
+            # common ancestor of otto.host.remote_host (the "Opening SSH
+            # tunnel..." line) and otto.host.connections (the two lines this
+            # test asserts on).
+            with caplog.at_level(logging.DEBUG, logger="otto.host"):
+                result = await target._connections._hop.get_tunnel()
+
+        assert result is mock_ssh_conn
+        mock_connect.assert_awaited_once_with(
+            "10.10.0.1",
+            username="admin",
+            password="secret",
+            tunnel=None,
+            port=2222,
+            known_hosts=None,
+            kex_algs=["diffie-hellman-group14-sha1"],
+        )
+        mock_post_connect.assert_not_awaited()
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any(
+            m.startswith("target via jumpbox: asyncssh.connect('10.10.0.1') kwargs=")
+            for m in messages
+        )
+        assert any(m.startswith("target via jumpbox: negotiated ") for m in messages)
+
+    @pytest.mark.asyncio
+    async def test_a_jumpbox_with_local_forwards_does_not_bind_them_on_its_tunnels(self):
+        """I1: a jumpbox host record's local_forwards belongs to the jumpbox's
+        OWN ssh() session, not to the per-target tunnel connections opened
+        through it as a hop. Before the fix, connect_and_describe ran the hop
+        host's post-connect hook (including forward_local_port) on every
+        hopped target's tunnel — a jumpbox with a FIXED local_forwards port
+        would try to bind that port once per target, and the second target's
+        tunnel would fail with 'address in use'. Two targets hop through one
+        jumpbox whose ssh_options declares a fixed local_forward; both must
+        open their tunnels and forward_local_port must never be awaited on
+        either tunnel connection."""
+        from otto.config.lab import Lab
+
+        jumpbox = UnixHost(
+            ip="10.10.0.1",
+            element=Element("jumpbox"),
+            creds=[Cred(login="admin", password="secret")],
+            ssh_options=SshOptions(
+                local_forwards=[
+                    LocalPortForward(
+                        listen_host="127.0.0.1",
+                        listen_port=9999,
+                        dest_host="10.20.0.5",
+                        dest_port=80,
+                    )
+                ]
+            ),
+            log=LogMode.QUIET,
+        )
+        target1 = UnixHost(
+            ip="10.10.0.2",
+            element=Element("target1"),
+            creds=[Cred(login="user", password="pass")],
+            hop="jumpbox",
+            log=LogMode.QUIET,
+        )
+        target2 = UnixHost(
+            ip="10.10.0.3",
+            element=Element("target2"),
+            creds=[Cred(login="user", password="pass")],
+            hop="jumpbox",
+            log=LogMode.QUIET,
+        )
+        lab = Lab(name="hop_local_forwards")
+        lab.add_host(jumpbox)
+        lab.add_host(target1)
+        lab.add_host(target2)
+
+        opened: list[Any] = []
+
+        async def fake_ssh_connect(*args: object, **kwargs: object) -> Any:
+            conn = AsyncMock(spec=SSHClientConnection)
+            opened.append(conn)
+            return conn
+
+        with patch("otto.host.connections.ssh_connect", side_effect=fake_ssh_connect):
+            conn1 = await target1._connections._hop.get_tunnel()
+            conn2 = await target2._connections._hop.get_tunnel()
+
+        assert conn1 is not conn2
+        assert len(opened) == 2
+        for conn in opened:
+            conn.forward_local_port.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_a_named_telnet_session_dials_the_forward_not_the_devices_own_address(self):

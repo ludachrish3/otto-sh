@@ -1718,7 +1718,7 @@ SQL
         vm.vm.provision "shell", name: "busybox-qemu", keep_color: true, inline: <<-SHELL
             set -e
             export DEBIAN_FRONTEND=noninteractive
-            apt -y install qemu-system-x86 zstd
+            apt -y install qemu-system-x86 zstd bzip2 curl
 
             BED=/home/vagrant/busybox-bed
             mkdir -p "$BED"
@@ -1771,13 +1771,71 @@ EOF
             fi
             chown -R vagrant:vagrant "$BED"
 
+            # dropbear 2012.55 for the bb1350 guest (spec 2026-09-23): the last
+            # release with no elliptic-curve support, so the guest is a
+            # SHA-1-only sshd like a real 2012-era device. Two builds from one
+            # checksum-pinned tarball: a NATIVE dropbearkey to mint the host key
+            # once, and a CROSS static x86_64 dropbear for the guest. The
+            # checksum mirrors DROPBEAR_PIN in scripts/build_busybox_guest_images.py
+            # and tests/unit/scripts/test_build_busybox_guest_images.py pins both.
+            DROPBEAR_SHA256="04982af2a10b220fa940f9f72f276d612c9bb643cfbb5ee1416e5a0f00de9b0f"
+            if [ ! -x "$BED/dropbear" ] || [ ! -f "$BED/dropbear_rsa_host_key" ]; then
+                apt -y install build-essential gcc-x86-64-linux-gnu libc6-dev-amd64-cross autotools-dev
+                tarball="$BED/cache/dropbear-2012.55.tar.bz2"
+                # This block runs as root, AFTER the chown -R vagrant:vagrant "$BED"
+                # above; the builder below runs as vagrant with
+                # OTTO_BUSYBOX_CACHE="$BED/cache" and writes into this directory,
+                # so it must be vagrant-owned on a fresh VM where nothing else
+                # created it yet.
+                install -d -o vagrant -g vagrant "$BED/cache"
+                [ -f "$tarball" ] || {
+                    curl -fsSL -o "$tarball.part" https://matt.ucc.asn.au/dropbear/releases/dropbear-2012.55.tar.bz2
+                    mv "$tarball.part" "$tarball"
+                    chown vagrant:vagrant "$tarball"
+                }
+                echo "$DROPBEAR_SHA256  $tarball" | sha256sum -c -
+                workdir=$(mktemp -d)
+                (
+                    trap 'rm -rf "$workdir"' EXIT
+                    cd "$workdir"
+                    # glibc dropped crypt(); no *-amd64-cross package carries
+                    # libxcrypt, so this downloads the amd64 archive's own .deb
+                    # via the foreign-arch source (amd64-archive.sources) the
+                    # kernel-fetch block above already set up. Deliberately
+                    # unpinned: the archive moves these debs; the build proved
+                    # reproducible with libcrypt1 sha256 9474785c… and
+                    # libcrypt-dev 2edff420… on 2026-09-23.
+                    apt-get download libcrypt-dev:amd64 libcrypt1:amd64
+                    mkdir sysroot
+                    for deb in libcrypt*.deb; do dpkg-deb -x "$deb" sysroot; done
+                    mkdir native cross
+                    tar xjf "$tarball" -C native --strip-components=1
+                    tar xjf "$tarball" -C cross --strip-components=1
+                    # The packaged config.sub/config.guess are copied in because
+                    # the 2012 tarball's own predate aarch64. --build below stays
+                    # explicit anyway, so the cross tree's build triplet is
+                    # pinned rather than re-guessed.
+                    for d in native cross; do cp /usr/share/misc/config.sub /usr/share/misc/config.guess "$d/"; done
+                    ( cd native && ./configure --disable-zlib && make PROGRAMS=dropbearkey )
+                    ( cd cross && ./configure --build=aarch64-unknown-linux-gnu --host=x86_64-linux-gnu --disable-zlib \
+                          LDFLAGS="-static -L$workdir/sysroot/usr/lib/x86_64-linux-gnu" \
+                      && make PROGRAMS=dropbear STATIC=1 && x86_64-linux-gnu-strip dropbear )
+                    install -m 0755 cross/dropbear "$BED/dropbear"
+                    # Minted once and kept: a stable host key across reboots and
+                    # re-provisions is what a real device looks like.
+                    [ -f "$BED/dropbear_rsa_host_key" ] || native/dropbearkey -t rsa -f "$BED/dropbear_rsa_host_key"
+                )
+                chown vagrant:vagrant "$BED/dropbear" "$BED/dropbear_rsa_host_key"
+            fi
+
             # Build (or refresh) the five images from the pinned artifacts.
             sudo -u vagrant env OTTO_BUSYBOX_CACHE="$BED/cache" \
                 python3 /vagrant/scripts/build_busybox_guest_images.py \
                 --dest "$BED" --kernel-module "$BED/e1000.ko" \
+                --dropbear "$BED/dropbear" --dropbear-host-key "$BED/dropbear_rsa_host_key" \
                 --emit-changed "$BED/changed.txt"
 
-            # version:guest_ip:tap_ip:tap_name — mirrors GUEST_TABLE in
+            # version:guest_ip:tap_ip:tap_name:sshd — mirrors GUEST_TABLE in
             # scripts/build_busybox_guest_images.py. Drift is caught
             # hostless: tests/unit/scripts/test_build_busybox_guest_images.py
             # reads this file and pins this table, the enable list below and
@@ -1788,15 +1846,21 @@ EOF
             # rcS writes it — but it is carried so each unit's Description and
             # each wrapper's header name the address an operator has to dial,
             # and so the guard pins that copy too.
-            for entry in "1.16.1:198.51.100.1:198.51.100.2:bbeth-1161" \
-                         "1.21.1:198.51.100.5:198.51.100.6:bbeth-1211" \
-                         "1.28.1:198.51.100.9:198.51.100.10:bbeth-1281" \
-                         "1.31.0:198.51.100.13:198.51.100.14:bbeth-1310" \
-                         "1.35.0:198.51.100.17:198.51.100.18:bbeth-1350"; do
+            #
+            # sshd names the guest whose image carries a dropbear
+            # (scripts/build_busybox_guest_images.py GUEST_TABLE); it only
+            # decorates the unit Description here — the builder decides what
+            # goes in the image.
+            for entry in "1.16.1:198.51.100.1:198.51.100.2:bbeth-1161:none" \
+                         "1.21.1:198.51.100.5:198.51.100.6:bbeth-1211:none" \
+                         "1.28.1:198.51.100.9:198.51.100.10:bbeth-1281:none" \
+                         "1.31.0:198.51.100.13:198.51.100.14:bbeth-1310:none" \
+                         "1.35.0:198.51.100.17:198.51.100.18:bbeth-1350:dropbear"; do
                 ver=$(echo "$entry" | cut -d: -f1)
                 gip=$(echo "$entry" | cut -d: -f2)
                 hip=$(echo "$entry" | cut -d: -f3)
                 tap=$(echo "$entry" | cut -d: -f4)
+                sshd=$(echo "$entry" | cut -d: -f5)
 
                 cat > /home/vagrant/run-busybox-qemu-${ver}.sh <<EOF
 #!/usr/bin/env bash
@@ -1827,9 +1891,12 @@ EOF
                 chown vagrant:vagrant /home/vagrant/run-busybox-qemu-${ver}.sh
                 chmod +x /home/vagrant/run-busybox-qemu-${ver}.sh
 
+                ssh_note=""
+                if [ "$sshd" = dropbear ]; then ssh_note=", ssh ${gip}:22"; fi
+
                 cat > /etc/systemd/system/busybox-qemu-${ver}.service <<EOF
 [Unit]
-Description=BusyBox ${ver} bed guest under QEMU on ${tap} (telnet ${gip}:23)
+Description=BusyBox ${ver} bed guest under QEMU on ${tap} (telnet ${gip}:23${ssh_note})
 After=network.target
 
 [Service]

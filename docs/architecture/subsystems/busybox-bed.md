@@ -187,7 +187,7 @@ it, so every guest is addressed through the hop:
 | 1.21.1 | `bb1211` | `busybox_1211` | 198.51.100.5 | `bbeth-1211` (198.51.100.6) | `busybox-qemu-1.21.1.service` |
 | 1.28.1 | `bb1281` | `busybox_1281` | 198.51.100.9 | `bbeth-1281` (198.51.100.10) | `busybox-qemu-1.28.1.service` |
 | 1.31.0 | `bb1310` | `busybox_1310` | 198.51.100.13 | `bbeth-1310` (198.51.100.14) | `busybox-qemu-1.31.0.service` |
-| 1.35.0 | `bb1350` | `busybox_1350` | 198.51.100.17 | `bbeth-1350` (198.51.100.18) | `busybox-qemu-1.35.0.service` |
+| 1.35.0 | `bb1350` | `busybox_1350` | 198.51.100.17 (telnet 23, ssh 22) | `bbeth-1350` (198.51.100.18) | `busybox-qemu-1.35.0.service` |
 
 Each guest owns one /30 out of TEST-NET-2, whose other end is its TAP device on
 `test1`; telnetd binds the honest port 23. Those addresses are routable from `test1`
@@ -195,11 +195,32 @@ and nowhere else, which is why every guest is reached through the hop.
 
 Facts worth knowing before you read a failure:
 
-- **Telnet only, and that is the device being honest.** These guests run no ssh
-  daemon — real BusyBox devices frequently do not either — so their lab entries
-  declare `telnet` and hop through `test1`. Their transfers are `shell` and
-  `nc`; `nc` is *declared and refused*, by a measured gap in the `nc` applet's
-  argument parsing, and the refusal itself is pinned by the bed suite.
+- **Telnet on every guest; ssh on one.** Four guests run no ssh daemon — real
+  BusyBox devices frequently do not either — so their lab entries declare
+  `telnet` and hop through `test1`, and their dead, undeclared ssh is the
+  probe survey's standing drift true-negative. All five guests' transfers
+  are `shell` and `nc`; `nc` is *declared and refused*, by a measured gap in
+  the `nc` applet's argument parsing, and the refusal itself is pinned by
+  the bed suite. `bb1350` also carries a **dropbear 2012.55**, cross-built
+  at provision time from a checksum-pinned tarball: the last release with no
+  elliptic-curve support, so it is a SHA-1-only sshd like a real 2012-era
+  device (`diffie-hellman-group14-sha1`, `ssh-rsa`, `hmac-sha1`). Its entry
+  declares `["telnet", "ssh"]`, telnet first, so sessions stay on the
+  console path unless `--term ssh` asks otherwise;
+  `tests/integration/busybox_bed/test_legacy_dropbear.py` is the wire proof
+  that otto negotiates with it, with stock options and with a per-host
+  [`kex_algs`](../../configuration/settings.md#legacy-ssh-servers). Over ssh
+  its `nc` transfer passes every conformance contract and `shell` passes all
+  but the full-stride progress contract: dropbear 2012.55 caps an SSH string
+  at 1400 bytes and a full chunk command is ~5.5 KB, declared a known
+  failure in the conformance bed
+  (`tests/conformance/test_progress_contract.py`, follow-up #437); the next
+  `make conformance-bed` records it as `measured-broken` in the support
+  matrix. The host key is minted once on
+  `test1` (`~/busybox-bed/dropbear_rsa_host_key`) and
+  kept across re-provisions. The daemon is not health-probed by
+  `scripts/lab_health.py`, which routes hop-fronted guests to the telnet
+  console probe by shape.
 - **One account: `root`.** The password is baked into the image by the builder and
   recorded in the guests' lab-data credentials.
 - **They are emulated, on two cores.** x86 guests on an aarch64 host means TCG with no
