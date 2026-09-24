@@ -117,7 +117,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1161"
         ],
@@ -147,7 +147,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1211"
         ],
@@ -177,7 +177,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1281"
         ],
@@ -207,7 +207,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1310"
         ],
@@ -237,11 +237,27 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1350"
         ],
         "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:nc]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1350:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:shell]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1350:ssh:shell]]"
+          },
           {
             "cell_label": "bed-busybox[bb1350:telnet:nc]",
             "element": "bb1350",
@@ -261,13 +277,13 @@
         ],
         "not_observable": [],
         "observable": "otto's CommandResult.retcode, .exit_code and .status for `(exit 42)` (must report 42) and `(exit 0)` (must report 0)",
-        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1350:telnet:nc]]"
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_exit_code_channel_reports_more_than_one_code[bed-busybox[bb1350:ssh:nc]]"
       },
       "gnu": {
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "test1",
           "test2",
@@ -540,7 +556,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -562,7 +578,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr37_fat",
           "zephyr37_lfs",
@@ -611,7 +627,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr44_lfs",
           "zephyr44_llext"
@@ -644,7 +660,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1161"
         ],
@@ -674,7 +690,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1211"
         ],
@@ -704,7 +720,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1281"
         ],
@@ -734,7 +750,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1310"
         ],
@@ -764,11 +780,27 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1350"
         ],
         "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:nc]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1350:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:shell]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1350:ssh:shell]]"
+          },
           {
             "cell_label": "bed-busybox[bb1350:telnet:nc]",
             "element": "bb1350",
@@ -788,13 +820,13 @@
         ],
         "not_observable": [],
         "observable": "the framed stdout of `printf '%s\\n%s\\n' otto-conformance-frame-1 otto-conformance-frame-2`: more than one line, no otto `__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line, and exact equality against the 2 lines the tester chose",
-        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1350:telnet:nc]]"
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_the_framing_check_sees_planted_pollution[bed-busybox[bb1350:ssh:nc]]"
       },
       "gnu": {
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "test1",
           "test2",
@@ -1067,7 +1099,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -1089,7 +1121,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr37_fat",
           "zephyr37_lfs",
@@ -1138,7 +1170,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_exec_frames_output_without_prompt_noise",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr44_lfs",
           "zephyr44_llext"
@@ -1171,7 +1203,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1161"
         ],
@@ -1201,7 +1233,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1211"
         ],
@@ -1231,7 +1263,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1281"
         ],
@@ -1261,7 +1293,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1310"
         ],
@@ -1291,11 +1323,27 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1350"
         ],
         "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:nc]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1350:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:shell]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1350:ssh:shell]]"
+          },
           {
             "cell_label": "bed-busybox[bb1350:telnet:nc]",
             "element": "bb1350",
@@ -1315,13 +1363,13 @@
         ],
         "not_observable": [],
         "observable": "the aggregate Results of a sequence whose middle command `(exit 5)` exits 5: its is_ok, its status, and which command first_failure names",
-        "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1350:telnet:nc]]"
+        "positive_control": "tests/conformance/test_exec_contract.py::test_control_a_succeeding_sequence_is_not_reported_as_failed[bed-busybox[bb1350:ssh:nc]]"
       },
       "gnu": {
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "test1",
           "test2",
@@ -1594,7 +1642,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -1616,7 +1664,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr37_fat",
           "zephyr37_lfs",
@@ -1665,7 +1713,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr44_lfs",
           "zephyr44_llext"
@@ -1698,7 +1746,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1161"
         ],
@@ -1728,7 +1776,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1211"
         ],
@@ -1758,7 +1806,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1281"
         ],
@@ -1788,7 +1836,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1310"
         ],
@@ -1818,11 +1866,27 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1350"
         ],
         "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:nc]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1350:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:shell]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1350:ssh:shell]]"
+          },
           {
             "cell_label": "bed-busybox[bb1350:telnet:nc]",
             "element": "bb1350",
@@ -1842,13 +1906,13 @@
         ],
         "not_observable": [],
         "observable": "the bytes get() reads back over `nc` after put() of a known payload to this host's own scratch directory | the bytes get() reads back over `shell` after put() of a known payload to this host's own scratch directory",
-        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1350:telnet:nc]]"
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_roundtrip_comparison_rejects_a_corrupted_byte[bed-busybox[bb1350:ssh:nc]]"
       },
       "gnu": {
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "test1",
           "test2",
@@ -2121,7 +2185,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -2143,7 +2207,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr37_fat",
           "zephyr37_lfs"
@@ -2185,7 +2249,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr44_lfs"
         ],
@@ -2215,7 +2279,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1161"
         ],
@@ -2245,7 +2309,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1211"
         ],
@@ -2275,7 +2339,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1281"
         ],
@@ -2305,7 +2369,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1310"
         ],
@@ -2335,11 +2399,27 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1350"
         ],
         "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:nc]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1350:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:shell]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1350:ssh:shell]]"
+          },
           {
             "cell_label": "bed-busybox[bb1350:telnet:nc]",
             "element": "bb1350",
@@ -2359,13 +2439,13 @@
         ],
         "not_observable": [],
         "observable": "the mode `stat -c %a` reads back on the host after put(mode=0o615) over `nc` | the mode `stat -c %a` reads back on the host after put(mode=0o615) over `shell`",
-        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1350:telnet:nc]]"
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_landed_mode_follows_the_mode_that_was_asked_for[bed-busybox[bb1350:ssh:nc]]"
       },
       "gnu": {
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "test1",
           "test2",
@@ -2638,7 +2718,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -2660,7 +2740,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr37_fat",
           "zephyr37_lfs"
@@ -2702,7 +2782,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr44_lfs"
         ],
@@ -2732,7 +2812,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_progress_contract.py::test_progress_events_track_the_bytes_in_both_directions",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1161"
         ],
@@ -2762,7 +2842,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_progress_contract.py::test_progress_events_track_the_bytes_in_both_directions",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1211"
         ],
@@ -2792,7 +2872,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_progress_contract.py::test_progress_events_track_the_bytes_in_both_directions",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1281"
         ],
@@ -2822,7 +2902,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_progress_contract.py::test_progress_events_track_the_bytes_in_both_directions",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1310"
         ],
@@ -2849,14 +2929,29 @@
         "positive_control": "tests/conformance/test_progress_contract.py::test_control_the_instrument_refuses_a_bar_that_jumps[bed-busybox[bb1310:telnet:nc]]"
       },
       "busybox-1.35.0": {
-        "status": "measured-ok",
+        "status": "measured-broken",
         "nodeid": "tests/conformance/test_progress_contract.py::test_progress_events_track_the_bytes_in_both_directions",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1350"
         ],
         "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:nc]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_progress_contract.py::test_control_the_instrument_refuses_a_bar_that_jumps[bed-busybox[bb1350:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:shell]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "shell",
+            "outcome": "xfailed"
+          },
           {
             "cell_label": "bed-busybox[bb1350:telnet:nc]",
             "element": "bb1350",
@@ -2876,13 +2971,13 @@
         ],
         "not_observable": [],
         "observable": "the progress events `nc` emits while put() and then get() move a payload sized from the backend's own declared stride | the progress events `shell` emits while put() and then get() move a payload sized from the backend's own declared stride",
-        "positive_control": "tests/conformance/test_progress_contract.py::test_control_the_instrument_refuses_a_bar_that_jumps[bed-busybox[bb1350:telnet:nc]]"
+        "failure_summary": "bed-busybox[bb1350:ssh:shell]: call: expected failure -- shell put at full stride over the ssh exec channel: dropbear 2012.55 caps any SSH string at MAX_STRING_LEN 1400 (sysoptions.h:118, buffer.c:211 'String too long') and exits the connection, while a full 4096-byte chunk command is ~5.5 KB on one line; measured 2026-09-24 on bb1350 (guest journal: 'Exit (root): String too long' at each failure). exec, transfer and timeout contracts pass on this cell (the transfer payload is 78 bytes, one short command). otto's SessionManager.exec_line_budget answers None for the bare exec route by design, so ShellFileTransfer has no budget to fit the chunk to; a per-host exec line budget is the follow-up, #437."
       },
       "gnu": {
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_progress_contract.py::test_progress_events_track_the_bytes_in_both_directions",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "test1",
           "test2",
@@ -3155,7 +3250,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_progress_contract.py::test_progress_events_track_the_bytes_in_both_directions",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -3177,7 +3272,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_progress_contract.py::test_progress_events_track_the_bytes_in_both_directions",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr37_fat",
           "zephyr37_lfs"
@@ -3219,7 +3314,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_progress_contract.py::test_progress_events_track_the_bytes_in_both_directions",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr44_lfs"
         ],
@@ -3249,7 +3344,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1161"
         ],
@@ -3279,7 +3374,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1211"
         ],
@@ -3309,7 +3404,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1281"
         ],
@@ -3339,7 +3434,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1310"
         ],
@@ -3369,11 +3464,27 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1350"
         ],
         "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:nc]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_tree_that_comes_back_is_the_tree_that_was_sent[bed-busybox[bb1350:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:shell]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_tree_that_comes_back_is_the_tree_that_was_sent[bed-busybox[bb1350:ssh:shell]]"
+          },
           {
             "cell_label": "bed-busybox[bb1350:telnet:nc]",
             "element": "bb1350",
@@ -3393,13 +3504,13 @@
         ],
         "not_observable": [],
         "observable": "the bytes, nesting and empty directory get(recursive=True) reads back over `nc` after put(recursive=True) of a small tree into this host's scratch directory | the bytes, nesting and empty directory get(recursive=True) reads back over `shell` after put(recursive=True) of a small tree into this host's scratch directory",
-        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_tree_that_comes_back_is_the_tree_that_was_sent[bed-busybox[bb1350:telnet:nc]]"
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_tree_that_comes_back_is_the_tree_that_was_sent[bed-busybox[bb1350:ssh:nc]]"
       },
       "gnu": {
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "test1",
           "test2",
@@ -3672,7 +3783,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -3694,7 +3805,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr37_fat",
           "zephyr37_lfs"
@@ -3736,7 +3847,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr44_lfs"
         ],
@@ -3766,7 +3877,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1161"
         ],
@@ -3796,7 +3907,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1211"
         ],
@@ -3826,7 +3937,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1281"
         ],
@@ -3856,7 +3967,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1310"
         ],
@@ -3886,11 +3997,27 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1350"
         ],
         "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:nc]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_batch_that_comes_back_is_the_batch_that_was_sent[bed-busybox[bb1350:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:shell]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_batch_that_comes_back_is_the_batch_that_was_sent[bed-busybox[bb1350:ssh:shell]]"
+          },
           {
             "cell_label": "bed-busybox[bb1350:telnet:nc]",
             "element": "bb1350",
@@ -3910,13 +4037,13 @@
         ],
         "not_observable": [],
         "observable": "the bytes of every file in a batch larger than the transfer's concurrency cap, read back over `nc` after put() of the batch, once concurrent and once one at a time | the bytes of every file in a batch larger than the transfer's concurrency cap, read back over `shell` after put() of the batch, once concurrent and once one at a time",
-        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_batch_that_comes_back_is_the_batch_that_was_sent[bed-busybox[bb1350:telnet:nc]]"
+        "positive_control": "tests/conformance/test_transfer_contract.py::test_control_the_batch_that_comes_back_is_the_batch_that_was_sent[bed-busybox[bb1350:ssh:nc]]"
       },
       "gnu": {
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "test1",
           "test2",
@@ -4189,7 +4316,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -4211,7 +4338,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr37_fat",
           "zephyr37_lfs"
@@ -4253,7 +4380,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "zephyr44_lfs"
         ],
@@ -4283,7 +4410,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1161"
         ],
@@ -4313,7 +4440,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1211"
         ],
@@ -4343,7 +4470,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1281"
         ],
@@ -4373,7 +4500,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1310"
         ],
@@ -4403,11 +4530,27 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "bb1350"
         ],
         "observed_cells": [
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:nc]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "nc",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1350:ssh:nc]]"
+          },
+          {
+            "cell_label": "bed-busybox[bb1350:ssh:shell]",
+            "element": "bb1350",
+            "term": "ssh",
+            "transfer": "shell",
+            "outcome": "passed",
+            "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1350:ssh:shell]]"
+          },
           {
             "cell_label": "bed-busybox[bb1350:telnet:nc]",
             "element": "bb1350",
@@ -4427,13 +4570,13 @@
         ],
         "not_observable": [],
         "observable": "CommandResult.timed_out, .status, .retcode and .exit_code for `sleep 10` (10.0s) run under a shorter budget, and whether the SAME session still answers `printf '%s\\n' otto-conformance-tail` afterwards",
-        "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1350:telnet:nc]]"
+        "positive_control": "tests/conformance/test_timeout_contract.py::test_control_a_command_inside_its_budget_is_not_reported_as_timed_out[bed-busybox[bb1350:ssh:nc]]"
       },
       "gnu": {
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "observed_on": [
           "test1",
           "test2",
@@ -4705,7 +4848,7 @@
       "zephyr-2.7": {
         "status": "not-observable",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr27_fat:telnet:console])",
         "probe_result": "False -- the contract declares this drawn cell outside its applicable domain",
         "observed_on": [],
@@ -4721,7 +4864,7 @@
       "zephyr-3.7": {
         "status": "not-observable",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_fat:telnet:console]); tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_lfs:telnet:console]); tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_llext:telnet:console]); tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr37_nofs:telnet:console])",
         "probe_result": "False -- the contract declares this drawn cell outside its applicable domain",
         "observed_on": [],
@@ -4752,7 +4895,7 @@
       "zephyr-4.4": {
         "status": "not-observable",
         "venue": "bed",
-        "as_of": "2026-09-23",
+        "as_of": "2026-09-24",
         "probed": "tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr44_lfs:telnet:console]); tests/conformance/test_timeout_contract.py::applicable_cell(bed-zephyr[zephyr44_llext:telnet:console])",
         "probe_result": "False -- the contract declares this drawn cell outside its applicable domain",
         "observed_on": [],
