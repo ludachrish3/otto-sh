@@ -4473,9 +4473,15 @@ def _with_the_nc_split(matrix: dict, *at: "tuple[str, str]") -> dict:
 
 
 def _distinguishing(group: "list[dict]", other: "list[dict]") -> "set[str]":
-    """Axis values that belong to *group* and to no cell in *other*."""
+    """Axis values that belong to *group* and to no cell in *other*.
+
+    ``cell_label`` counts as an axis too. When two axes vary at once no single value
+    can separate the groups -- `bb1350`'s ssh `shell` against its three other routes,
+    since 2026-09-24 -- and the renderer names each drawn cell by label instead, which
+    is exact; a label is unique to its entry, so it always belongs to one group only.
+    """
     values: "set[str]" = set()
-    for axis in ("element", "term", "transfer"):
+    for axis in ("element", "term", "transfer", "cell_label"):
         values |= {entry[axis] for entry in group} - {entry[axis] for entry in other}
     return values
 
@@ -6405,6 +6411,7 @@ def test_the_grid_legend_explains_every_word_the_grid_can_print(committed):
     keys = {
         "works": "`works`",
         "broken": "`broken`",
+        "partly broken": "`partly broken`",
         "refused": "`refused`",
         "not interpreted": "`not interpreted`",
         "not observable": "`not observable`",
@@ -6455,6 +6462,17 @@ def test_the_registered_gap_tally_counts_only_the_failures_the_suite_predicted(c
     """
     broken = [_NC_SPLIT_AT, ("transfer-mode", "busybox-1.16.1")]
     base = _with_the_nc_split(committed, *broken)
+    # THE ARTIFACT MAY ALREADY HOLD BROKEN CELLS OF ITS OWN -- since 2026-09-24 it does,
+    # `transfer-progress` x `busybox-1.35.0`, dropbear 2012.55's registered gap. They are
+    # counted into both sides rather than assumed away, and each must be predicted, or
+    # the control below would be asserting a count this test never set up.
+    already = [
+        cell for _, _, cell, _ in _cells(committed) if cell.get("status") == "measured-broken"
+    ]
+    assert all(
+        entry["outcome"] != "failed" for cell in already for entry in cell["observed_cells"]
+    ), "the artifact holds a failure nothing predicted; this control no longer isolates one"
+    total = len(broken) + len(already)
 
     def _tally(matrix: dict) -> str:
         page = _page(matrix)
@@ -6463,7 +6481,7 @@ def test_the_registered_gap_tally_counts_only_the_failures_the_suite_predicted(c
         )
 
     assert _tally(base) == (
-        f"{len(broken)} of these cells read `measured-broken`, and **{len(broken)} of them"
+        f"{total} of these cells read `measured-broken`, and **{total} of them"
     ), "the control: every broken cell here is a strict xfail, so the two counts agree"
 
     injected = copy.deepcopy(base)
@@ -6471,7 +6489,7 @@ def test_the_registered_gap_tally_counts_only_the_failures_the_suite_predicted(c
     entry = next(e for e in surprise["observed_cells"] if e["outcome"] == "xfailed")
     entry["outcome"] = "failed"
     assert _tally(injected) == (
-        f"{len(broken)} of these cells read `measured-broken`, and **{len(broken) - 1} of them"
+        f"{total} of these cells read `measured-broken`, and **{total - 1} of them"
     ), "a failure nothing predicted was counted as one the suite did"
 
 
@@ -6485,8 +6503,13 @@ def test_no_row_counts_a_single_drawn_cell_in_the_plural(committed):
     renderer that dropped the count entirely would satisfy only the second.
     """
     page = _page(committed)
-    for wrong in (" 1 drawn cells", "all 1 ", "the drawn cells `bed"):
+    for wrong in (" 1 drawn cells", "all 1 "):
         assert wrong not in page, f"the page counts one thing in the plural: {wrong!r}"
+    # THE PLURAL NOUN OVER ONE NAMED CELL, and only that: `the drawn cells` followed by a
+    # list (`a`, `b` and `c`) is right, and since 2026-09-24 the artifact prints one, so a
+    # bare substring would forbid the correct plural along with the wrong one.
+    one_named = re.search(r"the drawn cells `[^`]+`(?!,| and )", page)
+    assert one_named is None, f"the page counts one thing in the plural: {one_named[0]!r}"
 
     single = [
         (surface_id, profile_id)
@@ -6554,7 +6577,9 @@ def test_a_measured_ok_cell_with_no_control_promises_nothing_either(committed):
     assert "nothing proved it could fail there" in row, f"the row was not downgraded: {row}"
     assert "*Positive control:* **none**" in block, block
     assert f"on the drawn cell `{label}`" in row, f"one drawn cell, named in the plural: {row}"
-    assert "on the drawn cells `" not in page
+    # THE ROW AND NOT THE PAGE: a real multi-cell row elsewhere may say "on the drawn
+    # cells" correctly, and since 2026-09-24 one does.
+    assert "on the drawn cells `" not in row, row
 
 
 def test_a_refusal_cell_that_broke_still_reports_where_it_broke(committed):
