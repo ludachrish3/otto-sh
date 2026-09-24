@@ -2898,6 +2898,58 @@ GAPS: list[Gap] = [
         ],
     ),
     Gap(
+        surface="ssh-exec-string-cap",
+        status=MEASURED_BROKEN,
+        reason=(
+            "an old dropbear sshd caps every SSH protocol string at 1400 bytes and DROPS "
+            "THE CONNECTION on a longer one rather than truncating it -- and an ssh `exec` "
+            "request carries the whole command as ONE string. The `shell` transfer backend "
+            "puts a full 4096-byte chunk on one command line, about 5.5 KB once "
+            "base64-encoded, so a `shell` put of more than about 1 KB over an ssh host "
+            "whose sshd has the cap fails part-way, with the connection closed under it. "
+            "Small commands, `run()`, and small transfers are unaffected: every other "
+            "contract the conformance bed runs passes on the same device. Use `nc` (the "
+            "same device's `nc` transfers pass), or reach the device over telnet, where "
+            "the `shell` backend fits its chunks to the line it can type"
+        ),
+        measured_on=(
+            "the conformance bed, 2026-09-24, on `bb1350` -- BusyBox 1.35.0 behind dropbear "
+            "2012.55, whose `MAX_STRING_LEN` is 1400 (`sysoptions.h`), past which "
+            "`buffer.c` exits the connection with 'String too long': "
+            "`test_progress_events_track_the_bytes_in_both_directions` failed on the "
+            "`ssh:shell` cell with the guest journal logging 'Exit (root): String too long' "
+            "at each failure, and passed on `ssh:nc`, `telnet:nc` and `telnet:shell`. "
+            "Declared a strict xfail on that cell by the contract module, so a device that "
+            "stops failing reddens the lane"
+        ),
+        queued_for=(
+            "issue #437: a per-host exec line budget, so `ShellFileTransfer` can fit its "
+            "chunks to the exec channel the way it already fits them to a typed line. "
+            "`SessionManager.exec_line_budget` answers `None` for the bare ssh exec route by "
+            "design today, and giving that route a bound is a new host field, which needs "
+            "its own spec"
+        ),
+        paths=[
+            GapPath(
+                site="otto.host.transfer.shell.Base64Codec.send_chunks",
+                state=PATH_OPEN,
+                detail=(
+                    "the `shell` backend's put loop, which emits one chunk command per "
+                    "stride through the host's exec path. On an ssh host the chunk is sized by "
+                    "`_fitted_chunk_bytes` against `exec_line_budget`, which is `None` for "
+                    "the bare exec channel, so the full 4096-byte stride goes out and a "
+                    "capped sshd drops the connection. Nothing refuses it: otto has no way "
+                    "to learn an sshd's string cap before sending, and refusing every "
+                    "ssh `shell` put would stop transfers to the devices that have no cap"
+                ),
+                pinned_by=(
+                    "tests/conformance/test_progress_contract.py"
+                    "::test_progress_events_track_the_bytes_in_both_directions"
+                ),
+            ),
+        ],
+    ),
+    Gap(
         surface="product-lifecycle",
         status=UNTESTED,
         reason=(

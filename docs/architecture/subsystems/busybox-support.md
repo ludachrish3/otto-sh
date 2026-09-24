@@ -185,7 +185,7 @@ Counts, derived from the records themselves rather than maintained by hand
 | `PROBE_REFUSED` | 2 |
 | `PROTECTED` | 1 |
 | `ATTRIBUTED` | 2 |
-| `OPEN` | 4 |
+| `OPEN` | 5 |
 
 The `WIRED`, `ADAPTED` and `ATTRIBUTED` paths — the ones whose message is this
 table's — reach {func}`~otto.host.userland.refuse_if_gapped`
@@ -209,6 +209,7 @@ error prints it verbatim; the sections below are its readable form.
 | [`daemon-launch`](#daemon-launch) | `measured-broken` | Launching a tagged daemon needs bash, which a stock BusyBox userland does not have, so `link impair --expire` is refused rather than left with a timer that never runs. Impair without `--expire` and it works. |
 | [`shutdown-command`](#shutdown-command) | `measured-broken` | Nothing, on any measured device: `Host.shutdown()` asks which spelling your device has and emits `poweroff` where there is no `shutdown`. Only a device with neither is refused. `Host.reboot()` is unaffected. |
 | [`run-command-line-length`](#run-command-line-length) | `measured-broken` | `Host.run()` refuses a command whose typed line would exceed 1022 characters, rather than let ash truncate it. `Host.exec()` is safe and is not refused. |
+| [`ssh-exec-string-cap`](#ssh-exec-string-cap) | `measured-broken` | A `shell` put of more than about 1 KB over ssh fails part-way on a device whose old dropbear caps an SSH string at 1400 bytes. Nothing is refused; use `nc`, or reach the device over telnet. |
 | [`product-lifecycle`](#product-lifecycle) | `untested` | otto's `stage`/`install`/`uninstall` verbs emit no command of their own. Whether they work on your device is decided by your own product code. |
 | [`busybox-over-a-real-network`](#busybox-over-a-real-network) | `untested` | Every target is local or on host-local virtual wire, so nothing has met a physical path's latency or loss. |
 
@@ -657,6 +658,44 @@ deliberately. A fix is a pty-free `run()` path, not a larger buffer — the buff
 belongs to the device — and until one exists the record stays `measured-broken`,
 because the surface still is: otto declines the command rather than running a
 shorter one.
+
+### ssh-exec-string-cap
+
+**Status:** `measured-broken` — and **not refused**: otto has no way to learn an
+sshd's string cap before it sends, so the one path below is **OPEN**, and a
+`shell` put to a capped device fails part-way rather than up front.
+
+**Paths otto touches this from:**
+
+- `otto.host.transfer.shell.Base64Codec.send_chunks` — **OPEN**: the `shell`
+  backend's put loop, one chunk command per stride through the host's exec path.
+  On an ssh host nothing bounds that line, so the full 4096-byte stride goes out
+  and a capped sshd drops the connection.
+
+An old dropbear caps **every SSH protocol string at 1400 bytes** and exits the
+connection on a longer one rather than truncating it. An ssh `exec` request
+carries the whole command as one string, and the `shell` backend puts a full
+4096-byte chunk on one command line — about 5.5 KB once base64-encoded. So a
+`shell` put of more than about 1 KB to such a device fails with the connection
+closed under it. Short commands, `run()`, and small transfers never come near
+the cap, and are unaffected.
+
+**What to do instead.** Use the `nc` backend, which passes on the same device, or
+reach the device over telnet: on that route the `shell` backend already fits its
+chunks to the line it can type, and passes too.
+
+**Measured:** the conformance bed, 2026-09-24, on `bb1350` — BusyBox 1.35.0 behind
+dropbear 2012.55, whose `MAX_STRING_LEN` is 1400. The progress contract failed on
+the `ssh:shell` drawn cell, with the guest journal logging
+`Exit (root): String too long` at each failure, and passed on `ssh:nc`,
+`telnet:nc` and `telnet:shell`. The contract module declares that cell a strict
+xfail, so a device that stops failing reddens the lane
+({doc}`../support-matrix` renders the cell as `partly broken`).
+
+**Queued for:** issue #437 — a
+per-host exec line budget, so the `shell` backend can fit its chunks to the exec
+channel the way it already fits them to a typed line. That is a new host field,
+and needs its own spec.
 
 ### product-lifecycle
 
