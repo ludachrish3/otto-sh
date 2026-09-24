@@ -9,11 +9,11 @@
 #
 #     scripts/watch_release.sh [PID]      # PID defaults to the running `make release`
 #
-# It emits three kinds of line:
+# It emits three kinds of line, and ALWAYS ends on the last one:
 #
 #     STAGE: <target>        the chain advanced to a new gate
 #     LANE green|RED: <f>    a junit file landed, with its parsed counts
-#     DONE:|STOPPED:         the release exited, with or without a new tag
+#     SUCCESS:|FAILED:       the release exited, with or without a NEW tag
 #
 # Two traps shaped the implementation, and both produce a *confidently wrong*
 # reading rather than an obvious failure, so don't "simplify" them back:
@@ -35,7 +35,11 @@
 # A junit file is written when a lane ENDS, so LANE lines are completions, not
 # starts; a lane that hangs or is killed produces no file at all. That gap is
 # covered by the stage poll and by the exit branch, which always emits a final
-# DONE/STOPPED line -- silence never means success.
+# SUCCESS/FAILED line -- silence never means success. "New" tag means HEAD moved
+# AND is tagged: a HEAD that was already tagged when the watch began is the
+# previous release, not this one. Nothing in the exit branch may fail under
+# `set -e` -- `clean-dist` has usually removed `dist/`, and a bare `find dist/`
+# once killed the watcher silently at exactly the moment its line was needed.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -46,7 +50,7 @@ POLL_SECONDS="${POLL_SECONDS:-20}"
 STAGES=(clean-dist web-install check-python release-matrix release-kgcov-matrix \
         docs nox web dashboard-all validate-ts profile wheel-check build)
 
-usage() { sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^# Two traps/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
 
 case "${1:-}" in
     -h|--help) usage; exit 0 ;;
@@ -66,6 +70,8 @@ fi
 
 echo "watch_release: watching pid $REL_PID (poll ${POLL_SECONDS}s)"
 
+START_HEAD="$(git -C "$REPO" rev-parse -q --verify HEAD || true)"
+
 # Pull one attribute off an XML element line. Anchored on a non-name character
 # so `tests=` cannot be matched inside another attribute's name.
 attr() {
@@ -78,6 +84,8 @@ declare -A seen
 while IFS= read -r f; do
     seen["$f"]="$(stat -c %Y "$f" 2>/dev/null || echo 0)"
 done < <(find "$JUNIT_DIR" -name '*.xml' 2>/dev/null)
+
+red_lanes=""
 
 emit_new_lanes() {
     local f mtime line tests fails errs skips secs verdict
@@ -100,6 +108,7 @@ emit_new_lanes() {
         fi
         if [ "${fails:-0}" != "0" ] || [ "${errs:-0}" != "0" ]; then
             verdict="RED"
+            red_lanes="${red_lanes:+$red_lanes, }${f#"$JUNIT_DIR"/}"
         else
             verdict="green"
         fi
@@ -129,14 +138,18 @@ while true; do
 
     if ! kill -0 "$REL_PID" 2>/dev/null; then
         cd "$REPO"
-        tag="$(git tag --points-at HEAD | head -1)"
-        dist="$(find dist/ -maxdepth 1 -type f ! -name '.*' -printf '%f ' 2>/dev/null)"
+        head="$(git rev-parse -q --verify HEAD || true)"
+        tag=""
+        if [ "$head" != "$START_HEAD" ]; then
+            tag="$(git tag --points-at HEAD 2>/dev/null | head -1 || true)"
+        fi
+        dist="$(find dist/ -maxdepth 1 -type f ! -name '.*' -printf '%f ' 2>/dev/null || true)"
         if [ -n "$tag" ]; then
-            echo "DONE: release finished -- tagged $tag; dist: ${dist:-<empty>}"
+            echo "SUCCESS: release finished -- tagged $tag; dist: ${dist:-<empty>}"
         else
-            echo "STOPPED: \`make release\` exited with no new tag at HEAD" \
-                 "(describe: $(git describe --tags 2>/dev/null || echo none);" \
-                 "dist: ${dist:-<empty>}) -- likely a failed stage, last seen at: ${prev:-unknown}"
+            echo "FAILED: \`make release\` exited with no new tag" \
+                 "(last stage: ${prev:-unknown}; red lanes: ${red_lanes:-none};" \
+                 "dist: ${dist:-<empty>}) -- its own terminal has the reason"
         fi
         exit 0
     fi
