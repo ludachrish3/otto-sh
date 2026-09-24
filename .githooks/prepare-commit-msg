@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # prepare-commit-msg
 #
-# Two interactive prompts on `git commit`:
-#   1. Commit type prefix (feat/fix/chore/...) — prepended to the subject.
-#      Skipped if the message already starts with a Conventional Commits
-#      prefix (so re-edits and tool-generated commits like bump-my-version
-#      are not double-prefixed).
-#   2. AI assistance tag — added as an `Assisted-by:` trailer.
+# One interactive prompt on `git commit`: the commit type prefix
+# (feat/fix/chore/...), prepended to the subject. Skipped if the message
+# already starts with a Conventional Commits prefix (so re-edits and
+# tool-generated commits like bump-my-version are not double-prefixed), and
+# for merge/squash/amend commits and `git commit -m "..."`.
 #
-# Both prompts skip for merge/squash/amend commits and `git commit -m "..."`.
+# There is no `Assisted-by:` prompt any more. It dates from when AI tools
+# handed a human the diff to commit; an agent now commits on its own and
+# writes its own trailer into the message, so the prompt only ever asked a
+# question nobody at the terminal could answer better than the message did.
 #
 # Install: cp prepare-commit-msg .git/hooks/prepare-commit-msg
 #          chmod +x .git/hooks/prepare-commit-msg
@@ -55,11 +57,11 @@ first_line=$(grep -m1 -v '^#' "$COMMIT_MSG_FILE" | head -n1)
 # regex syntax rather than shell grouping. Reference unquoted below.
 conventional_prefix_re='^(feat|fix|chore|docs|test|refactor|ci|build|perf|style|revert)(\([^)]+\))?!?:'
 
-# The tty probe uses the same idiom as the AI-assistance prompt below: a plain
-# command rather than `exec`, so it fails cleanly into "skip the prompt" instead
-# of printing `/dev/tty: No such device or address` and then reading EOF. Without
-# it, a scripted commit fell through to whatever TYPE_DEFAULT was and got that
-# prefix prepended to a subject that never asked for one.
+# The tty probe is a plain command rather than `exec`, so it fails cleanly into
+# "skip the prompt" instead of printing `/dev/tty: No such device or address`
+# and then reading EOF. Without it, a scripted commit fell through to whatever
+# TYPE_DEFAULT was and got that prefix prepended to a subject that never asked
+# for one.
 if [[ ! "$first_line" =~ $conventional_prefix_re ]] && { : < /dev/tty; } 2>/dev/null; then
     # Read from terminal directly — stdin is not available in git hooks
     exec < /dev/tty
@@ -96,109 +98,5 @@ if [[ ! "$first_line" =~ $conventional_prefix_re ]] && { : < /dev/tty; } 2>/dev/
 
     exec < /dev/null
 fi
-
-# ── Options for AI assistance prompt ──────────────────────────────────────────
-# OPT_NONE and OPT_CUSTOM are sentinel values — they drive behavior, not tags.
-# OPT_DEFAULT controls which option number is selected on empty input.
-OPT_NONE="None"
-OPT_CLAUDE_OPUS="Claude Opus 5"
-OPT_CLAUDE_SONNET="Claude Sonnet 5"
-OPT_CLAUDE_FABLE="Claude Fable 5"
-OPT_CUSTOM="Custom"
-OPT_DEFAULT=1   # Options are 1-indexed
-
-OPTIONS=(
-    "$OPT_NONE"             # 1
-    "$OPT_CLAUDE_OPUS"      # 2
-    "$OPT_CLAUDE_SONNET"    # 3
-    "$OPT_CLAUDE_FABLE"     # 4
-    "$OPT_CUSTOM"           # 5
-)
-# ──────────────────────────────────────────────────────────────────────────────
-
-# (A) Respect an existing tag: if the message already carries an `Assisted-by:`
-# trailer (a tool/agent self-attributed it, or this is a re-edit), don't prompt
-# — take it as authoritative and leave it untouched. Also prevents a duplicate
-# trailer.
-if git interpret-trailers --parse "$COMMIT_MSG_FILE" | grep -qi '^Assisted-by:'; then
-    exit 0
-fi
-
-# (B) No controlling terminal (a scripted commit, an IDE, CI, an agent): we
-# can't ask, so resolve to the same "None" the interactive default resolves to
-# and add no trailer. This is the fast path for human commits made outside a
-# terminal.
-#
-# It used to stamp a hardcoded sentinel here instead, to avoid silently
-# mis-tagging AI-assisted work as human. That traded one mis-tag for another:
-# the string named a fixed model, so it mis-attributed every commit from any
-# other model, and went stale the moment the option list moved on — while also
-# tagging genuinely human commits as AI-assisted. A tag is a claim about THIS
-# commit's provenance; no fallback can know it, and a wrong tag is worse than
-# no tag.
-#
-# AI agents do not need this branch: they self-attribute by embedding the
-# `Assisted-by:` trailer in the message they write, which branch (A) above
-# takes as authoritative. An agent that skips that gets an untagged commit —
-# which is the agent's bug to fix, not something a guess here can paper over.
-#
-# `{ : < /dev/tty; }` probes tty availability without consuming stdin and, being
-# a plain command (not `exec`), fails cleanly into the branch rather than
-# risking a shell exit on the redirect error.
-if ! { : < /dev/tty; } 2>/dev/null; then
-    exit 0
-fi
-
-# Interactive: read from the terminal directly — stdin is not available in hooks.
-exec < /dev/tty
-
-echo ""
-echo "╭────────── AI assistance used in this commit? ──────────╮"
-echo "│                                                        │"
-for i in "${!OPTIONS[@]}"; do
-    num=$((i + 1))
-    label="${OPTIONS[$i]}"
-    if [ "$num" -eq "$OPT_DEFAULT" ]; then
-        printf "│  [%s] %-50s│\n" "$num" "$label  (default)"
-    else
-        printf "│  [%s] %-50s│\n" "$num" "$label"
-    fi
-done
-echo "│                                                        │"
-echo "╰────────────────────────────────────────────────────────╯"
-printf "  Select [%s]: " "$OPT_DEFAULT"
-read -r choice
-
-# Resolve empty input to the default option number
-[ -z "$choice" ] && choice="$OPT_DEFAULT"
-
-# Validate numeric input is in range
-if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#OPTIONS[@]}" ]; then
-    echo "  Invalid selection — skipping tag."
-    exec < /dev/null
-    exit 0
-fi
-
-selected="${OPTIONS[$((choice - 1))]}"
-
-if [ "$selected" = "$OPT_NONE" ]; then
-    exec < /dev/null
-    exit 0
-elif [ "$selected" = "$OPT_CUSTOM" ]; then
-    printf "  Name: "
-    read -r selected
-    if [ -z "$selected" ]; then
-        echo "  No name entered — skipping tag."
-        exec < /dev/null
-        exit 0
-    fi
-fi
-
-AI_TAG="$selected"
-
-exec < /dev/null
-
-# Add as a properly formatted git trailer (blank line + Token: Value)
-git interpret-trailers --in-place --trailer "Assisted-by: $AI_TAG" "$COMMIT_MSG_FILE"
 
 exit 0

@@ -872,17 +872,7 @@ contributions to otto. If your PR contains AI-assisted code, please note it
 in the PR description. Regardless of how code was generated, contributors
 are responsible for understanding, testing, and owning what they submit.
 
-`make dev` installs a `prepare-commit-msg` hook (from `.githooks/`) that
-prompts for the AI model used and records it as an `Assisted-by:` commit
-trailer. Pick the model that actually produced the work — the trailer is a
-per-commit provenance claim, so a stale or approximate name defeats its
-purpose. Use `Custom` for a model the menu doesn't list.
-
-If the message already carries an `Assisted-by:` trailer, the hook takes it
-as authoritative and leaves it alone. That is how an AI agent attributes its
-own commits: it writes the trailer into the message itself.
-
-On a non-interactive commit (no terminal — a scripted commit, an IDE, a CI
-job), the hook can't prompt and adds no trailer. This is the fast path for
-human commits made outside a terminal; the hook never guesses a model, since
-a wrong attribution is worse than none.
+AI-assisted commits carry an `Assisted-by:` trailer naming the model that
+actually produced the work — the trailer is a per-commit provenance claim, so a
+stale or approximate name defeats its purpose. An AI agent writes the trailer
+into the commit message itself; nothing adds it for you.

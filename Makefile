@@ -1163,12 +1163,10 @@ MATRIX_BASELINE := reports/.matrix-baseline.json
 # disagrees with the artifact committed in the same release
 # (`tests/unit/test_support_matrix.py` pins the order).
 #
-# HOOKS ARE OFF for this one commit. `.githooks/prepare-commit-msg` prompts on a
-# terminal for an `Assisted-by:` trailer, and a release runs on one -- so the
-# hook would stop the release to ask who assisted a measurement that `make`
-# produced. Its own branch (B) already says a provenance tag nobody can know
-# should be absent rather than guessed; this reaches that outcome deterministically
-# instead of stamping a trailer that would be false.
+# HOOKS ARE OFF for this one commit. A release runs on a terminal, and
+# `make` wrote this commit's whole message, so no hook has anything to ask or
+# add; turning them off keeps the commit non-interactive whatever
+# `.githooks/` grows to prompt for next.
 #
 # IDEMPOTENT: run it by hand, review, commit, and the release's stage finds
 # nothing to do. If the release aborts later, this commit stays -- it is a true
