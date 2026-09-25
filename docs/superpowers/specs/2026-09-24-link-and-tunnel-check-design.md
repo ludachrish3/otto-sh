@@ -246,3 +246,13 @@ A summary line states exactly what was proven, e.g. "hop chain: payload-verified
 
 - #440: payload-verified TCP/UDP last segment to `--dest` devices that run no socat.
 - Checking an existing tunnel by id (declined for v1; reconsider if users ask).
+
+## 10. Amendments (2026-09-25, before the tunnel check was planned)
+
+Settled while planning `otto tunnel check`, after `otto link check` landed:
+
+- **`--port` is the service port the user intends to use.** The throwaway tunnel is built on a scratch service port (§5.2), so the user's real service is never touched. The check reports whether `--port` is free for the chosen protocol on both endpoints. The `--dest` last-segment handshake (§5.3) targets it.
+- **A `--dest` host that does run socat and bash** gets the echo bound at its resolved address, so the whole path is payload-verified and there is no split. The split proof of §5.3 applies only to a device that doesn't.
+- **UDP payload sizes:** before this amendment, a UDP tunnel crossed its hops on a TCP carrier stream, which split datagrams over 8 KiB and could merge back-to-back ones. `2026-09-25-udp-tunnel-carrier-design.md` makes UDP tunnels carry UDP between hops. The tunnel check lands after that change, and its UDP payloads are 1 B, 1400 B and 65,000 B (the IPv4 maximum is 65,507), plus several round trips on one flow.
+- **Segment reachability (§5.2 step 1)** uses the tunnel's own carrier protocol: TCP segments for a TCP tunnel, UDP segments with a socat UDP echo for a UDP tunnel.
+- **Shared probe helpers** that the tunnel check needs (the bash-wrapped `$EPOCHREALTIME` clock, elapsed-time parsing, the socat client bounds) move from `otto.link` into `otto.check`, as §6 intends. `otto.tunnel` may not import `otto.link`.
