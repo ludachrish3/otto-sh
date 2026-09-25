@@ -1,72 +1,13 @@
-"""``[coverage]`` config resolution from ``.otto/settings.toml``.
+"""Coverage directory handling shared by the ``otto test --cov`` / ``otto cov`` paths.
 
-Pure helpers over the already-parsed repo list: which repo (if any) declared
-a ``[coverage]`` section, and what that section's raw settings dict looks
-like. Every ``otto test --cov`` / ``otto cov`` code path resolves its
-coverage settings through :func:`has_cov_config`, :func:`get_cov_repo`, and
-:func:`get_cov_config`, so a lab with multiple SUT repos always picks the
-same one. :func:`load_hosts_pattern` compiles that section's optional
-``hosts`` host-id selector, refusing a malformed value by name.
-:func:`prepare_empty_dir` rounds the module out — the typer-free
-empty/overwrite directory gate shared by ``--cov-dir`` and
-``--cov-report-dir``.
+:func:`prepare_empty_dir` is the typer-free empty/overwrite directory gate
+shared by ``--cov-dir`` and ``--cov-report-dir``. The ``[coverage]`` settings
+lookup (which repo declares it, its ``hosts`` selector) lives beneath the
+coverage pipeline, in :mod:`otto.config.coverage_settings`.
 """
 
-import re
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-from .errors import CoverageConfigError
-
-if TYPE_CHECKING:
-    from ..config.repo import Repo
-
-
-def has_cov_config(cov: dict[str, Any]) -> bool:
-    """Return True when the repo actually declared coverage settings."""
-    return bool(cov.get("embedded") or cov.get("tiers") or cov.get("hosts"))
-
-
-def get_cov_repo(repos: "list[Repo]") -> "Repo | None":
-    """Return the first repo with a ``[coverage]`` section in its settings."""
-    for repo in repos:
-        if has_cov_config(repo.settings.get("coverage") or {}):
-            return repo
-    return None
-
-
-def get_cov_config(repos: "list[Repo]") -> dict[str, Any]:
-    """Extract the ``[coverage]`` config from the first repo that has one."""
-    repo = get_cov_repo(repos)
-    return repo.settings["coverage"] if repo else {}
-
-
-def load_hosts_pattern(cov_config: dict[str, Any]) -> "re.Pattern[str] | None":
-    """Compile the optional ``[coverage].hosts`` host-id selector.
-
-    ``None`` when the key is absent — every lab host is a coverage target.
-    The value comes straight out of settings.toml, so a wrong shape is refused
-    by name rather than with ``re.compile``'s bare TypeError. The empty string
-    is refused too: it *looks* like a selector but would fall through as "no
-    selector", silently fanning coverage (and ``otto cov clean``'s deletes)
-    out to every host — including the SSH hop the selector exists to exclude.
-
-    Raises:
-        CoverageConfigError: On a non-string or empty ``hosts`` value.
-    """
-    raw = cov_config.get("hosts")
-    if raw is None:
-        return None
-    if not isinstance(raw, str):
-        raise CoverageConfigError(
-            f"[coverage] hosts must be a string (a host-id regex), got {type(raw).__name__}"
-        )
-    if not raw:
-        raise CoverageConfigError(
-            "[coverage] hosts must not be empty — omit the key to select every host"
-        )
-    return re.compile(raw)
 
 
 def prepare_empty_dir(path: Path, *, overwrite: bool, flag_name: str) -> None:

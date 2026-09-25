@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..errors import CoverageConfigError
+from ...config.coverage_settings import CoverageConfigError
 
 STATS = ("line", "branch")
 
@@ -179,7 +179,7 @@ def _load_one(index: int, raw: dict[str, Any]) -> ExclusionRule:
 def load_exclusion_rules(cov_config: dict[str, Any]) -> list[ExclusionRule]:
     """Parse ``[coverage.exclusions].rules`` into compiled rule objects.
 
-    Raises :class:`~otto.coverage.errors.CoverageConfigError` (a
+    Raises :class:`~otto.config.coverage_settings.CoverageConfigError` (a
     ``ValueError``) on any malformed rule, naming the offending index.
     """
     raw_rules = (cov_config.get("exclusions") or {}).get("rules") or []

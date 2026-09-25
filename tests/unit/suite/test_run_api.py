@@ -314,7 +314,7 @@ def _stub_instrumented_lab(monkeypatch, *, instrumented=True):
     it (the ``[coverage.tickets]`` wiring tests depend on that), and one that
     declares none is handed a minimal stand-in table.
     """
-    from otto.coverage.config import get_cov_config as _real_get_cov_config
+    from otto.config.coverage_settings import get_cov_config as _real_get_cov_config
     from otto.coverage.instrumentation import InstrumentationReport, InstrumentationRow
 
     rows = [InstrumentationRow("h1", "app", True)] if instrumented else []
@@ -323,7 +323,7 @@ def _stub_instrumented_lab(monkeypatch, *, instrumented=True):
         lambda repos: InstrumentationReport(rows),
     )
     monkeypatch.setattr(
-        "otto.coverage.config.get_cov_config",
+        "otto.config.coverage_settings.get_cov_config",
         lambda repos: _real_get_cov_config(repos) or {"hosts": ".*"},
     )
 
@@ -336,7 +336,9 @@ def test_resolve_coverage_auto_turns_on_when_instrumented(monkeypatch):
         "otto.coverage.instrumentation.detect_for_lab",
         lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
     )
-    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": ".*"})
+    monkeypatch.setattr(
+        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ".*"}
+    )
     assert resolve_coverage(RunOptions(), [], command="otto test").cov is True
 
 
@@ -348,7 +350,9 @@ def test_resolve_coverage_auto_stays_off_when_nothing_instrumented(monkeypatch):
         "otto.coverage.instrumentation.detect_for_lab",
         lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", False)]),
     )
-    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": ".*"})
+    monkeypatch.setattr(
+        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ".*"}
+    )
     assert resolve_coverage(RunOptions(), [], command="otto test").cov is False
 
 
@@ -360,7 +364,9 @@ def test_resolve_coverage_forced_on_with_nothing_raises(monkeypatch):
     monkeypatch.setattr(
         "otto.coverage.instrumentation.detect_for_lab", lambda repos: InstrumentationReport([])
     )
-    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": ".*"})
+    monkeypatch.setattr(
+        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ".*"}
+    )
     with pytest.raises(CoverageNotInstrumentedError):
         resolve_coverage(RunOptions(cov=True), [], command="otto test --cov")
 
@@ -380,7 +386,9 @@ def test_resolve_coverage_returns_a_copy_keeping_every_other_field(monkeypatch):
     from otto.suite.run import RunOptions, resolve_coverage
 
     _stub_instrumented_lab(monkeypatch)
-    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": ".*"})
+    monkeypatch.setattr(
+        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ".*"}
+    )
     opts = RunOptions(markers="smoke", cov_report=True, project_name="P")
     resolved = resolve_coverage(opts, [], command="otto test")
     assert opts.cov is None
@@ -416,7 +424,7 @@ def test_resolve_coverage_forced_on_refuses_a_missing_coverage_table(monkeypatch
     arrives *after* the suite has run, where ``_post_run_coverage`` swallows it
     — so an explicit request must die here, naming the remedy.
     """
-    from otto.coverage.errors import CoverageConfigError
+    from otto.config.coverage_settings import CoverageConfigError
     from otto.coverage.instrumentation import InstrumentationReport, InstrumentationRow
     from otto.suite.run import RunOptions, resolve_coverage
 
@@ -424,7 +432,7 @@ def test_resolve_coverage_forced_on_refuses_a_missing_coverage_table(monkeypatch
         "otto.coverage.instrumentation.detect_for_lab",
         lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
     )
-    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {})
+    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda repos: {})
     with pytest.raises(CoverageConfigError, match=r"\[coverage\] table"):
         resolve_coverage(RunOptions(cov=True), [], command="otto test --cov")
 
@@ -432,7 +440,7 @@ def test_resolve_coverage_forced_on_refuses_a_missing_coverage_table(monkeypatch
 def test_run_suite_forced_cov_without_coverage_table_refuses_before_the_run(tmp_path, monkeypatch):
     """The refusal reaches the caller before any host is touched."""
     import otto.config
-    from otto.coverage.errors import CoverageConfigError
+    from otto.config.coverage_settings import CoverageConfigError
     from otto.coverage.instrumentation import InstrumentationReport, InstrumentationRow
 
     monkeypatch.setattr(otto.config, "get_repos", list)
@@ -443,7 +451,7 @@ def test_run_suite_forced_cov_without_coverage_table_refuses_before_the_run(tmp_
         "otto.coverage.instrumentation.detect_for_lab",
         lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
     )
-    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {})
+    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda repos: {})
 
     class _NoCovTableSuite:
         pass
@@ -463,7 +471,7 @@ def test_resolve_coverage_auto_with_no_coverage_table_does_not_raise(monkeypatch
         "otto.coverage.instrumentation.detect_for_lab",
         lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
     )
-    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {})
+    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda repos: {})
     assert resolve_coverage(RunOptions(), [], command="otto test").cov is False
 
 
@@ -480,7 +488,9 @@ def test_resolve_coverage_auto_survives_an_empty_hosts_selection(monkeypatch, ca
     from otto.suite.run import RunOptions, resolve_coverage
 
     monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_empty_selection)
-    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": "sensor"})
+    monkeypatch.setattr(
+        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": "sensor"}
+    )
 
     with caplog.at_level("WARNING"):
         resolved = resolve_coverage(RunOptions(), [], command="otto test")
@@ -500,14 +510,16 @@ def test_resolve_coverage_auto_survives_a_malformed_hosts_selector(monkeypatch, 
     text is parsed as a style tag and silently eaten. ``getMessage()`` cannot
     see that, so the LOGGED ARG is what this asserts.
     """
-    from otto.coverage.errors import CoverageConfigError
+    from otto.config.coverage_settings import CoverageConfigError
     from otto.suite.run import RunOptions, resolve_coverage
 
     def _raise_config(_repos):
         raise CoverageConfigError("[coverage].hosts must be a string")
 
     monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_config)
-    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": ["a"]})
+    monkeypatch.setattr(
+        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ["a"]}
+    )
 
     with caplog.at_level("WARNING"):
         resolved = resolve_coverage(RunOptions(), [], command="otto test")
@@ -529,7 +541,7 @@ def test_resolve_coverage_auto_warning_renders_its_brackets_literally(monkeypatc
     from rich.highlighter import NullHighlighter
     from rich.logging import RichHandler
 
-    from otto.coverage.errors import CoverageConfigError
+    from otto.config.coverage_settings import CoverageConfigError
     from otto.suite.run import RunOptions, resolve_coverage
     from otto.suite.run import logger as run_logger
 
@@ -537,7 +549,9 @@ def test_resolve_coverage_auto_warning_renders_its_brackets_literally(monkeypatc
         raise CoverageConfigError("[coverage].hosts must be a string")
 
     monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_config)
-    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": ["a"]})
+    monkeypatch.setattr(
+        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ["a"]}
+    )
 
     buf = io.StringIO()
     handler = RichHandler(
@@ -563,7 +577,9 @@ def test_resolve_coverage_forced_on_propagates_an_empty_hosts_selection(monkeypa
     from otto.suite.run import RunOptions, resolve_coverage
 
     monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_empty_selection)
-    monkeypatch.setattr("otto.coverage.config.get_cov_config", lambda repos: {"hosts": "sensor"})
+    monkeypatch.setattr(
+        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": "sensor"}
+    )
 
     with pytest.raises(EmptySelectionError):
         resolve_coverage(RunOptions(cov=True), [], command="otto test --cov")
@@ -1769,3 +1785,98 @@ def test_run_suite_unpinned_session_fixture_fails_with_scope_mismatch(tmp_path, 
     result, _, out = _run_loop_probe(tmp_path, monkeypatch, "Unpinned", _UNPINNED_SESSION_SUITE)
     assert not result.passed
     assert "_class_scoped_runner" in (out / "junit.xml").read_text()
+
+
+# ── ctx.cov: the resolved coverage decision is visible to the suite ─────────
+#
+# A test or fixture reads `ctx.cov` (or `get_context().cov`) to change
+# behavior under coverage — e.g. keep .gcda files on a remote for the
+# post-run fetch. It must carry the RESOLVED decision (auto mode included),
+# hold for the whole session, and never leak past the run.
+
+
+def _record_ctx_cov_during_session(monkeypatch, *, decision: bool) -> list[bool]:
+    """Force resolve_coverage to *decision*; record ctx.cov as pytest.main sees it."""
+    from otto.context import get_context
+
+    seen: list[bool] = []
+
+    def fake_main(*_a, **_k):
+        seen.append(get_context().cov)
+        return pytest.ExitCode.OK
+
+    monkeypatch.setattr("pytest.main", fake_main)
+    monkeypatch.setattr(
+        "otto.suite.run.resolve_coverage",
+        lambda opts, _repos, *, command: dataclasses.replace(opts, cov=decision),
+    )
+    monkeypatch.setattr("otto.suite.run._pre_run_cov_clean", AsyncMock())
+    monkeypatch.setattr("otto.suite.run._post_run_coverage", AsyncMock())
+    return seen
+
+
+@pytest.mark.parametrize("decision", [True, False])
+def test_run_suite_exposes_resolved_cov_on_context(tmp_path, monkeypatch, decision):
+    """Auto mode (cov=None) resolved to *decision* is what the session reads."""
+    import otto.config
+    from otto.context import try_get_context
+
+    monkeypatch.setattr(otto.config, "get_repos", list)
+    seen = _record_ctx_cov_during_session(monkeypatch, decision=decision)
+
+    class _CovCtxSuite:
+        pass
+
+    run_suite(_CovCtxSuite, output_dir=tmp_path)
+    assert seen == [decision]
+    assert try_get_context() is None  # hermetic default: the library context is gone
+
+
+def test_run_suite_restores_prior_cov_on_an_active_context(tmp_path, monkeypatch):
+    """A caller's own context gets its cov back after the run."""
+    import otto.config
+    from otto.config.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context
+
+    monkeypatch.setattr(otto.config, "get_repos", list)
+    seen = _record_ctx_cov_during_session(monkeypatch, decision=True)
+
+    class _CovRestoreSuite:
+        pass
+
+    ctx = OttoContext(lab=Lab(name="test"), output_dir=tmp_path)
+    token = set_context(ctx)
+    try:
+        run_suite(_CovRestoreSuite, output_dir=tmp_path)
+    finally:
+        reset_context(token)
+    assert seen == [True]
+    assert ctx.cov_decision is None  # back to undecided: detection applies again
+
+
+def test_run_selection_exposes_resolved_cov_on_context(tmp_path, monkeypatch):
+    """The suite-less selection path sets ctx.cov exactly as run_suite does."""
+    import otto.config
+    from otto.config.repo import CollectedTest
+
+    class _FakeRepo:
+        name = "fixture-repo"
+        sut_dir = tmp_path
+        tests: ClassVar[list] = []
+        settings: ClassVar[dict] = {}
+
+        def collect_tests(self, markers=None, suite=None, tests=None):
+            return [
+                CollectedTest(
+                    nodeid="tests/t.py::test_alpha",
+                    name="test_alpha",
+                    path=tmp_path / "tests" / "t.py",
+                    cls_name=None,
+                )
+            ]
+
+    monkeypatch.setattr(otto.config, "get_repos", lambda: [_FakeRepo()])
+    seen = _record_ctx_cov_during_session(monkeypatch, decision=True)
+
+    run_selection(run_options=RunOptions(tests="test_alpha"), output_dir=tmp_path)
+    assert seen == [True]

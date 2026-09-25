@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from otto.context import (
+    LIBRARY_LAB_NAME,
     HostScope,
     OttoContext,
     get_context,
@@ -274,6 +275,9 @@ def test_context_runtime_flags_default_and_override():
     assert OttoContext(lab=lab).log_command_output is True
     assert OttoContext(lab=lab, dry_run=True).dry_run is True
     assert OttoContext(lab=lab, log_command_output=False).log_command_output is False
+    assert OttoContext(lab=lab).cov_decision is None  # undecided: detected on first read
+    assert OttoContext(lab=lab, cov_decision=True).cov is True
+    assert OttoContext(lab=lab, cov_decision=False).cov is False
 
 
 def test_bare_accessors_delegate_to_active_context():
@@ -630,3 +634,112 @@ def test_hostscope_rebuild_connections_hits_every_host_with_the_hook():
     scope.register(_WithHook("b"))
     scope.rebuild_connections()
     assert calls == ["a", "b"]
+
+
+# ── ctx.cov: coverage awareness, detected lazily when nothing decided it ─────
+
+
+class _CovRepo:
+    """The one thing detection reads off a repo: its settings."""
+
+    def __init__(self, coverage: "dict | None") -> None:
+        self.settings = {"coverage": coverage} if coverage is not None else {}
+
+
+@pytest.fixture
+def cov_detection(monkeypatch):
+    """Stub the repos and the fleet walk; each host carries one product.
+
+    ``instrumented`` is each product's own ``instrumented()`` verdict, in host
+    order; ``scans`` records every walk and the selector it was given.
+    """
+    from types import SimpleNamespace
+
+    import otto.config
+
+    state = {"repos": [_CovRepo({"hosts": "test.*"})], "instrumented": [True], "scans": []}
+
+    def _all_hosts(_self, pattern=None, *, include_containers=False, **_kw):
+        state["scans"].append((pattern.pattern if pattern else None, include_containers))
+        return [
+            SimpleNamespace(
+                id=f"h{i}", products=[SimpleNamespace(instrumented=lambda v=verdict: v)]
+            )
+            for i, verdict in enumerate(state["instrumented"])
+        ]
+
+    monkeypatch.setattr(otto.config, "get_repos", lambda: state["repos"])
+    monkeypatch.setattr(OttoContext, "all_hosts", _all_hosts)
+    return state
+
+
+def test_cov_is_detected_true_when_instrumented_and_configured(cov_detection):
+    ctx = OttoContext(lab=_lab_with("test1"))
+    assert ctx.cov is True
+    # The [coverage].hosts selector, and containers included (a product can live in one).
+    assert cov_detection["scans"] == [("test.*", True)]
+
+
+def test_cov_is_false_when_nothing_is_instrumented(cov_detection):
+    """``unknown`` (None) is not instrumented, exactly as otto test's scan counts it."""
+    cov_detection["instrumented"] = [False, None]
+    assert OttoContext(lab=_lab_with("test1")).cov is False
+
+
+def test_cov_without_a_coverage_table_is_false_and_never_scans(cov_detection):
+    """otto test's auto rule: no [coverage] table means off, whatever is built."""
+    cov_detection["repos"] = [_CovRepo(None)]
+    assert OttoContext(lab=_lab_with("test1")).cov is False
+    assert cov_detection["scans"] == []
+
+
+def test_cov_detection_runs_once_per_context(cov_detection):
+    ctx = OttoContext(lab=_lab_with("test1"))
+    assert [ctx.cov, ctx.cov, ctx.cov] == [True, True, True]
+    assert len(cov_detection["scans"]) == 1
+    assert ctx.cov_decision is True  # the detected answer is now the decision
+
+
+def test_a_decision_wins_over_detection(cov_detection):
+    """otto test stamps its resolved --cov/--no-cov/auto decision; nothing is scanned."""
+    ctx = OttoContext(lab=_lab_with("test1"), cov_decision=False)
+    assert ctx.cov is False
+    assert cov_detection["scans"] == []
+
+
+def test_cov_on_the_library_sentinel_lab_is_false_without_touching_repos(monkeypatch):
+    import otto.config
+
+    def _boom():
+        raise AssertionError("the sentinel lab must not reach the repos")
+
+    monkeypatch.setattr(otto.config, "get_repos", _boom)
+    assert OttoContext(lab=Lab(name=LIBRARY_LAB_NAME)).cov is False
+
+
+def test_cov_detection_failure_is_false_with_one_warning(cov_detection, caplog):
+    """A broken [coverage].hosts selector must not kill a caller that only asked."""
+    cov_detection["repos"] = [_CovRepo({"hosts": 5})]  # not a string: CoverageConfigError
+    ctx = OttoContext(lab=_lab_with("test1"))
+    with caplog.at_level(logging.WARNING, logger="otto.context"):
+        assert ctx.cov is False
+        assert ctx.cov is False
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "coverage" in warnings[0].getMessage()
+
+
+def test_cov_detection_with_unreachable_repos_is_false(monkeypatch):
+    import otto.config
+
+    def _unreachable():
+        raise RuntimeError("no bootstrap")
+
+    monkeypatch.setattr(otto.config, "get_repos", _unreachable)
+    assert OttoContext(lab=_lab_with("test1")).cov is False
+
+
+def test_cov_reads_through_a_repo_view(cov_detection):
+    """The repo-scoped view delegates live, so instructions' self.ctx sees it too."""
+    ctx = OttoContext(lab=_lab_with("test1"))
+    assert ctx.for_repo("acme").cov is True

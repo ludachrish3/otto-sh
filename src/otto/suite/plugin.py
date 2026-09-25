@@ -49,11 +49,6 @@ from otto.suite.pytest_plugin import (
 
 logger = logging.getLogger(__name__)
 
-#: Stash key indicating that ``--cov`` was passed to ``otto test``.
-#: Fixtures can read this to decide whether to preserve ``.gcda`` files
-#: on remote hosts for post-run collection.
-otto_cov_key: pytest.StashKey[bool] = pytest.StashKey()
-
 otto_plugin_key: pytest.StashKey["OttoPlugin"] = pytest.StashKey()
 """Where ``pytest_configure`` parks the plugin instance for its static fixtures.
 
@@ -148,7 +143,6 @@ class OttoPlugin:
         self,
         sut_test_dirs: list[Path] | None = None,
         stability_collector: StabilityCollector | None = None,
-        cov: bool = False,
         iterations: int = 0,
         duration: int = 0,
         monitor: bool = False,
@@ -158,7 +152,6 @@ class OttoPlugin:
     ) -> None:
         self._sut_test_dirs = sut_test_dirs or []
         self._stability_collector = stability_collector
-        self._cov = cov
         self._iterations = iterations
         self._duration = duration
         self._monitor = monitor
@@ -179,7 +172,6 @@ class OttoPlugin:
         dependency), which honors ``@pytest.mark.timeout(seconds)`` natively.
         """
         config.option.asyncio_mode = "auto"
-        config.stash[otto_cov_key] = self._cov
         config.stash[otto_plugin_key] = self
         # pytest-randomly resolves its seed in ITS pytest_configure (a drawn
         # int, `--randomly-seed=N`, or `last`) and writes the int back onto

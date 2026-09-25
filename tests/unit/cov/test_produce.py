@@ -170,8 +170,8 @@ async def test_produce_annotates_display_names_by_host(
 
 
 def test_a_gcda_directly_under_the_host_dir_is_refused(tmp_path):
+    from otto.config.coverage_settings import CoverageConfigError
     from otto.coverage.capture.produce import _product_dirs
-    from otto.coverage.errors import CoverageConfigError
 
     (tmp_path / "h1").mkdir()
     (tmp_path / "h1" / "x.gcda").write_bytes(b"")

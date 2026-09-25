@@ -26,6 +26,8 @@ settings parsing, and lab loading.
 
 .. automodule:: otto.config.scope
 
+.. automodule:: otto.config.coverage_settings
+
 .. automodule:: otto.config.dependencies
 
 .. automodule:: otto.config.repo

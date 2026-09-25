@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from otto.coverage.errors import CoverageConfigError
+from otto.config.coverage_settings import CoverageConfigError
 from otto.coverage.tree import iter_product_dirs
 
 

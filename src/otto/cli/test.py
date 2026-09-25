@@ -695,7 +695,7 @@ def main(  # noqa: PLR0913 — CLI command params
         # otto.suite.run._post_run_coverage). Without this, --cov-tickets-json
         # would run the whole suite, warn once in an unread log, exit 0, and
         # never write the file -- a silently broken CI pipeline.
-        from ..coverage.config import get_cov_config
+        from ..config.coverage_settings import get_cov_config
         from ..coverage.tickets import load_ticket_spec
 
         if load_ticket_spec(get_cov_config(get_repos())) is None:

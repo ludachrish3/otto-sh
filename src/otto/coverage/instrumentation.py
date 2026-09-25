@@ -132,7 +132,7 @@ def detect_for_lab(repos: "list[Repo] | None" = None) -> InstrumentationReport:
     a container (spec §13).
     """
     from ..config import all_hosts, get_repos
-    from .config import get_cov_config, load_hosts_pattern
+    from ..config.coverage_settings import get_cov_config, load_hosts_pattern
 
     if repos is None:
         repos = get_repos()

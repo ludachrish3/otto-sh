@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING
 
+from ..config.coverage_settings import CoverageConfigError
 from ..errors import OttoError
 
 if TYPE_CHECKING:  # pragma: no cover — typing only; see CoverageNotInstrumentedError
@@ -30,22 +31,6 @@ class CoverageToolVersionError(OttoError, RuntimeError):
             "set it to the matching cross gcov instead.\n"
             f"Underlying output:\n{detail}"
         )
-
-
-class CoverageConfigError(OttoError, ValueError):
-    """No ``[coverage]`` section is configured for the resolved repo(s).
-
-    Raised by ``otto.coverage.collect.collect_coverage`` before any fetch is
-    attempted: with no ``[coverage]`` section there is nothing to resolve a
-    host selector, a product's ``cov_dir``, or a tier against.
-
-    Also raised at capture and report time by
-    ``otto.coverage.tree.iter_product_dirs`` for a cov directory whose shape
-    is wrong — a host directory holding counters or a ``capture.json``
-    directly instead of the ``cov/<host>/<product>/`` tree this version of
-    otto stages — since that too is a configuration the pipeline cannot run
-    against, and there is no migration shim for it.
-    """
 
 
 class CoverageNotInstrumentedError(CoverageConfigError):

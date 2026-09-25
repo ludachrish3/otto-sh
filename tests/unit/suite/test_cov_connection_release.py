@@ -17,25 +17,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from otto.suite.plugin import otto_cov_key
 from otto.suite.suite import OttoSuite
+from tests.conftest import active_context
 
 
-def _request(cov: bool) -> MagicMock:
-    req = MagicMock()
-    stash = {otto_cov_key: cov}
-    req.config.stash.get.side_effect = lambda key, default=None: stash.get(key, default)
-    return req
-
-
-async def _drive(request: MagicMock) -> None:
+async def _drive(*, cov: bool) -> None:
+    """Run the fixture's setup and teardown under a context whose ``cov`` is *cov*."""
     fixture_fn = OttoSuite._otto_release_connections.__wrapped__
     # A classmethod fixture: the wrapped object may be the classmethod itself.
     fixture_fn = getattr(fixture_fn, "__func__", fixture_fn)
-    gen = fixture_fn(OttoSuite, request)
-    await gen.__anext__()  # setup → suspend at yield
-    with contextlib.suppress(StopAsyncIteration):
-        await gen.__anext__()  # resume → run teardown
+    with active_context(cov_decision=cov):
+        gen = fixture_fn(OttoSuite)
+        await gen.__anext__()  # setup → suspend at yield
+        with contextlib.suppress(StopAsyncIteration):
+            await gen.__anext__()  # resume → run teardown
 
 
 @pytest.mark.asyncio
@@ -43,7 +38,7 @@ async def test_release_connections_closes_hosts_under_cov():
     host = MagicMock(id="zephyr37-llext")
     host.close = AsyncMock()
     with patch("otto.config.all_hosts", return_value=[host]):
-        await _drive(_request(cov=True))
+        await _drive(cov=True)
     host.close.assert_awaited_once()
 
 
@@ -52,7 +47,7 @@ async def test_release_connections_noop_without_cov():
     host = MagicMock(id="zephyr37-llext")
     host.close = AsyncMock()
     with patch("otto.config.all_hosts", return_value=[host]):
-        await _drive(_request(cov=False))
+        await _drive(cov=False)
     host.close.assert_not_awaited()
 
 
@@ -64,7 +59,7 @@ async def test_release_connections_tolerates_close_errors():
     good = MagicMock(id="good")
     good.close = AsyncMock()
     with patch("otto.config.all_hosts", return_value=[bad, good]):
-        await _drive(_request(cov=True))  # must not raise
+        await _drive(cov=True)  # must not raise
     good.close.assert_awaited_once()
 
 

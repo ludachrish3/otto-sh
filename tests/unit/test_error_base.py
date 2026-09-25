@@ -35,6 +35,7 @@ import pytest
 
 from otto.bootstrap import BootstrapError, DependencyError, ProjectScopeError
 from otto.cli.invoke import LabContextError, LoggingLevelsConflictError
+from otto.config.coverage_settings import CoverageConfigError
 from otto.config.scope import EmptySelectionError
 from otto.coverage.capture.gitio import (
     GitCommandFailedError,
@@ -43,7 +44,6 @@ from otto.coverage.capture.gitio import (
     NotAGitRepoError,
 )
 from otto.coverage.errors import (
-    CoverageConfigError,
     CoverageDataMismatchError,
     CoverageNotInstrumentedError,
     CoverageToolVersionError,

@@ -191,7 +191,7 @@ def discover_gcda_dirs(cov_dirs: list[Path]) -> list[Path]:
         List of per-product directories containing ``.gcda`` files.
 
     Raises:
-        otto.coverage.errors.CoverageConfigError: If a host dir holds
+        otto.config.coverage_settings.CoverageConfigError: If a host dir holds
             coverage data directly (the pre-product one-level tree).
     """
     gcda_dirs: list[Path] = []

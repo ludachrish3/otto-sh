@@ -14,9 +14,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from otto.config.coverage_settings import CoverageConfigError, load_hosts_pattern
 from otto.coverage.collect import collect_coverage
-from otto.coverage.config import load_hosts_pattern
-from otto.coverage.errors import CoverageConfigError
 
 
 class TestLoadHostsPattern:

@@ -238,6 +238,15 @@ class OttoContext:
     dry_run: bool = False
     log_command_output: bool = True
     output_dir: "Path | None" = None
+    cov_decision: "bool | None" = None
+    """Whether coverage is on for this run, once decided; ``None`` until then.
+
+    Read :attr:`cov`, not this. ``otto test`` is the one writer: it stamps its
+    resolved ``--cov``/``--no-cov``/auto decision here for the length of the
+    run (:func:`otto.suite.run.run_suite` / :func:`~otto.suite.run.run_selection`).
+    Left ``None``, the first read of :attr:`cov` detects the answer and
+    stores it here.
+    """
     scope: HostScope = field(default_factory=HostScope)
 
     include_projects: tuple[str, ...] = ()
@@ -264,6 +273,72 @@ class OttoContext:
     :func:`otto.config.scope.active` for the verdict and by
     :func:`otto.config.scope.switched_off` for attribution.
     """
+
+    @property
+    def cov(self) -> bool:
+        """Whether this lab is in coverage mode — informational, never an action.
+
+        ``otto test``'s decision when it made one (:attr:`cov_decision`).
+        Otherwise it is detected on first read with ``otto test``'s auto rule:
+        some product on a ``[coverage].hosts`` host is an instrumented build
+        AND a ``[coverage]`` table is configured. That is the same local
+        artifact scan ``otto test`` runs, and no host is contacted. The answer
+        is cached for this context. A suite, a fixture or an instruction reads
+        it to avoid destroying counters that a coverage run still needs, e.g.
+        to leave ``.gcda`` files in place instead of uninstalling a product.
+        Nothing cleans or collects coverage because of it.
+
+        Lazy on purpose: a command that never asks pays for neither the scan
+        nor the coverage import.
+        """
+        if self.cov_decision is None:
+            self.cov_decision = self._detect_cov()
+        return self.cov_decision
+
+    def _detect_cov(self) -> bool:
+        """Apply ``otto test``'s auto rule to this context's lab; ``False`` if it cannot.
+
+        Never raises for a misconfiguration. A caller that only asked a
+        question must not die of it, so a broken ``[coverage].hosts`` selector
+        is one warning and ``False``, exactly as it is for an auto
+        ``otto test``. The sentinel library lab and unreachable repos have no
+        coverage configuration to find and answer ``False`` quietly.
+        """
+        if self.lab.name == LIBRARY_LAB_NAME:
+            return False
+        try:
+            from .config import get_repos
+
+            repos = get_repos()
+        except Exception as exc:  # noqa: BLE001 — no repos reachable ⇒ no [coverage] ⇒ off
+            logger.debug(f"otto: coverage detection unavailable ({exc!r}); ctx.cov is False")
+            return False
+        from .bootstrap import ProjectScopeError
+        from .config.coverage_settings import (
+            CoverageConfigError,
+            get_cov_config,
+            load_hosts_pattern,
+        )
+        from .config.scope import EmptySelectionError
+
+        cov_config = get_cov_config(repos)
+        if not cov_config:
+            return False
+        try:
+            pattern = load_hosts_pattern(cov_config)
+            hosts = list(self.all_hosts(pattern=pattern, include_containers=True))
+        except (EmptySelectionError, CoverageConfigError, ProjectScopeError) as exc:
+            from rich.markup import escape as escape_markup
+
+            # escape_markup: the message quotes a literal bracket ("[coverage].hosts",
+            # or the user's own regex) and the console handler renders markup.
+            reason = escape_markup(str(exc))
+            logger.warning(f"otto: coverage detection failed, ctx.cov is False: {reason}")
+            return False
+        # The verdict otto.coverage.instrumentation.detect() reports as "yes" —
+        # asked of the products directly, because this layer sits beneath the
+        # coverage pipeline (tach) and needs no report, only the answer.
+        return any(product.instrumented() is True for host in hosts for product in host.products)
 
     def get_host(self, host_id: str, **overrides: Any) -> "UnixHost":
         """Look up *host_id* in the active lab, apply any keyword overrides, and register it."""

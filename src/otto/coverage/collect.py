@@ -34,7 +34,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .errors import CoverageConfigError, NoCoverageDataError
+from ..config.coverage_settings import CoverageConfigError
+from .errors import NoCoverageDataError
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
@@ -92,8 +93,8 @@ async def clean_remote_gcda(repos: "list[Repo] | None" = None) -> None:
             host is touched.
     """
     from ..config import all_hosts, get_repos
+    from ..config.coverage_settings import get_cov_config, load_hosts_pattern
     from ..host import UnixHost
-    from .config import get_cov_config, load_hosts_pattern
     from .fetcher.remote import GcdaFetcher
 
     if repos is None:
@@ -145,8 +146,8 @@ async def collect_coverage(
 
     Fails loud (never swallows):
 
-    * no ``[coverage]`` section configured → :class:`~otto.coverage.errors.CoverageConfigError`
-      (a :class:`ValueError`);
+    * no ``[coverage]`` section configured →
+      :class:`~otto.config.coverage_settings.CoverageConfigError` (a :class:`ValueError`);
     * no ``.gcda`` retrieved from any matched product →
       :class:`~otto.coverage.errors.NoCoverageDataError` (a :class:`ValueError`)
       naming every ``host:product:cov_dir`` triple searched;
@@ -189,9 +190,9 @@ async def collect_coverage(
         the produced capture paths.
     """
     from ..config import all_hosts, get_repos
+    from ..config.coverage_settings import get_cov_config, load_hosts_pattern
     from ..host.embedded_host import EmbeddedHost
     from ..host.local_host import LocalHost
-    from .config import get_cov_config, load_hosts_pattern
     from .fetcher.embedded import collect_embedded_coverage
     from .fetcher.remote import GcdaFetcher
     from .instrumentation import instrumented_products
@@ -321,8 +322,8 @@ async def _produce_capture_tail(
     manual-tier ``--ticket`` requirement, must not pay for — or risk
     diverging from — a second resolution by name here).
     """
+    from ..config.coverage_settings import get_cov_repo
     from .capture.produce import produce_captures
-    from .config import get_cov_repo
     from .tiers import TierConfig, load_tiers, resolve_get_tier
 
     cov_repo = get_cov_repo(repos)
@@ -383,9 +384,9 @@ async def _write_metadata(
     """
     import json
 
+    from ..config.coverage_settings import get_cov_repo
     from ..host.toolchain import Toolchain
     from ..utils import anchor_path
-    from .config import get_cov_repo
 
     cov_repo = get_cov_repo(repos)
     if not cov_repo:

@@ -30,7 +30,6 @@ from otto.config.fleet import (
 from otto.host import LocalHost
 from otto.host.unix_host import UnixHost
 from otto.suite import OttoSuite
-from otto.suite.plugin import otto_cov_key
 from otto.utils import Status
 
 logger = logging.getLogger(__name__)
@@ -147,7 +146,7 @@ class TestCoverageProduct(OttoSuite):
 
     @pytest_asyncio.fixture(autouse=True, scope="class")
     @classmethod
-    async def _deploy_product(cls, request):
+    async def _deploy_product(cls, ctx):
         """Compile and deploy the product to all remote hosts; uninstall on teardown.
 
         A classmethod on the suite's own loop (no ``loop_scope`` pin: under
@@ -167,7 +166,7 @@ class TestCoverageProduct(OttoSuite):
 
         yield
 
-        cov_active = request.config.stash.get(otto_cov_key, False)
+        cov_active = ctx.cov
         if cov_active:
             # Only remove the binary; leave .gcda files for post-test fetch.
             await do_for_all_hosts(

@@ -256,9 +256,7 @@ class OttoSuite:
 
     @pytest_asyncio.fixture(autouse=True, scope="class")
     @classmethod
-    async def _otto_release_connections(
-        cls, request: pytest.FixtureRequest
-    ) -> AsyncGenerator[None, None]:
+    async def _otto_release_connections(cls) -> AsyncGenerator[None, None]:
         """Release host connections at class teardown during coverage runs.
 
         OttoSuites run each test class on its own event loop
@@ -279,9 +277,9 @@ class OttoSuite:
         instance methods.
         """
         yield
-        from .plugin import otto_cov_key
+        from ..context import get_context
 
-        if not request.config.stash.get(otto_cov_key, False):
+        if not get_context().cov:
             return
 
         from ..config import all_hosts

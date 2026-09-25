@@ -8,6 +8,7 @@ otto.cli.invoke
 otto.cli.main
 otto.cli.registry
 otto.config
+otto.config.coverage_settings
 otto.config.env
 otto.config.fleet
 otto.config.lab

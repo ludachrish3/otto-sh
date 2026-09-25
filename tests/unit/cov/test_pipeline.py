@@ -8,9 +8,10 @@ from pathlib import Path
 
 import pytest
 
+from otto.config.coverage_settings import CoverageConfigError
 from otto.coverage.capture.gitio import head_commit
 from otto.coverage.capture.model import Capture, CaptureFileCov
-from otto.coverage.errors import CoverageConfigError, CoverageDataMismatchError
+from otto.coverage.errors import CoverageDataMismatchError
 from otto.coverage.reporter import (
     CollectionInputs,
     CoverageReporter,

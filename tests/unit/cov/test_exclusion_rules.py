@@ -2,7 +2,7 @@
 
 import pytest
 
-from otto.coverage.errors import CoverageConfigError
+from otto.config.coverage_settings import CoverageConfigError
 from otto.coverage.exclusions.rules import (
     BUILTIN_MARKER_RULES,
     MarkerRule,

@@ -42,7 +42,6 @@ from otto.host import LocalHost
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.llext_kind import LlextProduct
 from otto.suite import OttoSuite
-from otto.suite.plugin import otto_cov_key
 from otto.utils import Status
 
 logger = logging.getLogger(__name__)
@@ -189,7 +188,7 @@ class TestEmbeddedCoverage(OttoSuite):
 
     @pytest_asyncio.fixture(autouse=True, scope="class")
     @classmethod
-    async def _load_extension(cls, request):
+    async def _load_extension(cls, ctx):
         """Rebuild (per version), then load + initialise the extension on every
         embedded host; unload on teardown (unless ``--cov`` needs it kept for
         the post-test dump). A classmethod on the suite's own loop (no
@@ -251,7 +250,7 @@ class TestEmbeddedCoverage(OttoSuite):
 
         yield
 
-        cov_active = request.config.stash.get(otto_cov_key, False)
+        cov_active = ctx.cov
         if not cov_active:
             for host in hosts:
                 product = _product_of(host)

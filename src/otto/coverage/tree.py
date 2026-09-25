@@ -11,7 +11,7 @@ it fires.
 
 from pathlib import Path
 
-from .errors import CoverageConfigError
+from ..config.coverage_settings import CoverageConfigError
 
 
 def _holds_data_directly(host_dir: Path) -> bool:
@@ -35,7 +35,7 @@ def iter_product_dirs(cov_dir: Path) -> list[tuple[str, str, Path]]:
         One tuple per product directory, sorted by host id then product.
 
     Raises:
-        otto.coverage.errors.CoverageConfigError: A host directory holds
+        otto.config.coverage_settings.CoverageConfigError: A host directory holds
             coverage data directly — the pre-product one-level tree. There
             is no migration shim; the message names the directory and the
             layout otto expects.

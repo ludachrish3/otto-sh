@@ -115,6 +115,31 @@ Two properties of the fleet helpers to keep in mind:
   results.  Check values with `isinstance(value, BaseException)` before
   using them.
 
+(instruction-coverage)=
+## Behaving differently under coverage
+
+`ctx.cov` is `True` when the lab is in coverage mode: an instrumented product
+is deployed and `[coverage]` is configured. otto detects this on its own
+({ref}`coverage-awareness`). Take the context as a parameter and branch on it
+wherever the body would destroy counters that a later fetch (`otto cov get`,
+or the next `otto test --cov`) still needs:
+
+```python
+from otto import OttoContext
+from otto.cli.run import instruction
+
+
+@instruction()
+async def exercise_failover(ctx: OttoContext) -> None:
+    router = ctx.get_host("router1")
+    await router.run("failover-test --all")
+    if not ctx.cov:
+        await router.run("rm -rf /opt/failover-test")  # would take the .gcda with it
+```
+
+An instruction never cleans or collects coverage itself; `ctx.cov` only
+informs it.
+
 ## File transfers
 
 Instructions can transfer files to and from hosts via

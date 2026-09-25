@@ -48,6 +48,35 @@ output directory, keyed by host and then product —
 `--cov-dir`, `--cov-report`, `--cov-report-dir` and `--cov-tickets-json` all
 imply coverage, so pairing any of them with `--no-cov` is a usage error.
 
+(coverage-awareness)=
+## Coverage awareness: `ctx.cov`
+
+Code running under otto can ask whether the lab is in coverage mode by reading
+`ctx.cov` on the active {class}`~otto.context.OttoContext`. This works in a
+suite, a fixture, an instruction or a library script. It is information only,
+and reading it never cleans or fetches anything. The usual reason to read it is
+to avoid destroying counters that a coverage run still needs, for example by
+leaving a product's `.gcda` files in place instead of uninstalling the product.
+
+- **Under `otto test`** it is the run's own decision after resolving
+  `--cov`, `--no-cov` or auto. It is also `True` when an auto run turned
+  retrieval on by itself.
+- **Everywhere else** (`otto run`, `otto host`, a script inside
+  `open_context`) the answer is **detected** with the same auto rule. It is
+  `True` when a product on a `[coverage].hosts` host is an instrumented build
+  **and** a `[coverage]` table is configured. This is the same local artifact
+  scan, and no host is contacted. It runs the first time something reads
+  `ctx.cov` and is cached for the rest of the invocation, so a command that
+  never asks pays nothing.
+
+Only `otto test` overrides the detected answer. Any other command has no
+coverage flag. If detection cannot finish, `ctx.cov` is `False` and one warning
+is logged, just as an auto `otto test` behaves. A broken `[coverage].hosts`
+selector is one example.
+
+See the [`ctx` fixture](../../cookbook/authoring/writing-suites.md#what-every-suite-gets)
+for a suite example and {ref}`instruction-coverage` for an instruction.
+
 The refusal is **one line plus a table** of every product it examined and what
 it concluded.  An excerpt, at a narrow terminal:
 

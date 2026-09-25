@@ -142,7 +142,23 @@ delivers everything — as fixtures — and nothing otto-specific lives on
   and keeps the test running; the test fails at the end with every failure
   listed, in the call phase like any other failure. A hard `assert` in the
   body still wins. See the [expect recipe](../suite-recipes.md#non-fatal-assertions-with-expect).
-- `ctx` — the active {class}`~otto.context.OttoContext`.
+- `ctx` — the active {class}`~otto.context.OttoContext`. `ctx.cov` is
+  whether this run collects coverage, which is the decision `otto test`
+  settled on ({ref}`coverage-awareness`). Branch on it when a test or fixture
+  has to act differently under coverage. The usual case is a teardown that
+  would otherwise erase the counters before the post-run fetch:
+
+  ```python
+  @pytest_asyncio.fixture(autouse=True, scope="class")
+  @classmethod
+  async def deployed(cls, ctx):
+      await install_product()
+      yield
+      if ctx.cov:
+          await remove_binary_only()  # leave the .gcda files for the fetch
+      else:
+          await uninstall_product()
+  ```
 
 **Logging.** Put `logger = logging.getLogger(__name__)` at the top of the
 file. Everything that logs during a run — the suite, otto, any library

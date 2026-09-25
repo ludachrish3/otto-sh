@@ -830,3 +830,31 @@ class TestInstructionOnAMethod:
             @instruction()
             async def deploy():
                 pass
+
+
+# ── ctx.cov: coverage awareness reaches instructions ─────────────────────────
+
+
+class TestInstructionCoverageAwareness:
+    """An instruction reads ``ctx.cov`` — detected, never acted on.
+
+    The detection rule has its own tests in ``tests/unit/test_context.py``;
+    this pins that an instruction's injected context is the one that detects,
+    so ``otto run`` gets the answer with no flag of its own.
+    """
+
+    @pytest.mark.parametrize("detected", [True, False])
+    def test_instruction_sees_the_detected_answer(self, monkeypatch, detected):
+        from otto.context import OttoContext
+
+        monkeypatch.setattr(OttoContext, "_detect_cov", lambda _self: detected)
+        seen: list[bool] = []
+
+        @instruction("_unit_test_cov_aware")
+        async def _probe(ctx: OttoContext) -> None:
+            seen.append(ctx.cov)
+
+        result = runner.invoke(run_app, ["_unit_test_cov_aware"])
+
+        assert result.exit_code == 0, result.output
+        assert seen == [detected]

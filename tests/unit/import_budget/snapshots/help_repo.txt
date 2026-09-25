@@ -31,6 +31,7 @@ otto.config.cache_maintenance
 otto.config.cache_sections
 otto.config.completion_cache
 otto.config.completion_tree
+otto.config.coverage_settings
 otto.config.dependencies
 otto.config.env
 otto.config.fleet

@@ -210,7 +210,7 @@ def _resolve_cov_settings() -> "_CovSettings":
     ticket_spec, overrides)``.
 
     Uses the same first-repo-with-``[coverage]`` selection as ``get`` and
-    ``clean`` (via :func:`otto.coverage.config.get_cov_repo`).  Returns
+    ``clean`` (via :func:`otto.config.coverage_settings.get_cov_repo`).  Returns
     ``(None, None, [], None, None, None)`` when no coverage section is
     configured — the git-less fallback that keeps ``otto cov report``
     working exactly as before on a tree with no ``[coverage]`` settings.
@@ -221,7 +221,7 @@ def _resolve_cov_settings() -> "_CovSettings":
     branches they name from the merged store. An empty list is not
     feature-absent: the built-in ``LCOV_EXCL_*`` families always apply on top
     of whatever is configured here. Raises
-    :class:`~otto.coverage.errors.CoverageConfigError` (a :class:`ValueError`)
+    :class:`~otto.config.coverage_settings.CoverageConfigError` (a :class:`ValueError`)
     on a malformed rule — caught by ``report``'s existing ``except ValueError``
     handler, same as ``overrides`` below.
 
@@ -243,7 +243,7 @@ def _resolve_cov_settings() -> "_CovSettings":
     existing ``except ValueError`` handler.
     """
     from ..config import get_repos
-    from ..coverage.config import get_cov_config, get_cov_repo
+    from ..config.coverage_settings import get_cov_config, get_cov_repo
     from ..coverage.exclusions.rules import load_exclusion_rules
     from ..coverage.overrides import load_override_config
     from ..coverage.report_config import load_report_thresholds
@@ -635,9 +635,13 @@ async def _connect_cov_hosts() -> tuple[
         boards, which dump over their console instead.
     """
     from ..config import all_hosts, get_repos
+    from ..config.coverage_settings import (
+        CoverageConfigError,
+        get_cov_config,
+        get_cov_repo,
+        load_hosts_pattern,
+    )
     from ..config.scope import EmptySelectionError
-    from ..coverage.config import get_cov_config, get_cov_repo, load_hosts_pattern
-    from ..coverage.errors import CoverageConfigError
     from ..host.embedded_host import EmbeddedHost
     from ..host.local_host import LocalHost
 

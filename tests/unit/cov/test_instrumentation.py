@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from otto.coverage.errors import CoverageConfigError, CoverageNotInstrumentedError
+from otto.config.coverage_settings import CoverageConfigError
+from otto.coverage.errors import CoverageNotInstrumentedError
 from otto.coverage.instrumentation import (
     InstrumentationReport,
     InstrumentationRow,
@@ -178,8 +179,8 @@ def test_detect_for_lab_with_coverage_config_passes_pattern_and_containers(monke
         return [host]
 
     monkeypatch.setattr("otto.config.get_repos", fake_get_repos)
-    monkeypatch.setattr("otto.coverage.config.get_cov_config", fake_get_cov_config)
-    monkeypatch.setattr("otto.coverage.config.load_hosts_pattern", fake_load_hosts_pattern)
+    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", fake_get_cov_config)
+    monkeypatch.setattr("otto.config.coverage_settings.load_hosts_pattern", fake_load_hosts_pattern)
     monkeypatch.setattr("otto.config.all_hosts", fake_all_hosts)
 
     report = detect_for_lab()
@@ -208,8 +209,8 @@ def test_detect_for_lab_without_coverage_config_defaults_to_none_pattern(monkeyp
         return [host]
 
     monkeypatch.setattr("otto.config.get_repos", fake_get_repos)
-    monkeypatch.setattr("otto.coverage.config.get_cov_config", fake_get_cov_config)
-    monkeypatch.setattr("otto.coverage.config.load_hosts_pattern", fake_load_hosts_pattern)
+    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", fake_get_cov_config)
+    monkeypatch.setattr("otto.config.coverage_settings.load_hosts_pattern", fake_load_hosts_pattern)
     monkeypatch.setattr("otto.config.all_hosts", fake_all_hosts)
 
     report = detect_for_lab()

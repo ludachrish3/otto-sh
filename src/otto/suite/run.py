@@ -28,6 +28,7 @@ from ..errors import OttoError
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
+    from ..context import OttoContext
     from ..coverage.exclusions.rules import ExclusionRule
     from .plugin import StabilityCollector
 
@@ -198,13 +199,17 @@ def _final_exit_code(rc: int, unstable: bool) -> int:
 
 
 @contextlib.contextmanager
-def _session_context(log_dir: Path) -> Iterator[None]:
+def _session_context(log_dir: Path) -> "Iterator[OttoContext]":
     """Guarantee an active ``OttoContext`` with an ``output_dir`` for the session(s).
+
+    Yields that context, so the caller can stamp the run's resolved coverage
+    decision on it (``ctx.cov_decision``, read as ``ctx.cov``) once
+    :func:`resolve_coverage` has taken it.
 
     Otto's own fixtures (``suite_dir``/``test_dir``, the ``ctx`` fixture) call
     ``get_context()``; in the CLI that context is
     installed by the command preamble, but a library caller
-    (``bootstrap()`` → :func:`run_suite`) has none. Three cases:
+    (``bootstrap()`` → :func:`run_suite`) has none. Two cases:
 
     - **No active context**: install a minimal lab-less one
       (``OttoContext(lab=Lab(name=LIBRARY_LAB_NAME), output_dir=log_dir)``) for
@@ -215,13 +220,11 @@ def _session_context(log_dir: Path) -> Iterator[None]:
       ``LIBRARY_LAB_NAME`` — see :meth:`otto.context.OttoContext.get_host`) —
       correct for hostless library runs; suites that need lab hosts use
       ``open_context()`` (see the Cookbook's Python library page).
-    - **Active context without an output_dir**: point it at *log_dir* for the
-      session (the same assignment the CLI preamble makes) and restore the
-      prior value afterwards. The prior value is captured explicitly (``prior
-      = active.output_dir``) rather than assumed to be the literal ``None``
-      this branch's guard implies — a defensive habit that stays correct even
-      if this branch's precondition ever changes.
-    - **Active context with an output_dir**: leave it untouched.
+    - **Active context**: point its ``output_dir`` at *log_dir* when it has
+      none (the same assignment the CLI preamble makes; one it already has is
+      left alone), and restore both ``output_dir`` and ``cov_decision`` afterwards — the
+      run's per-session state never outlives the run on a context the caller
+      owns.
     """
     from ..context import try_get_context
 
@@ -230,20 +233,20 @@ def _session_context(log_dir: Path) -> Iterator[None]:
         from ..config.lab import Lab
         from ..context import LIBRARY_LAB_NAME, OttoContext, reset_context, set_context
 
-        token = set_context(OttoContext(lab=Lab(name=LIBRARY_LAB_NAME), output_dir=log_dir))
+        ctx = OttoContext(lab=Lab(name=LIBRARY_LAB_NAME), output_dir=log_dir)
+        token = set_context(ctx)
         try:
-            yield
+            yield ctx
         finally:
             reset_context(token)
-    elif active.output_dir is None:
-        prior = active.output_dir
+        return
+    prior_output_dir, prior_cov = active.output_dir, active.cov_decision
+    if active.output_dir is None:
         active.output_dir = log_dir
-        try:
-            yield
-        finally:
-            active.output_dir = prior
-    else:
-        yield
+    try:
+        yield active
+    finally:
+        active.output_dir, active.cov_decision = prior_output_dir, prior_cov
 
 
 def _pre_run_cov_dir_check(opts: RunOptions) -> None:
@@ -292,7 +295,7 @@ def resolve_coverage(opts: RunOptions, repos: "list[Repo]", *, command: str) -> 
     of a coverage misconfiguration.
 
     Raises:
-        otto.coverage.errors.CoverageConfigError: ``cov`` is forced on and
+        otto.config.coverage_settings.CoverageConfigError: ``cov`` is forced on and
             either no ``[coverage]`` table is configured or its ``hosts``
             selector is malformed.
         otto.config.scope.EmptySelectionError: ``cov`` is forced on and the
@@ -305,9 +308,8 @@ def resolve_coverage(opts: RunOptions, repos: "list[Repo]", *, command: str) -> 
     # Function-scope: otto.coverage.instrumentation pulls rich.table, and this
     # module sits on an import-budget surface a plain `otto test` must not
     # widen.
+    from ..config.coverage_settings import CoverageConfigError, get_cov_config
     from ..config.scope import EmptySelectionError
-    from ..coverage.config import get_cov_config
-    from ..coverage.errors import CoverageConfigError
     from ..coverage.instrumentation import decide_coverage, detect_for_lab
 
     forced_on = opts.cov is True
@@ -406,7 +408,8 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
     if opts.cov_report:
         from rich.markup import escape as escape_markup
 
-        from ..coverage.config import get_cov_config, get_cov_repo, prepare_empty_dir
+        from ..config.coverage_settings import get_cov_config, get_cov_repo
+        from ..coverage.config import prepare_empty_dir
         from ..coverage.exclusions.rules import load_exclusion_rules
         from ..coverage.overrides import load_override_config
         from ..coverage.report_config import load_report_thresholds
@@ -652,10 +655,6 @@ def _run_pytest_session(
         monitor_output = log_dir / "monitor.json"
     otto_plugin = OttoPlugin(
         sut_test_dirs=sut_test_dirs,
-        # Both run paths call resolve_coverage before they reach a session, so
-        # the tri-state is already a decision here; bool() only says so to the
-        # type checker (and keeps a hand-built RunOptions honest).
-        cov=bool(opts.cov),
         iterations=opts.iterations,
         duration=opts.duration,
         monitor=opts.monitor,
@@ -751,7 +750,6 @@ def run_suite(
     import inspect
 
     from ..config import get_repos
-    from ..context import try_get_context
     from ..lifecycle import run_command
 
     repos = get_repos()
@@ -760,7 +758,7 @@ def run_suite(
     results_path = run_options.results or str(log_dir / "junit.xml")
     sut_test_dirs = [p for r in repos for p in r.tests]
 
-    with _session_context(log_dir):
+    with _session_context(log_dir) as session_ctx:
         # Inside the session context: the instrumentation scan walks the lab's
         # hosts, which a library caller only has once the context is installed.
         # Still ahead of every side effect — no dir is prepared, no host
@@ -768,6 +766,7 @@ def run_suite(
         run_options = resolve_coverage(
             run_options, repos, command=_cov_command_label(run_options, "otto test")
         )
+        session_ctx.cov_decision = bool(run_options.cov)
         _pre_run_cov_dir_check(run_options)
         run_command(_pre_run_cov_clean(repos, run_options))
         outcome, interrupted = _guarded_pytest_session(
@@ -785,9 +784,7 @@ def run_suite(
         # pytest's own (now-closed) event loops; drop that dead per-loop
         # state so the post-run sweep below doesn't attempt cross-loop
         # closes (they can only fail — see HostScope.rebuild_connections).
-        session_ctx = try_get_context()
-        if session_ctx is not None:
-            session_ctx.scope.rebuild_connections()
+        session_ctx.scope.rebuild_connections()
         if interrupted is None:
             run_command(_post_run_coverage(repos, log_dir, run_options))
     if interrupted is not None or outcome is None:
@@ -844,7 +841,6 @@ def run_selection(
         raise ValueError("run_selection requires run_options.tests or run_options.markers")
 
     from ..config import get_repos
-    from ..context import try_get_context
     from ..lifecycle import run_command
     from .selection import SelectionMatch, repos_with_marker_matches, resolve_selection
 
@@ -876,10 +872,11 @@ def run_selection(
     # ever precedes the first session.
     outcome: "_SessionOutcome | None" = None
     interrupted: "int | None" = None
-    with _session_context(log_dir):
+    with _session_context(log_dir) as session_ctx:
         # Same placement as run_suite's: the scan needs the session context,
         # and the decision precedes every side effect.
         opts = resolve_coverage(opts, repos, command=_cov_command_label(opts, "otto test"))
+        session_ctx.cov_decision = bool(opts.cov)
         _pre_run_cov_dir_check(opts)
         run_command(_pre_run_cov_clean(repos, opts))
         for match in per_repo:
@@ -919,9 +916,7 @@ def run_selection(
         # pytest's own (now-closed) event loops; drop that dead per-loop
         # state so the post-run sweep below doesn't attempt cross-loop
         # closes (they can only fail — see HostScope.rebuild_connections).
-        session_ctx = try_get_context()
-        if session_ctx is not None:
-            session_ctx.scope.rebuild_connections()
+        session_ctx.scope.rebuild_connections()
         if interrupted is None:
             run_command(_post_run_coverage(repos, log_dir, opts))
     if interrupted is not None:

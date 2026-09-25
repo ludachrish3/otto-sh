@@ -11,8 +11,9 @@ Coverage works in two steps:
    :class:`~otto.coverage.reporter.CoverageReporter`.
 """
 
+from ..config.coverage_settings import CoverageConfigError
 from .collect import CollectResult, clean_remote_gcda, collect_coverage
-from .errors import CoverageConfigError, CoverageNotInstrumentedError, NoCoverageDataError
+from .errors import CoverageNotInstrumentedError, NoCoverageDataError
 from .fetcher.remote import GcdaFetcher
 from .reporter import CoverageReporter
 from .store.model import CoverageStore

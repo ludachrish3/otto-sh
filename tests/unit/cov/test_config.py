@@ -10,12 +10,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from otto.coverage.config import (
-    get_cov_config,
-    get_cov_repo,
-    has_cov_config,
-    prepare_empty_dir,
-)
+from otto.config.coverage_settings import get_cov_config, get_cov_repo, has_cov_config
+from otto.coverage.config import prepare_empty_dir
 
 
 class TestHasCovConfig:

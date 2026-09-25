@@ -113,7 +113,7 @@ async def produce_captures(
     Raises:
         otto.coverage.capture.gitio.GitUnavailableError: If *repo_root*
             is not a git repository.
-        otto.coverage.errors.CoverageConfigError: If a host dir holds
+        otto.config.coverage_settings.CoverageConfigError: If a host dir holds
             coverage data directly (the pre-product one-level tree).
         otto.host.errors.CoverageToolMissingError: If a product's stamp
             names a gcov that is not on PATH.
