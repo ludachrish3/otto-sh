@@ -835,20 +835,24 @@ class TestPortPrefixes:
         with pytest.raises(ValueError, match="port range"):
             port_prefixes(lo, hi)
 
-    @settings(max_examples=_COVER_MAX_EXAMPLES, deadline=None)
-    @given(lo=st.integers(1, 65535), width=st.integers(0, 2047))
-    @pytest.mark.timeout(_COVER_TIMEOUT_S)
-    def test_cover_exactly_disjointly_and_minimally(self, lo: int, width: int) -> None:
-        hi = min(lo + width, 65535)
-        prefixes = port_prefixes(lo, hi)
-        covered: list[int] = []
-        for p in prefixes:
-            inverse = ~p.mask & 0xFFFF
-            assert inverse & (inverse + 1) == 0, f"mask {p.mask:#06x} not leading-ones"
-            assert p.value & inverse == 0, f"{p} not aligned"
-            covered.extend(range(p.value, p.value + inverse + 1))
-        assert covered == list(range(lo, hi + 1))
-        assert len(prefixes) == _min_blocks(lo, hi) <= 30
+
+# Module-level, not a TestPortPrefixes method: the unit-repeat lane calls every
+# test twice in one process, each time on a fresh class instance, and Hypothesis
+# fails a @given method seen under two `self`s (HealthCheck.differing_executors).
+@settings(max_examples=_COVER_MAX_EXAMPLES, deadline=None)
+@given(lo=st.integers(1, 65535), width=st.integers(0, 2047))
+@pytest.mark.timeout(_COVER_TIMEOUT_S)
+def test_port_prefixes_cover_exactly_disjointly_and_minimally(lo: int, width: int) -> None:
+    hi = min(lo + width, 65535)
+    prefixes = port_prefixes(lo, hi)
+    covered: list[int] = []
+    for p in prefixes:
+        inverse = ~p.mask & 0xFFFF
+        assert inverse & (inverse + 1) == 0, f"mask {p.mask:#06x} not leading-ones"
+        assert p.value & inverse == 0, f"{p} not aligned"
+        covered.extend(range(p.value, p.value + inverse + 1))
+    assert covered == list(range(lo, hi + 1))
+    assert len(prefixes) == _min_blocks(lo, hi) <= 30
 
 
 ROUNDTRIP_CASES = [
