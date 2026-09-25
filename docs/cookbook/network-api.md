@@ -112,7 +112,9 @@ await repair_link(lab, "edge")
 
 `selector` is the same optional keyword on both mutators — pass a `Selector`
 to route through the port-scoped path instead of the whole-interface one;
-omitted (the default), the whole interface is impaired or repaired:
+omitted (the default), the whole interface is impaired or repaired. `end`
+and `side` extend a selector to a port range and/or one port side (`dst` or
+`src`), the same as the CLI's `--port START:END` and `--side`:
 
 ```python
 from otto.link import Selector, impair_link, repair_link
@@ -121,7 +123,19 @@ report = await impair_link(
     lab, "edge", ImpairmentParams(delay_ms=200.0), selector=Selector(5201, "tcp")
 )
 await repair_link(lab, "edge", selector=Selector(5201, "tcp"))
+
+report = await impair_link(
+    lab,
+    "edge",
+    ImpairmentParams(delay_ms=50.0),
+    selector=Selector(5000, "tcp", end=5010, side="dst"),
+)
+await repair_link(lab, "edge", selector=Selector(5000, "tcp", end=5010, side="dst"))
 ```
+
+An overlapping selector that doesn't nest raises `ValueError` with exactly
+the message the CLI prints — see
+{doc}`Overlapping selectors <../cli/link/port-scoped>`.
 
 `read_link_states`'s result shape follows: each `LinkState.by_direction`
 value is a `DirectionState` (`whole: ImpairmentParams | None`, `scoped: dict[Selector,

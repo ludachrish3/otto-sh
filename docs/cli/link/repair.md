@@ -10,8 +10,8 @@ unconditionally (no merge — a placement with anything applied gets a
 `tc qdisc del`) and cancels any live `--expire` timer for it, whether or not
 that placement actually had an impairment to clear. This bare form clears a
 whole-link impairment OR an entire port-scoped tree, whichever the placement
-carries. Adding `--port N [--proto P]` narrows `repair` to one selector
-instead of the whole placement — see
+carries. Adding `--port N|START:END [--proto P] [--side S]` narrows `repair` to one
+selector instead of the whole placement — see
 [Repairing one selector](#repairing-one-selector).
 
 `repair --all` walks every static link in the lab and never raises: a link
@@ -47,14 +47,22 @@ than a skip — `skipped` means otto declined a link it never impaired.
 ```bash
 otto --lab unix link repair edge --port 5201 --proto tcp
 otto --lab unix link repair edge --port 5201
+otto --lab unix link repair edge --port 5000:5010 --side dst
 otto --lab unix link repair edge
 ```
 
-`repair <link> --port N [--proto P]` clears just that one selector —
-deleting the whole classful tree if it was the last selector standing — and
-cancels only its own timer, leaving every other selector on the placement
-untouched. A bare `repair` (no `--port`) still clears **everything**, as
-described above. `--port` and `--all` don't compose: `--port` repairs one selector on
-one link, `--all` sweeps every static link, and passing both is a usage
-error.
+`repair <link> --port N|START:END [--proto P] [--side S]` clears just that
+one selector — deleting the whole classful tree if it was the last selector
+standing — and cancels only its own timer, leaving every other selector on
+the placement untouched. A bare `repair` (no `--port`) still clears
+**everything**, as described above. `--port` and `--all` don't compose:
+`--port` repairs one selector on one link, `--all` sweeps every static link,
+and passing both is a usage error.
+
+The flags must name the selector exactly as it was impaired — `5000:5000`
+and `5000` are the same selector, but a narrower `--port` never carves a
+piece out of a wider one, so `--port 5205` cannot partially clear a
+`5200:5220` selector. See
+[Overlapping selectors: nest or collide](port-scoped.md#overlapping-selectors-nest-or-collide)
+for how selectors compose and how impairing gives `--port` its target.
 

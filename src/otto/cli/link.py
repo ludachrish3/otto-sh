@@ -177,15 +177,19 @@ async def impair(  # noqa: PLR0913 — CLI command params
     expire: int | None = typer.Option(
         None, "--expire", min=1, help="Auto-clear this impairment after N seconds."
     ),
-    port: int | None = typer.Option(
+    port: str | None = typer.Option(
         None,
         "--port",
-        min=1,
-        max=65535,
-        help="Scope to one service port (matches source OR dest; see the guide).",
+        help=(
+            "Scope to one port or a START:END range "
+            "(matches source OR dest unless --side; see the guide)."
+        ),
     ),
     proto: str | None = typer.Option(
         None, "--proto", help="With --port: narrow to tcp or udp (default: both)."
+    ),
+    side: str | None = typer.Option(
+        None, "--side", help="With --port: match only the dst or src port (default: either)."
     ),
 ) -> None:
     """Impair a static link (merge-read-modify-replace, verified). See spec §9/§10."""
@@ -210,13 +214,13 @@ async def impair(  # noqa: PLR0913 — CLI command params
     if all(v is None for v in given.values()):
         rprint("[red]impair needs at least one parameter option (--delay/--loss/--rate/...).[/red]")
         raise typer.Exit(2)
-    if proto is not None and port is None:
-        rprint("[red]--proto needs --port.[/red]")
-        raise typer.Exit(2)
+    for flag, value in (("--proto", proto), ("--side", side)):
+        if value is not None and port is None:
+            fail(f"{flag} needs --port.", 2)
     selector: Selector | None = None
     if port is not None:
         try:
-            selector = Selector(port, proto)
+            selector = Selector.parse(port, proto, side)
         except ValueError as e:
             fail(e, 2)
     lab = get_lab()
@@ -256,15 +260,16 @@ async def repair(
         None, help="Link id or name.", autocompletion=_link_completer
     ),
     all_: bool = typer.Option(False, "--all", help="Repair every static link in the lab."),
-    port: int | None = typer.Option(
+    port: str | None = typer.Option(
         None,
         "--port",
-        min=1,
-        max=65535,
-        help="Repair only this service port's scoped impairment (single link only).",
+        help="Repair only this port/range's scoped impairment (single link only).",
     ),
     proto: str | None = typer.Option(
         None, "--proto", help="With --port: narrow to tcp or udp (default: both)."
+    ),
+    side: str | None = typer.Option(
+        None, "--side", help="With --port: match only the dst or src port (default: either)."
     ),
 ) -> None:
     """Clear a link's impairment(s) and cancel its timers, or repair --all. See spec §9/§10."""
@@ -273,16 +278,16 @@ async def repair(
     if bool(link) == bool(all_):
         rprint("[red]give a link id/name, or --all (not both).[/red]")
         raise typer.Exit(2)
-    if proto is not None and port is None:
-        rprint("[red]--proto needs --port.[/red]")
-        raise typer.Exit(2)
+    for flag, value in (("--proto", proto), ("--side", side)):
+        if value is not None and port is None:
+            fail(f"{flag} needs --port.", 2)
     if all_ and port is not None:
         rprint("[red]--port repairs one selector on one link; it cannot combine with --all.[/red]")
         raise typer.Exit(2)
     selector: Selector | None = None
     if port is not None:
         try:
-            selector = Selector(port, proto)
+            selector = Selector.parse(port, proto, side)
         except ValueError as e:
             fail(e, 2)
     lab = get_lab()
@@ -381,7 +386,7 @@ def _read_error_rows(state: LinkState) -> list[str]:
 
 
 def _selector_rows(state: LinkState) -> list[str]:
-    """One indented row per selector, a->b first, sorted by (port, proto)."""
+    """One indented row per selector, a->b first, sorted by (port, last, proto, side)."""
     rows: list[str] = []
     for direction in (FlowDirection.A_TO_B, FlowDirection.B_TO_A):
         dstate = state.by_direction.get(direction)
@@ -390,7 +395,8 @@ def _selector_rows(state: LinkState) -> list[str]:
         rows.extend(
             f"  {direction.value}  {sel.describe()}  {params.describe()}"
             for sel, params in sorted(
-                dstate.scoped.items(), key=lambda kv: (kv[0].port, kv[0].proto or "")
+                dstate.scoped.items(),
+                key=lambda kv: (kv[0].port, kv[0].last, kv[0].proto or "", kv[0].side or ""),
             )
         )
     return rows

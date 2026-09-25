@@ -139,6 +139,11 @@ _CLEAN_PORT = 5202
 _SCOPED_DELAY_MS = 200.0
 _TCP_DELTA_MIN_MS = 150.0
 
+_WIDE_RANGE_LO = 5200
+_WIDE_RANGE_HI = 5220
+_NARROW_PORT = 5205  # strictly inside the wide range
+_NARROW_DELAY_MS = 60.0  # moderate: keeps every rejected outcome in a disjoint window
+
 _VLAN_INTERFACES: dict[str, dict[str, Interface]] = {
     "test1": {_VLAN100_DEV: Interface(ip=_TEST1_VLAN_IP)},
     "test2": {_VLAN200_DEV: Interface(ip=_TEST2_VLAN_IP)},
@@ -719,6 +724,74 @@ async def test_scoped_differential_and_two_selectors(impair_lab: Lab) -> None:
             await _root_best_effort(test3, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{port}')}'")
 
 
+@pytest.mark.asyncio(loop_scope="module")
+async def test_range_dst_selector_live(impair_lab: Lab) -> None:
+    """A fresh connect + echo is two round trips, each crossing the dst-matched direction
+    once (~2x delay); a both-sides selector would cross it four times (~4x delay). A
+    same-scope overlap is refused live without touching the tree; repair returns the
+    netdev to pristine."""
+    from otto.link import DirectionState, Selector
+
+    test1 = impair_lab.hosts[_TEST1]
+    test3 = impair_lab.hosts[_TEST3]
+    sel = Selector(_SCOPED_PORT - 1, "tcp", end=_SCOPED_PORT, side="dst")
+    for port in (_SCOPED_PORT, _CLEAN_PORT):
+        await _root_best_effort(test3, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{port}')}'")
+        await test3.exec(
+            f"setsid socat TCP4-LISTEN:{port},fork,reuseaddr EXEC:cat </dev/null >/dev/null 2>&1 &",
+            timeout=_HOST_CMD_TIMEOUT,
+            log=LogMode.QUIET,
+        )
+    try:
+        base_scoped = await _tcp_rtt_ms(test1, _TEST3_VLAN100_IP, _SCOPED_PORT)
+        base_clean = await _tcp_rtt_ms(test1, _TEST3_VLAN100_IP, _CLEAN_PORT)
+        # both directions: a->b (test1) sees dport 5201 requests; b->a (test3)
+        # sees replies with sport 5201 — which a dst-only selector must NOT match.
+        await impair_link(
+            impair_lab, "edge", ImpairmentParams(delay_ms=_SCOPED_DELAY_MS), selector=sel
+        )
+        try:
+            impaired = await _tcp_rtt_ms(test1, _TEST3_VLAN100_IP, _SCOPED_PORT)
+            clean = await _tcp_rtt_ms(test1, _TEST3_VLAN100_IP, _CLEAN_PORT)
+            delta = impaired - base_scoped
+            assert 2 * _SCOPED_DELAY_MS - 50.0 <= delta < 3 * _SCOPED_DELAY_MS, (
+                f"a fresh connect + echo is two round trips, each crossing the dst-matched "
+                f"direction once (~{2 * _SCOPED_DELAY_MS:.0f}ms expected; baseline "
+                f"{base_scoped:.1f}ms, impaired {impaired:.1f}ms)"
+            )
+            assert clean - base_clean < _TCP_DELTA_MIN_MS, (
+                f"port {_CLEAN_PORT} is outside the range and must stay fast "
+                f"(baseline {base_clean:.1f}ms, now {clean:.1f}ms)"
+            )
+            states = await read_link_states(impair_lab)
+            a = next(s for s in states if s.link.id == "edge").by_direction[FlowDirection.A_TO_B]
+            assert isinstance(a, DirectionState)
+            assert set(a.scoped) == {sel}
+
+            with pytest.raises(ValueError, match="same scope"):
+                await impair_link(
+                    impair_lab,
+                    "edge",
+                    ImpairmentParams(loss_pct=1.0),
+                    selector=Selector(_SCOPED_PORT, "tcp", side="dst"),
+                )
+            states = await read_link_states(impair_lab)
+            a = next(s for s in states if s.link.id == "edge").by_direction[FlowDirection.A_TO_B]
+            assert isinstance(a, DirectionState)
+            assert set(a.scoped) == {sel}, "a refused collision must leave the tree untouched"
+        finally:
+            await repair_link(impair_lab, "edge", selector=sel)
+        qdisc = await test1.exec(
+            f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+        )
+        first = (qdisc.value or "").splitlines()[0] if (qdisc.value or "").strip() else ""
+        assert "prio 1:" not in first, qdisc.value
+        assert "netem" not in first, qdisc.value
+    finally:
+        for port in (_SCOPED_PORT, _CLEAN_PORT):
+            await _root_best_effort(test3, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{port}')}'")
+
+
 # ---------------------------------------------------------------------------
 # Test 8: per-selector expiry clears only its selector
 # ---------------------------------------------------------------------------
@@ -777,3 +850,92 @@ async def test_scoped_expire_clears_only_its_selector(impair_lab: Lab) -> None:
         assert not stale, f"expired selector's timer still running: {stale!r}"
     finally:
         await repair_link(impair_lab, "edge")
+
+
+# ---------------------------------------------------------------------------
+# Test 9: precedence — a strictly nested selector wins over its wide parent
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_narrower_nested_selector_outranks_its_wide_parent(impair_lab: Lab) -> None:
+    """A wide range selector and a proto-narrowed selector strictly nested inside it compose
+    (spec table: ``5200:5220`` + ``5200:5210/tcp`` composes) rather than collide. A probe to
+    the narrower selector's own port must measure ITS delay, not the wide parent's and not
+    their sum — the feature's headline promise, "predict which selector wins".
+
+    Bounds, derived the same way as ``test_range_dst_selector_live``: a fresh connect + one
+    echo is two round trips. That test's selector is dst-only, so each round trip crosses the
+    delayed direction once (~2x delay; bounds ``2D-50 <= delta < 3D``). Neither selector here
+    is side-scoped (both `--side` unset, matching source OR destination), so each round trip
+    crosses the delayed direction on BOTH legs — request and reply — twice as many crossings
+    as the dst-only case, hence ~4x delay (already observed live, not just derived: the
+    both-sides selector in ``test_scoped_differential_and_two_selectors`` measures ~805ms at
+    a 200ms delay). Scaling the dst-only test's identically-shaped fudge factor (a flat jitter
+    allowance, one extra multiple of D as upper headroom) gives ``4D-100 <= delta < 5D``.
+
+    The wide parent gets the LARGE delay (``_SCOPED_DELAY_MS`` = 200ms) and the nested
+    selector the moderate one (``_NARROW_DELAY_MS`` = 60ms) -- not the other way around --
+    specifically so every alternative outcome falls outside the narrow-wins window
+    ``[4*60-100, 5*60)`` = ``[140, 300)``: no impairment lands at ~0ms, the wide parent
+    winning lands at ~4*200 = 800ms, and even the two summed (never actually possible here --
+    a packet is routed to exactly one classful band, never both) would land at ~4*260 =
+    1040ms. All three are well clear of 300ms, so a measurement inside ``[140, 300)`` can only
+    mean the narrower selector won.
+    """
+    from otto.link import DirectionState, Selector
+
+    test1 = impair_lab.hosts[_TEST1]
+    test3 = impair_lab.hosts[_TEST3]
+    wide = Selector(_WIDE_RANGE_LO, end=_WIDE_RANGE_HI)
+    narrow = Selector(_NARROW_PORT, "tcp")
+    await _root_best_effort(test3, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{_NARROW_PORT}')}'")
+    await test3.exec(
+        f"setsid socat TCP4-LISTEN:{_NARROW_PORT},fork,reuseaddr EXEC:cat </dev/null "
+        ">/dev/null 2>&1 &",
+        timeout=_HOST_CMD_TIMEOUT,
+        log=LogMode.QUIET,
+    )
+    try:
+        baseline = await _tcp_rtt_ms(test1, _TEST3_VLAN100_IP, _NARROW_PORT)
+
+        await impair_link(
+            impair_lab, "edge", ImpairmentParams(delay_ms=_SCOPED_DELAY_MS), selector=wide
+        )
+        try:
+            await impair_link(
+                impair_lab, "edge", ImpairmentParams(delay_ms=_NARROW_DELAY_MS), selector=narrow
+            )
+            try:
+                states = await read_link_states(impair_lab)
+                edge_state = next(s for s in states if s.link.id == "edge")
+                a = edge_state.by_direction[FlowDirection.A_TO_B]
+                assert isinstance(a, DirectionState)
+                assert set(a.scoped) == {wide, narrow}, (
+                    "both selectors must coexist, un-merged, in otto's own state"
+                )
+                assert equivalent(a.scoped[wide], ImpairmentParams(delay_ms=_SCOPED_DELAY_MS))
+                assert equivalent(a.scoped[narrow], ImpairmentParams(delay_ms=_NARROW_DELAY_MS))
+
+                impaired = await _tcp_rtt_ms(test1, _TEST3_VLAN100_IP, _NARROW_PORT)
+                delta = impaired - baseline
+                lo, hi = 4 * _NARROW_DELAY_MS - 100.0, 5 * _NARROW_DELAY_MS
+                assert lo <= delta < hi, (
+                    f"port {_NARROW_PORT} is inside both {wide.describe()} and "
+                    f"{narrow.describe()}; the narrower selector must win, giving a delta in "
+                    f"[{lo:.0f}, {hi:.0f})ms -- got {delta:.1f}ms (baseline {baseline:.1f}ms, "
+                    f"impaired {impaired:.1f}ms). No impairment (~0ms), the wide parent winning "
+                    "(~800ms), and the two summed (~1040ms) are all rejected by this window."
+                )
+            finally:
+                await repair_link(impair_lab, "edge", selector=narrow)
+        finally:
+            await repair_link(impair_lab, "edge", selector=wide)
+        qdisc = await test1.exec(
+            f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+        )
+        first = (qdisc.value or "").splitlines()[0] if (qdisc.value or "").strip() else ""
+        assert "prio 1:" not in first, qdisc.value
+        assert "netem" not in first, qdisc.value
+    finally:
+        await _root_best_effort(test3, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{_NARROW_PORT}')}'")

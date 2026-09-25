@@ -14,10 +14,11 @@ from otto.link.manage import (
 from otto.link.model import Link, LinkEndpoint
 from otto.link.params import ImpairmentParams, Selector
 from otto.link.placement import BOTH_DIRECTIONS, FlowDirection, Placement, impairment_refusal
-from otto.link.sentinel import IMPAIR_PS_COMMAND, encode_impair_sentinel, encode_impair_sentinel_v2
+from otto.link.sentinel import IMPAIR_PS_COMMAND, encode_impair_sentinel, encode_impair_sentinel_v3
 from otto.result import CommandResult
 from tests.conftest import active_context
 
+from ._tc_render import render_scoped_tree
 from .test_manage_impair import (
     FILTER_SCOPED_ONE,
     FILTER_SCOPED_TWO,
@@ -352,7 +353,7 @@ class TestScopedRepair:
     @pytest.mark.asyncio
     async def test_bare_repair_clears_scoped_tree_and_all_timers(self) -> None:
         v1 = encode_impair_sentinel(LINK.id, "eth1.100")
-        v2 = encode_impair_sentinel_v2(LINK.id, "eth1.100", Selector(5201, "tcp"))
+        v2 = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(5201, "tcp"))
         lab, test1, test2, _ = _bed()
         test1.ps_text = f"  4242 05:00 {v1} -c sleep 600\n  4243 05:00 {v2} -c sleep 600\n"
         test1.qdisc_texts = [QDISC_SCOPED_ONE, ""]
@@ -371,8 +372,8 @@ class TestScopedRepair:
         test2.qdisc_texts = [""]
         report = await repair_link(lab, "edge", selector=Selector(53, "udp"))
         assert test1.sudo_commands == [
-            "tc filter del dev eth1.100 parent 1: pref 52 protocol ip u32",
-            "tc filter del dev eth1.100 parent 1: pref 53 protocol ip u32",
+            "tc filter del dev eth1.100 parent 1: pref 251 protocol ip u32",
+            "tc filter del dev eth1.100 parent 1: pref 1251 protocol ip u32",
             "tc qdisc del dev eth1.100 parent 1:5 handle 50:",
         ]
         assert [p.netdev for p in report.cleared] == ["eth1.100"]
@@ -388,8 +389,8 @@ class TestScopedRepair:
 
     @pytest.mark.asyncio
     async def test_selector_repair_cancels_only_matching_v2_timer(self) -> None:
-        mine = encode_impair_sentinel_v2(LINK.id, "eth1.100", Selector(5201, "tcp"))
-        other = encode_impair_sentinel_v2(LINK.id, "eth1.100", Selector(53, "udp"))
+        mine = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(5201, "tcp"))
+        other = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(53, "udp"))
         lab, test1, test2, _ = _bed()
         test1.ps_text = f"  4242 05:00 {mine} -c x\n  4243 05:00 {other} -c x\n"
         # post-clear re-read: only 53/udp (band 5) remains
@@ -398,10 +399,10 @@ class TestScopedRepair:
             "qdisc netem 50: parent 1:5 limit 1000 loss 5%\n"
         )
         filter_53_only = (
-            "filter parent 1: protocol ip pref 52 u32 fh 802::800 flowid 1:5\n"
+            "filter parent 1: protocol ip pref 251 u32 fh 802::800 flowid 1:5\n"
             "  match 00110000/00ff0000 at 8\n"
             "  match 00000035/0000ffff at 20\n"
-            "filter parent 1: protocol ip pref 53 u32 fh 803::800 flowid 1:5\n"
+            "filter parent 1: protocol ip pref 1251 u32 fh 803::800 flowid 1:5\n"
             "  match 00110000/00ff0000 at 8\n"
             "  match 00350000/ffff0000 at 20\n"
         )
@@ -673,3 +674,24 @@ class TestDryRunListReportsNotMeasured:
         assert state.read_errors == {}
         assert state.read_failed is False
         assert state.unreachable is False
+
+
+class TestRangeRepair:
+    @pytest.mark.asyncio
+    async def test_repair_link_clears_an_exact_range_selector(self) -> None:
+        sel = Selector(5000, "tcp", end=5010, side="dst")
+        tree = render_scoped_tree({sel: (4, ImpairmentParams(delay_ms=50.0))})
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts, test1.filter_texts = [tree.qdisc, ""], [tree.filters, ""]
+        report = await repair_link(lab, "edge", selector=sel)
+        assert test1.sudo_commands == ["tc qdisc del dev eth1.100 root"]
+        assert [p.host_id for p in report.cleared] == ["test1"]
+
+    @pytest.mark.asyncio
+    async def test_repair_inside_a_wider_range_carves_nothing(self) -> None:
+        tree = render_scoped_tree({Selector(5200, end=5220): (4, ImpairmentParams(delay_ms=50.0))})
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts, test1.filter_texts = [tree.qdisc], [tree.filters]
+        report = await repair_link(lab, "edge", selector=Selector(5205))
+        assert test1.sudo_commands == []
+        assert report.cleared == []

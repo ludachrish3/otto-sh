@@ -11,11 +11,14 @@ import pytest
 from otto.link.impairer import LinkImpairer, register_impairer
 from otto.link.manage import LinkNotMeasuredError, _exec, find_link, impair_link
 from otto.link.model import Link, LinkEndpoint
+from otto.link.netem import NetEmImpairer
 from otto.link.params import ImpairmentParams, Selector
 from otto.link.placement import FlowDirection
-from otto.link.sentinel import IMPAIR_PS_COMMAND, encode_impair_sentinel_v2
+from otto.link.sentinel import IMPAIR_PS_COMMAND, encode_impair_sentinel_v3
 from otto.result import CommandResult, Results, Status
 from tests.conftest import active_context
+
+from ._tc_render import render_scoped_tree
 
 TEST1_ADDR = (
     "3: eth1    inet 10.10.200.11/24 brd 10.10.200.255 scope global eth1\\  x\n"
@@ -486,10 +489,10 @@ QDISC_SCOPED_ONE = (
     "qdisc netem 40: parent 1:4 limit 1000 delay 200ms\n"
 )
 FILTER_SCOPED_ONE = (
-    "filter parent 1: protocol ip pref 40 u32 fh 800::800 flowid 1:4\n"
+    "filter parent 1: protocol ip pref 240 u32 fh 800::800 flowid 1:4\n"
     "  match 00060000/00ff0000 at 8\n"
     "  match 00001451/0000ffff at 20\n"
-    "filter parent 1: protocol ip pref 41 u32 fh 801::800 flowid 1:4\n"
+    "filter parent 1: protocol ip pref 1240 u32 fh 801::800 flowid 1:4\n"
     "  match 00060000/00ff0000 at 8\n"
     "  match 14510000/ffff0000 at 20\n"
 )
@@ -535,10 +538,10 @@ QDISC_SCOPED_TWO = (
     "qdisc netem 50: parent 1:5 limit 1000 loss 5%\n"
 )
 FILTER_SCOPED_TWO = FILTER_SCOPED_ONE + (
-    "filter parent 1: protocol ip pref 52 u32 fh 802::800 flowid 1:5\n"
+    "filter parent 1: protocol ip pref 251 u32 fh 802::800 flowid 1:5\n"
     "  match 00110000/00ff0000 at 8\n"
     "  match 00000035/0000ffff at 20\n"
-    "filter parent 1: protocol ip pref 53 u32 fh 803::800 flowid 1:5\n"
+    "filter parent 1: protocol ip pref 1251 u32 fh 803::800 flowid 1:5\n"
     "  match 00110000/00ff0000 at 8\n"
     "  match 00350000/ffff0000 at 20\n"
 )
@@ -566,11 +569,11 @@ class TestScopedImpair:
             ),
             "tc qdisc replace dev eth1.100 parent 1:4 handle 40: netem delay 200ms",
             (
-                "tc filter add dev eth1.100 parent 1: pref 40 protocol ip u32 "
+                "tc filter add dev eth1.100 parent 1: pref 240 protocol ip u32 "
                 "match ip protocol 6 0xff match ip dport 5201 0xffff flowid 1:4"
             ),
             (
-                "tc filter add dev eth1.100 parent 1: pref 41 protocol ip u32 "
+                "tc filter add dev eth1.100 parent 1: pref 1240 protocol ip u32 "
                 "match ip protocol 6 0xff match ip sport 5201 0xffff flowid 1:4"
             ),
         ]
@@ -644,10 +647,10 @@ class TestScopedImpair:
             f"qdisc netem {b:x}0: parent 1:{b:x} limit 1000 delay 1ms\n" for b in range(4, 12)
         )
         filters = "".join(
-            f"filter parent 1: protocol ip pref {b * 10} u32 fh 800::800 flowid 1:{b:x}\n"
+            f"filter parent 1: protocol ip pref {200 + b * 10} u32 fh 800::800 flowid 1:{b:x}\n"
             f"  match 00060000/00ff0000 at 8\n"
             f"  match {5000 + b:08x}/0000ffff at 20\n"
-            f"filter parent 1: protocol ip pref {b * 10 + 1} u32 fh 801::800 flowid 1:{b:x}\n"
+            f"filter parent 1: protocol ip pref {1200 + b * 10} u32 fh 801::800 flowid 1:{b:x}\n"
             f"  match 00060000/00ff0000 at 8\n"
             f"  match {(5000 + b) << 16:08x}/ffff0000 at 20\n"
             for b in range(4, 12)
@@ -708,11 +711,11 @@ class TestScopedImpair:
             ),
             "tc qdisc replace dev eth1.100 parent 1:4 handle 40: netem delay 200ms",
             (
-                "tc filter add dev eth1.100 parent 1: pref 40 protocol ip u32 "
+                "tc filter add dev eth1.100 parent 1: pref 240 protocol ip u32 "
                 "match ip protocol 6 0xff match ip dport 5201 0xffff flowid 1:4"
             ),
             (
-                "tc filter add dev eth1.100 parent 1: pref 41 protocol ip u32 "
+                "tc filter add dev eth1.100 parent 1: pref 1240 protocol ip u32 "
                 "match ip protocol 6 0xff match ip sport 5201 0xffff flowid 1:4"
             ),
         ]
@@ -759,10 +762,11 @@ class TestScopedTimers:
         launch = next(c for c in test1.sudo_commands if "otto-impair:" in c)
         # LINK.id may percent-encode in the sentinel; assert the frame + payload
         # tail rather than interpolating the raw id (mirrors the v1 test).
-        assert "otto-impair:v2:" in launch
-        assert ":eth1.100:5201:tcp" in launch
+        assert "otto-impair:v3:" in launch
+        assert ":eth1.100:5201::tcp:" in launch
         assert "sleep 30 && " in launch
-        assert "tc filter del dev eth1.100 parent 1: pref 40 protocol ip u32" in launch
+        assert "tc filter del dev eth1.100 parent 1: pref 240 protocol ip u32" in launch
+        assert "tc filter del dev eth1.100 parent 1: pref 1240 protocol ip u32" in launch
         assert "tc qdisc del dev eth1.100 parent 1:4 handle 40:" in launch
         assert (
             'if [ -z "$(tc filter show dev eth1.100 parent 1: 2>/dev/null || true)" ]; '
@@ -772,8 +776,8 @@ class TestScopedTimers:
 
     @pytest.mark.asyncio
     async def test_scoped_impair_cancels_only_its_selectors_v2_timer(self) -> None:
-        v2_mine = encode_impair_sentinel_v2(LINK.id, "eth1.100", Selector(5201, "tcp"))
-        v2_other = encode_impair_sentinel_v2(LINK.id, "eth1.100", Selector(53, "udp"))
+        v2_mine = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(5201, "tcp"))
+        v2_other = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(53, "udp"))
         lab, test1, _, _ = _bed()
         test1.ps_text = (
             f"  4242 05:00 {v2_mine} -c sleep 600\n  4243 05:00 {v2_other} -c sleep 600\n"
@@ -795,7 +799,7 @@ class TestScopedTimers:
     async def test_whole_link_impair_does_not_cancel_v2_timers(self) -> None:
         # a v2 timer for another link's netdev-sharing selector must survive a
         # bare impair (which only owns v1 whole-link timers)
-        v2 = encode_impair_sentinel_v2(LINK.id, "eth1.100", Selector(5201, "tcp"))
+        v2 = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(5201, "tcp"))
         lab, test1, _, _ = _bed()
         test1.ps_text = f"  4242 05:00 {v2} -c sleep 600\n"
         test1.qdisc_texts = ["", DELAY_50_TEXT]
@@ -812,7 +816,7 @@ class TestScopedTimers:
         # live sibling selector's expire timer too — leaving that sibling's
         # restored impairment with a dead timer, persisting forever instead
         # of expiring).
-        v2_sibling = encode_impair_sentinel_v2(LINK.id, "eth1.100", Selector(53, "udp"))
+        v2_sibling = encode_impair_sentinel_v3(LINK.id, "eth1.100", Selector(53, "udp"))
         lab, test1, _, _ = _bed()
         test1.ps_text = f"  4243 05:00 {v2_sibling} -c sleep 600\n"
         test1.qdisc_texts = [QDISC_SCOPED_TWO, ""]  # prior: both selectors; verify: nothing there
@@ -1320,3 +1324,216 @@ class TestDryRunSurfacesTheExpireRefusalUpFront:
         assert report.plan.would[-1] == (
             "a->b on test1/eth1.100: launch an expire timer that clears it after 30s"
         )
+
+
+ROOT_CMD = (
+    "tc qdisc replace dev eth1.100 root handle 1: prio bands 11 "
+    "priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1"
+)
+
+
+class TestSelectorCollisions:
+    @pytest.mark.asyncio
+    async def test_same_scope_overlap_is_refused_before_any_mutation(self) -> None:
+        tree = render_scoped_tree(
+            {Selector(5200, "tcp", end=5220): (4, ImpairmentParams(delay_ms=200.0))}
+        )
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts, test1.filter_texts = [tree.qdisc], [tree.filters]
+        with pytest.raises(ValueError, match="collides with") as exc:
+            await impair_link(
+                lab,
+                "edge",
+                ImpairmentParams(delay_ms=5.0),
+                from_host="test1",
+                selector=Selector(5205, "tcp"),
+            )
+        msg = str(exc.value)
+        assert "5205/tcp collides with 5200:5220/tcp on edge a->b (test1/eth1.100)" in msg
+        assert "same scope, overlapping ports 5205" in msg
+        assert "otto link repair edge --port 5200:5220 --proto tcp" in msg
+        assert "narrow it (--proto/--side on the CLI, proto/side on the API) so it nests" in msg
+        assert "inside 5200:5220/tcp" in msg
+        assert not test1.sudo_commands
+
+    @pytest.mark.asyncio
+    async def test_incomparable_scopes_are_refused(self) -> None:
+        tree = render_scoped_tree({Selector(5005, "tcp"): (4, ImpairmentParams(delay_ms=200.0))})
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts, test1.filter_texts = [tree.qdisc], [tree.filters]
+        with pytest.raises(ValueError, match="neither scope is narrower, overlapping ports 5005"):
+            await impair_link(
+                lab,
+                "edge",
+                ImpairmentParams(delay_ms=5.0),
+                from_host="test1",
+                selector=Selector(5005, side="dst"),
+            )
+        assert not test1.sudo_commands
+
+    @pytest.mark.asyncio
+    async def test_incomparable_scopes_refusal_names_the_narrowing_remedy(self) -> None:
+        """Neither existing remedy (clear it, pick a disjoint range) fits when
+
+        neither scope is narrower — the refusal must name the remedy the
+        feature actually offers: narrowing the new selector so it nests.
+        """
+        tree = render_scoped_tree({Selector(5005, "tcp"): (4, ImpairmentParams(delay_ms=200.0))})
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts, test1.filter_texts = [tree.qdisc], [tree.filters]
+        with pytest.raises(ValueError, match="neither scope is narrower") as exc:
+            await impair_link(
+                lab,
+                "edge",
+                ImpairmentParams(delay_ms=5.0),
+                from_host="test1",
+                selector=Selector(5005, side="dst"),
+            )
+        msg = str(exc.value)
+        assert "narrow it (--proto/--side on the CLI, proto/side on the API) so it nests" in msg
+        assert "inside 5005/tcp" in msg
+
+    @pytest.mark.asyncio
+    async def test_fully_narrowed_refusal_does_not_offer_narrowing(self) -> None:
+        """A selector with both proto and side set has no narrower scope."""
+        existing = Selector(5200, "tcp", end=5220, side="dst")
+        tree = render_scoped_tree({existing: (4, ImpairmentParams(delay_ms=200.0))})
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts, test1.filter_texts = [tree.qdisc], [tree.filters]
+        with pytest.raises(ValueError, match="same scope, overlapping ports 5205") as exc:
+            await impair_link(
+                lab,
+                "edge",
+                ImpairmentParams(delay_ms=5.0),
+                from_host="test1",
+                selector=Selector(5205, "tcp", side="dst"),
+            )
+        msg = str(exc.value)
+        assert "otto link repair edge --port 5200:5220 --proto tcp --side dst), or choose" in msg
+        assert "narrow it" not in msg
+        assert not test1.sudo_commands
+
+    @pytest.mark.asyncio
+    async def test_a_strictly_narrower_selector_composes(self) -> None:
+        wide = {Selector(5200, end=5220): (4, ImpairmentParams(delay_ms=10.0))}
+        narrow = Selector(5200, "tcp", end=5210)
+        both = {**wide, narrow: (5, ImpairmentParams(delay_ms=200.0))}
+        before, after = render_scoped_tree(wide), render_scoped_tree(both)
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts, test1.filter_texts = (
+            [before.qdisc, after.qdisc],
+            [before.filters, after.filters],
+        )
+        report = await impair_link(
+            lab, "edge", ImpairmentParams(delay_ms=200.0), from_host="test1", selector=narrow
+        )
+        assert report.applied[0].selector == narrow
+        assert test1.sudo_commands == [
+            "tc qdisc replace dev eth1.100 parent 1:5 handle 50: netem delay 200ms",
+            *NetEmImpairer().scoped_filter_commands("eth1.100", 5, narrow),
+        ]
+        assert test1.sudo_commands[1] == (
+            "tc filter add dev eth1.100 parent 1: pref 250 protocol ip u32 "
+            "match ip protocol 6 0xff match ip dport 5200 0xfff8 flowid 1:5"
+        )
+
+    @pytest.mark.asyncio
+    async def test_reimpairing_the_same_range_merges_even_when_spelled_n_colon_n(self) -> None:
+        sel = Selector(5200, "tcp", end=5220)
+        before = render_scoped_tree({sel: (4, ImpairmentParams(delay_ms=200.0))})
+        after = render_scoped_tree({sel: (4, ImpairmentParams(delay_ms=200.0, loss_pct=2.0))})
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts, test1.filter_texts = (
+            [before.qdisc, after.qdisc],
+            [before.filters, after.filters],
+        )
+        await impair_link(
+            lab,
+            "edge",
+            ImpairmentParams(loss_pct=2.0),
+            from_host="test1",
+            selector=Selector.parse("5200:5220", "tcp"),
+        )
+        assert test1.sudo_commands == [
+            "tc qdisc replace dev eth1.100 parent 1:4 handle 40: netem delay 200ms loss 2%"
+        ]
+        single = Selector(7000, "udp")
+        s_before = render_scoped_tree({single: (4, ImpairmentParams(delay_ms=1.0))})
+        s_after = render_scoped_tree({single: (4, ImpairmentParams(delay_ms=2.0))})
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts, test1.filter_texts = (
+            [s_before.qdisc, s_after.qdisc],
+            [s_before.filters, s_after.filters],
+        )
+        await impair_link(
+            lab,
+            "edge",
+            ImpairmentParams(delay_ms=2.0),
+            from_host="test1",
+            selector=Selector.parse("7000:7000", "udp"),
+        )
+        assert test1.sudo_commands == [
+            "tc qdisc replace dev eth1.100 parent 1:4 handle 40: netem delay 2ms"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_collision_on_the_second_placement_rolls_the_first_back(self) -> None:
+        new = Selector(5205, "tcp")
+        applied_on_test1 = render_scoped_tree({new: (4, ImpairmentParams(delay_ms=5.0))})
+        clash = render_scoped_tree(
+            {Selector(5200, "tcp", end=5220): (4, ImpairmentParams(delay_ms=200.0))}
+        )
+        lab, test1, test2, _ = _bed()
+        test1.qdisc_texts, test1.filter_texts = (
+            ["", applied_on_test1.qdisc],
+            ["", applied_on_test1.filters],
+        )
+        test2.qdisc_texts, test2.filter_texts = [clash.qdisc], [clash.filters]
+        with pytest.raises(ValueError, match="collides with 5200:5220/tcp on edge b->a"):
+            await impair_link(lab, "edge", ImpairmentParams(delay_ms=5.0), selector=new)
+        assert test1.sudo_commands[-1] == "tc qdisc del dev eth1.100 root"
+        assert not test2.sudo_commands
+
+    @pytest.mark.asyncio
+    async def test_dry_run_discloses_that_collisions_are_unchecked(self) -> None:
+        lab, test1, _, _ = _bed()
+        with active_context(dry_run=True):
+            report = await impair_link(
+                lab,
+                "edge",
+                ImpairmentParams(delay_ms=5.0),
+                from_host="test1",
+                selector=Selector(5200, "tcp", end=5220),
+            )
+        assert report.plan is not None
+        assert any("collides" in u for u in report.plan.unchecked)
+        assert test1.commands == []
+
+
+class TestPythonApiParity:
+    @pytest.mark.asyncio
+    async def test_impair_link_applies_a_range_side_selector(self) -> None:
+        sel = Selector(5000, "tcp", end=5010, side="dst")
+        tree = render_scoped_tree({sel: (4, ImpairmentParams(delay_ms=50.0))})
+        lab, test1, _, _ = _bed()
+        test1.qdisc_texts, test1.filter_texts = ["", tree.qdisc], ["", tree.filters]
+        report = await impair_link(
+            lab, "edge", ImpairmentParams(delay_ms=50.0), from_host="test1", selector=sel
+        )
+        assert report.applied[0].selector == sel
+        assert test1.sudo_commands == [
+            ROOT_CMD,
+            "tc qdisc replace dev eth1.100 parent 1:4 handle 40: netem delay 50ms",
+            (
+                "tc filter add dev eth1.100 parent 1: pref 40 protocol ip u32 "
+                "match ip protocol 6 0xff match ip dport 5000 0xfff8 flowid 1:4"
+            ),
+            (
+                "tc filter add dev eth1.100 parent 1: pref 40 protocol ip u32 "
+                "match ip protocol 6 0xff match ip dport 5008 0xfffe flowid 1:4"
+            ),
+            (
+                "tc filter add dev eth1.100 parent 1: pref 40 protocol ip u32 "
+                "match ip protocol 6 0xff match ip dport 5010 0xffff flowid 1:4"
+            ),
+        ]

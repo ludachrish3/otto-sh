@@ -8,6 +8,7 @@ and old iproute2 formatting (``50ms`` vs ``50.0ms``).
 """
 
 import re
+from dataclasses import dataclass
 from typing import ClassVar
 
 from typing_extensions import override
@@ -19,7 +20,7 @@ from .impairer import (
     ScopedState,
     register_impairer,
 )
-from .params import ImpairmentParams, Selector
+from .params import ImpairmentParams, Selector, collides
 
 _TIME_TOKEN = re.compile(r"^(?P<num>\d+(?:\.\d+)?)(?P<unit>us|usec|ms|msec|s|sec)$")
 _PERCENT_TOKEN = re.compile(r"^(?P<num>\d+(?:\.\d+)?)%$")
@@ -43,20 +44,82 @@ _KERNEL_DEFAULT_PRIOMAP = "1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1"
 """The kernel's default prio priomap: every TOS value maps to bands 1-3, so
 unmatched traffic behaves exactly as with no qdisc (pfifo_fast equivalence)."""
 
-_SLOTS: tuple[tuple[str, str], ...] = (
-    ("dport", "tcp"),
-    ("sport", "tcp"),
-    ("dport", "udp"),
-    ("sport", "udp"),
-)
-"""Fixed per-selector pref-slot order (spec §2): pref = band*10 + slot index."""
-
 _PROTO_NUM = {"tcp": 6, "udp": 17}
 
+_SIDES_ORDER = ("dst", "src")
+_PROTOS_ORDER = ("tcp", "udp")
+_SIDE_MATCH = {"dst": "dport", "src": "sport"}
+_PREF_SIDE_STRIDE = 1000
+_PREF_TIER_STRIDE = 200
+_PREF_BAND_STRIDE = 10
+_MAX_TIER = 2
 
-def _selector_slots(selector: Selector) -> list[int]:
-    """Return the pref-slot indices *selector* occupies (2 for one proto, 4 for both)."""
-    return [i for i, (_side, proto) in enumerate(_SLOTS) if selector.proto in (None, proto)]
+
+@dataclass(frozen=True, slots=True)
+class _Slot:
+    """One (side, proto) pair a selector covers — one pref, one or more u32 entries."""
+
+    side: str
+    proto: str
+
+
+def _selector_slots(selector: Selector) -> list[_Slot]:
+    """Return the slots *selector* occupies: dst before src, tcp before udp."""
+    return [
+        _Slot(side, proto)
+        for side in _SIDES_ORDER
+        if side in selector.sides
+        for proto in _PROTOS_ORDER
+        if proto in selector.protos
+    ]
+
+
+def _filter_pref(selector: Selector, band: int, slot: _Slot) -> int:
+    """``1000*side + 200*tier + 10*band + proto`` — the pref order IS the precedence.
+
+    The kernel walks filters in ascending pref and stops at the first match:
+    every dport slot sorts before every sport slot (destination first), and
+    within a side a strictly narrower selector has a strictly lower tier. Two
+    selectors sharing a (side, tier, proto) cannot both match one packet on
+    that side — that pair collides and is refused before any filter is
+    written — so the band term only keeps prefs distinct.
+    """
+    return (
+        _PREF_SIDE_STRIDE * _SIDES_ORDER.index(slot.side)
+        + _PREF_TIER_STRIDE * selector.tier
+        + _PREF_BAND_STRIDE * band
+        + _PROTOS_ORDER.index(slot.proto)
+    )
+
+
+_PORT_SPACE = 0x10000
+
+
+@dataclass(frozen=True, slots=True)
+class PortPrefix:
+    """One u32 port match: ports ``p`` with ``p & mask == value`` (16-bit)."""
+
+    value: int
+    mask: int
+
+
+def port_prefixes(lo: int, hi: int) -> list[PortPrefix]:
+    """Minimal mask-aligned blocks covering exactly ``lo..hi``, ascending.
+
+    Repeatedly takes the largest power-of-two block aligned at ``lo`` that
+    still fits. A single port is one ``0xffff`` prefix — the same filter
+    shape a one-port selector always had. At most 30 blocks for 16 bits.
+    """
+    if not 0 <= lo <= hi < _PORT_SPACE:
+        raise ValueError(f"port range {lo}:{hi} must satisfy 0 <= START <= END <= 65535")
+    out: list[PortPrefix] = []
+    while lo <= hi:
+        size = lo & -lo if lo else _PORT_SPACE
+        while size > hi - lo + 1:
+            size //= 2
+        out.append(PortPrefix(lo, (_PORT_SPACE - 1) & ~(size - 1)))
+        lo += size
+    return out
 
 
 def netem_args(params: ImpairmentParams) -> str:
@@ -175,7 +238,6 @@ def _parse_band_leaves(output: str) -> dict[int, ImpairmentParams] | None:
 
 
 _MATCH_RE = re.compile(r"^match (?P<val>[0-9a-f]{8})/(?P<mask>[0-9a-f]{8}) at (?P<off>\d+)$")
-_SLOT_COUNT = len(_SLOTS)
 _MATCHES_PER_BLOCK = 2
 """Exactly two u32 matches (proto @8, port @20) per selector filter block."""
 _PROTO_MATCH_OFFSET = 8
@@ -245,46 +307,89 @@ def _parse_filter_blocks(filter_output: str) -> list[_FilterBlock] | None:
     return blocks
 
 
-def _selector_from_slots(slots: dict[int, int]) -> Selector | None:
-    """Rebuild the band's Selector from ``{slot: port}``; ``None`` = not our shape."""
-    if len(set(slots.values())) != 1:
-        return None
-    port = next(iter(slots.values()))
-    present = frozenset(slots)
-    proto_by_slots = {
-        frozenset({0, 1, 2, 3}): None,
-        frozenset({0, 1}): "tcp",
-        frozenset({2, 3}): "udp",
-    }
-    if present not in proto_by_slots:
-        return None
-    try:
-        return Selector(port, proto_by_slots[present])
-    except ValueError:
-        return None
+@dataclass(frozen=True, slots=True)
+class _FilterEntry:
+    """One decoded u32 entry of our layout."""
+
+    slot: _Slot
+    tier: int
+    prefix: PortPrefix
 
 
-def _decode_block(
-    pref: int, band: int, matches: list[tuple[str, str, int]]
-) -> tuple[int, int] | None:
-    """Validate one u32 block against our conventions; return ``(slot, port)``."""
-    slot = pref - band * 10
-    if not 0 <= slot < _SLOT_COUNT or len(matches) != _MATCHES_PER_BLOCK:
+def _port_half(side: str, word_val: int, word_mask: int) -> PortPrefix | None:
+    """Return the prefix in *side*'s half of the u32 port word (at 20); ``None`` = not ours."""
+    if side == "dst":
+        if word_val >> 16 or word_mask >> 16:
+            return None
+        value, mask = word_val & 0xFFFF, word_mask & 0xFFFF
+    else:
+        if word_val & 0xFFFF or word_mask & 0xFFFF:
+            return None
+        value, mask = word_val >> 16, word_mask >> 16
+    inverse = ~mask & 0xFFFF
+    if mask == 0 or inverse & (inverse + 1) or value & inverse:
         return None
-    side, proto = _SLOTS[slot]
+    return PortPrefix(value, mask)
+
+
+def _decode_entry(pref: int, band: int, matches: list[tuple[str, str, int]]) -> _FilterEntry | None:
+    """Validate one u32 block against the pref layout; ``None`` = not ours."""
+    side_i, rest = divmod(pref, _PREF_SIDE_STRIDE)
+    tier, rest = divmod(rest, _PREF_TIER_STRIDE)
+    pref_band, proto_i = divmod(rest, _PREF_BAND_STRIDE)
+    if (
+        side_i >= len(_SIDES_ORDER)
+        or tier > _MAX_TIER
+        or proto_i >= len(_PROTOS_ORDER)
+        or pref_band != band
+        or len(matches) != _MATCHES_PER_BLOCK
+    ):
+        return None
+    slot = _Slot(_SIDES_ORDER[side_i], _PROTOS_ORDER[proto_i])
     proto_match = next((m for m in matches if m[2] == _PROTO_MATCH_OFFSET), None)
     port_match = next((m for m in matches if m[2] == _PORT_MATCH_OFFSET), None)
     if proto_match is None or port_match is None:
         return None
     val, mask, _ = proto_match
-    if mask != "00ff0000" or (int(val, 16) >> 16) & 0xFF != _PROTO_NUM[proto]:
+    if mask != "00ff0000" or (int(val, 16) >> 16) & 0xFF != _PROTO_NUM[slot.proto]:
         return None
-    val, mask, _ = port_match
-    if side == "dport" and mask == "0000ffff":
-        return slot, int(val, 16) & 0xFFFF
-    if side == "sport" and mask == "ffff0000":
-        return slot, int(val, 16) >> 16
-    return None
+    prefix = _port_half(slot.side, int(port_match[0], 16), int(port_match[1], 16))
+    return None if prefix is None else _FilterEntry(slot, tier, prefix)
+
+
+def _port_span(prefixes: set[PortPrefix]) -> range | None:
+    """Return the one interval *prefixes* minimally tile; ``None`` = gap, overlap or non-minimal."""
+    ordered = sorted(prefixes, key=lambda p: p.value)
+    lo = cursor = ordered[0].value
+    for p in ordered:
+        if p.value != cursor:
+            return None
+        cursor += (~p.mask & 0xFFFF) + 1
+    if cursor > _PORT_SPACE or port_prefixes(lo, cursor - 1) != ordered:
+        return None
+    return range(lo, cursor)
+
+
+def _selector_from_band(slots: dict[_Slot, set[PortPrefix]], tiers: set[int]) -> Selector | None:
+    """Rebuild one band's Selector; ``None`` = not a shape our builders emit."""
+    sides = {s.side for s in slots}
+    protos = {s.proto for s in slots}
+    if set(slots) != {_Slot(side, proto) for side in sides for proto in protos}:
+        return None
+    spans = {_port_span(prefixes) for prefixes in slots.values()}
+    span = spans.pop()
+    if spans or span is None:
+        return None
+    try:
+        selector = Selector(
+            span.start,
+            protos.pop() if len(protos) == 1 else None,
+            end=span.stop - 1,
+            side=sides.pop() if len(sides) == 1 else None,
+        )
+    except ValueError:
+        return None
+    return selector if tiers == {selector.tier} else None
 
 
 def parse_scoped_outputs(qdisc_output: str, filter_output: str) -> ScopedState:
@@ -310,18 +415,30 @@ def parse_scoped_outputs(qdisc_output: str, filter_output: str) -> ScopedState:
         return ScopedState.foreign()
     if not leaves and not blocks:
         return ScopedState.clean()
-    slots_by_band: dict[int, dict[int, int]] = {}
+    slots_by_band: dict[int, dict[_Slot, set[PortPrefix]]] = {}
+    tiers_by_band: dict[int, set[int]] = {}
     for pref, band, matches in blocks:
-        decoded = _decode_block(pref, band, matches)
-        if decoded is None or (band in slots_by_band and decoded[0] in slots_by_band[band]):
+        entry = _decode_entry(pref, band, matches)
+        if entry is None:
             return ScopedState.foreign()
-        slots_by_band.setdefault(band, {})[decoded[0]] = decoded[1]
+        prefixes = slots_by_band.setdefault(band, {}).setdefault(entry.slot, set())
+        if entry.prefix in prefixes:
+            return ScopedState.foreign()
+        prefixes.add(entry.prefix)
+        tiers_by_band.setdefault(band, set()).add(entry.tier)
     if set(slots_by_band) != set(leaves):
         return ScopedState.foreign()
     selectors: dict[Selector, tuple[int, ImpairmentParams]] = {}
     for band, slots in slots_by_band.items():
-        selector = _selector_from_slots(slots)
-        if selector is None or selector in selectors:
+        selector = _selector_from_band(slots, tiers_by_band[band])
+        # A selector colliding with an earlier one (every pair is checked once)
+        # is foreign: otto refuses such a pair before writing it, and in that
+        # tree band order, not scope, would pick the winner.
+        if (
+            selector is None
+            or selector in selectors
+            or any(collides(selector, other) for other in selectors)
+        ):
             return ScopedState.foreign()
         selectors[selector] = (band, leaves[band])
     return ScopedState.from_selectors(selectors)
@@ -371,24 +488,29 @@ class NetEmImpairer(LinkImpairer):
 
     @override
     def scoped_filter_commands(self, netdev: str, band: int, selector: Selector) -> list[str]:
-        """u32 filters steering *selector* into band *band*, fixed pref-slot order."""
-        cmds: list[str] = []
-        for slot in _selector_slots(selector):
-            side, proto = _SLOTS[slot]
-            cmds.append(
-                f"tc filter add dev {netdev} parent 1: pref {band * 10 + slot} "
-                f"protocol ip u32 match ip protocol {_PROTO_NUM[proto]} 0xff "
-                f"match ip {side} {selector.port} 0xffff flowid 1:{band:x}"
-            )
-        return cmds
+        """u32 entries steering *selector* into *band*: one per port prefix per slot.
+
+        Every entry of a slot shares that slot's single pref, so one
+        ``tc filter del … pref P`` removes the whole slot.
+        """
+        prefixes = port_prefixes(selector.port, selector.last)
+        return [
+            f"tc filter add dev {netdev} parent 1: pref {_filter_pref(selector, band, slot)} "
+            f"protocol ip u32 match ip protocol {_PROTO_NUM[slot.proto]} 0xff "
+            f"match ip {_SIDE_MATCH[slot.side]} {prefix.value} 0x{prefix.mask:04x} "
+            f"flowid 1:{band:x}"
+            for slot in _selector_slots(selector)
+            for prefix in prefixes
+        ]
 
     @override
     def scoped_clear_selector_commands(
         self, netdev: str, band: int, selector: Selector
     ) -> list[str]:
-        """Delete *selector*'s filters (by pref) then its band's netem leaf."""
+        """Delete *selector*'s slots (one ``tc filter del`` per pref) then its band's leaf."""
         cmds = [
-            f"tc filter del dev {netdev} parent 1: pref {band * 10 + slot} protocol ip u32"
+            f"tc filter del dev {netdev} parent 1: pref {_filter_pref(selector, band, slot)} "
+            "protocol ip u32"
             for slot in _selector_slots(selector)
         ]
         cmds.append(f"tc qdisc del dev {netdev} parent 1:{band:x} handle {band:x}0:")

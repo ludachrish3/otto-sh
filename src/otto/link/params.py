@@ -7,7 +7,7 @@ that param.
 """
 
 import re
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 
 _TIME_RE = re.compile(r"^(?P<num>\d+(?:\.\d+)?)(?P<unit>us|ms|s)?$")
 _PERCENT_RE = re.compile(r"^(?P<num>\d+(?:\.\d+)?)%?$")
@@ -147,38 +147,127 @@ class ImpairmentParams:
 
 
 _PROTOS = ("tcp", "udp")
+_SIDES = ("dst", "src")
 _MAX_PORT = 65535
+_PORT_TEXT_RE = re.compile(r"(?P<start>[0-9]{1,5})(?::(?P<end>[0-9]{1,5}))?")
 
 
 @dataclass(frozen=True, slots=True)
 class Selector:
-    """One port-scoped impairment selector: a service port, EITHER side.
+    """One port-scoped impairment selector: a port or inclusive port range.
 
-    Matches traffic whose SOURCE OR DESTINATION port is :attr:`port` —
-    otto never needs to know which endpoint is the server. :attr:`proto`
-    narrows to one L4 protocol; ``None`` = both tcp and udp.
-    ``Selector(5201)`` and ``Selector(5201, "tcp")`` are DISTINCT keys;
-    the former's filters simply match a superset of the latter's traffic
-    (spec 2026-07-11 §1).
+    Matches traffic whose SOURCE OR DESTINATION port falls in
+    ``port..last`` — unless :attr:`side` narrows it to one of the two.
+    :attr:`proto` narrows to one L4 protocol. ``None`` in either field means
+    "both". Two selectors that overlap must nest (see :func:`collides`).
     """
 
     port: int
+    """First port, 1-65535."""
     proto: str | None = None
     """``"tcp"``, ``"udp"``, or ``None`` = both."""
+    end: int | None = field(default=None, kw_only=True)
+    """Last port of a range; ``None`` = the single port :attr:`port`."""
+    side: str | None = field(default=None, kw_only=True)
+    """``"dst"``, ``"src"``, or ``None`` = either side."""
 
     def __post_init__(self) -> None:
         if not 1 <= self.port <= _MAX_PORT:
             raise ValueError(f"selector port {self.port} out of range 1-{_MAX_PORT}")
         if self.proto is not None and self.proto not in _PROTOS:
             raise ValueError(f"selector proto {self.proto!r} must be tcp or udp")
+        if self.side is not None and self.side not in _SIDES:
+            raise ValueError(f"selector side {self.side!r} must be src or dst")
+        if self.end is not None:
+            if not self.port <= self.end <= _MAX_PORT:
+                raise ValueError(
+                    f"selector range {self.port}:{self.end} must satisfy "
+                    f"START <= END <= {_MAX_PORT}"
+                )
+            if self.end == self.port:
+                # One key per meaning: 5000 and 5000:5000 are the same selector.
+                object.__setattr__(self, "end", None)
+
+    @classmethod
+    def parse(cls, port_text: str, proto: str | None = None, side: str | None = None) -> "Selector":
+        """Build a selector from ``N`` or ``N:M`` text — the one text parser.
+
+        The CLI and the expire-timer sentinel both go through here, so a
+        spelling the CLI accepts is exactly one the sentinel can carry.
+        """
+        m = _PORT_TEXT_RE.fullmatch(port_text)
+        if m is None:
+            raise ValueError(
+                f"port {port_text!r} must be PORT or START:END (e.g. 5201 or 5000:5010)"
+            )
+        end = m.group("end")
+        return cls(
+            int(m.group("start")), proto, end=int(end) if end is not None else None, side=side
+        )
+
+    @property
+    def last(self) -> int:
+        """Last port covered (:attr:`port` itself for a single-port selector)."""
+        return self.port if self.end is None else self.end
+
+    @property
+    def protos(self) -> frozenset[str]:
+        """Protocols covered."""
+        return frozenset({self.proto}) if self.proto else frozenset(_PROTOS)
+
+    @property
+    def sides(self) -> frozenset[str]:
+        """Port sides covered (``dst`` / ``src``)."""
+        return frozenset({self.side}) if self.side else frozenset(_SIDES)
+
+    @property
+    def tier(self) -> int:
+        """How many of (proto, side) are unnarrowed — 0, 1, or 2; lower is narrower."""
+        return int(self.proto is None) + int(self.side is None)
 
     def describe(self) -> str:
         """Return the one string form for the selector.
 
-        The form (``5201`` / ``5201/tcp``) is used uniformly by the CLI,
-        ``list`` rows, error text, and the v2 sentinel payload.
+        ``5201``, ``5000:5010``, ``5000:5010/tcp``, ``5000:5010/tcp dst`` —
+        used uniformly by the CLI, ``list`` rows, error text and verify
+        messages.
         """
-        return f"{self.port}/{self.proto}" if self.proto else str(self.port)
+        text = str(self.port) if self.end is None else f"{self.port}:{self.end}"
+        if self.proto:
+            text += f"/{self.proto}"
+        if self.side:
+            text += f" {self.side}"
+        return text
+
+
+def scope_contains(outer: Selector, inner: Selector) -> bool:
+    """Whether every (proto, side) *inner* covers is also covered by *outer*."""
+    return inner.protos <= outer.protos and inner.sides <= outer.sides
+
+
+def overlaps(a: Selector, b: Selector) -> bool:
+    """Whether some (proto, side, port) is covered by both selectors."""
+    return (
+        bool(a.protos & b.protos)
+        and bool(a.sides & b.sides)
+        and a.port <= b.last
+        and b.port <= a.last
+    )
+
+
+def collides(a: Selector, b: Selector) -> bool:
+    """Whether *a* and *b* may not coexist on one netdev.
+
+    Overlapping selectors must nest: one scope strictly narrower than the
+    other, so "the narrowest wins" names exactly one of them. A same-scope
+    overlap, or an overlap where neither scope is narrower, collides. A
+    selector never collides with itself — re-impairing it is a merge.
+    """
+    if a == b or not overlaps(a, b):
+        return False
+    same_scope = a.protos == b.protos and a.sides == b.sides
+    nested = scope_contains(a, b) or scope_contains(b, a)
+    return same_scope or not nested
 
 
 def _canonical_rate_bps(rate: str | None) -> int | None:

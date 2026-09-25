@@ -1,14 +1,20 @@
 """ImpairmentParams: unit parsing (spec §3.1), merge (spec §3.3), coupling rules."""
 
+import re
+
 import pytest
 
 from otto.link.params import (
     ImpairmentParams,
+    Selector,
     canonical_key,
+    collides,
     equivalent,
+    overlaps,
     parse_percent,
     parse_rate,
     parse_time_ms,
+    scope_contains,
 )
 
 
@@ -208,3 +214,131 @@ class TestSelector:
 
         with pytest.raises(ValueError, match="must be tcp or udp"):
             Selector(80, "icmp")
+
+
+class TestSelectorRangesAndSides:
+    def test_positional_forms_are_unchanged(self) -> None:
+        sel = Selector(5201, "tcp")
+        assert [sel.port, sel.proto, sel.end, sel.side] == [5201, "tcp", None, None]
+
+    def test_end_equal_to_port_normalizes_to_a_single_port(self) -> None:
+        assert Selector(5000, end=5000) == Selector(5000)
+        assert hash(Selector(5000, end=5000)) == hash(Selector(5000))
+        assert Selector(5000, end=5000).end is None
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"port": 5010, "end": 5000}, "5010:5000"),
+            ({"port": 1, "end": 65536}, "1:65536"),
+            ({"port": 80, "side": "both"}, "side 'both' must be src or dst"),
+        ],
+    )
+    def test_invalid_fields_raise(self, kwargs: dict, match: str) -> None:
+        with pytest.raises(ValueError, match=re.escape(match)):
+            Selector(**kwargs)
+
+    @pytest.mark.parametrize(
+        ("sel", "text"),
+        [
+            (Selector(5201), "5201"),
+            (Selector(5000, end=5010), "5000:5010"),
+            (Selector(5000, "tcp", end=5010), "5000:5010/tcp"),
+            (Selector(5000, "tcp", end=5010, side="dst"), "5000:5010/tcp dst"),
+            (Selector(5000, end=5010, side="src"), "5000:5010 src"),
+        ],
+    )
+    def test_describe(self, sel: Selector, text: str) -> None:
+        assert sel.describe() == text
+
+    def test_derived_properties(self) -> None:
+        sel = Selector(5000, "udp", end=5010, side="src")
+        assert sel.last == 5010
+        assert Selector(5201).last == 5201
+        assert sel.protos == frozenset({"udp"})
+        assert Selector(5201).protos == frozenset({"tcp", "udp"})
+        assert sel.sides == frozenset({"src"})
+        assert Selector(5201).sides == frozenset({"dst", "src"})
+        sel_dst = Selector(1, "tcp", side="dst")
+        sel_tcp = Selector(1, "tcp")
+        sel_any = Selector(1)
+        assert [sel_dst.tier, sel_tcp.tier, sel_any.tier] == [0, 1, 2]
+        assert Selector(1, side="src").tier == 1
+
+    @pytest.mark.parametrize(
+        ("text", "proto", "side", "expected"),
+        [
+            ("5201", None, None, Selector(5201)),
+            ("5000:5010", "tcp", "dst", Selector(5000, "tcp", end=5010, side="dst")),
+            ("5000:5000", None, None, Selector(5000)),
+            ("1:65535", None, None, Selector(1, end=65535)),
+        ],
+    )
+    def test_parse_accepts(
+        self, text: str, proto: str | None, side: str | None, expected: Selector
+    ) -> None:
+        assert Selector.parse(text, proto, side) == expected
+
+    @pytest.mark.parametrize(
+        ("text", "match"),
+        [
+            ("", "PORT or START:END"),
+            ("5000:", "PORT or START:END"),
+            (":5010", "PORT or START:END"),
+            ("50 00", "PORT or START:END"),
+            (" 5000", "PORT or START:END"),
+            ("5000-5010", "'5000-5010'"),
+            ("abc", "PORT or START:END"),
+            ("٥٠٠٠", "PORT or START:END"),  # noqa: RUF001 Arabic-Indic digits
+            ("0", "out of range"),
+            ("65536", "out of range"),
+            ("5010:5000", "5010:5000"),
+        ],
+    )
+    def test_parse_rejects(self, text: str, match: str) -> None:
+        with pytest.raises(ValueError, match=re.escape(match)):
+            Selector.parse(text)
+
+
+COLLISION_TABLE = [
+    # spec §5 table, plus identity and disjoint-range rows
+    (Selector(5200, end=5220), Selector(5200, end=5210), True),
+    (Selector(5200, end=5220), Selector(5200, "tcp", end=5210), False),
+    (Selector(5200, end=5220), Selector(5205, side="dst"), False),
+    (Selector(5200, "tcp", end=5220), Selector(5205, "tcp", side="dst"), False),
+    (Selector(5200, "tcp", end=5220), Selector(5200, "udp", end=5220), False),
+    (Selector(5005, "tcp"), Selector(5005, side="dst"), True),
+    (Selector(5005, side="dst"), Selector(5005, side="src"), False),
+    (Selector(5200, "tcp", end=5220), Selector(5200, "tcp", end=5220), False),
+    (Selector(5200, "tcp", end=5220), Selector(5221, "tcp"), False),
+]
+
+
+@pytest.mark.parametrize(("a", "b", "expected"), COLLISION_TABLE)
+def test_collision_table_both_orders(a: Selector, b: Selector, expected: bool) -> None:
+    assert collides(a, b) is expected
+    assert collides(b, a) is expected
+
+
+def _cells(sel: Selector) -> set:
+    protos = [sel.proto] if sel.proto else ["tcp", "udp"]
+    sides = [sel.side] if sel.side else ["dst", "src"]
+    return {(p, s, n) for p in protos for s in sides for n in range(sel.port, sel.last + 1)}
+
+
+def _scope_set(sel: Selector) -> set:
+    return {(p, s) for p, s, _ in _cells(sel)}
+
+
+def test_helpers_match_a_brute_force_cell_oracle() -> None:
+    scopes = [(p, s) for p in (None, "tcp", "udp") for s in (None, "dst", "src")]
+    ranges = [(5000, None), (5000, 5010), (5005, None), (5011, 5020)]
+    sels = [Selector(lo, p, end=hi, side=s) for p, s in scopes for lo, hi in ranges]
+    for a in sels:
+        for b in sels:
+            overlap = bool(_cells(a) & _cells(b))
+            nested = _scope_set(a) < _scope_set(b) or _scope_set(b) < _scope_set(a)
+            assert overlaps(a, b) is overlap, (a.describe(), b.describe())
+            expected_collision = a != b and overlap and not nested
+            assert collides(a, b) is expected_collision, (a.describe(), b.describe())
+            assert scope_contains(a, b) is (_scope_set(b) <= _scope_set(a))

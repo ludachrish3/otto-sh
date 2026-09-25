@@ -325,6 +325,59 @@ class TestScopedCli:
         )
         assert result.exit_code == 2
 
+    def test_impair_range_and_side_pass_one_selector(self) -> None:
+        mock = AsyncMock(return_value=ImpairReport(link_id="lnk-abc", applied=[]))
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.impair_link", mock),
+        ):
+            result = runner.invoke(
+                link_app,
+                [
+                    "impair",
+                    "edge",
+                    "--delay",
+                    "5",
+                    "--port",
+                    "5000:5010",
+                    "--proto",
+                    "tcp",
+                    "--side",
+                    "dst",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        assert mock.call_args.kwargs["selector"] == Selector(5000, "tcp", end=5010, side="dst")
+
+    def test_bad_port_text_is_a_usage_error_naming_it(self) -> None:
+        result = runner.invoke(link_app, ["impair", "edge", "--delay", "1", "--port", "5010:5000"])
+        assert result.exit_code == 2
+        assert "5010:5000" in result.output
+
+    def test_side_without_port_is_a_usage_error(self) -> None:
+        result = runner.invoke(link_app, ["impair", "edge", "--delay", "1", "--side", "dst"])
+        assert result.exit_code == 2
+        assert "--side needs --port" in result.output
+
+    def test_bad_side_is_a_usage_error(self) -> None:
+        result = runner.invoke(
+            link_app, ["impair", "edge", "--delay", "1", "--port", "80", "--side", "both"]
+        )
+        assert result.exit_code == 2
+
+    def test_collision_refusal_surfaces_as_a_failure(self) -> None:
+        refusal = ValueError("5205/tcp collides with 5200:5220/tcp")  # short: Rich wraps at 80 cols
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.impair_link", AsyncMock(side_effect=refusal)),
+        ):
+            result = runner.invoke(
+                link_app,
+                ["impair", "edge", "--delay", "1", "--port", "5205", "--proto", "tcp"],
+            )
+        assert result.exit_code != 0
+        assert "collides with 5200:5220/tcp" in result.output
+
     def test_repair_with_port_passes_selector(self) -> None:
         from otto.link import RepairReport
 
@@ -340,6 +393,27 @@ class TestScopedCli:
     def test_repair_all_with_port_is_usage_error(self) -> None:
         result = runner.invoke(link_app, ["repair", "--all", "--port", "53"])
         assert result.exit_code == 2
+
+    def test_repair_range_and_side_and_n_colon_n(self) -> None:
+        from otto.link import RepairReport
+
+        mock = AsyncMock(return_value=RepairReport("lnk-abc"))
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.repair_link", mock),
+        ):
+            result = runner.invoke(
+                link_app, ["repair", "edge", "--port", "5000:5010", "--side", "src"]
+            )
+            assert result.exit_code == 0, result.output
+            assert mock.call_args.kwargs["selector"] == Selector(5000, end=5010, side="src")
+            result = runner.invoke(link_app, ["repair", "edge", "--port", "5000:5000"])
+            assert mock.call_args.kwargs["selector"] == Selector(5000)
+
+    def test_repair_side_without_port_is_a_usage_error(self) -> None:
+        result = runner.invoke(link_app, ["repair", "edge", "--side", "dst"])
+        assert result.exit_code == 2
+        assert "--side needs --port" in result.output
 
     def test_list_renders_selector_rows_and_foreign(self) -> None:
         scoped = LinkState(
@@ -366,8 +440,32 @@ class TestScopedCli:
         assert "b->a: foreign qdisc — not otto's" in result.output
         assert "  a->b  53/udp  loss 5%" in result.output
         assert "  a->b  5201/tcp  delay 200ms" in result.output
-        # rows sort by (port, proto): 53/udp before 5201/tcp, not insertion order
+        # rows sort by (port, last, proto, side): 53/udp before 5201/tcp, not insertion order
         assert result.output.index("53/udp") < result.output.index("5201/tcp")
+
+    def test_list_rows_sort_by_port_then_last_then_proto_then_side(self) -> None:
+        scoped = LinkState(
+            link=LINK,
+            impairable=True,
+            unreachable=False,
+            by_direction={
+                FlowDirection.A_TO_B: DirectionState(
+                    scoped={
+                        Selector(6000, "tcp"): ImpairmentParams(delay_ms=1.0),
+                        Selector(5000, end=5010, side="src"): ImpairmentParams(delay_ms=2.0),
+                        Selector(5000, side="dst"): ImpairmentParams(delay_ms=3.0),
+                    }
+                ),
+            },
+        )
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.read_link_states", AsyncMock(return_value=[scoped])),
+        ):
+            result = runner.invoke(link_app, ["list"])
+        assert result.exit_code == 0, result.output
+        out = result.output
+        assert out.index("5000 dst") < out.index("5000:5010 src") < out.index("6000/tcp")
 
     def test_list_distinguishes_a_failed_read_from_an_unreachable_host(self) -> None:
         """ "?" and "!" are different news and get different summary lines.

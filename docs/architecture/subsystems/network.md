@@ -58,11 +58,24 @@ ways, and never both at once. The default degrades the entire netdev — one roo
 netem qdisc, every packet treated alike. Port scoping instead builds a classful
 `prio` tree: the kernel-default three bands carry unmatched traffic exactly as
 an unshaped interface would, and each port selector adds one more band with its
-own netem leaf and a pair of `u32` filters (source and destination port)
-steering that service's traffic into it. The two shapes are mutually exclusive
-on one placement because they are different qdisc roots; here too the only state
-is the kernel's, and `list` rebuilds the whole scoped tree from `tc qdisc show`
-+ `tc filter show`.
+own netem leaf and one or more `u32` filters — one entry per mask-aligned port
+block of the selector's range — steering that service's traffic into it. The
+two shapes are mutually exclusive on one placement because they are different
+qdisc roots; here too the only state is the kernel's, and `list` rebuilds the
+whole scoped tree from `tc qdisc show` + `tc filter show`.
+
+Each selector's band is reached through one **pref** per (side, protocol) slot
+it covers — 1, 2, or 4 prefs, each holding every one of that slot's port-block
+entries — computed as `pref = 1000·side + 200·tier + 10·band + proto` (side:
+0 = dst, 1 = src; tier: how many of protocol/side this selector leaves
+*un*-narrowed, 0-2; band: 4-11, the selector's own band; proto: 0 = tcp, 1 =
+udp). The kernel walks filters in ascending pref and steers a packet into the
+first one that matches, so that walk order *is* the precedence: every
+destination-side pref precedes every source-side one, and within a side a
+strictly narrower (lower-tier) selector's pref always precedes a wider one's.
+No otto-side ordering state exists — the pref arithmetic alone fixes which
+selector a packet lands in, independent of the order selectors were applied
+in.
 
 **Never sever otto's own path.** A link's netdev may be the very interface otto
 reaches a host *through*, so every resolved placement is checked against three

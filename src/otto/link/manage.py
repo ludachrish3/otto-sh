@@ -29,7 +29,7 @@ from ..host.host import is_dry_run
 from ..logger.mode import LogMode
 from .impairer import FIRST_SELECTOR_BAND, MAX_SELECTORS, LinkImpairer, ScopedState, build_impairer
 from .model import Link
-from .params import ImpairmentParams, Selector, equivalent
+from .params import ImpairmentParams, Selector, collides, equivalent
 from .placement import (
     BOTH_DIRECTIONS,
     FlowDirection,
@@ -45,7 +45,7 @@ from .placement import (
 from .sentinel import (
     IMPAIR_PS_COMMAND,
     encode_impair_sentinel,
-    encode_impair_sentinel_v2,
+    encode_impair_sentinel_v3,
     parse_impair_ps,
 )
 
@@ -683,10 +683,11 @@ async def _cancel_timers(
 ) -> int:
     """Kill live expire-timers for (*link_id*, *netdev*) on *host*, scoped.
 
-    ``everything=True`` reaps every v1 AND v2 timer (bare repair). Otherwise
-    ``selector=None`` matches only v1 whole-link timers (today's exact
-    semantics — scoped state can't hold v1 timers, exclusivity guarantees
-    it) and ``selector=S`` matches only S's own v2 timer.
+    ``everything=True`` reaps every v1 AND per-selector (v2/v3) timer (bare
+    repair). Otherwise ``selector=None`` matches only v1 whole-link timers
+    (today's exact semantics — scoped state can't hold v1 timers,
+    exclusivity guarantees it) and ``selector=S`` matches only S's own
+    per-selector (v2/v3) timer.
 
     Best-effort ONLY against an unreachable host: cancellation is a hygiene
     step, not the operation itself, and every caller's next ``_exec`` on the
@@ -806,6 +807,51 @@ def _ensure_selector_capable(host: Any, impairer: LinkImpairer) -> None:
         )
 
 
+def _repair_hint(link: Link, selector: Selector) -> str:
+    """Build the exact ``otto link repair`` line that clears *selector* — for refusal text."""
+    port = str(selector.port) if selector.end is None else f"{selector.port}:{selector.end}"
+    flags = f"--port {port}"
+    if selector.proto:
+        flags += f" --proto {selector.proto}"
+    if selector.side:
+        flags += f" --side {selector.side}"
+    return f"otto link repair {link.name or link.id} {flags}"
+
+
+def _ensure_no_collision(
+    host: Any, link: Link, placement: Placement, state: ScopedState, selector: Selector
+) -> None:
+    """Refuse *selector* when it overlaps an existing one without strict nesting.
+
+    A ``ValueError`` — this module's structural refusal: nothing failed, otto
+    is declining, and no state has been touched. Overlapping selectors must
+    nest so "the narrowest wins" always names one of them; see
+    :func:`~otto.link.params.collides`.
+    """
+    for existing in state.selectors:
+        if not collides(selector, existing):
+            continue
+        same_scope = selector.protos == existing.protos and selector.sides == existing.sides
+        reason = "same scope" if same_scope else "neither scope is narrower"
+        lo, hi = max(selector.port, existing.port), min(selector.last, existing.last)
+        span = str(lo) if lo == hi else f"{lo}:{hi}"
+        # A selector that already names both proto and side has no narrower
+        # scope, so offering to narrow it would be advice nobody can follow.
+        narrow = (
+            "narrow it (--proto/--side on the CLI, proto/side on the API) so it "
+            f"nests inside {existing.describe()}, "
+            if selector.proto is None or selector.side is None
+            else ""
+        )
+        raise ValueError(
+            f"{selector.describe()} collides with {existing.describe()} on "
+            f"{link.name or link.id} {placement.direction.value} "
+            f"({host.id}/{placement.netdev}): {reason}, overlapping ports {span}. "
+            f"Clear it first ({_repair_hint(link, existing)}), {narrow}"
+            "or choose a non-overlapping range."
+        )
+
+
 async def _launch_selector_timer(
     host: Any,
     link: Link,
@@ -815,14 +861,14 @@ async def _launch_selector_timer(
     band: int,
     expire: int,
 ) -> None:
-    """Detached v2 timer clearing one selector after *expire* seconds.
+    """Detached v3 timer clearing one selector after *expire* seconds.
 
     The timer can't know whether it will be the LAST selector when it fires,
     so the script ends with a conditional root cleanup: if no filters remain
     under the scoped root, delete the root — restoring pristine, per spec §2
     'clearing the last selector deletes the root'.
     """
-    sentinel = encode_impair_sentinel_v2(link.id, placement.netdev, selector)
+    sentinel = encode_impair_sentinel_v3(link.id, placement.netdev, selector)
     clear_seq = " && ".join(
         impairer.scoped_clear_selector_commands(placement.netdev, band, selector)
     )
@@ -940,8 +986,9 @@ async def _rollback(
     this run may have launched on the placement is cancelled first, matching
     the ordinary cancel-before-mutate invariant — scoped to the SAME
     *selector* the run's own pre-mutation cancel used (spec: a bare run only
-    ever owns v1 timers, a scoped run only ever owns its own selector's v2
-    timer), so a sibling selector's still-live expire timer is left running.
+    ever owns v1 timers, a scoped run only ever owns its own selector's
+    per-selector (v2/v3) timer), so a sibling selector's still-live expire
+    timer is left running.
 
     Note the inherent, acceptable race this leaves: if a sibling's detached
     timer fires between this run's read and its verify, the post-apply
@@ -1025,6 +1072,12 @@ _UNCHECKED_BAND = (
     "the prio band this selector would land in. It is the lowest band still free on the "
     "netdev, so the exact `tc qdisc replace … parent 1:<band>` and `tc filter add … pref "
     "<n>` lines cannot be shown without reading the netdev's current selectors"
+)
+
+_UNCHECKED_COLLISION = (
+    "whether this selector collides with one already on the netdev. Overlapping selectors "
+    "must nest (one strictly narrower in protocol or side), and a real run refuses one that "
+    "does not — which only the netdev's current selectors can show"
 )
 
 
@@ -1171,7 +1224,7 @@ def _plan_impair(
             _ensure_selector_capable(host, impairer)
         if expire is not None:
             sentinel = (
-                encode_impair_sentinel_v2(link.id, placement.netdev, selector)
+                encode_impair_sentinel_v3(link.id, placement.netdev, selector)
                 if selector is not None
                 else encode_impair_sentinel(link.id, placement.netdev)
             )
@@ -1179,6 +1232,7 @@ def _plan_impair(
         would.extend(_plan_one_placement(placement, impairer, params, selector, expire))
     if selector is not None:
         unchecked.append(_UNCHECKED_BAND)
+        unchecked.append(_UNCHECKED_COLLISION)
     unchecked.append(_UNCHECKED_MERGE)
     unchecked.append(_UNCHECKED_LOCKOUT)
     unchecked.append(_UNCHECKED_FOREIGN)
@@ -1275,7 +1329,8 @@ async def impair_link(
     instead: *params* merges over just THAT selector's currently-applied
     state (not the whole netdev's), landing in its own prio band (assigned on
     first use, kept across re-impairs, capped at :data:`~otto.link.impairer.MAX_SELECTORS`
-    per netdev) with its own pair of u32 filters. Whole-link and port-scoped
+    per netdev) with its own u32 filters, one per port-prefix per (side, proto) slot
+    it covers. Whole-link and port-scoped
     impairment are exclusive per netdev (spec §1): a bare impair against
     scoped state, or a scoped impair against whole-link state, is a loud
     :class:`ValueError` telling the operator to repair first. A host whose
@@ -1283,8 +1338,12 @@ async def impair_link(
     is also a loud capability error — never a silent fallback to whole-link.
     Expire-timers follow the same split: a bare impair only ever cancels/launches
     v1 whole-link timers; a scoped impair only ever cancels/launches its OWN
-    selector's v2 timer, leaving every other selector's timer (and any v1
-    timer, which scoped state can't have anyway) untouched.
+    selector's per-selector (v2/v3) timer, leaving every other selector's
+    timer (and any v1 timer, which scoped state can't have anyway) untouched.
+    A selector that overlaps an existing one on a placement without strictly
+    nesting is a loud :class:`ValueError` naming both (see
+    :func:`~otto.link.params.collides`), raised before that placement is
+    touched.
 
     An *expire* against a host declaring ``has_bash=False`` is REFUSED with
     :class:`~otto.host.errors.UnsupportedOnUserlandError` (the ``daemon-launch``
@@ -1330,6 +1389,8 @@ async def impair_link(
                 _raise_scoped_exclusivity(link.id)
             if selector is not None and state.kind == "whole":
                 _raise_whole_link_exclusivity(link.id)
+            if selector is not None:
+                _ensure_no_collision(host, link, placement, state, selector)
             # Register the rollback entry BEFORE mutating: a verify or timer
             # failure on THIS placement must roll its own just-applied mutation
             # back too, not only the earlier placements' (final-review 2026-07-10).
@@ -1390,9 +1451,10 @@ async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = Non
 
     Bare (``selector=None``): clears EVERYTHING per placement that has any
     otto state — whole-link or the entire scoped tree, each a single root
-    delete — and cancels every v1 and v2 timer. With *selector*: clears just
-    that selector (deleting the root when it is the last one) and cancels
-    only its own v2 timer; a selector that isn't present clears nothing.
+    delete — and cancels every v1 and per-selector (v2/v3) timer. With
+    *selector*: clears just that selector (deleting the root when it is the
+    last one) and cancels only its own per-selector (v2/v3) timer; a
+    selector that isn't present clears nothing.
 
     Every clear is verified by a post-clear re-read: a clear that silently
     didn't take is a loud, host-named failure, never reported as ``cleared``.
