@@ -99,6 +99,12 @@ depends_on = [
 ]
 
 [[modules]]
+path = "otto.check"
+# Shared by otto.link and otto.tunnel, so it may import NEITHER (they stay
+# decoupled; see the otto.link entry). Host probing only.
+depends_on = ["otto.host", "otto.logger", "otto.version", "otto.errors", "otto.result"]
+
+[[modules]]
 path = "otto.cli"
 # otto.inventory: invoke.py's `build_lab_from_repos` resolves the process
 # inventory once and hands it to the load (spec 2026-08-28 host-inventory §8).
@@ -106,7 +112,7 @@ path = "otto.cli"
 # otto.kgcov: cov.py's `kgcov export`/`kgcov check` leaves call
 # export_tree()/check_tree() to vendor or compare the otto_kgcov library.
 # Function-local, same import-budget reason as otto.inventory above.
-depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kgcov", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors"]
+depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kgcov", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check"]
 
 [[modules]]
 path = "otto.config"
@@ -338,7 +344,7 @@ depends_on = ["otto.config", "otto.context", "otto.logger"]
 path = "otto.link"
 # NOTE: no otto.tunnel here — the packages are fully decoupled via
 # otto.host.daemon (July finding a1/a3, FIXED). Keep it that way.
-depends_on = ["otto.lifecycle", "otto.logger", "otto.registry", "otto.models", "otto.host", "otto.errors"]
+depends_on = ["otto.lifecycle", "otto.logger", "otto.registry", "otto.models", "otto.host", "otto.errors", "otto.check"]
 
 [[modules]]
 path = "otto.logger"

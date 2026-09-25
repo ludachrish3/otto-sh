@@ -1537,3 +1537,18 @@ class TestPythonApiParity:
                 "match ip protocol 6 0xff match ip dport 5010 0xffff flowid 1:4"
             ),
         ]
+
+
+class TestLaunchClearTimer:
+    @pytest.mark.asyncio
+    async def test_launches_a_sentinel_tagged_sleep_and_clear(self) -> None:
+        from otto.link.manage import launch_clear_timer
+        from otto.link.sentinel import encode_impair_sentinel
+
+        host = FakeHost(id="test1", ip="10.10.200.11")
+        await launch_clear_timer(
+            host, "otto-check-a1b2c3", "ocka1b2c3", "tc qdisc del dev ocka1b2c3 root", 5
+        )
+        launched = host.sudo_commands[-1]
+        assert encode_impair_sentinel("otto-check-a1b2c3", "ocka1b2c3") in launched
+        assert "sleep 5 && tc qdisc del dev ocka1b2c3 root" in launched

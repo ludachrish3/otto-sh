@@ -1535,7 +1535,8 @@ check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; R
 # where `release-kgcov-matrix` refreshes the artifact but no docs/** file
 # changed leaves docs/_build/html/index.html newer than every listed input,
 # `make docs` no-ops, and the release publishes a page disagreeing with the
-# artifact it just committed.
+# artifact it just committed. src/otto/check/proven.json and its renderer are the
+# same shape again, for the link docs' known-good environments page.
 SPHINX_SRCS :=  docs/conf.py                        \
                 $(shell find docs -name '*.rst')    \
                 $(shell find docs -name '*.md')    \
@@ -1544,6 +1545,8 @@ SPHINX_SRCS :=  docs/conf.py                        \
                 scripts/render_support_matrix.py    \
                 schemas/kgcov_matrix.json           \
                 scripts/render_kgcov_matrix.py      \
+                src/otto/check/proven.json          \
+                scripts/render_proven_range.py      \
 
 docs: docs-lint docs-html doctest doctest-src ## (Docs) Build HTML docs + Sphinx & src doctests (sub-targets: docs-lint, docs-html, doctest, doctest-src, docs-inventories)
 

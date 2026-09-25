@@ -712,7 +712,7 @@ def _live_refusals(lab: "Lab", skipped: "list[str]") -> "list[str]":
     link impair --from <that end>`` places netem on it happily. The filter is
     right anyway, because it is asked in the directions the sweep it filters
     actually works in -- ``repair_all`` goes through ``repair_link``, which
-    takes ``_directions(link, None)``, both of them -- so a half-named link is
+    takes ``resolve_directions(link, None)``, both of them -- so a half-named link is
     one the sweep can never clear either. Only the CLAIM has to stay the
     narrower one: this drops links a cleanup could not have acted on, not links
     that could not be impaired.

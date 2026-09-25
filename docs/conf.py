@@ -581,11 +581,43 @@ def _generate_kgcov_matrix(app):  # noqa: ARG001 — Sphinx event signature
         )
 
 
+def _generate_proven_range(app):  # noqa: ARG001 — Sphinx event signature
+    """Render docs/cli/link/known-good.md from src/otto/check/proven.json.
+
+    The sibling of the two matrix hooks above for the proven-range page; every
+    builder, for the same reason — the page is a real source file the link
+    toctree names, so every builder has to find it on disk, and a non-zero exit
+    RAISES so a proven-range file the renderer cannot read is a build FAILURE
+    and not a warning.
+    """
+    import subprocess
+
+    from sphinx.util import logging as sphinx_logging
+
+    logger = sphinx_logging.getLogger(__name__)
+    root = pathlib.Path(__file__).parent.parent
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.render_proven_range"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(root),
+    )
+    if proc.stdout.strip():
+        logger.info(proc.stdout.strip())
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"scripts/render_proven_range.py failed with exit code "
+            f"{proc.returncode}:\n{proc.stderr}"
+        )
+
+
 def setup(app):
     app.connect("source-read", _substitute_version_token)
     app.connect("builder-inited", _generate_docs_media)
     app.connect("builder-inited", _generate_support_matrix)
     app.connect("builder-inited", _generate_kgcov_matrix)
+    app.connect("builder-inited", _generate_proven_range)
     app.connect("missing-reference", _resolve_short_types)
     app.connect("missing-reference", _resolve_internal_aliases)
     app.connect("missing-reference", _resolve_external_doc_links)

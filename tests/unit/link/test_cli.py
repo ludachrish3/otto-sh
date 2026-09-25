@@ -1,14 +1,16 @@
-"""``otto link`` CLI: impair/repair/list rendering + completion.
+"""``otto link`` CLI: impair/repair/list/check rendering + completion.
 
 Commands are plain ``async def`` leaves bridged by the leaf-invoke wrapper,
 so these tests drive ``link_app`` through the production dispatch seam
 (``DispatchRunner``) rather than a bare ``CliRunner``.
 """
 
+import json
 from unittest.mock import AsyncMock, patch
 
 from rich import get_console
 
+from otto.check import CheckHostUnreachableError, FeatureResult, UnmeasuredReason, Verdict
 from otto.cli.link import _link_completer, link_app
 from otto.link import (
     AppliedPlacement,
@@ -18,6 +20,7 @@ from otto.link import (
     LinkState,
     Placement,
 )
+from otto.link.check import LinkCheckHost, LinkCheckReport
 from otto.link.model import Link, LinkEndpoint
 from tests._fixtures.dispatch import DispatchRunner
 from tests.conftest import active_context
@@ -266,7 +269,7 @@ class TestListCommand:
 
     def test_unimpairable_row_without_a_reason_prints_no_extra_row(self) -> None:
         """`refusal` defaults to None, and a LinkState built by anything but
-        `_link_state` (a third-party caller, a future backend) must not render
+        `read_link_state` (a third-party caller, a future backend) must not render
         the string `None` at the user — nor lose its row, which is why the
         `n/a` cells are asserted rather than just the absence of `None`."""
         output = self._list_output(
@@ -551,6 +554,328 @@ class TestScopedCli:
         assert "a->b: ?" in result.output
         assert "partial scan" in result.output
         assert "read failed" not in result.output
+
+
+def _check_host(
+    host_id: str = "test1", *, sandbox: list[FeatureResult] | None = None
+) -> LinkCheckHost:
+    return LinkCheckHost(
+        host_id=host_id,
+        placements=[Placement(host_id, "eth1.100", FlowDirection.A_TO_B)],
+        fingerprint=None,
+        range_labels={},
+        sandbox=list(sandbox) if sandbox is not None else [],
+        live=[],
+        swept=[],
+    )
+
+
+def _check_report(
+    *,
+    hosts: list[LinkCheckHost] | None = None,
+    features: list[str] | None = None,
+    refusal: str | None = None,
+    refusal_hint: str | None = None,
+    dry_run_plan: list[str] | None = None,
+    live_swept: list[str] | None = None,
+) -> LinkCheckReport:
+    hosts = hosts if hosts is not None else []
+    # `link_sections` builds one row per `features` entry, looking each up by
+    # name in the host's sandbox results — so a report whose `features` don't
+    # name the rows a test put in `hosts` renders every row as the row-less
+    # "n/a", the exact trap this default guards against.
+    if features is None:
+        named = list(dict.fromkeys(r.feature for h in hosts for r in h.sandbox))
+        features = named or ["read-back"]
+    return LinkCheckReport(
+        link_id="lnk-abc",
+        link_name="edge",
+        live_requested=False,
+        features=features,
+        hosts=hosts,
+        refusal=refusal,
+        refusal_hint=refusal_hint,
+        dry_run_plan=dry_run_plan if dry_run_plan is not None else [],
+        live_swept=live_swept if live_swept is not None else [],
+    )
+
+
+class TestCheckCommand:
+    def test_check_all_pass_exits_0_and_prints_the_table(self) -> None:
+        host = _check_host(sandbox=[FeatureResult("read-back", Verdict.PASS)])
+        report = _check_report(hosts=[host])
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(return_value=report)),
+        ):
+            result = runner.invoke(link_app, ["check", "edge"])
+        assert result.exit_code == 0, result.output
+        assert "read-back" in result.output
+        assert "pass" in result.output
+        assert "test1" in result.output
+
+    def test_check_any_fail_exits_1(self) -> None:
+        host = _check_host(sandbox=[FeatureResult("delay", Verdict.FAIL)])
+        report = _check_report(hosts=[host])
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(return_value=report)),
+        ):
+            result = runner.invoke(link_app, ["check", "edge"])
+        assert result.exit_code == 1, result.output
+        assert "fail" in result.output
+
+    def test_check_unmeasured_only_exits_0(self) -> None:
+        host = _check_host(
+            sandbox=[
+                FeatureResult("rate", Verdict.UNMEASURED, reason=UnmeasuredReason.MISSING_TOOL)
+            ]
+        )
+        report = _check_report(hosts=[host])
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(return_value=report)),
+        ):
+            result = runner.invoke(link_app, ["check", "edge"])
+        assert result.exit_code == 0, result.output
+        assert "unmeasured" in result.output
+
+    def test_check_unknown_feature_exits_2_naming_valid_features(self) -> None:
+        """``--feature`` validation runs BEFORE ``check_link`` (real, unmocked
+        ``requested_features``), so an unknown name never reaches it at all —
+        the mock records zero calls, not just a matching exit code."""
+        mock = AsyncMock()
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", mock),
+        ):
+            result = runner.invoke(link_app, ["check", "edge", "--feature", "bogus"])
+        assert result.exit_code == 2, result.output
+        assert "unknown feature" in result.output
+        assert "'bogus'" in result.output
+        assert "valid: read-back" in result.output
+        mock.assert_not_called()
+
+    def test_check_unknown_link_from_check_link_exits_1(self) -> None:
+        """The sibling case to the test above: ``check_link`` raises
+        ``ValueError`` for plenty of things that are NOT a bad ``--feature``
+        (an unknown link, a bad ``--from`` host, a lab host it can't find) —
+        those are the check's own RESULT, exit 1, same as `impair`/`repair`'s
+        `except (ValueError, RuntimeError)`, not a usage error."""
+        error = ValueError("no link 'nope' in this lab; known: edge, mgmt-edge")
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(side_effect=error)),
+        ):
+            result = runner.invoke(link_app, ["check", "nope"])
+        assert result.exit_code == 1, result.output
+        assert "no link 'nope' in this lab" in result.output
+
+    def test_check_feature_naming_no_features_exits_2(self) -> None:
+        """``--feature ""``/``--feature ","`` parse to an empty list, which
+        must not silently become "just run read-back" — that's indistinguishable
+        from an operator's genuine mistake."""
+        for given in ("", ","):
+            result = runner.invoke(link_app, ["check", "edge", "--feature", given])
+            assert result.exit_code == 2, (given, result.output)
+            assert "--feature named no features" in result.output
+
+    def test_check_refusal_exits_1_with_hint(self) -> None:
+        report = _check_report(
+            refusal="'edge' has no named interface",
+            refusal_hint="declare this link in lab.json with an interface on each endpoint",
+        )
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(return_value=report)),
+        ):
+            result = runner.invoke(link_app, ["check", "edge"])
+        assert result.exit_code == 1, result.output
+        assert "cannot check link lnk-abc" in result.output
+        assert "no named interface" in result.output
+        assert "declare this link in lab.json" in result.output
+
+    def test_check_report_writes_json_only_when_asked(self, tmp_path, monkeypatch) -> None:
+        host = _check_host(sandbox=[FeatureResult("read-back", Verdict.PASS)])
+        report = _check_report(hosts=[host])
+        dest = tmp_path / "out.json"
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(return_value=report)),
+        ):
+            result = runner.invoke(link_app, ["check", "edge", "--report", str(dest)])
+        assert result.exit_code == 0, result.output
+        assert dest.exists()
+        payload = json.loads(dest.read_text())
+        assert payload["schema"] == "otto-check/1"
+        assert payload["kind"] == "link"
+        assert str(dest) in result.output
+
+        # `dest` was never passed to the second invoke, so an assertion about
+        # SOME other named path is vacuous — it can never fail. `chdir` into
+        # `tmp_path` instead and compare its whole listing before/after: any
+        # write anywhere under it, named or not, moves that listing.
+        before = sorted(tmp_path.iterdir())
+        monkeypatch.chdir(tmp_path)
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(return_value=report)),
+        ):
+            result = runner.invoke(link_app, ["check", "edge"])
+        assert result.exit_code == 0, result.output
+        assert sorted(tmp_path.iterdir()) == before, (
+            "check without --report wrote something under the cwd"
+        )
+        assert "report:" not in result.output
+
+    def test_check_report_write_failure_exits_1_no_traceback(self, tmp_path) -> None:
+        host = _check_host(sandbox=[FeatureResult("read-back", Verdict.PASS)])
+        report = _check_report(hosts=[host])
+        dest = tmp_path / "missing-dir" / "out.json"
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(return_value=report)),
+        ):
+            result = runner.invoke(link_app, ["check", "edge", "--report", str(dest)])
+        assert result.exit_code == 1, result.output
+        assert f"cannot write report {dest}" in result.output
+        assert "Traceback" not in result.output
+
+    def test_check_refusal_still_writes_the_report(self, tmp_path) -> None:
+        """A refusal IS the check's result — `--report` gets one for it too,
+        the same `LinkCheckReport` JSON shape the success path writes."""
+        dest = tmp_path / "out.json"
+        report = _check_report(
+            refusal="'edge' has no named interface",
+            refusal_hint="declare this link in lab.json with an interface on each endpoint",
+        )
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(return_value=report)),
+        ):
+            result = runner.invoke(link_app, ["check", "edge", "--report", str(dest)])
+        assert result.exit_code == 1, result.output
+        assert dest.exists()
+        payload = json.loads(dest.read_text())
+        assert payload["result"]["refusal"] == "'edge' has no named interface"
+        assert str(dest) in result.output
+
+    def test_check_dry_run_with_report_writes_nothing_and_says_so(self, tmp_path) -> None:
+        """A dry run measures nothing, so `--report` must not write a file
+        that LOOKS like a real result — and must not go silent about why."""
+        dest = tmp_path / "out.json"
+        plan = ["placement a->b on test1/eth1.100", "no device was contacted"]
+        report = _check_report(dry_run_plan=plan)
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(return_value=report)),
+        ):
+            result = runner.invoke(link_app, ["check", "edge", "--report", str(dest)])
+        assert result.exit_code == 0, result.output
+        assert not dest.exists()
+        assert "no report was written" in result.output
+
+    def test_check_dry_run_of_a_refused_link_writes_no_report(self, tmp_path) -> None:
+        """A refusal is built BEFORE the dry-run plan, so a refused link reaches
+        the refusal branch with an empty plan. Under a dry run it must still
+        write nothing: the dry run measured nothing, refusal or not."""
+        dest = tmp_path / "out.json"
+        report = _check_report(
+            refusal="'edge' has no named interface",
+            refusal_hint="declare this link in lab.json with an interface on each endpoint",
+        )
+        with (
+            active_context(dry_run=True),
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(return_value=report)),
+        ):
+            result = runner.invoke(link_app, ["check", "edge", "--report", str(dest)])
+        assert result.exit_code == 1, result.output
+        assert "cannot check link lnk-abc" in result.output
+        assert not dest.exists()
+        assert "no report was written — a dry run measures nothing" in result.output
+
+    def test_check_refusal_and_live_swept_survive_brackets_end_to_end(self) -> None:
+        """A refusal/hint and a `--live` sweep line both carry text a real
+        netdev/namespace name can legally contain (`eth0[dataplane]`, a legal
+        netdev name rich reads as a style tag and eats). Both are asserted
+        through `runner.invoke`'s REAL render path — refusal via
+        `print_error`, live_swept via `link_sections`/`render_sections` — not
+        via an isolated helper call that could pass while the wiring rots."""
+        refusal_report = _check_report(
+            refusal="cannot impair 'eth0[dataplane]' on 'gw' — it is the management interface",
+            refusal_hint="use a non-management interface, not eth0[dataplane]",
+        )
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(return_value=refusal_report)),
+        ):
+            result = runner.invoke(link_app, ["check", "edge"])
+        assert result.exit_code == 1, result.output
+        # Twice, not just "somewhere in the output": the refusal message and
+        # the hint each print it through their own `print_error` call, and
+        # counting both separately keeps one surviving line from masking the
+        # other's regression.
+        assert result.output.count("eth0[dataplane]") == 2, result.output
+
+        host = _check_host(sandbox=[FeatureResult("read-back", Verdict.PASS)])
+        swept_report = _check_report(
+            hosts=[host], live_swept=["swept otto-check-eth0[dataplane] from an earlier run"]
+        )
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(return_value=swept_report)),
+        ):
+            result = runner.invoke(link_app, ["check", "edge"])
+        assert result.exit_code == 0, result.output
+        assert "otto-check-eth0[dataplane]" in result.output
+
+    def test_check_passes_live_feature_and_from_through(self) -> None:
+        mock = AsyncMock(return_value=_check_report())
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", mock),
+        ):
+            result = runner.invoke(
+                link_app,
+                ["check", "edge", "--live", "--feature", "delay, loss", "--from", "test1"],
+            )
+        assert result.exit_code == 0, result.output
+        assert mock.call_args.kwargs["live"] is True
+        assert mock.call_args.kwargs["features"] == ["delay", "loss"]
+        assert mock.call_args.kwargs["from_host"] == "test1"
+
+    def test_check_dry_run_prints_the_plan_and_exits_0(self) -> None:
+        plan = [
+            "placement a->b on test1/eth1.100",
+            "no device was contacted — nothing was measured",
+        ]
+        report = _check_report(dry_run_plan=plan)
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(return_value=report)),
+        ):
+            result = runner.invoke(link_app, ["check", "edge"])
+        assert result.exit_code == 0, result.output
+        assert "dry run" in result.output
+        assert "placement a->b on test1/eth1.100" in result.output
+        assert "no device was contacted" in result.output
+
+    def test_check_host_unreachable_exits_1_with_no_traceback(self) -> None:
+        """Every host-side error ``check_link`` raises subclasses ``RuntimeError``
+        (``CheckHostUnreachableError``, ``CheckCommandFailedError``,
+        ``LinkHostUnreachableError``, ``LinkCommandFailedError``), so the plain
+        ``except RuntimeError`` below must turn a down host into the clean
+        host-named exit 1 the dispatch seam prints — never a traceback."""
+        error = CheckHostUnreachableError("'tc qdisc show' timed out on 'test1'")
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.link.check.check_link", AsyncMock(side_effect=error)),
+        ):
+            result = runner.invoke(link_app, ["check", "edge"])
+        assert result.exit_code == 1, result.output
+        assert "'tc qdisc show' timed out on 'test1'" in result.output
+        assert "Traceback" not in result.output
 
 
 class TestCompleter:

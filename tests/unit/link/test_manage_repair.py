@@ -593,7 +593,7 @@ class TestDryRunListReportsNotMeasured:
     @pytest.mark.asyncio
     async def test_the_same_bed_read_for_real_reports_the_impairment(self) -> None:
         """The control. Without it, `not_measured` could be reported by a
-        `_link_state` that had simply stopped reading anything."""
+        `read_link_state` that had simply stopped reading anything."""
         lab, test1, test2, _ = _bed()
         test1.qdisc_texts = ["qdisc netem 8001: root refcnt 2 limit 1000 delay 20ms\n"]
         test2.qdisc_texts = [""]
@@ -641,7 +641,7 @@ class TestDryRunListReportsNotMeasured:
     ) -> None:
         """The INNER arm, reached by injecting the one refactor that would reach it.
 
-        Unreachable today, and the proof is in `_link_state` beside the arm:
+        Unreachable today, and the proof is in `read_link_state` beside the arm:
         under a dry run the loop is entered only if `_resolve_placements`
         returned, and that always issues at least one `_exec` first, so the
         OUTER arm always wins. The premise is one plausible change away — cache

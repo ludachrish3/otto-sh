@@ -121,7 +121,7 @@ class TestImpairRefusesAnIncompleteView:
 
         A preview that promised a placement the real command refuses would be
         previewing the wrong outcome — which is why the check sits ABOVE the
-        dry-run short-circuit with `find_link` and `_directions`.
+        dry-run short-circuit with `find_link` and `resolve_directions`.
         """
         from tests.conftest import active_context
 

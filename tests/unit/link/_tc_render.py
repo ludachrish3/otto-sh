@@ -37,21 +37,30 @@ def render_scoped_tree(mapping: dict[Selector, tuple[int, ImpairmentParams]]) ->
         f"qdisc netem {band:x}0: parent 1:{band:x} limit 1000 {netem_args(params)}\n"
         for band, params in leaves
     )
+    cmds = [
+        cmd
+        for selector, (band, _params) in mapping.items()
+        for cmd in imp.scoped_filter_commands("eth1.100", band, selector)
+    ]
+    return ScopedTree(qdisc, filter_show_text(cmds))
+
+
+def filter_show_text(add_commands: list[str]) -> str:
+    """``tc filter show`` text for the u32 ``tc filter add`` commands NetEm built."""
     blocks: list[str] = []
-    for selector, (band, _params) in mapping.items():
-        for cmd in imp.scoped_filter_commands("eth1.100", band, selector):
-            m = _ADD_RE.search(cmd)
-            assert m is not None, cmd
-            val, mask = int(m["val"]), int(m["mask"], 16)
-            port = (
-                f"0000{val:04x}/0000{mask:04x}"
-                if m["field"] == "dport"
-                else f"{val:04x}0000/{mask:04x}0000"
-            )
-            blocks.append(
-                f"filter protocol ip pref {m['pref']} u32 "
-                f"fh 800::{0x800 + len(blocks):x} flowid 1:{m['band']}\n"
-                f"  match {int(m['proto']):04x}0000/00ff0000 at 8\n"
-                f"  match {port} at 20\n"
-            )
-    return ScopedTree(qdisc, "".join(blocks))
+    for cmd in add_commands:
+        m = _ADD_RE.search(cmd)
+        assert m is not None, cmd
+        val, mask = int(m["val"]), int(m["mask"], 16)
+        port = (
+            f"0000{val:04x}/0000{mask:04x}"
+            if m["field"] == "dport"
+            else f"{val:04x}0000/{mask:04x}0000"
+        )
+        blocks.append(
+            f"filter protocol ip pref {m['pref']} u32 "
+            f"fh 800::{0x800 + len(blocks):x} flowid 1:{m['band']}\n"
+            f"  match {int(m['proto']):04x}0000/00ff0000 at 8\n"
+            f"  match {port} at 20\n"
+        )
+    return "".join(blocks)

@@ -12,8 +12,11 @@ timer-cancel hygiene step both act on the difference.
 These four functions — :func:`impair_link`, :func:`repair_link`,
 :func:`repair_all`, :func:`read_link_states` — plus :func:`find_link` ARE the
 public API (spec's single-API constraint): the CLI, the future GUI topology
-overlay, and any direct importer call exactly these. Nothing here prints or
-knows about exit codes/colors.
+overlay, and any direct importer call exactly these. ``otto link check``
+also shares the lookups those five resolve a link with —
+:func:`resolve_directions`, :func:`lab_host` and :func:`read_link_state` —
+so it reads and places a link exactly the way ``impair`` does. Nothing here
+prints or knows about exit codes/colors.
 """
 
 import contextlib
@@ -22,6 +25,7 @@ from dataclasses import field as dc_field
 from typing import TYPE_CHECKING, Any
 
 from ..errors import OttoError
+from ..host import CommandResult
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.daemon import kill_command, launch_command, refuse_if_launch_wrapper_needs_bash
 from ..host.errors import exec_or_raise
@@ -55,6 +59,12 @@ if TYPE_CHECKING:
     from ..config.lab import Lab
 
 _IMPAIR_HOST_TIMEOUT = 30.0
+VERIFY_FAILED = "post-apply verify failed"
+"""How every post-apply verify mismatch's :class:`LinkCommandFailedError` message begins.
+
+The one outcome ``otto link check --live`` must tell apart from the other
+command failures: it means otto could not read back the tree it just wrote.
+"""
 _BOTH = BOTH_DIRECTIONS
 _ADDR_SHOW_COMMAND = "ip -o addr show"
 
@@ -393,7 +403,7 @@ async def _exec(host: Any, cmd: str) -> Any:
     :func:`impair_link` and :func:`repair_link` short-circuit ABOVE this, where
     that intent lives, and never reach it.
 
-    :func:`_link_state` is the deliberate exception: it has no plan to build —
+    :func:`read_link_state` is the deliberate exception: it has no plan to build —
     reading IS its whole job — so it lets this fire and catches it, which is
     what gives ``list`` its "not read" state and keeps this arm live rather
     than a tripwire nothing ever trips. :func:`_root_run`, the MUTATING twin,
@@ -417,6 +427,11 @@ async def _exec(host: Any, cmd: str) -> Any:
 async def _root_run(host: Any, cmd: str) -> Any:
     """Run a mutating *cmd* on *host*, sudo'd unless already root.
 
+    *cmd* must be ONE simple command: elevation is a prefix, so a ``;`` list,
+    a pipe or a redirection would split around it (see
+    :func:`otto.check.fingerprint.one_command`, which the check's own
+    privileged commands go through).
+
     A non-ok result is deliberately NOT raised here — a command that reaches the
     host but reports failure is caught by the caller's own re-read
     (:func:`impair_link`'s post-apply verify, :func:`repair_link`'s post-clear
@@ -438,7 +453,7 @@ async def _root_run(host: Any, cmd: str) -> Any:
     return results[0]
 
 
-def _host(lab: Any, host_id: str) -> Any:
+def lab_host(lab: Any, host_id: str) -> Any:
     """Look up *host_id* in *lab*; a missing host is a rich :class:`ValueError`."""
     try:
         return lab.hosts[host_id]
@@ -454,7 +469,7 @@ def _impairer_for(host: Any) -> LinkImpairer:
     return build_impairer(name)()
 
 
-def _directions(link: Link, from_host: str | None) -> frozenset[FlowDirection]:
+def resolve_directions(link: Link, from_host: str | None) -> frozenset[FlowDirection]:
     """Both directions by default; ``--from`` narrows to the originating one."""
     if from_host is None:
         return _BOTH
@@ -606,7 +621,7 @@ async def _resolve_placements(
     ensure_not_local_link(link)
     tables: dict[str, dict[str, list["IPv4Interface"]]] = {}
     if link.impair:
-        middlebox = _host(lab, link.impair)
+        middlebox = lab_host(lab, link.impair)
         table = parse_ip_addr((await _exec(middlebox, _ADDR_SHOW_COMMAND)).value)
         tables[link.impair] = table
         placements = inpath_placements(link, link.impair, table, directions)
@@ -618,7 +633,7 @@ async def _resolve_placements(
         return placements
     dependents: dict[str, list[tuple[str, str]]] = {}
     for placement in placements:
-        host = _host(lab, placement.host_id)
+        host = lab_host(lab, placement.host_id)
         if placement.host_id not in tables:
             addr_output = (await _exec(host, _ADDR_SHOW_COMMAND)).value
             tables[placement.host_id] = parse_ip_addr(addr_output)
@@ -649,7 +664,7 @@ def _ensure_not_foreign(host: Any, netdev: str, state: ScopedState) -> None:
     """Refuse to mutate a root qdisc otto did not generate (spec §1).
 
     A ``ValueError``, matching this module's convention for a STRUCTURAL
-    refusal (``find_link``, ``_directions``, the exclusivity raises): nothing
+    refusal (``find_link``, ``resolve_directions``, the exclusivity raises): nothing
     failed, otto is declining. That is what makes :func:`repair_all` skip the
     link rather than collect it as a failure — a foreign qdisc was never
     otto's impairment, so "repair every link" has nothing to do here. The
@@ -696,7 +711,7 @@ async def _cancel_timers(
     fire against state this call is changing — so that propagates, as does
     any bare ``RuntimeError`` from the host stack beneath.
 
-    Deliberately NOT widened the way :func:`_link_state`'s read arms were:
+    Deliberately NOT widened the way :func:`read_link_state`'s read arms were:
     this is a MUTATING path, where raising IS the right answer. The outcome is
     unchanged either way — the caller's very next ``_read_state`` hits the
     same dead session and raises — so the only difference is that the failure
@@ -739,7 +754,7 @@ def _expire_refusal_context(sentinel: str | None = None) -> str:
     )
 
 
-async def _launch_daemon(host: Any, sentinel: str, argv: list[str]) -> None:
+async def _launch_daemon(host: Any, sentinel: str, argv: list[str]) -> "TimerLaunch":
     """Launch one sentinel-tagged daemon on *host*, refusing what it cannot run.
 
     THE ONLY PLACE ``otto.link`` reaches
@@ -773,16 +788,44 @@ async def _launch_daemon(host: Any, sentinel: str, argv: list[str]) -> None:
     only the message is shared, via :func:`_expire_refusal_context`.
     """
     refuse_if_launch_wrapper_needs_bash(host, attempted=_expire_refusal_context(sentinel))
-    await _root_run(host, launch_command(sentinel, argv))
+    command = launch_command(sentinel, argv)
+    return TimerLaunch(command, await _root_run(host, command))
+
+
+@dataclass(frozen=True)
+class TimerLaunch:
+    """One daemon launch: the exact line otto ran and what the host answered.
+
+    ``impair`` has no use for either (nothing re-reads after a launch, see
+    ``_launch_daemon``); ``otto link check`` shows both as the expire
+    row's evidence.
+    """
+
+    command: str
+    result: CommandResult
+
+
+async def launch_clear_timer(
+    host: Any, link_id: str, netdev: str, clear_command: str, expire: int
+) -> TimerLaunch:
+    """Launch a detached, sentinel-tagged timer that runs *clear_command* after *expire* seconds.
+
+    Public so ``otto link check`` can drive the SAME timer path
+    ``impair --expire`` uses (``_launch_timer``, below, now a one-line
+    call to this) rather than a second, drifting reimplementation.
+    """
+    sentinel = encode_impair_sentinel(link_id, netdev)
+    argv = ["bash", "-c", f"sleep {int(expire)} && {clear_command}"]
+    return await _launch_daemon(host, sentinel, argv)
 
 
 async def _launch_timer(
     host: Any, link: Link, placement: Placement, impairer: LinkImpairer, expire: int
 ) -> None:
     """Launch a detached, sentinel-tagged timer that clears *placement* after *expire*s."""
-    sentinel = encode_impair_sentinel(link.id, placement.netdev)
-    argv = ["bash", "-c", f"sleep {int(expire)} && {impairer.clear_command(placement.netdev)}"]
-    await _launch_daemon(host, sentinel, argv)
+    await launch_clear_timer(
+        host, link.id, placement.netdev, impairer.clear_command(placement.netdev), expire
+    )
 
 
 def _assign_band(link_id: str, host: Any, netdev: str, state: ScopedState) -> int:
@@ -914,7 +957,7 @@ def _verify_scoped(
             or observed.kind
         )
         raise LinkCommandFailedError(
-            f"post-apply verify failed on {host.id}/{placement.netdev}: "
+            f"{VERIFY_FAILED} on {host.id}/{placement.netdev}: "
             f"expected [{exp_text}], observed [{obs_text}]"
         )
 
@@ -1020,7 +1063,7 @@ def _raise_verify_mismatch(
 ) -> None:
     """Raise for a post-apply verify mismatch (TRY301: kept out of the try body)."""
     raise LinkCommandFailedError(
-        f"post-apply verify failed on {host.id}/{placement.netdev}: "
+        f"{VERIFY_FAILED} on {host.id}/{placement.netdev}: "
         f"expected [{_describe_state(expected)}], observed [{_describe_state(observed)}]"
     )
 
@@ -1120,7 +1163,7 @@ def _planned_placements(
         # Resolves the middlebox so a lab-data error (a link naming a host that
         # is not in the lab) is still the loud ValueError a real run raises,
         # rather than being lost behind "could not be resolved".
-        _host(lab, link.impair)
+        lab_host(lab, link.impair)
         return None
     return endpoint_placements(link, directions)
 
@@ -1208,7 +1251,7 @@ def _plan_impair(
     unchecked: list[str] = []
     placements = _planned_placements(lab, link, directions)
     if placements is None:
-        middlebox = _host(lab, link.impair or "")
+        middlebox = lab_host(lab, link.impair or "")
         impairer = _impairer_for(middlebox)
         if selector is not None:
             _ensure_selector_capable(middlebox, impairer)
@@ -1218,7 +1261,7 @@ def _plan_impair(
         unchecked.append(_UNCHECKED_TIMERS_AND_VERIFY)
         return DryRunPlan(would, unchecked)
     for placement in placements:
-        host = _host(lab, placement.host_id)
+        host = lab_host(lab, placement.host_id)
         impairer = _impairer_for(host)
         if selector is not None:
             _ensure_selector_capable(host, impairer)
@@ -1271,7 +1314,7 @@ def _plan_repair(lab: Any, link: Link, *, selector: Selector | None) -> DryRunPl
     unchecked: list[str] = []
     placements = _planned_placements(lab, link, _BOTH)
     if placements is None:
-        middlebox = _host(lab, link.impair or "")
+        middlebox = lab_host(lab, link.impair or "")
         impairer = _impairer_for(middlebox)
         if selector is not None:
             _ensure_selector_capable(middlebox, impairer)
@@ -1279,7 +1322,7 @@ def _plan_repair(lab: Any, link: Link, *, selector: Selector | None) -> DryRunPl
         unchecked.append(_UNCHECKED_TIMER_COUNT)
         return DryRunPlan(would, unchecked)
     for placement in placements:
-        host = _host(lab, placement.host_id)
+        host = lab_host(lab, placement.host_id)
         impairer = _impairer_for(host)
         where = f"{placement.host_id}/{placement.netdev}"
         if selector is None:
@@ -1366,7 +1409,7 @@ async def impair_link(
     """
     link = find_link(lab, ident)
     _ensure_endpoints_are_loaded(lab, link)
-    directions = _directions(link, from_host)
+    directions = resolve_directions(link, from_host)
     if is_dry_run():
         return ImpairReport(
             link.id,
@@ -1378,7 +1421,7 @@ async def impair_link(
     rollback_entries: list[_RollbackEntry] = []
     try:
         for placement in placements:
-            host = _host(lab, placement.host_id)
+            host = lab_host(lab, placement.host_id)
             impairer = _impairer_for(host)
             if selector is not None:
                 _ensure_selector_capable(host, impairer)
@@ -1474,7 +1517,7 @@ async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = Non
     end it CAN reach is stranded by the end it cannot.
     """
     link = find_link(lab, ident)
-    directions = _directions(link, None)
+    directions = resolve_directions(link, None)
     if is_dry_run():
         return RepairReport(link.id, plan=_plan_repair(lab, link, selector=selector))
     placements = await _resolve_placements(lab, link, directions, clearing=True)
@@ -1484,7 +1527,7 @@ async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = Non
     timers_cancelled = 0
     for placement in placements:
         try:
-            host = _host(lab, placement.host_id)
+            host = lab_host(lab, placement.host_id)
         except ValueError as e:
             unreachable.append(f"{placement.host_id}/{placement.netdev}: {e}")
             continue
@@ -1579,8 +1622,8 @@ async def repair_all(lab: "Lab") -> RepairAllReport:
     return report
 
 
-async def _link_state(lab: Any, link: Link) -> LinkState:
-    """Read one link's impairment state.
+async def read_link_state(lab: Any, link: Link) -> LinkState:
+    """Read one link's impairment state (what :func:`read_link_states` reads per link).
 
     Structural refusals, unreachable hosts and failed reads are reported as
     flags/messages, never raised (spec §9 — ``list`` never dies). The last
@@ -1616,7 +1659,7 @@ async def _link_state(lab: Any, link: Link) -> LinkState:
     purpose. :func:`impair_link` and :func:`repair_link` need one because they
     have a plan to build; ``list`` has none — reading IS its job — so the
     honest answer is whatever the read attempt produces, and the backstop in
-    :func:`_exec` produces exactly it. The structural refusal above is still
+    ``_exec`` produces exactly it. The structural refusal above is still
     answered first (it is pure, and it is real information a dry run CAN
     give); everything after it raises :class:`LinkNotMeasuredError` from the
     first address-table read, and the arm below turns that into
@@ -1633,7 +1676,7 @@ async def _link_state(lab: Any, link: Link) -> LinkState:
         unreachable = False
         read_errors: dict[FlowDirection, str] = {}
         for placement in placements:
-            host = _host(lab, placement.host_id)
+            host = lab_host(lab, placement.host_id)
             impairer = _impairer_for(host)
             try:
                 state = await _read_state(host, impairer, placement.netdev)
@@ -1728,4 +1771,4 @@ async def read_link_states(lab: "Lab") -> list[LinkState]:
     can't hide the rest of the fleet's state from a caller like ``otto link
     list`` or a topology overlay.
     """
-    return [await _link_state(lab, link) for link in lab.static_links()]
+    return [await read_link_state(lab, link) for link in lab.static_links()]

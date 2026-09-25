@@ -34,6 +34,7 @@ import builtins
 import pytest
 
 from otto.bootstrap import BootstrapError, DependencyError, ProjectScopeError
+from otto.check.errors import CheckCommandFailedError, CheckHostUnreachableError
 from otto.cli.invoke import LabContextError, LoggingLevelsConflictError
 from otto.config.coverage_settings import CoverageConfigError
 from otto.config.scope import EmptySelectionError
@@ -159,6 +160,8 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (LinkHostUnreachableError, RuntimeError),
     (LinkCommandFailedError, RuntimeError),
     (LinkNotMeasuredError, RuntimeError),
+    (CheckHostUnreachableError, RuntimeError),
+    (CheckCommandFailedError, RuntimeError),
 ]
 
 

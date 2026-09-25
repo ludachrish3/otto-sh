@@ -54,6 +54,10 @@ docs/architecture/support-matrix.md
 # Sphinx build (docs/conf.py, builder-inited); the committed copy would be the stale one.
 docs/cli/cov/instrumenting/kgcov-matrix.md
 
+# Rendered from src/otto/check/proven.json by scripts/render_proven_range.py on every
+# Sphinx build (docs/conf.py, builder-inited); the committed copy would be the stale one.
+docs/cli/link/known-good.md
+
 # Claude files
 .claude
 

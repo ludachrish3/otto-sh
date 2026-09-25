@@ -27,6 +27,7 @@ from .placement import BOTH_DIRECTIONS, FlowDirection, Placement, impairment_ref
 # touches these names, so re-export them lazily to keep those surfaces out of
 # manage's import weight (2026-07-10 review finding).
 if TYPE_CHECKING:
+    from .check import LinkCheckReport, check_link
     from .manage import (
         AppliedPlacement,
         DirectionState,
@@ -55,6 +56,7 @@ __all__ = [
     "ImpairReport",
     "ImpairmentParams",
     "Link",
+    "LinkCheckReport",
     "LinkCommandFailedError",
     "LinkEndpoint",
     "LinkHostUnreachableError",
@@ -70,6 +72,7 @@ __all__ = [
     "Selector",
     "build_impairer",
     "canonical_key",
+    "check_link",
     "equivalent",
     "find_link",
     "impair_link",
@@ -105,15 +108,23 @@ _MANAGE_NAMES = frozenset(
     }
 )
 
+_CHECK_NAMES = frozenset({"LinkCheckReport", "check_link"})
+
 
 def __getattr__(name: str) -> object:
-    """Lazily resolve the ``.manage`` orchestration API on first access.
+    """Lazily resolve the ``.manage``/``.check`` orchestration API on first access.
 
-    Keeps ``otto.host.daemon``/``otto.link.sentinel`` off every otto.link
-    importer that only wants the model/impairer/placement layer.
+    Keeps ``otto.host.daemon``/``otto.link.sentinel`` (via ``.manage``) and
+    ``otto.check``'s fingerprint/probe machinery (via ``.check``) off every
+    otto.link importer that only wants the model/impairer/placement layer —
+    only ``otto link impair``/``repair``/``check`` actually need them.
     """
     if name in _MANAGE_NAMES:
         from . import manage
 
         return getattr(manage, name)
+    if name in _CHECK_NAMES:
+        from . import check
+
+        return getattr(check, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

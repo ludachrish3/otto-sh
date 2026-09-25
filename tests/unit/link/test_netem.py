@@ -7,7 +7,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from otto.link.impairer import IMPAIRERS
+from otto.link.impairer import IMPAIRERS, ScopedState
 from otto.link.netem import NetEmImpairer, PortPrefix, netem_args, parse_qdisc_show, port_prefixes
 from otto.link.params import ImpairmentParams, Selector, collides, scope_contains
 
@@ -517,6 +517,33 @@ FILTER_LIVE_B_CLEARED_OLD = (
     "  match 00350000/ffff0000 at 20\n"
 )
 
+# captured live on test3 in a throwaway centos:7 container, 2026-09-25: otto link
+# check's read-back row (sandbox veth, 100ms delay) -- first the whole-link tree,
+# then the port-scoped one for dst 5200-5210/tcp; tc -V: tc utility, iproute2-ss170501
+CHECK_READBACK_PARAMS = ImpairmentParams(delay_ms=100.0)
+CHECK_RANGE_SELECTOR = Selector(5200, "tcp", end=5210, side="dst")
+QDISC_CHECK_WHOLE_OLD = "qdisc netem 80a9: root refcnt 3 limit 1000 delay 100.0ms\n"
+QDISC_CHECK_SCOPED_OLD = (
+    "qdisc prio 1: root refcnt 3 bands 11 priomap  1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1\n"
+    "qdisc netem 40: parent 1:4 limit 1000 delay 100.0ms\n"
+)
+FILTER_CHECK_SCOPED_OLD = (
+    "filter protocol ip pref 40 u32 chain 0 \n"
+    "filter protocol ip pref 40 u32 chain 0 fh 800: ht divisor 1 \n"
+    "filter protocol ip pref 40 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0"
+    " flowid 1:4 not_in_hw \n"
+    "  match 00060000/00ff0000 at 8\n"
+    "  match 00001450/0000fff8 at 20\n"
+    "filter protocol ip pref 40 u32 chain 0 fh 800::801 order 2049 key ht 800 bkt 0"
+    " flowid 1:4 not_in_hw \n"
+    "  match 00060000/00ff0000 at 8\n"
+    "  match 00001458/0000fffe at 20\n"
+    "filter protocol ip pref 40 u32 chain 0 fh 800::802 order 2050 key ht 800 bkt 0"
+    " flowid 1:4 not_in_hw \n"
+    "  match 00060000/00ff0000 at 8\n"
+    "  match 0000145a/0000ffff at 20\n"
+)
+
 LIVE_A = {
     Selector(5201, "tcp"): (4, ImpairmentParams(delay_ms=200.0)),
     Selector(53, "udp"): (5, ImpairmentParams(loss_pct=5.0)),
@@ -599,6 +626,24 @@ class TestParseScoped:
         state = self.imp.parse_scoped(qdisc, filters)
         assert state.kind == "scoped"
         assert state.selectors == expected
+
+    @pytest.mark.parametrize(
+        ("qdisc", "filters", "expected"),
+        [
+            (QDISC_CHECK_WHOLE_OLD, "", ScopedState.whole_link(CHECK_READBACK_PARAMS)),
+            (
+                QDISC_CHECK_SCOPED_OLD,
+                FILTER_CHECK_SCOPED_OLD,
+                ScopedState.from_selectors({CHECK_RANGE_SELECTOR: (4, CHECK_READBACK_PARAMS)}),
+            ),
+        ],
+        ids=["whole-link", "port-scoped"],
+    )
+    def test_link_check_readback_parses_old_userland(
+        self, qdisc: str, filters: str, expected: ScopedState
+    ) -> None:
+        """``otto link check``'s read-back row, both trees, as old userland prints them."""
+        assert self.imp.parse_scoped(qdisc, filters) == expected
 
     def test_scoped_proto_none_selector_four_slots(self) -> None:
         qdisc = (
@@ -740,7 +785,7 @@ class TestParseScoped:
             assert self.imp.parse_scoped(qdisc, filt).kind == "foreign", (qdisc, filt)
 
     def test_truncated_root_line_ending_in_bands_is_foreign(self) -> None:
-        # a truncated read (host hiccup mid-command, escaping `_link_state`'s
+        # a truncated read (host hiccup mid-command, escaping `read_link_state`'s
         # own nets) can drop every token after "bands"; must never IndexError
         # in `_is_our_prio_root` — just fail our-shape recognition like any
         # other malformed root.

@@ -1,4 +1,4 @@
-"""Live-bed e2e tests for ``otto.link`` impairment (Task 11).
+"""Live-bed e2e tests for ``otto.link`` impairment.
 
 Drives the real ``otto.link`` library API (``impair_link`` / ``repair_link`` /
 ``repair_all`` / ``read_link_states``) against the three-VM unix bed,
@@ -12,7 +12,13 @@ Topology (fixture-created over real ``sudo ip``/``tc``, torn down after)
 The peers' only shared network (``10.10.200.0/24`` on ``eth1``) is the mgmt
 path, so this module builds a VLAN data plane instead -- verified live: VLAN
 tags pass the VirtualBox network, and ``tc qdisc replace ... netem`` on a VLAN
-sub-interface moves ping RTT without touching the untagged mgmt path.
+sub-interface moves ping RTT without touching the untagged mgmt path. Each
+VLAN sub-interface gets MTU 1496, not the inherited 1500 -- also verified live:
+the bed network silently drops a tagged frame carrying a full 1500-byte packet
+(``ping -M do -s 1472`` over the VLAN is lost, ``-s 1468`` answers; over the
+untagged mgmt path both answer), so any full-size TCP segment black-holes. Small
+probes (ping, a connect, a one-byte echo) never noticed; ``otto link check
+--live``'s bulk rate transfer is what exposed it.
 
 - VLAN 100 (``10.10.201.0/24``): test1 ``eth1.100`` = .11, test3
   ``eth1.100`` = .13
@@ -40,7 +46,7 @@ sub-interface moves ping RTT without touching the untagged mgmt path.
 Guaranteed teardown
 --------------------
 ``impair_lab`` is a module-scoped fixture (setup pays the VLAN/route/sysctl
-cost once for all 5 tests): its ``finally`` block repairs both links, deletes
+cost once for every test): its ``finally`` block repairs both links, deletes
 the VLAN sub-interfaces on all three peers (which removes any qdiscs and
 routes still riding them), restores test3's prior ``ip_forward``, and closes
 every host -- each step individually suppressed so one failure never skips
@@ -50,6 +56,7 @@ the rest.
 fixture (own throwaway ``asyncio.run``, fresh hosts -- mirrors
 ``test_tunnel_e2e.py``'s ``_final_leftover_sweep``) that does a final bed scan
 after every test in this module has run: no ``otto-impair:`` timer processes,
+no ``otto-check-*`` namespace or process left by ``otto link check``,
 no netem on the mgmt ``eth1`` (the load-bearing safety assertion), no VLAN
 sub-interfaces left behind. Autouse fixtures instantiate before explicitly
 requested ones within the same scope (a documented pytest guarantee), so this
@@ -86,6 +93,7 @@ from otto.link import (
     repair_all,
     repair_link,
 )
+from otto.link.check import LinkCheckReport
 from otto.link.netem import parse_qdisc_show
 from otto.link.sentinel import IMPAIR_PS_COMMAND, parse_impair_ps
 from otto.logger.mode import LogMode
@@ -111,6 +119,7 @@ _VLAN100_DEV = "eth1.100"
 _VLAN200_DEV = "eth1.200"
 _VLAN100_ID = 100
 _VLAN200_ID = 200
+_VLAN_MTU = 1496  # eth1's 1500 less the 802.1Q tag; see the module docstring
 _VLAN100_NET = "10.10.201.0/24"
 _VLAN200_NET = "10.10.202.0/24"
 
@@ -194,8 +203,12 @@ async def _root_best_effort(host: UnixHost, cmd: str) -> None:
 
 
 async def _add_vlan(host: UnixHost, dev: str, vlan_id: int, ip_cidr: str) -> None:
-    """Create VLAN sub-interface *dev* on *host*'s ``eth1``, address it, and bring it up."""
-    await _root(host, f"ip link add link eth1 name {dev} type vlan id {vlan_id}")
+    """Create VLAN sub-interface *dev* on *host*'s ``eth1``, address it, and bring it up.
+
+    The MTU leaves room for the 4-byte tag (see the module docstring): the bed
+    network drops a full 1500-byte packet once it is tagged.
+    """
+    await _root(host, f"ip link add link eth1 name {dev} mtu {_VLAN_MTU} type vlan id {vlan_id}")
     await _root(host, f"ip addr add {ip_cidr} dev {dev}")
     await _root(host, f"ip link set {dev} up")
 
@@ -324,6 +337,14 @@ async def _assert_bed_hygiene() -> None:
                     f"{host.id}: mgmt interface eth1 still carries a netem qdisc: "
                     f"{qdisc_result.value!r}"
                 )
+
+            # Two separate commands: a pgrep pattern must not appear literally
+            # anywhere in its own command line, or it matches its own shell.
+            for probe in ("ip netns list 2>/dev/null || true", "pgrep -af '[o]tto-check-' || true"):
+                check_result = await host.exec(probe, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET)
+                left = [ln for ln in (check_result.value or "").splitlines() if "otto-check-" in ln]
+                if left:
+                    leaks.append(f"{host.id}: otto link check left behind: {left!r}")
 
             link_result = await host.exec(
                 "ip -o link show", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
@@ -939,3 +960,86 @@ async def test_narrower_nested_selector_outranks_its_wide_parent(impair_lab: Lab
         assert "netem" not in first, qdisc.value
     finally:
         await _root_best_effort(test3, f"pkill -f '{argv_pattern(f'TCP4-LISTEN:{_NARROW_PORT}')}'")
+
+
+# ---------------------------------------------------------------------------
+# otto link check: the netem conformance survey, proven on the bed
+# ---------------------------------------------------------------------------
+
+
+def _show(report: LinkCheckReport) -> None:
+    """Print *report* the way ``otto link check -v`` would, so a ``-s`` run records the rows."""
+    from rich.console import Console
+
+    from otto.check import render_sections
+    from otto.link.check import link_sections
+
+    render_sections(Console(width=160), link_sections(report), verbose=True)
+
+
+async def _check_netns_left(host: UnixHost) -> str:
+    """``otto-check-*`` namespaces still on *host* (empty when the check cleaned up)."""
+    result = await host.exec(
+        "ip netns list | grep otto-check- || true", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+    )
+    return (result.value or "").strip()
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_link_check_sandbox_passes_on_the_bed(impair_lab: Lab) -> None:
+    """Every sandbox row passes on the modern-userland bed host, and nothing is left behind."""
+    from otto.check import Verdict
+    from otto.link import check_link
+    from otto.link.check import FEATURES
+
+    report = await check_link(impair_lab, "edge", from_host=_TEST1)
+    _show(report)
+    (host,) = report.hosts
+    assert host.host_id == _TEST1
+    assert [r.feature for r in host.sandbox] == FEATURES
+    bad = [r for r in host.sandbox if r.verdict is not Verdict.PASS]
+    assert not bad, bad
+    assert not await _check_netns_left(impair_lab.hosts[_TEST1])
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_link_check_live_passes_and_heals(impair_lab: Lab) -> None:
+    """--live on edge: every live row passes, and the link is clean afterwards."""
+    from otto.check import Verdict
+    from otto.link import DirectionState, check_link
+    from otto.link.check import FEATURES, LIVE_FEATURES
+
+    report = await check_link(impair_lab, "edge", live=True, from_host=_TEST1)
+    _show(report)
+    (host,) = report.hosts
+    # Live rows come back in report (FEATURES) order, narrowed to the live ones.
+    assert [r.feature for r in host.live] == [f for f in FEATURES if f in LIVE_FEATURES]
+    bad = [r for r in host.live if r.verdict is not Verdict.PASS]
+    assert not bad, bad
+    states = await read_link_states(impair_lab)
+    edge = next(s for s in states if s.link.id == "edge" or s.link.name == "edge")
+    assert edge.by_direction == {d: DirectionState() for d in FlowDirection}, edge
+    assert not edge.unreachable
+    assert not edge.read_errors
+    assert not await _check_netns_left(impair_lab.hosts[_TEST1])
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_link_check_sweeps_a_killed_runs_sandbox(impair_lab: Lab) -> None:
+    """A namespace left by a killed run is swept, named, and gone afterwards."""
+    from otto.link import check_link
+    from otto.link.sandbox import new_sandbox, setup_commands
+
+    test1 = impair_lab.hosts[_TEST1]
+    stale = new_sandbox("dead00")
+    try:
+        for cmd in setup_commands(stale):
+            await _root(test1, cmd)
+        assert stale.name in await _check_netns_left(test1)
+        report = await check_link(impair_lab, "edge", from_host=_TEST1, features=["delay"])
+        assert stale.name in report.hosts[0].swept
+        assert not await _check_netns_left(test1)
+    finally:
+        # A failed sweep must not leave the planted namespace for the next run.
+        await _root_best_effort(test1, f"ip netns del {stale.name}")
+        await _root_best_effort(test1, f"ip link del {stale.veth}")

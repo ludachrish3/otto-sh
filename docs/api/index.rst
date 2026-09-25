@@ -18,6 +18,7 @@ API Reference
    project
    instructions
    params
+   check
    link
    tunnel
    logger

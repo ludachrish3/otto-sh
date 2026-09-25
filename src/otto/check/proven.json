@@ -1,0 +1,21 @@
+{
+  "revision": "2026-09-25",
+  "components": {
+    "iproute2": [
+      {"version": "ss170501", "where": "unix bed, oldos container (CentOS 7) on test3", "when": "2026-09-24"},
+      {"version": "6.1.0", "where": "unix bed test1/test3", "when": "2026-09-24"}
+    ],
+    "kernel": [
+      {"version": "6.8.0-86-generic", "where": "unix bed test1", "when": "2026-09-25"}
+    ],
+    "isa": [
+      {"version": "aarch64", "where": "unix bed", "when": "2026-09-24"}
+    ],
+    "userland": [
+      {"version": "gnu", "where": "unix bed", "when": "2026-09-24"}
+    ],
+    "socat": [],
+    "bash": [],
+    "launcher": []
+  }
+}

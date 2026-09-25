@@ -7,6 +7,9 @@ refusals) lives in the library — this module only parses CLI strings via the
 ``otto.link`` parsers, calls the library, and renders the result.
 """
 
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated
+
 import typer
 from rich import get_console
 from rich import print as rprint
@@ -33,6 +36,9 @@ from ..link import (
 )
 from .completers import completion_source, lab_scoped_host_ids, selected_lab_names
 from .invoke import fail, print_error
+
+if TYPE_CHECKING:
+    from ..link.check import LinkCheckReport
 
 link_app = typer.Typer(
     name="link",
@@ -476,3 +482,120 @@ async def list_links() -> None:
             "were not evaluated either",
             soft_wrap=True,
         )
+
+
+def _parse_features(given: str | None) -> list[str] | None:
+    """Split ``--feature``'s comma-separated text into a list, or ``None`` when unset.
+
+    Stripped and emptied entries are dropped so ``--feature "delay, "`` does
+    not hand ``check_link`` a spurious ``""`` to reject as an unknown feature.
+    """
+    if given is None:
+        return None
+    return [f.strip() for f in given.split(",") if f.strip()]
+
+
+def _print_check_dry_run(link_id: str, plan: list[str]) -> None:
+    """Render ``check_link``'s ``--dry-run`` preview: the plan, and nothing else.
+
+    Unlike ``impair``/``repair``'s ``DryRunPlan`` (a ``would``/``unchecked``
+    split), ``check_link`` hands back one flat, already-ordered line list — so
+    there is nothing to split here, only to print through ``_row`` the same
+    way: every line is lab/host data (a netdev, a host id), and rich would eat
+    a bracketed one (see ``_row``'s docstring).
+    """
+    get_console().print(f"[cyan]dry run[/cyan] {escape(link_id)}:", soft_wrap=True)
+    for line in plan:
+        _row(f"  {line}")
+
+
+@link_app.command()
+async def check(
+    link: str = typer.Argument(..., help="Link id or name.", autocompletion=_link_completer),
+    *,
+    live: bool = typer.Option(
+        False, "--live", help="Also run a short real impair/measure/repair cycle on the link."
+    ),
+    feature: str | None = typer.Option(
+        None, "--feature", help="Comma-separated features to check (read-back always runs)."
+    ),
+    from_host: str | None = typer.Option(
+        None, "--from", help="Check only the direction originating at this host."
+    ),
+    # `Path | None` isn't ruff B008-immutable like the options above; `Annotated`
+    # is the established escape (see `otto.cli.init`'s `--path`).
+    report: Annotated[
+        Path | None,
+        typer.Option("--report", help="Also write the full result as JSON to this path."),
+    ] = None,
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show every probe's raw output."),
+) -> None:
+    """Survey this link's hosts' netem support (sandbox pass; --live adds the real link)."""
+    # Deferred, not module-scope: `check_link` pulls in `otto.link.check`
+    # (fingerprint/probe/judge/sandbox machinery) and, through it,
+    # `otto.check.*`. A module-level import would make `otto.cli.link` —
+    # and so every `otto --help` subcommand-group walk — pay for that whole
+    # tree on every invocation, not just on `otto link check`. Same pattern
+    # as `otto.cli.monitor`'s command bodies. `requested_features` lives in
+    # the same module as `check_link`, so it is deferred for the same reason.
+    from ..check import render_sections, report_to_json
+    from ..host.host import is_dry_run
+    from ..link import check_link
+    from ..link.check import link_sections, requested_features
+
+    def write_report(result_: "LinkCheckReport") -> None:
+        """``--report PATH`` → write the JSON *result_* there, or do nothing.
+
+        Never under a dry run, whatever the result: a dry run measured
+        nothing, and that includes a REFUSED link, whose result is built
+        before the dry-run plan and so reaches the refusal branch below
+        without one. It says why instead of going silent.
+        """
+        if report is None:
+            return
+        if result_.dry_run_plan or is_dry_run():
+            _row("no report was written — a dry run measures nothing")
+            return
+        try:
+            report.write_text(report_to_json(result_, kind="link"))
+        except OSError as e:
+            # soft_wrap=True: the path is a token the reader copies, same
+            # reasoning as this module's `_row` helper.
+            fail(f"cannot write report {report}: {e}", soft_wrap=True)
+        _row(f"report: {report}")
+
+    features = _parse_features(feature)
+    if feature is not None and not features:
+        fail("--feature named no features", 2)
+    # `requested_features` (an unknown `--feature` name) is a usage error (2),
+    # validated on its own and BEFORE calling `check_link` — never folded into
+    # the broader try below. `check_link` itself still raises `ValueError` for
+    # everything else it validates (an unknown link, `--from` host or lab
+    # host): that is the command's own RESULT, not a usage error, exactly like
+    # `impair`/`repair`'s `except (ValueError, RuntimeError) as e: fail(e)`.
+    try:
+        requested_features(features)
+    except ValueError as e:
+        fail(e, 2)
+    lab = get_lab()
+    try:
+        result = await check_link(lab, link, live=live, features=features, from_host=from_host)
+    except (ValueError, RuntimeError) as e:
+        fail(e)
+    if result.dry_run_plan:
+        _print_check_dry_run(result.link_id, result.dry_run_plan)
+        write_report(result)
+        raise typer.Exit(0)
+    if result.refusal is not None:
+        print_error(f"cannot check link {result.link_id}: {result.refusal}")
+        if result.refusal_hint:
+            print_error(result.refusal_hint)
+        # A refusal IS the check's result (spec: every link gets a result),
+        # so `--report` still gets one — the same shape `report_to_json`
+        # already serialises for the success path, since `refusal`/
+        # `refusal_hint` are ordinary fields on `LinkCheckReport`.
+        write_report(result)
+        raise typer.Exit(1)
+    render_sections(get_console(), link_sections(result), verbose=verbose)
+    write_report(result)
+    raise typer.Exit(0 if result.ok else 1)

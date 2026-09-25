@@ -334,6 +334,9 @@ Commands that run something on a host are ssh-like instead: they exit with the
 remote command's own return code, or 255 when the command never ran because the
 connection failed.
 
+The setup checks, such as `otto link check`, exit by their verdicts instead:
+see {doc}`check-verdicts`.
+
 ## Commands
 
 | Command | What it does |
@@ -362,6 +365,7 @@ when you need one that does not.
 
 dry-run
 projects
+check-verdicts
 ```
 
 ```{toctree}

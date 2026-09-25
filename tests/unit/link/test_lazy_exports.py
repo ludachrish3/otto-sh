@@ -21,6 +21,20 @@ def test_manage_name_resolves_to_manage_module_object():
     assert impair_link is manage.impair_link
 
 
+def test_check_names_resolve_to_check_module_object():
+    """``check_link``/``LinkCheckReport`` are lazy too, via the ``.check`` branch
+    of ``__getattr__`` — same PEP 562 mechanism as ``.manage``'s names above,
+    proven separately because they resolve against a different module."""
+    from otto.link import check
+    from otto.link import check_link as lazy_check_link
+
+    assert lazy_check_link is check.check_link
+
+    import otto.link as link_mod
+
+    assert link_mod.LinkCheckReport is check.LinkCheckReport
+
+
 def test_manage_names_all_resolve():
     import otto.link as link_mod
 

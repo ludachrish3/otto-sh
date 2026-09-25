@@ -28,7 +28,9 @@ narrows to one.
 
 Inspect and impair the lab's static links (the topology edges `otto tunnel`
 rides). Units and merge semantics are on {doc}`impair`; see also
-{doc}`in-path`, {doc}`port-scoped` and {doc}`safety`.
+{doc}`in-path`, {doc}`port-scoped` and {doc}`safety`. To find out which
+features work on your hosts before you rely on them, run {doc}`check`; the
+versions otto has been proven on are listed on {doc}`known-good`.
 
 ```text
 otto link impair <link> [--delay <time>] [--jitter <time>] [--loss <percent>] [--rate <rate>]
@@ -36,6 +38,8 @@ otto link impair <link> [--delay <time>] [--jitter <time>] [--loss <percent>] [-
                          [--from <host>] [--expire <seconds>]
 otto link repair [<link>] [--all]
 otto link list
+otto link check <link> [--live] [--feature <name>[,<name>...]] [--from <host>]
+                        [--report <path>] [--verbose]
 ```
 
 ## Subcommands
@@ -45,12 +49,13 @@ otto link list
 | `impair` | Merge-apply netem parameters to a link's resolved placement(s) |
 | `repair` | Clear a link's impairment(s) and cancel its timers, or every link with `--all` |
 | `list` | List every static link's current impairment state |
+| `check` | Survey which netem features work on the hosts that would impair a link |
 
 ## Options
 
 | Option | Applies to | Description |
 | ------ | ---------- | ----------- |
-| `<link>` (argument) | `impair`, `repair` | Link id or name |
+| `<link>` (argument) | `impair`, `repair`, `check` | Link id or name |
 | `--delay` | `impair` | Delay; bare number = ms, or an explicit `us`/`ms`/`s` suffix |
 | `--jitter` | `impair` | Jitter; requires a delay (given now or already applied) |
 | `--loss` | `impair` | Packet loss; bare number = percent, or a `%` suffix |
@@ -58,9 +63,13 @@ otto link list
 | `--corrupt` | `impair` | Corruption; bare number = percent, or a `%` suffix |
 | `--duplicate` | `impair` | Duplication; bare number = percent, or a `%` suffix |
 | `--reorder` | `impair` | Reorder; requires a delay (given now or already applied) |
-| `--from` | `impair` | Narrow to the direction originating at this host (both by default) |
+| `--from` | `impair`, `check` | Narrow to the direction originating at this host (both by default) |
 | `--expire` | `impair` | Auto-clear this impairment after N seconds |
 | `--all` | `repair` | Repair every static link in the lab |
+| `--live` | `check` | Also run a short real impair, measure, repair cycle on the link |
+| `--feature` | `check` | Check only these features (`read-back` always runs) |
+| `--report` | `check` | Also write the full result as JSON to this path |
+| `--verbose`, `-v` | `check` | Also print every probe's raw output |
 
 ## Previewing: `--dry-run`
 
@@ -144,6 +153,7 @@ previews nothing.
 impair
 repair
 list
+check
 ```
 
 ```{toctree}
@@ -153,4 +163,5 @@ list
 in-path
 port-scoped
 safety
+known-good
 ```
