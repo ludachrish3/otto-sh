@@ -1,6 +1,6 @@
 # Ordinary commands stop paying for completion and test suites — design
 
-**Status:** approved in conversation 2026-09-25 (scope, stat counter, repo shape, packaging, the §2b reversal and its guard were each decided explicitly). Amended 2026-09-25: one corpus walk per rebuild (§3.3, §4.4) chosen over a detached rebuild (#447) as the simpler long-term mechanism. Amended again 2026-09-25: the cache machinery gets its own architecture page (§7).
+**Status:** approved in conversation 2026-09-25 (scope, stat counter, repo shape, packaging, the §2b reversal and its guard were each decided explicitly). Amended 2026-09-25: one corpus walk per rebuild (§3.3, §4.4) chosen over a detached rebuild (#447) as the simpler long-term mechanism. Amended again 2026-09-25: the cache machinery gets its own architecture page (§7). Clarified during planning 2026-09-25: the concrete dispatch argv (§3.2) and five Part 3 mechanics found by code survey (§5.2, §5.3).
 **Reverses:** the 2026-08-06 ruling recorded in `todo/churn-review-remaining-work-2026-08-05.md` §2b ("a module that declines to load gates dispatch"). See Part 3.
 **Amends:** `2026-06-29-import-budget-guard-design.md` (adds strace counters and a dispatch surface, removes `--hyperfine`), and `2026-09-04-shim-completion-design.md` (a stale handover now repairs the cache).
 **Follow-ups filed:** #446 (rebuild only the stale sections) and #447 (rebuild in a detached process). Neither is in scope here.
@@ -66,7 +66,9 @@ The existing audit-hook counters stay as they are.
 This surface measures the branch of `entry()` that every real command takes.
 
 - **Setup:** real `entry()`, a generated repo, and a warm cache (measured on its second run against one home, like `help_repo_warm`).
-- **argv:** `otto run <noop>`, where `<noop>` is a lab-free instruction the generated repo registers and whose body returns immediately. If planning finds that a lab-free instruction cannot run hostless, the fallback argv is `otto run --help`, which takes the same `entry()` branch (not root help, so it bootstraps). The plan records which one it used and why.
+- **argv:** `otto -R run noop`, with `OTTO_LAB=unix` set through `env_extra`. `noop` is an `async` `@instruction()` whose body returns a success `CommandResult`. The generated repo's init module registers it and declares a JSON lab source pointing at `tests/_fixtures/lab_data/tech1`. This is the hostless pattern `tests/e2e/cli/test_project_activation_e2e.py` already runs from a non-git temp repo with exit 0: loading a JSON lab contacts no host, and `-R` skips the reservation check. `otto run` is not `lab_free`, which is why the lab is given.
+- **Output directory:** `surface_env` also points `OTTO_XDIR` at a fresh directory inside the fixture root on every call, the same way it pins `OTTO_HOME`, so the output directory a run creates is deterministic and never accumulates across measurements.
+- **Fallback:** if this argv cannot be made to exit 0 hostless, use `otto run --help`, which takes the same `entry()` branch (it is not root help, so it bootstraps). The plan records the outcome.
 - **Denylist:** `_ALL_HEAVY` minus `pytest` until Part 3 adds it back (see §3.5).
 - **Cap:** measured on 3.10 + 15, the #303 policy for a full-path surface.
 - **Scaling test:** `test_dispatch_io_does_not_scale_with_corpus_size` compares 50 files/5 dirs with 200 files/20 dirs on `open`, `scandir` and `stat_workspace`.
@@ -164,8 +166,15 @@ After this part, a broken test file fails loudly on **the commands that read sui
 ### 5.2 Mechanism
 
 - **`bootstrap()` stops importing test files.** Init modules still load on every command.
-- **`Registry` gains an optional `loader`,** a callable run exactly once before the registry's first read (`items`, `names`, `get`, `__contains__`, `__iter__`, `__len__`), and never re-entered.
-- **`SUITES` declares `loader=load_test_suites`**, a new function in `otto.bootstrap`. It calls `bootstrap()` (idempotent), then imports each repo's test files under that repo's registering marker, with today's per-file containment. Each failure is appended as a framed `BootstrapError` to the live `BootstrapResult.errors` list.
+- **`Registry` gains an optional `loader`,** a callable invoked at the start of every read (`items`, `names`, `get`, `origin`, `unregister`, `__contains__`, `__len__`) and never re-entered. A registry-local flag guards the re-entry: `register_suite_class` reads `SUITES` before it writes, from inside the load. The loader itself decides whether there is anything to do, so every call after the first is a cheap no-op.
+- **`SUITES` declares `loader=load_test_suites`**, a new function in `otto.bootstrap`.
+  - It does nothing unless `bootstrap()` has **completed**. It never bootstraps by itself, so `find_suite` before `bootstrap()`/`open_context()` still raises `LookupError`, exactly as the library cookbook documents.
+  - It loads at most once per `BootstrapResult`, tracked by the result object's identity and cleared by `invalidate()`.
+  - It imports each repo's top-level test files under that repo's registering marker, with today's per-file containment.
+  - Each failure is appended as a framed `BootstrapError` to the live `BootstrapResult.errors` list.
+- **`otto.registry.suspend_loaders()`** is a context manager (a context variable) under which reads never call a loader. The test harness's registry snapshot/restore fixtures run under it (`_isolate_registries` in `tests/conftest.py` and `_isolate_suites` in `tests/unit/suite/conftest.py`), so a per-test snapshot never loads a SUT's test files as a side effect.
+- **A failed test module no longer lingers.** `Repo.import_test_file` removes the half-built module from `sys.modules` when its body raises, so the next load (after `invalidate()`) re-raises instead of silently skipping it.
+- **Late findings are still rendered.** Startup prints each contained error once, as a `warning:` line (`_emit_bootstrap_findings`), but a lazy load appends errors after that. The CLI keeps track of what it has already rendered. Any finding not yet rendered is printed, in the same `warning:` form, at two points: by `fail_loud_on_bootstrap_errors` before its summary, and by `entry()` after a cache rebuild. A lazily found error is therefore printed exactly once, like any other.
 - **Every current `SUITES` reader** goes through the loader without being changed: `cli/test.py` (the suite subcommand group and the `--list` panels), `suite/run.py` (resolving a suite by name, which covers library use), `config/repo.py` (`registered_suites` and the suite-restricted run), and `completion_cache.collect_current_commands` (the cache rebuild).
 - **Fail loud where suites are read.** The `otto test` command path calls the existing `fail_loud_on_bootstrap_errors` after triggering the load.
 - **The rebuild stays honest.** In `entry()`'s rebuild, `tainted` is computed **after** collection, so errors from a suite load during the rebuild still taint the cache. That is what today's taint rule promises.
@@ -175,8 +184,10 @@ After this part, a broken test file fails loudly on **the commands that read sui
 A test file runs under the same registering-repo marker as an init module, so today it can register instructions, products, dev tools and so on. Once test files load lazily, such a registration would silently disappear from every command that does not read suites. This is made loud instead:
 
 - `otto.registry` gains a suite-loading phase marker (a context variable) that `load_test_suites` sets around each test-file import.
-- `Registry.register` refuses during that phase unless the registry opted in. `SUITES` is the only one that opts in, via a constructor flag.
-- The two provider lists that bypass `Registry`, `register_product_provider` (`host/product.py`) and `register_dev_tool_provider` (`host/dev_tool.py`), check the same marker.
+- `Registry.register` refuses during that phase when **the registration's origin is outside the `otto` package**, unless the registry opted in. `SUITES` is the only one that opts in, via a constructor flag.
+  - Why origin matters: otto's own modules register at import time, and a test file can be the first thing to import one. `otto.host.llext_kind`, for example, registers a product kind when imported, and `tests/repo1`'s test files import it. That registration is otto's, not the test file's, and must succeed.
+  - Every public `register_*` wrapper must therefore attribute its entry to the user module that called it. `register_product_kind` and `register_dev_tool_kind` currently pass no `origin`, which attributes their entries to `otto.host.*`; they are fixed to pass `caller_module()` like the other wrappers.
+- The two provider lists that bypass `Registry`, `register_product_provider` (`host/product.py`) and `register_dev_tool_provider` (`host/dev_tool.py`), check the same marker, keyed on `provider.__module__`.
 - A refusal is a framed, contained `BootstrapError` naming the file and what it tried to register: "register <kind> from an init module, not a test file".
 - **Guard test:** every `Registry` instance in the imported `otto` package is enumerated (the class records its instances), and each one except `SUITES` refuses during the phase. Any future `_PROVIDERS`-style list must be added to the test explicitly; the test names the two it knows about.
 
@@ -226,8 +237,13 @@ Each topic has one home, and other pages link to it:
   - `otto test` still lists and runs every suite.
   - A cold cache rebuild still records every suite and is tainted by a broken test file.
   - A test file that registers an instruction fails with the framed "from an init module" error.
+  - A test file whose first import of an otto module registers that module's own entries (the `otto.host.llext_kind` case) loads cleanly.
   - The registry-enumeration guard passes.
   - The §2b record is rewritten.
+  - `find_suite` before `bootstrap()` still raises `LookupError`.
+  - A test that bootstraps a repo with test files does not load them from the harness's snapshot fixtures.
+  - A lazily found error is printed as a `warning:` line exactly once.
+  - The four e2e tests in `tests/e2e/cli/test_plugin_commands_e2e.py` that encode the old ruling are rewritten to the new behaviour, using `tests/repo_broken` (a broken test file and no init): `otto run noop` and `--show-lab`/`--list-hosts` are no longer blocked, while `otto test` fails loud and cold `otto --help` prints the framed warning.
 - **Part 4:** there are no hyperfine references outside historical specs, and `make dev` no longer installs it.
 - **Re-measurement:** the §1 scaling probe (0/500/2,000 nested test files) shows a dispatch's cache cost at 0 for all three sizes, and a cold rebuild at about 3 syscalls per file, down from 817 + ~11.6 per file. Probe wall times are taken WITHOUT strace attached; strace inflates them. The before and after numbers go in the squash commit message.
 - **All parts:** the full gate suite passes before the squash (`make coverage`, `nox -s tests_hostless-3.14`, `make typecheck`, `make docs`, `make gate-fresh`).
