@@ -1,6 +1,6 @@
 # Ordinary commands stop paying for completion and test suites — design
 
-**Status:** approved in conversation 2026-09-25 (scope, stat counter, repo shape, packaging, the §2b reversal and its guard were each decided explicitly). Amended 2026-09-25: one corpus walk per rebuild (§3.3, §4.4) chosen over a detached rebuild (#447) as the simpler long-term mechanism.
+**Status:** approved in conversation 2026-09-25 (scope, stat counter, repo shape, packaging, the §2b reversal and its guard were each decided explicitly). Amended 2026-09-25: one corpus walk per rebuild (§3.3, §4.4) chosen over a detached rebuild (#447) as the simpler long-term mechanism. Amended again 2026-09-25: the cache machinery gets its own architecture page (§7).
 **Reverses:** the 2026-08-06 ruling recorded in `todo/churn-review-remaining-work-2026-08-05.md` §2b ("a module that declines to load gates dispatch"). See Part 3.
 **Amends:** `2026-06-29-import-budget-guard-design.md` (adds strace counters and a dispatch surface, removes `--hyperfine`), and `2026-09-04-shim-completion-design.md` (a stale handover now repairs the cache).
 **Follow-ups filed:** #446 (rebuild only the stale sections) and #447 (rebuild in a detached process). Neither is in scope here.
@@ -196,7 +196,22 @@ Historical specs are records and stay as they are.
 Each topic has one home, and other pages link to it:
 
 - **`docs/architecture/startup-performance.md`:** "What holds these numbers in place" describes the strace counters and their two gates. The "no stat audit event" caveats become "counted by strace". The page names Part 2's per-command saving.
-- **`docs/architecture/subsystems/completion.md`:** a new "Who refreshes the cache" section covering the readers, the stale-TAB repair and the fact that dispatch never touches the cache.
+- **New page `docs/architecture/subsystems/completion-cache.md`: the single home for the cache machinery.** It is written for someone who needs to know what the cache does and **why** each piece exists, and it describes the state after all four parts. It has these sections:
+  1. **Why there is a cache.** Completion and root help must answer without running user code or bootstrapping, and every path syscall costs a round trip on a network filesystem.
+  2. **Where it lives and what it's keyed on.** The per-workspace home under `$OTTO_HOME`, the workspace key derived from the SUT-dir set, the single JSON file, the schema, and atomic writes.
+  3. **The sections.** `names`, `tests` and `shim`: what each holds, who reads it, and why they are split (a names-only reader never pays for the corpus).
+  4. **Freshness.** Stat-triple key sets, the per-section digest, the shim's composed digest, the shared tail, the inventory block, the TTLs (a day, or five minutes for unfingerprinted sources), taint (stored but never served), the shim's stored triples and markers, and why freshness is stat-based rather than content-based.
+  5. **Reserved namespaces.** Collected tests and tunnel ids: what writes them, and why they are carried across rewrites.
+  6. **Who reads and who refreshes.** Completion and root help read; ordinary dispatch never touches the cache; a stale bash TAB and a missing `names` section trigger the rebuild; the one-corpus-walk snapshot; and how the rebuild interacts with lazy suite loading.
+  7. **What it costs, and the guards that hold it.** The per-file rates and the budget tests that pin them.
+  8. **Deliberate non-goals.** Detached or selective rebuild (#447, #446), zsh and fish, and root help not repairing `tests`.
+
+  The existing pages then **link to it instead of restating it**:
+  - `completion.md`'s "The entry" keeps only what the shim itself needs (the payload fields it reads) and links to the new page for the cache's semantics.
+  - `registries.md`'s cache paragraph shrinks to one sentence plus the link.
+  - `startup-performance.md`'s "The cache's economics on a network filesystem" keeps its NFS measurements and links to the new page for the mechanism.
+  - `docs/cli/cache/index.md` (user-facing) links to it from its opening paragraph.
+  - The new page is added to the architecture subsystems toctree.
 - **`docs/architecture/subsystems/bootstrap.md`** and **`docs/architecture/lifecycle.md`:** test files load on demand, not in phase 2.
 - **Test-suite author docs,** wherever `OttoSuite` registration is explained: a test file registers suites only; extensions go in init modules; a broken test file fails the commands that read suites.
 - **`entry()`'s docstring and `Repo.iter_test_files`' docstring** are rewritten to match.
