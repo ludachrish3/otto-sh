@@ -1,6 +1,6 @@
 # Ordinary commands stop paying for completion and test suites — design
 
-**Status:** approved in conversation 2026-09-25 (scope, stat counter, repo shape, packaging, the §2b reversal and its guard were each decided explicitly).
+**Status:** approved in conversation 2026-09-25 (scope, stat counter, repo shape, packaging, the §2b reversal and its guard were each decided explicitly). Amended 2026-09-25: one corpus walk per rebuild (§3.3, §4.4) chosen over a detached rebuild (#447) as the simpler long-term mechanism.
 **Reverses:** the 2026-08-06 ruling recorded in `todo/churn-review-remaining-work-2026-08-05.md` §2b ("a module that declines to load gates dispatch"). See Part 3.
 **Amends:** `2026-06-29-import-budget-guard-design.md` (adds strace counters and a dispatch surface, removes `--hyperfine`), and `2026-09-04-shim-completion-design.md` (a stale handover now repairs the cache).
 **Follow-ups filed:** #446 (rebuild only the stale sections) and #447 (rebuild in a detached process). Neither is in scope here.
@@ -34,8 +34,8 @@ The guard's `--hyperfine` wall-clock option is a manual diagnostic that nothing 
 
 One worktree, four parts, in this order, one commit per part, squashed at the end:
 
-1. **Guard expansion.** The guard learns to see this class of cost. It lands with an enumerated expected-red test that proves it can.
-2. **Completion-cache fix.** That test goes green.
+1. **Guard expansion.** The guard learns to see this class of cost. It lands with two enumerated expected-red tests that prove it can.
+2. **Completion-cache fix.** Both tests go green. This part includes one corpus walk per rebuild (§4.4).
 3. **Test files load on demand.** This reverses §2b.
 4. **Remove hyperfine.**
 
@@ -67,17 +67,36 @@ This surface measures the branch of `entry()` that every real command takes.
 
 - **Setup:** real `entry()`, a generated repo, and a warm cache (measured on its second run against one home, like `help_repo_warm`).
 - **argv:** `otto run <noop>`, where `<noop>` is a lab-free instruction the generated repo registers and whose body returns immediately. If planning finds that a lab-free instruction cannot run hostless, the fallback argv is `otto run --help`, which takes the same `entry()` branch (not root help, so it bootstraps). The plan records which one it used and why.
-- **Denylist:** `_ALL_HEAVY` minus `pytest` until Part 3 adds it back (see §3.3).
+- **Denylist:** `_ALL_HEAVY` minus `pytest` until Part 3 adds it back (see §3.5).
 - **Cap:** measured on 3.10 + 15, the #303 policy for a full-path surface.
 - **Scaling test:** `test_dispatch_io_does_not_scale_with_corpus_size` compares 50 files/5 dirs with 200 files/20 dirs on `open`, `scandir` and `stat_workspace`.
 
-**Expected red.** On the Part 1 commit, `test_dispatch_io_does_not_scale_with_corpus_size` FAILS (the dispatch cache check scans and stats the corpus), and it is the only test that does. Part 1 is gated on exactly that one failing id. That red is the proof that the guard sees the defect, per the "a guard must inject the hostile condition" rule.
+### 3.3 New test: a cold rebuild walks the corpus once
 
-### 3.3 Realistic generated repo (record only)
+Cold `help_repo` legitimately scales, because a full load reads every file. What it must not do is read a file several times. Today one rebuild stats each nested test file 4 times and lists each directory 5 times: 817 syscalls plus about 11.6 per file, measured at 0, 500 and 2,000 files. That is about 29 s at 2,000 files on a 1.2 ms-RTT NFS mount.
+
+`test_cold_rebuild_walks_the_corpus_once` measures cold `help_repo` at 50 files/5 dirs and at 200 files/20 dirs. The generated repo varies only its *nested* files, which are walked and parsed but never executed; its top-level file count stays fixed. With Δf the added files and Δd the added directories, it asserts:
+
+- `stat_workspace` delta ≤ Δf + Δd + 5
+- `open` delta ≤ Δf + 5 (one open per file, for the AST parse)
+- `scandir` delta ≤ Δd + 2
+
+This is the long-term guard for the rebuild. If a future feature adds another walk, the per-file rate doubles and the test names the surface.
+
+### 3.4 Expected red
+
+On the Part 1 commit exactly two tests FAIL, and Part 1 is gated on exactly those two ids:
+
+- `test_dispatch_io_does_not_scale_with_corpus_size`, because the dispatch cache check scans and stats the corpus;
+- `test_cold_rebuild_walks_the_corpus_once`, because a rebuild walks the corpus about five times.
+
+That red is the proof that the guard sees both defects, per the "a guard must inject the hostile condition" rule.
+
+### 3.5 Realistic generated repo (record only)
 
 The generated repo gains:
 
-- test files whose module bodies `import pytest` and `from otto.suite import OttoSuite` and define one `Test*` suite;
+- **top-level** test files whose module bodies `import pytest` and `from otto.suite import OttoSuite` and define one `Test*` suite. Only top-level files are executed, and the nested files stay plain so that §3.3's per-file bound measures walking and parsing alone;
 - one init module that imports `otto.monitor.parsers`.
 
 The goldens of every repo-bearing surface change to show pytest and the `otto.monitor` → `aiosqlite` chain, and their caps are re-baselined under the #303 policy.
@@ -121,6 +140,16 @@ The repair moves to the TAB that finds the cache stale:
 - When `cache_stale` is set in completion mode, `entry()` skips the `names` fast path, so it bootstraps, runs the check-and-rebuild of §4.2, and then Typer answers. The cost is one cold TAB per change; the next TAB is served by the shim again.
 
 Not covered, both unchanged from today: a root `--help` with a valid `names` section does not repair `tests`. zsh and fish TABs never reach the shim, and only bash completion is supported.
+
+### 4.4 One corpus walk per rebuild
+
+§4.3 moves the rebuild onto a TAB, the most latency-sensitive place a cost can land. So the rebuild's redundant walking goes at the same time. Five consumers each walk the corpus today: the `tests` digest, the `shim` digest (removed by §4.1), `scan_test_corpus`, `build_shim_payload`'s stored `keys`, and `compute_fingerprint`.
+
+- **One snapshot per invocation.** A `CorpusSnapshot` is built at most once per invocation from the repos: for each repo, the walked directories and each matched file with its stat triple, captured in a single walk.
+- **Every consumer derives from it.** It is threaded through as an argument, or memoized per repo set for the invocation's lifetime; the plan picks one, and it is not module-global state that outlives the invocation. The `names`/`tests` key paths and digests, the shim's stored stat triples, the fingerprint's tests term and the AST scan's file list all come from the snapshot. The scan still opens each file once to parse it.
+- **Key sets stay exactly as they are.** Each section's key set is unchanged; the snapshot is a superset, and each consumer filters it with the rules it has today. A differential test pins this: every consumer's derived key set equals the one its current standalone walk produces, for the generated repo and for both fixture repos.
+- **The walker has a single owner.** `iter_test_sources` and the key-path functions become the only walker, behind the snapshot. §3.3's per-file rate is what keeps a second walker from quietly coming back.
+- **Expected cost:** about 1 stat and 1 open per file, down from roughly 12 syscalls, for about 3 per file in total. At 2,000 files on a 1.2 ms-RTT NFS mount, a rebuild drops from about 29 s to about 7 s, once per change.
 
 `logins_by_host` (schema 20) stays in both `write_cache`'s call and `cache_sections._collect_names`. `tests/unit/shim/test_differential.py` (shim == Typer) must stay green.
 
@@ -174,10 +203,10 @@ Each topic has one home, and other pages link to it:
 
 ## 8. Acceptance
 
-- **Part 1:** the new counters are live, meaning `stat_workspace` is greater than 0 on every repo-bearing surface and the harness fails without strace. `dispatch_repo_warm` exists. On the Part 1 commit, `test_dispatch_io_does_not_scale_with_corpus_size` is the only failing test.
-- **Part 2:** that test passes. On `dispatch_repo_warm`, the `stat_workspace` golden drops to the repos' settings and lab reads (no corpus term). A dispatch calls `completion_cache.hash_file` zero times and writes no cache file. A names + tests + shim validation hashes each key path exactly once. The shim digest moves if and only if the `names` or `tests` digest moves (differential test). A stale bash TAB after a nested test-file edit repairs the cache, and the next TAB is answered by the shim. A non-stale handover (unknown option, `live source`) does not bootstrap.
+- **Part 1:** the new counters are live, meaning `stat_workspace` is greater than 0 on every repo-bearing surface and the harness fails without strace. `dispatch_repo_warm` exists. On the Part 1 commit, the two §3.4 tests are the only failing ones.
+- **Part 2:** both §3.4 tests pass. The consumer-key-set differential test of §4.4 passes. On `dispatch_repo_warm`, the `stat_workspace` golden drops to the repos' settings and lab reads (no corpus term). A dispatch calls `completion_cache.hash_file` zero times and writes no cache file. A names + tests + shim validation hashes each key path exactly once. The shim digest moves if and only if the `names` or `tests` digest moves (differential test). A stale bash TAB after a nested test-file edit repairs the cache, and the next TAB is answered by the shim. A non-stale handover (unknown option, `live source`) does not bootstrap.
 - **Part 3:**
-  - `dispatch_repo_warm` and `bootstrap_repo` lose pytest and `otto.suite` from their goldens, and both deny `pytest` again (§3.3).
+  - `dispatch_repo_warm` and `bootstrap_repo` lose pytest and `otto.suite` from their goldens, and both deny `pytest` again (§3.5).
   - A broken test file makes `otto test …` fail loud and leaves `otto run <noop>` and `otto schema export` exiting 0.
   - `otto test` still lists and runs every suite.
   - A cold cache rebuild still records every suite and is tainted by a broken test file.
@@ -185,12 +214,12 @@ Each topic has one home, and other pages link to it:
   - The registry-enumeration guard passes.
   - The §2b record is rewritten.
 - **Part 4:** there are no hyperfine references outside historical specs, and `make dev` no longer installs it.
-- **Re-measurement:** the §1 scaling probe (0/500/2,000 nested test files) shows a dispatch's cache cost at 0 for all three sizes. The before and after numbers go in the squash commit message.
+- **Re-measurement:** the §1 scaling probe (0/500/2,000 nested test files) shows a dispatch's cache cost at 0 for all three sizes, and a cold rebuild at about 3 syscalls per file, down from 817 + ~11.6 per file. Probe wall times are taken WITHOUT strace attached; strace inflates them. The before and after numbers go in the squash commit message.
 - **All parts:** the full gate suite passes before the squash (`make coverage`, `nox -s tests_hostless-3.14`, `make typecheck`, `make docs`, `make gate-fresh`).
 
 ## 9. Not in scope
 
-- Rebuilding only the stale sections (#446), and rebuilding in a detached process (#447).
+- Rebuilding only the stale sections (#446), and rebuilding in a detached process (#447). Both stay open. Once §4.4 lands, #446 mostly saves collector CPU rather than I/O. #447 is the escalation path, to be taken only if a measured real corpus shows that a single-walk rebuild is still too slow for an interactive TAB. It was deliberately not chosen here: it adds a process-lifecycle subsystem (spawn, locking, stale-lock recovery, failure surfacing, test isolation) without reducing the work.
 - A lazy `otto.monitor` package `__init__`, and any other import-graph trimming the realistic repo reveals.
 - Making root help repair a stale `tests` section.
 - zsh or fish completion.
