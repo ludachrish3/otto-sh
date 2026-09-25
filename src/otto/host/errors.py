@@ -81,6 +81,19 @@ class SessionSetupError(OttoError, ConnectionError):
     """
 
 
+class ConsoleError(OttoError, ConnectionError):
+    """The serial console behind a telnet server did not reach a login otto can perform.
+
+    Every message names the host, the server host ID, the port and the dial
+    mode, then says which of five distinct states the line was in — stuck at
+    a password prompt, busy (the server closed the connection), silent,
+    already logged in (quoting the last bytes seen, ANSI-stripped), or a
+    refused login — because each has a different fix. A ``ConnectionError``
+    so callers that treat "the session never came up" as unreachable keep
+    doing so.
+    """
+
+
 class MountNotFoundError(OttoError, ValueError):
     """A container path could not be translated to a parent-side path.
 

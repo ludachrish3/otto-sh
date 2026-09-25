@@ -26,7 +26,7 @@ import contextlib
 import logging
 import os
 import warnings
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
@@ -34,13 +34,14 @@ from typing_extensions import override
 
 from ..registry import Registry, caller_module
 from .login_proxy import Cred, LoginProxyError, default_login, resolve_chain
-from .options import FtpOptions, SftpOptions, SshOptions, TelnetOptions
+from .options import ConsoleOptions, FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from .telnet import TelnetClient
 
 if TYPE_CHECKING:
     import aioftp
     from asyncssh import SFTPClient, SSHClientConnection
 
+    from .console import ConsoleClient
     from .transport import HopTransport
 
 
@@ -62,6 +63,24 @@ class TelnetTarget:
     """The port to dial -- ``telnet_options.port``, or the forwarded local port."""
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleEndpoint:
+    """The console server as the ``console`` term reaches it: its ip and the hop transport to use.
+
+    Built by :meth:`otto.host.remote_host.RemoteHost.console_endpoint` from
+    the SERVER's host record. With ``dial: ssh`` *hop* tunnels into the
+    server itself; with ``dial: direct`` it is the server's own hop chain, or
+    ``None`` when the server is directly reachable. The connection manager
+    that holds it closes *hop* on ``close()``.
+    """
+
+    server_ip: str
+    """The console server's ``ip`` -- dialled by ``dial: direct``."""
+
+    hop: "HopTransport | None"
+    """The transport to forward through, or ``None`` to dial *server_ip* directly."""
+
+
 @dataclass(frozen=True)
 class TermContext:
     """Construction inputs a UnixHost provides to build its connection backend.
@@ -79,6 +98,10 @@ class TermContext:
     telnet_options: TelnetOptions | None = None
     sftp_options: SftpOptions | None = None
     ftp_options: FtpOptions | None = None
+    console_options: ConsoleOptions | None = None
+    console_endpoint: "Callable[[], ConsoleEndpoint] | None" = None
+    """Resolves where the ``console`` term dials; called lazily, on the first
+    console dial, so no lab lookup happens at host construction."""
 
 
 logger = logging.getLogger(__name__)
@@ -404,6 +427,7 @@ class ConnectionManager:
                 self._sftp_conn = None
                 self._ftp_conn = None
                 self._telnet_conn = None
+                self._console_conn = None
                 self._user_ssh_conns = {}
                 self._user_sftp_conns = {}
                 self._user_locks = {}
@@ -415,7 +439,7 @@ class ConnectionManager:
         host = UnixHost(..., _connection_factory=FakeConnections)
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 — one options slot per transport plus the console endpoint seam; TermContext is the grouped form callers use via create()
         self,
         ip: str,
         creds: list[Cred],
@@ -426,6 +450,9 @@ class ConnectionManager:
         telnet_options: TelnetOptions | None = None,
         sftp_options: SftpOptions | None = None,
         ftp_options: FtpOptions | None = None,
+        *,
+        console_options: ConsoleOptions | None = None,
+        console_endpoint: "Callable[[], ConsoleEndpoint] | None" = None,
     ) -> None:
         self._ip = ip
         self._creds = creds
@@ -436,11 +463,15 @@ class ConnectionManager:
         self._telnet_options = telnet_options or TelnetOptions()
         self._sftp_options = sftp_options or SftpOptions()
         self._ftp_options = ftp_options or FtpOptions()
+        self._console_options = console_options or ConsoleOptions()
+        self._console_endpoint_factory = console_endpoint
+        self._console_endpoint: ConsoleEndpoint | None = None
 
         self._ssh_conn: "SSHClientConnection | None" = None
         self._sftp_conn: "SFTPClient | None" = None
         self._ftp_conn: "aioftp.Client | None" = None
         self._telnet_conn: TelnetClient | None = None
+        self._console_conn: "ConsoleClient | None" = None
 
         # Per-user connections (spec 2026-09-01 §3): ``ssh_as``/``sftp_as``
         # authenticate the transport AS a given login, keyed by that login,
@@ -459,6 +490,7 @@ class ConnectionManager:
         self._sftp_lock = asyncio.Lock()
         self._ftp_lock = asyncio.Lock()
         self._telnet_lock = asyncio.Lock()
+        self._console_lock = asyncio.Lock()
 
     @classmethod
     def create(cls, ctx: "TermContext") -> "ConnectionManager":
@@ -479,12 +511,19 @@ class ConnectionManager:
             telnet_options=ctx.telnet_options,
             sftp_options=ctx.sftp_options,
             ftp_options=ctx.ftp_options,
+            console_options=ctx.console_options,
+            console_endpoint=ctx.console_endpoint,
         )
 
     @property
     def telnet_options(self) -> TelnetOptions:
         """Expose the stored ``TelnetOptions`` so custom callers honor the same configuration."""
         return self._telnet_options
+
+    @property
+    def console_options(self) -> ConsoleOptions:
+        """The stored ``ConsoleOptions`` (server, port, dial, prompts)."""
+        return self._console_options
 
     def login_target_for(self, protocol: str) -> str:
         """Return the login *protocol* authenticates as (spec 2026-09-13 cred-scope §3.2).
@@ -557,6 +596,7 @@ class ConnectionManager:
         return bool(
             self._ssh_conn
             or self._telnet_conn
+            or self._console_conn
             or self._sftp_conn
             or self._ftp_conn
             or self._user_ssh_conns
@@ -848,6 +888,116 @@ class ConnectionManager:
             logger.debug(f"Connected to {self._name} via telnet")
             return client
 
+    def _resolved_console_endpoint(self) -> ConsoleEndpoint:
+        """Resolve the console endpoint on first use; cached for this manager's life."""
+        if self._console_endpoint is None:
+            if self._console_endpoint_factory is None:
+                raise RuntimeError(f"{self._name}: term 'console' needs a console endpoint")
+            self._console_endpoint = self._console_endpoint_factory()
+        return self._console_endpoint
+
+    async def console_target(self) -> TelnetTarget:
+        """Where a NEW console client must dial: see ``ConsoleOptions.dial``.
+
+        ``dial: ssh`` forwards ``localhost:port`` through the tunnel INTO the
+        console server, so the destination resolves on the server and a
+        listener bound on its loopback is reachable. ``dial: direct`` dials
+        ``server_ip:port`` -- through the server's own hop chain when it has
+        one, else straight from here. This host's own ``ip`` and ``hop`` play
+        no part. Forwards are held by the endpoint's hop transport and
+        released when :meth:`close` closes it.
+
+        A tunnel that cannot be built (server down, bad SSH cred, a hop in
+        its chain unreachable) raises :class:`~otto.host.errors.ConsoleError`
+        naming the console and the server -- an unreachable server needs a
+        different fix from a busy line. How long building it may take is the
+        server's (and its hops') ``ssh_options.connect_timeout``, exactly as
+        for a host's own hop.
+        """
+        opts = self._console_options
+        ep = self._resolved_console_endpoint()
+        if opts.dial == "ssh":
+            if ep.hop is None:
+                raise RuntimeError(
+                    f"{self._name}: dial=ssh needs a hop transport into the console server"
+                )
+            return TelnetTarget("localhost", await self._console_forward(ep.hop, "localhost"))
+        if ep.hop is not None:
+            return TelnetTarget("localhost", await self._console_forward(ep.hop, ep.server_ip))
+        return TelnetTarget(ep.server_ip, opts.port)
+
+    async def _console_forward(self, hop: "HopTransport", dest_host: str) -> int:
+        """Forward ``dest_host:port`` through *hop*; a tunnel failure names the console server."""
+        from .errors import ConsoleError
+
+        opts = self._console_options
+        try:
+            return await hop.forward_port(dest_host, opts.port)
+        except ConsoleError:
+            raise
+        except Exception as exc:
+            from .console import console_prefix  # off the CLI startup import graph on purpose
+
+            prefix = console_prefix(self._name, opts.server, opts)
+            raise ConsoleError(
+                f"{prefix}could not tunnel to console server {opts.server!r}: {exc}"
+            ) from exc
+
+    async def console(self) -> "ConsoleClient":
+        """Return the live ConsoleClient, opening (and logging in) if needed.
+
+        Same shape as :meth:`telnet`: a single connection (a serial line is
+        single-client), ``alive`` rechecked, and the cached attribute
+        published only after the open and login succeed, with the client
+        torn down on any exception (including cancellation) so the next call
+        rebuilds cleanly rather than reusing a half-logged-in line.
+        """
+        from .console import ConsoleClient  # off the CLI startup import graph on purpose
+
+        if self._console_conn is not None and self._console_conn.alive:
+            return self._console_conn
+        async with self._console_lock:
+            if self._console_conn is not None and not self._console_conn.alive:
+                with contextlib.suppress(Exception):
+                    await self._console_conn.close()
+                self._console_conn = None
+            if self._console_conn is not None:
+                return self._console_conn
+            opts = self._console_options
+            cred = self.transport_cred_for("console") or LOGINLESS
+            target = await self.console_target()
+            logger.debug(f"Connecting to {self._name} via console {opts.server}:{opts.port}")
+            client = ConsoleClient(
+                host=target.host,
+                port=target.port,
+                user=cred.login,
+                password=cred.password or "",
+                options=opts,
+                name=self._name,
+                server=opts.server,
+            )
+            try:
+                await client.connect()
+            except BaseException:
+                with contextlib.suppress(Exception):
+                    await client.close()
+                raise
+            self._console_conn = client
+            logger.debug(f"Connected to {self._name} via console")
+            return client
+
+    def abandon_console(self) -> None:
+        """Drop the cached console client and release its line now, synchronously.
+
+        The synchronous counterpart of the console step in :meth:`close`, for
+        a caller replacing this manager that cannot await (see
+        :meth:`~otto.host.console.ConsoleClient.abandon`). No-op when no
+        console client is cached.
+        """
+        console, self._console_conn = self._console_conn, None
+        if console is not None:
+            console.abandon()
+
     async def forward_port(self, dest_port: int) -> int:
         """Forward a local ephemeral port to ``self._ip:dest_port`` through the tunnel.
 
@@ -896,6 +1046,7 @@ class ConnectionManager:
         ssh, self._ssh_conn = self._ssh_conn, None
         ftp, self._ftp_conn = self._ftp_conn, None
         telnet, self._telnet_conn = self._telnet_conn, None
+        console, self._console_conn = self._console_conn, None
         user_sftp, self._user_sftp_conns = self._user_sftp_conns, {}
         user_ssh, self._user_ssh_conns = self._user_ssh_conns, {}
         self._user_locks = {}
@@ -953,6 +1104,14 @@ class ConnectionManager:
         if telnet:
             with teardown_step(self._name, "telnet"):
                 await telnet.close()
+
+        if console:
+            with teardown_step(self._name, "console"):
+                await console.close()
+
+        if self._console_endpoint is not None and self._console_endpoint.hop is not None:
+            with teardown_step(self._name, "console hop"):
+                await self._console_endpoint.hop.close()
 
         if self._hop is not None:
             with teardown_step(self._name, "hop"):
@@ -1016,6 +1175,13 @@ class TermBackend:
     console) declares ``False`` and cannot be named as a cred's scope.
     """
 
+    dials_host: bool = True
+    """Whether this term is reached by dialling the HOST's own address.
+
+    ssh and telnet are; a console term is addressed at its console SERVER, so
+    a port survey of the host has nothing to dial for it.
+    """
+
 
 TERM_BACKENDS: Registry[TermBackend] = Registry(
     "term backend", register_hint="otto.host.connections.register_term_backend()"
@@ -1028,6 +1194,7 @@ def register_term_backend(
     *,
     host_families: frozenset[str],
     authenticates: bool,
+    dials_host: bool = True,
     overwrite: bool = False,
 ) -> None:
     """Make a custom connection backend available to lab data under *name*.
@@ -1049,6 +1216,14 @@ def register_term_backend(
     §2.1). Required, like *host_families*, so the declaration is stated rather
     than inferred; a non-bool is refused.
 
+    *dials_host* states whether the survey should dial the HOST's own address
+    to find this term. ``True`` (the default, and correct for ssh/telnet:
+    both live on a port of the host itself). A term reached at some OTHER
+    address — a console term dials its console SERVER, not the host — must
+    pass ``False`` so the port survey never manufactures a phantom dial for a
+    port the host was never going to answer on; a non-bool is refused, like
+    *authenticates*.
+
     *overwrite* replaces an existing registration under *name* deliberately
     (e.g. a built-in); by default a duplicate name raises.
     """
@@ -1063,9 +1238,20 @@ def register_term_backend(
             f"register_term_backend({name!r}): authenticates must be a bool "
             f"(True when the term logs in with a cred, as ssh and telnet do)."
         )
+    if not isinstance(dials_host, bool):
+        raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see host_families above)
+            f"register_term_backend({name!r}): dials_host must be a bool "
+            f"(True when the term is reached by dialling the host's own address, "
+            f"as ssh and telnet are)."
+        )
     TERM_BACKENDS.register(
         name,
-        TermBackend(cls=cls, host_families=host_families, authenticates=authenticates),
+        TermBackend(
+            cls=cls,
+            host_families=host_families,
+            authenticates=authenticates,
+            dials_host=dials_host,
+        ),
         overwrite=overwrite,
         origin=caller_module(),
     )
@@ -1095,6 +1281,13 @@ def _register_builtin_term_backends() -> None:
         ConnectionManager,
         host_families=frozenset({"unix", "embedded"}),
         authenticates=True,
+    )
+    register_term_backend(
+        "console",
+        ConnectionManager,
+        host_families=frozenset({"unix", "embedded"}),
+        authenticates=True,
+        dials_host=False,
     )
 
 

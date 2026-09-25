@@ -113,6 +113,10 @@ pytestmark = pytest.mark.interpreter_agnostic
 #
 # `test1` appears ONCE, under `unix`, though it declares membership in
 # `busybox` as well -- the de-duplication keeps first appearance.
+#
+# The `console` term crosses without `nc` (otto drops it from the menu a
+# console resolves from), so `test2` has three console cells, not four, and
+# `bb1350` one, not two.
 RECORDED_ORDER = [
     ("test1", "ssh", "scp"),
     ("test1", "ssh", "sftp"),
@@ -130,6 +134,9 @@ RECORDED_ORDER = [
     ("test2", "ssh", "scp"),
     ("test2", "ssh", "sftp"),
     ("test2", "ssh", "ftp"),
+    ("test2", "console", "scp"),
+    ("test2", "console", "sftp"),
+    ("test2", "console", "ftp"),
     ("test3", "ssh", "scp"),
     ("test3", "ssh", "sftp"),
     ("test3", "ssh", "ftp"),
@@ -150,6 +157,7 @@ RECORDED_ORDER = [
     ("bb1350", "telnet", "nc"),
     ("bb1350", "ssh", "shell"),
     ("bb1350", "ssh", "nc"),
+    ("bb1350", "console", "shell"),
     ("test4", "ssh", "scp"),
     ("test4", "ssh", "sftp"),
     ("test4", "ssh", "ftp"),
@@ -160,11 +168,11 @@ RECORDED_ORDER = [
     ("test4", "telnet", "nc"),
     ("zephyr37_fat", "telnet", "console"),
     ("zephyr37_lfs", "telnet", "console"),
-    ("zephyr37_nofs", "telnet", "console"),
+    ("zephyr37_nofs", "console", "console"),
     ("zephyr27_fat", "telnet", "console"),
     ("zephyr44_lfs", "telnet", "console"),
-    ("zephyr37_llext", "telnet", "console"),
-    ("zephyr44_llext", "telnet", "console"),
+    ("zephyr37_llext", "console", "console"),
+    ("zephyr44_llext", "console", "console"),
 ]
 
 
@@ -247,7 +255,7 @@ def test_bed_space_order_does_not_move_between_calls():
 
 
 def test_bed_menus_are_emitted_in_the_hosts_own_order_never_sorted():
-    """``test2`` reports its terms as ``['telnet', 'ssh']``; the space must say so.
+    """``test2``'s term menu leads with ``telnet``; the space must say so.
 
     The discriminator is real rather than theoretical: ``test1`` and ``test3``
     report ``['ssh', 'telnet']``, so a resolver that sorted, or that imposed
@@ -279,7 +287,7 @@ def test_the_bed_labs_overlap_so_the_dedup_is_not_vacuous():
     ``test_no_bed_cell_is_offered_twice`` only means something while the raw
     concatenation actually contains a repeat. It does: ``test1`` declares
     membership in both ``unix`` and ``busybox``, so ``BED_LABS`` concatenated
-    without de-duplication is 57 cells with ``test1``'s 8 listed twice. If a
+    without de-duplication is 63 cells with ``test1``'s 8 listed twice. If a
     future lab-data edit ends that overlap, this fails and says so, rather
     than letting the de-duplication quietly become untested code.
     """
@@ -693,10 +701,11 @@ def test_a_cell_builds_even_when_the_out_of_tree_frame_was_evicted():
 
 # --- The lab context a hopped cell needs (Task 4b) --------------------------
 #
-# 19 of the 51 bed cells name a host that is only reachable THROUGH another
-# one: the five BusyBox guests hop `test1` (bb1350 twice, over telnet and over
-# ssh) and the seven Zephyr guests hop `test4` (measured,
-# `tests/_fixtures/lab_data/tech1/lab.json`).
+# 20 of the 55 bed cells name a host that is only reachable THROUGH another
+# one: the five BusyBox guests hop `test1` (bb1350 three times, over telnet,
+# ssh and console) and the seven Zephyr guests hop `test4` (measured,
+# `tests/_fixtures/lab_data/tech1/lab.json`). `test2`'s three console cells
+# reach `test1` too, as their console server, which resolves the same way.
 # `RemoteHost._build_hop_transport` resolves that hop id against the host's
 # own `_lab` back-reference or, failing that, against the active
 # `OttoContext` -- and `create_host_from_dict` hands back a host with
@@ -930,10 +939,40 @@ def test_the_venues_lab_resolves_the_hop_of_every_hopped_cell_in_the_space():
     assert not unresolvable, (
         f"the venue's lab {sorted(lab.hosts)} cannot resolve these cells' hops: {unresolvable}"
     )
-    assert len(hopped) == 19, (
-        f"expected the 19 hopped cells this task was written for (the 5 BusyBox guests "
-        f"crossed by 2 transfers, plus bb1350's 2 ssh cells, plus the 7 Zephyr guests), "
+    assert len(hopped) == 20, (
+        f"expected the 20 hopped cells (the 5 BusyBox guests crossed by 2 transfers, "
+        f"plus bb1350's 2 ssh cells and 1 console cell, plus the 7 Zephyr guests), "
         f"got {len(hopped)}: {hopped}"
+    )
+
+
+def test_the_venues_lab_resolves_the_console_server_of_every_console_cell():
+    """A console server resolves by the same lab lookup a hop does.
+
+    The venue's lab is DERIVED from hop targets, and today's console servers
+    (``test1`` for ``test2``/``bb1350``, ``test4`` for the ARM Zephyr guests)
+    are hop targets as well, so the lab answers them without naming them.
+    That is a coincidence of this lab data, not a rule: a console server that
+    hopped nobody would be missing and the cell unopenable. Asked of every
+    console cell so that shape reddens here. The count is recorded for the
+    same reason the hopped count above is: an empty loop asserts nothing.
+    """
+    lab = bed_lab(BED_TECH)
+    console_cells = []
+    unresolvable = []
+    for resolved in bed_space():
+        host = build_bed_host(resolved.cell)
+        if host.term != "console":
+            continue
+        console_cells.append(cell_label(resolved))
+        if host.console_options.server not in lab.hosts:
+            unresolvable.append(f"{cell_label(resolved)} dials {host.console_options.server!r}")
+    assert not unresolvable, (
+        f"the venue's lab {sorted(lab.hosts)} cannot resolve these console servers: {unresolvable}"
+    )
+    assert len(console_cells) == 7, (
+        f"expected 7 console-term cells (test2 x 3 transfers, bb1350 x 1, the 3 ARM "
+        f"Zephyr guests), got {len(console_cells)}: {console_cells}"
     )
 
 
@@ -1229,19 +1268,27 @@ def test_a_console_cell_running_unprotected_fails_the_run(tmp_path, breakage, ex
     )
 
 
-def _unprotected_console_cells():
-    """Cells otto builds as ``EmbeddedHost`` that the venue would NOT serialize.
+def _single_client_by_otto(host) -> bool:
+    """otto's OWN answer to "does this host's console serve one client"."""
+    return isinstance(host, EmbeddedHost) or host.term == "console"
 
-    otto's OWN answer to "does this host's console serve one client", not this
-    suite's: ``EmbeddedHost.__post_init__`` is the only place in ``src/`` that
-    sets ``TelnetOptions.single_client_console=True``, so the class the factory
-    picks IS the property. Returned as a list rather than asserted here so the
-    injected negatives below can call it and expect a non-empty answer.
+
+def _unprotected_console_cells():
+    """Cells otto builds onto a single-client console that the venue would NOT serialize.
+
+    otto's OWN answer, not this suite's, and it has two halves.
+    ``EmbeddedHost.__post_init__`` is the only place in ``src/`` that sets
+    ``TelnetOptions.single_client_console=True``, so the class the factory
+    picks is one; a host built on the ``console`` term is the other, because
+    otto's console transport serves one client whatever the host family (it
+    drops ``nc`` from a console's transfer menu for that reason). Returned as
+    a list rather than asserted here so the injected negatives below can call
+    it and expect a non-empty answer.
     """
     return [
         cell_label(resolved)
         for resolved in bed_space()
-        if isinstance(build_bed_host(resolved.cell), EmbeddedHost)
+        if _single_client_by_otto(build_bed_host(resolved.cell))
         and not opens_a_single_client_console(resolved)
     ]
 
@@ -1252,16 +1299,49 @@ def test_every_host_otto_builds_as_embedded_is_serialized():
     ``SINGLE_CLIENT_CONSOLE_KINDS`` is spelled in this suite's own kind
     vocabulary, so on its own it can only ever agree with itself: rename the
     kind and the protection would switch off with every assertion about it
-    still green. This asks otto instead, over all 51 cells, and it is the
+    still green. This asks otto instead, over all 55 cells, and it is the
     reason the predicate is allowed to stay a cheap string membership.
     """
     assert not _unprotected_console_cells()
 
 
+# The four Zephyr guests still on the `telnet` term: the kind is their ONLY
+# protection. The three ARM guests moved to the `console` term, so the term
+# clause covers them as well and an injection against the kind alone cannot
+# see them -- which is why the kind injections below count four, not seven.
+_KIND_ONLY_ZEPHYR_CELLS = 4
+
+
 def test_the_cross_check_notices_a_protected_kind_that_was_dropped(monkeypatch):
-    """INJECTED: empty the protected set and the cross-check must see all seven."""
+    """INJECTED: empty the protected set and the cross-check must see every
+    Zephyr cell the term clause does not also cover."""
     monkeypatch.setattr(_console_safety, "SINGLE_CLIENT_CONSOLE_KINDS", frozenset())
-    assert len(_unprotected_console_cells()) == 7
+    unprotected = _unprotected_console_cells()
+    assert len(unprotected) == _KIND_ONLY_ZEPHYR_CELLS, unprotected
+    assert all(label.startswith(f"{BED_ZEPHYR}[") for label in unprotected), unprotected
+
+
+def test_the_cross_check_notices_a_dropped_console_term_clause(monkeypatch):
+    """INJECTED: the predicate back to kind-only, as it was before the console term.
+
+    A unix host on the ``console`` term is a ``bed-unix`` or ``bed-busybox``
+    cell, so no kind protects it; only the term clause does. Dropping that
+    clause must leave exactly those cells unprotected -- ``test2``'s three and
+    ``bb1350``'s one.
+    """
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "opens_a_single_client_console",
+        lambda resolved: resolved.kind in _console_safety.SINGLE_CLIENT_CONSOLE_KINDS,
+    )
+    assert sorted(_unprotected_console_cells()) == sorted(
+        [
+            f"{BED_BUSYBOX}[bb1350:console:shell]",
+            f"{BED_UNIX}[test2:console:scp]",
+            f"{BED_UNIX}[test2:console:sftp]",
+            f"{BED_UNIX}[test2:console:ftp]",
+        ]
+    )
 
 
 def test_the_cross_check_notices_a_renamed_kind_vocabulary(monkeypatch):
@@ -1280,13 +1360,16 @@ def test_the_cross_check_notices_a_renamed_kind_vocabulary(monkeypatch):
         "_kind_for_userland",
         lambda userland: "bed-rtos" if userland.startswith("zephyr-") else BED_UNIX,
     )
-    assert len(_unprotected_console_cells()) == 7
+    assert len(_unprotected_console_cells()) == _KIND_ONLY_ZEPHYR_CELLS
 
 
 def test_a_cell_that_opens_no_console_is_not_serialized():
     """The predicate has to be able to say no, or the space would serialize whole."""
     assert not opens_a_single_client_console(_resolved(DEFAULT_CELL))
     assert opens_a_single_client_console(_resolved(("zephyr37_fat", "telnet", "console")))
+    # The same unix host is single-client on its console and not on ssh.
+    assert opens_a_single_client_console(_resolved(("test2", "console", "scp")))
+    assert not opens_a_single_client_console(_resolved(("test2", "ssh", "scp")))
 
 
 def test_the_family_predicate_selects_exactly_the_busybox_cells():
@@ -1294,13 +1377,22 @@ def test_the_family_predicate_selects_exactly_the_busybox_cells():
 
     Space-driven like the console cross-check above, so a renamed kind or a
     membership typo reddens here rather than silently unserializing the
-    family. Disjointness from the console set is asserted too: a cell in both
-    would take both locks nested, which is a deadlock shape (two items
-    acquiring the pair in opposite orders), and today no kind needs both.
+    family. The overlap with the console set is pinned too, because a cell in
+    both takes both locks nested. That is safe only while every item takes
+    them in ONE order -- two autouse fixtures of one conftest and one scope,
+    which pytest orders identically for every item (measured on a collected
+    ``bb1350:console`` item: ``_shared_cpu_family`` then
+    ``_single_client_console``) -- and a console-only item never waits on the
+    family lock, so no cycle can form. The overlap is exactly the BusyBox
+    guests' console cells: a second one appearing is a lab-data change worth
+    being told about.
     """
+    both = []
     for r in bed_space():
         assert shares_a_family_cpu_budget(r) == (r.kind == BED_BUSYBOX)
-        assert not (shares_a_family_cpu_budget(r) and opens_a_single_client_console(r))
+        if shares_a_family_cpu_budget(r) and opens_a_single_client_console(r):
+            both.append(cell_label(r))
+    assert both == [f"{BED_BUSYBOX}[bb1350:console:shell]"]
     assert shares_a_family_cpu_budget(_resolved(("bb1281", "telnet", "nc")))
     assert not shares_a_family_cpu_budget(_resolved(DEFAULT_CELL))
 
@@ -1628,20 +1720,20 @@ def test_the_transfer_domain_excludes_exactly_the_filesystem_less_guests():
     one does) fails the element comparison, and a domain that quietly NARROWS
     (a `fat-ram` guest losing its mount) fails it the other way.
 
-    48 of 51, not "most of them": the count is written down because the set
+    52 of 55, not "most of them": the count is written down because the set
     comparison alone would still pass if a fourth guest were added with no
     filesystem and this list were updated to match without anyone asking why.
     """
     space = bed_space()
-    assert len(space) == 51
+    assert len(space) == 55
 
     outside = _outside_the_domain(space)
     assert sorted({rc.cell.element for rc in outside}) == sorted(NO_FILESYSTEM_GUESTS)
     assert len(outside) == 3, (
-        f"a Zephyr host reports a single (telnet, console) pair, so each excluded guest "
+        f"a Zephyr host reports a single (term, console) pair, so each excluded guest "
         f"contributes exactly one cell -- got {[cell_label(rc) for rc in outside]}"
     )
-    assert len(_inside_the_domain(space)) == 48
+    assert len(_inside_the_domain(space)) == 52
 
 
 def test_the_excluded_guests_are_the_ones_otto_says_have_nowhere_to_put_a_file():
@@ -1890,7 +1982,7 @@ def test_a_declared_domain_narrows_the_parametrization_to_its_cells(monkeypatch)
 def test_a_domain_that_narrows_the_draw_to_nothing_raises_rather_than_skipping(monkeypatch):
     """INJECTED: pytest's answer to an empty parameter set is a SKIP.
 
-    Unreachable from real data -- 3 of 51 bed cells and 0 of 8 hermetic ones
+    Unreachable from real data -- 3 of 55 bed cells and 0 of 8 hermetic ones
     are outside the only domain that exists, so no draw of 8 can miss every
     applicable cell. That is exactly why it is injected here instead of being
     left as a check nothing has ever reached: a skipped contract reports

@@ -18,6 +18,7 @@ fragment on this page shows:
 |-------------------|--------------------------------|
 | ``ssh_options``   | SSH sessions                   |
 | ``telnet_options``| Telnet sessions                |
+| ``console_options``| Serial-console sessions ({ref}`console-term`); ``lab.json`` only |
 | ``sftp_options``  | SFTP transfers                 |
 | ``scp_options``   | SCP transfers                  |
 | ``ftp_options``   | FTP transfers (aioftp)         |
@@ -26,12 +27,13 @@ fragment on this page shows:
 One further table, ``userland_options``, sits alongside these but names no
 protocol: it declares facts about the *device* (which elevation mechanism it
 has, which ``timeout`` convention its applet speaks) that otto otherwise
-probes for once per host.  It layers exactly like the six above, per-call
-override included.  `otto host <id> probe` prints the table ready to paste —
+probes for once per host.  It layers exactly like the protocol tables,
+per-call override included.  `otto host <id> probe` prints the table ready to paste —
 see {ref}`userland-capabilities`.  See also {doc}`lab-config`.
 
-The same tables are recognized in four places, layered from least
-to most specific:
+The same tables — all but ``console_options``, which is read from the
+host's ``lab.json`` entry alone — are recognized in four places, layered
+from least to most specific:
 
 1. **Hardcoded defaults** in `otto.host.options` — what you get when no
    `*_options` is supplied anywhere.
@@ -148,7 +150,11 @@ service listens elsewhere, prints the fragment to paste here — see
 
 **Embedded / UART-backed consoles** — four extra fields matter when the
 telnet endpoint is a QEMU ``-serial telnet:`` bridge rather than a Unix
-telnetd ({class}`~otto.host.options.TelnetOptions`):
+telnetd ({class}`~otto.host.options.TelnetOptions`). A serial console behind
+a telnet server is usually better reached with the `console` term
+({ref}`console-term`), which names the server rather than the device and
+checks what state the line is in; these fields keep such a device working on
+`telnet`:
 
 - ``write_chunk_size`` (default ``0``) — split each command write into
   chunks of at most this many bytes.  ``0`` sends the whole payload in
@@ -168,6 +174,154 @@ telnetd ({class}`~otto.host.options.TelnetOptions`):
   Otto registers the transport so the embedded teardown can force-release
   the slot if a timed-out test left it half-open.  Leave ``false`` for
   ordinary multi-session telnetd.
+
+(console-term)=
+
+### Console
+
+A **serial console** is a device's serial port (its UART): the line a
+Linux box runs a `login:` prompt on (a *getty*), and the only shell many
+routers, boards and RTOS targets have. Labs rarely cable those ports to a
+test machine directly; a **console server** sits in front of them and
+turns each serial port into a telnet port — `ser2net` on a Linux box, a
+Lantronix or Digi appliance, or QEMU's `-serial telnet:` for a virtual
+board. The `console` term is otto's client for that shape.
+
+Choose it when the serial console is the way in: the device runs no ssh or
+telnet daemon, its network is down or not yet configured, or what you are
+testing is the console itself. Where the device has a working ssh, prefer
+ssh — a serial line serves one client at a time, and that shapes what otto
+can do over it (see *One client at a time* below).
+
+Unlike `telnet`, which dials the device's own address, the console term
+dials **a port on another lab host**: the host that runs the telnet server.
+The device's own `ip` and `hop` play no part in reaching the console (they
+still address the device for anything that reaches it over its network,
+such as an `scp` transfer). This is `test2` from otto's test bed, whose
+console is served by `test1` on port 4001:
+
+```json
+{
+    "ip": "10.10.200.12",
+    "creds": [{ "login": "vagrant", "password": "vagrant" }],
+    "valid_terms": ["telnet", "ssh", "console"],
+    "console_options": { "server": "test1", "port": 4001 }
+}
+```
+
+`test1` must be a host in the same lab. Put `console` first in
+`valid_terms` (or pin `"term": "console"`) to use it by default, or select
+it for one invocation with `--term console` ({doc}`../cli/host/connections`).
+
+`dial` picks how otto reaches the server's port:
+
+- **`"ssh"`** (the default) — otto opens an SSH connection *into* the
+  server, with the server's own cred and through the server's own `hop`
+  chain if it has one, and forwards `localhost:<port>` from inside it. A
+  listener bound only to the server's loopback — QEMU's usual bridge — is
+  reachable this way. The server needs a cred otto can SSH with.
+- **`"direct"`** — otto connects to `<server ip>:<port>` over TCP (through
+  the server's `hop` chain, when it has one). For a console appliance that
+  has no SSH of its own.
+
+A missing `server`, or a `port` outside `1`–`65535`, on a host whose term
+is `console` is an error when the lab loads. A `server` that names the host
+itself, or a host not in the lab, is an error naming both, raised on the
+first connect, as a bad `hop` is, not at lab load.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `server` | — | Lab host ID of the telnet server. Required when the term is `console`; missing, the lab fails to load. |
+| `port` | — | The console's telnet port on the server, `1`–`65535`. Required when the term is `console`; missing or out of range, the lab fails to load. |
+| `dial` | `"ssh"` | `"ssh"` or `"direct"`, as above. |
+| `login` | `true` | Log in from the `login:` prompt. Set `false` for a line with no login step (an RTOS shell); embedded hosts always force `false`. |
+| `login_prompt`, `password_prompt` | from the OS profile | Regexes matched against the *end* of what the line shows. Unset means the host's OS profile's patterns ({doc}`os-profiles`); set them for a device whose prompts read differently. |
+| `login_timeout` | `10.0` | Seconds to wait for each prompt after otto presses Enter or types a name. Also bounds the dial. Raise it when a boot log precedes `login:`. |
+| `settle` | `0.5` | Seconds of output read and thrown away right after connecting, so stale bytes on the line are never mistaken for an answer. |
+| `logout` | `true` | On close, send Ctrl-D (end of input) and wait up to `login_timeout` for `login:`, so the next client finds the line logged out. |
+| `write_chunk_size`, `write_chunk_delay` | `0`, `0.0` | Paced writes for a UART that overruns on a long line, as for telnet (above). |
+| `cols`, `rows` | `400`, `24` | Initial terminal size reported to the server. |
+| `encoding` | `false` | Text encoding; `false` is bytes mode. |
+| `echo_negotiation_timeout` | `3.0` | Seconds to wait for the server to stop echoing. |
+| `extra` | `{}` | Passed verbatim to `telnetlib3.open_connection()`. |
+
+**What otto does on connect.** It dials, waits `settle`, then presses
+Enter and reads until the output *ends* in a prompt or `login_timeout`
+passes. Only a `login:` prompt it has just seen lets it continue: it types
+the username, waits for the password prompt, and types the password. The
+login happens before anything else runs on the line — see
+{ref}`What runs, in order <session-run-order>`. With `login: false`
+there is no login step; the readiness handshake that follows is the check
+that a shell answers.
+
+Anything but a `login:` prompt is an error. otto never resets a console on
+its own and never proceeds on a session it did not open — **a console that
+is already logged in always fails**, even if the session left on it is
+otto's own from an earlier run. Resetting the line is an operator's
+decision: {doc}`../cli/host/login` covers `otto host <id> logout` and
+`login --force`.
+
+(console-failures)=
+
+**The failures.** Every console error starts with the words
+`<host>: console <server>:<port> (dial=<mode>)` — the lab's names, never a
+forwarded local port — then says which state the line was in, because each
+has a different fix:
+
+| The message says | What the line was doing | What to do |
+|---|---|---|
+| `is stuck at a password prompt` | Someone typed a username and left. | `otto host <id> logout`. |
+| `is busy: the server closed the connection before any prompt — another client holds the port, or the server has no serial device behind it right now (the line is down)` | The console server allows one client and another has it (a colleague's telnet, another otto run, a stale tunnel), or the server accepted and closed at once because its serial device is gone (a USB adapter unplugged; on the bed, the socat link while its far end reboots). During `reboot --wait` this is the down phase and expected. | Find and close the other client, or wait for the device to return. |
+| `is silent: no login prompt within <N>s and no bytes received` | Nothing answered Enter. | Check the port, that a getty runs on the device's serial line, and the cable. |
+| `did not show a login prompt; it is likely already logged in. Seen: '…'` | A shell, or a program in it, was left running. The quote is the last 200 characters the line showed, escape sequences stripped and the password replaced by `***`. | Read the quote; then `otto host <id> logout` (or `login --force`). |
+| `login refused for '<user>'` | After the username the line showed `login:` again, or after the password it showed a login or password prompt. | Check the host's cred. |
+
+Rarer ones name their cause the same way: `showed no password prompt after
+the username`, `closed the connection after the username` (the device or
+server hung up mid-login), `lost the connection: …` (the link dropped while
+otto was reading), `could not be dialled: …`, `could not tunnel to console
+server …`, and `no login prompt pattern` (or `no password prompt pattern`)
+when neither the host nor its OS profile supplies that prompt regex. Passwords never appear in any of them.
+
+**One client at a time.** A serial line has one shell, so otto uses one
+session on it:
+
+- `run()` works, on that session. So does `exec()` (and
+  `otto host <id> exec`): on a console it is a special case of `run()`, one
+  command on the same session with the same exit-code handling. It shares
+  that session's shell state (a `cd` stays). Concurrent `run()`, `exec()`
+  and `shell`-transfer commands take turns on the one line. A user switch
+  (`run(user=...)`, `as_user`) happens outside that turn-taking, so keep
+  switched calls sequential rather than gathering them with other commands.
+  `exec(user=...)` switches the session to that user for the one command
+  and back, inside its turn.
+- The `shell` transfer works (its commands run on that session, as the
+  logged-in user), and so do `scp`, `sftp` and `ftp`, which reach the device
+  over its network rather than the console.
+- Named sessions are refused on a Unix host, with `console is single-client
+  (<server>:<port>, dial=<mode>); named sessions are not available on this
+  term`: each one would be a second connection. On an embedded host `exec`
+  already shares the one session ({doc}`../cli/host/embedded`).
+- The `nc` transfer is refused: its remote listener would hold the session
+  while its control commands need it too. How a menu that lists `nc` resolves
+  is on {doc}`lab-config` (the `transfer` row); a transfer asked to run as a
+  user other than the one logged in is refused too.
+- Every command otto issues for itself — the userland probes, a transfer's
+  helper commands, the `sudo` probe — is an `exec`, so it runs on the same
+  session, one at a time. A `session_setup` hook that calls the host's
+  `run()`, `exec()` or file operations (`put`, `exists`, `read_file`, …) on
+  a console host therefore waits for the session its own hook is still
+  setting up, forever. Use the session handle the hook is given instead.
+- Calling `login()` or `logout()` on a host in the same process ends that
+  host's `run()` session: both close otto's own session first, since it
+  holds the line. The next `run()` connects and logs in again. A
+  reachability probe (`otto host <id> probe`, `is_reachable()`, and each
+  poll of `reboot(wait=True)`) does the same and then dials fresh: the link
+  to the server outlives a device reboot, so only a new login shows the
+  device is up.
+
+When otto closes the session it logs out (per `logout`), so the next client
+finds `login:`.
 
 ### SFTP, SCP, FTP, Netcat
 
@@ -295,13 +449,17 @@ code, registered from an `init` module — {doc}`../cookbook/extending/extending
 has the contract and a copyable registration, and the Getting Started
 {doc}`../getting-started/customizations` page walks through three.
 
+(session-run-order)=
+
 ### What runs, in order
 
 1. Transport hops (`hop`), then the connection lands.
-2. The readiness handshake, in the **landing** dialect.
-3. Every login-proxy hop (`creds` with `proxy`), identity-proved.
-4. The hook, over a session framed in the landing dialect.
-5. **Frame entry**: the `command_frame`'s own handshake, in whatever shell
+2. The console login (term `console` only): from a `login:` prompt otto
+   observed, never otherwise — see {ref}`console-term`.
+3. The readiness handshake, in the **landing** dialect.
+4. Every login-proxy hop (`creds` with `proxy`), identity-proved.
+5. The hook, over a session framed in the landing dialect.
+6. **Frame entry**: the `command_frame`'s own handshake, in whatever shell
    the hook left. This runs after every hook, unconditionally, and is the
    confirmation that the shell is fit to use.
 
@@ -338,6 +496,16 @@ entry must land in a bash-family dialect (the hop identity probe is bash).
 handshake is sent, the hook works with `send`/`expect` alone (`run()`
 refuses until `enter_frame()`), and frame entry still confirms the target.
 `command_frame: "raw"` is refused — raw is a landing, never a destination.
+
+A console whose line must be driven through a boot menu before Linux
+reaches `login:` declares `console_options.login: false`, so the transport
+does not try to log in, and lands raw; its hook calls
+`await session.console_login()` once the prompt is in sight. That runs the
+same login and raises the same {ref}`failures <console-failures>` as the
+transport would, once per session: a second call, or a call on a console
+whose transport already logged in (`login: true`), fails with `is already
+logged in by this connection`. On any other term it is refused with an
+error naming the host.
 
 ### What a two-dialect host can do
 

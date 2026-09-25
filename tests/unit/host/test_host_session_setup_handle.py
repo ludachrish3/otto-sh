@@ -6,7 +6,8 @@ import logging
 import pytest
 
 from otto.host.command_frame import ZephyrFrame
-from otto.host.session import HostSession
+from otto.host.errors import ConsoleError
+from otto.host.session import HostSession, TelnetSession
 from otto.host.session_setup import SessionSetupError
 from tests.unit.host.test_session import MockSession
 
@@ -96,3 +97,84 @@ async def test_close_works_on_an_ordinary_handle(landed):
     await h.close()
     assert closed == ["n"]
     assert not landed.alive
+
+
+@pytest.mark.asyncio
+async def test_console_login_runs_the_client_sequence_on_a_console_session():
+    calls = []
+
+    class _Client:
+        # TelnetSession.__init__ reads .logged_in unconditionally on any
+        # non-None console_client (to decide _retry_failed_handshake) — the
+        # brief's stub needs it too, or construction itself raises
+        # AttributeError before console_login() is ever reached.
+        logged_in = False
+
+        async def login_sequence(self):
+            calls.append("login")
+
+    shell = TelnetSession(reader=object(), writer=object(), console_client=_Client())
+    handle = HostSession(
+        "default",
+        shell,
+        lambda *_: None,
+        lambda *_: None,
+        lambda n: None,
+        host_id="test2",
+        term="console",
+    )
+    await handle.console_login()
+    assert calls == ["login"]
+
+
+@pytest.mark.asyncio
+async def test_console_login_disables_the_handshake_retry_after_a_successful_login():
+    # M3: a retry would retype the password into the line a second time —
+    # console_login() must mark this session un-retryable once the client
+    # has typed a password, the same guarantee TelnetSession.__init__ gives
+    # a session built over an already-logged-in client.
+    class _Client:
+        logged_in = False
+
+        async def login_sequence(self):
+            pass
+
+    shell = TelnetSession(reader=object(), writer=object(), console_client=_Client())
+    assert shell._retry_failed_handshake is True
+    handle = HostSession(
+        "default", shell, lambda *_: None, lambda *_: None, lambda n: None, host_id="test2"
+    )
+    await handle.console_login()
+    assert shell._retry_failed_handshake is False
+
+
+@pytest.mark.asyncio
+async def test_console_login_is_refused_off_a_console_term():
+    # M1: the refusal must name THIS host and term — TelnetSession/
+    # ShellSession only know their own session identity, not the host, so
+    # HostSession.console_login() re-raises with host_id and term.
+    shell = TelnetSession(reader=object(), writer=object())
+    handle = HostSession(
+        "default",
+        shell,
+        lambda *_: None,
+        lambda *_: None,
+        lambda n: None,
+        host_id="test2",
+        term="ssh",
+    )
+    with pytest.raises(
+        ConsoleError, match=r"^test2: console_login\(\) needs a console term \(term is 'ssh'\)"
+    ):
+        await handle.console_login()
+
+
+@pytest.mark.asyncio
+async def test_console_login_off_a_console_term_is_refused_on_the_base_class_too(landed):
+    # M4: `landed` is a plain MockSession (ShellSession subclass, no
+    # console_client) — this exercises ShellSession.console_login's own
+    # refusal, not TelnetSession's override, so SshSession/LocalSession stay
+    # covered too.
+    handle = _handle(landed, term="ssh")
+    with pytest.raises(ConsoleError, match=r"^h: console_login\(\) needs a console term"):
+        await handle.console_login()

@@ -58,6 +58,9 @@ The telnet term cannot be stretched to it:
   ser2net (GNU getty), a second QEMU UART on the bb1350 BusyBox guest
   (BusyBox getty), and the existing ARM Zephyr `-serial telnet:` guests
   migrated to the console term (no login).
+  **Correction (2026-09-25, proven by the implementation):** the GNU row's link is a socat null-modem over the lab network, not a
+  VirtualBox UART (see §7), and the three kinds are five console *hosts*:
+  test2, bb1350 and the three ARM Zephyr guests.
 - **Not a breaking change.** The telnet term is byte-for-byte unchanged, so
   an existing `-serial telnet:` Zephyr host on `term: telnet` keeps working.
   Only otto's own bed entries migrate. Minor bump.
@@ -74,6 +77,21 @@ The telnet term cannot be stretched to it:
   session; `exec` and every named session are refused. The transfers that
   reach the device over its own network (`scp`, `sftp`, `ftp`, `nc`) are
   unaffected by the term.
+  **Correction (2026-09-25, proven by the implementation):** `nc` is not unaffected: its remote side is a command (`nc -l`) that
+  holds the one session while its control commands must run beside it, so
+  `nc` is refused on a console term. A `transfer: nc` pin (or a menu of only
+  `nc`) is a load-time config error; an `nc` preference falls through to the
+  next kind. `scp`, `sftp` and `ftp` stay unaffected (their remote side is a
+  daemon).
+  **Correction (h) (2026-09-25, Chris's ruling):** `exec` is not refused. It is a
+  special case of `run`: on a console term it runs its one command on the
+  default session (the one `run` uses), with `run`'s marker and exit-code
+  handling, and returns a normal `CommandResult`. Concurrent `exec` calls on
+  one console host run one at a time. The exec pool is never built on a
+  console, because a pool session is a second connection. Named sessions
+  stay refused, and so does `nc`, which needs two sessions at once. With
+  `exec` working, otto's own commands (file ops, userland probes, transfer
+  steps) call `exec` directly; no separate internal chooser is needed.
 - `otto.host.console` stays off the CLI startup import graph (lazy import
   from the session manager, as `session_setup` is). The import budget does
   not move.
@@ -105,6 +123,11 @@ test2: console is single-client (test1:4001, dial=ssh); exec and named
 sessions are not available on this term — use run(), or select another term
 ```
 
+**Correction (h) (2026-09-25, Chris's ruling):** only named sessions are refused.
+`exec` never reaches this build on a console: it runs on the default session
+(see the hard constraints). The message reads `named sessions are not
+available on this term — use run() or exec(), or select another term`.
+
 ### 2. Options (`otto.host.options.ConsoleOptions`, `otto.models.options.ConsoleOptionsSpec`)
 
 Runtime dataclass and pydantic spec, paired in `OPTION_SPEC_RUNTIME_PAIRS`
@@ -126,6 +149,7 @@ beside `telnet_options`, so both families carry it.
 | `write_chunk_delay` | `0.0` | As `telnet_options`. |
 | `cols`, `rows` | `400`, `24` | As `telnet_options`. |
 | `encoding` | `False` | As `telnet_options`. |
+| `echo_negotiation_timeout` | `3.0` | As `telnet_options`. |
 | `extra` | `{}` | Passed to `telnetlib3.open_connection`. |
 
 Validation at lab load (`otto.models.host`, alongside the `hop` checks):
@@ -138,6 +162,12 @@ Validation at lab load (`otto.models.host`, alongside the `hop` checks):
 - `login_prompt` / `password_prompt`, when given, must compile.
 - `login: true` on an embedded host is accepted and overridden to `False`
   at construction, matching the telnet behaviour, with a debug log line.
+
+**Correction (i) (2026-09-25, planning ruling):** the server checks in bullets 2 and 3 (the
+server is a host in the lab, is not the host itself, and carries an ssh cred for `dial: ssh`)
+run at connect-time pre-flight, the way a hop resolves, not at lab load: the repo has no
+lab-load cross-host validation layer. A bad server surfaces at the first connection, and the
+error still names the host and the server.
 
 `TermContext` gains `console_options`. `RemoteHost` gains
 `console_options: ConsoleOptions`, the JSON schemas regenerate via
@@ -167,7 +197,7 @@ cascades into the console hop transport as it does for `hop`.
 
 A dataclass with the same shape as `TelnetClient` (`host`, `user`,
 `password`, `options`, `connect_port`, `reader`, `writer`, `alive`,
-`close()`), reusing telnetlib3's open and the DONT ECHO negotiation, and
+`close()`) — **Correction (2026-09-25, proven by the implementation):** the dial port field is `port`, not `connect_port` — reusing telnetlib3's open and the DONT ECHO negotiation, and
 always registering as a single-client console transport. What differs is
 `connect()`:
 
@@ -198,6 +228,15 @@ starting point:
 
 1. Nudge `\r`. At `login_prompt` → done. At `password_prompt` → `\r`, wait
    for `login_prompt` (getty prints "Login incorrect" and re-prompts) → done.
+   **Correction (2026-09-25, proven by the implementation):** at `password_prompt` the reset sends Ctrl-C (`\x03`), not `\r`:
+   `login(1)` exits and getty respawns a clean prompt, whereas a CR leaves
+   `login(1)`'s own retry prompt, which answers the next client's nudge with
+   `Password:` (bed-proven). And a `login_prompt` is confirmed by a *second*
+   nudge before it counts as done, because only getty's prompt re-prints on
+   CR; `login(1)`'s retry prompt takes it as an empty username and asks for a
+   password. In step 2 each round writes Ctrl-C, waits (bounded) for the
+   interrupt to show, then Ctrl-D and CR, since a tty's Ctrl-C flushes a
+   Ctrl-D sent before it lands.
 2. Up to three rounds of `\x03`, `\x04`, `\r`, then classify; each round
    ends as soon as `login_prompt` appears. Three rounds cover a nested shell
    and an `su` level. EOF rather than `exit` because EOF ends bash, sh,
@@ -244,11 +283,17 @@ profile one").
   client, runs `reset()`, prints the outcome (`already at login prompt` /
   `reset: login prompt restored` / the failure), closes. On a `login=False`
   console it reports "this console has no login" and does nothing.
+  **Correction (2026-09-25, proven by the implementation):** `logout()` prints nothing: it returns a `Result` whose value is the
+  outcome line (a dry run returns `NotRun`), and the CLI renders it; a
+  failure is the raised `ConsoleError`. It also closes otto's own session on
+  the host first, as `login --force` does.
 - `HostSession.console_login()`: runs steps 4–6 with the host's console
   cred on the session's own streams. Refused with `ConsoleError` on a
   non-console term. Intended for a `landing_frame: "raw"` +
   `session_setup` hook that drives a boot menu first; such a host declares
   `login: false` so the transport does not also try.
+  **Correction (2026-09-25, proven by the implementation):** the refusal names the host
+  (`<host>: console_login() needs a console term; ...`).
 
 `EmbeddedHost._login` stays `NotImplementedError`; `logout` on an embedded
 host reports "no login".
@@ -256,6 +301,14 @@ host reports "no login".
 ### 7. Bed (Vagrantfile, `scripts/build_busybox_guest_images.py`, `scripts/lab_health.py`)
 
 **GNU row — test2's UART cabled to test1's UART.**
+
+**Correction (2026-09-25, proven by the implementation):** the bed spike found no usable UART: VirtualBox's UART is an x86
+16550A at I/O `0x3f8` and the arm64 guests have no ISA bus. The shipped
+fallback is the socat null-modem below: test2 holds a pty `/dev/ttyV0` with
+agetty on it and listens on `10.10.200.12:4102`; test1 dials it into its own
+`/dev/ttyV0` and ser2net serves that on port 4001. test1 retries the dial,
+so boot order does not matter. The VirtualBox bullets that follow were not
+built.
 
 - test1: `vb.customize ["modifyvm", :id, "--uart1", "0x3F8", "4",
   "--uartmode1", "tcpserver", "<host port>"]`; test2: the same UART in
@@ -306,6 +359,10 @@ Conformance draws console cells automatically because `_bed.py` enumerates
 host with a console term it connects, classifies, and reports `at-login` /
 `logged-in` / `at-password` / `silent` / `busy`. `--logout-consoles` runs
 `reset()` on the logged-in ones. `make vm-health` shows the probe.
+**Correction (2026-09-25, proven by the implementation):** the probe reports five console rows, not three: test2, bb1350 and each
+of the three ARM Zephyr guests. A credential-less (Zephyr) row is healthy
+`logged-in` and waits out the full `login_timeout` to know it, adding about
+35 s to a run.
 
 ### 8. Tests
 
@@ -321,7 +378,9 @@ host with a console term it connects, classifies, and reports `at-login` /
   bad regex refused; embedded forces `login=False`.
 - OS profile keywords registered and compiled; host override wins.
 - Session dispatch builds a `TelnetSession` for `console`; named session
-  refused; `exec` refused.
+  refused; `exec` refused. **Correction (h) (2026-09-25):** `exec` runs on the
+  default session, never builds a pool session, and serialises; a named
+  session is still refused.
 - `login(force=True)` on ssh/telnet refused; `logout()` on ssh/telnet
   refused; `console_login()` on a non-console session refused.
 - Repo invariants named in their tasks: public API snapshot, error
@@ -344,7 +403,10 @@ host with a console term it connects, classifies, and reports `at-login` /
    nudge sees `login:`.
 5. `test_console_wrong_password_fails_loud`: `login refused for 'test'`.
 6. `test_console_busy`: a raw client holds the port; otto raises `busy`.
-7. `test_console_exec_refused`.
+7. `test_console_exec_refused`. **Correction (h) (2026-09-25):** renamed
+   `test_console_exec_runs_on_the_single_session`: exec returns the
+   command's output and exit code, a second exec works, and a named session
+   is still refused.
 8. `test_console_login_busybox` in the busybox bed group; the migrated ARM
    Zephyr entries are covered by the existing embedded suites.
 9. `test_logout_verb` and `test_login_force`: `otto host test2 logout`

@@ -223,8 +223,8 @@ class TestSelectorEnums:
         props = build_schemas()["unix-host"]["properties"]
         # Menu fields accept scalar-or-list; the registry enum rides both branches.
         vt = props["valid_terms"]
-        assert vt["anyOf"][0]["enum"] == ["ssh", "telnet"]  # scalar
-        assert vt["anyOf"][1]["items"]["enum"] == ["ssh", "telnet"]  # array
+        assert vt["anyOf"][0]["enum"] == ["console", "ssh", "telnet"]  # scalar
+        assert vt["anyOf"][1]["items"]["enum"] == ["console", "ssh", "telnet"]  # array
         vx = props["valid_transfers"]
         assert vx["anyOf"][0]["enum"] == ["ftp", "nc", "scp", "sftp", "shell"]
         assert vx["anyOf"][1]["items"]["enum"] == ["ftp", "nc", "scp", "sftp", "shell"]
@@ -240,8 +240,8 @@ class TestSelectorEnums:
         assert vx["anyOf"][0]["enum"] == ["console", "tftp"]
         assert vx["anyOf"][1]["items"]["enum"] == ["console", "tftp"]
         vt = props["valid_terms"]
-        assert vt["anyOf"][0]["enum"] == ["telnet"]
-        assert vt["anyOf"][1]["items"]["enum"] == ["telnet"]
+        assert vt["anyOf"][0]["enum"] == ["console", "telnet"]
+        assert vt["anyOf"][1]["items"]["enum"] == ["console", "telnet"]
         assert "term" in props
         assert "enum" not in props["term"]
 

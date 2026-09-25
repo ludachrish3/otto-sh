@@ -46,7 +46,9 @@ exposed = [
 ]
 assert exposed, "no @cli_exposed methods discoverable on unix host"
 
-print(json.dumps({m: m in sys.modules for m in ("asyncssh", "aioftp", "telnetlib3")}))
+print(json.dumps({
+    m: m in sys.modules for m in ("asyncssh", "aioftp", "telnetlib3", "otto.host.console")
+}))
 """
 
 
@@ -68,7 +70,10 @@ def _loaded_network_libs() -> dict[str, bool]:
     return json.loads(result.stdout.strip().splitlines()[-1])
 
 
-@pytest.mark.parametrize("lib", ["telnetlib3", "asyncssh", "aioftp"])
+# ``otto.host.console`` is otto's own, not a network library, but it rides the
+# same rule: the session and connection managers import it inside their
+# ``console`` branches only, so it must never load at host-class discovery.
+@pytest.mark.parametrize("lib", ["telnetlib3", "asyncssh", "aioftp", "otto.host.console"])
 def test_network_lib_not_imported_by_host_class_discovery(lib: str) -> None:
     loaded = _loaded_network_libs()
     assert loaded[lib] is False, (

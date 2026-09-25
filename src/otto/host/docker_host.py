@@ -875,13 +875,23 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     ####################
 
     @override
-    async def _login(self, user: "str | None" = None) -> None:
+    def _refuse_console_verb(self, verb: str) -> None:
+        raise ValueError(
+            f"{self.name}: {verb} applies to console hosts only (a container has no console)"
+        )
+
+    @override
+    async def _login(self, user: "str | None" = None, force: bool = False) -> None:
         """Open an interactive shell inside the container via the parent's SSH conn.
 
         ``user`` lands the shell as that identity (``docker exec -u``); the
         declared per-service default applies when the call names none, and
-        the image's ``USER`` when neither is set.
+        the image's ``USER`` when neither is set. ``force`` is a console
+        reset, and a container has no console: it raises :exc:`ValueError`
+        before anything else runs.
         """
+        if force:
+            self._refuse_console_verb("--force")
         # Importing here to keep this module importable without asyncssh.
         from .interact import run_ssh_login
         from .unix_host import UnixHost

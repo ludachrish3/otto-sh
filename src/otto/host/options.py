@@ -321,6 +321,97 @@ class TelnetOptions:
 
 
 # ---------------------------------------------------------------------------
+# Console
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class ConsoleOptions:
+    """Connection options for the ``console`` term: a serial console behind a telnet server.
+
+    The console is addressed by the lab host that runs the telnet server
+    (``server``) and the port on it (``port``); the device's own ``ip`` and
+    ``hop`` play no part. ``dial`` picks how otto reaches that port: ``"ssh"``
+    tunnels INTO the server host (through the server's own hop chain, any
+    depth) and forwards ``localhost:port`` from there, so a listener bound
+    on the server's loopback is reachable; ``"direct"`` connects to
+    ``server.ip:port`` through the server's hop chain, for a console
+    appliance that has no SSH.
+
+    Prompt patterns default from the host's OS profile
+    (:func:`otto.host.os_profile.resolve_console_prompts`); set them here to
+    override for one host.
+    """
+
+    server: str = ""
+    """Lab host ID of the telnet server fronting the console. Required when
+    the active term is ``console``."""
+
+    port: int = 0
+    """Console port on the server. Required, 1..65535."""
+
+    dial: str = "ssh"
+    """``"ssh"`` (tunnel into the server, forward ``localhost:port``) or
+    ``"direct"`` (connect to ``server.ip:port`` through the server's hop)."""
+
+    login: bool = True
+    """Run the login state machine after connecting. Embedded hosts force
+    ``False``: an RTOS shell has no login step."""
+
+    login_prompt: str | None = None
+    """Regex matched against the end of the line's output; ``None`` means the
+    OS profile's default (``login: ?$`` on unix)."""
+
+    password_prompt: str | None = None
+    """Regex for the password prompt; ``None`` means the OS profile's default
+    (``[Pp]assword: ?$`` on unix)."""
+
+    login_timeout: float = 10.0
+    """Seconds to wait for each prompt after a nudge. Raise it for a device
+    whose boot log precedes ``login:``."""
+
+    settle: float = 0.5
+    """Quiet window read and discarded right after connect, so stale bytes on
+    the line are never classified."""
+
+    logout: bool = True
+    """On close, send EOF and wait briefly for the login prompt so the next
+    client finds the console logged out."""
+
+    write_chunk_size: int = 0
+    """As :attr:`TelnetOptions.write_chunk_size`: paced writes for a UART
+    whose RX FIFO a multi-KB line would overrun."""
+
+    write_chunk_delay: float = 0.0
+    """As :attr:`TelnetOptions.write_chunk_delay`."""
+
+    cols: int = 400
+    """Initial terminal width reported to the remote side."""
+
+    rows: int = 24
+    """Initial terminal height reported to the remote side."""
+
+    encoding: str | bool = False
+    """Text encoding. ``False`` = bytes mode (otto default)."""
+
+    echo_negotiation_timeout: float = 3.0
+    """Seconds to wait for the remote to honor ``DONT ECHO`` during connect."""
+
+    extra: dict[str, Any] = field(default_factory=dict)
+    """Extra kwargs forwarded to ``telnetlib3.open_connection()``."""
+
+    def _open_kwargs(self) -> dict[str, Any]:
+        """Build the kwargs dict passed to ``telnetlib3.open_connection()``."""
+        kw: dict[str, Any] = {
+            "encoding": self.encoding,
+            "cols": self.cols,
+            "rows": self.rows,
+        }
+        kw.update(self.extra)
+        return kw
+
+
+# ---------------------------------------------------------------------------
 # SFTP
 # ---------------------------------------------------------------------------
 

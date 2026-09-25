@@ -302,3 +302,267 @@ async def test_ssh_as_resolves_against_ssh(monkeypatch):
     mgr = _mgr([ADMIN, ssh_admin])
     await mgr.ssh_as("admin")
     assert seen["auth"] == ("admin", "ssh-pw")
+
+
+def test_console_term_is_registered_for_both_families():
+    from otto.host.connections import TERM_BACKENDS
+
+    backend = TERM_BACKENDS.get("console")
+    assert backend.host_families == frozenset({"unix", "embedded"})
+    assert backend.authenticates is True
+
+
+def test_dials_host_distinguishes_console_from_ssh_and_telnet():
+    from otto.host.connections import TERM_BACKENDS, register_term_backend
+
+    assert TERM_BACKENDS.get("ssh").dials_host is True
+    assert TERM_BACKENDS.get("telnet").dials_host is True
+    assert TERM_BACKENDS.get("console").dials_host is False
+    with pytest.raises(ValueError, match="dials_host must be a bool"):
+        register_term_backend(
+            "bad-dials",
+            ConnectionManager,
+            host_families=frozenset({"unix"}),
+            authenticates=True,
+            dials_host="nope",
+        )
+
+
+# ---------------------------------------------------------------------------
+# console term: addressing through the console server's endpoint
+# ---------------------------------------------------------------------------
+
+
+class _FakeHop:
+    def __init__(self):
+        self.forwards = []
+
+    async def forward_port(self, dest_host, dest_port):
+        self.forwards.append((dest_host, dest_port))
+        return 50000 + len(self.forwards)
+
+    def unforward_port(self, dest_host, dest_port):
+        pass
+
+    async def get_tunnel(self):
+        raise AssertionError("not used")
+
+    async def close(self):
+        self.closed = True
+
+
+def _console_mgr(dial, hop, **opts):
+    from otto.host.connections import ConsoleEndpoint, TermContext
+    from otto.host.options import ConsoleOptions
+
+    ctx = TermContext(
+        ip="10.0.0.9",
+        creds=[],
+        term="console",
+        name="dev1",
+        console_options=ConsoleOptions(server="test1", port=4001, dial=dial, **opts),
+        console_endpoint=lambda: ConsoleEndpoint(server_ip="10.10.200.11", hop=hop),
+    )
+    return ConnectionManager.create(ctx)
+
+
+@pytest.mark.asyncio
+async def test_console_target_ssh_forwards_localhost_on_the_server():
+    hop = _FakeHop()
+    target = await _console_mgr("ssh", hop).console_target()
+    assert (target.host, target.port) == ("localhost", 50001)
+    assert hop.forwards == [("localhost", 4001)]
+
+
+@pytest.mark.asyncio
+async def test_console_target_direct_without_a_hop_dials_the_server_ip():
+    target = await _console_mgr("direct", None).console_target()
+    assert (target.host, target.port) == ("10.10.200.11", 4001)
+
+
+@pytest.mark.asyncio
+async def test_console_target_direct_through_the_servers_hop():
+    hop = _FakeHop()
+    target = await _console_mgr("direct", hop).console_target()
+    assert target.host == "localhost"
+    assert hop.forwards == [("10.10.200.11", 4001)]
+
+
+@pytest.mark.asyncio
+async def test_console_close_cascades_into_the_console_hop():
+    hop = _FakeHop()
+    mgr = _console_mgr("ssh", hop)
+    await mgr.console_target()
+    await mgr.close()
+    assert hop.closed is True
+
+
+@pytest.mark.asyncio
+async def test_console_endpoint_is_resolved_once_and_only_when_dialled():
+    calls = []
+    hop = _FakeHop()
+
+    def factory():
+        from otto.host.connections import ConsoleEndpoint
+
+        calls.append(1)
+        return ConsoleEndpoint(server_ip="10.10.200.11", hop=hop)
+
+    from otto.host.options import ConsoleOptions
+
+    mgr = ConnectionManager(
+        ip="10.0.0.9",
+        creds=[],
+        term="console",
+        name="dev1",
+        console_options=ConsoleOptions(server="test1", port=4001),
+        console_endpoint=factory,
+    )
+    assert calls == []  # nothing is looked up at construction
+    await mgr.console_target()
+    await mgr.console_target()
+    assert calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_console_target_without_an_endpoint_names_the_host():
+    from otto.host.options import ConsoleOptions
+
+    mgr = ConnectionManager(
+        ip="10.0.0.9",
+        creds=[],
+        term="console",
+        name="dev1",
+        console_options=ConsoleOptions(server="test1", port=4001),
+    )
+    with pytest.raises(RuntimeError, match="dev1: term 'console' needs a console endpoint"):
+        await mgr.console_target()
+
+
+class _FakeConsoleWriter:
+    def __init__(self):
+        self.closed = False
+        self.transport = None
+
+    def is_closing(self):
+        return self.closed
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_console_opens_once_and_caches_the_live_client(monkeypatch):
+    from otto.host import console as console_mod
+
+    opened = []
+
+    async def fake_open(self, interactive=False):
+        opened.append((self.host, self.port, self.name, self.server))
+        self.reader, self.writer = object(), _FakeConsoleWriter()
+
+    monkeypatch.setattr(console_mod.ConsoleClient, "open", fake_open)
+    mgr = _console_mgr("direct", None, login=False)
+    first = await mgr.console()
+    second = await mgr.console()
+    assert first is second
+    assert opened == [("10.10.200.11", 4001, "dev1", "test1")]
+    assert mgr.connected is True
+    await mgr.close()
+    assert mgr.connected is False
+    assert first.writer is None  # the client was closed by the manager
+
+
+@pytest.mark.asyncio
+async def test_console_dial_timeout_is_a_console_error_naming_the_console(monkeypatch):
+    """The TCP dial is bounded by ``login_timeout`` inside ``ConsoleClient.open``.
+
+    telnetlib3 enforces ``connect_timeout`` and raises ``ConnectionError`` when
+    it fires; through ``console()`` that surfaces as a ConsoleError naming the
+    host, server, port and dial mode, never the forwarded local port.
+    """
+    from otto.host.errors import ConsoleError
+
+    seen = {}
+
+    async def timed_out(host, **kw):
+        seen.update(kw, host=host)
+        raise ConnectionError(f"TCP connection to {host}:{kw['port']} timed out after 0.05s")
+
+    monkeypatch.setattr("otto.host.console.open_telnet_connection", timed_out)
+    hop = _FakeHop()
+    mgr = _console_mgr("ssh", hop, login_timeout=0.05)
+    with pytest.raises(
+        ConsoleError, match=r"^dev1: console test1:4001 \(dial=ssh\) could not be dialled"
+    ):
+        await mgr.console()
+    assert (seen["host"], seen["port"], seen["connect_timeout"]) == ("localhost", 50001, 0.05)
+    assert mgr._console_conn is None
+
+
+@pytest.mark.asyncio
+async def test_console_dial_refused_is_a_console_error_naming_the_server(monkeypatch):
+    from otto.host.errors import ConsoleError
+
+    async def refused(host, **kw):
+        raise ConnectionRefusedError(111, f"Connect call failed ('{host}', {kw['port']})")
+
+    monkeypatch.setattr("otto.host.console.open_telnet_connection", refused)
+    hop = _FakeHop()
+    mgr = _console_mgr("ssh", hop)
+    with pytest.raises(
+        ConsoleError, match=r"dev1: console test1:4001 \(dial=ssh\) could not be dialled"
+    ):
+        await mgr.console()
+    assert mgr._console_conn is None
+    # The failed attempt's forward lives on the console hop; close() still
+    # releases it.
+    await mgr.close()
+    assert hop.closed is True
+
+
+class _BrokenHop(_FakeHop):
+    async def forward_port(self, dest_host, dest_port):
+        raise OSError(113, "No route to host")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dial", ["ssh", "direct"])
+async def test_console_tunnel_failure_names_the_console_server(dial):
+    from otto.host.errors import ConsoleError
+
+    hop = _BrokenHop()
+    mgr = _console_mgr(dial, hop)
+    with pytest.raises(
+        ConsoleError,
+        match=(
+            rf"^dev1: console test1:4001 \(dial={dial}\) could not tunnel to console server "
+            r"'test1': \[Errno 113\] No route to host"
+        ),
+    ) as excinfo:
+        await mgr.console_target()
+    assert isinstance(excinfo.value.__cause__, OSError)
+    await mgr.close()
+    assert hop.closed is True
+
+
+@pytest.mark.asyncio
+async def test_console_login_failure_tears_the_client_down(monkeypatch):
+    from otto.host import console as console_mod
+    from otto.host.errors import ConsoleError
+
+    writer = _FakeConsoleWriter()
+
+    async def fake_open(self, interactive=False):
+        self.reader, self.writer = object(), writer
+
+    async def refuse(self):
+        raise ConsoleError("scripted refusal")
+
+    monkeypatch.setattr(console_mod.ConsoleClient, "open", fake_open)
+    monkeypatch.setattr(console_mod.ConsoleClient, "login_sequence", refuse)
+    mgr = _console_mgr("direct", None, logout=False)
+    with pytest.raises(ConsoleError, match="scripted refusal"):
+        await mgr.console()
+    assert writer.closed is True
+    assert mgr._console_conn is None

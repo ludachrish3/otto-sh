@@ -252,14 +252,14 @@ def test_axis_space_crosses_the_two_menus_rather_than_pairing_them() -> None:
     this claim. Measured: an implementation pinning ``transfers[0]`` yields 2
     cells here and this assertion fails -- and it does NOT fail alone.
     ``test_axis_space_covers_every_host_in_the_lab`` fails with it (it
-    expects 24 cells and gets 6). Measured: those two are the only tests in
+    expects 27 cells and gets 7). Measured: those two are the only tests in
     this file that detect the pin. In particular
     ``test_axis_space_cells_come_from_the_built_host`` above stays green,
     because at 1 term x 1 transfer it cannot see the difference -- which is
     why this test exists separately from it.
 
     A set, not a list: menu ORDER is the host's own answer and differs
-    between hosts (measured: ``test2`` reports ``['telnet', 'ssh']`` while
+    between hosts (measured: ``test2`` reports ``['telnet', 'ssh', 'console']`` while
     ``test1`` and ``test3`` report ``['ssh', 'telnet']``), so asserting an
     order here would pin something this test is not about.
     """
@@ -275,7 +275,9 @@ def test_axis_space_covers_every_host_in_the_lab() -> None:
     """A shrinking space must be visible, so the count is asserted, not sampled."""
     cells = axis_space("unix")
     assert {c.element for c in cells} == {"test1", "test2", "test3"}
-    assert len(cells) == 3 * 2 * 4  # three hosts x two terms x four transfers
+    # three hosts x two terms x four transfers, plus test2's console term
+    # crossed with the three transfers otto resolves from there (no nc).
+    assert len(cells) == 3 * 2 * 4 + 3
 
 
 def test_axis_space_rejects_a_lab_no_host_declares() -> None:
@@ -311,18 +313,20 @@ def test_axes_match_the_host_otto_actually_builds(tech: str, element: str) -> No
     that fail in OPPOSITE directions and only the whole population covers
     both. Measured against the current lab data:
 
-    * Ten hosts omit ``valid_terms`` -- the seven Zephyr guests (which do
-      declare ``valid_transfers: ["console"]``, so "declares no menus" would
-      be the wrong description) and alt1/alt2/alt3 (which declare no
-      ``os_type`` and neither menu). The factory supplies the term menu for
-      all ten, so a resolver that went back to reading the raw file hands
-      them an empty one and the non-empty assertions below go red.
-    * The other nine -- test1, test2, test3, test4 and bb1161/bb1211/bb1281/
-      bb1310/bb1350 -- declare ``valid_terms``, and measured, ``axes_for``
-      returns each declared list unchanged. They are the half that catches
-      the opposite mistake: a resolver that OVERRODE a menu the lab data had
-      already stated. Those nine stay green under a raw read, which is
-      exactly why sampling them would certify nothing.
+    * Seven hosts omit ``valid_terms`` -- the four Zephyr guests still on the
+      default telnet console (which do declare ``valid_transfers:
+      ["console"]``, so "declares no menus" would be the wrong description)
+      and alt1/alt2/alt3 (which declare no ``os_type`` and neither menu). The
+      factory supplies the term menu for all seven, so a resolver that went
+      back to reading the raw file hands them an empty one and the non-empty
+      assertions below go red.
+    * The other twelve -- test1, test2, test3, test4, bb1161/bb1211/bb1281/
+      bb1310/bb1350 and the three ARM Zephyr guests on the ``console`` term
+      -- declare ``valid_terms``, and measured, ``axes_for`` returns each
+      declared list unchanged. They are the half that catches the opposite
+      mistake: a resolver that OVERRODE a menu the lab data had already
+      stated. Those twelve stay green under a raw read, which is exactly why
+      sampling them would certify nothing.
     """
     axes = axes_for(element, tech)
     assert axes.terms, f"{element}: resolved an empty term menu"
@@ -335,13 +339,15 @@ def test_axes_match_the_host_otto_actually_builds(tech: str, element: str) -> No
         )
 
 
-def test_at_least_ten_hosts_still_omit_their_term_menu() -> None:
+def test_at_least_seven_hosts_still_omit_their_term_menu() -> None:
     """Pin the premise the guard above rests on.
 
     If the lab data ever starts declaring ``valid_terms`` everywhere, that
     guard stops discriminating a raw read from a host read -- every case would
     pass either way -- and it should be re-pointed at whatever the factory
-    still defaults. Measured today: ten of the nineteen omit it, listed in the
+    still defaults. Measured today: seven of the nineteen omit it (the three
+    ARM Zephyr guests declare ``["console"]`` since they moved to the console
+    term), listed in the
     failure message so the shrink is readable rather than inferred.
     """
     undeclared = [
@@ -350,7 +356,7 @@ def test_at_least_ten_hosts_still_omit_their_term_menu() -> None:
         for host in flat_hosts(tech)
         if "valid_terms" not in host
     ]
-    assert len(undeclared) >= 10, (
+    assert len(undeclared) >= 7, (
         f"only {len(undeclared)} hosts omit valid_terms ({undeclared}); this "
         f"guard exists because the factory fills in the term menu for hosts "
         f"that do not declare one"

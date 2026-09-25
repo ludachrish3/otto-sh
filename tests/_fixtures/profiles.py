@@ -1,13 +1,14 @@
 """The machine-readable axis space: what a host *is*, for conformance sampling.
 
 Almost every axis is read off a host that otto built, never off ``lab.json``.
-Ten of the nineteen bed hosts do not declare ``valid_terms`` (the seven
-Zephyr guests, which DO declare ``valid_transfers: ["console"]``; and
-alt1/alt2/alt3, which are the only three omitting ``os_type``,
-``valid_terms`` and ``valid_transfers`` alike) and the factory supplies what
-they omit, so reading the raw file would produce wrong axes for more than
-half the bed while looking correct on the nine that do declare theirs
-(test1-4 and the five bb guests).
+Seven of the nineteen bed hosts do not declare ``valid_terms`` (the four
+Zephyr guests on the default telnet console, which DO declare
+``valid_transfers: ["console"]``; and alt1/alt2/alt3, which are the only
+three omitting ``os_type``, ``valid_terms`` and ``valid_transfers`` alike)
+and the factory supplies what they omit, so reading the raw file would
+produce wrong axes for them while looking correct on the twelve that do
+declare theirs (test1-4, the five bb guests and the three ARM Zephyr guests
+on the ``console`` term).
 
 Two fields are read from the raw entry rather than the host: ``hop``, walked
 across entries in ``_hop_depth`` to count chain depth (a property of the lab,
@@ -36,6 +37,7 @@ import importlib
 import sys
 from dataclasses import dataclass
 
+from otto.host.capability import console_transfer_menu
 from otto.host.command_frame import FRAME_CLASSES
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.factory import create_host_from_dict
@@ -223,10 +225,19 @@ def axis_space(lab: str, tech: str = "tech1") -> list[Cell]:
     and it would keep passing after the host stopped agreeing with it.
 
     Menus are emitted in the order the host reported them, never sorted.
-    Measured: ``test2`` reports ``['telnet', 'ssh']`` while ``test1`` and
+    Measured: ``test2`` reports ``['telnet', 'ssh', 'console']`` while ``test1`` and
     ``test3`` report ``['ssh', 'telnet']``, so a sort here would be this
     module inventing a value the host did not give. Callers that need a
     stable order must impose their own.
+
+    The crossing is otto's, not a bare product of the two menus: on the
+    ``console`` term the transfer menu otto resolves from has no ``nc`` (a
+    single-client console cannot host nc's second session, and a pinned
+    ``console``/``nc`` pair is refused at load). So ``test2``'s
+    ``['telnet', 'ssh', 'console']`` x ``['nc', 'scp', 'sftp', 'ftp']`` is 11
+    cells, not 12. The narrowing is read from the product's own rule
+    (:func:`otto.host.capability.console_transfer_menu`) rather than restated,
+    so a cell the factory would refuse never enters the space.
     """
     # Membership is the one axis with no host-side answer to defer to. Since
     # lab.json v2 it is not even a host field: `HostSpec` forbids `labs`, and
@@ -245,5 +256,16 @@ def axis_space(lab: str, tech: str = "tech1") -> list[Cell]:
     cells: list[Cell] = []
     for element in members:
         axes = axes_for(element, tech)
-        cells += [Cell(element, t, x) for t in axes.terms for x in axes.transfers]
+        cells += [
+            Cell(element, t, x)
+            for t in axes.terms
+            for x in _transfers_on_term(element, t, axes.transfers)
+        ]
     return cells
+
+
+def _transfers_on_term(element: str, term: str, transfers: list[str]) -> list[str]:
+    """The transfer menu otto resolves from when *element* runs on *term*."""
+    if term != "console":
+        return transfers
+    return console_transfer_menu(element, transfers, None)

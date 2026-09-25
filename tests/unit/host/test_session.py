@@ -2206,3 +2206,337 @@ class TestExecLogsCommandExactlyOnce:
         await mgr.exec_on(other_conn, "id", log=LogMode.NEVER)
 
         assert logged == []
+
+
+# ---------------------------------------------------------------------------
+# Console term: session dispatch, single-client refusal, failure context
+# ---------------------------------------------------------------------------
+
+from otto.host.console import ConsoleClient
+from otto.host.errors import ConsoleError
+from otto.host.options import ConsoleOptions
+from otto.host.session import TelnetSession
+
+
+async def _noop(*a, **k): ...
+
+
+def _console_connections(client) -> SimpleNamespace:
+    """A console-term connections fake: ``console()`` hands back *client*, already logged in."""
+
+    async def console():
+        conn.console_dials += 1
+        return client
+
+    conn = SimpleNamespace(
+        term="console",
+        console_options=ConsoleOptions(server="test1", port=4001, dial="ssh"),
+        console=console,
+        console_client=client,
+        credentials=("test", "s3cret"),
+        login_target="test",
+        proxy_hops=[],
+        console_dials=0,
+    )
+    return conn
+
+
+@pytest.fixture
+def fake_console_connections() -> SimpleNamespace:
+    client = SimpleNamespace(
+        reader=object(),
+        writer=MagicMock(),
+        options=ConsoleOptions(server="test1", port=4001, dial="ssh"),
+        logged_in=True,
+    )
+    return _console_connections(client)
+
+
+@pytest.mark.asyncio
+async def test_console_term_builds_a_telnet_session_over_the_console_client(
+    fake_console_connections,
+):
+    mgr = SessionManager(
+        connections=fake_console_connections,
+        name="test2",
+        log_command=lambda *_: None,
+        log_output=lambda *_: None,
+    )
+    session = await mgr._build_session()
+    assert isinstance(session, TelnetSession)
+    assert session.console_client is fake_console_connections.console_client
+    assert session._reader is fake_console_connections.console_client.reader
+    assert session._writer is fake_console_connections.console_client.writer
+    assert "console test1:4001" in session._failure_context
+
+
+@pytest.mark.asyncio
+async def test_named_sessions_are_refused_on_a_console_term(fake_console_connections):
+    mgr = SessionManager(
+        connections=fake_console_connections,
+        name="test2",
+        log_command=lambda *_: None,
+        log_output=lambda *_: None,
+    )
+    with pytest.raises(ConsoleError, match=r"single-client.*named sessions") as exc_info:
+        await mgr.open_session("aux")
+    assert str(exc_info.value).startswith("test2: ")
+    assert fake_console_connections.console_dials == 0, "refused by name, never dialled"
+
+
+@pytest.mark.asyncio
+async def test_the_pool_is_never_built_on_a_console_term_and_exec_still_succeeds(
+    fake_console_connections,
+):
+    """exec on a console is one command on the default session: no pool, no second dial."""
+    mgr = SessionManager(
+        connections=fake_console_connections,
+        name="test2",
+        log_command=lambda *_: None,
+        log_output=lambda *_: None,
+    )
+    ran: list[str] = []
+
+    async def run_cmd(cmd, **_kw):
+        ran.append(cmd)
+        return CommandResult(status=Status.Success, value="test", command=cmd, retcode=0)
+
+    mgr._session = SimpleNamespace(alive=True, current_user="test", run_cmd=run_cmd)
+
+    result = await mgr.exec("id -un")
+
+    assert (result.value, result.retcode, ran) == ("test", 0, ["id -un"])
+    assert mgr._exec_pool == []
+    assert mgr._exec_pool_count == 0
+    assert mgr._named_sessions == {}
+    assert fake_console_connections.console_dials == 0, "exec rode the session already open"
+
+
+@pytest.mark.asyncio
+async def test_the_exec_pool_backstop_still_refuses_on_a_console_term(fake_console_connections):
+    """exec never asks for a pool session on a console; if anything did, it is refused."""
+    mgr = SessionManager(
+        connections=fake_console_connections,
+        name="test2",
+        log_command=lambda *_: None,
+        log_output=lambda *_: None,
+    )
+    with pytest.raises(ConsoleError, match=r"single-client.*named sessions"):
+        await mgr._acquire_exec_session()
+    assert fake_console_connections.console_dials == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_handshake_names_the_console(monkeypatch):
+    session = TelnetSession(
+        reader=object(), writer=object(), failure_context="console test1:4001 (dial=ssh)"
+    )
+    monkeypatch.setattr(session, "close", _noop)
+    with pytest.raises(ConnectionError, match=r"console test1:4001 \(dial=ssh\)"):
+        await session._fail_init()
+
+
+class _UnreadConsole:
+    """A console reader holding output no handshake read ever matched.
+
+    What telnetlib3 leaves behind when a ``readuntil_pattern`` is cancelled by
+    its timeout: the bytes stay buffered, unread. ``read()`` hands them out and
+    then goes silent (blocks), exactly as a console at a prompt does.
+    """
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    async def readuntil_pattern(self, pattern):
+        await asyncio.Event().wait()  # the READY marker never comes back
+
+    async def read(self, n: int) -> bytes:
+        if self._data:
+            chunk, self._data = self._data[:n], self._data[n:]
+            return chunk
+        await asyncio.Event().wait()
+        return b""
+
+
+def _console_client(output: bytes, *, login: bool = True) -> ConsoleClient:
+    """A real ConsoleClient over a fake line that shows *output*, as if it had just logged in.
+
+    With ``login=False`` it is a client that never typed a password (an RTOS
+    shell, a raw landing) — the Zephyr shape the handshake retry exists for.
+    """
+    client = ConsoleClient(
+        host="localhost",
+        port=40001,
+        user="test",
+        password="s3cret",
+        options=ConsoleOptions(
+            server="test1",
+            port=4001,
+            dial="ssh",
+            login=login,
+            login_prompt=r"login: ?$",
+            password_prompt=r"[Pp]assword: ?$",
+            login_timeout=0.3,
+        ),
+        name="test2",
+        server="test1",
+    )
+    client.reader = _UnreadConsole(output)
+    client.writer = MagicMock(spec=["write", "close", "is_closing"])
+    client.writer.is_closing.return_value = False
+    client._logged_in = login
+    return client
+
+
+def _dialling_console_connections(make_client) -> SimpleNamespace:
+    """Like :func:`_console_connections`, but every ``console()`` dials a FRESH client."""
+    conn = _console_connections(None)
+
+    async def console():
+        conn.console_dials += 1
+        conn.console_client = make_client()
+        return conn.console_client
+
+    conn.console = console
+    return conn
+
+
+_CONSOLE_CONTEXT = (
+    "console test1:4001 (dial=ssh); a login prompt in the output means the login was refused"
+)
+
+
+def _console_session(client: ConsoleClient) -> TelnetSession:
+    session = TelnetSession(
+        client.reader,
+        client.writer,
+        console_client=client,
+        failure_context=_CONSOLE_CONTEXT,
+    )
+    session._init_timeout = 0.05
+    session._init_probe_interval = 0.01
+    return session
+
+
+class TestConsoleHandshakeFailure:
+    """A console handshake that never confirms names the console, and a refused login as such."""
+
+    @pytest.mark.asyncio
+    async def test_output_ending_at_the_login_prompt_says_the_login_was_refused(self, monkeypatch):
+        client = _console_client(b"Password: \r\n\r\nLogin incorrect\r\n\x1b[0mtest2 login: ")
+        monkeypatch.setattr(client, "logout", AsyncMock())
+        session = _console_session(client)
+
+        with pytest.raises(ConsoleError) as exc_info:
+            await session._ensure_initialized()
+
+        message = str(exc_info.value)
+        assert message == "test2: console test1:4001 (dial=ssh) login refused for 'test'"
+        assert "s3cret" not in message
+        assert session.alive is False
+
+    @pytest.mark.asyncio
+    async def test_output_ending_elsewhere_keeps_the_generic_message_with_the_console_named(
+        self, monkeypatch
+    ):
+        client = _console_client(b"Last login: Thu Sep 24\r\nwelcome to test2\r\n")
+        monkeypatch.setattr(client, "logout", AsyncMock())
+        session = _console_session(client)
+
+        with pytest.raises(ConnectionError) as exc_info:
+            await session._ensure_initialized()
+
+        message = str(exc_info.value)
+        assert not isinstance(exc_info.value, ConsoleError)
+        assert "never became ready" in message
+        seen = repr("Last login: Thu Sep 24\r\nwelcome to test2\r\n")
+        assert message.endswith(f"[{_CONSOLE_CONTEXT}] Seen: {seen}."), message
+        assert "s3cret" not in message
+
+    @pytest.mark.asyncio
+    async def test_output_parked_at_the_password_prompt_says_the_login_was_refused(
+        self, monkeypatch
+    ):
+        """login(1) reads the resent probes as a username, so a refusal can end at Password:."""
+        client = _console_client(
+            b"Login incorrect\r\ntest2 login: stty -echo; echo; echo X\r\nPassword: "
+        )
+        monkeypatch.setattr(client, "logout", AsyncMock())
+        session = _console_session(client)
+
+        with pytest.raises(ConsoleError) as exc_info:
+            await session._ensure_initialized()
+
+        assert (
+            str(exc_info.value) == "test2: console test1:4001 (dial=ssh) login refused for 'test'"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_failed_handshake_logs_the_console_out_exactly_once(self, monkeypatch):
+        """Teardown runs the client's close (logout, THEN release) once, even through the manager.
+
+        A refused login is not a handshake race, so the manager does not dial
+        the console again to retry it (that would type the password again).
+        """
+        client = _console_client(b"Login incorrect\r\ntest2 login: ")
+        writer = client.writer
+
+        async def logout() -> None:
+            assert not writer.close.called, "the writer was closed before the logout could send EOF"
+
+        logout_spy = AsyncMock(side_effect=logout)
+        monkeypatch.setattr(client, "logout", logout_spy)
+        conn = _console_connections(client)
+        mgr = SessionManager(connections=conn, name="test2", init_timeout=0.05, retry_backoff=0)
+        monkeypatch.setattr(TelnetSession, "_init_probe_interval", 0.01)
+
+        with pytest.raises(ConsoleError, match="login refused for 'test'"):
+            await mgr._ensure_session()
+
+        logout_spy.assert_awaited_once()
+        writer.close.assert_called_once()
+        assert client.writer is None, "the console client released its transport"
+        assert conn.console_dials == 1, "a refused login must not be retried"
+
+
+class TestConsoleHandshakeRetry:
+    """A generic handshake failure is retried once — unless otto typed a password to get there."""
+
+    @pytest.mark.asyncio
+    async def test_a_logged_in_console_is_not_retried(self, monkeypatch):
+        """A retry re-runs the login: the password would be typed into the line a second time."""
+        conn = _dialling_console_connections(lambda: _console_client(b"welcome to test2\r\n"))
+        mgr = SessionManager(connections=conn, name="test2", init_timeout=0.05, retry_backoff=0)
+        monkeypatch.setattr(TelnetSession, "_init_probe_interval", 0.01)
+        monkeypatch.setattr(ConsoleClient, "logout", AsyncMock())
+
+        with pytest.raises(ConnectionError, match="never became ready"):
+            await mgr._ensure_session()
+
+        assert conn.console_dials == 1
+
+    @pytest.mark.asyncio
+    async def test_a_console_without_a_login_keeps_its_one_retry(self, monkeypatch):
+        """The control: a login=False console (Zephyr's slot race) is still retried once."""
+        conn = _dialling_console_connections(lambda: _console_client(b"uart:~$ ", login=False))
+        mgr = SessionManager(connections=conn, name="test2", init_timeout=0.05, retry_backoff=0)
+        monkeypatch.setattr(TelnetSession, "_init_probe_interval", 0.01)
+
+        with pytest.raises(ConnectionError, match="never became ready"):
+            await mgr._ensure_session()
+
+        assert conn.console_dials == 2
+
+
+@pytest.mark.asyncio
+async def test_an_echoed_password_never_reaches_the_handshake_message(monkeypatch):
+    client = _console_client(b"s3cret\r\nbash: s3cret: command not found\r\n$ ")
+    monkeypatch.setattr(client, "logout", AsyncMock())
+    session = _console_session(client)
+
+    with pytest.raises(ConnectionError) as exc_info:
+        await session._ensure_initialized()
+
+    message = str(exc_info.value)
+    assert "s3cret" not in message
+    assert "***" in message

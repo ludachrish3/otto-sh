@@ -54,7 +54,9 @@ class TestBuiltins:
         assert set(registered_profile_names()) >= {"unix", "embedded", "zephyr"}
 
     def test_unix_and_embedded_have_no_defaults(self):
-        assert build_os_profile("unix") == OsProfile("unix", "unix", {})
+        assert build_os_profile("unix") == OsProfile(
+            "unix", "unix", {}, login_prompt=r"login: ?$", password_prompt=r"[Pp]assword: ?$"
+        )
         assert build_os_profile("embedded") == OsProfile("embedded", "embedded", {})
 
     def test_zephyr_profile_points_to_zephyr_class(self):
@@ -110,6 +112,41 @@ class TestRegistry:
         with caplog.at_level(logging.WARNING):
             register_os_profile("embedded", base="embedded", defaults={"os_name": "Custom"})
         assert any("built-in" in r.message for r in caplog.records)
+
+
+class TestConsolePrompts:
+    def test_unix_and_busybox_carry_the_getty_prompts(self):
+        for name in ("unix", "busybox"):
+            prof = build_os_profile(name)
+            assert prof.login_prompt == r"login: ?$", name
+            assert prof.password_prompt == r"[Pp]assword: ?$", name
+
+    def test_embedded_and_zephyr_carry_none(self):
+        for name in ("embedded", "zephyr"):
+            prof = build_os_profile(name)
+            assert prof.login_prompt is None and prof.password_prompt is None, name  # noqa: PT018
+
+    def test_register_accepts_prompt_keywords_and_compiles_them(self):
+        register_os_profile("vendor", base="unix", login_prompt=r"Username: ?$")
+        assert build_os_profile("vendor").login_prompt == r"Username: ?$"
+        with pytest.raises(ValueError, match="login_prompt"):
+            register_os_profile("bad", base="unix", login_prompt="(")
+
+    def test_resolve_fills_only_the_unset_fields(self):
+        from otto.host.options import ConsoleOptions
+        from otto.host.os_profile import resolve_console_prompts
+
+        resolved = resolve_console_prompts(ConsoleOptions(password_prompt="pw: $"), "unix")
+        assert resolved.login_prompt == r"login: ?$"
+        assert resolved.password_prompt == "pw: $"
+        untouched = resolve_console_prompts(ConsoleOptions(), "zephyr")
+        assert untouched.login_prompt is None
+
+    def test_resolve_on_an_unknown_profile_leaves_the_options_alone(self):
+        from otto.host.options import ConsoleOptions
+        from otto.host.os_profile import resolve_console_prompts
+
+        assert resolve_console_prompts(ConsoleOptions(), "no-such-profile").login_prompt is None
 
 
 class TestHostClassRegistry:

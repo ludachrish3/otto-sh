@@ -16,6 +16,7 @@ from typing import Any
 
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
+from otto.host.options import ConsoleOptions
 from otto.host.unix_host import UnixHost
 from otto.labs.sources import CompiledLabSource
 from otto.models.lab import HOISTED_HOST_KEYS
@@ -226,6 +227,49 @@ def make_host(ne: str, **kwargs: Any) -> UnixHost:
         is_virtual=data.get("is_virtual", False),
         **kwargs,
     )
+
+
+def host_data_console(ne: str, tech: str = "tech1") -> ConsoleOptions:
+    """The runtime ``ConsoleOptions`` a lab entry's ``console_options`` table builds."""
+    from otto.models.options import ConsoleOptionsSpec
+
+    return ConsoleOptionsSpec(**host_data(ne, tech)["console_options"]).to_runtime()
+
+
+def make_console_host(ne: str, **kwargs: Any) -> UnixHost:
+    """Build *ne* on the ``console`` term, registered in a lab beside its console server.
+
+    ``make_host`` carries no ``console_options`` and no lab, and the console
+    term resolves its server (``console_options.server``) through the host's
+    lab back-reference. Defaults: the entry's ``console_options``, the
+    ``shell`` transfer (the only one that runs on the single session) and
+    the entry's creds; any keyword overrides them.
+    """
+    from otto.config.lab import Lab
+
+    flat = _flat_record(ne, "tech1")
+    data = entry_of(flat)
+    fields: dict[str, Any] = {
+        "ip": data["ip"],
+        "element": element_of(flat),
+        "creds": [Cred(**c) for c in data["creds"]],
+        "board": data.get("board"),
+        "is_virtual": data.get("is_virtual", False),
+        "valid_terms": data["valid_terms"],
+        # The lab entry's menu does not list ``shell`` (its unix transfers
+        # all have a daemon), but the console's single session is where a
+        # ``shell`` transfer runs, so the helper's default adds it.
+        "valid_transfers": ["shell", *data.get("valid_transfers", [])],
+        "term": "console",
+        "transfer": "shell",
+        "console_options": host_data_console(ne),
+        **kwargs,
+    }
+    host = UnixHost(**fields)
+    lab = Lab(name=f"{ne}_console")
+    lab.add_host(make_host(fields["console_options"].server))
+    lab.add_host(host)
+    return host
 
 
 def json_lab_sources(

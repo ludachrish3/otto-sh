@@ -9,8 +9,8 @@ from otto.host.connections import ConnectionManager, register_term_backend
 from otto.host.transfer import NcFileTransfer, register_transfer_backend
 
 
-def test_built_ins_are_ftp_ssh_telnet_sorted():
-    assert authenticating_protocols() == ["ftp", "ssh", "telnet"]
+def test_built_ins_are_console_ftp_ssh_telnet_sorted():
+    assert authenticating_protocols() == ["console", "ftp", "ssh", "telnet"]
 
 
 def test_a_custom_authenticating_backend_joins_the_vocabulary():

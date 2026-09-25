@@ -491,6 +491,39 @@ class TestPerCallOptionOverrides:
 
         assert get_lab().hosts["test1"].transfer == "scp"
 
+    def test_a_console_term_override_drops_a_resolved_nc_transfer(self):
+        """``otto host --term console test2``: the host was resolved for its lab
+        term with nc (first in its menu), which a single-client console
+        refuses. The override falls through to the next kind in the menu, as
+        resolving the console term from the lab would."""
+        import dataclasses
+
+        from otto.config.fleet import _apply_option_overrides
+        from otto.host.options import ConsoleOptions
+
+        host = make_host(
+            "test2",
+            valid_terms=["telnet", "ssh", "console"],
+            valid_transfers=["nc", "scp", "sftp", "ftp"],
+            term="telnet",
+            transfer="nc",
+            console_options=ConsoleOptions(server="test1", port=4001),
+        )
+        switched = _apply_option_overrides(host, term="console")
+        assert (switched.term, switched.transfer) == ("console", "scp")
+        # An explicit --transfer nc is still refused, not silently replaced,
+        # as the ValueError override callers map (the CLI to --transfer).
+        with pytest.raises(ValueError, match="transfer 'nc' cannot run on a console term"):
+            _apply_option_overrides(host, term="console", transfer="nc")
+        # Also when the host is already on the console term.
+        on_console = _apply_option_overrides(host, term="console")
+        with pytest.raises(ValueError, match="transfer 'nc' cannot run on a console term"):
+            _apply_option_overrides(on_console, transfer="nc")
+        # A menu with nothing but nc fails with the lab model's config message.
+        nc_only = dataclasses.replace(host, valid_transfers=["nc"])
+        with pytest.raises(ValueError, match="leaves a console term no transfer"):
+            _apply_option_overrides(nc_only, term="console")
+
     def test_term_override_out_of_menu_raises(self, three_hosts):
         # 'bogus' is not in valid_terms -> __post_init__ validate_choice fails loud
         with pytest.raises(ValueError, match="term menu"):

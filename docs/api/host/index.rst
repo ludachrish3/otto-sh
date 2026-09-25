@@ -25,6 +25,7 @@ local and remote machines.
    session_setup
    transport
    telnet
+   console
    capability_grid
    os_profile
    factory

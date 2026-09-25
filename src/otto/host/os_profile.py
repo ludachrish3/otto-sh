@@ -52,6 +52,7 @@ specific defaults, and is registered under ``"zephyr"`` at module load.
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -59,6 +60,7 @@ from ..registry import Registry, caller_module
 
 if TYPE_CHECKING:
     from ..models.host import HostSpec
+    from .options import ConsoleOptions
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,14 @@ class OsProfile:
 
     defaults: dict[str, Any] = field(default_factory=dict)
     """Raw field defaults merged beneath a host's own ``lab.json`` fields."""
+
+    login_prompt: str | None = None
+    """Regex the ``console`` term matches against the end of the line to
+    recognise this OS's login prompt; ``None`` for an OS with no login
+    (an RTOS shell)."""
+
+    password_prompt: str | None = None
+    """Regex for this OS's password prompt; ``None`` with ``login_prompt``."""
 
 
 # Registry of profile name -> profile, mirroring
@@ -289,6 +299,10 @@ def register_os_profile(
     name: str,
     base: str,
     defaults: dict[str, Any] | None = None,
+    *,
+    login_prompt: str | None = None,
+    password_prompt: str | None = None,
+    _builtin: bool = False,
 ) -> None:
     """Register an :class:`OsProfile` so lab data can select it by ``os_type``.
 
@@ -319,12 +333,21 @@ def register_os_profile(
     defaults : dict[str, Any] | None
         Raw field defaults merged beneath each host's own fields. Keys are
         validated against the base class's fields.
+    login_prompt : str | None
+        Regex for this OS's login prompt (see :attr:`OsProfile.login_prompt`).
+        Compiled at registration time to catch a bad pattern early.
+    password_prompt : str | None
+        Regex for this OS's password prompt (see
+        :attr:`OsProfile.password_prompt`). Compiled at registration time.
+    _builtin : bool
+        private: built-in bootstrap only.
 
     Raises
     ------
     ValueError
-        If *base* is not a registered host class name, or if a ``defaults`` key
-        is not a field on the base class (a likely typo).
+        If *base* is not a registered host class name; if a ``defaults`` key
+        is not a field on the base class (a likely typo); or if
+        ``login_prompt``/``password_prompt`` is not a valid regex.
     """
     if base not in HOST_CLASSES:
         known = ", ".join(HOST_CLASSES.names())
@@ -342,14 +365,32 @@ def register_os_profile(
             f"base {base!r}: {sorted(unknown)}"
         )
 
-    if name in _BUILTIN_NAMES and name in OS_PROFILES:
+    for field_name, pattern in (
+        ("login_prompt", login_prompt),
+        ("password_prompt", password_prompt),
+    ):
+        if pattern is not None:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(
+                    f"register_os_profile({name!r}): {field_name} is not a valid regex: {exc}"
+                ) from exc
+
+    if name in _BUILTIN_NAMES and name in OS_PROFILES and not _builtin:
         logger.warning(f"register_os_profile: overriding built-in profile {name!r}")
 
     # Last-writer-wins by design (see docstring) — always overwrite rather
     # than raise on re-registration.
     OS_PROFILES.register(
         name,
-        OsProfile(name=name, base=base, defaults=defaults),
+        OsProfile(
+            name=name,
+            base=base,
+            defaults=defaults,
+            login_prompt=login_prompt,
+            password_prompt=password_prompt,
+        ),
         overwrite=True,
         origin=caller_module(),
     )
@@ -395,6 +436,12 @@ def registered_profile_names() -> list[str]:
 # class — it is a defaults-only profile over ``unix``, registered explicitly by
 # :func:`_register_builtin_os_profiles` below.
 _BUILTIN_NAMES: frozenset[str] = frozenset(("unix", "embedded", "zephyr", "busybox"))
+
+UNIX_LOGIN_PROMPT = r"login: ?$"
+"""What a getty prints, with or without a hostname prefix (``test2 login:``)."""
+
+UNIX_PASSWORD_PROMPT = r"[Pp]assword: ?$"  # noqa: S105 — a regex pattern, not a credential
+"""``login(1)``'s prompt; BusyBox and shadow spell the case differently."""
 
 
 def _register_builtin_host_classes() -> None:
@@ -497,6 +544,13 @@ def _register_builtin_os_profiles() -> None:
     backend is actually registered in ``TRANSFER_BACKENDS``.
     """
     register_os_profile(
+        "unix",
+        base="unix",
+        login_prompt=UNIX_LOGIN_PROMPT,
+        password_prompt=UNIX_PASSWORD_PROMPT,
+        _builtin=True,
+    )
+    register_os_profile(
         "busybox",
         base="unix",
         defaults={
@@ -505,6 +559,33 @@ def _register_builtin_os_profiles() -> None:
             "transfer": "shell",
             "valid_transfers": ["shell", "scp", "sftp", "ftp", "nc"],
         },
+        login_prompt=UNIX_LOGIN_PROMPT,
+        password_prompt=UNIX_PASSWORD_PROMPT,
+        _builtin=True,
+    )
+
+
+def resolve_console_prompts(options: "ConsoleOptions", os_type: str) -> "ConsoleOptions":
+    """Fill ``login_prompt``/``password_prompt`` left ``None`` on *options* from the profile.
+
+    A host's own ``console_options`` win; the profile named by *os_type*
+    supplies whatever they leave unset; an unknown profile changes nothing
+    (the host factory has already refused it, so this is only reached from
+    a directly-constructed host).
+    """
+    from dataclasses import replace
+
+    prof = get_os_profile(os_type)
+    if prof is None:
+        return options
+    return replace(
+        options,
+        login_prompt=(
+            options.login_prompt if options.login_prompt is not None else prof.login_prompt
+        ),
+        password_prompt=(
+            options.password_prompt if options.password_prompt is not None else prof.password_prompt
+        ),
     )
 
 

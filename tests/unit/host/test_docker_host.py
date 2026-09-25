@@ -1480,6 +1480,32 @@ async def test_login_requires_remote_ssh_parent():
         await h._login()
 
 
+@pytest.mark.asyncio
+async def test_login_force_is_refused_on_a_container():
+    """--force is a console reset; a container has no console, so it is
+    refused before the parent is inspected or a container started."""
+    parent = _build_fake_ssh_remote_host()
+    h = _make_container(parent=parent)
+    with (
+        patch("otto.host.interact.run_ssh_login", new_callable=AsyncMock) as mock_login,
+        pytest.raises(ValueError, match="--force applies to console hosts only"),
+    ):
+        await h.login(force=True)
+    mock_login.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_logout_is_refused_on_a_container_even_under_a_dry_run():
+    h = _make_container()
+    with pytest.raises(ValueError, match="logout applies to console hosts only"):
+        await h.logout()
+    with (
+        active_context(dry_run=True),
+        pytest.raises(ValueError, match=r"a container has no console"),
+    ):
+        await h.logout()
+
+
 # ---------------------------------------------------------------------------
 # Dry-run behavior
 # ---------------------------------------------------------------------------

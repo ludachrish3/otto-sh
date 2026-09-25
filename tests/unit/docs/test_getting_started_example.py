@@ -36,6 +36,7 @@ _ATTRS = [
     "docker_capable",
     "valid_terms",
     "valid_transfers",
+    "console_options",
     "source_lab",
     "lab_info",
     "hop",
@@ -80,6 +81,21 @@ def test_the_bed_is_all_there() -> None:
         "bb1310_qemu",
         "bb1350_qemu",
     }
+
+
+def test_the_example_console_hosts_mirror_the_bed() -> None:
+    """Every console the bed wires, the example declares the same way (server, port)."""
+    hosts = load_example_lab("unix+busybox+embedded").hosts
+    for host_id, server, port in (
+        ("test2", "test1", 4001),
+        ("bb1350_qemu", "test1", 2450),
+        ("zephyr37-nofs", "test4", 2325),
+        ("zephyr37-llext", "test4", 2323),
+        ("zephyr44-llext", "test4", 2324),
+    ):
+        host = hosts[host_id]
+        assert "console" in host.valid_terms, host_id
+        assert (host.console_options.server, host.console_options.port) == (server, port), host_id
 
 
 def _drop_leading_docstring(body: list[ast.stmt]) -> list[ast.stmt]:

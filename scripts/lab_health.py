@@ -16,6 +16,23 @@ each defined host, reports reachability and a timestamp:
   + console responsiveness rather than wall-clock drift; a BusyBox guest
   answers its telnet ``login:`` prompt and is reported as such.
 
+* **Serial consoles.** Every entry that offers ``console`` in its term menu
+  (``valid_terms``) and carries ``console_options`` gets a SECOND row, of
+  TYPE ``console``, in addition to its own: the state that console line is in
+  right now, read from the console server exactly the way otto's console term
+  reads it (nudge Enter, classify the tail) — ``AT-LOGIN``, ``AT-PASSWORD``,
+  ``LOGGED-IN``, ``SILENT`` or ``BUSY``. A console that logs in (the entry has
+  creds) is healthy only ``AT-LOGIN``; a credential-less one (Zephyr) is
+  healthy ``LOGGED-IN`` too, since its shell prompt IS its idle state. With
+  ``--logout-consoles`` a login console found ``LOGGED-IN`` or ``AT-PASSWORD``
+  is reset (Ctrl-C at a password prompt; up to three rounds of Ctrl-C, a
+  wait for it to land, then Ctrl-D and Enter) and its row reports where the
+  reset left it. No password is ever
+  typed. A credential-less console's row takes the probe's full 10 s wait —
+  a shell prompt that is not a login prompt is only knowable by waiting out
+  the budget — so the three Zephyr rows add about 35 s to a run; that pause
+  is the probe working, not a hang.
+
 With ``--restart-qemu`` the script first restarts the ``zephyr-qemu-*``,
 ``zephyr-snmp-relay-*`` and ``busybox-qemu-*`` systemd units on each hop VM,
 waits for the guests to boot, then runs the health check. Use it to recover a
@@ -28,6 +45,7 @@ Usage::
     scripts/lab_health.py
     scripts/lab_health.py --hosts tests/_fixtures/lab_data/tech1/lab.json
     scripts/lab_health.py --restart-qemu
+    scripts/lab_health.py --logout-consoles
 """
 
 from __future__ import annotations
@@ -85,11 +103,11 @@ _LOGIN_PROBE_SSH_TIMEOUT_S = 45.0
 # but neither shape) / "NOOUT" (TCP open but the guest emitted nothing — the
 # classic wedge) / "CONNFAIL <err>".
 #
-# The port is argv[2], NOT hardcoded: the x86 net beds and the BusyBox guests
-# expose the in-guest shell on :23 (reached over their TAPs), but the ARM serial
-# beds bridge UART to a telnet listener on a loopback /32 at 2323+. A hardcoded
-# :23 would connect to the hop's own 0.0.0.0:23 telnetd for those loopback
-# addresses and report a false "up" — so honor telnet_options.port.
+# The port is argv[2], NOT hardcoded: the BusyBox guests expose their in-guest
+# telnetd on :23 (reached over their TAPs), but the ARM Zephyr consoles are a
+# UART bridged to a telnet listener on the console server's 127.0.0.1 at
+# console_options.port (2323+). A hardcoded :23 would connect to the server's
+# own telnetd and report a false "up" — so the caller passes the port.
 #
 # argv[3]/argv[4] are an OPTIONAL user/password, and supplying them selects a
 # different probe entirely: log in, then read /proc/uptime. Only the BusyBox
@@ -253,6 +271,154 @@ else:
         print("OK", "?")
 """
 
+# Budget, in seconds, the console-state probe waits for a prompt after each
+# thing it sends — otto's `console_options.login_timeout` default, so the row
+# reports what otto's own console term would see.
+_CONSOLE_STATE_BUDGET_S = 10.0
+
+# SSH budget for the console-state probe: its hard hold ceiling (34.5 s at the
+# default budget, see HOLD below) plus its 4 s connect and the ssh/python
+# startup around it. Raise both together.
+_CONSOLE_STATE_SSH_TIMEOUT_S = 50.0
+
+# Runs on the console SERVER (which has python3) against its own loopback
+# console port — the address otto's `dial: ssh` mode reaches — and prints the
+# state that line is in: AT-LOGIN / AT-PASSWORD / LOGGED-IN / SILENT / BUSY, or
+# "CONNFAIL <err>". It is otto.host.console's state machine restated, stdlib
+# only, because nothing of otto exists on the server: settle 0.5 s (discarded),
+# nudge "\r", read until a prompt ends the buffer or the budget runs out, then
+# classify the ANSI-stripped, line-end-trimmed tail with the unix OS profile's
+# two prompt patterns. Keep the patterns in step with UNIX_LOGIN_PROMPT /
+# UNIX_PASSWORD_PROMPT in src/otto/host/os_profile.py.
+#
+# argv: addr port [budget] [reset]. With "reset", a line found AT-LOGIN is
+# nudged once more (getty re-prints its prompt; login(1)'s own retry prompt,
+# which looks the same, asks Password: and is then reset), and a line found AT-PASSWORD or
+# LOGGED-IN is walked back to its login prompt the way ConsoleClient.reset()
+# does it — Ctrl-C at a password prompt (login(1) exits and getty respawns a
+# clean prompt; an Enter would leave login(1)'s own retry prompt, which answers
+# the next nudge with Password:), then up to three rounds of Ctrl-C, a wait of
+# up to STEP for it to land (its ^C echo or a redrawn prompt), then Ctrl-D and
+# Enter, classifying after each and stopping at the first login prompt (the
+# wait because a tty's ISIG handling of Ctrl-C flushes its input queue: a
+# Ctrl-D that arrives before the interrupt is handled is discarded, measured
+# on test2's bash) — and a second line says "RESET-OK" or
+# "RESET-FAILED <tail>", quoting the last thing the line actually said. The
+# probe never types a password; it has none.
+#
+# Each reset step waits at most STEP = min(budget, 3) s: a getty respawns in
+# well under a second, so a full login_timeout per step would only stretch the
+# hold. A LOGGED-IN decision always spends the whole budget (no prompt ever
+# ends that read), so the hold ceiling is sized to leave every step its own
+# real wait after it: HOLD = settle + budget + 2 * STEP + ROUNDS * 2 * STEP,
+# 34.5 s at the default budget. A serial console serves ONE client, so the probe never
+# holds it past HOLD from connect — a step the deadline would starve is not
+# sent at all — and it closes its socket on every path rather than leaving
+# that to the interpreter's exit.
+_CONSOLE_STATE_PROBE = r"""
+import re, socket, sys, time
+addr, port = sys.argv[1], int(sys.argv[2])
+budget = float(sys.argv[3]) if len(sys.argv) > 3 else 10.0
+reset = len(sys.argv) > 4 and sys.argv[4] == "reset"
+SETTLE, ROUNDS, WINDOW = 0.5, 3, 4096
+STEP = min(budget, 3.0)
+HOLD = SETTLE + budget + 2 * STEP + ROUNDS * 2 * STEP
+ANSI = re.compile(
+    r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\x1b[()][0-9A-Za-z]|\x1b[@-Z\\-_]"
+)
+LOGIN, PASSWORD = re.compile(r"login: ?$"), re.compile(r"[Pp]assword: ?$")
+LANDED = re.compile(r"\^C|[$#>%] ?$")
+
+def classify(buf):
+    tail = ANSI.sub("", buf[-WINDOW:].decode("utf-8", "replace")).rstrip("\r\n\x00")
+    if LOGIN.search(tail):
+        return "AT-LOGIN"
+    if PASSWORD.search(tail):
+        return "AT-PASSWORD"
+    return None
+
+try:
+    s = socket.create_connection((addr, port), timeout=4)
+except OSError as e:
+    print("CONNFAIL", e)
+    raise SystemExit(0)
+deadline = time.monotonic() + HOLD
+
+def send(data):
+    try:
+        s.sendall(data)
+        return True
+    except OSError:
+        return False
+
+def collect(wait, stop):
+    # (bytes, eof): read until stop(buf) holds, EOF, or wait (clamped to HOLD).
+    end = min(time.monotonic() + wait, deadline)
+    buf = b""
+    while True:
+        left = end - time.monotonic()
+        if left <= 0:
+            return buf, False
+        s.settimeout(left)
+        try:
+            chunk = s.recv(4096)
+        except socket.timeout:
+            return buf, False
+        except OSError:
+            return buf, True
+        if not chunk:
+            return buf, True
+        buf += chunk
+        if stop(buf):
+            return buf, False
+
+try:
+    _, eof = collect(SETTLE, lambda b: False)
+    if eof or not send(b"\r"):
+        print("BUSY")
+        raise SystemExit(0)
+    buf, eof = collect(budget, lambda b: classify(b) is not None)
+    state = classify(buf) or ("BUSY" if eof else "LOGGED-IN" if buf else "SILENT")
+    if reset and state == "AT-LOGIN" and send(b"\r"):
+        # Confirm it is getty's prompt: login(1)'s own retry prompt looks the
+        # same but takes this Enter as an empty username and asks Password:.
+        buf, eof = collect(STEP, lambda b: classify(b) is not None)
+        state = classify(buf) or ("BUSY" if eof else "LOGGED-IN" if buf else "SILENT")
+    print(state, flush=True)
+    if not reset or state not in ("AT-PASSWORD", "LOGGED-IN"):
+        raise SystemExit(0)
+    at_login = lambda b: classify(b) == "AT-LOGIN"
+    landed = lambda b: at_login(b) or LANDED.search(
+        ANSI.sub("", b[-WINDOW:].decode("utf-8", "replace")).rstrip("\r\n")
+    ) is not None
+    done, eof, last = False, False, buf
+    if state == "AT-PASSWORD" and send(b"\x03"):
+        buf, eof = collect(STEP, at_login)
+        last = buf or last
+        done = at_login(buf)
+    rounds = 0
+    while not done and not eof and rounds < ROUNDS:
+        if time.monotonic() >= deadline or not send(b"\x03"):
+            break
+        rounds += 1
+        buf, eof = collect(STEP, landed)
+        last = buf or last
+        done = at_login(buf)
+        if done or eof or time.monotonic() >= deadline or not send(b"\x04\r"):
+            break
+        buf, eof = collect(STEP, at_login)
+        last = buf or last
+        done = at_login(buf)
+    if done:
+        print("RESET-OK")
+    else:
+        tail = ANSI.sub("", last[-200:].decode("utf-8", "replace")).strip()
+        print("RESET-FAILED", repr(tail[-60:]))
+    raise SystemExit(0)
+finally:
+    s.close()
+"""
+
 
 def _load_hosts(path: Path) -> list[dict]:
     """Flatten a lab.json's ``elements`` into the flat host dicts this script reads.
@@ -369,15 +535,35 @@ def _check_unix(host: dict) -> dict:
 
 def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
     """Console responsiveness + uptime for a QEMU guest reached through its hop."""
-    hop = hops.get(host.get("hop", ""))
+    # A `term: "console"` host carries `console_options` (server + port): the
+    # console-term dials that server's OWN loopback telnet listener — the
+    # zephyr hop's ARM QEMU unit now binds it to 127.0.0.1 rather than the
+    # guest's own TAP address — instead of dialing the guest directly. This
+    # takes over the probe ONLY for a credential-less (Zephyr-shaped) console:
+    # a host that also carries its own `creds` (e.g. bb1350, whose console is
+    # a SECOND way in alongside its in-guest telnetd) keeps its in-guest
+    # telnetd probe here and gets a separate console row from
+    # `_check_console`. Creds is what discriminates the shapes, same as
+    # `_is_ssh_host`'s rule: both entries list `console` in `valid_terms`, so
+    # the term menu cannot tell them apart.
+    console = host.get("console_options")
+    if console and not host.get("creds"):
+        hop_name = console["server"]
+        hop = hops.get(hop_name)
+        addr, port = "127.0.0.1", console["port"]
+        missing = f"console server {hop_name!r} not in lab"
+    else:
+        hop_name = host.get("hop", "")
+        hop = hops.get(hop_name)
+        # The in-guest telnetd, reached over the guest's own TAP from the hop:
+        # :23 unless the entry's telnet_options name another port (no lab
+        # entry does today; the ARM consoles moved to console_options above).
+        addr, port = host["ip"], host.get("telnet_options", {}).get("port", 23)
+        missing = f"hop {hop_name!r} not in lab"
     if hop is None:
-        return {"ok": False, "status": "NO-HOP", "info": f"hop {host.get('hop')!r} not in lab"}
+        return {"ok": False, "status": "NO-HOP", "info": missing}
     user, password = _ssh_user_pass(hop["creds"])
-    # ARM serial beds carry the console on telnet_options.port (2323+); x86 net
-    # beds and the BusyBox guests have no telnet_options and use the in-guest
-    # shell on :23, reached over their own TAP from the hop.
-    port = host.get("telnet_options", {}).get("port", 23)
-    remote_cmd = f"python3 -c {shlex.quote(_CONSOLE_PROBE)} {shlex.quote(host['ip'])} {port}"
+    remote_cmd = f"python3 -c {shlex.quote(_CONSOLE_PROBE)} {shlex.quote(addr)} {port}"
     # A guest carrying creds of ITS OWN can be logged into for a real uptime;
     # that is the BusyBox bed's shape. A Zephyr console carries none (it
     # borrows its hop's, which are already in `user`/`password` above and are
@@ -422,6 +608,75 @@ def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
     return {"ok": False, "status": "DOWN", "info": out[:40] or "no console"}
 
 
+def _has_console_row(host: dict) -> bool:
+    """Say whether *host* offers ``console`` in its term menu and names where it is served."""
+    return bool(host.get("console_options")) and "console" in host.get("valid_terms", [])
+
+
+# What each console state means in the report's info column.
+_CONSOLE_STATE_INFO = {
+    "AT-LOGIN": "login prompt",
+    "AT-PASSWORD": "password prompt",
+    "LOGGED-IN": "shell / no prompt",
+    "SILENT": "no bytes",
+    "BUSY": "port held",
+}
+
+
+def _check_console(host: dict, hops: dict[str, dict], *, logout: bool) -> dict:
+    """Report the state of *host*'s serial console, optionally resetting it to ``login:``.
+
+    SSHes to the console SERVER (``console_options.server``) and runs
+    :data:`_CONSOLE_STATE_PROBE` against that server's ``127.0.0.1`` at
+    ``console_options.port`` — the address otto's ``dial: ssh`` mode uses. An
+    entry that logs in (carries its own ``creds``) is healthy only
+    ``AT-LOGIN``; a credential-less console (Zephyr) is healthy ``LOGGED-IN``
+    too, because its shell prompt is its idle state. *logout* asks the probe
+    to reset a ``LOGGED-IN`` / ``AT-PASSWORD`` line — only ever on an entry
+    with creds: Ctrl-D at a Zephyr shell is not a logout, and there is no
+    login prompt to go back to. No password is sent to the probe.
+    """
+    console = host["console_options"]
+    server_name = console["server"]
+    server = hops.get(server_name)
+    if server is None:
+        return {
+            "ok": False,
+            "status": "NO-HOP",
+            "info": f"console server {server_name!r} not in lab",
+        }
+    logs_in = bool(host.get("creds"))
+    user, password = _ssh_user_pass(server["creds"])
+    remote_cmd = (
+        f"python3 -c {shlex.quote(_CONSOLE_STATE_PROBE)} 127.0.0.1 {int(console['port'])}"
+        f" {_CONSOLE_STATE_BUDGET_S:g}"
+    )
+    if logout and logs_in:
+        remote_cmd += " reset"
+    rc, out, err = _run_ssh(
+        server["ip"], user, password, remote_cmd, timeout=_CONSOLE_STATE_SSH_TIMEOUT_S
+    )
+    if rc != 0:
+        return {"ok": False, "status": "HOP-FAIL", "info": err or f"rc={rc}"}
+    lines = out.splitlines() or [""]
+    state = lines[0].strip()
+    if state not in _CONSOLE_STATE_INFO:
+        return {"ok": False, "status": "DOWN", "info": state[:40] or "no answer"}
+    if len(lines) > 1 and lines[1].startswith("RESET-OK"):
+        return {"ok": True, "status": "AT-LOGIN", "info": f"reset from {state}"}
+    if len(lines) > 1 and lines[1].startswith("RESET-FAILED"):
+        # The quoted tail is too wide for the info column; it rides at the
+        # end of the row instead, where nothing follows it.
+        return {
+            "ok": False,
+            "status": state,
+            "info": "reset failed",
+            "detail": lines[1][len("RESET-FAILED") :].strip(),
+        }
+    ok = state == "AT-LOGIN" or (state == "LOGGED-IN" and not logs_in)
+    return {"ok": ok, "status": state, "info": _CONSOLE_STATE_INFO[state]}
+
+
 def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:
     """Restart the QEMU + SNMP-relay units on every hop that fronts a guest."""
     # Select console guests by the SAME shape rule as ``_is_ssh_host`` /
@@ -458,11 +713,16 @@ def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:
     return failures
 
 
-def _print_report(hosts: list[dict], hops: dict[str, dict]) -> bool:
-    """Probe every host, print the table, and return True iff all are healthy."""
+def _print_report(hosts: list[dict], hops: dict[str, dict], *, logout: bool = False) -> bool:
+    """Probe every host, print the table, and return True iff all are healthy.
+
+    A console-capable entry (see :func:`_has_console_row`) prints a second row,
+    TYPE ``console``, right after its own; *logout* is handed to
+    :func:`_check_console`.
+    """
     local = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     print(f"Local reference clock: {local}Z\n")
-    header = f"{'NE':<14}{'IP':<16}{'TYPE':<10}{'STATUS':<13}{'TIMESTAMP/UPTIME':<18}DRIFT"
+    header = f"{'NE':<16}{'IP':<16}{'TYPE':<10}{'STATUS':<13}{'TIMESTAMP/UPTIME':<18}DRIFT"
     print(header)
     print("-" * len(header))
 
@@ -478,9 +738,18 @@ def _print_report(hosts: list[dict], hops: dict[str, dict]) -> bool:
             drift_col = f"{res['drift']:+.2f}s"
             drifts.append((host["element"], res["drift"]))
         print(
-            f"{host['element']:<14}{host['ip']:<16}{ostype:<10}"
+            f"{host['element']:<16}{host['ip']:<16}{ostype:<10}"
             f"{res['status']:<13}{res['info']:<18}{drift_col}"
         )
+        if _has_console_row(host):
+            con = _check_console(host, hops, logout=logout)
+            all_ok = all_ok and con["ok"]
+            where = f"{host['console_options']['server']}:{host['console_options']['port']}"
+            print(
+                f"{host['element']:<16}{where:<16}{'console':<10}"
+                f"{con['status']:<13}{con['info']:<18}—"
+                + (f"  {con['detail']}" if con.get("detail") else "")
+            )
 
     skewed = [(ne, d) for ne, d in drifts if abs(d) > _DRIFT_WARN_S]
     if skewed:
@@ -509,6 +778,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="restart Zephyr + BusyBox QEMU + relay units on each hop, then health-check",
     )
+    parser.add_argument(
+        "--logout-consoles",
+        action="store_true",
+        help=(
+            "reset every console left logged in (or at a password prompt) to its login "
+            "prompt — Enter, then up to three rounds of Ctrl-C/Ctrl-D/Enter; never on a "
+            "credential-less (Zephyr) console, never typing a password"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if shutil.which("sshpass") is None:
@@ -529,7 +807,7 @@ def main(argv: list[str] | None = None) -> int:
         time.sleep(_RESTART_SETTLE_S)
         print()
 
-    return 0 if _print_report(hosts, hops) else 1
+    return 0 if _print_report(hosts, hops, logout=args.logout_consoles) else 1
 
 
 if __name__ == "__main__":

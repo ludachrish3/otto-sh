@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     # module is on it (`unix_host` imports it at module level), so the name is
     # available for annotations only; the runtime names it needs are imported
     # inside `_run_session_setup_on_bridge`.
+    from .console import ConsoleClient
     from .session_setup import SessionSetup
 
 logger = logging.getLogger(__name__)
@@ -461,6 +462,13 @@ class _BridgeShellSession(ShellSession):
     them the recall of everything they type for the rest of the session. The
     hook's commands land in the human's history, the same trade the shell
     history docs already accept for a ``--user`` login's resync probe.
+
+    On a console host the bridge's streams are a
+    :class:`~otto.host.console.ConsoleClient`'s, passed as *console_client*,
+    so a raw-landing hook's :meth:`console_login` runs that client's login
+    sequence exactly as it would on the session otto drives. The session
+    never closes it: the host's login verb owns the client and closes it
+    (logout, then release) when the bridge ends.
     """
 
     def __init__(
@@ -470,12 +478,14 @@ class _BridgeShellSession(ShellSession):
         *,
         newline: bytes,
         command_frame: "CommandFrame | None",
+        console_client: "ConsoleClient | None" = None,
     ) -> None:
         super().__init__(command_frame=command_frame, shell_history=True)
         self._write_remote = write_remote
         self._read_remote = read_remote
         self._newline = newline
         self._buffer = ""
+        self.console_client = console_client
 
     @override
     async def _open(self) -> None:
@@ -499,6 +509,20 @@ class _BridgeShellSession(ShellSession):
             if not chunk:
                 raise asyncio.IncompleteReadError(self._buffer.encode(), None)
             self._buffer += chunk.decode("utf-8", errors="replace")
+
+    @override
+    async def console_login(self) -> None:
+        """Run the console login sequence on the bridge's own console client.
+
+        The bridge-side twin of
+        :meth:`TelnetSession.console_login <otto.host.session.TelnetSession.console_login>`:
+        refused with :class:`~otto.host.errors.ConsoleError` when the bridge
+        is not over a console.
+        """
+        if self.console_client is None:
+            await super().console_login()
+            return
+        await self.console_client.login_sequence()
 
     @override
     async def close(self) -> None:
@@ -525,6 +549,8 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
     proxy_hops: Sequence[Cred],
     via_login: str,
     log_line: Callable[[str], None],
+    term: str | None = None,
+    console_client: "ConsoleClient | None" = None,
 ) -> bytes:
     """Land, hop, run the hook, enter the frame, restore the terminal; return the residual.
 
@@ -540,6 +566,11 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
     governs the sessions otto drives; this one ends in a human's hands, and
     ``otto login`` keeps its promise to leave their history — and their
     up-arrow recall — alone, on a hooked host exactly as on an unhooked one.
+
+    *term* is the transport the bridge runs over (``ssh``, ``telnet`` or
+    ``console``), named in the hook handle's refusals. *console_client* is the
+    console bridge's client, so the hook's ``console_login()`` can run it;
+    ``None`` on every other transport.
     """
     # Local, like SessionManager._apply_session_setup's: `otto.host.session_setup`
     # is off the CLI startup import graph and this module is on it, so a host
@@ -552,6 +583,7 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
         read_remote,
         newline=newline,
         command_frame=landing_dialect,
+        console_client=console_client,
     )
     await session._ensure_initialized()  # noqa: SLF001 — the bridge is this session's manager
     # Empty, always: nothing this function writes may suppress the history of
@@ -588,6 +620,7 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
         history_prefix=prefix,
         target_frame=target_frame,
         establishing=True,
+        term=term,
     )
     ctx = SetupContext(
         host_id=host_id,
@@ -849,6 +882,7 @@ async def run_ssh_login(
                 proxy_hops=proxy_hops,
                 via_login=via_login,
                 log_line=log_file_effective.write_line,
+                term="ssh",
             )
         await _run_bridge(
             write_remote=write_remote,
@@ -866,7 +900,7 @@ async def run_ssh_login(
         _print_stderr(f"[otto] disconnected from {host_name}.")
 
 
-async def run_telnet_login(
+async def run_telnet_login(  # noqa: PLR0913 — wide bridge entry point: the host fields plus the transport label and a notice
     *,
     client: Any,
     host_name: str,
@@ -877,14 +911,25 @@ async def run_telnet_login(
     landing_frame: "CommandFrame | None" = None,
     target_frame: "CommandFrame | None" = None,
     creds: "list[Cred] | None" = None,
+    transport_label: str = "telnet",
+    notice: str | None = None,
 ) -> None:
-    r"""Bridge an already-connected interactive ``TelnetClient`` to the terminal.
+    r"""Bridge an already-connected interactive telnet or console client to the terminal.
 
     The client must have been opened with ``interactive=True`` so the
     remote is left in its default echo mode (otto's non-interactive
     connect flow sends ``DONT ECHO`` to silence command echo — not
     what we want here). Local ``SIGWINCH`` is forwarded as a NAWS
-    subnegotiation via ``TelnetClient._send_naws``.
+    subnegotiation via the client's ``_send_naws``.
+
+    *transport_label* is ``"telnet"`` for a :class:`~otto.host.telnet.TelnetClient`
+    or ``"console"`` for a :class:`~otto.host.console.ConsoleClient`; it names
+    the transport in the banner, and on ``"console"`` the client is handed to
+    a session-setup hook's bridge session so its ``console_login()`` works.
+
+    *notice* is a line reported to the human (as ``[otto] <notice>`` on
+    stderr, like the bridge's other status lines) before anything else runs
+    on the bridge — e.g. what ``login --force``'s console reset found.
 
     *proxy_hops*/*via_login*/*host_id* mirror :func:`run_ssh_login` (the
     ``--user`` path): non-empty hops are replayed over the bridge after login
@@ -942,6 +987,9 @@ async def run_telnet_login(
     log_file.write_marker("Entering interactive session")
 
     try:
+        if notice is not None:
+            _print_stderr(f"[otto] {notice}")
+            log_file.write_line(f"[otto] {notice}")
         prelude: bytes | None = None
         if session_setup is None:
             await _replay_proxy_hops(
@@ -966,13 +1014,15 @@ async def run_telnet_login(
                 proxy_hops=proxy_hops,
                 via_login=via_login,
                 log_line=log_file.write_line,
+                term=transport_label,
+                console_client=client if transport_label == "console" else None,
             )
         await _run_bridge(
             write_remote=write_remote,
             read_remote=read_remote,
             install_sigwinch=install_sigwinch,
             on_output_line=log_file.write_line,
-            banner=f"[otto] interactive session with {host_name} (telnet). Press Ctrl+] to disconnect.",  # noqa: E501 — long banner string
+            banner=f"[otto] interactive session with {host_name} ({transport_label}). Press Ctrl+] to disconnect.",  # noqa: E501 — long banner string
             prelude=prelude,
         )
     finally:

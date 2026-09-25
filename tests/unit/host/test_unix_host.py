@@ -63,6 +63,38 @@ def host() -> UnixHost:
     )
 
 
+@pytest.fixture
+def unix_host_ssh() -> UnixHost:
+    return UnixHost(
+        ip="10.0.0.1",
+        element=Element("box"),
+        creds=[Cred(login="user", password="pass")],
+        log=LogMode.QUIET,
+    )
+
+
+@pytest.fixture
+def console_unix_host(monkeypatch) -> UnixHost:
+    from otto.host.connections import TelnetTarget
+    from otto.host.options import ConsoleOptions
+
+    h = UnixHost(
+        ip="10.0.0.2",
+        element=Element("test2"),
+        creds=[Cred(login="test", password="Password1")],
+        log=LogMode.QUIET,
+        valid_terms=["console"],
+        term="console",
+        console_options=ConsoleOptions(server="test1", port=4001),
+    )
+
+    async def fake_target():
+        return TelnetTarget("localhost", 4001)
+
+    monkeypatch.setattr(h._connections, "console_target", fake_target)
+    return h
+
+
 # ---------------------------------------------------------------------------
 # Initialization
 # ---------------------------------------------------------------------------
@@ -1207,6 +1239,357 @@ class TestPutGetUser:
         result = await h._transfer_for("root")._exec_cmd("true")
         assert h._session_mgr.exec.await_args.kwargs["user"] == "root"
         assert result.status == Status.Success
+
+
+class TestConsoleTermTransfers:
+    """A single-client console has no exec channel: transfers type into the one default session."""
+
+    def _console_host(self) -> UnixHost:
+        from otto.host.options import ConsoleOptions
+
+        return UnixHost(
+            ip="10.0.0.2",
+            element=Element("test2"),
+            creds=[Cred(login="test", password="pw"), Cred(login="root", password="rootpw")],
+            term="console",
+            valid_terms=["ssh", "console"],
+            transfer="shell",
+            valid_transfers=["shell", "nc"],
+            console_options=ConsoleOptions(server="test1", port=4001),
+            log=LogMode.QUIET,
+        )
+
+    @staticmethod
+    def _spy_default_session(host: UnixHost, monkeypatch: pytest.MonkeyPatch) -> list:
+        """Record every command typed on the default session; fail any second session."""
+        calls: list = []
+        mgr = host._session_mgr
+
+        async def fake_run_cmd(cmd, expects=None, timeout=0.0, log=None, write_progress=None):
+            calls.append((cmd, timeout))
+            return _cs(command=cmd, output="ok")
+
+        async def no_second_session(name):
+            raise AssertionError(f"a console has one session; {name!r} would be a second")
+
+        monkeypatch.setattr(mgr, "run_cmd", fake_run_cmd)
+        monkeypatch.setattr(mgr, "open_session", no_second_session)
+        return calls
+
+    @pytest.mark.asyncio
+    async def test_exec_cmd_runs_one_command_on_the_default_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        host = self._console_host()
+        calls = self._spy_default_session(host, monkeypatch)
+
+        result = await host._file_transfer._exec_cmd("md5sum /tmp/a", timeout=5.0)
+
+        assert calls == [("md5sum /tmp/a", 5.0)]
+        assert result.value == "ok"
+
+    @pytest.mark.asyncio
+    async def test_the_login_user_is_the_default_session_so_it_needs_no_switch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        host = self._console_host()
+        calls = self._spy_default_session(host, monkeypatch)
+
+        async def no_switch(*_a, **_kw):
+            raise AssertionError("the one session already is the login user")
+
+        monkeypatch.setattr(host, "as_user", no_switch)
+
+        await host._transfer_for("test")._exec_cmd("true")
+
+        assert [cmd for cmd, _t in calls] == ["true"]
+
+    def test_a_different_user_is_refused_naming_the_host(self):
+        from otto.host.errors import ConsoleError
+
+        host = self._console_host()
+        with pytest.raises(ConsoleError, match=r"^test2: .*single-client.*'test'.*'root'"):
+            host._transfer_for("root")
+
+
+class TestConsoleTermRefusesNc:
+    """nc's listener would hold the one console session its control commands also need."""
+
+    def test_nc_is_refused_naming_the_host(self):
+        from otto.host.errors import ConsoleError
+
+        host = TestConsoleTermTransfers()._console_host()
+        host.transfer = "nc"
+        with pytest.raises(ConsoleError, match=r"^test2: .*single-client.*nc.*second"):
+            host._build_file_transfer()
+
+    def test_shell_builds(self):
+        host = TestConsoleTermTransfers()._console_host()
+        assert type(host._build_file_transfer()).__name__ == "ShellFileTransfer"
+
+    def test_nc_on_ssh_is_untouched(self):
+        host = TestConsoleTermTransfers()._console_host()
+        host.term = "ssh"
+        host.transfer = "nc"
+        assert type(host._build_file_transfer()).__name__ == "NcFileTransfer"
+
+
+class TestConsoleExec:
+    """``exec`` on a console term is one command on the host's single default session.
+
+    A console serves one client, so there is no raw channel and no pooled
+    session to run it on; it runs where ``run`` does, one call at a time.
+    otto's own commands (probes, file ops, transfer steps) call ``exec`` too,
+    so they land in the same place.
+    """
+
+    @staticmethod
+    def _console_host() -> UnixHost:
+        return TestConsoleTermTransfers()._console_host()
+
+    @staticmethod
+    def _spy(host: UnixHost, monkeypatch: pytest.MonkeyPatch) -> list:
+        return TestConsoleTermTransfers._spy_default_session(host, monkeypatch)
+
+    @pytest.mark.asyncio
+    async def test_exec_reaches_the_default_session_and_never_opens_a_pool_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        host = self._console_host()
+        calls = self._spy(host, monkeypatch)
+
+        result = await host.exec("uname -a", timeout=7.0)
+
+        assert calls == [("uname -a", 7.0)]
+        assert (result.value, result.retcode) == ("ok", 0)
+        assert host._session_mgr._exec_pool == []
+        assert host._session_mgr._exec_pool_count == 0
+
+    @pytest.mark.asyncio
+    async def test_exec_as_another_user_switches_the_one_session_and_back(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """What ``run(user=...)`` does on the same session: switch, run, restore."""
+        from contextlib import asynccontextmanager
+
+        host = self._console_host()
+        calls = self._spy(host, monkeypatch)
+        events: list[str] = []
+
+        @asynccontextmanager
+        async def fake_as_user(user="root", password=None):
+            events.append(f"as {user}")
+            yield host
+            events.append("back")
+
+        monkeypatch.setattr(host, "as_user", fake_as_user)
+
+        await host.exec("id -un", user="root")
+
+        assert events == ["as root", "back"]
+        assert [cmd for cmd, _t in calls] == ["id -un"]
+
+    @pytest.mark.asyncio
+    async def test_a_failing_exec_as_another_user_restores_the_user_and_frees_the_line(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The command raises: the switch is undone and the lock released for the next exec."""
+        from contextlib import asynccontextmanager
+
+        host = self._console_host()
+        mgr = host._session_mgr
+        who = {"user": "test"}
+        events: list[str] = []
+
+        @asynccontextmanager
+        async def fake_as_user(user="root", password=None):
+            # The real as_user's shape: switch, then undo in a finally.
+            prev = who["user"]
+            who["user"] = user
+            events.append(f"as {user}")
+            try:
+                yield host
+            finally:
+                who["user"] = prev
+                events.append("back")
+
+        async def run_cmd(cmd, *_a, **_kw):
+            events.append(f"run {cmd} as {who['user']}")
+            if cmd == "boom":
+                raise ConnectionError("line dropped mid-command")
+            return _cs(command=cmd, output=who["user"])
+
+        monkeypatch.setattr(host, "as_user", fake_as_user)
+        monkeypatch.setattr(mgr, "run_cmd", run_cmd)
+
+        with pytest.raises(ConnectionError, match="mid-command"):
+            await host.exec("boom", user="root")
+
+        assert who["user"] == "test", "the switch was not undone"
+        assert host._console_exec_lock is not None
+        assert not host._console_exec_lock.locked(), "the failed exec kept the line"
+        after = await asyncio.wait_for(host.exec("id -un"), timeout=1.0)
+        assert after.value == "test"
+        assert events == ["as root", "run boom as root", "back", "run id -un as test"]
+
+    @pytest.mark.asyncio
+    async def test_a_named_session_is_still_refused(self):
+        from otto.host.errors import ConsoleError
+
+        host = self._console_host()
+        with pytest.raises(ConsoleError, match=r"^test2: console is single-client.*named sessions"):
+            await host.open_session("aux")
+
+    @pytest.mark.asyncio
+    async def test_concurrent_execs_serialise_on_a_console(self, monkeypatch):
+        """Gathered execs (and so gathered file ops) must not interleave on the one session."""
+        host = self._console_host()
+        events: list[str] = []
+
+        async def slow(cmd, *_a, **_kw):
+            events.append(f"start {cmd}")
+            await asyncio.sleep(0.05)
+            events.append(f"end {cmd}")
+            return _cs(command=cmd, output="")
+
+        monkeypatch.setattr(host._session_mgr, "run_cmd", slow)
+        await asyncio.gather(host.exec("a"), host.exec("b"))
+        assert events == ["start a", "end a", "start b", "end b"]
+
+    @pytest.mark.asyncio
+    async def test_concurrent_execs_overlap_on_ssh(self, host: UnixHost, monkeypatch):
+        """The control: exec is concurrency-safe off a console, and the lock is never taken."""
+        events: list[str] = []
+
+        async def slow(cmd, *_a, **_kw):
+            events.append(f"start {cmd}")
+            await asyncio.sleep(0.05)
+            events.append(f"end {cmd}")
+            return _cs(command=cmd, output="")
+
+        monkeypatch.setattr(host._session_mgr, "exec", slow)
+        await asyncio.gather(host.exec("a"), host.exec("b"))
+        assert events[:2] == ["start a", "start b"]
+        assert host._console_exec_lock is None
+
+    @pytest.mark.asyncio
+    async def test_a_run_gathered_with_an_exec_serialises_on_a_console(self, monkeypatch):
+        """``run`` and ``exec`` share the one session, so they take turns on the line."""
+        host = self._console_host()
+        events: list[str] = []
+
+        async def slow(cmd, *_a, **_kw):
+            events.append(f"start {cmd}")
+            await asyncio.sleep(0.05)
+            events.append(f"end {cmd}")
+            return _cs(command=cmd, output="")
+
+        monkeypatch.setattr(host._session_mgr, "run_cmd", slow)
+        await asyncio.gather(host.run("a"), host.exec("b"), host.run("c"))
+        assert events == ["start a", "end a", "start b", "end b", "start c", "end c"]
+
+    @pytest.mark.asyncio
+    async def test_a_run_gathered_with_an_exec_overlaps_on_ssh(self, host: UnixHost, monkeypatch):
+        """The control: off a console, ``run`` takes no line lock and ``exec`` does not wait."""
+        events: list[str] = []
+
+        async def slow(cmd, *_a, **_kw):
+            events.append(f"start {cmd}")
+            await asyncio.sleep(0.05)
+            events.append(f"end {cmd}")
+            return _cs(command=cmd, output="")
+
+        monkeypatch.setattr(host._session_mgr, "run_cmd", slow)
+        monkeypatch.setattr(host._session_mgr, "exec", slow)
+        await asyncio.gather(host.run("a"), host.exec("b"))
+        assert events[:2] == ["start a", "start b"]
+        assert host._console_exec_lock is None
+
+    @pytest.mark.asyncio
+    async def test_run_as_another_user_on_a_console_does_not_wait_on_itself(self, monkeypatch):
+        """The switch drives the session with send/expect, which never take the
+        line lock, so ``run(user=...)`` and ``exec(user=...)`` complete."""
+        from contextlib import asynccontextmanager
+
+        host = self._console_host()
+        events: list[str] = []
+
+        @asynccontextmanager
+        async def fake_as_user(user="root", password=None):
+            # Stands in for the send/expect switch; it must be able to run
+            # while the line lock is held (exec) and before it is (run).
+            await host.send(f"su - {user}\n")
+            events.append(f"as {user}")
+            yield host
+            events.append("back")
+
+        async def run_cmd(cmd, *_a, **_kw):
+            events.append(f"run {cmd}")
+            return _cs(command=cmd, output="")
+
+        monkeypatch.setattr(host, "as_user", fake_as_user)
+        monkeypatch.setattr(host._session_mgr, "run_cmd", run_cmd)
+        monkeypatch.setattr(host._session_mgr, "send", AsyncMock())
+
+        await asyncio.wait_for(host.run("id -un", user="root"), timeout=2.0)
+        await asyncio.wait_for(host.exec("id -un", user="root"), timeout=2.0)
+        assert events == ["as root", "run id -un", "back"] * 2
+
+    @pytest.mark.asyncio
+    async def test_the_userland_runner_is_exec_looked_up_per_call(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Bound late: a runner cached before ``exec`` is swapped still reaches the swap."""
+        host = self._console_host()
+        runner = host._userland()._run
+        execs: list = []
+
+        async def fake_exec(*a, **kw):
+            execs.append(a)
+            return _cs(command=a[0], output="")
+
+        monkeypatch.setattr(host, "exec", fake_exec)
+        await runner("true")
+        assert execs == [("true",)]
+
+    @pytest.mark.asyncio
+    async def test_a_userland_probe_on_a_console_host_reaches_the_default_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        host = self._console_host()
+        calls = self._spy(host, monkeypatch)
+
+        await host._userland().resolve()
+
+        assert calls, "the userland probe never reached the default session"
+        assert all(isinstance(cmd, str) and cmd for cmd, _t in calls)
+
+    @pytest.mark.asyncio
+    async def test_a_file_op_on_a_console_host_reaches_the_default_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        host = self._console_host()
+        calls = self._spy(host, monkeypatch)
+
+        await host.exists(Path("/tmp/a"))
+
+        assert [cmd for cmd, _t in calls] == ["test -e /tmp/a"]
+
+    @pytest.mark.asyncio
+    async def test_the_login_home_probe_on_a_console_host_reaches_the_default_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        host = self._console_host()
+        calls: list = []
+
+        async def fake_run_cmd(cmd, *_a, **_kw):
+            calls.append(cmd)
+            return _cs(command=cmd, output="/home/test")
+
+        monkeypatch.setattr(host._session_mgr, "run_cmd", fake_run_cmd)
+
+        assert await host.login_home() == Path("/home/test")
+        assert calls == ['printf %s "$HOME"']
 
 
 # ---------------------------------------------------------------------------
@@ -3554,3 +3937,631 @@ async def test_exec_without_an_ambient_user_runs_as_the_login_user(monkeypatch):
 
     assert result.value == "OUT"
     assert seen[-1] == ("id", "admin")
+
+
+# ---------------------------------------------------------------------------
+# Console verbs: login --force, logout
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_login_force_is_refused_off_a_console_term(unix_host_ssh):
+    with pytest.raises(ValueError, match="--force applies to console hosts only"):
+        await unix_host_ssh.login(force=True)
+
+
+@pytest.mark.asyncio
+async def test_login_force_is_refused_on_a_telnet_term():
+    """The refusal is the term's, not ssh's: telnet is refused the same way,
+    before any client is built or dialled."""
+    h = UnixHost(
+        ip="10.0.0.1",
+        element=Element("box"),
+        creds=[Cred(login="user", password="pass")],
+        term="telnet",
+        log=LogMode.QUIET,
+    )
+    with (
+        patch("otto.host.unix_host.TelnetClient") as client_cls,
+        pytest.raises(
+            ValueError, match=r"--force applies to console hosts only \(term is 'telnet'\)"
+        ),
+    ):
+        await h.login(force=True)
+    client_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_logout_is_refused_off_a_console_term(unix_host_ssh):
+    with pytest.raises(ValueError, match="logout applies to console hosts only"):
+        await unix_host_ssh.logout()
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_refuses_the_console_verbs_off_a_console(unix_host_ssh):
+    """A dry run of a call this host could never honour refuses, rather than
+    declining as though it could have (the ``_refuse_exec_user`` contract)."""
+    with active_context(dry_run=True):
+        with pytest.raises(ValueError, match="logout applies to console hosts only"):
+            await unix_host_ssh.logout()
+        with pytest.raises(ValueError, match="--force applies to console hosts only"):
+            await unix_host_ssh.login(force=True)
+        # The control: a plain login under a dry run still declines quietly.
+        assert await unix_host_ssh.login() is None
+
+
+@pytest.mark.asyncio
+async def test_logout_opens_resets_reports_and_closes(monkeypatch, console_unix_host):
+    events = []
+
+    class _Client:
+        def __init__(self, **kw):
+            events.append(("build", kw["user"]))
+
+        async def open(self, interactive=False):
+            events.append("open")
+
+        async def reset(self):
+            events.append("reset")
+            from otto.host.console import ConsoleState
+
+            return ConsoleState.AT_LOGIN
+
+        async def close(self):
+            events.append("close")
+
+    monkeypatch.setattr("otto.host.console.ConsoleClient", _Client)
+    result = await console_unix_host.logout()
+    assert events == [("build", "test"), "open", "reset", "close"]
+    assert result.status is Status.Success
+    assert "login prompt" in result.value
+
+
+@pytest.mark.asyncio
+async def test_login_force_resets_before_the_scripted_login(monkeypatch, console_unix_host):
+    order = []
+
+    class _Client:
+        reader = writer = None
+
+        def __init__(self, **kw):
+            pass
+
+        async def open(self, interactive=False):
+            order.append(("open", interactive))
+
+        async def reset(self):
+            order.append("reset")
+
+        async def login_sequence(self):
+            order.append("login")
+
+        async def logout(self):
+            order.append("logout")
+
+        async def close(self):
+            order.append("close")
+
+    async def fake_bridge(**kw):
+        order.append(("bridge", kw["transport_label"]))
+
+    monkeypatch.setattr("otto.host.console.ConsoleClient", _Client)
+    monkeypatch.setattr("otto.host.unix_host.run_telnet_login", fake_bridge)
+    await console_unix_host.login(force=True)
+    assert order == [("open", True), "reset", "login", ("bridge", "console"), "close"]
+
+
+class _RecordingConsoleClient:
+    """A ConsoleClient stand-in that records calls and can fail one step."""
+
+    def __init__(self, fail_at: str = "", found=None, events=None, **kw):
+        from otto.host.console import ConsoleState
+
+        self.kw = kw
+        self.calls: list[str] = []
+        self.fail_at = fail_at
+        self.found = found or ConsoleState.AT_LOGIN
+        self.events = events if events is not None else []
+        self.reader = self.writer = None
+
+    async def _step(self, name: str):
+        self.calls.append(name)
+        self.events.append(name)
+        if name == self.fail_at:
+            from otto.host.errors import ConsoleError
+
+            raise ConsoleError(f"{name} failed")
+
+    async def open(self, interactive=False):
+        await self._step("open")
+
+    async def reset(self):
+        await self._step("reset")
+        return self.found
+
+    async def login_sequence(self):
+        await self._step("login")
+
+    async def close(self):
+        self.calls.append("close")
+        self.events.append("close")
+
+
+@pytest.fixture
+def recording_console(monkeypatch):
+    """Install a ``_RecordingConsoleClient`` factory; returns the list it fills."""
+    instances: list[_RecordingConsoleClient] = []
+
+    def install(fail_at: str = "", found=None, events=None):
+        def build(**kw):
+            if events is not None:
+                events.append("build")
+            client = _RecordingConsoleClient(fail_at=fail_at, found=found, events=events, **kw)
+            instances.append(client)
+            return client
+
+        monkeypatch.setattr("otto.host.console.ConsoleClient", build)
+        return instances
+
+    return install
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_at", ["open", "reset", "login"])
+async def test_login_force_closes_the_client_on_every_failure(
+    monkeypatch, console_unix_host, recording_console, fail_at
+):
+    """A console left half-open holds its single-client slot: every path out
+    of the interactive login closes the client, and no path reaches the bridge."""
+    instances = recording_console(fail_at)
+    bridge = AsyncMock()
+    monkeypatch.setattr("otto.host.unix_host.run_telnet_login", bridge)
+    from otto.host.errors import ConsoleError
+
+    with pytest.raises(ConsoleError, match=f"{fail_at} failed"):
+        await console_unix_host.login(force=True)
+    (client,) = instances
+    assert client.calls[-1] == "close"
+    assert client.calls.count("close") == 1
+    bridge.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_login_bridge_failure_still_closes_the_client(
+    monkeypatch, console_unix_host, recording_console
+):
+    instances = recording_console()
+    monkeypatch.setattr(
+        "otto.host.unix_host.run_telnet_login", AsyncMock(side_effect=RuntimeError("bridge died"))
+    )
+    with pytest.raises(RuntimeError, match="bridge died"):
+        await console_unix_host.login()
+    (client,) = instances
+    assert client.calls == ["open", "login", "close"]
+
+
+@pytest.mark.asyncio
+async def test_login_without_force_never_resets_and_hands_the_client_to_the_bridge(
+    monkeypatch, console_unix_host, recording_console
+):
+    instances = recording_console()
+    bridge = AsyncMock()
+    monkeypatch.setattr("otto.host.unix_host.run_telnet_login", bridge)
+    await console_unix_host.login()
+    (client,) = instances
+    assert client.calls == ["open", "login", "close"]
+    kw = bridge.await_args.kwargs
+    assert kw["client"] is client
+    assert kw["transport_label"] == "console"
+    assert kw["via_login"] == "test"
+    assert kw["notice"] is None, "no reset ran, so there is nothing to report"
+    # The client dials what console_target() returned, and names the lab's server.
+    assert (client.kw["host"], client.kw["port"]) == ("localhost", 4001)
+    assert client.kw["server"] == "test1"
+    assert client.kw["name"] == console_unix_host.name
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("found", "outcome"),
+    [
+        ("AT_LOGIN", "already at login prompt"),
+        ("LOGGED_IN", "reset: login prompt restored"),
+        ("AT_PASSWORD", "reset: login prompt restored"),
+    ],
+)
+async def test_login_force_reports_what_the_reset_found_through_the_bridge(
+    monkeypatch, console_unix_host, recording_console, found, outcome
+):
+    from otto.host.console import ConsoleState
+
+    recording_console(found=ConsoleState[found])
+    bridge = AsyncMock()
+    monkeypatch.setattr("otto.host.unix_host.run_telnet_login", bridge)
+    await console_unix_host.login(force=True)
+    assert bridge.await_args.kwargs["notice"] == f"test2: console test1:4001 {outcome}"
+
+
+def _loginless_console_host(monkeypatch, creds) -> UnixHost:
+    from otto.host.connections import TelnetTarget
+    from otto.host.options import ConsoleOptions
+
+    h = UnixHost(
+        ip="10.0.0.2",
+        element=Element("test2"),
+        creds=creds,
+        log=LogMode.QUIET,
+        valid_terms=["console"],
+        term="console",
+        console_options=ConsoleOptions(server="test1", port=4001, login=False),
+    )
+    monkeypatch.setattr(
+        h._connections, "console_target", AsyncMock(return_value=TelnetTarget("localhost", 4001))
+    )
+    return h
+
+
+@pytest.mark.asyncio
+async def test_login_force_on_a_loginless_console_resets_but_types_no_credentials(
+    monkeypatch, recording_console
+):
+    """``console_options.login: false``: the reset still runs under --force,
+    the scripted login does not, and the bridge gets the line as it is."""
+    h = _loginless_console_host(monkeypatch, [Cred(login="test", password="Password1")])
+    instances = recording_console()
+    bridge = AsyncMock()
+    monkeypatch.setattr("otto.host.unix_host.run_telnet_login", bridge)
+    await h.login(force=True)
+    (client,) = instances
+    assert client.calls == ["open", "reset", "close"]
+    bridge.assert_awaited_once()
+    assert bridge.await_args.kwargs["transport_label"] == "console"
+    assert bridge.await_args.kwargs["client"] is client
+
+
+@pytest.mark.asyncio
+async def test_a_loginless_console_with_a_proxied_login_target_keeps_its_hop_chain(
+    monkeypatch, recording_console
+):
+    """``login: false`` skips only the TYPED login; a proxied login target's
+    hops are still replayed on the bridge, as the session manager replays them
+    for ``run`` — so ``login`` lands where ``run`` does."""
+    root = Cred(login="root", password="rootpw", proxy="su", via="test")
+    h = _loginless_console_host(monkeypatch, [root, Cred(login="test", password="Password1")])
+    assert h._connections.login_target == "root"
+    recording_console()
+    bridge = AsyncMock()
+    monkeypatch.setattr("otto.host.unix_host.run_telnet_login", bridge)
+    await h.login()
+    kw = bridge.await_args.kwargs
+    assert [hop.login for hop in kw["proxy_hops"]] == ["root"]
+    assert kw["via_login"] == "test"
+
+
+@pytest.mark.asyncio
+async def test_a_credless_loginless_console_bridges_without_a_cred_chain(
+    monkeypatch, recording_console
+):
+    """otto types no credential on a ``login: false`` console, so a host with no
+    creds at all still bridges — no ``unknown login ''`` from a chain it never needs."""
+    h = _loginless_console_host(monkeypatch, [])
+    instances = recording_console()
+    bridge = AsyncMock()
+    monkeypatch.setattr("otto.host.unix_host.run_telnet_login", bridge)
+    await h.login()
+    (client,) = instances
+    assert client.calls == ["open", "close"]
+    bridge.assert_awaited_once()
+    assert bridge.await_args.kwargs["proxy_hops"] == []
+    assert bridge.await_args.kwargs["via_login"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("found", "outcome"),
+    [
+        ("AT_LOGIN", "already at login prompt"),
+        ("LOGGED_IN", "reset: login prompt restored"),
+        ("AT_PASSWORD", "reset: login prompt restored"),
+    ],
+)
+async def test_logout_returns_what_the_reset_found(
+    console_unix_host, recording_console, found, outcome
+):
+    from otto.host.console import ConsoleState
+
+    recording_console(found=ConsoleState[found])
+    result = await console_unix_host.logout()
+    assert result.status is Status.Success
+    assert result.value == f"test2: console test1:4001 {outcome}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verb", ["logout", "login"])
+async def test_the_console_verbs_release_otto_s_own_session_before_dialling(
+    monkeypatch, console_unix_host, recording_console, verb
+):
+    """otto's own cached console client holds the single-client line: it is
+    closed (logging out) BEFORE the verb dials its own client and resets."""
+    events: list[str] = []
+    cached = MagicMock()
+    cached.alive = True
+
+    async def cached_close():
+        events.append("cached-close")
+
+    cached.close = cached_close
+    console_unix_host._connections._console_conn = cached
+
+    async def target():
+        from otto.host.connections import TelnetTarget
+
+        events.append("dial")
+        return TelnetTarget("localhost", 4001)
+
+    monkeypatch.setattr(console_unix_host._connections, "console_target", target)
+    monkeypatch.setattr("otto.host.unix_host.run_telnet_login", AsyncMock())
+    recording_console(events=events)
+    if verb == "logout":
+        await console_unix_host.logout()
+    else:
+        await console_unix_host.login(force=True)
+    assert events[:5] == ["cached-close", "dial", "build", "open", "reset"]
+    assert console_unix_host._connections._console_conn is None
+
+
+@pytest.mark.asyncio
+async def test_logout_closes_the_client_when_reset_fails(console_unix_host, recording_console):
+    instances = recording_console("reset")
+    from otto.host.errors import ConsoleError
+
+    with pytest.raises(ConsoleError, match="reset failed"):
+        await console_unix_host.logout()
+    (client,) = instances
+    assert client.calls == ["open", "reset", "close"]
+
+
+@pytest.mark.asyncio
+async def test_logout_on_a_loginless_console_reports_and_dials_nothing(monkeypatch):
+    h = _loginless_console_host(monkeypatch, [Cred(login="test", password="Password1")])
+    result = await h.logout()
+    h._connections.console_target.assert_not_awaited()
+    assert result.status is Status.Success
+    assert result.value == "test2: this console has no login step; nothing to reset"
+
+
+@pytest.mark.asyncio
+async def test_logout_under_dry_run_touches_no_console(console_unix_host, recording_console):
+    instances = recording_console()
+    logged: list[str] = []
+    console_unix_host._log_command = lambda text, *_a, **_k: logged.append(text)
+    with active_context(dry_run=True):
+        result = await console_unix_host.logout()
+    assert instances == []
+    assert result.status is Status.NotRun
+    assert "[DRY RUN] logout(" in result.msg
+    # An SDK dry run announces itself, not only hands back the decline.
+    assert logged == [result.msg]
+
+
+class _ScriptedLine:
+    """A telnet reader/writer pair: the line answers each write per a script.
+
+    ``script`` maps a written byte string to the reply the line gives once
+    that string has been written; unscripted writes get no reply.
+    """
+
+    def __init__(self, script: "list[tuple[bytes, bytes]]"):
+        self.script = list(script)
+        self.written = b""
+        self.transport = None
+        self._wake = asyncio.Event()
+
+    # writer half
+    def write(self, data: bytes) -> None:
+        self.written += data
+        self._wake.set()
+
+    def iac(self, *args) -> None:
+        pass
+
+    async def wait_for(self, **kw):
+        return None
+
+    def is_closing(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        pass
+
+    # reader half
+    async def read(self, n: int = 4096) -> bytes:
+        while True:
+            for i, (trigger, reply) in enumerate(self.script):
+                if self.written.endswith(trigger):
+                    del self.script[i]
+                    return reply
+            self._wake.clear()
+            await self._wake.wait()
+
+
+@pytest.mark.asyncio
+async def test_logout_with_the_real_client_resets_a_logged_in_line_without_the_password(
+    monkeypatch,
+):
+    """End to end over the real ConsoleClient: a line left at a shell prompt
+    is reset with Ctrl-C/Ctrl-D/CR, and the password is never typed."""
+    from otto.host.connections import TelnetTarget
+    from otto.host.options import ConsoleOptions
+
+    h = UnixHost(
+        ip="10.0.0.2",
+        element=Element("test2"),
+        creds=[Cred(login="test", password="Password1")],
+        log=LogMode.QUIET,
+        valid_terms=["console"],
+        term="console",
+        console_options=ConsoleOptions(server="test1", port=4001, settle=0, login_timeout=0.5),
+    )
+    monkeypatch.setattr(
+        h._connections, "console_target", AsyncMock(return_value=TelnetTarget("localhost", 4001))
+    )
+    line = _ScriptedLine(
+        [(b"\r", b"test@test2:~$ "), (b"\x03\x04\r", b"\r\nlogout\r\ntest2 login: ")]
+    )
+
+    async def fake_open(host, **kw):
+        return line, line
+
+    monkeypatch.setattr("otto.host.console.open_telnet_connection", fake_open)
+    result = await h.logout()
+    assert b"Password1" not in line.written
+    assert line.written == b"\r\x03\x04\r"
+    assert result.value == "test2: console test1:4001 reset: login prompt restored"
+
+
+# ---------------------------------------------------------------------------
+# Console term: the connection probe (verify_connection / is_reachable)
+# ---------------------------------------------------------------------------
+
+
+class _DeviceBehindConsole:
+    """A device on a serial line behind a console server that stays up.
+
+    ``up`` says whether a fresh client would find the device's login prompt.
+    Every client built through ``otto.host.console.ConsoleClient`` is recorded;
+    its ``connect()`` fails the way a real one does when the device is not at
+    a prompt (booting, or powered down) while the server still answers.
+    """
+
+    def __init__(self) -> None:
+        self.up = True
+        self.clients: list[SimpleNamespace] = []
+        self.events: list[str] = []
+
+    def build(self, **kw):
+        device = self
+        n = len(self.clients)
+
+        class _Client:
+            alive = False
+
+            async def connect(self, interactive=False):
+                device.events.append(f"dial {n}")
+                if not device.up:
+                    from otto.host.errors import ConsoleError
+
+                    raise ConsoleError("test2: console test1:4001 never showed a login prompt")
+                self.alive = True
+
+            async def close(self):
+                device.events.append(f"close {n}")
+                self.alive = False
+
+            def abandon(self):
+                device.events.append(f"abandon {n}")
+                self.alive = False
+
+        client = _Client()
+        self.clients.append(client)
+        return client
+
+
+@pytest.fixture
+def device_behind_console(monkeypatch) -> _DeviceBehindConsole:
+    device = _DeviceBehindConsole()
+    monkeypatch.setattr("otto.host.console.ConsoleClient", device.build)
+    return device
+
+
+@pytest.mark.asyncio
+async def test_the_console_probe_dials_the_console_never_telnet_or_ssh(
+    monkeypatch, console_unix_host
+):
+    """On a console term the probe dials the console server, never the
+    device's own telnet port (nor ssh) — the headline case is a device with
+    no network at all."""
+    mgr = console_unix_host._connections
+    console = AsyncMock()
+    monkeypatch.setattr(mgr, "console", console)
+    monkeypatch.setattr(mgr, "telnet", AsyncMock(side_effect=AssertionError("dialled telnet")))
+    monkeypatch.setattr(mgr, "ssh", AsyncMock(side_effect=AssertionError("dialled ssh")))
+
+    result = await console_unix_host.verify_connection()
+
+    assert result.status is Status.Success, result.value
+    console.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_each_console_probe_closes_the_cached_client_and_dials_fresh(
+    console_unix_host, device_behind_console
+):
+    """The TCP link to the console server outlives the device, so an alive
+    cached client says nothing about the device: every probe closes it and
+    only a fresh login counts as reachable."""
+    device = device_behind_console
+
+    assert await console_unix_host.is_reachable()
+    device.up = False
+    assert not await console_unix_host.is_reachable(), "a cached client counted as up"
+
+    assert device.events == ["dial 0", "close 0", "dial 1", "close 1"]
+
+
+@pytest.mark.asyncio
+async def test_reboot_wait_on_a_console_sees_the_device_go_down_and_come_back(
+    monkeypatch, console_unix_host, device_behind_console
+):
+    """``reboot(wait=True)`` replaces the connection manager without closing
+    it. The replaced manager's client is abandoned at once (it would hold the
+    single-client line and make every fresh dial busy), and each poll dials
+    fresh, so the down phase observes the reboot instead of a cached client."""
+    from otto.host.connections import ConnectionManager, TelnetTarget
+
+    async def console_target(_self):
+        return TelnetTarget("localhost", 4001)
+
+    # The rebuilt manager must dial the same fake line as the fixture's one.
+    monkeypatch.setattr(ConnectionManager, "console_target", console_target)
+    device = device_behind_console
+    await console_unix_host._connections.console()  # otto's session holds the line
+    polls: list[bool] = []
+    real_is_reachable = console_unix_host.is_reachable
+
+    async def soft_reboot():
+        device.up = False
+        return Result(Status.Success)
+
+    async def is_reachable(timeout: float = 10.0) -> bool:
+        reachable = await real_is_reachable(timeout)
+        polls.append(reachable)
+        if len(polls) == 2:  # booted: the login prompt is back from the next dial on
+            device.up = True
+        return reachable
+
+    monkeypatch.setattr(console_unix_host, "_soft_reboot", soft_reboot)
+    monkeypatch.setattr(console_unix_host, "is_reachable", is_reachable)
+    monkeypatch.setattr(console_unix_host, "_confirm_recovered", AsyncMock(return_value=True))
+
+    result = await console_unix_host.reboot(wait=True, timeout=5.0, poll_interval=0.01)
+
+    assert result.status is Status.Success, result.msg
+    assert device.events[:2] == ["dial 0", "abandon 0"]
+    assert polls == [False, False, True]
+    # Every poll is a fresh dial; a failed one is torn down before the next.
+    assert device.events[2:] == ["dial 1", "close 1", "dial 2", "close 2", "dial 3"]
+
+
+def test_rebuild_connections_releases_a_cached_console_line(console_unix_host):
+    """Dropping the manager must not strand its console client on the line."""
+    released: list[str] = []
+    cached = SimpleNamespace(abandon=lambda: released.append("abandon"))
+    old = console_unix_host._connections
+    old._console_conn = cached
+
+    console_unix_host.rebuild_connections()
+
+    assert released == ["abandon"]
+    assert old._console_conn is None
+    assert console_unix_host._connections is not old

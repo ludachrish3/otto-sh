@@ -8,11 +8,23 @@ bundle once instead of copy-pasting it into every entry.
 
 Built-in profiles registered at startup:
 
-| `os_type` | Host class | Notes |
-|----------|------------|-------|
-| `unix` | `UnixHost` | Default when `os_type` is absent. |
-| `embedded` | `EmbeddedHost` | OS-agnostic bare-metal/RTOS.  Fails loud without a `command_frame`. |
-| `zephyr` | `ZephyrHost` | Concrete Zephyr subclass; supplies `ZephyrFrame` and `os_name: "Zephyr"`. |
+| `os_type` | Host class | Console `login_prompt` / `password_prompt` | Notes |
+|----------|------------|-----------------|-------|
+| `unix` | `UnixHost` | `login: ?$` / `[Pp]assword: ?$` | Default when `os_type` is absent. |
+| `busybox` | `UnixHost` | `login: ?$` / `[Pp]assword: ?$` | A BusyBox userland: `ash` framing, no bash, the `shell` transfer first. |
+| `embedded` | `EmbeddedHost` | none | OS-agnostic bare-metal/RTOS.  Fails loud without a `command_frame`. |
+| `zephyr` | `ZephyrHost` | none | Concrete Zephyr subclass; supplies `ZephyrFrame` and `os_name: "Zephyr"`. |
+
+The prompt patterns are what the `console` term's login matches
+({ref}`console-term`): regexes against the end of what the line shows. A
+host's own `console_options.login_prompt` / `password_prompt` win over its
+profile's. The two embedded profiles carry none because an RTOS shell has
+no login. A profile of your own carries none either unless its code
+registration passes them
+({doc}`../cookbook/extending/custom-host-classes`) — a data profile cannot
+— so a console host that logs in under such a profile needs them in its
+`console_options`, or its first connect fails with `no login prompt
+pattern`.
 
 Profiles are authorable two ways, both feeding the same registry:
 

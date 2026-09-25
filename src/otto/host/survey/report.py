@@ -13,8 +13,7 @@ from rich import box
 from rich.table import Table
 from rich.text import Text
 
-from ..connections import TERM_BACKENDS
-from ..transfer.registry import TRANSFER_BACKENDS
+from .engine import dialling_terms
 
 if TYPE_CHECKING:
     from ..host import BaseHost
@@ -64,7 +63,7 @@ def footnote_lines(survey: "Survey") -> list[Text]:
 
 
 def _kind_of(protocol: str) -> str:
-    return "term" if protocol in TERM_BACKENDS.names() else "transfer"
+    return "term" if protocol in dialling_terms() else "transfer"
 
 
 def _declared_but_dead(declared: set[str], survey: "Survey") -> list[DriftRow]:
@@ -125,11 +124,29 @@ def menu_pin(host_terms: list[str], host_transfers: list[str], survey: "Survey")
     Only the menu lines the host's menus actually differ from are emitted.
     """
     supported = set(survey.supported)
-    terms = [n for n in TERM_BACKENDS.names() if n in supported]
-    transfers = [n for n in TRANSFER_BACKENDS.names() if n in supported]
+    dialling = dialling_terms()
+    terms = [n for n in dialling if n in supported]
+    # A non-dialling term (e.g. console) never appears in `terms` -- it has
+    # no port on the host's own address to survey -- so it is compared and
+    # re-emitted separately from the dialling subset, never dropped from a
+    # pin just because the survey has no way to confirm it by dialling.
+    host_dialling_terms = [n for n in host_terms if n in dialling]
+    host_nondialling_terms = [n for n in host_terms if n not in dialling]
+    # Built from the supported verdict rows whose own `kind` is "transfer",
+    # never from a name test over those rows: "console" is both a
+    # non-dialling TERM (a unix console-term host carries a supported
+    # own-session row named "console", kind "term") and a REGISTERED
+    # TRANSFER backend (embedded-only), so `v.protocol in
+    # TRANSFER_BACKENDS.names()` would read that term row as a transfer and
+    # fire a false valid_transfers pin. `_kind_of` has the same flaw: it
+    # reads "transfer" for anything that is not a DIALLING term. Each row's
+    # own `kind` was set once, correctly, when its Candidate was built.
+    transfers = sorted(
+        {v.protocol for v in survey.verdicts if v.state == "supported" and v.kind == "transfer"}
+    )
     lines: list[str] = []
-    if set(terms) != set(host_terms):
-        lines.append(f"valid_terms = {json.dumps(terms)}")
+    if set(terms) != set(host_dialling_terms):
+        lines.append(f"valid_terms = {json.dumps(terms + host_nondialling_terms)}")
     if set(transfers) != set(host_transfers):
         lines.append(f"valid_transfers = {json.dumps(transfers)}")
     for proto in sorted(survey.working_ports):

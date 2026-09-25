@@ -162,7 +162,7 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
     Read by ``tests/conformance/conftest.py``'s ``pytest_generate_tests``,
     which parametrizes ``resolved_cell`` over the drawn cells this answers
     True for. Today it narrows nothing in the hermetic venue (all 8 cells are
-    a runner filesystem) and excludes exactly three of the bed's 51:
+    a runner filesystem) and excludes exactly three of the bed's 55:
     ``zephyr37_nofs``, ``zephyr37_llext`` and ``zephyr44_llext``, which
     declare ``filesystem: "none"``.
 
@@ -179,7 +179,7 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
     NOT A SKIP AND NOT AN EXCLUSION FROM THE SPACE, and the difference is the
     point. A skip inside a drawn cell reports success for a contract nobody
     ran. Dropping the cell from the space is worse than it looks: a Zephyr
-    host reports a single ``(telnet, console)`` pair, so its one cell IS the
+    host reports a single ``(term, console)`` pair, so its one cell IS the
     guest, and dropping it would take that guest's exec and timeout coverage
     with it -- paying for one inapplicable contract with two applicable ones.
     A contract stating what it covers is not a run pretending it covered

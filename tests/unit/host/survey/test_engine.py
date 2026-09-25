@@ -10,11 +10,12 @@ from otto.host.element import Element
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.login_proxy import Cred
-from otto.host.options import FtpOptions, SnmpOptions, SshOptions, TelnetOptions
+from otto.host.options import ConsoleOptions, FtpOptions, SnmpOptions, SshOptions, TelnetOptions
 from otto.host.survey import engine
 from otto.host.survey.dial import DialOutcome
 from otto.host.survey.inventory import Inventory, Listener, parse_inventory
 from otto.host.survey.login import LoginOutcome
+from otto.host.survey.report import menu_pin
 from otto.host.survey.sweep import SweepRow
 from otto.host.survey.verdict import ProtocolVerdict
 from otto.host.unix_host import UnixHost
@@ -136,6 +137,120 @@ async def test_unix_declared_ports_get_login_inventory_and_session_rows(seams):
     assert "console" in s.not_applicable
     assert s.supported == ["ftp", "nc", "scp", "sftp", "shell", "snmp", "ssh"]
     assert s.working_ports == {}
+
+
+@pytest.mark.asyncio
+async def test_a_term_with_dials_host_false_produces_no_candidate_dial_or_login(seams):
+    """A term not reached by dialling the host (like console) is invisible to the survey.
+
+    Registers a throwaway term backend with ``dials_host=False`` on the unix
+    family and proves ``run_survey`` manufactures nothing for it: no
+    candidate (so no declared port), no dial, no login attempt, and no row.
+    """
+    from otto.host import connections as conn_mod
+    from otto.host.connections import ConnectionManager, register_term_backend
+
+    class _Quiet(ConnectionManager):
+        pass
+
+    register_term_backend(
+        "quiet-console",
+        _Quiet,
+        host_families=frozenset({"unix"}),
+        authenticates=True,
+        dials_host=False,
+    )
+    try:
+        host = _unix(
+            ssh_options=SshOptions(port=22),
+            ftp_options=FtpOptions(port=21),
+            telnet_options=TelnetOptions(port=23),
+        )
+        s = await engine.run_survey(host)
+    finally:
+        conn_mod.TERM_BACKENDS.unregister("quiet-console")
+
+    assert "quiet-console" not in s.declared_ports
+    assert not any(v.protocol == "quiet-console" for v in s.verdicts)
+    assert not any(protocol == "quiet-console" for protocol, _port, _login in seams["term"])
+
+
+@pytest.mark.asyncio
+async def test_a_console_own_term_still_opens_its_session_with_no_dial_and_no_port_row(seams):
+    """``dials_host=False`` excludes a term from the candidate walk -- but not from OWNING
+
+    the session when it is the host's own term. Before this, a console-term
+    host could never open its own session at all: no candidate meant
+    ``declared_logins`` never matched ``c.protocol == self.host.term``, so
+    ``own_ok`` stayed False and the session/inventory tiers never ran.
+    """
+    host = _unix(
+        term="console",
+        valid_terms=["console"],
+        console_options=ConsoleOptions(server="test1", port=4001),
+    )
+    s = await engine.run_survey(host)
+    assert seams["own"] == ["console"]
+    assert "console" not in s.declared_ports
+    assert not any(v.protocol == "console" and v.tier == "dial" for v in s.verdicts)
+    row = _row(s, "console", 0)
+    assert row.state == "supported"
+    assert row.tier == "login"
+    assert seams["inventory"], "own_ok=True must still run the inventory tier"
+    assert not any("no term logged in" in f for f in s.footnotes)
+
+
+@pytest.mark.asyncio
+async def test_a_console_own_terms_row_never_becomes_a_supported_port_or_a_pin(seams):
+    """The synthetic own-term row must not leak into `_resolve` or `menu_pin`.
+
+    `console` is also a registered (embedded-only) transfer backend name, so
+    treating its own-session row like any dialled candidate would falsely
+    pin ``valid_transfers`` and a ``console_options`` port fragment for a
+    port (0) that was never really surveyed.
+    """
+    host = _unix(
+        term="console",
+        valid_terms=["console"],
+        # sftp needs ssh regardless of term, so it never becomes "supported"
+        # under a console term -- leaving it in valid_transfers would fire a
+        # genuine (unrelated) drift pin and mask the one this test is for.
+        valid_transfers=["scp", "ftp", "nc", "shell"],
+        console_options=ConsoleOptions(server="test1", port=4001),
+    )
+    s = await engine.run_survey(host)
+    assert "console" not in s.supported
+    assert "console" not in s.working_ports
+    row = _row(s, "console", 0)
+    assert row.state == "supported"
+    assert row.tier == "login"
+    pin = menu_pin(host.valid_terms, host.valid_transfers, s)
+    assert not any(line.startswith("valid_transfers") for line in pin)
+    assert not any(line.startswith('"console_options"') for line in pin)
+
+
+@pytest.mark.asyncio
+async def test_no_session_detail_names_a_non_dialling_own_term_that_failed(seams, monkeypatch):
+    """A non-dialling own term (console) has no candidate, so it is never in
+
+    ``self.cands`` -- append it explicitly to the tried list or a
+    console-term host's own-session failure reads as though console itself
+    was never attempted.
+    """
+
+    async def own(host, timeout, *, who=None):
+        return LoginOutcome("closed", "connection refused")
+
+    monkeypatch.setattr(engine, "_open_own_session", own)
+    host = _unix(
+        term="console",
+        valid_terms=["console"],
+        console_options=ConsoleOptions(server="test1", port=4001),
+    )
+    s = await engine.run_survey(host)
+    row = _row(s, "shell", 1)
+    assert row.state == "no-session"
+    assert row.detail == "needs a term session; tried ssh, telnet, console"
 
 
 @pytest.mark.asyncio
@@ -918,6 +1033,45 @@ async def test_embedded_sweeps_the_bounded_set_and_promotes_a_telnet_banner(monk
     assert "8023/tcp unknown (no banner)" in s.other_listeners
     assert sorted(calls["snmp"]) == [161, 1161]
     assert s.working_ports == {}  # the declared console port won
+
+
+@pytest.mark.asyncio
+async def test_an_embedded_console_transfer_row_stays_supported(monkeypatch):
+    """Only a console TERM row is kept out of ``supported``; the TRANSFER row is not.
+
+    ``console`` names both a (non-dialling) term backend and the embedded
+    transfer backend. The resolver's skip is for the term's own-session row
+    only -- an embedded host's supported console transfer must still land in
+    ``survey.supported``, or the report reads a working transfer as absent.
+    """
+
+    async def telnet_ok():
+        return object()
+
+    async def sweep(ports, dial, *, concurrency):
+        return [SweepRow(p, DialOutcome(state="timeout")) for p in ports]
+
+    async def snmp(**kw):
+        return ProtocolVerdict(
+            protocol="snmp",
+            kind="monitor",
+            port=kw["port"],
+            state="timeout",
+            tier="dial",
+            vantage=kw["vantage"],
+            detail="no reply",
+        )
+
+    host = _embedded(telnet_options=TelnetOptions(port=2325))
+    monkeypatch.setattr(type(host.connections), "telnet", lambda self: telnet_ok())
+    monkeypatch.setattr(engine, "sweep_ports", sweep)
+    monkeypatch.setattr(engine, "check_snmp", snmp)
+    s = await engine.run_survey(host)
+    row = _row(s, "console", 2325)
+    assert (row.kind, row.state) == ("transfer", "supported")
+    assert "console" in s.supported
+    pin = menu_pin(host.valid_terms, host.valid_transfers, s)
+    assert not any(line.startswith("valid_transfers") for line in pin)
 
 
 @pytest.mark.asyncio

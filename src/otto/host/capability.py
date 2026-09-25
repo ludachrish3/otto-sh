@@ -55,6 +55,36 @@ TRANSFER_RESOLVER = CapabilityResolver("transfer")
 IMPAIRER_RESOLVER = CapabilityResolver("impairer")
 
 
+_CONSOLE_NC_WHY = (
+    "nc needs a second command channel beside its remote listener, and a "
+    "single-client console has only one"
+)
+
+
+def console_transfer_menu(host: str, menu: Sequence[str], pin: str | None) -> list[str]:
+    """Return the transfer menu a console-term host resolves from: *menu* without nc.
+
+    A console serves one client; nc's remote ``nc -l`` holds that one session
+    while its control commands must run beside it. An explicit nc *pin*, or a
+    menu with nothing but nc, is therefore a config error (``ValueError``)
+    naming *host*. The one home for this rule: the lab model resolves a
+    console host's transfer from it, and so does a ``--term console``
+    override (:func:`otto.config.fleet._apply_option_overrides`).
+    """
+    if pin == "nc":
+        raise ValueError(
+            f"{host}: transfer 'nc' cannot run on a console term: {_CONSOLE_NC_WHY}; "
+            f"pin shell, scp, sftp or ftp"
+        )
+    usable = [t for t in menu if t != "nc"]
+    if menu and not usable:
+        raise ValueError(
+            f"{host}: valid_transfers {list(menu)} leaves a console term no transfer: "
+            f"{_CONSOLE_NC_WHY}; add shell, scp, sftp or ftp"
+        )
+    return usable
+
+
 def select_preferences(
     table: dict[str, dict[str, list[str] | dict[str, Any]]], host_id: str
 ) -> dict[str, list[str]]:

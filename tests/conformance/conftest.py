@@ -74,8 +74,9 @@ _CONFORMANCE_ROOT = Path(__file__).parent
 # Cheap enough to sit on the collection path of every path-less run in the
 # repo: measured at 0.01s for the hermetic venue's 8 cells, because
 # `_cells.resolve_space` deliberately starts no daemon and fetches nothing at
-# resolve time. The BED venue's 51 cells measure 0.06s on a cold interpreter
-# and 0.011s warm — RE-MEASURED, and the host-build count in this comment was
+# resolve time. The BED venue's 55 cells resolve in 0.018s once imported
+# (re-measured after the console rows; 0.06s cold and 0.011s warm when the
+# space was 51) — RE-MEASURED, and the host-build count in this comment was
 # wrong before: it is 65 builds through otto's factory over 16 distinct
 # elements, not nineteen. Three questions are asked per element (its kind, its
 # scratch directory and its vocabulary, each of which builds the host to read
@@ -223,7 +224,7 @@ def pytest_generate_tests(metafunc):
     inside a drawn cell reports success for a contract nobody ran, which is
     the failure this suite exists to make impossible; and dropping the cell
     from the space would delete the guest entirely, since a Zephyr host
-    reports a single ``(telnet, console)`` pair and so has exactly one cell.
+    reports a single ``(term, console)`` pair and so has exactly one cell.
     What a domain says is what the contract COVERS, which is a different
     statement from what a run MEASURED, and the run's own draw line still
     names every cell it drew.
@@ -233,7 +234,7 @@ def pytest_generate_tests(metafunc):
     set is to mark the item SKIPPED, which would put back exactly the silent
     green this whole venue is built against -- and the failure would be
     invisible in a report that already contains the draw line. Unreachable
-    from real data (of the 51 bed cells, 3 are outside the transfer domain and
+    from real data (of the 55 bed cells, 3 are outside the transfer domain and
     7 outside the timeout one; 0 of the 8 hermetic cells is outside either), so
     it is exercised by injection in
     ``tests/unit/test_conformance_bed.py`` rather than left as a check nothing
@@ -351,8 +352,8 @@ def _single_client_console(request: pytest.FixtureRequest, tmp_path_factory):
     every contract here opens and closes inside the body, well within it.
 
     A no-op for every other cell. That is the whole point of a lock rather than
-    an ``-n0`` lane: the bed venue's 51 cells include 7 single-client console
-    ones, and only those seven pay for the serialization. Full one-group
+    an ``-n0`` lane: the bed venue's 55 cells include 11 single-client console
+    ones, and only those eleven pay for the serialization. Full one-group
     serialization of the bed measured >450s against the Makefile's 240s cap
     (``tests/integration/host/conftest.py``'s grouping note), which is the
     price this does not pay.
@@ -425,10 +426,12 @@ def pytest_runtest_call(item):
         pytest.fail(
             f"single-client console serialization is NOT in effect for "
             f"{cell_label(resolved)}: {unhonored}.\n"
-            "Two clients on one Zephyr console is not a flake -- when a send fails at "
-            "accept time the guest re-initialises its telnet backend and then refuses "
-            "every connection until `make qemu-restart` (issue #260; two guests taken "
-            "down that way in one day).\n"
+            "A single-client console (a Zephyr guest's, or any host on the `console` "
+            "term) admits one client; a second one is refused or collides. On a Zephyr "
+            "console it is not a flake -- when a send fails at accept time the guest "
+            "re-initialises its telnet backend and then refuses every connection until "
+            "`make qemu-restart` (issue #260; two guests taken down that way in one "
+            "day).\n"
             "Cause: tests/conformance/conftest.py's autouse `_single_client_console` "
             "fixture must wrap every item whose cell opens one. If it was narrowed or "
             "removed, restore it rather than silencing this check.",

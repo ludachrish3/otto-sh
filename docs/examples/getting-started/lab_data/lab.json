@@ -77,8 +77,9 @@
                 {
                     "ip": "10.10.200.12",
                     "os_type": "unix",
-                    "valid_terms": ["telnet", "ssh"],
+                    "valid_terms": ["telnet", "ssh", "console"],
                     "valid_transfers": ["nc", "scp", "sftp", "ftp"],
+                    "console_options": {"server": "test1", "port": 4001},
                     "is_virtual": true,
                     "site": "lab-a",
                     "rack": 1,
@@ -220,7 +221,8 @@
                     "filesystem": "none",
                     "max_filename_len": 32,
                     "is_virtual": true,
-                    "telnet_options": {"port": 2325, "write_chunk_size": 64, "write_chunk_delay": 0.015},
+                    "valid_terms": ["console"],
+                    "console_options": {"server": "test4", "port": 2325, "write_chunk_size": 64, "write_chunk_delay": 0.015},
                     "hop": "test4"
                 }
             ],
@@ -290,7 +292,8 @@
                     "loader": "llext-hex",
                     "max_filename_len": 32,
                     "is_virtual": true,
-                    "telnet_options": {"port": 2323, "write_chunk_size": 64, "write_chunk_delay": 0.015},
+                    "valid_terms": ["console"],
+                    "console_options": {"server": "test4", "port": 2323, "write_chunk_size": 64, "write_chunk_delay": 0.015},
                     "toolchain": {
                         "sysroot": "/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi",
                         "gcov": "bin/arm-zephyr-eabi-gcov",
@@ -316,7 +319,8 @@
                     "loader": "llext-hex",
                     "max_filename_len": 32,
                     "is_virtual": true,
-                    "telnet_options": {"port": 2324, "write_chunk_size": 64, "write_chunk_delay": 0.015},
+                    "valid_terms": ["console"],
+                    "console_options": {"server": "test4", "port": 2324, "write_chunk_size": 64, "write_chunk_delay": 0.015},
                     "toolchain": {
                         "sysroot": "/home/vagrant/zephyr-sdk-1.0.1/gnu/arm-zephyr-eabi",
                         "gcov": "bin/arm-zephyr-eabi-gcov",
@@ -482,8 +486,9 @@
                     "os_type": "unix",
                     "board": "qemu",
                     "sw_version": "1.35.0",
-                    "valid_terms": ["telnet", "ssh"],
+                    "valid_terms": ["telnet", "ssh", "console"],
                     "valid_transfers": ["shell", "nc"],
+                    "console_options": {"server": "test1", "port": 2450},
                     "is_virtual": true,
                     "hop": "test1",
                     "resources": ["bb1350-slot"],

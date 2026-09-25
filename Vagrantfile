@@ -526,6 +526,11 @@ Vagrant.configure("2") do |config|
             provision_docker(node, name)
             provision_mysql(node, name)
 
+            # test2's serial console, served by ser2net on test1 over a socat
+            # null-modem across the lab network (see provision_console_host).
+            provision_console_server(node) if name == "test1"
+            provision_console_host(node) if name == "test2"
+
             # test1 additionally hosts the BusyBox QEMU bed (spec
             # 2026-08-20-busybox-bed-and-tier-migration-design.md): five
             # per-milestone-version guests behind this VM as hop. TCG
@@ -1179,13 +1184,16 @@ EOF
         # builds + runs the stock *base image* the extension loads into. The split
         # mirrors the x86 beds (this VM runs images; the dev VM builds + reports).
         #
-        # ARM_INSTANCES columns: id | zver | zsdk | zephyr-board | build-dir | telnet-addr | port | pport | sample | overlay-config
+        # ARM_INSTANCES columns: id | zver | zsdk | zephyr-board | build-dir | lo-addr | port | pport | sample | overlay-config
         # `pport` is the raw-TCP *protocol* serial port (QEMU's second -serial,
         # which lands on uart1 = the zephyr,uart-pipe device); `-` = console
         # only. Raw tcp:, not telnet:, because protocol frames are binary and
         # telnet IAC-escapes 0xFF. Added for the basecamp LLEXT product
         # (todo/testbed-request.md); ports mirror the console's (23xx -> 24xx).
-        # NB: telnet-addr must be a *host* address — not the network/broadcast of a
+        # `lo-addr` no longer names the console listener (UART0's telnet now
+        # binds 127.0.0.1 — see the unit step below); it carries only the lo
+        # alias the raw uart1 `tcp:` protocol port (`pport`) binds to.
+        # NB: lo-addr must be a *host* address — not the network/broadcast of a
         # /30 owned by a zeth-* TAP. Those route to the (linkdown) TAP rather than
         # the /32 the unit adds to lo, so TCP connects fail "Network unreachable".
         # The cov /30 is 192.0.2.32/30 (.33/.34 = cov/cov44; .35 = its broadcast),
@@ -1256,11 +1264,10 @@ ARM_INSTANCES
                 exit 1
             fi
 
-            # QEMU bridges each guest's UART0 to a telnet listener. otto reaches
-            # it via the test4 hop, then telnets <addr>:<port> (ports use 23xx
-            # because 23 is privileged + already taken). Each listen address lives
-            # on this VM's loopback (added by ExecStartPre) so the hop's in-VM
-            # telnet resolves it; nothing outside this VM needs the address.
+            # UART0 → telnet on 127.0.0.1:<port> (the console term tunnels into
+            # this VM and forwards localhost:port); the lo alias ${addr} remains
+            # for the raw uart1 protocol port (ports use 23xx because 23 is
+            # privileged + already taken).
             while IFS='|' read -r id zver zsdk board build_dir addr port pport sample overlay; do
                 [ -z "$id" ] && continue
 
@@ -1277,17 +1284,18 @@ ARM_INSTANCES
                 cat > /home/vagrant/run-zephyr-qemu-${id}.sh <<EOF
 #!/usr/bin/env bash
 # Launch the ${id} instance (zephyr ${zver}, ${board}) under QEMU, bridging UART
-# to a telnet listener on ${addr}:${port}. Serial-telnet (no NIC): the mps2
-# LAN9118 can't receive a multi-frame load_hex line, and a serial console needs
-# no in-guest networking anyway. See tests/repo3/docs/feasibility.md
-# ("pivot to serial-telnet"). A second -serial (raw tcp, binary-safe) bridges
-# uart1 for extension protocols where the instance table defines a pport.
+# to a telnet listener on 127.0.0.1:${port} (the console term tunnels into this
+# VM and forwards localhost:port). Serial-telnet (no NIC): the mps2 LAN9118
+# can't receive a multi-frame load_hex line, and a serial console needs no
+# in-guest networking anyway. See tests/repo3/docs/feasibility.md ("pivot to
+# serial-telnet"). A second -serial (raw tcp, binary-safe) bridges uart1 for
+# extension protocols where the instance table defines a pport.
 set -euo pipefail
 exec ${QEMU_ARM} \\
     -machine mps2-an385 \\
     -display none \\
     -monitor none \\
-    -serial telnet:${addr}:${port},server,nowait \\
+    -serial telnet:127.0.0.1:${port},server,nowait \\
     ${proto_serial}\\
     -kernel ${build_dir}/zephyr/zephyr.elf
 EOF
@@ -1684,6 +1692,156 @@ SQL
         SHELL
     end
 
+    # test2's serial console, as a virtual null-modem built inside the guests.
+    # VirtualBox on this arm64 host exposes no UART to the aarch64 guests (its
+    # UART is an x86 16550A at I/O 0x3f8, and the guests have no ISA bus), so
+    # the "cable" is socat over the lab network: test2 (the console HOST)
+    # holds a pty at /dev/ttyV0 with a getty on it and listens for its far end
+    # on 10.10.200.12:4102; test1 (the console SERVER) dials that listener,
+    # holds its own /dev/ttyV0, and serves it with ser2net on port 4001. otto
+    # sees exactly what a real UART behind a console server looks like: the
+    # lab data says `console_options: {"server": "test1", "port": 4001}`.
+    #
+    # The listener binds the lab address only, never the NAT or data-plane
+    # NICs. No `fork`: a serial line has one peer. (With `fork` the pty is
+    # opened once in the parent and each connection's child unlinks
+    # /dev/ttyV0 on exit, so the next getty respawn waits for a link that
+    # never comes back.) Without it socat exits when test1 disconnects, its
+    # unit restarts and makes a new pty and link, and the getty follows. A
+    # logged-in console session dies with the link; that is acceptable here.
+    #
+    # Both TCP ends carry keepalives. An idle console sends nothing, so a
+    # hard-stopped peer (an aborted VM, `vagrant halt -f`) never produces a
+    # RST: the surviving socat would hold a dead socket forever and the
+    # console would go silent. With keepidle=10/keepintvl=5/keepcnt=3 the
+    # peer is declared dead ~25 s into the silence, socat exits, and its
+    # unit's restart recovers.
+    #
+    # The getty is a full instance unit, not the serial-getty@ template: the
+    # template BindsTo dev-%i.device, and a socat pty link is no udev device,
+    # so dev-ttyV0.device would never appear and the getty would never start.
+    # It survives socat restarts by a Restart= policy rather than BindsTo: a
+    # socat restart replaces the pty, agetty exits on the hangup, and
+    # Restart=always brings it back once ExecStartPre sees the new link.
+    # (BindsTo would stop the getty with socat, and nothing would restart it
+    # after socat's own automatic restart.)
+    def provision_console_host(vm)
+        vm.vm.provision "shell", name: "console host", keep_color: true, inline: <<-SHELL
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install socat
+
+            cat > /etc/systemd/system/console-link.service <<'EOF'
+[Unit]
+Description=test2 serial console: pty /dev/ttyV0 listening for test1 on 10.10.200.12:4102
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+ExecStartPre=-/bin/rm -f /dev/ttyV0
+ExecStart=/usr/bin/socat -d -d pty,raw,echo=0,link=/dev/ttyV0 tcp-listen:4102,bind=10.10.200.12,reuseaddr,keepalive,keepidle=10,keepintvl=5,keepcnt=3
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+            cat > /etc/systemd/system/serial-getty@ttyV0.service <<'EOF'
+[Unit]
+Description=Serial getty on the socat console pty /dev/ttyV0
+Wants=console-link.service
+After=console-link.service
+After=systemd-user-sessions.service
+Before=getty.target
+Conflicts=rescue.service
+Before=rescue.service
+StartLimitIntervalSec=0
+
+[Service]
+ExecStartPre=/usr/bin/timeout 10 /bin/sh -c 'until [ -e /dev/ttyV0 ]; do sleep 0.2; done'
+ExecStart=-/sbin/agetty -L 115200 ttyV0 vt220
+Type=idle
+Restart=always
+RestartSec=1
+UtmpIdentifier=ttyV0
+KillMode=process
+IgnoreSIGPIPE=no
+SendSIGHUP=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+            systemctl daemon-reload
+            systemctl enable console-link.service
+            systemctl enable serial-getty@ttyV0.service
+            systemctl restart console-link.service
+            systemctl restart serial-getty@ttyV0.service
+        SHELL
+    end
+
+    # test1 serves test2's serial console over telnet (see
+    # provision_console_host for the null-modem). The socat unit dials test2's
+    # listener; test2 may boot after test1 (or be halted), so a failed dial
+    # just exits and Restart=always tries again. ser2net serves the pty on
+    # port 4001, bound on every address so both console dial modes ("ssh"
+    # forwards localhost:4001 from inside test1, "direct" dials
+    # 10.10.200.11:4001) meet one listener. max-connections 1: a serial line
+    # is single-client.
+    def provision_console_server(vm)
+        vm.vm.provision "shell", name: "console server", keep_color: true, inline: <<-SHELL
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            # force-conf*: /etc/ser2net.yaml is a dpkg conffile we overwrite, and
+            # DEBIAN_FRONTEND does not cover dpkg's conffile prompt, so a later
+            # ser2net upgrade would otherwise stop there and abort the provision.
+            apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install socat ser2net
+
+            cat > /etc/systemd/system/console-link.service <<'EOF'
+[Unit]
+Description=test2 serial console, far end: pty /dev/ttyV0 dialled to test2 at 10.10.200.12:4102
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+ExecStartPre=-/bin/rm -f /dev/ttyV0
+ExecStart=/usr/bin/socat pty,raw,echo=0,link=/dev/ttyV0 tcp:10.10.200.12:4102,keepalive,keepidle=10,keepintvl=5,keepcnt=3
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+            cat > /etc/ser2net.yaml <<'EOF'
+%YAML 1.1
+---
+connection: &test2_console
+    accepter: telnet(rfc2217),tcp,4001
+    connector: serialdev,/dev/ttyV0,115200n81,local
+    options:
+      kickolduser: false
+      max-connections: 1
+EOF
+
+            mkdir -p /etc/systemd/system/ser2net.service.d
+            cat > /etc/systemd/system/ser2net.service.d/console-link.conf <<'EOF'
+[Unit]
+Wants=console-link.service
+After=console-link.service
+EOF
+
+            systemctl daemon-reload
+            systemctl enable console-link.service
+            systemctl enable ser2net
+            systemctl restart console-link.service
+            systemctl restart ser2net
+        SHELL
+    end
+
     # BusyBox QEMU bed on test1 (spec 2026-08-20-busybox-bed-and-tier-
     # migration-design.md). Five guests, one per pinned milestone version,
     # each a tiny x86 initramfs whose userland IS the pinned artifact.
@@ -1835,9 +1993,9 @@ EOF
                 --dropbear "$BED/dropbear" --dropbear-host-key "$BED/dropbear_rsa_host_key" \
                 --emit-changed "$BED/changed.txt"
 
-            # version:guest_ip:tap_ip:tap_name:sshd — mirrors GUEST_TABLE in
-            # scripts/build_busybox_guest_images.py. Drift is caught
-            # hostless: tests/unit/scripts/test_build_busybox_guest_images.py
+            # version:guest_ip:tap_ip:tap_name:sshd:console_port — mirrors
+            # GUEST_TABLE in scripts/build_busybox_guest_images.py. Drift is
+            # caught hostless: tests/unit/scripts/test_build_busybox_guest_images.py
             # reads this file and pins this table, the enable list below and
             # the wrapper/unit templates that consume it to GUEST_TABLE. Edit
             # that table and this one in the same commit, or the guard reds.
@@ -1851,16 +2009,26 @@ EOF
             # (scripts/build_busybox_guest_images.py GUEST_TABLE); it only
             # decorates the unit Description here — the builder decides what
             # goes in the image.
-            for entry in "1.16.1:198.51.100.1:198.51.100.2:bbeth-1161:none" \
-                         "1.21.1:198.51.100.5:198.51.100.6:bbeth-1211:none" \
-                         "1.28.1:198.51.100.9:198.51.100.10:bbeth-1281:none" \
-                         "1.31.0:198.51.100.13:198.51.100.14:bbeth-1310:none" \
-                         "1.35.0:198.51.100.17:198.51.100.18:bbeth-1350:dropbear"; do
+            #
+            # console_port is "-" for a guest with no second UART, or the
+            # loopback telnet port test1 bridges ttyS1 to (GUEST_TABLE's
+            # console_port; spec 2026-09-24 §7) — bb1350's getty answers it.
+            for entry in "1.16.1:198.51.100.1:198.51.100.2:bbeth-1161:none:-" \
+                         "1.21.1:198.51.100.5:198.51.100.6:bbeth-1211:none:-" \
+                         "1.28.1:198.51.100.9:198.51.100.10:bbeth-1281:none:-" \
+                         "1.31.0:198.51.100.13:198.51.100.14:bbeth-1310:none:-" \
+                         "1.35.0:198.51.100.17:198.51.100.18:bbeth-1350:dropbear:2450"; do
                 ver=$(echo "$entry" | cut -d: -f1)
                 gip=$(echo "$entry" | cut -d: -f2)
                 hip=$(echo "$entry" | cut -d: -f3)
                 tap=$(echo "$entry" | cut -d: -f4)
                 sshd=$(echo "$entry" | cut -d: -f5)
+                cport=$(echo "$entry" | cut -d: -f6)
+
+                console_serial=""
+                if [ "$cport" != "-" ]; then
+                    console_serial="-serial telnet:127.0.0.1:${cport},server,nowait "
+                fi
 
                 cat > /home/vagrant/run-busybox-qemu-${ver}.sh <<EOF
 #!/usr/bin/env bash
@@ -1878,11 +2046,21 @@ EOF
 # created, addressed and torn down by the unit's ExecStartPre/ExecStopPost
 # (which need root; the qemu process itself runs as vagrant, which is why
 # the tap is made with 'user vagrant').
+#
+# -display none -parallel none, rather than -nographic, so ttyS0 can be put
+# explicitly on -serial mon:stdio below and stays on this unit's journal,
+# while ttyS1 is left free for the one guest with a console_port to bridge
+# to a telnet listener via \\${console_serial} (console-term, spec 2026-09-24
+# §7). -parallel none matches -nographic's own default parallel backend, so
+# the guest-visible device set is otherwise identical either way.
 set -euo pipefail
 exec qemu-system-x86_64 \\
     -m 96 \\
-    -nographic \\
+    -display none \\
+    -parallel none \\
     -no-reboot \\
+    -serial mon:stdio \\
+    ${console_serial}\\
     -kernel /home/vagrant/busybox-bed/vmlinuz \\
     -initrd /home/vagrant/busybox-bed/initramfs-${ver}.cpio.gz \\
     -append "console=ttyS0 rdinit=/init panic=-1" \\
@@ -1894,9 +2072,12 @@ EOF
                 ssh_note=""
                 if [ "$sshd" = dropbear ]; then ssh_note=", ssh ${gip}:22"; fi
 
+                console_note=""
+                if [ "$cport" != "-" ]; then console_note=", console 127.0.0.1:${cport}"; fi
+
                 cat > /etc/systemd/system/busybox-qemu-${ver}.service <<EOF
 [Unit]
-Description=BusyBox ${ver} bed guest under QEMU on ${tap} (telnet ${gip}:23${ssh_note})
+Description=BusyBox ${ver} bed guest under QEMU on ${tap} (telnet ${gip}:23${ssh_note}${console_note})
 After=network.target
 
 [Service]

@@ -341,14 +341,14 @@ the full list of `(host, term, transfer)` cells that lab permits.
 
 The rule that gives the module its reason to exist: **the axes are read off
 a host otto's own factory built, never re-derived from `lab.json`.**
-Measured against the current bed, 10 of the 19 hosts do not declare
-`valid_terms` at all — the seven Zephyr guests (which do declare
+Measured against the current bed, 7 of the 19 hosts do not declare
+`valid_terms` at all — the four x86 Zephyr guests (which do declare
 `valid_transfers: ["console"]`) and `alt1`/`alt2`/`alt3` (which declare no
 `os_type` and neither menu). The factory supplies what they omit: `alt1`
 constructs as `unix` with `['ssh', 'telnet']` and
 `['scp', 'sftp', 'ftp', 'nc']`, `zephyr37_fat` resolves to `['telnet']`. A
 resolver that read the raw JSON would therefore produce *wrong* axes for
-more than half the bed while looking perfectly correct on the nine hosts
+a third of the bed while looking perfectly correct on the twelve hosts
 that do declare theirs. Two fields are deliberate exceptions, read from the
 raw entry because the host cannot answer them: `hop`, since chain depth is a
 property of the lab rather than of any one host, and `userland_options`,
@@ -357,8 +357,8 @@ truthy.
 
 `tests/unit/test_profiles.py` guards that rule across the whole population
 rather than a sample, for a specific reason: the bed splits into two halves
-that fail in opposite directions. The ten that declare no term menu catch a
-resolver that stopped asking the factory; the nine that declare one — and
+that fail in opposite directions. The seven that declare no term menu catch a
+resolver that stopped asking the factory; the twelve that declare one — and
 whose declared list the factory returns unchanged — catch the opposite
 mistake, a resolver that overrode a menu the lab data had already stated.
 Sampling only the second half would certify nothing, because those hosts
@@ -427,15 +427,19 @@ venue's cells:
   runs and what the nightly CI job runs.
 - **Bed (`OTTO_CONFORMANCE_BED=1`).** Real hardware, built from the bed's own
   lab data by `tests/conformance/_bed.py`: the Unix VMs across
-  `{ssh, telnet} × {scp, sftp, ftp, nc}`, the five BusyBox guests over hopped
-  telnet, bb1350 also over hopped ssh (its 2012 dropbear), and the seven
-  Zephyr guests over their single-client consoles.
-  51 cells over 16 elements — 32 `bed-unix`, 12 `bed-busybox`, 7
-  `bed-zephyr`. `make conformance-bed` is its only lane; it is **dev VM
-  only** (nothing in CI runs it, and `tests/unit/test_tier_marker_invariants.py`
-  asserts that no other lane can set the knob), and it is **exhaustive by
-  default** rather than sampled, because a budget of 8 against a space of 51
-  measures roughly one cell in six and the crossing is this venue's whole claim.
+  `{ssh, telnet} × {scp, sftp, ftp, nc}` and `test2` also over its serial
+  `console` × `{scp, sftp, ftp}` (never `nc`, which a console refuses), the
+  five BusyBox guests over hopped telnet, `bb1350` also over hopped ssh (its
+  2012 dropbear) and over its serial `console` with `shell`, and the seven
+  Zephyr guests over their consoles.
+  55 cells over 16 elements — 35 `bed-unix`, 13 `bed-busybox`, 7
+  `bed-zephyr` — of which 11 open a single-client console (the seven Zephyr
+  cells, `test2`'s three and `bb1350`'s one). `make conformance-bed` is
+  its only lane; it is **dev VM only** (nothing in CI runs it, and
+  `tests/unit/test_tier_marker_invariants.py` asserts that no other lane
+  can set the knob), and it is **exhaustive by
+  default** rather than sampled, because a budget of 8 against a space of 55
+  measures roughly one cell in seven and the crossing is this venue's whole claim.
   `make conformance-bed CONFORMANCE_CELLS=N` samples off the session seed
   instead.
 
@@ -481,9 +485,10 @@ below is a real limitation of `make conformance-bed` as it ships, not a
 to-do list.
 
 **The console lock is cross-worker, not cross-session.** Zephyr's
-`shell_telnet` backend serves exactly ONE client per guest, and
-`tests/conformance/_console_safety.py` holds the repo's writer-fair console
-lock EXCLUSIVELY around every item whose drawn cell opens one. That lock is
+`shell_telnet` backend serves exactly ONE client per guest, as does every
+serial console, and `tests/conformance/_console_safety.py` holds the repo's
+writer-fair console lock EXCLUSIVELY around every item whose drawn cell
+opens one. That lock is
 taken in `tmp_path_factory.getbasetemp().parent`, which resolves to
 `/tmp/pytest-of-<user>` under `-n0` but to `/tmp/pytest-of-<user>/pytest-<N>`
 under xdist, because a worker's basetemp is a child of the controller's. The
@@ -663,7 +668,7 @@ resolving its loopback `sshd` visible rather than silent. Measured on the
 dev VM today, the hermetic space holds 8 cells and the default budget is 8 —
 so at the hermetic default the draw *is* the whole space, and sampling only
 starts to bite at a smaller budget. The bed venue is where the space is
-genuinely bigger than a budget (51 against 8), which is why its lane sets
+genuinely bigger than a budget (55 against 8), which is why its lane sets
 `OTTO_CONFORMANCE_CELLS=all` and draws every one.
 
 ### Why it is nightly, not per-push

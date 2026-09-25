@@ -81,6 +81,11 @@ class Guest:
     (spec 2026-09-23), ``"none"`` for the rest — whose ssh absence is the
     bed's standing drift-table true-negative."""
 
+    console_port: "int | None" = None
+    """``ttyS1`` is bridged by QEMU to ``-serial telnet:127.0.0.1:<port>`` on
+    ``test1`` and a getty answers it: the BusyBox row of the console-term bed
+    (spec 2026-09-24 §7). ``None`` for guests with no console."""
+
 
 # The bed identity table (spec §2/§4, re-cut 2026-08-22 when the guests moved
 # off QEMU user-mode networking onto real TAP NICs).
@@ -99,7 +104,15 @@ GUEST_TABLE = [
     Guest("1.21.1", "bb1211", "198.51.100.5", "198.51.100.6", "bbeth-1211"),
     Guest("1.28.1", "bb1281", "198.51.100.9", "198.51.100.10", "bbeth-1281"),
     Guest("1.31.0", "bb1310", "198.51.100.13", "198.51.100.14", "bbeth-1310"),
-    Guest("1.35.0", "bb1350", "198.51.100.17", "198.51.100.18", "bbeth-1350", sshd="dropbear"),
+    Guest(
+        "1.35.0",
+        "bb1350",
+        "198.51.100.17",
+        "198.51.100.18",
+        "bbeth-1350",
+        sshd="dropbear",
+        console_port=2450,
+    ),
 ]
 
 
@@ -212,11 +225,13 @@ done
 """
 
 
-def _inittab(sshd: str) -> str:
+def _inittab(sshd: str, console_port: "int | None") -> str:
     lines = [
         "::sysinit:/bin/busybox sh /etc/init.d/rcS",
         "::respawn:/bin/busybox telnetd -F -l /bin/login",
     ]
+    if console_port is not None:
+        lines.append("ttyS1::respawn:/bin/busybox getty -L 115200 ttyS1 vt100")
     if sshd == "dropbear":
         lines.append(DROPBEAR_INITTAB_LINE)
     lines += ["::restart:/bin/busybox init", "::ctrlaltdel:/bin/busybox reboot"]
@@ -241,6 +256,8 @@ def cpio_newc_entries(
     A guest whose table row says ``sshd="dropbear"`` also gets the daemon,
     its key and a respawn line; every other guest ignores the two dropbear
     inputs entirely, so offering them changes nothing about those images.
+    Likewise a guest whose row sets ``console_port`` also gets a ttyS1 getty
+    line; every other guest's inittab does not.
     """
     dirs = [
         "bin",
@@ -256,19 +273,21 @@ def cpio_newc_entries(
         "tmp",
     ]
     try:
-        sshd = next(g.sshd for g in GUEST_TABLE if g.element == hostname)
+        guest = next(g for g in GUEST_TABLE if g.element == hostname)
     except StopIteration:
         raise ValueError(
-            f"{hostname!r} is not a bed guest in GUEST_TABLE; the sshd column "
-            "decides what goes in the image"
+            f"{hostname!r} is not a bed guest in GUEST_TABLE; the sshd and "
+            "console_port columns decide what goes in the image"
         ) from None
+    sshd = guest.sshd
+    console_port = guest.console_port
     entries = [CpioEntry(d, 0o040755) for d in dirs]
     entries += [
         CpioEntry("bin/busybox", 0o100755, busybox.read_bytes()),
         CpioEntry("init", 0o120777, b"bin/busybox"),
         CpioEntry("dev/console", 0o020600, rdev=(5, 1)),
         CpioEntry("dev/null", 0o020666, rdev=(1, 3)),
-        CpioEntry("etc/inittab", 0o100644, _inittab(sshd).encode()),
+        CpioEntry("etc/inittab", 0o100644, _inittab(sshd, console_port).encode()),
         CpioEntry("etc/init.d/rcS", 0o100755, _rcs(hostname, ip).encode()),
         CpioEntry("etc/passwd", 0o100644, b"root:x:0:0:root:/root:/bin/sh\n"),
         CpioEntry("etc/shadow", 0o100600, f"root:{ROOT_SHADOW_HASH}:0:0:99999:7:::\n".encode()),

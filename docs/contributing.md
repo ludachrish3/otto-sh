@@ -19,8 +19,8 @@ network:
 | VM       | IP              | `autostart` | Purpose                                                   |
 |----------|-----------------|-------------|-----------------------------------------------------------|
 | `dev`    | `10.10.200.100` | yes         | Development VM - develop and run the test suite here      |
-| `test1`  | `10.10.200.11`  | no          | SSH + SCP test host                                       |
-| `test2`  | `10.10.200.12`  | no          | Telnet + netcat test host                                 |
+| `test1`  | `10.10.200.11`  | no          | SSH + SCP test host; console server for `test2` and `bb1350`; hop to the BusyBox guests |
+| `test2`  | `10.10.200.12`  | no          | Telnet + netcat test host, with a serial console served by `test1` |
 | `test3`  | `10.10.200.13`  | no          | Docker-capable test host                                  |
 | `zephyr` | `10.10.200.14`  | no          | Zephyr RTOS test bed (7 QEMU instances) + SSH hop to them |
 
@@ -41,10 +41,13 @@ unreachable):
 | `zephyr44_lfs`  | `192.0.2.29` | `192.0.2.28/30` | 4.4    | LittleFS on the flash simulator | `zephyr-qemu-v4_4_lfs.service`      |
 
 **Three ARM `mps2_an385` instances are serial.** QEMU bridges each console to
-a telnet port on the hop, so they need no TAP and no `/30`; the address below
-is identity, not a route:
+a telnet port on the hop's loopback (`127.0.0.1`), so they need no TAP and no
+`/30`; the address below is identity, not a route. otto reaches them over the
+`console` term, which tunnels into `test4` and dials that port there. A
+checkout from before the console term dials the guest's own address through
+the hop instead, and cannot reach these three:
 
-| Zephyr instance  | Address      | Telnet | Zephyr | Sample                       | systemd unit                     |
+| Zephyr instance  | Address      | Console port | Zephyr | Sample                 | systemd unit                     |
 |------------------|--------------|--------|--------|------------------------------|----------------------------------|
 | `zephyr37_nofs`  | `192.0.2.37` | `2325` | 3.7    | `shell_module` (no `fs`)     | `zephyr-qemu-no_fs_arm.service`  |
 | `zephyr37_llext` | `192.0.2.33` | `2323` | 3.7    | `shell_loader` (LLEXT)       | `zephyr-qemu-cov.service`        |
@@ -56,6 +59,26 @@ coverage. Every other guest runs `shell_module`.
 
 See `tests/firmware/zephyr/README.md` in the repo for the per-config
 overlay layout.
+
+### Serial consoles
+
+Five bed hosts have a serial console that otto reaches over the `console`
+term ({ref}`console-term`):
+
+| Host | Console server : port | What answers Enter |
+|------|-----------------------|--------------------|
+| `test2` | `test1:4001` | agetty: `test2 login:` |
+| `bb1350` | `test1:2450` (loopback) | BusyBox getty on the guest's second serial port, `ttyS1`: `bb1350 login:` |
+| the three ARM Zephyr guests | `test4`, on the ports in the table above (loopback) | the Zephyr shell; no login |
+
+`test2`'s console is a virtual null-modem, because VirtualBox offers no
+usable UART to the arm64 guests. `test2` runs a getty on a pseudo-terminal
+and listens for its far end on `10.10.200.12:4102` (socat); `test1` dials
+that into a pseudo-terminal of its own, which `ser2net` serves on port 4001,
+one client at a time, on every address. Start the two VMs in either order:
+`test1` re-dials until `test2` answers. A session left logged in on the line
+ends if the link drops. `bb1350`'s console is described with the BusyBox bed
+({doc}`architecture/subsystems/busybox-bed`).
 
 Only `dev` starts on a bare `vagrant up` (the rest are `autostart: false`).
 Bring the others up explicitly when you need them:
@@ -516,7 +539,12 @@ their hosts are reachable — including completing a partial reap after a host
 returns.
 
 `uv run pytest -k <kw>` filters any run by keyword. Recover a wedged embedded bed
-with `make qemu-restart`; probe the whole lab with `make vm-health`. The 3.7
+with `make qemu-restart`; probe the whole lab with `make vm-health` (which also
+adds a `console` row per bed serial console: a console that logs in is healthy at
+`AT-LOGIN`, a Zephyr console at `LOGGED-IN`, its idle shell prompt; each Zephyr
+console row waits out the probe's full 10 s to tell those apart, so expect about
+35 s of apparent pause), and put a console that a run left logged in back at its
+login prompt with `make console-logout`. The 3.7
 guests wedge by design of two upstream Zephyr bugs that are deliberately left in
 place — see "Known guest defects" in `tests/firmware/zephyr/README.md` for the
 mechanism, the tell, and why silence from a console is not evidence.
@@ -540,8 +568,8 @@ and `make stability-tunnel CYCLES=N`.
 ### Embedded coverage bed
 
 `zephyr37_llext` is the embedded coverage instance: an ARM `mps2_an385` Zephyr in the
-`embedded` lab, reached over a QEMU `-serial telnet:` bridge via the `test4` SSH
-hop (`zephyr-qemu-cov.service` on the zephyr VM, provisioned by the Vagrantfile
+`embedded` lab, whose QEMU `-serial telnet:` bridge the `console` term reaches
+by tunnelling into `test4` (`zephyr-qemu-cov.service` on the zephyr VM, provisioned by the Vagrantfile
 like the other Zephyr instances). The **dev VM runs no QEMU** — it only builds
 the instrumented `.llext` extension and runs the cross-gcov report; the coverage
 instance itself runs on the zephyr VM. Which host(s) coverage is collected from

@@ -50,6 +50,7 @@ from dataclasses import (
 )
 from pathlib import Path
 from typing import (
+    TYPE_CHECKING,
     Annotated,
     cast,
 )
@@ -77,7 +78,7 @@ from .connections import (
     build_term_backend,
     teardown_step,
 )
-from .errors import HostCommandError, UnsupportedOnUserlandError
+from .errors import ConsoleError, HostCommandError, UnsupportedOnUserlandError
 from .file_ops import PosixFileOps
 from .host import (
     CONCURRENT_HELP,
@@ -116,6 +117,12 @@ from .userland import (
     applet_capability,
     refuse_if_gapped,
 )
+
+if TYPE_CHECKING:
+    # `otto.host.console` stays off the CLI startup import graph: the console
+    # branches import it lazily, so the names are for annotations only.
+    from .connections import TelnetTarget
+    from .console import ConsoleClient, ConsoleState
 
 logger = logging.getLogger(__name__)
 
@@ -360,6 +367,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     """Backing store for :meth:`_userland` — see there for why it is built on
     demand rather than by a ``default_factory``."""
 
+    _console_exec_lock: asyncio.Lock | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    """Serialises ``run`` and ``exec`` on a ``console`` term, where both run on
+    the one session (see ``_console_line`` and ``_exec_on_console``); created
+    on first use, so a ``dataclasses.replace`` copy gets its own."""
+
     ####################
     #  Privilege
     ####################
@@ -399,8 +413,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         original instance.
 
         The lambda is deliberate, and matches :meth:`_build_file_transfer`'s:
-        binding ``self.exec`` eagerly would freeze out a test (or a subclass)
-        that swaps the method afterwards.
+        binding the runner eagerly would freeze out a test (or a subclass)
+        that swaps the method afterwards. The runner is :meth:`exec`, which
+        picks its primitive per call (on a ``console`` term, the default
+        session), so this cached instance stays right across a ``term`` change.
         """
         if self._userland_cache is None:
             self._userland_cache = Userland(
@@ -487,7 +503,19 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         Useful after changing ``hop`` or when the host must reconnect on a
         new event loop (e.g. after ``pytest.main()`` returns and coverage
         collection starts in a fresh ``asyncio.run()``).
+
+        The old manager is dropped, not closed (its transports may belong to
+        a dead loop or a rebooted device), except for a cached console
+        client, whose line is released at once: the console server serves
+        one client, so a client left holding it would refuse every dial the
+        new manager makes.
         """
+        abandon_console = getattr(self._connections, "abandon_console", None)
+        if abandon_console is not None:
+            abandon_console()
+        # The line lock binds to the loop that first contends it; a rebuild
+        # is how a host moves to a fresh loop, so it starts a fresh lock.
+        self._console_exec_lock = None
         self._connections = self._build_connections()
         self._session_mgr = SessionManager(
             connections=self._connections,
@@ -511,6 +539,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         ``rebuild_connections`` (and the override-copy seam, via ``dataclasses.replace``) so a
         custom term backend builds the right class.
         """
+        # Lazy: os_profile registers the built-in host classes at import,
+        # which imports this module.
+        from .os_profile import resolve_console_prompts
+
         hop_transport = self._build_hop_transport() if self.hop else None
         term_ctx = TermContext(
             ip=self.ip,
@@ -522,6 +554,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             telnet_options=self.telnet_options,
             sftp_options=self.sftp_options,
             ftp_options=self.ftp_options,
+            console_options=resolve_console_prompts(self.console_options, self.os_type),
+            # The bound method, not its result: the server is looked up in
+            # the lab on the first console dial, never at construction.
+            console_endpoint=self.console_endpoint if self.term == "console" else None,
         )
         conn_cls = self._connection_factory or build_term_backend(self.term)
         return conn_cls.create(term_ctx)
@@ -538,7 +574,17 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         ``exec_cmd`` binds ``user=`` — so nc's remote listener/stat commands
         run as *user* too. The backend class itself is unchanged; only the
         identity underneath it is (spec 2026-09-01 §4).
+
+        ``exec_cmd`` is :meth:`exec`, which on a ``console`` term runs each
+        command on the default session (the line serves one client). That
+        one session is logged in as one user, so a console transfer for
+        anyone else is refused by name (:meth:`_refuse_console_transfer`),
+        and one for that user needs no switch at all. So is
+        ``transfer="nc"`` on a console.
         """
+        if self.term == "console":
+            self._refuse_console_transfer(user)
+            user = None
         connections = (
             self._connections
             if user is None
@@ -573,6 +619,38 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             ),
         )
 
+    def _refuse_console_transfer(self, user: "str | None") -> None:
+        """Refuse a console-term transfer that would need a second session.
+
+        A console serves ONE client, so ``exec`` — and with it a transfer's
+        commands — runs on the host's one session (see ``_exec_on_console``),
+        one at a time, as whoever that session is logged in as. Two things need more than that:
+
+        - ``transfer="nc"``: its remote ``nc -l`` listener holds the shell's
+          foreground for the whole transfer while nc's control commands
+          (the listener-ready probe, the reap) must run BESIDE it. On one
+          session they would be typed into the listener's terminal.
+        - a *user* other than the session's login: running as them would
+          need a second session, or a silent switch of the caller's.
+
+        scp, sftp, ftp and shell move their bytes without a listener in the
+        shell and only type single commands, so they are allowed.
+        """
+        if self.transfer == "nc":
+            raise ConsoleError(
+                f"{self.name}: console is single-client; transfer='nc' runs a remote "
+                f"listener alongside its control commands, which needs a second "
+                f"session — use transfer='shell' (or scp/sftp/ftp)"
+            )
+        if user is None:
+            return
+        login = self._connections.login_target
+        if user != login:
+            raise ConsoleError(
+                f"{self.name}: console is single-client; a transfer runs on its one "
+                f"session as {login!r}, so it cannot run as {user!r}"
+            )
+
     def _transfer_for(self, user: "str | None") -> UnixFileTransfer:
         """Return the transfer backend for *user* — the shared one for ``None``.
 
@@ -600,8 +678,22 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
     @override
     async def _probe_connection(self) -> None:
-        """Open this host's term channel (ssh or telnet); warm FTP when configured."""
-        if self.term == "ssh":
+        """Open this host's term channel (ssh, telnet or console); warm FTP when configured.
+
+        On a ``console`` term the probe dials the console server, never the
+        device's own address, and always dials fresh: the TCP link to the
+        server outlives a device reboot, so a cached client being alive says
+        nothing about the device. Any cached client (and the session on it)
+        is closed first, and the device counts as up only when a new client
+        logs in through its login prompt again. This is what lets
+        ``reboot(wait=True)`` see a console host go down and come back. On a
+        ``login: false`` console there is no prompt to observe, so a fresh
+        dial proves only that the server answers.
+        """
+        if self.term == "console":
+            await self.close()
+            await self._connections.console()
+        elif self.term == "ssh":
             await self._connections.ssh()
         else:
             await self._connections.telnet()
@@ -616,7 +708,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     # TODO: Make sync versions of cmd and file methods that just wraps the async def
 
     @override
-    async def _login(self, user: str | None = None) -> None:
+    async def _login(self, user: str | None = None, force: bool = False) -> None:
         """Open an interactive shell on this host, bridged to the local terminal.
 
         Dispatches on ``self.term``:
@@ -633,6 +725,20 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
           The cached telnet client, if any, is not reused — it may
           already be in non-echo mode. Hop tunnels are honored via the
           same port-forward helper the regular telnet path uses.
+        - **console**: builds a dedicated :class:`~otto.host.console.ConsoleClient`
+          on :meth:`ConnectionManager.console_target
+          <otto.host.connections.ConnectionManager.console_target>` — after
+          closing otto's own session on this host, which would hold the
+          single-client line — opens it interactively, runs the bounded
+          ``reset()`` first when *force* is set (its outcome is reported as
+          an ``[otto]`` status line), then the scripted login (unless
+          ``console_options.login`` is false), and bridges it with the
+          ``console`` label. The client's
+          ``close()`` — on every path out — runs the logout EOF per
+          ``console_options.logout`` and frees the single-client line.
+
+        ``force`` is refused with :exc:`ValueError` on any term but
+        ``console``, before anything is dialled.
 
         ``user``: land the interactive session on this login
         instead of ``self._connections.login_target``, replaying any
@@ -646,6 +752,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         mismatch raises :class:`~otto.host.login_proxy.LoginProxyError`
         rather than silently proxying from the wrong account.
         """
+        if force:
+            self._refuse_console_verb("--force")
+        if self.term == "console":
+            await self._console_login_bridge(user, force=force)
+            return
+
         target = user if user is not None else self._connections.login_target
         direct, hops = resolve_chain(self.creds, target, self.term)
 
@@ -717,6 +829,126 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 await client.close()
 
     @override
+    def _refuse_console_verb(self, verb: str) -> None:
+        if self.term != "console":
+            raise ValueError(
+                f"{self.name}: {verb} applies to console hosts only (term is {self.term!r})"
+            )
+
+    def _new_console_client(self, target: "TelnetTarget") -> "ConsoleClient":
+        """Build a dedicated console client dialling *target*, as the console's transport cred.
+
+        A fresh client, never the connection manager's cached one: a verb
+        that bridges or resets the line owns it for the verb's duration and
+        closes it when done.
+        """
+        from .console import ConsoleClient  # off the CLI startup import graph on purpose
+
+        login_user, password = self._connections.credentials
+        opts = self._connections.console_options
+        return ConsoleClient(
+            host=target.host,
+            port=target.port,
+            user=login_user,
+            password=password or "",
+            options=opts,
+            name=self.name,
+            server=opts.server,
+        )
+
+    def _reset_outcome(self, found: "ConsoleState") -> str:
+        """Word what ``ConsoleClient.reset()`` found: already at the prompt, or restored."""
+        from .console import ConsoleState  # off the CLI startup import graph on purpose
+
+        opts = self._connections.console_options
+        what = (
+            "already at login prompt"
+            if found is ConsoleState.AT_LOGIN
+            else "reset: login prompt restored"
+        )
+        return f"{self.name}: console {opts.server}:{opts.port} {what}"
+
+    async def _console_login_bridge(self, user: str | None, *, force: bool) -> None:
+        """Bridge an interactive console session: release otto's own, dial, reset, log in, bridge.
+
+        otto's own session on this host is closed first (it would hold the
+        single-client line, and a reset would end it anyway); the host
+        reconnects lazily on its next command. The cred chain is resolved
+        whenever a cred applies — ``login: false`` skips only the TYPED
+        login, and a proxied login target's hops are still replayed, as the
+        session manager replays them for ``run``. A console with no cred at
+        all (and no ``--user``) resolves nothing and bridges as it is.
+        """
+        opts = self._connections.console_options
+        login_user, _ = self._connections.credentials
+        hops: list[Cred] = []
+        target_login = user if user is not None else self._connections.login_target
+        if target_login:
+            direct, hops = resolve_chain(self.creds, target_login, self.term)
+            if direct.login != login_user:
+                raise LoginProxyError(
+                    f"{self.name}: login is authenticated as {login_user!r}, but "
+                    f"--user {target_login!r} resolves to a direct login of "
+                    f"{direct.login!r}; starting a fresh connection as "
+                    f"{direct.login!r} is not supported."
+                )
+        await self.close()
+        target = await self._connections.console_target()
+        client = self._new_console_client(target)
+        try:
+            await client.open(interactive=True)
+            notice = None
+            if force:
+                notice = self._reset_outcome(await client.reset())
+            if opts.login:
+                await client.login_sequence()
+            await run_telnet_login(
+                client=client,
+                host_name=self.name,
+                proxy_hops=hops,
+                via_login=login_user,
+                host_id=self.id,
+                session_setup=self.session_setup,
+                landing_frame=self.landing_frame,
+                target_frame=self.command_frame,
+                creds=self.creds,
+                transport_label="console",
+                notice=notice,
+            )
+        finally:
+            with teardown_step(self.name, "interactive console client close"):
+                await client.close()
+
+    @override
+    async def _logout(self) -> Result:
+        """Reset this host's serial console to its login prompt (see ``BaseHost.logout``).
+
+        Closes otto's own session on this host first (it holds the
+        single-client line, and the reset would end it anyway; the host
+        reconnects lazily), then dials a dedicated client, runs the bounded
+        ``reset()`` — which never types a credential — and closes it on
+        every path. A ``console_options.login: false`` console has no login
+        prompt to return to, so nothing is dialled.
+        """
+        self._refuse_console_verb("logout")
+        opts = self._connections.console_options
+        if not opts.login:
+            return Result(
+                Status.Success,
+                value=f"{self.name}: this console has no login step; nothing to reset",
+            )
+        await self.close()
+        target = await self._connections.console_target()
+        client = self._new_console_client(target)
+        try:
+            await client.open()
+            found = await client.reset()
+        finally:
+            with teardown_step(self.name, "console client close"):
+                await client.close()
+        return Result(Status.Success, value=self._reset_outcome(found))
+
+    @override
     async def _exec_one(
         self,
         cmd: str,
@@ -739,8 +971,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         +------------------+------------------------------+----------------------------+
         | Property         | ``run()``                    | ``exec()``                 |
         +==================+==============================+============================+
-        | Shell state      | Persistent (cd, env persist) | Stateless (fresh each call)|
-        | Concurrency      | Sequential only              | Safe for asyncio.gather()  |
+        | Shell state      | Persistent (cd, env persist) | Stateless (not on console) |
+        | Concurrency      | Sequential only              | gather()-safe (console:    |
+        |                  |                              | calls take turns)          |
         | Expect support   | Yes                          | Yes (forces needs_shell)   |
         | Connection cost  | Reuses existing session      | Reuses cached exec pool    |
         | Best for         | Multi-step workflows, state  | One-off / parallel cmds    |
@@ -758,6 +991,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
           the free-list, opening a new one if none are free.  This preserves
           the independence guarantee while avoiding the 1-2 s handshake on
           every call.
+        - **Console**: the line serves one client, so there is neither a raw
+          channel nor a pool. The command runs on the default session, the
+          one ``run`` uses (its shell state included), and concurrent calls
+          take turns — see ``_exec_on_console``.
 
         Args:
             cmd: Shell command to run. Shell operators (``<``, ``>``, ``|``) work on
@@ -775,7 +1012,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 channel cannot provide. Every other case — a user reachable
                 only through proxy hops, or any user on a telnet host — runs
                 on a pooled shell session switched to that user for the call
-                and back after (spec 2026-09-21 §4.2). ``None`` inherits an
+                and back after (spec 2026-09-21 §4.2). On a console term
+                there is no pool: the one default session is switched to
+                that user for the call and back, as ``run(user=...)`` does,
+                while no other ``exec`` runs. ``None`` inherits an
                 enclosing ``as_user()``'s identity, else the login target.
 
         Returns:
@@ -785,6 +1025,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             :meth:`~otto.host.host.BaseHost.run`: stateful, sequential alternative
             with expect support.
         """
+        if self.term == "console":
+            return await self._exec_on_console(
+                cmd, timeout=timeout, log=log, user=user, expects=expects
+            )
         if (
             user is not None
             and self.term == "ssh"
@@ -803,6 +1047,85 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             user=user,
             needs_shell=needs_shell,
         )
+
+    def _console_line(self) -> asyncio.Lock:
+        """Return the lock that gives one ``run`` or ``exec`` the console line at a time.
+
+        Taken by :meth:`_run_one` and :meth:`_exec_on_console` on a
+        ``console`` term only. A user switch (``run(user=...)``,
+        ``exec(user=...)``, ``as_user``) drives the session with
+        ``send``/``expect``, which never take it, so a switch made while the
+        lock is held cannot wait on itself.
+        """
+        if self._console_exec_lock is None:
+            self._console_exec_lock = asyncio.Lock()
+        return self._console_exec_lock
+
+    @override
+    async def _run_one(
+        self,
+        cmd: str,
+        timeout: float,
+        expects: "list[Expect] | None" = None,
+        log: LogMode = LogMode.NORMAL,
+        user: "str | None" = None,
+    ) -> CommandResult:
+        """Run one command on the persistent session; on a console, one at a time.
+
+        On a ``console`` term ``run`` and ``exec`` share the one session, so
+        a ``run`` takes the same line lock ``exec`` does and a gathered
+        ``run`` + ``exec`` cannot interleave on the line. Every other term
+        runs :meth:`~otto.host.remote_host.RemoteHost._run_one` unchanged.
+
+        Explicit two-argument ``super()``: a bare one raises on this
+        ``@dataclass(slots=True)`` class, which is rebuilt after the methods
+        close over the original.
+        """
+        parent = super(UnixHost, self)
+        if self.term != "console":
+            return await parent._run_one(cmd, timeout, expects=expects, log=log, user=user)  # noqa: SLF001 — the parent's own implementation, via two-argument super()
+        async with self._console_line():
+            return await parent._run_one(cmd, timeout, expects=expects, log=log, user=user)  # noqa: SLF001 — the parent's own implementation, via two-argument super()
+
+    async def _exec_on_console(
+        self,
+        cmd: str,
+        *,
+        timeout: float,
+        log: LogMode,
+        user: str | None,
+        expects: "list[Expect] | None",
+    ) -> CommandResult:
+        """``exec`` on a ``console`` term: one command on the default session, one call at a time.
+
+        A console serves ONE client, so the session ``run`` uses is the only
+        one there is (the pool would be a second connection; see
+        ``SessionManager._exec_on_default_session``).
+        ``exec`` is a special case of ``run`` here: the same marker and exit
+        code handling, the same shell state, one
+        :class:`~otto.result.CommandResult`.
+
+        The per-host line lock (:meth:`_console_line`, shared with ``run``)
+        makes concurrent calls take turns, so gathered commands
+        (``asyncio.gather(host.exists(a), host.exists(b))``, or an ``exec``
+        gathered with a ``run``) run one after the other instead of
+        interleaving on the line. A *user* other
+        than the session's current one switches the session for the call and
+        back, as ``run(user=...)`` does, inside the same lock, so no other
+        call runs while the session is switched. The lock is not re-entrant:
+        a ``session_setup`` hook that calls back into ``exec`` while the
+        session is being built would wait on itself.
+        """
+        mgr = self._session_mgr
+        async with self._console_line():
+            if user is None or user == mgr.current_user:
+                return await mgr.exec(
+                    cmd, timeout=timeout, log=self._effective_log(log), expects=expects
+                )
+            async with self.as_user(user):
+                return await mgr.exec(
+                    cmd, timeout=timeout, log=self._effective_log(log), expects=expects
+                )
 
     ####################
     #  File transfer

@@ -2,12 +2,14 @@
 
 import pytest
 
-from otto.host.errors import RawLandingError
+from otto.host.command_frame import BashFrame
+from otto.host.errors import ConsoleError, RawLandingError
 from otto.host.session_setup import (
     SESSION_SETUPS,
     SessionSetup,
     SessionSetupError,
     SetupContext,
+    apply_session_setup,
     register_session_setup,
     session_setup_from_spec,
 )
@@ -102,3 +104,41 @@ def test_session_setup_is_frozen():
 def test_error_types():
     assert issubclass(SessionSetupError, ConnectionError)
     assert issubclass(RawLandingError, RuntimeError)
+
+
+@pytest.mark.asyncio
+async def test_a_console_refusal_at_frame_entry_reaches_the_caller_unchanged():
+    """I2: a bad password typed by console_login() surfaces only once the
+    post-hook frame-entry handshake times out — as a ConsoleError raised by
+    session.enter_frame() (TelnetSession._fail_init -> _refused_login ->
+    ConsoleClient.refused_after_login, in the real path). That message
+    already names the console and the exact refusal; apply_session_setup
+    must let it through unchanged rather than relabelling it as a generic
+    "left no shell that answers frame" failure.
+    """
+
+    class _RefusedAtFrameEntry:
+        async def enter_frame(self, frame) -> None:
+            raise ConsoleError("test2: console test1:4001 (dial=ssh) login refused for 'root'")
+
+    async def hook(session, ctx) -> None:
+        return None
+
+    register_session_setup("t1-console-refused", hook, overwrite=True)
+    try:
+        ctx = SetupContext(
+            host_id="test2", host_name="test2", user="root", params={}, kind="default"
+        )
+        with pytest.raises(ConsoleError, match="login refused for 'root'") as exc_info:
+            await apply_session_setup(
+                _RefusedAtFrameEntry(),
+                object(),
+                ctx,
+                SessionSetup(name="t1-console-refused"),
+                BashFrame(),
+            )
+        # Not relabelled — the operator reads the actual refusal, not a
+        # generic "left no shell" diagnosis.
+        assert "left no shell" not in str(exc_info.value)
+    finally:
+        SESSION_SETUPS.unregister("t1-console-refused")

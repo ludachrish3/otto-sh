@@ -155,3 +155,53 @@ def test_no_pin_when_the_menus_and_ports_already_match():
         verdicts=[_v("ssh", 22, "supported")], declared_ports={"ssh": 22}, supported=["ssh"]
     )
     assert menu_pin(["ssh"], [], s) == []
+
+
+def test_a_non_dialling_own_term_never_triggers_a_valid_terms_pin_by_itself():
+    """console can never appear in the dialling subset the survey builds -- it has no port
+
+    to dial -- so comparing the built list against the host's FULL term menu
+    always differed and pinned a removal. The comparison has to drop to the
+    dialling subset of the host's own menu before it decides whether
+    anything changed.
+    """
+    s = _survey(
+        verdicts=[_v("ssh", 1, "supported"), _v("scp", 1, "supported", kind="transfer")],
+        supported=["ssh", "scp"],
+    )
+    assert menu_pin(["ssh", "console"], ["scp"], s) == []
+
+
+def test_a_menu_whose_only_non_dialling_entry_is_console_gets_no_valid_terms_pin():
+    s = _survey(verdicts=[_v("telnet", 1, "supported")], supported=["telnet"])
+    assert menu_pin(["telnet", "console"], [], s) == []
+
+
+def test_valid_transfers_reads_each_rows_own_kind_not_supported_membership():
+    """A stray ``console`` in ``survey.supported`` -- as the pre-fix resolver left it --
+
+    must not read as a transfer just because ``console`` also happens to be
+    a registered (embedded-only) TRANSFER backend name. ``menu_pin`` decides
+    kind from each row's own ``kind``, never from ``TRANSFER_BACKENDS`` names
+    intersected with ``supported``.
+    """
+    s = _survey(
+        verdicts=[
+            _v("console", 0, "supported", kind="term"),
+            _v("scp", 22, "supported", kind="transfer"),
+        ],
+        supported=["console", "scp"],
+    )
+    assert menu_pin(["console"], ["scp"], s) == []
+
+
+def test_a_valid_terms_pin_keeps_the_hosts_non_dialling_term():
+    """A real change on the dialling side (telnet newly supported) still pins --
+
+    and the pinned list keeps ``console`` rather than silently dropping it.
+    """
+    s = _survey(
+        verdicts=[_v("ssh", 1, "supported"), _v("telnet", 1, "supported")],
+        supported=["ssh", "telnet"],
+    )
+    assert menu_pin(["ssh", "console"], [], s) == ['valid_terms = ["ssh", "telnet", "console"]']

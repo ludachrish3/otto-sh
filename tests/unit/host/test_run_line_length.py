@@ -161,6 +161,18 @@ class TestAnAshHostRefusesInsteadOfTruncating:
         assert str(2005) in message, "the refusal must state the command's own length"
 
     @pytest.mark.asyncio
+    async def test_on_a_console_the_way_out_is_to_split_not_exec(self) -> None:
+        """A console's exec types into this same session, so advising it would be false."""
+        mgr, sessions = _manager(AshFrame(), term="console", name="bb1350")
+        with pytest.raises(UnsupportedOnUserlandError) as excinfo:
+            await mgr.exec("echo " + "x" * 2000)
+        message = str(excinfo.value)
+        assert "Send it through `exec()`" not in message
+        assert "split it" in message
+        assert sessions == []
+        assert str(2005) in message, "the refusal must state the command's own length"
+
+    @pytest.mark.asyncio
     async def test_flipping_the_record_to_untested_stops_the_refusal(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

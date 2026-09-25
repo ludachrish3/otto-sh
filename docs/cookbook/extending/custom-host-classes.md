@@ -11,15 +11,20 @@ Call `register_os_profile()` from an init module listed in `settings.toml`:
 from otto.host.os_profile import register_os_profile
 
 register_os_profile(
-    "zephyr-3.7-fat32",
-    base="zephyr",
-    defaults={
-        "os_version": "3.7",
-        "filesystem": "fat-ram",
-        "max_filename_len": 32,
-    },
+    "vendor-linux",
+    base="unix",
+    defaults={"os_version": "5.4"},
+    login_prompt=r"(?i)username: ?$",
+    password_prompt=r"(?i)password: ?$",
 )
 ```
+
+`login_prompt` and `password_prompt` are what the `console` term's login
+waits for on this OS's serial console
+({ref}`console-term`); both are compiled at registration, so a bad regex
+fails the init module rather than a later connect. A profile carries none
+unless you pass them, even one based on `unix`; the built-in values are
+listed in {doc}`../../configuration/os-profiles`.
 
 A code registration overrides a data table of the same name (see
 {doc}`../../configuration/os-profiles`), so an `[os_profiles]` table in
@@ -35,7 +40,10 @@ To ship a host subclass from an external repo:
 1. Subclass `EmbeddedHost` or `UnixHost` (whichever family fits).
 2. Call `register_host_class(name, cls)` from an init module.  This also
    auto-registers a trivial same-named profile so `os_type: <name>` resolves
-   immediately with no extra config.
+   immediately with no extra config.  That profile carries no console prompt
+   patterns — even over `unix` — so a `UnixHost` subclass whose hosts log in
+   over the `console` term follows it with
+   `register_os_profile(name, base=name, login_prompt=..., password_prompt=...)`.
 
 ```python
 from dataclasses import dataclass, field

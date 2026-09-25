@@ -989,3 +989,116 @@ class TestInterfaceSpec:
             self._host({"eth1": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"}})
         ).to_host(element=Element("x"))
         assert host.interfaces["eth1"] == Interface(ip="192.168.1.11", subnet="192.168.1.0/24")
+
+
+class TestConsoleRules:
+    def _unix(self, **extra):
+        return UnixHostSpec(ip="10.0.0.9", creds=[{"login": "u", "password": "p"}], **extra)
+
+    def test_console_term_requires_a_server(self):
+        with pytest.raises(ValidationError, match=r"console_options\.server"):
+            self._unix(valid_terms=["console"], console_options={"port": 4001})
+
+    def test_console_term_requires_a_port(self):
+        with pytest.raises(ValidationError, match=r"console_options\.port"):
+            self._unix(valid_terms=["console"], console_options={"server": "test1"})
+
+    def test_console_options_are_inert_on_an_ssh_host(self):
+        # Review Focus 5: pre-declared console data on a host that runs ssh
+        # today must not be validated against anything.
+        spec = self._unix(valid_terms=["ssh", "console"], console_options={"server": "nope"})
+        assert spec.console_options.server == "nope"
+        host = spec.to_host(element=Element("e"))
+        assert host.term == "ssh"
+        assert host.console_options.server == "nope"
+
+    def test_console_options_reach_the_runtime(self):
+        spec = self._unix(
+            valid_terms=["console"],
+            console_options={"server": "test1", "port": 4001, "dial": "direct"},
+        )
+        host = spec.to_host(element=Element("e"))
+        assert host.console_options.port == 4001
+        assert host.console_options.dial == "direct"
+
+    def test_console_options_pass_through_on_a_console_free_menu(self):
+        # No term-menu validation ever touches console_options here: "console"
+        # is not even in valid_terms, so the passthrough and inert paths hold
+        # regardless of which term the host actually runs.
+        spec = self._unix(valid_terms=["ssh"], console_options={"server": "nope", "port": 0})
+        assert spec.console_options.server == "nope"
+        assert spec.console_options.port == 0
+        host = spec.to_host(element=Element("e"))
+        assert host.console_options.server == "nope"
+        assert host.console_options.port == 0
+
+
+class TestConsoleRefusesNc:
+    """A console serves one client, and nc's remote listener needs a second one.
+
+    An explicit nc pin, or a menu of nothing but nc, fails when the lab loads.
+    An nc *preference* is skipped, so the next kind on the menu is chosen.
+    """
+
+    _CONSOLE: ClassVar[dict] = {
+        "valid_terms": ["console"],
+        "console_options": {"server": "test1", "port": 4001},
+    }
+
+    def _unix(self, **extra):
+        return UnixHostSpec(
+            ip="10.0.0.9", name="cons1", creds=[{"login": "u", "password": "p"}], **extra
+        )
+
+    def test_an_nc_pin_on_a_console_is_a_config_error(self):
+        with pytest.raises(
+            ValidationError, match=r"cons1.*nc.*second command channel.*single-client console"
+        ):
+            self._unix(transfer="nc", **self._CONSOLE)
+
+    def test_a_menu_of_only_nc_on_a_console_is_a_config_error(self):
+        with pytest.raises(
+            ValidationError, match=r"cons1.*nc.*second command channel.*single-client console"
+        ):
+            self._unix(valid_transfers=["nc"], **self._CONSOLE)
+
+    def test_a_menu_with_nc_and_scp_on_a_console_resolves_scp(self):
+        spec = self._unix(valid_transfers=["nc", "scp"], **self._CONSOLE)
+        host = spec.to_host(element=Element("e"))
+        assert host.transfer == "scp"
+        assert host.valid_transfers == ["nc", "scp"]
+
+    def test_an_nc_preference_on_a_console_falls_through_to_scp(self):
+        spec = self._unix(**self._CONSOLE)
+        host = spec.to_host(element=Element("e"), preferences={"transfer": ["nc", "scp"]})
+        assert host.transfer == "scp"
+
+    def test_an_nc_preference_on_an_ssh_host_still_resolves_nc(self):
+        spec = self._unix()
+        host = spec.to_host(element=Element("e"), preferences={"transfer": ["nc", "scp"]})
+        assert host.term == "ssh"
+        assert host.transfer == "nc"
+
+    def test_an_nc_pin_on_an_ssh_host_is_accepted(self):
+        host = self._unix(transfer="nc").to_host(element=Element("e"))
+        assert host.transfer == "nc"
+
+    def test_a_console_chosen_by_preference_refuses_an_nc_pin(self):
+        # The term preference is invisible to the spec validator, so the nc
+        # pin only meets the console at resolution — still a config error.
+        spec = self._unix(
+            valid_terms=["ssh", "console"],
+            console_options={"server": "test1", "port": 4001},
+            transfer="nc",
+        )
+        with pytest.raises(ValueError, match=r"cons1.*second command channel"):
+            spec.to_host(element=Element("e"), preferences={"term": ["console"]})
+
+    def test_a_console_chosen_by_preference_with_only_nc_is_a_config_error(self):
+        spec = self._unix(
+            valid_terms=["ssh", "console"],
+            console_options={"server": "test1", "port": 4001},
+            valid_transfers=["nc"],
+        )
+        with pytest.raises(ValueError, match=r"cons1.*second command channel"):
+            spec.to_host(element=Element("e"), preferences={"term": ["console"]})

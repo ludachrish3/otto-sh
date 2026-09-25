@@ -572,10 +572,16 @@ class Host(Protocol):
     """Whether this host has a working ``bash`` to tag and exec through (see
     :attr:`BaseHost.has_bash`)."""
 
-    async def _login(self, user: str | None = None) -> None: ...
+    async def _login(self, user: str | None = None, force: bool = False) -> None: ...
 
-    async def login(self, user: str | None = None) -> None:
+    async def login(self, user: str | None = None, force: bool = False) -> None:
         """Open an interactive shell bridged to the local terminal."""
+        ...
+
+    async def _logout(self) -> Result: ...
+
+    async def logout(self) -> Result:
+        """Reset a serial console to its login prompt (console term only)."""
         ...
 
     @property
@@ -1484,7 +1490,7 @@ class BaseHost(ABC):
     #  Command execution
     ####################
 
-    async def _login(self, user: str | None = None) -> None:
+    async def _login(self, user: str | None = None, force: bool = False) -> None:
         raise NotImplementedError(
             f"The '{self.__class__.__name__}' class does not support interactive sessions"
         ) from None
@@ -1500,6 +1506,13 @@ class BaseHost(ABC):
                 "unix replays login-proxy hops).",
             ),
         ] = None,
+        force: Annotated[
+            bool,
+            Opt(
+                help="Console hosts only: reset the line (Ctrl-C, Ctrl-D, Enter, up to "
+                "three rounds) to end whatever session was left on it, then log in.",
+            ),
+        ] = False,
     ) -> None:
         """Open an interactive shell bridged to the local terminal.
 
@@ -1510,7 +1523,12 @@ class BaseHost(ABC):
         stdin and stdout are bridged directly to the remote terminal and the
         session is recorded to the otto log. Press ``Ctrl+]`` to disconnect
         locally without ending the remote session; type ``exit`` or ``logout``
-        to end the session normally.
+        to end the session normally. On a ``console`` host ``Ctrl+]`` DOES end
+        it: disconnecting closes the console client, which logs the line out
+        (EOF, then a bounded wait for the login prompt) unless
+        ``console_options.logout`` is false, so the next client finds the
+        console at its login prompt. That is one EOF: a nested shell or ``su``
+        left running on the line stays logged in, so use :meth:`logout` then.
 
         Under a dry run this announces and returns without connecting. It is
         the ``send`` shape, not the ``expect`` shape: ``login`` returns
@@ -1529,9 +1547,15 @@ class BaseHost(ABC):
                 ``docker exec -u``; unix hosts replay any login-proxy hops
                 needed to reach it (see :mod:`otto.host.login_proxy`). Hosts
                 that can do neither raise :exc:`NotImplementedError`.
+            force: Console hosts only. Run the bounded reset (Ctrl-C, Ctrl-D,
+                Enter, up to three rounds) to end whatever session was left on
+                the line, THEN log in. Without it a console that is not at a
+                login prompt fails loudly. On ssh/telnet hosts it is an error.
         """
         if user is not None:
             _validate_user(user)
+        if force:
+            self._refuse_console_verb("--force")
         if is_dry_run():
             target = f"as {user!r}" if user is not None else "as the configured login user"
             self._log_command(
@@ -1539,7 +1563,48 @@ class BaseHost(ABC):
                 f"no connection made"
             )
             return
-        await self._login(user)
+        await self._login(user, force=force)
+
+    async def _logout(self) -> Result:
+        raise NotImplementedError(
+            f"The '{self.__class__.__name__}' class does not support console logout"
+        ) from None
+
+    def _refuse_console_verb(self, verb: str) -> None:  # noqa: B027 — an empty default is the POINT: a family with no term concept has nothing to refuse here
+        """Refuse a console-only verb (``logout``, ``login --force``) off a console.
+
+        Called above the verbs' dry-run arms, with the same contract as
+        :meth:`_refuse_exec_user`: a dry run of a call this host could never
+        honour refuses rather than declining as though it could have.
+        Synchronous and side-effect free — the answer is the host's own
+        configured term. *verb* is how the refusal names the request
+        (``"logout"`` or ``"--force"``). The default has nothing to refuse;
+        the families with a term override it.
+        """
+
+    @cli_exposed(output_dir=False)
+    async def logout(self) -> Result:
+        """Reset a serial console to its login prompt (console term only).
+
+        Connects to the console, runs the bounded reset — nudge (a second
+        nudge confirms a login prompt); at a password prompt press Ctrl-C;
+        otherwise up to three rounds of Ctrl-C, Ctrl-D, Enter — and returns
+        what it found as the result's value: ``already at login prompt``
+        or ``reset: login prompt restored``.
+        Ends whatever session was left on the line — otto's own session on
+        this host included, which is closed first and reconnects on next
+        use; nothing about the console is changed except that. On a host
+        whose term is not ``console`` this is an error (a dry run refuses
+        too), and on a console with no login step the value says so and
+        nothing is dialled. Under a dry run it returns a
+        :attr:`~otto.utils.Status.NotRun` result without connecting.
+        """
+        self._refuse_console_verb("logout")
+        if is_dry_run():
+            banner = f"[DRY RUN] logout({self.name}) — no console reset performed"
+            self._log_command(banner)
+            return Result(Status.NotRun, msg=banner)
+        return await self._logout()
 
     async def run(
         self,
@@ -1604,7 +1669,8 @@ class BaseHost(ABC):
                 alternative is the device silently running a SHORTER command
                 and reporting its success as this one's. :meth:`exec` allocates
                 no pty, is not subject to the bound, and is the way to send
-                such a command.
+                such a command — except on a ``console`` term, where ``exec``
+                shares ``run``'s session and its bound, so split the command.
 
         See Also:
             :meth:`exec`: stateless, concurrent-safe alternative for one-off commands.

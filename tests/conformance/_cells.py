@@ -206,7 +206,7 @@ def _loopback_ssh_cells() -> "list[ResolvedCell]":
         element = host.element.name
         # Never sorted. Menus are emitted in the order the host reported
         # them, for the reason `axis_space` gives and re-measured here:
-        # `axes_for` reports ['telnet', 'ssh'] for test2 against
+        # `axes_for` reports a menu leading with telnet for test2 against
         # ['ssh', 'telnet'] for test1 and test3, so a sort would be this
         # module inventing a value the host did not give. The loopback host
         # has a one-entry term menu and so cannot show the difference --

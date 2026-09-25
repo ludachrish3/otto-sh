@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart import-snapshot api-snapshot check-breaking hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kgcov kgcov-matrix release-kgcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-breaking hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kgcov kgcov-matrix release-kgcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -1328,6 +1328,10 @@ vm-health: ## (Lab) Probe every lab VM + Zephyr/BusyBox QEMU guest; prints per-h
 qemu-restart: ## (Lab) Restart the Zephyr + BusyBox QEMU and SNMP-relay units on the hop VM(s), then health-check. Use to recover a wedged embedded or BusyBox bed.
 	@$(SAY) "restarting Zephyr + BusyBox QEMU + SNMP relay, then health-checking"
 	@uv run python scripts/lab_health.py --restart-qemu
+
+console-logout: ## (Lab) Reset every logged-in bed console to its login prompt and report
+	@$(SAY) "resetting logged-in bed consoles to their login prompt and reporting"
+	@uv run python scripts/lab_health.py --logout-consoles
 
 # ═══ Quality: static analysis + autofix ═════════════════════════════════════
 

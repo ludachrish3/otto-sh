@@ -85,7 +85,7 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
 
     NOT A SKIP AND NOT AN EXCLUSION FROM THE SPACE. A skip inside a drawn cell
     reports success for a contract nobody ran. Dropping the cell is worse: a
-    Zephyr host reports a single ``(telnet, console)`` pair, so its one cell IS
+    Zephyr host reports a single ``(term, console)`` pair, so its one cell IS
     the guest, and dropping it would take that guest's exec coverage with it.
 
     THE UNCOVERED HALF IS UNCOVERED, and that is stated rather than delegated.

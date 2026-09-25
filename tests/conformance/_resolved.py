@@ -79,7 +79,7 @@ class ResolvedCell:
     declares that domain and parametrizes over the cells that have one; see
     ``tests/conformance/test_transfer_contract.py``. Excluding the cell from a
     CONTRACT is not excluding it from the SPACE: a Zephyr guest reports a
-    single ``(telnet, console)`` pair, so dropping the cell would delete the
+    single ``(term, console)`` pair, so dropping the cell would delete the
     guest and take its exec and timeout coverage with it.
 
     REQUIRED, with no default. A default of ``None`` would file every cell a

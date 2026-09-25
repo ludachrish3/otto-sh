@@ -278,7 +278,7 @@ required `login` and four optional fields:
 | `proxy` | string | Name of a registered login proxy (see {doc}`../cookbook/extending/extending-backends`) that drives the steps to *become* this login, after authenticating as `via`. Omit for a directly-loginable account — a proxy-less entry still uses the built-in `"su"` proxy when `switch_user`/`as_user` switches to it. |
 | `via` | string | The `login` of another entry in this same list to authenticate as first. Only valid alongside `proxy`. Omit to default to the first proxy-less (directly-loginable) entry. |
 | `params` | object | Free-form data handed to the proxy callable (e.g. a container name, a service name). Otto interprets only two keys: `login_shell` (default `true`) in the built-in `"su"` proxy, and `expect_prompt` for any proxy that declares a prompt — see below. |
-| `protocols` | list of strings | The protocols this entry is **for** — names of self-authenticating backends: `ssh`, `telnet`, `ftp` (a custom backend that declares `authenticates` joins the list). Omit for an entry that applies to every protocol. See {ref}`cred-protocols`. |
+| `protocols` | list of strings | The protocols this entry is **for** — names of self-authenticating backends: `console`, `ftp`, `ssh`, `telnet` (a custom backend that declares `authenticates` joins the list). Omit for an entry that applies to every protocol. See {ref}`cred-protocols`. |
 
 On a host that references the inventory, this list is optional and is the
 **highest** of three creds layers — it overrides the inventory record's and

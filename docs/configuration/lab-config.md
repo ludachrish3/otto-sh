@@ -244,7 +244,7 @@ host field — the third reservation level, beside the
 | `resources` | array of strings | This host's own reservation identifiers — a slot.  Combined with the element's and the lab's; see {doc}`../cli/reservation/index`.  Defaults to empty. |
 | `board` | string | Board type, included in the host id when set. |
 | `term` | string | Terminal protocol lab pin — must be in the host's `valid_terms` menu.  Product `[host_preferences]` and CLI `--term` can override; see the precedence chain below. |
-| `transfer` | string | File-transfer protocol lab pin — must be in the host's `valid_transfers` menu.  Product `[host_preferences]` and CLI `--transfer` can override; see the precedence chain below. |
+| `transfer` | string | File-transfer protocol lab pin — must be in the host's `valid_transfers` menu.  Product `[host_preferences]` and CLI `--transfer` can override; see the precedence chain below.  On a `console` term `nc` is never chosen: its remote listener needs a second command channel, and a console serves one client.  An `nc` entry in `[host_preferences]` falls through to the next one, and a pin of `nc` (or a menu holding only `nc`) fails the load. |
 | `impairer` | string | Link-impairment backend lab pin — must be in the host's `valid_impairers` menu (Unix hosts only).  Product `[host_preferences]` can override.  See {doc}`../cli/link/index`. |
 | `valid_terms` | array of strings | Ordered list of term backends that may be selected for this host (gates `--term` and `[host_preferences]`).  Defaults to `["ssh", "telnet"]` for Unix hosts and `["telnet"]` for embedded hosts.  Custom backends registered via `register_term_backend` also appear. |
 | `valid_transfers` | array of strings | Ordered list of transfer backends that may be selected for this host (gates `--transfer` and `[host_preferences]`).  Defaults to `["scp", "sftp", "ftp", "nc"]` for Unix hosts and `["console"]` for embedded hosts.  Custom backends registered via `register_transfer_backend` also appear. |
@@ -508,6 +508,7 @@ connection-options reference.
 |-----|----------|
 | `ssh_options` | SSH (term and hop) |
 | `telnet_options` | Telnet (term, and the embedded console) |
+| `console_options` | Console (term; addresses the telnet server fronting a serial console, not this host).  Read from this entry only — not a `[host_preferences]` table |
 | `sftp_options` | SFTP transfer |
 | `scp_options` | SCP transfer |
 | `ftp_options` | FTP transfer |

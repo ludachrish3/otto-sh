@@ -185,8 +185,9 @@ def build_bed_host(cell: "Cell") -> "RemoteHost":
     THE CALL IS NOT THE WHOLE STORY, and the difference cost this item a task.
     The bed's own fixtures make that call INSIDE an installed ``OttoContext``
     whose lab holds the hop targets, and a host this function builds carries
-    no lab of its own -- so for the 19 hopped cells the call alone produces a
-    host that cannot resolve its hop. ``_opener_for`` below supplies the
+    no lab of its own -- so for the 20 hopped cells, and for ``test2``'s 3
+    console cells whose console server resolves the same way a hop does, the
+    call alone produces a host that cannot resolve its way in. ``_opener_for`` below supplies the
     context; ``tests/conformance/_lab_context.py`` is where it comes from.
 
     THE PIN IS THE WHOLE POINT OF THIS VENUE. An opener that built the entry
@@ -204,7 +205,7 @@ def build_bed_host(cell: "Cell") -> "RemoteHost":
       host's term menu ['telnet']``, and ``{"transfer": "scp"}`` on
       ``zephyr37_fat`` raises the transfer analogue.
     - that check cannot see a pin that is wrong but IN the menu -- passing
-      ``host.valid_terms[0]`` for every cell would satisfy it on all 51 --
+      ``host.valid_terms[0]`` for every cell would satisfy it on all 55 --
       so the built host is asked what pair it came out with and compared
       against the cell's. ``tests/unit/test_conformance_bed.py`` runs that
       comparison over the whole space with no bed.
@@ -397,7 +398,8 @@ def _opener_for(cell: "Cell") -> "Callable[[], AbstractAsyncContextManager[BaseH
     agreeing with itself after otto's stopped.
 
     THE ONE REAL PER-KIND DIFFERENCE IS NOT HANDLED HERE, and it is not
-    absent either: the Zephyr console serves exactly ONE client, and the
+    absent either: a Zephyr console, and any host on the ``console`` term,
+    serves exactly ONE client, and the
     serialization for it lives in ``tests/conformance/_console_safety.py``,
     which holds that console EXCLUSIVELY around every item whose DRAWN cell
     opens one. Its docstring is where the mechanism, the rejected options and
@@ -407,18 +409,22 @@ def _opener_for(cell: "Cell") -> "Callable[[], AbstractAsyncContextManager[BaseH
     telnet backend, after which it refuses every connection until ``make
     qemu-restart`` (issue #260). Worth repeating one measurement from there,
     because the hazard is not the obvious shape: a Zephyr host reports a single
-    ``(telnet, console)`` pair, so there is ONE cell per guest and two cells can
-    never name the same one -- what collides is the seven contract items of ONE
-    cell, which this tree's default ``-n auto`` scatters across workers.
+    ``(term, console)`` pair, so there is ONE cell per guest and two Zephyr
+    cells can never name the same one -- what collides is the contract items
+    of ONE cell, which this tree's default ``-n auto`` scatters across
+    workers. (``test2``'s three console cells DO name one serial line; the
+    exclusive hold spans every console cell, so they are serialized too.)
 
     Built per cell, never per session: a contract that leaves a host's
     session in a bad state must not make the next cell's result depend on the
     order the sampler drew them. The host is entered as a context manager so
     its transports are closed even when the probe below raises.
 
-    THE LAB CONTEXT WRAPS THE WHOLE OPEN, and 19 of the 51 cells cannot open
-    without it. A host `create_host_from_dict` builds from one lab entry has
-    no `_lab` back-reference, so `RemoteHost._build_hop_transport` falls back
+    THE LAB CONTEXT WRAPS THE WHOLE OPEN, and 23 of the 55 cells cannot open
+    without it (20 declare a hop; ``test2``'s 3 console cells name a console
+    server, which otto resolves through the same lab lookup). A host
+    `create_host_from_dict` builds from one lab entry has no `_lab`
+    back-reference, so `RemoteHost._build_hop_transport` falls back
     to the active `OttoContext` to resolve its hop -- and this tree installs
     none, which is why the BusyBox and Zephyr guests failed before any
     transport existed. `tests/conformance/_lab_context.py` is the installer
@@ -449,34 +455,37 @@ def bed_space() -> "list[ResolvedCell]":
     in the order :func:`~tests._fixtures.profiles.axis_space` emits them --
     the lab file's own host order, and within a host the term-major crossing
     of the menus the built host reported. Nothing here sorts: measured,
-    ``test2`` reports its terms as ``['telnet', 'ssh']`` while ``test1`` and
-    ``test3`` report ``['ssh', 'telnet']``, so a sort would be this module
+    ``test2`` reports its terms as ``['telnet', 'ssh', 'console']`` while
+    ``test1`` and ``test3`` report ``['ssh', 'telnet']``, so a sort would be this module
     inventing a value the host did not give.
 
     DE-DUPLICATED ACROSS LABS, first appearance winning, and this fires today
     rather than being defensive: ``test1`` declares membership in BOTH
     ``unix`` and ``busybox`` (measured, ``lab.json``), so the raw
-    concatenation is 57 cells of which 8 are ``test1``'s, listed twice. A
+    concatenation is 63 cells of which 8 are ``test1``'s, listed twice. A
     duplicate is not cosmetic here. :func:`tests.conformance._sample.draw`
     samples without replacement and keys its rank on the cell's LABEL, so two
     identical cells get identical ranks and take two of the budget's slots
     between them -- one contract asserted twice while another goes unasserted,
     with the run's own ``drew N of M`` line still reading correctly. They
-    would also collide as pytest parametrization ids. 59 raw, 51 after.
+    would also collide as pytest parametrization ids. 63 raw, 55 after.
 
-    Exclusions: none. Every cell the lab data permits is offered, because
-    nothing has been shown to be unbuildable -- and the spec's rule is that a
-    cell the venue cannot build leaves the SPACE, never that it is drawn and
-    skipped. The console-safety decision was the one place an exclusion might
-    have landed, and it went the other way: the seven single-client console
-    cells are SERIALIZED rather than dropped
+    Exclusions: none here. Every cell the lab data permits is offered -- and
+    the spec's rule is that a cell the venue cannot build leaves the SPACE,
+    never that it is drawn and skipped. The one pair otto refuses to build,
+    ``console`` x ``nc`` (a single-client console cannot host nc's second
+    session), never reaches this function: ``axis_space`` crosses the
+    transfer menu otto resolves from on each term, and on ``console`` that
+    menu has no ``nc``. The console-safety decision was the one place an
+    exclusion might have landed, and it went the other way: the eleven
+    single-client console cells are SERIALIZED rather than dropped
     (``tests/conformance/_console_safety.py`` argues why), so the space is all
-    51 and the docs page has no exclusion to state.
+    55 and the docs page has no exclusion to state.
 
     Nor is a cell that has NOWHERE TO PUT A FILE an exclusion from here. The
     three guests declaring ``filesystem: "none"`` carry
     ``remote_scratch=None`` (:func:`bed_scratch_dir`) and stay in the space,
-    because a Zephyr host reports a single ``(telnet, console)`` pair -- so
+    because a Zephyr host reports a single ``(term, console)`` pair -- so
     dropping the cell would delete the guest and take its exec and timeout
     coverage with it, paying for one inapplicable contract with two
     applicable ones. The narrowing belongs to the CONTRACT that needs a
@@ -499,7 +508,7 @@ def bed_space() -> "list[ResolvedCell]":
                 # Per ELEMENT because the QUESTION is per element --
                 # `bed_scratch_dir` and `bed_vocabulary` take no cell, and
                 # their docstrings give the measurement. 16 host builds at
-                # resolve time rather than 51.
+                # resolve time rather than 55.
                 scratch[cell.element] = bed_scratch_dir(cell.element)
                 words[cell.element] = bed_vocabulary(cell.element)
             resolved.append(

@@ -19,10 +19,15 @@ inherits nothing, and the venue's default ``-n auto --dist loadgroup``
 (``pyproject.toml`` addopts) would put two workers on one console.
 
 WHAT THE COLLISION ACTUALLY LOOKS LIKE HERE, measured rather than assumed,
-because it is not the shape the integration tree faces. The bed space is 51
-cells of which 7 are ``bed-zephyr`` -- ONE cell per guest, since a Zephyr host
-reports a single ``(telnet, console)`` pair. So two cells can never name the
-same guest. The collision is between the CONTRACT ITEMS of ONE cell: every
+because it is not the shape the integration tree faces. The bed space is 55
+cells of which 11 open a single-client console: the 7 ``bed-zephyr`` cells --
+ONE cell per guest, since a Zephyr host reports a single ``(term, console)``
+pair -- plus the 4 cells that reach a unix host over the ``console`` term
+(``test2``'s three, one per transfer, and ``bb1350``'s one). So two Zephyr
+cells can never name the same guest, but ``test2``'s three console cells all
+name ONE serial line; the lock below is one exclusive hold across every
+console cell, so it serializes those too. The collision the Zephyr cells
+face is between the CONTRACT ITEMS of ONE cell: every
 drawn cell is parametrized into every contract in this tree (re-measured on
 the hermetic lane 2026-08-26: 112 cell items over 8 cells, so fourteen items
 per cell), and under ``-n auto`` those fourteen scatter across workers and
@@ -37,8 +42,8 @@ because the ``xdist_group`` stamp has already pinned one device's tests to one
 worker, so the shared holders are never two clients of one console. This tree
 has no such stamp (see below), so SHARED would permit exactly the collision
 above. EXCLUSIVE costs the parallelism of running two DIFFERENT guests at
-once, which is 7 cells' worth of the space and, at the default budget of 8
-drawn from 51, usually one.
+once, which is 11 cells' worth of the space and, at the default budget of 8
+drawn from 55, usually one or two.
 
 WHAT THIS DOES NOT PROTECT AGAINST, stated here rather than discovered later:
 
@@ -107,16 +112,16 @@ survive the correction:
   :func:`unhonored_console_lock`), so its guard reads state rather than
   inferring it from a nodeid suffix.
 - THERE IS ALMOST NO PARALLELISM TO PRESERVE. A group's whole advantage over
-  an exclusive lock is that two DIFFERENT guests can still run at once; 7 of
-  the 51 cells are console cells, one per guest, and at the default budget of
-  8 a run draws about one of them.
+  an exclusive lock is that two DIFFERENT guests can still run at once; 11 of
+  the 55 cells are console cells, and at the default budget of 8 a run draws
+  one or two of them.
 
 WHY NOT DROP THE CONSOLE CELLS FROM THE SPACE. That is the safest option and
 it was rejected on what it costs: spec s4 names the Zephyr guests as bed
-hosts, and a venue that resolves 44 of 51 cells would ship without ever
+hosts, and a venue that resolves 44 of 55 cells would ship without ever
 reaching the one host family whose contract nothing else crosses. The
 exclusion would also have to be argued down in the docs as deliberate rather
-than accidental. The lock keeps all 51.
+than accidental. The lock keeps all 55.
 """
 
 import fcntl
@@ -132,17 +137,24 @@ from tests.conformance._resolved import ResolvedCell
 
 # Which venue kinds stand up a console that serves ONE client at a time.
 #
+# The kind is half the rule. A unix host reached over the `console` term is a
+# single-client console too -- ser2net's `max-connections: 1` behind `test2`,
+# QEMU's telnet chardev behind `bb1350` -- while the SAME host over ssh or
+# telnet is not, so for those the TERM decides, not the kind: see
+# `opens_a_single_client_console` below.
+#
 # Read off the venue's KIND rather than off the element's name, for the reason
 # `tests/conformance/_bed.py` sets out at length: every Zephyr guest in this
 # lab data happens to be named `zephyr*`, so a name sniff passes on all seven
 # while being a claim about a naming convention rather than about the host.
 #
 # The kind is still this suite's own vocabulary, so it can drift away from
-# what otto actually builds. `tests/unit/test_conformance_bed.py` holds this
-# set against otto's OWN answer -- `isinstance(host, EmbeddedHost)`, the class
+# what otto actually builds. `tests/unit/test_conformance_bed.py` holds the
+# rule against otto's OWN answer -- `isinstance(host, EmbeddedHost)`, the class
 # whose `__post_init__` is the only place in `src/` that sets
-# `TelnetOptions.single_client_console=True` -- over the whole 51-cell space,
-# so a renamed kind reddens there instead of silently unprotecting a guest.
+# `TelnetOptions.single_client_console=True`, or a host built on the
+# `console` term -- over the whole 55-cell space, so a renamed kind reddens
+# there instead of silently unprotecting a guest.
 SINGLE_CLIENT_CONSOLE_KINDS = frozenset({BED_ZEPHYR})
 
 # Which venue kinds stand up guests that CONTEND FOR ONE CPU BUDGET (the five
@@ -165,7 +177,7 @@ _HELD: "list[Path]" = []
 
 def opens_a_single_client_console(resolved: ResolvedCell) -> bool:
     """Whether standing *resolved* up puts a client on a single-client console."""
-    return resolved.kind in SINGLE_CLIENT_CONSOLE_KINDS
+    return resolved.kind in SINGLE_CLIENT_CONSOLE_KINDS or resolved.cell.term == "console"
 
 
 def shares_a_family_cpu_budget(resolved: ResolvedCell) -> bool:

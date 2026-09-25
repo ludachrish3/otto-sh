@@ -358,6 +358,65 @@ def test_exec_and_login_exposed_on_base_host():
     assert base["exec"] == "exec"
 
 
+def test_logout_exposed_on_base_host_without_an_output_dir():
+    """``otto host <id> logout`` is synthesized from BaseHost.logout; it only
+    resets a console, so it creates no per-invocation output directory."""
+    from otto.host.host import BaseHost
+
+    base = collect_exposed_methods(BaseHost)
+    assert base["logout"] == "logout"
+    assert BaseHost.logout.__cli_output_dir__ is False
+
+
+def test_login_force_and_logout_render_in_help(monkeypatch):
+    monkeypatch.setenv("COLUMNS", "300")
+    app = _make_app(monkeypatch, {"u1": UnixHost})
+    r = CliRunner().invoke(app, ["u1", "--help"])
+    assert r.exit_code == 0, r.output
+    assert "logout" in r.output
+    r = CliRunner().invoke(app, ["u1", "login", "--help"])
+    assert r.exit_code == 0, r.output
+    assert "--force" in r.output
+    r = CliRunner().invoke(app, ["u1", "logout", "--help"])
+    assert r.exit_code == 0, r.output
+    assert "login prompt" in r.output
+
+
+def test_logout_renders_its_returned_outcome_once(monkeypatch):
+    """The verb RETURNS its outcome and the CLI renders it: the message is
+    printed once, with no trailing ``done`` from the None rendering."""
+    from otto.result import Result
+    from otto.utils import Status
+
+    class _Host:
+        id = "h1"
+
+        @cli_exposed(output_dir=False)
+        async def logout(self) -> Result:
+            return Result(Status.Success, value="h1: console s:1 already at login prompt")
+
+        async def close(self) -> None:
+            pass
+
+    import otto.host.os_profile as op
+
+    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _Host})
+    monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _Host)
+    app = typer.Typer(name="host", cls=HostGroup)
+    host = _Host()
+
+    @app.callback(invoke_without_command=True)
+    def main(ctx: typer.Context, host_id: str = typer.Argument("")):
+        if ctx.resilient_parsing:
+            return
+        ctx.obj = host
+
+    r = DispatchRunner().invoke(app, ["h1", "logout"])
+    assert r.exit_code == 0, r.output
+    assert r.output.count("h1: console s:1 already at login prompt") == 1
+    assert "done" not in r.output
+
+
 # ---------------------------------------------------------------------------
 # Task 9: `otto host <id> login --user <target>`
 # ---------------------------------------------------------------------------

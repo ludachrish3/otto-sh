@@ -22,7 +22,8 @@ Run commands, transfer files, log in, and invoke capability verbs on lab hosts.
 otto host <HOST_ID> exec [--sudo] [--timeout SECS] [--user NAME] "COMMAND"
 otto host <HOST_ID> put <SRC...> <DEST>
 otto host <HOST_ID> get <SRC...> <DEST>
-otto host <HOST_ID> login
+otto host <HOST_ID> login [--user NAME] [--force]
+otto host <HOST_ID> logout
 otto host <HOST_ID> reboot [--hard] [--wait] [--timeout SECS]
 otto host <HOST_ID> install [--stage-only]
 otto host <HOST_ID> power [STATE]
@@ -85,6 +86,7 @@ when called from Python with no explicit `user=` of its own.
 | `put` | Upload local files to the host |
 | `get` | Download files from the host |
 | `login` | Open an interactive shell session on the host |
+| `logout` | Reset a serial console to its login prompt (console hosts only; {ref}`host-logout`) |
 | `reboot` | Reboot the host (soft or hard power-cycle) |
 | `shutdown` | Power off the host from its own shell |
 | `power` | Turn the host on/off or toggle (requires a power controller) |

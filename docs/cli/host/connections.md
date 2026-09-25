@@ -14,9 +14,11 @@ intermediate SSH jump host:
 otto --lab my_lab host --hop jumpbox target_seed exec "uname -a"
 ```
 
-The hop host must support SSH. The target host can use any terminal
-protocol (SSH or telnet) -- otto tunnels the connection through the
-hop automatically.
+The hop host must support SSH. The target host can use SSH or telnet --
+otto tunnels the connection through the hop automatically. The `console`
+term is the exception: it reaches a console *server*, through that
+server's own hop chain, so the target's `hop` (and `--hop`) does not
+apply to it ({ref}`console-term`).
 
 Hops can be chained: if the hop host itself has a `hop` configured,
 otto builds a recursive tunnel chain
@@ -82,8 +84,19 @@ built-ins do — a project-registered backend behaves identically to `ssh` or
 
 Valid values for the built-in backends (UnixHost):
 
-- `--term`: `ssh`, `telnet`
+- `--term`: `ssh`, `telnet`, `console`
 - `--transfer`: `scp`, `sftp`, `ftp`, `nc`
+
+`console` reaches the device's serial console through a telnet server on
+another lab host, named with its port in the host's `console_options`;
+`dial: "ssh"` (the default) tunnels into that server and `dial: "direct"`
+connects to its address. {ref}`console-term` is the reference: what the
+term is for, both dial modes, its options and its errors. It serves one
+client at a time, so `exec` runs its command on that one session, one
+call at a time, and `nc` cannot run over it:
+`--term console` alone on a host whose transfer is `nc` takes the next
+transfer in the host's `valid_transfers` order (it does not see
+`[host_preferences]`); add `--transfer` to choose.
 
 The accepted values are validated against the host's configured menu
 (`valid_terms` / `valid_transfers` fields in `lab.json`); out-of-menu

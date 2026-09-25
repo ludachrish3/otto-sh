@@ -792,8 +792,9 @@ a reference plus otto-owned fields; nothing here is an address or a credential:
                     "inventory": "test2",
                     "os_type": "unix",
                     "docker_capable": true,
-                    "valid_terms": ["telnet", "ssh"],
+                    "valid_terms": ["telnet", "ssh", "console"],
                     "valid_transfers": ["nc", "scp", "sftp", "ftp"],
+                    "console_options": {"server": "test1", "port": 4001},
                     "resources": ["test2-console"]
                 }
             ]

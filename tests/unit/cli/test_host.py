@@ -741,6 +741,30 @@ class TestHostTermAndTransfer:
         mock_override.assert_any_call(mock_host, term="ssh")
         mock_override.assert_any_call(mock_host, transfer="sftp")
 
+    def test_transfer_nc_on_a_console_host_is_a_parameter_error(self):
+        """An nc pin on a console-term host is refused as a ``--transfer``
+        parameter error (exit 2, the option named), not as a bare
+        ConsoleError sentence from building the copy's transfer backend."""
+        from otto.host.options import ConsoleOptions
+
+        console_host = UnixHost(
+            ip="10.0.0.2",
+            element=Element("test2"),
+            creds=[Cred(login="test", password="pw")],
+            term="console",
+            valid_terms=["ssh", "console"],
+            transfer="shell",
+            valid_transfers=["shell", "nc"],
+            console_options=ConsoleOptions(server="test1", port=4001),
+            log=LogMode.QUIET,
+        )
+        with patch.object(host_module, "get_host", return_value=console_host):
+            result = runner.invoke(host_app, ["--transfer", "nc", "test2", "exec", "ls"])
+
+        assert result.exit_code == 2, result.output
+        flat = " ".join(re.sub(r"[│╭╮╰╯─]", " ", result.output).split())
+        assert "Invalid value for --transfer: test2: transfer 'nc' cannot run" in flat
+
 
 # ── get command ───────────────────────────────────────────────────────────────
 

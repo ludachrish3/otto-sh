@@ -17,15 +17,19 @@ doing.
 """
 
 import socket
+import socketserver
 import subprocess
 import sys
 import threading
+import time
+from typing import ClassVar
 
 import pytest
 
 from scripts import lab_health
 from scripts.lab_health import (
     _CONSOLE_PROBE,
+    _CONSOLE_STATE_PROBE,
     DEFAULT_HOSTS,
     _hop_index,
     _load_hosts,
@@ -52,6 +56,11 @@ def _route_probes(monkeypatch):
 
     monkeypatch.setattr(lab_health, "_check_unix", fake_unix)
     monkeypatch.setattr(lab_health, "_check_embedded", fake_embedded)
+    monkeypatch.setattr(
+        lab_health,
+        "_check_console",
+        lambda host, hops, *, logout: {"ok": True, "status": "AT-LOGIN", "info": ""},
+    )
     _print_report(hosts, hops)
     return hosts, seen
 
@@ -669,3 +678,754 @@ def test_a_refused_guest_fails_the_whole_report_by_name(monkeypatch, capsys):
         f"the refusal did not surface as a named row per guest: {named!r}\n{table}"
     )
     assert all("root login refused" in line for line in named), named
+
+
+# ---------------------------------------------------------------------------
+# console_options (spec 2026-09-24 §7 / console-term)
+#
+# A host whose term is "console" carries console_options (server + port)
+# instead of telnet_options: it dials the console-term's own telnet server
+# (the zephyr hop, on the loopback port the ARM QEMU unit now binds to)
+# rather than the guest's own address. The lab data migration to
+# term: "console" is a later task (#14); until then _check_embedded must
+# handle BOTH shapes, so this pins the new one without disturbing the
+# telnet_options path pinned above.
+# ---------------------------------------------------------------------------
+
+
+def test_embedded_probe_dials_the_console_server_port_when_console_options_are_declared(
+    monkeypatch,
+):
+    """``console_options`` routes the probe through ITS OWN server/port, not the
+    guest's address — the console-term reaches the guest via the zephyr hop's
+    own loopback telnet listener, not by dialing the guest directly."""
+    from scripts import lab_health
+
+    seen = {}
+
+    def fake_ssh(ip, user, password, remote_cmd, timeout=25.0):
+        seen["ip"], seen["cmd"] = ip, remote_cmd
+        return 0, "OK 1234", ""
+
+    monkeypatch.setattr(lab_health, "_run_ssh", fake_ssh)
+    # `hop` is deliberately a THIRD host (test9), distinct from the console
+    # server (test4): the console path must dial the server named in
+    # `console_options`, never the entry's own `hop`, and a real host dict
+    # with both pointing the same place (test4 == test4) would let a mutant
+    # such as `hops.get(host.get("hop") or console["server"])` pass unnoticed.
+    host = {
+        "element": "zephyr37_nofs",
+        "ip": "192.0.2.37",
+        "os_type": "zephyr",
+        "hop": "test9",
+        "console_options": {"server": "test4", "port": 2325},
+    }
+    hops = {
+        "test4": {
+            "element": "test4",
+            "ip": "10.10.200.14",
+            "creds": [{"login": "vagrant", "password": "vagrant"}],
+        },
+        "test9": {
+            "element": "test9",
+            "ip": "10.10.200.19",
+            "creds": [{"login": "vagrant", "password": "vagrant"}],
+        },
+    }
+    res = lab_health._check_embedded(host, hops)
+    assert res["ok"]
+    assert seen["ip"] == "10.10.200.14"
+    assert "127.0.0.1 2325" in seen["cmd"]
+    assert "192.0.2.37" not in seen["cmd"], (
+        f"the guest's own address leaked into the console probe: {seen['cmd']!r}"
+    )
+
+
+def test_a_creds_carrying_console_host_keeps_the_telnet_options_probe(monkeypatch):
+    """``console_options`` alone must NOT take over a host that also has its own
+    creds — the bb1350 shape Task 14 adds. bb1350 keeps `creds` + `hop: test1`
+    (its in-guest telnetd is still its primary reach path) and separately
+    grows `console_options` pointing at its ttyS1 serial getty; Task 15 adds
+    a console row for it IN ADDITION to this one. If this probe silently
+    switched to the console path once console_options showed up, the
+    authenticated `/proc/uptime` read (and the in-guest telnetd check
+    entirely) would be lost with no sign of it — the console UART0 getty was
+    long past its login prompt by the time the probe connects (QEMU's
+    `nowait` discards anything printed before the client attaches), so the
+    swapped-in probe would report a false ``up`` instead."""
+    from scripts import lab_health
+
+    seen = {}
+
+    def fake_ssh(ip, user, password, remote_cmd, timeout=25.0):
+        seen["ip"], seen["cmd"] = ip, remote_cmd
+        return 0, "OK login", ""
+
+    monkeypatch.setattr(lab_health, "_run_ssh", fake_ssh)
+    host = {
+        "element": "bb1350",
+        "ip": "198.51.100.17",
+        "os_type": "unix",
+        "hop": "test1",
+        "creds": [{"login": "root", "password": "otto"}],
+        "console_options": {"server": "test1", "port": 2450},
+    }
+    hops = {
+        "test1": {
+            "element": "test1",
+            "ip": "10.10.200.11",
+            "creds": [{"login": "vagrant", "password": "vagrant"}],
+        }
+    }
+    res = lab_health._check_embedded(host, hops)
+    assert res["ok"]
+    assert seen["ip"] == "10.10.200.11"
+    assert "198.51.100.17 23" in seen["cmd"], (
+        f"a creds-carrying console host was probed on the console path instead of "
+        f"its own telnetd: {seen['cmd']!r}"
+    )
+    assert seen["cmd"].endswith(" root otto"), (
+        f"the login branch's own creds did not survive: {seen['cmd']!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The console-state probe (spec 2026-09-24, "health probe")
+#
+# Every entry that offers `console` in its term menu gets one extra row: the
+# state its serial console is in right now, read the way otto's ConsoleClient
+# reads it (nudge CR, classify the ANSI-stripped tail). `--logout-consoles`
+# additionally runs the bounded reset on lines left logged in.
+# ---------------------------------------------------------------------------
+
+
+class _Console(socketserver.BaseRequestHandler):
+    reply: bytes = b""
+    close_at_once: bool = False
+
+    def handle(self):
+        if self.close_at_once:
+            return
+        self.request.settimeout(2)
+        try:
+            while True:
+                data = self.request.recv(64)
+                if not data:
+                    return
+                if b"\r" in data and self.reply:
+                    self.request.sendall(self.reply)
+        except OSError:
+            return
+
+
+def _serve(reply: bytes, close_at_once: bool = False):
+    handler = type("H", (_Console,), {"reply": reply, "close_at_once": close_at_once})
+    srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def _probe(port: int, *extra: str) -> str:
+    out = subprocess.run(
+        [sys.executable, "-c", _CONSOLE_STATE_PROBE, "127.0.0.1", str(port), "1.0", *extra],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    return out.stdout.strip()
+
+
+@pytest.mark.parametrize(
+    ("reply", "close_at_once", "expected"),
+    [
+        (b"\r\ntest2 login: ", False, "AT-LOGIN"),
+        (b"Password: ", False, "AT-PASSWORD"),
+        (b"\r\ntest@test2:~$ ", False, "LOGGED-IN"),
+        (b"", False, "SILENT"),
+        (b"", True, "BUSY"),
+    ],
+)
+def test_console_probe_script_classifies_each_state(reply, close_at_once, expected):
+    srv = _serve(reply, close_at_once)
+    try:
+        assert _probe(srv.server_address[1]) == expected
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        # A getty that paints its banner in colour: the ANSI has to go before
+        # the tail is classified, or `login: ?$` never matches.
+        (b"\r\n\x1b[1mtest2\x1b[0m login: \x1b[0m", "AT-LOGIN"),
+        # A prompt followed by stray line ends is still that prompt.
+        (b"\r\ntest2 login: \r\n", "AT-LOGIN"),
+        # A MOTD's "Last login:" mid-buffer is not a login prompt: only the tail decides.
+        (b"Last login: Mon\r\n# ", "LOGGED-IN"),
+        # Zephyr's shell prompt: bytes, no prompt of either kind.
+        (b"\r\nuart:~$ ", "LOGGED-IN"),
+    ],
+)
+def test_console_probe_classifies_the_stripped_tail(reply, expected):
+    srv = _serve(reply)
+    try:
+        assert _probe(srv.server_address[1]) == expected
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_console_probe_reports_a_refused_connect():
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    port = srv.getsockname()[1]
+    srv.close()  # nothing listens here now
+    assert _probe(port).startswith("CONNFAIL")
+
+
+def test_console_probe_reset_ends_a_shell():
+    # A shell that answers Ctrl-C/Ctrl-D/CR with a login prompt.
+    class _Shell(_Console):
+        def handle(self):
+            self.request.settimeout(2)
+            seen = b""
+            while True:
+                data = self.request.recv(64)
+                if not data:
+                    return
+                seen += data
+                self.request.sendall(
+                    b"\r\ntest2 login: " if b"\x04" in seen else b"\r\ntest@test2:~$ "
+                )
+
+    srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _Shell)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        assert _probe(srv.server_address[1], "reset").splitlines()[-1] == "RESET-OK"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+class _RecordingConsole:
+    """One connection: answer each write with ``respond(everything_seen)``; record every byte."""
+
+    def __init__(self, respond, idle=5.0):
+        self.respond = respond
+        self.idle = idle
+        self.received = bytearray()
+        self.srv = socket.socket()
+        self.srv.bind(("127.0.0.1", 0))
+        self.srv.listen(1)
+        self.port = self.srv.getsockname()[1]
+        self.thread = threading.Thread(target=self._serve, daemon=True)
+        self.thread.start()
+
+    def _serve(self):
+        try:
+            conn, _ = self.srv.accept()
+            with conn:
+                conn.settimeout(self.idle)
+                while True:
+                    chunk = conn.recv(64)
+                    if not chunk:
+                        return
+                    self.received.extend(chunk)
+                    reply = self.respond(bytes(self.received))
+                    if reply:
+                        conn.sendall(reply)
+        except OSError:
+            return
+
+    def close(self):
+        self.thread.join(timeout=5)
+        self.srv.close()
+
+
+def test_reset_sends_ctrl_c_ctrl_d_cr_in_order_and_stops_at_the_first_login_prompt():
+    """One round is enough when the first Ctrl-D ends the shell: the probe must
+    not keep typing at a line that is already back at ``login:``."""
+
+    def shell(seen):
+        return b"\r\ntest2 login: " if b"\x04" in seen else b"\r\nroot@test2:~# "
+
+    con = _RecordingConsole(shell)
+    try:
+        out = _probe(con.port, "reset").splitlines()
+    finally:
+        con.close()
+    assert out == ["LOGGED-IN", "RESET-OK"], out
+    assert bytes(con.received) == b"\r" + b"\x03\x04\r", bytes(con.received)
+
+
+def test_reset_writes_ctrl_d_apart_from_the_ctrl_c_whose_flush_would_eat_it():
+    """A tty's ISIG handling of Ctrl-C flushes its input queue: a Ctrl-D that
+    arrives in the same burst never reaches the shell (measured on test2's
+    bash, where every burst round only redrew the prompt). The fake models
+    it per received chunk, so a probe that sends the two together fails."""
+    delivered = bytearray()
+    consumed = [0]
+
+    def tty(seen):
+        chunk = seen[consumed[0] :]
+        consumed[0] = len(seen)
+        if b"\x03" in chunk:
+            chunk = chunk[: chunk.index(b"\x03") + 1]
+        delivered.extend(chunk)
+        return b"\r\ntest2 login: " if b"\x04" in delivered else b"\r\ntest@test2:~$ "
+
+    con = _RecordingConsole(tty)
+    try:
+        out = _probe(con.port, "reset").splitlines()
+    finally:
+        con.close()
+    assert out == ["LOGGED-IN", "RESET-OK"], out
+
+
+def test_reset_at_a_password_prompt_sends_only_ctrl_c():
+    """At ``Password:`` the reset's first move is Ctrl-C: login(1) exits and
+    getty respawns a clean prompt. It never types a password, and no Enter
+    follows (an Enter would leave login(1)'s own retry prompt, which answers
+    the next nudge with ``Password:``)."""
+
+    def getty(seen):
+        if seen.endswith(b"\x03"):
+            return b"\r\r\nUbuntu test2 ttyV0\r\n\r\ntest2 login: "
+        return b"Password: "
+
+    con = _RecordingConsole(getty)
+    try:
+        out = _probe(con.port, "reset").splitlines()
+    finally:
+        con.close()
+    assert out == ["AT-PASSWORD", "RESET-OK"], out
+    assert bytes(con.received) == b"\r\x03", bytes(con.received)
+
+
+def test_reset_at_a_password_prompt_does_not_stop_at_login_1s_retry_prompt():
+    """Measured on the bed: an Enter at login(1)'s Password: lands at login(1)'s
+    retry prompt, whose next nudge answers ``Password:`` again. The fake
+    answers an Enter that way, so a probe that sends one reports a reset it
+    did not do only if it stops there; Ctrl-C is the only way to getty."""
+
+    def login1(seen):
+        if seen.endswith(b"\x03"):
+            return b"\r\r\nUbuntu test2 ttyV0\r\n\r\ntest2 login: "
+        if seen == b"\r\r":
+            return b"\r\nLogin incorrect\r\ntest2 login: "
+        return b"\r\nPassword: "
+
+    con = _RecordingConsole(login1)
+    try:
+        out = _probe(con.port, "reset").splitlines()
+    finally:
+        con.close()
+    assert out == ["AT-PASSWORD", "RESET-OK"], out
+    assert bytes(con.received) == b"\r\x03", "the password prompt got Ctrl-C, not Enter"
+
+
+def test_reset_gives_up_after_three_rounds_and_quotes_the_tail():
+    def stuck(seen):
+        return b"\r\n(stuck)> "
+
+    con = _RecordingConsole(stuck)
+    try:
+        out = _probe(con.port, "reset").splitlines()
+    finally:
+        con.close()
+    assert out[0] == "LOGGED-IN"
+    assert out[-1].startswith("RESET-FAILED"), out
+    assert "(stuck)>" in out[-1]
+    assert bytes(con.received) == b"\r" + b"\x03\x04\r" * 3, bytes(con.received)
+
+
+def test_reset_is_never_attempted_on_a_line_already_at_login():
+    con = _RecordingConsole(lambda seen: b"\r\ntest2 login: ")
+    try:
+        out = _probe(con.port, "reset").splitlines()
+    finally:
+        con.close()
+    assert out == ["AT-LOGIN"], out
+    assert bytes(con.received) == b"\r\r", "two nudges (the second confirms getty), no reset"
+
+
+def test_reset_tells_login_1s_retry_prompt_from_gettys_and_ends_login_1():
+    """login(1)'s own retry prompt looks like getty's but answers an Enter with
+    Password: (an empty username). The confirming nudge sees that and the
+    reset ends login(1) with Ctrl-C."""
+
+    def login1(seen):
+        if seen.endswith(b"\x03"):
+            return b"\r\r\nUbuntu test2 ttyV0\r\n\r\ntest2 login: "
+        if seen == b"\r":
+            return b"\r\nLogin incorrect\r\ntest2 login: "
+        return b"\r\nPassword: "
+
+    con = _RecordingConsole(login1)
+    try:
+        out = _probe(con.port, "reset").splitlines()
+    finally:
+        con.close()
+    assert out == ["AT-PASSWORD", "RESET-OK"], out
+    assert bytes(con.received) == b"\r\r\x03", bytes(con.received)
+
+
+def test_a_plain_health_probe_nudges_once():
+    """Without ``reset`` the probe is read-only past its one Enter: a second
+    Enter at login(1)'s retry prompt would move the line to Password:."""
+    con = _RecordingConsole(lambda seen: b"\r\ntest2 login: ")
+    try:
+        out = _probe(con.port).splitlines()
+    finally:
+        con.close()
+    assert out == ["AT-LOGIN"], out
+    assert bytes(con.received) == b"\r"
+
+
+class _ClosingSocket:
+    """Wrap a real socket and record whether the probe closed it itself."""
+
+    closed: ClassVar[list[bool]] = []
+
+    def __init__(self, real):
+        self._real = real
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def close(self):
+        _ClosingSocket.closed.append(True)
+        self._real.close()
+
+
+@pytest.mark.parametrize(
+    ("reply", "close_at_once", "extra"),
+    [
+        (b"\r\ntest2 login: ", False, []),
+        (b"\r\n# ", False, []),
+        (b"", False, []),
+        (b"", True, []),
+        (b"\r\n# ", False, ["reset"]),
+    ],
+    ids=["at-login", "logged-in", "silent", "busy", "failed-reset"],
+)
+def test_the_probe_closes_its_socket_on_every_path(
+    monkeypatch, capsys, reply, close_at_once, extra
+):
+    """A serial console serves ONE client: a probe that leaves its socket to
+    the interpreter's exit is a probe that can wedge the line if it ever runs
+    longer than planned. Run the script in-process and watch ``close()``."""
+    real_connect = socket.create_connection
+    _ClosingSocket.closed = []
+    monkeypatch.setattr(
+        socket, "create_connection", lambda *a, **k: _ClosingSocket(real_connect(*a, **k))
+    )
+    srv = _serve(reply, close_at_once)
+    monkeypatch.setattr(sys, "argv", ["-c", "127.0.0.1", str(srv.server_address[1]), "0.3", *extra])
+    try:
+        with pytest.raises(SystemExit):
+            exec(compile(_CONSOLE_STATE_PROBE, "<probe>", "exec"), {"__name__": "__main__"})  # noqa: S102
+    finally:
+        srv.shutdown()
+        srv.server_close()
+    assert capsys.readouterr().out.strip()
+    assert _ClosingSocket.closed == [True]
+
+
+# -- _check_console ----------------------------------------------------------
+
+# Sentinels that must never leave the entry they sit in.
+_GUEST_PASSWORD = "s3cr3t-guest-pw"
+_HOP_PASSWORD = "s3cr3t-hop-pw"
+
+
+def _console_entry(*, creds: bool, element="test2", server="test1", port=4001):
+    host = {
+        "element": element,
+        "ip": "10.10.200.12",
+        "valid_terms": ["telnet", "ssh", "console"] if creds else ["console"],
+        "console_options": {"server": server, "port": port},
+    }
+    if creds:
+        host["creds"] = [{"login": "test", "password": _GUEST_PASSWORD}]
+    return host
+
+
+_SERVER = {
+    "element": "test1",
+    "ip": "10.10.200.11",
+    "creds": [{"login": "vagrant", "password": _HOP_PASSWORD}],
+}
+
+
+def _fake_ssh(monkeypatch, out, rc=0, err=""):
+    calls = []
+
+    def fake(ip, user, password, cmd, timeout=25.0):
+        calls.append({"ip": ip, "user": user, "cmd": cmd, "timeout": timeout})
+        return rc, out, err
+
+    monkeypatch.setattr(lab_health, "_run_ssh", fake)
+    return calls
+
+
+def test_check_console_dials_the_servers_loopback_port_from_the_server(monkeypatch):
+    calls = _fake_ssh(monkeypatch, "AT-LOGIN")
+    res = lab_health._check_console(_console_entry(creds=True), {"test1": _SERVER}, logout=False)
+    assert res["ok"] is True
+    assert res["status"] == "AT-LOGIN"
+    (call,) = calls
+    assert call["ip"] == "10.10.200.11"
+    assert call["user"] == "vagrant"
+    assert " 127.0.0.1 4001 " in call["cmd"] + " "
+    assert not call["cmd"].rstrip().endswith("reset")
+
+
+@pytest.mark.parametrize(
+    ("creds", "out", "ok"),
+    [
+        (True, "AT-LOGIN", True),
+        (True, "LOGGED-IN", False),
+        (True, "AT-PASSWORD", False),
+        (True, "SILENT", False),
+        (True, "BUSY", False),
+        (False, "LOGGED-IN", True),  # a Zephyr shell showing its prompt is healthy
+        (False, "AT-LOGIN", True),
+        (False, "SILENT", False),
+        (False, "BUSY", False),
+    ],
+)
+def test_check_console_ok_rule_depends_on_whether_the_entry_logs_in(monkeypatch, creds, out, ok):
+    _fake_ssh(monkeypatch, out)
+    res = lab_health._check_console(_console_entry(creds=creds), {"test1": _SERVER}, logout=False)
+    assert res["ok"] is ok, res
+    assert res["status"] == out
+
+
+def test_logout_consoles_resets_only_entries_that_log_in(monkeypatch):
+    calls = _fake_ssh(monkeypatch, "LOGGED-IN")
+    zephyr = lab_health._check_console(
+        _console_entry(creds=False, element="zephyr37_llext", server="test1", port=2323),
+        {"test1": _SERVER},
+        logout=True,
+    )
+    assert zephyr["ok"] is True
+    assert not calls[-1]["cmd"].rstrip().endswith("reset"), (
+        "a credless (Zephyr) console was sent the reset: Ctrl-D at a Zephyr shell is not a logout"
+    )
+
+    calls = _fake_ssh(monkeypatch, "LOGGED-IN\nRESET-OK")
+    res = lab_health._check_console(_console_entry(creds=True), {"test1": _SERVER}, logout=True)
+    assert calls[-1]["cmd"].rstrip().endswith("reset")
+    assert res["ok"] is True
+    assert res["status"] == "AT-LOGIN"
+    assert "LOGGED-IN" in res["info"]
+
+
+def test_a_failed_reset_is_a_not_ok_row_that_keeps_the_state(monkeypatch):
+    _fake_ssh(monkeypatch, "LOGGED-IN\nRESET-FAILED '(stuck)> '")
+    res = lab_health._check_console(_console_entry(creds=True), {"test1": _SERVER}, logout=True)
+    assert res["ok"] is False
+    assert res["status"] == "LOGGED-IN"
+    assert "reset failed" in res["info"]
+
+
+@pytest.mark.parametrize(
+    ("rc", "out", "status"),
+    [(0, "CONNFAIL [Errno 111] Connection refused", "DOWN"), (255, "", "HOP-FAIL")],
+)
+def test_check_console_failures(monkeypatch, rc, out, status):
+    _fake_ssh(monkeypatch, out, rc=rc, err="boom" if rc else "")
+    res = lab_health._check_console(_console_entry(creds=True), {"test1": _SERVER}, logout=False)
+    assert res["ok"] is False
+    assert res["status"] == status
+
+
+def test_check_console_names_a_missing_server(monkeypatch):
+    _fake_ssh(monkeypatch, "AT-LOGIN")
+    res = lab_health._check_console(_console_entry(creds=True), {}, logout=False)
+    assert res == {"ok": False, "status": "NO-HOP", "info": "console server 'test1' not in lab"}
+
+
+def test_no_password_reaches_the_probe_or_the_report(monkeypatch, capsys):
+    assert _GUEST_PASSWORD not in _CONSOLE_STATE_PROBE
+    calls = _fake_ssh(monkeypatch, "LOGGED-IN\nRESET-OK")
+    monkeypatch.setattr(
+        lab_health, "_check_unix", lambda host: {"ok": True, "status": "up", "info": ""}
+    )
+    host = _console_entry(creds=True)
+    lab_health._print_report([host, {**_SERVER}], {"test1": _SERVER}, logout=True)
+    table = capsys.readouterr().out
+    for call in calls:
+        assert _GUEST_PASSWORD not in call["cmd"]
+        assert _HOP_PASSWORD not in call["cmd"]
+    assert _GUEST_PASSWORD not in table
+    assert _HOP_PASSWORD not in table
+
+
+def _rows(table: str, element: str) -> list[str]:
+    return [line for line in table.splitlines() if line.split()[:1] == [element]]
+
+
+@pytest.mark.parametrize("element", ["bb1350", "zephyr37_llext", "test2"])
+def test_a_console_capable_entry_gets_its_own_row_and_a_console_row(monkeypatch, capsys, element):
+    """Over the real lab data: the console row is IN ADDITION to the entry's
+    existing probe, never instead of it, and a host without `console` in its
+    term menu gets no console row at all."""
+    seen: list[str] = []
+    monkeypatch.setattr(
+        lab_health, "_check_unix", lambda host: {"ok": True, "status": "up", "info": ""}
+    )
+    monkeypatch.setattr(
+        lab_health,
+        "_check_embedded",
+        lambda host, hops: {"ok": True, "status": "up", "info": ""},
+    )
+
+    def fake_console(host, hops, *, logout):
+        seen.append(host["element"])
+        return {"ok": True, "status": "AT-LOGIN", "info": "login prompt"}
+
+    monkeypatch.setattr(lab_health, "_check_console", fake_console)
+    hosts = _load_hosts(DEFAULT_HOSTS)
+    assert _print_report(hosts, _hop_index(hosts)) is True
+    rows = _rows(capsys.readouterr().out, element)
+    assert len(rows) == 2, rows
+    assert rows[0].split()[2] != "console"
+    assert rows[1].split()[2] == "console"
+    assert "AT-LOGIN" in rows[1]
+    expected = {
+        h["element"]
+        for h in hosts
+        if h.get("console_options") and "console" in h.get("valid_terms", [])
+    }
+    assert sorted(seen) == sorted(expected)
+    assert "test1" not in seen
+
+
+def test_a_not_ok_console_row_fails_the_report(monkeypatch, capsys):
+    monkeypatch.setattr(
+        lab_health, "_check_unix", lambda host: {"ok": True, "status": "up", "info": ""}
+    )
+    monkeypatch.setattr(
+        lab_health,
+        "_check_console",
+        lambda host, hops, *, logout: {"ok": False, "status": "BUSY", "info": "port held"},
+    )
+    host = _console_entry(creds=True)
+    assert lab_health._print_report([host, {**_SERVER}], {"test1": _SERVER}) is False
+
+
+def test_main_passes_logout_consoles_through(monkeypatch, tmp_path):
+    seen = {}
+    lab = tmp_path / "lab.json"
+    lab.write_text('{"elements": []}')
+    monkeypatch.setattr(lab_health.shutil, "which", lambda name: "/usr/bin/sshpass")
+
+    def fake_report(hosts, hops, *, logout=False):
+        seen["logout"] = logout
+        return True
+
+    monkeypatch.setattr(lab_health, "_print_report", fake_report)
+    assert lab_health.main(["--hosts", str(lab), "--logout-consoles"]) == 0
+    assert seen["logout"] is True
+    assert lab_health.main(["--hosts", str(lab)]) == 0
+    assert seen["logout"] is False
+
+
+def test_a_console_that_hangs_up_on_the_nudge_is_busy_not_silent():
+    """The server accepts, stays quiet through the settle, then drops the line
+    on the Enter: the EOF after the nudge is what BUSY means, not zero bytes."""
+
+    class _HangUpOnEnter(socketserver.BaseRequestHandler):
+        def handle(self):
+            self.request.settimeout(5)
+            try:
+                self.request.recv(64)
+            except OSError:
+                return
+
+    srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _HangUpOnEnter)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        assert _probe(srv.server_address[1]) == "BUSY"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_a_nested_shell_needing_two_rounds_resets_at_the_real_budget():
+    """A shell nested in a shell needs two Ctrl-D rounds. At the REAL default
+    budget the LOGGED-IN decision alone spends the full 10 s, and the reset
+    rounds must still each get a real wait of their own afterwards, rather than
+    being fired blind past a hold ceiling and reported as a failure."""
+
+    consumed = [0]
+
+    def nested(seen):
+        chunk = seen[consumed[0] :]
+        consumed[0] = len(seen)
+        rounds = seen.count(b"\x04")
+        if b"\x04" in chunk:
+            # Each logout takes a moment to land, as a real shell exit + getty
+            # respawn does: two of these do not fit in what a 15 s hold would
+            # leave after the 10.5 s LOGGED-IN decision.
+            time.sleep(2.5)
+        return b"\r\ntest2 login: " if rounds >= 2 else b"\r\nroot@test2:~# "
+
+    # The server must outwait the probe's 10 s LOGGED-IN decision.
+    con = _RecordingConsole(nested, idle=20.0)
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _CONSOLE_STATE_PROBE, "127.0.0.1", str(con.port), "10", "reset"],
+            capture_output=True,
+            text=True,
+            timeout=40,
+            check=False,
+        )
+    finally:
+        con.close()
+    assert proc.stdout.split() == ["LOGGED-IN", "RESET-OK"], proc.stdout
+    assert bytes(con.received) == b"\r" + b"\x03\x04\r" * 2, bytes(con.received)
+
+
+def test_a_failed_reset_quotes_the_last_thing_the_line_said():
+    """A line that answers the first round and then goes quiet: the failure
+    must quote what it last said, not the empty read of the final round."""
+
+    def goes_quiet(seen):
+        rounds = seen.count(b"\x04")
+        if rounds == 0:
+            return b"\r\nroot@test2:~# "
+        return b"\r\n(stuck)> " if rounds == 1 else b""
+
+    con = _RecordingConsole(goes_quiet)
+    try:
+        out = _probe(con.port, "reset").splitlines()
+    finally:
+        con.close()
+    assert out[-1].startswith("RESET-FAILED"), out
+    assert "(stuck)>" in out[-1], out
+
+
+def test_the_ssh_timeout_covers_the_probes_whole_hold():
+    step = min(lab_health._CONSOLE_STATE_BUDGET_S, 3.0)
+    hold = 0.5 + lab_health._CONSOLE_STATE_BUDGET_S + 2 * step + 3 * 2 * step
+    assert 4 + hold + 10 <= lab_health._CONSOLE_STATE_SSH_TIMEOUT_S
+
+
+def test_a_failed_reset_row_keeps_the_info_column_and_puts_the_tail_last(monkeypatch, capsys):
+    _fake_ssh(monkeypatch, "LOGGED-IN\nRESET-FAILED '(stuck in a very long prompt)> '")
+    monkeypatch.setattr(
+        lab_health, "_check_unix", lambda host: {"ok": True, "status": "up", "info": ""}
+    )
+    lab_health._print_report(
+        [_console_entry(creds=True), {**_SERVER}], {"test1": _SERVER}, logout=True
+    )
+    (row,) = [line for line in capsys.readouterr().out.splitlines() if " console " in line]
+    info = row[16 + 16 + 10 + 13 :][:18]
+    assert info.rstrip() == "reset failed", row
+    assert row.endswith("'(stuck in a very long prompt)> '"), row

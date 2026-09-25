@@ -7,9 +7,10 @@ carry the library adapters, callables, and open ``extra`` dicts) are never
 modified here.
 """
 
+import re
 from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 
 from ..host import options as rt
 from ..host.transfer import NcListenerCheck, NcPortStrategy
@@ -207,6 +208,65 @@ class TelnetOptionsSpec(OttoModel):
         )
 
 
+class ConsoleOptionsSpec(OttoModel):
+    """Boundary spec for the ``console`` term's options table (``[console_options]`` in lab data).
+
+    Validates the server/port address, the dial mode, the prompt regexes
+    (compiled here so a bad pattern fails at lab load, not at first
+    connect), and the paced-write and terminal fields shared with telnet.
+    Builds a ``ConsoleOptions`` runtime dataclass via ``to_runtime()``.
+    """
+
+    server: str = ""
+    port: int = Field(default=0, ge=0, le=65535)
+    dial: Literal["ssh", "direct"] = "ssh"
+    login: bool = True
+    login_prompt: str | None = None
+    password_prompt: str | None = None
+    login_timeout: float = Field(default=10.0, gt=0)
+    settle: float = Field(default=0.5, ge=0)
+    logout: bool = True
+    write_chunk_size: int = 0
+    write_chunk_delay: float = 0.0
+    cols: int = 400
+    rows: int = 24
+    encoding: str | bool = False
+    echo_negotiation_timeout: float = 3.0
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("login_prompt", "password_prompt")
+    @classmethod
+    def _compiles(cls, v: str | None, info: ValidationInfo) -> str | None:
+        if v is None:
+            return v
+        try:
+            re.compile(v)
+        except re.error as exc:
+            raise ValueError(f"{info.field_name} is not a valid regex: {exc}") from None
+        return v
+
+    def to_runtime(self) -> rt.ConsoleOptions:
+        """Build the ``ConsoleOptions`` runtime dataclass from the validated spec fields."""
+        return rt.ConsoleOptions(
+            server=self.server,
+            port=self.port,
+            dial=self.dial,
+            login=self.login,
+            login_prompt=self.login_prompt,
+            password_prompt=self.password_prompt,
+            login_timeout=self.login_timeout,
+            settle=self.settle,
+            logout=self.logout,
+            write_chunk_size=self.write_chunk_size,
+            write_chunk_delay=self.write_chunk_delay,
+            cols=self.cols,
+            rows=self.rows,
+            encoding=self.encoding,
+            echo_negotiation_timeout=self.echo_negotiation_timeout,
+            extra=dict(self.extra),
+        )
+
+
 class NcOptionsSpec(OttoModel):
     """Boundary spec for the netcat (nc) transfer options table (``[nc_options]`` in lab data).
 
@@ -341,6 +401,7 @@ class UserlandOptionsSpec(OttoModel):
 OPTION_SPEC_RUNTIME_PAIRS: list[tuple[type[OttoModel], type]] = [
     (SshOptionsSpec, rt.SshOptions),
     (TelnetOptionsSpec, rt.TelnetOptions),
+    (ConsoleOptionsSpec, rt.ConsoleOptions),
     (SftpOptionsSpec, rt.SftpOptions),
     (ScpOptionsSpec, rt.ScpOptions),
     (FtpOptionsSpec, rt.FtpOptions),

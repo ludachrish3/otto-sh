@@ -31,7 +31,7 @@ from .command_frame import (
     SessionMarkers,
     history_prefix,
 )
-from .errors import RawLandingError, SessionSetupError
+from .errors import ConsoleError, RawLandingError, SessionSetupError
 from .login_proxy import Cred, LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
 from .shell_liveness import confirm_live
 from .telnet import TelnetClient
@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
 
     from .connections import ConnectionManager
+    from .console import ConsoleClient
 
     # Annotations only. `otto.host.session_setup` must stay OFF the CLI
     # startup import graph and this module is on it, so the runtime import
@@ -147,7 +148,7 @@ def _sink_for(
 
 
 def refuse_if_line_editor_would_truncate(
-    frame: CommandFrame | None, cmd: str, *, host: str = ""
+    frame: CommandFrame | None, cmd: str, *, host: str = "", exec_escapes: bool = True
 ) -> None:
     """Refuse *cmd* when the far shell's line editor would silently shorten it.
 
@@ -195,6 +196,10 @@ def refuse_if_line_editor_would_truncate(
     that is fixed by this module's ``_SESSION_ID_LEN``, which
     ``tests/unit/host/test_run_line_length.py`` pins against a real session.
 
+    *exec_escapes* says whether ``exec()`` on this host avoids the bound, and
+    so whether the message may advise it. It does everywhere but a ``console``
+    term, where ``exec`` runs on this same session and is refused the same way.
+
     Raises:
         ~otto.host.errors.UnsupportedOnUserlandError: *frame* is ash and the
             typed line is over :data:`~otto.host.userland.ASH_TYPED_LINE_MAX`.
@@ -209,6 +214,12 @@ def refuse_if_line_editor_would_truncate(
     if longest <= ASH_TYPED_LINE_MAX:
         return
     overhead = len(frame.frame("", markers).rstrip("\n"))
+    way_out = (
+        "Send it through `exec()`, which allocates no pty and took 9000 characters "
+        "in the same measurement, or split it"
+        if exec_escapes
+        else "On a console `exec()` types into this same session, so split it"
+    )
     refuse_if_gapped(
         "run-command-line-length",
         host=host,
@@ -217,8 +228,7 @@ def refuse_if_line_editor_would_truncate(
             f"line once its own BEGIN/END framing ({overhead} characters) is added — over "
             f"the {ASH_TYPED_LINE_MAX} this shell's line editor delivers intact, so "
             f"{ASH_TYPED_LINE_MAX - overhead} characters is the most any one line of a "
-            f"command may be here. Send it through `exec()`, which allocates no pty and "
-            f"took 9000 characters in the same measurement, or split it"
+            f"command may be here. {way_out}"
         ),
     )
 
@@ -333,13 +343,29 @@ class ShellSession(ABC):
     # reading) to roughly one interval.
     _init_probe_interval: float = 0.5
 
+    # Whether SessionManager may rebuild the transport and retry a handshake
+    # that failed with the generic readiness error. True everywhere but a
+    # console session whose client typed a password: its retry would re-run
+    # the login and type that password into the line again.
+    _retry_failed_handshake: bool = True
+
     def __init__(
         self,
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
         shell_history: bool = True,
+        failure_context: str = "",
     ) -> None:
         self._session_id = uuid.uuid4().hex[:_SESSION_ID_LEN]
+        # Words naming WHAT this session is a shell on, appended in brackets
+        # to a failed-readiness message. Empty for ssh/telnet, whose message
+        # needs none; a console term names its server, port and dial mode, so
+        # the failure reads as a console failure rather than a telnet one.
+        self._failure_context = failure_context
+        # What the line showed after a failed handshake, as a ready-made
+        # message suffix (``" Seen: '<quote>'."``). Filled only by a transport
+        # that can read it back — a console session, via its client — else "".
+        self._handshake_seen = ""
         # The dialect: how commands are framed and parsed. Defaults to bash; an
         # embedded host injects a ZephyrFrame (or a project-registered frame).
         self._frame: CommandFrame = command_frame or BashFrame()
@@ -432,6 +458,29 @@ class ShellSession(ABC):
         ``single_client_console`` frame, and only there, because that is the
         one teardown point reached while the transport is still live.
         """
+
+    async def _refused_login(self) -> Exception | None:
+        """Name a refused login from the output the failed handshake left behind, or ``None``.
+
+        ``None`` by default: the generic message :meth:`_fail_init` raises
+        already says a login may not have completed, and no transport but a
+        console can tell. Overridden by :class:`TelnetSession` for a console
+        term, whose client knows the line's prompts. Called from
+        :meth:`_fail_init` before any drain or :meth:`close`, while the
+        transport can still be read.
+        """
+        return None
+
+    async def console_login(self) -> None:
+        """Run the console login state machine on this session's own streams.
+
+        Refused here: only :class:`TelnetSession` on a console term can run
+        it. See :meth:`TelnetSession.console_login` for what it does and who
+        calls it.
+        """
+        raise ConsoleError(
+            f"{self._log_tag}: console_login() needs a console term; this session is not one"
+        )
 
     @abstractmethod
     async def close(self) -> None:
@@ -621,6 +670,11 @@ class ShellSession(ABC):
             f"marking session dead and closing"
         )
         self._alive = False
+        # Read what the handshake left unread BEFORE any drain or close can
+        # discard it: on a console it is where a refused login shows.
+        refused: Exception | None = None
+        with suppress(Exception):  # pragma: no cover - best-effort diagnosis
+            refused = await self._refused_login()
         # A single-client console must go quiet before its connection is
         # released: a send that fails because we closed mid-stream can wedge
         # the backend for the guest's life (issue #324). This is the one
@@ -644,10 +698,16 @@ class ShellSession(ABC):
                 "the shell may never have started, or the login never completed "
                 "(e.g. bad credentials)"
             )
-        raise ConnectionError(
+        if refused is not None:
+            raise refused
+        msg = (
             f"shell never became ready after open — the transport connected but the "
             f"shell never reached a prompt; {why}"
         )
+        if self._failure_context:
+            msg += f" [{self._failure_context}]"
+        msg += self._handshake_seen
+        raise ConnectionError(msg)
 
     # --- Public API ---
 
@@ -1172,15 +1232,25 @@ class TelnetSession(ShellSession):
         write_chunk_size: int = 0,
         write_chunk_delay: float = 0.0,
         shell_history: bool = True,
+        console_client: "ConsoleClient | None" = None,
+        failure_context: str = "",
     ) -> None:
         super().__init__(
             command_frame=command_frame,
             init_timeout=init_timeout,
             shell_history=shell_history,
+            failure_context=failure_context,
         )
         self._reader = reader
         self._writer = writer
         self._owned_client = _owned_client
+        # The console term's client, when this session is a shell on a serial
+        # console: *reader*/*writer* are its streams, it owns the line, and
+        # closing this session closes it (logout, then release). ``None`` for
+        # every telnet session.
+        self.console_client = console_client
+        if console_client is not None and console_client.logged_in:
+            self._retry_failed_handshake = False
         # Paced-write tuning for slow/RX-limited consoles. ``write_chunk_size``
         # of 0 (the default) writes each payload in a single call — correct for
         # a host-terminated telnet shell (e.g. x86 + E1000). A positive value
@@ -1262,8 +1332,54 @@ class TelnetSession(ShellSession):
                 return  # EOF — the peer closed first; nothing left to drain
 
     @override
+    async def _refused_login(self) -> Exception | None:
+        """On a console, ask the client whether getty is back on the line.
+
+        The client owns the prompt rules (see
+        :meth:`~otto.host.console.ConsoleClient.refused_after_login`): its
+        refusal is returned for :meth:`_fail_init` to raise once the session
+        is closed; otherwise what it quoted from the line is kept for the
+        generic message. ``None`` for every non-console telnet session.
+        """
+        client = self.console_client
+        if client is None:
+            return None
+        try:
+            self._handshake_seen = await client.refused_after_login()
+        except ConsoleError as exc:
+            return exc
+        return None
+
+    @override
+    async def console_login(self) -> None:
+        """Run the console login state machine on this session's own streams.
+
+        For a ``landing_frame: "raw"`` host whose hook drives a boot menu
+        before Linux reaches ``login:``: the host declares
+        ``console_options.login: false`` so the transport does not try, and
+        the hook calls this once the prompt is in sight. Same errors, same
+        cred, one implementation.
+        """
+        if self.console_client is None:
+            raise ConsoleError(
+                f"{self._log_tag}: console_login() needs a console term; this session is not one"
+            )
+        await self.console_client.login_sequence()
+        # The client just typed the password: a retry would type it again.
+        # Set is unconditional (rather than mirroring console_client.logged_in
+        # live) so this stays correct even if a future client subclass
+        # returns False for a login it still performed.
+        self._retry_failed_handshake = False
+
+    @override
     async def close(self) -> None:
-        if self._writer:
+        if self.console_client is not None:
+            # The client owns the line: its close() logs out (EOF, then a
+            # bounded wait for the login prompt) BEFORE it releases the
+            # writer. Closing the writer here first would cut that logout off
+            # and leave the console logged in for the next client.
+            await self.console_client.close()
+        elif self._writer:
             self._writer.close()
         if self._owned_client:
             await self._owned_client.close()
@@ -1865,6 +1981,39 @@ class HostSession:
             )
         await self._session.enter_frame(self._target_frame, timeout=timeout)
 
+    async def console_login(self) -> None:
+        """Run the console login sequence, for a raw-landing hook that just drove a boot menu.
+
+        A host with ``console_options.login: false`` lands its ``"raw"``
+        dialect with the transport's own login skipped; once the hook's
+        boot-menu handling has the prompt in sight, it calls this to run the
+        nudge/username/password sequence the transport would otherwise have
+        run itself. See :doc:`/configuration/host-options`, "Two dialects:
+        `landing_frame`", for the raw-landing hook this pairs with, and
+        :meth:`~otto.host.session.TelnetSession.console_login` for what runs.
+
+        Raises:
+            ~otto.host.errors.ConsoleError: this session is not a console
+                term (no ``console_client``) — named with this handle's own
+                host id and term, since :class:`ShellSession`/
+                :class:`TelnetSession` only know their session identity, not
+                the host. A refusal from the console itself (a bad
+                credential, already logged in) already names the console —
+                see :meth:`~otto.host.console.ConsoleClient.login_sequence`
+                — and passes through unchanged.
+        """
+        try:
+            await self._session.console_login()
+        except ConsoleError as exc:
+            if getattr(self._session, "console_client", None) is not None:
+                # A real console refused the login itself (bad password,
+                # already logged in): that message already names the
+                # console and must reach the caller unchanged.
+                raise
+            raise ConsoleError(
+                f"{self._host_id}: console_login() needs a console term (term is {self._term!r})"
+            ) from exc
+
     async def close(self) -> None:
         """Close this session and remove it from the host's session registry.
 
@@ -2134,7 +2283,8 @@ class _ExecRoute(Enum):
     :func:`typed_line_budget`; the other two are not (``SSH_CHANNEL`` opens a
     bare pty-less channel, ``FACTORY`` hands the command to a caller-supplied
     primitive -- a local subprocess, a ``docker exec`` -- that types it into no
-    shell of otto's).
+    shell of otto's). ``DEFAULT_SESSION`` types into a pty shell too -- the
+    one ``run`` uses -- so it carries the same budget.
     """
 
     FACTORY = "exec-factory"
@@ -2145,6 +2295,11 @@ class _ExecRoute(Enum):
 
     SSH_CHANNEL = "ssh-channel"
     """A bare ssh exec channel, no pty allocated."""
+
+    DEFAULT_SESSION = "default-session"
+    """The host's one default session, the one ``run`` uses: a ``console`` term,
+    which serves a single client, so neither a raw channel nor a pooled
+    session exists to run on."""
 
     UNSUPPORTED = "unsupported"
     """A term this manager cannot exec on at all; ``exec`` raises for it."""
@@ -2501,7 +2656,9 @@ class SessionManager:
         masking a genuine misconfiguration: a real never-reached-a-prompt
         failure (see :meth:`ShellSession._fail_init` for what that message now
         distinguishes) will fail the same way on the second attempt and
-        propagate.
+        propagate. A console session whose client typed a password is not
+        retried at all: the rebuild re-runs the login, typing the password
+        into the line a second time (see ``_retry_failed_handshake``).
         """
         if self._session and self._session.alive:
             return
@@ -2532,13 +2689,15 @@ class SessionManager:
                     await new_session._ensure_initialized()  # noqa: SLF001 — intra-package access to ShellSession._ensure_initialized for handshake
                     await self._apply_login_proxy(new_session)
                     await self._apply_session_setup(new_session, "default")
-                except (LoginProxyError, SessionSetupError, RawLandingError):
+                except (LoginProxyError, SessionSetupError, RawLandingError, ConsoleError):
                     # A proxy or setup failure is not a handshake race — the transport
                     # came up fine, so retrying it would just repeat the same
                     # failed hop (or re-run the same hook against the same
-                    # console). Tear down and propagate on the first try,
+                    # console). Nor is a console login the handshake found
+                    # refused: a retry would only type the same password into
+                    # the line again. Tear down and propagate on the first try,
                     # without falling into the ConnectionError retry below
-                    # (LoginProxyError and SessionSetupError both subclass it).
+                    # (LoginProxyError, SessionSetupError and ConsoleError subclass it).
                     with suppress(Exception):  # pragma: no cover - best-effort cleanup
                         await new_session.close()
                     raise
@@ -2546,7 +2705,7 @@ class SessionManager:
                     with suppress(Exception):  # pragma: no cover - best-effort cleanup
                         await new_session.close()
                     last_exc = exc
-                    if attempt == 0:
+                    if attempt == 0 and new_session._retry_failed_handshake:  # noqa: SLF001 — intra-package read of the session's own retry verdict
                         logger.debug(
                             rf"SessionManager\[{self._name}]: handshake failed "
                             f"on first attempt ({exc!r}); rebuilding transport "
@@ -2581,35 +2740,109 @@ class SessionManager:
         """
         if self._session_factory is not None:
             return self._session_factory()
+        return await self._open_transport_session(named=False)
+
+    async def _open_transport_session(self, *, named: bool) -> "ShellSession":
+        """Build a ShellSession over the manager's term: ssh, telnet or console.
+
+        The ONE place the term is dispatched, for the default session
+        (:meth:`_build_session`) and named ones (:meth:`open_session`) alike.
+        *named* selects the telnet dedicated-client path: a named session
+        owns its own ``TelnetClient`` rather than sharing the manager's. A
+        console has no such path — the line serves ONE client, and the
+        default session already holds it — so a named request there is
+        refused by name rather than dialled. ``exec`` never asks for one on a
+        console: :meth:`_exec_route` sends it to the default session.
+        """
         assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no session_factory
-        match self._connections.term:
-            case "ssh":
-                ssh_conn = await self._connections.ssh()
-                return SshSession(
-                    ssh_conn,
-                    command_frame=self._session_frame,
-                    init_timeout=self._init_timeout,
-                    shell_history=self._shell_history,
+        term = self._connections.term
+        if term == "ssh":
+            ssh_conn = await self._connections.ssh()
+            return SshSession(
+                ssh_conn,
+                command_frame=self._session_frame,
+                init_timeout=self._init_timeout,
+                shell_history=self._shell_history,
+            )
+        if term == "telnet" and not named:
+            telnet_conn = await self._connections.telnet()
+            logger.debug(
+                rf"SessionManager\[{self._name}]: building telnet session "
+                f"with frame={type(self._session_frame).__name__}"
+            )
+            return TelnetSession(
+                telnet_conn.reader,
+                telnet_conn.writer,
+                command_frame=self._session_frame,
+                init_timeout=self._init_timeout,
+                write_chunk_size=telnet_conn.options.write_chunk_size,
+                write_chunk_delay=telnet_conn.options.write_chunk_delay,
+                shell_history=self._shell_history,
+            )
+        if term == "telnet":
+            user, password = self._connections.credentials
+            # Ask the ConnectionManager WHERE to dial rather than
+            # reading `.ip` off it: behind a hop those differ, and
+            # the raw address is the guest's own loopback — i.e.
+            # this machine. See `ConnectionManager.telnet_target`.
+            target = await self._connections.telnet_target()
+            client = TelnetClient(
+                target.host,
+                user=user,
+                password=password or "",
+                options=self._connections.telnet_options,
+                connect_port=target.port,
+            )
+            # A caller-side ``wait_for`` cancellation can land
+            # anywhere in ``connect()`` (TCP, ECHO negotiation,
+            # credential exchange) and would otherwise drop
+            # ``client`` on the floor with its socket still open.
+            # Tear down on any exception (including CancelledError)
+            # so the FD is released. The marker handshake that
+            # follows is guarded separately, in the caller.
+            try:
+                await client.connect()
+            except BaseException:
+                with suppress(Exception):
+                    await client.close()
+                raise
+            return TelnetSession(
+                client.reader,
+                client.writer,
+                _owned_client=client,
+                command_frame=self._session_frame,
+                init_timeout=self._init_timeout,
+                write_chunk_size=client.options.write_chunk_size,
+                write_chunk_delay=client.options.write_chunk_delay,
+                shell_history=self._shell_history,
+            )
+        if term == "console":
+            opts = self._connections.console_options
+            if named:
+                raise ConsoleError(
+                    f"{self._name}: console is single-client ({opts.server}:{opts.port}, "
+                    f"dial={opts.dial}); named sessions are not available on this "
+                    f"term — use run() or exec(), or select another term"
                 )
-            case "telnet":
-                telnet_conn = await self._connections.telnet()
-                logger.debug(
-                    rf"SessionManager\[{self._name}]: building telnet session "
-                    f"with frame={type(self._session_frame).__name__}"
-                )
-                return TelnetSession(
-                    telnet_conn.reader,
-                    telnet_conn.writer,
-                    command_frame=self._session_frame,
-                    init_timeout=self._init_timeout,
-                    write_chunk_size=telnet_conn.options.write_chunk_size,
-                    write_chunk_delay=telnet_conn.options.write_chunk_delay,
-                    shell_history=self._shell_history,
-                )
-            case _:
-                raise ValueError(
-                    f'{self._name}: unsupported terminal type "{self._connections.term}"'
-                )
+            # Connected AND logged in on return (or it raised ConsoleError):
+            # the console login runs in the transport slot, before the
+            # landing handshake this session goes on to run.
+            console = await self._connections.console()
+            return TelnetSession(
+                console.reader,
+                console.writer,
+                console_client=console,
+                command_frame=self._session_frame,
+                init_timeout=self._init_timeout,
+                write_chunk_size=opts.write_chunk_size,
+                write_chunk_delay=opts.write_chunk_delay,
+                shell_history=self._shell_history,
+                failure_context=(
+                    f"console {opts.server}:{opts.port} (dial={opts.dial}); a login prompt "
+                    f"in the output means the login was refused"
+                ),
+            )
+        raise ValueError(f'{self._name}: unsupported terminal type "{term}"')
 
     async def run_cmd(
         self,
@@ -2627,19 +2860,25 @@ class SessionManager:
 
         THE PER-COMMAND PATH OF :meth:`otto.host.host.BaseHost.run`, for every
         host family (``RemoteHost._run_one``, ``LocalHost``,
-        ``DockerContainerHost``, ``EmbeddedHost``), and nothing else --
-        ``exec()`` and named sessions both reach a
-        :class:`ShellSession` without passing through here. That is what makes
-        this the right and only home for
-        :func:`refuse_if_line_editor_would_truncate`: the
-        ``run-command-line-length`` gap is ``run()``'s alone, and the two paths
-        this method does not cover are two paths that MUST keep working
-        unguarded (see that function, and the gap record).
+        ``DockerContainerHost``, ``EmbeddedHost``) -- and ``exec()`` on a
+        ``console`` term, which runs on this same session. Everywhere else
+        ``exec()`` and named sessions reach a :class:`ShellSession` without
+        passing through here. That is what makes this the right and only home
+        for :func:`refuse_if_line_editor_would_truncate`: the
+        ``run-command-line-length`` gap belongs to the default session, and the
+        two paths this method does not cover are two paths that MUST keep
+        working unguarded (see that function, and the gap record). On a console
+        there is no unguarded path, so the refusal does not advise ``exec()``.
 
         The refusal is checked BEFORE ``_ensure_session``, so a command otto
         will not send costs no connection either.
         """
-        refuse_if_line_editor_would_truncate(self._command_frame, cmd, host=self._name)
+        refuse_if_line_editor_would_truncate(
+            self._command_frame,
+            cmd,
+            host=self._name,
+            exec_escapes=getattr(self._connections, "term", None) != "console",
+        )
         await self._ensure_session()
         mode = log
         if mode is not LogMode.NEVER:
@@ -2687,7 +2926,12 @@ class SessionManager:
         is what makes nc transfers (whose ``exec_cmd`` is ``UnixHost.exec``)
         land files owned by the proxied target.
 
-        WHICH of the three it is comes from ``_exec_route`` rather than
+        On a ``console`` term there is neither a raw channel nor a pool: the
+        line serves one client, so the command runs on the default session
+        (see ``_exec_on_default_session``), and concurrent callers are
+        serialised by the host, not here.
+
+        WHICH of these it is comes from ``_exec_route`` rather than
         from conditions spelled out here, because a second caller needs the
         same answer: :attr:`exec_line_budget` has to know whether this command
         will be TYPED into a pty, and a caller that re-derived that from
@@ -2715,6 +2959,10 @@ class SessionManager:
         match route:
             case _ExecRoute.POOLED_SHELL:
                 return await self._exec_pooled(
+                    cmd, timeout=timeout, log=log, expects=expects, user=user
+                )
+            case _ExecRoute.DEFAULT_SESSION:
+                return await self._exec_on_default_session(
                     cmd, timeout=timeout, log=log, expects=expects, user=user
                 )
             case _ExecRoute.SSH_CHANNEL:
@@ -2845,6 +3093,40 @@ class SessionManager:
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(process.wait(), timeout=_EXEC_REAP_TIMEOUT)
 
+    async def _exec_on_default_session(
+        self,
+        cmd: str,
+        *,
+        timeout: float,
+        log: LogMode,
+        expects: "list[Expect] | None",
+        user: str | None,
+    ) -> CommandResult:
+        """One command on the default session: ``exec`` on a single-client console.
+
+        A console line serves one client, so the session ``run`` uses is the
+        only one there is: a pooled session would be a second connection to a
+        port that refuses it. The command therefore goes through
+        :meth:`run_cmd`, with ``run``'s marker and exit-code handling, and
+        shares the default session's shell state (a ``cd`` it makes stays).
+
+        This layer does not serialise concurrent callers and cannot switch
+        the session's identity. Both belong to the host, which owns the
+        switch (:meth:`~otto.host.privilege.PosixPrivilege.as_user`) and so
+        must hold one lock across the switch, the command and the switch
+        back (see ``UnixHost._exec_one``). A *user* other than the
+        session's current one reaching here is refused by name rather than
+        run as the wrong user.
+        """
+        current = self.current_user
+        if user is not None and user != current:
+            raise ConsoleError(
+                f"{self._name}: console is single-client; exec runs on its one "
+                f"session as {current!r}, so it cannot run as {user!r} here — "
+                f"switch the session first (host.exec(user=...) does)"
+            )
+        return await self.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
+
     async def _exec_pooled(
         self,
         cmd: str,
@@ -2942,8 +3224,10 @@ class SessionManager:
         and :attr:`exec_line_budget` both need the answer and a second copy
         would be a prediction of this method rather than a reading of it.
 
-        Order matters and is :meth:`exec`'s own: a raw exec primitive wins
-        unless the login is PROXIED, the host declares a ``session_setup``
+        Order matters and is :meth:`exec`'s own. A ``console`` term answers
+        ``DEFAULT_SESSION`` before anything else is read, since it serves one
+        client and so has nothing else to offer. Otherwise a raw exec
+        primitive wins unless the login is PROXIED, the host declares a ``session_setup``
         hook (the raw channel cannot run setup), or the call itself needs a
         shell, in which case nothing raw can be used at all (neither the
         factory nor ssh's channel can replay the hops, and neither is a shell
@@ -2963,13 +3247,20 @@ class SessionManager:
         optimization for calls that need nothing a shell provides, never a
         second meaning of ``exec``.
         """
+        term = getattr(self._connections, "term", None)
+        if term == "console":
+            # First, whatever else the call needs: a console serves ONE
+            # client, so there is no raw channel and no second (pooled)
+            # session to consider. Hops, a hook, a prompt or a user switch
+            # all happen on the session `run` uses.
+            return _ExecRoute.DEFAULT_SESSION
         hops = getattr(self._connections, "proxy_hops", []) if self._connections is not None else []
         hooked = self._session_setup is not None
         if self._exec_factory is not None and not hops and not hooked and not needs_shell:
             return _ExecRoute.FACTORY
         if hops or hooked or needs_shell:
             return _ExecRoute.POOLED_SHELL
-        match getattr(self._connections, "term", None):
+        match term:
             case "ssh":
                 return _ExecRoute.SSH_CHANNEL
             case "telnet":
@@ -3001,7 +3292,7 @@ class SessionManager:
         ``UNSUPPORTED`` answers ``None`` too: :meth:`exec` raises on that term
         before any line is typed, so there is no line to budget.
         """
-        if self._exec_route() is not _ExecRoute.POOLED_SHELL:
+        if self._exec_route() not in (_ExecRoute.POOLED_SHELL, _ExecRoute.DEFAULT_SESSION):
             return None
         return typed_line_budget(self._command_frame)
 
@@ -3057,57 +3348,7 @@ class SessionManager:
             if named_factory is not None:
                 shell_session: ShellSession = named_factory()
             else:
-                assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no session_factory
-                match self._connections.term:
-                    case "ssh":
-                        ssh_conn = await self._connections.ssh()
-                        shell_session = SshSession(
-                            ssh_conn,
-                            command_frame=self._session_frame,
-                            init_timeout=self._init_timeout,
-                            shell_history=self._shell_history,
-                        )
-                    case "telnet":
-                        user, password = self._connections.credentials
-                        # Ask the ConnectionManager WHERE to dial rather than
-                        # reading `.ip` off it: behind a hop those differ, and
-                        # the raw address is the guest's own loopback — i.e.
-                        # this machine. See `ConnectionManager.telnet_target`.
-                        target = await self._connections.telnet_target()
-                        client = TelnetClient(
-                            target.host,
-                            user=user,
-                            password=password or "",
-                            options=self._connections.telnet_options,
-                            connect_port=target.port,
-                        )
-                        # A caller-side ``wait_for`` cancellation can land
-                        # anywhere in ``connect()`` (TCP, ECHO negotiation,
-                        # credential exchange) and would otherwise drop
-                        # ``client`` on the floor with its socket still open.
-                        # Tear down on any exception (including CancelledError)
-                        # so the FD is released. The marker handshake that
-                        # follows is guarded separately, below.
-                        try:
-                            await client.connect()
-                        except BaseException:
-                            with suppress(Exception):
-                                await client.close()
-                            raise
-                        shell_session = TelnetSession(
-                            client.reader,
-                            client.writer,
-                            _owned_client=client,
-                            command_frame=self._session_frame,
-                            init_timeout=self._init_timeout,
-                            write_chunk_size=client.options.write_chunk_size,
-                            write_chunk_delay=client.options.write_chunk_delay,
-                            shell_history=self._shell_history,
-                        )
-                    case _:
-                        raise ValueError(
-                            f'{self._name}: unsupported terminal type "{self._connections.term}"'
-                        )
+                shell_session = await self._open_transport_session(named=True)
 
             shell_session._on_output = _sink_for(self._log_output, LogMode.NORMAL)  # noqa: SLF001 — intra-package wiring of output callback on freshly-built ShellSession
             self._seed_user(shell_session)

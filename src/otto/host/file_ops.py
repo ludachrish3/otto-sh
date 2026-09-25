@@ -2,7 +2,9 @@
 Posix remote file-management mixin.
 
 Mimics the unix CLI (``test``/``ls``/``mkdir``/``rm``/``cp``/``mv``/``cat``)
-over the host's shell via :meth:`~otto.host.host.Host.exec`. These manage
+over the host's shell via :meth:`~otto.host.host.Host.exec` (on a unix
+host's single-client ``console`` term, one command at a time on the default
+session). These manage
 files *already on / between locations on* the host — complementary to
 ``put``/``get`` (which move files local↔remote). Shared by the posix-shell hosts
 (:class:`~otto.host.unix_host.UnixHost`,

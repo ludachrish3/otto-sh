@@ -40,10 +40,11 @@ from typing_extensions import override
 from ..logger.mode import LogMode
 from ..result import CommandResult
 from ..utils import Status
-from .connections import LOGINLESS, connect_and_describe
+from .connections import LOGINLESS, ConsoleEndpoint, connect_and_describe
+from .errors import ConsoleError
 from .host import BaseHost, is_dry_run
 from .login_proxy import Cred
-from .options import SshOptions, TelnetOptions
+from .options import ConsoleOptions, SshOptions, TelnetOptions
 
 if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
@@ -259,6 +260,11 @@ class RemoteHost(BaseHost):
 
     telnet_options: TelnetOptions = field(default_factory=TelnetOptions, repr=False)
     """Connection options for telnet sessions (port, cols/rows, auto-resize, etc.)."""
+
+    console_options: ConsoleOptions = field(default_factory=ConsoleOptions, repr=False)
+    """Address and login behaviour of this host's serial console for the
+    ``console`` term (server host ID, port, dial mode, prompt patterns).
+    See :class:`~otto.host.options.ConsoleOptions`."""
 
     snmp: "SnmpOptions | None" = field(default=None, repr=False)
     """Optional per-host SNMP polling config (lab ``snmp`` block), or None. When
@@ -598,15 +604,13 @@ class RemoteHost(BaseHost):
     #  Hop transport
     ####################
 
-    def hop_host(self) -> "RemoteHost | None":
-        """Return the hop's host object, or ``None`` when this host has no hop.
+    def _lab_host(self, host_id: str, *, role: str) -> "RemoteHost":
+        """Resolve *host_id* to a lab host, naming *role* (``hop``, ``console server``) on failure.
 
         Resolved from this host's own lab back-reference, else the active
-        context's lab -- the lookup the tunnel factory performs, shared so
-        the protocol survey observes from the same hop.
+        context's lab -- the lookup the tunnel factory performs for a hop and
+        the console term performs for its console server.
         """
-        if self.hop is None:
-            return None
         lab = self._lab
         if lab is None:
             from ..context import try_get_context
@@ -615,18 +619,32 @@ class RemoteHost(BaseHost):
             lab = ctx.lab if ctx is not None else None
         if lab is None:
             raise RuntimeError(
-                f"Host {self.name!r} cannot resolve hop {self.hop!r}: the host has no lab "
+                f"Host {self.name!r} cannot resolve {role} {host_id!r}: the host has no lab "
                 f"back-reference and there is no active OttoContext. Add the host to a Lab "
                 f"(Lab.add_host) or run within `otto.open_context(...)`."
             )
-        if self.hop not in lab.hosts:
+        if host_id not in lab.hosts:
             raise KeyError(
-                f"hop {self.hop!r} not in lab {lab.name!r}; available: {sorted(lab.hosts)}"
+                f"{role} {host_id!r} not in lab {lab.name!r}; available: {sorted(lab.hosts)}"
             )
-        return cast("RemoteHost", lab.hosts[self.hop])
+        return cast("RemoteHost", lab.hosts[host_id])
 
-    def _build_hop_transport(self) -> "SshHopTransport":
+    def hop_host(self) -> "RemoteHost | None":
+        """Return the hop's host object, or ``None`` when this host has no hop.
+
+        Shared with the tunnel factory, so the protocol survey observes from
+        the same hop.
+        """
+        if self.hop is None:
+            return None
+        return self._lab_host(self.hop, role="hop")
+
+    def _build_hop_transport(self, hop_id: str | None = None) -> "SshHopTransport":
         """Build an ``SshHopTransport`` for reaching this host through its hop.
+
+        *hop_id* names the host to tunnel into; ``None`` (the default) means
+        this host's own ``hop``. The console term passes its console server's
+        id, so the same recursion, cred lookup and cycle check reach it.
 
         The transport wraps a factory coroutine that lazily resolves the hop
         host ID via the config module and opens a dedicated SSH connection to
@@ -655,7 +673,7 @@ class RemoteHost(BaseHost):
         """
         from .transport import SshHopTransport
 
-        hop_id = self.hop
+        hop_id = self.hop if hop_id is None else hop_id
         if hop_id is None:
             raise ValueError(
                 f"_build_hop_transport called on host {self.name!r} with no hop configured"
@@ -682,7 +700,7 @@ class RemoteHost(BaseHost):
                 raise ValueError(f"Circular hop detected: {hop_id!r} already in chain {visited}")
             visited.add(hop_id)
 
-            hop_host = cast("RemoteHost", self.hop_host())
+            hop_host = self._lab_host(hop_id, role="hop")
 
             parent_tunnel = None
             if hop_host.hop:
@@ -728,3 +746,36 @@ class RemoteHost(BaseHost):
 
         outer._factory = _create_tunnel  # noqa: SLF001 — intra-package assignment to SshHopTransport._factory closure
         return outer
+
+    def console_endpoint(self) -> ConsoleEndpoint:
+        """Where the ``console`` term dials, resolved from the SERVER's host record.
+
+        ``dial: ssh``: an SSH hop transport INTO the server (built exactly as
+        ``hop: <server>`` would be, so a multi-hop server chain and its cred
+        resolution come for free); the connection manager forwards
+        ``localhost:port`` through it. ``dial: direct``: the server's ``ip``
+        and, when the server itself sits behind a hop, a hop transport built
+        from the server's own ``hop`` (a fresh one, owned by this endpoint).
+        The host's own ``hop`` is never consulted here.
+
+        Raises :class:`~otto.host.errors.ConsoleError` when the server is
+        this host itself, and ``KeyError`` (naming this host) when the server
+        is not in the lab.
+        """
+        opts = self.console_options
+        if opts.server == self.id:
+            raise ConsoleError(
+                f"{self.name}: console {opts.server}:{opts.port} (dial={opts.dial}) names "
+                f"this host {self.id!r} as its own console server; set "
+                f"console_options.server to the lab host that runs the telnet server"
+            )
+        try:
+            server = self._lab_host(opts.server, role="console server")
+        except KeyError as exc:
+            raise KeyError(f"{self.name}: {exc.args[0]}") from None
+        if opts.dial == "ssh":
+            return ConsoleEndpoint(
+                server_ip=server.ip, hop=self._build_hop_transport(hop_id=opts.server)
+            )
+        server_hop = server._build_hop_transport() if server.hop else None  # noqa: SLF001 — intra-package access to RemoteHost._build_hop_transport
+        return ConsoleEndpoint(server_ip=server.ip, hop=server_hop)

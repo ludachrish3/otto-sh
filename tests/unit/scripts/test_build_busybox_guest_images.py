@@ -164,6 +164,13 @@ def test_inittab_respawns_telnetd_with_an_explicit_login(image):
     assert "::respawn:/bin/busybox telnetd -F -l /bin/login" in inittab
 
 
+def test_a_console_port_puts_a_getty_on_ttys1_and_nothing_else_does():
+    from scripts.build_busybox_guest_images import _inittab
+
+    assert "ttyS1::respawn:/bin/busybox getty -L 115200 ttyS1 vt100\n" in _inittab("none", 2450)
+    assert "ttyS1" not in _inittab("none", None)
+
+
 def test_root_login_is_md5_crypt_and_shell_is_ash(image):
     assert image["etc/passwd"]["data"] == b"root:x:0:0:root:/root:/bin/sh\n"
     shadow = image["etc/shadow"]["data"].decode()
@@ -186,12 +193,14 @@ def test_the_guest_table_matches_the_pinned_bed_identities():
     # The /30 arithmetic (guest = 4n+1, tap = 4n+2) is spelled out literally
     # rather than computed: a generated expectation would agree with a
     # generator that had the same off-by-one as the table.
-    assert [(g.version, g.element, g.ip, g.host_ip, g.tap, g.sshd) for g in GUEST_TABLE] == [
-        ("1.16.1", "bb1161", "198.51.100.1", "198.51.100.2", "bbeth-1161", "none"),
-        ("1.21.1", "bb1211", "198.51.100.5", "198.51.100.6", "bbeth-1211", "none"),
-        ("1.28.1", "bb1281", "198.51.100.9", "198.51.100.10", "bbeth-1281", "none"),
-        ("1.31.0", "bb1310", "198.51.100.13", "198.51.100.14", "bbeth-1310", "none"),
-        ("1.35.0", "bb1350", "198.51.100.17", "198.51.100.18", "bbeth-1350", "dropbear"),
+    assert [
+        (g.version, g.element, g.ip, g.host_ip, g.tap, g.sshd, g.console_port) for g in GUEST_TABLE
+    ] == [
+        ("1.16.1", "bb1161", "198.51.100.1", "198.51.100.2", "bbeth-1161", "none", None),
+        ("1.21.1", "bb1211", "198.51.100.5", "198.51.100.6", "bbeth-1211", "none", None),
+        ("1.28.1", "bb1281", "198.51.100.9", "198.51.100.10", "bbeth-1281", "none", None),
+        ("1.31.0", "bb1310", "198.51.100.13", "198.51.100.14", "bbeth-1310", "none", None),
+        ("1.35.0", "bb1350", "198.51.100.17", "198.51.100.18", "bbeth-1350", "dropbear", 2450),
     ]
 
 
@@ -233,6 +242,26 @@ def test_a_dropbear_guest_image_carries_the_daemon_its_key_and_a_respawn_line(tm
     )
     # telnetd stays: the guest's term is still telnet-first.
     assert "::respawn:/bin/busybox telnetd -F -l /bin/login" in inittab
+
+
+def test_only_the_console_guest_image_carries_the_ttys1_getty(tmp_path):
+    """The ``console_port`` column has an sshd-shaped twin: this is it.
+
+    ``test_a_console_port_puts_a_getty_on_ttys1_and_nothing_else_does`` only
+    calls ``_inittab`` directly — it cannot see the call site in
+    ``cpio_newc_entries`` looking ``console_port`` up from ``GUEST_TABLE`` by
+    hostname. A regression there (e.g. a stray ``_inittab(sshd, None)``)
+    ships bb1350 with no getty on ttyS1 while every other test still passes,
+    and the first place that shows up is a live `vagrant provision test1`.
+    Table-driven, like ``test_the_other_images_are_byte_identical_...``
+    above, so every guest is checked, not just the anchor.
+    """
+    for guest in GUEST_TABLE:
+        inittab = _build(tmp_path, guest, dropbear=guest.sshd == "dropbear")["etc/inittab"][
+            "data"
+        ].decode()
+        has_getty = "ttyS1::respawn:/bin/busybox getty -L 115200 ttyS1 vt100\n" in inittab
+        assert has_getty == (guest.console_port is not None), guest.element
 
 
 def test_a_guest_without_an_sshd_ships_no_dropbear_even_when_given_one(tmp_path):
@@ -324,7 +353,10 @@ def test_the_guest_slash_30s_do_not_collide_with_the_zephyr_beds():
 # expected shape, so a malformed, extra or missing-quote entry fails the whole
 # match rather than being quietly skipped by a findall over the file. The
 # separator class allows the line continuations the table is wrapped with.
-_QUAD = r'"\d+\.\d+\.\d+:\d+\.\d+\.\d+\.\d+:\d+\.\d+\.\d+\.\d+:[a-z0-9-]+:(?:none|dropbear)"'
+_QUAD = (
+    r'"\d+\.\d+\.\d+:\d+\.\d+\.\d+\.\d+:\d+\.\d+\.\d+\.\d+:[a-z0-9-]+:'
+    r'(?:none|dropbear):(?:-|\d+)"'
+)
 _PROVISIONER_QUADS = re.compile(rf"for entry in\s+((?:{_QUAD}[\s\\]*)+);\s*do")
 _PROVISIONER_ENABLE_LIST = re.compile(r'for entry in\s+((?:"\d+\.\d+\.\d+"[\s\\]*)+);\s*do')
 
@@ -342,8 +374,33 @@ _PROVISIONER_TAP_DOWN = re.compile(
     r"ExecStopPost=\+/bin/sh -c 'ip link set \$\{tap\} down 2>/dev/null; "
     r"ip tuntap del \$\{tap\} mode tap 2>/dev/null; true'"
 )
+# Pins the WHOLE conditional assignment as one block: the loopback bind, the
+# exact -serial telnet flag shape, and the comparison DIRECTION (`!=`, not
+# `=`) all in one match. Any one of those flipped independently either binds
+# the console off loopback (0.0.0.0), turns the flag on for every guest
+# instead of only the one with a console_port, or drops the flag from the
+# guest that should have it — three separate mutants a bare "the string
+# appears somewhere" count cannot tell apart.
+_PROVISIONER_CONSOLE_SERIAL_ASSIGN = re.compile(
+    r'if \[ "\$cport" != "-" \]; then\s*\n'
+    r'\s*console_serial="-serial telnet:127\.0\.0\.1:\$\{cport\},server,nowait "\s*\n'
+    r"\s*fi"
+)
+# Pins the QEMU flag block in ORDER: -display none, -parallel none (device-set
+# parity with the -nographic this replaced), -no-reboot, -serial mon:stdio,
+# then ${console_serial}. The mon:stdio/console_serial adjacency matters on
+# its own — reversing it puts the telnet bridge on ttyS0 and starves the
+# unit's own journal of boot output, which two independent "each flag
+# appears once" counts cannot catch.
+_PROVISIONER_QEMU_FLAGS = re.compile(
+    r"-display none \\\\\n"
+    r"\s*-parallel none \\\\\n"
+    r"\s*-no-reboot \\\\\n"
+    r"\s*-serial mon:stdio \\\\\n"
+    r"\s*\$\{console_serial\}\\\\\n"
+)
 
-# The four ``cut`` bindings, in order and as one contiguous block. This is the
+# The six ``cut`` bindings, in order and as one contiguous block. This is the
 # JOINT between the table and the templates, and pinning the two ends without
 # it leaves the whole chain forgeable: ``tap=bbeth-1161`` written straight at
 # the binding line satisfies every ``${tap}`` pattern above AND the quad
@@ -359,6 +416,7 @@ _PROVISIONER_BINDINGS = re.compile(
     r'\s*hip=\$\(echo "\$entry" \| cut -d: -f3\)\s*\n'
     r'\s*tap=\$\(echo "\$entry" \| cut -d: -f4\)'
     r'\s*\n\s*sshd=\$\(echo "\$entry" \| cut -d: -f5\)'
+    r'\s*\n\s*cport=\$\(echo "\$entry" \| cut -d: -f6\)'
 )
 
 
@@ -400,15 +458,26 @@ def test_the_vagrantfile_provisioner_mirrors_the_guest_table():
 
     quad_lists = _PROVISIONER_QUADS.findall(body)
     assert len(quad_lists) == 1, (
-        "expected exactly one version:guest_ip:tap_ip:tap_name:sshd list in the "
+        "expected exactly one version:guest_ip:tap_ip:tap_name:sshd:console_port list in the "
         f"busybox-qemu provisioner, found {len(quad_lists)} — the table moved, "
-        "changed shape, or grew an entry that is not a well-formed five-field entry"
+        "changed shape, or grew an entry that is not a well-formed six-field entry"
     )
     provisioned = re.findall(
-        r'"(\d+\.\d+\.\d+):(\d+\.\d+\.\d+\.\d+):(\d+\.\d+\.\d+\.\d+):([a-z0-9-]+):([a-z]+)"',
+        r'"(\d+\.\d+\.\d+):(\d+\.\d+\.\d+\.\d+):(\d+\.\d+\.\d+\.\d+):'
+        r'([a-z0-9-]+):([a-z]+):(-|\d+)"',
         quad_lists[0],
     )
-    assert provisioned == [(g.version, g.ip, g.host_ip, g.tap, g.sshd) for g in GUEST_TABLE], (
+    assert provisioned == [
+        (
+            g.version,
+            g.ip,
+            g.host_ip,
+            g.tap,
+            g.sshd,
+            "-" if g.console_port is None else str(g.console_port),
+        )
+        for g in GUEST_TABLE
+    ], (
         "Vagrantfile busybox-qemu identity table drifted from GUEST_TABLE in "
         "scripts/build_busybox_guest_images.py — the bed would stand up TAPs "
         "and addresses the lab data does not address"
@@ -425,16 +494,21 @@ def test_the_vagrantfile_provisioner_mirrors_the_guest_table():
     )
     # Stated separately from the two comparisons above so the failure names
     # the real accident: the two shell lists disagreeing with each other.
-    assert enabled == [version for version, _gip, _hip, _tap, _sshd in provisioned], (
+    assert enabled == [version for version, _gip, _hip, _tap, _sshd, _cport in provisioned], (
         "the provisioner's own two copies disagree: enable list "
-        f"{enabled} vs identity table {[v for v, _g, _h, _t, _s in provisioned]}"
+        f"{enabled} vs identity table {[v for v, _g, _h, _t, _s, _c in provisioned]}"
     )
 
     for name, pattern in (
-        ("the five cut -d: field bindings, in table order", _PROVISIONER_BINDINGS),
+        ("the six cut -d: field bindings, in table order", _PROVISIONER_BINDINGS),
         ("the qemu -nic tap line", _PROVISIONER_NIC),
         ("the unit's ExecStartPre TAP setup", _PROVISIONER_TAP_UP),
         ("the unit's ExecStopPost TAP teardown", _PROVISIONER_TAP_DOWN),
+        ("the console_serial loopback conditional assignment", _PROVISIONER_CONSOLE_SERIAL_ASSIGN),
+        (
+            "the -display/-parallel/-no-reboot/-serial/console_serial flag order",
+            _PROVISIONER_QEMU_FLAGS,
+        ),
     ):
         found = pattern.findall(body)
         assert len(found) == 1, (

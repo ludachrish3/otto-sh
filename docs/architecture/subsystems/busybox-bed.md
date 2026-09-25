@@ -221,6 +221,16 @@ Facts worth knowing before you read a failure:
   kept across re-provisions. The daemon is not health-probed by
   `scripts/lab_health.py`, which routes hop-fronted guests to the telnet
   console probe by shape.
+- **`bb1350` also has a serial console.** Its QEMU gives the guest a second
+  serial port: `ttyS0` still feeds the unit's journal, and `ttyS1` is bridged
+  to a telnet listener on `test1`'s loopback, port 2450, with a BusyBox
+  `getty` respawned on it from `inittab`. Nudged, the line shows
+  `bb1350 login:`. Its entry adds `console` to its term menu with
+  `console_options: {"server": "test1", "port": 2450}`, so the `console` term
+  ({ref}`console-term`) reaches it by tunnelling into `test1`; a direct dial
+  cannot, since the listener is loopback-only. The builder's guest table has
+  a `console_port` column (2450 for `bb1350`, empty for the other four), and
+  only a guest with one gets the second getty.
 - **One account: `root`.** The password is baked into the image by the builder and
   recorded in the guests' lab-data credentials.
 - **They are emulated, on two cores.** x86 guests on an aarch64 host means TCG with no

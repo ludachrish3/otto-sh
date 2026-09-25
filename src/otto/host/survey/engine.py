@@ -15,7 +15,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from ...logger.mode import LogMode
-from ..connections import TERM_BACKENDS
+from ..connections import TERM_BACKENDS, TermBackend
 from ..login_proxy import cred_for, cred_identity
 from ..transfer.registry import TRANSFER_BACKENDS
 from ..transfer.sftp import open_sftp_or_attribute
@@ -155,13 +155,25 @@ async def _run_only(host: "BaseHost", cmd: str, *, sudo: bool = False) -> "Comma
     return (await host.run(cmd, sudo=sudo, timeout=INVENTORY_TIMEOUT_S, log=LogMode.NEVER)).only
 
 
+def dialling_terms() -> dict[str, TermBackend]:
+    """Return registered term backends reached by dialling the HOST's own address.
+
+    A console term is addressed at its console SERVER, not the host, so it has
+    no port on the host's own address for a port survey to dial — every survey
+    read of ``TERM_BACKENDS`` routes through here instead, so a term like it
+    never manufactures a phantom candidate, dial or login attempt against the
+    host.
+    """
+    return {n: b for n, b in TERM_BACKENDS.items() if b.dials_host}
+
+
 def _family_candidates(
     family: str, declared: "Callable[[str, Kind], int]"
 ) -> "tuple[list[Candidate], list[str]]":
     """Split registered protocols into this family's candidates and the not-applicable names."""
     cands: list[Candidate] = []
     other: list[str] = []
-    for name, backend in TERM_BACKENDS.items():
+    for name, backend in dialling_terms().items():
         if family in backend.host_families:
             cands.append(Candidate(name, "term", declared(name, "term"), declared=True))
         else:
@@ -303,10 +315,22 @@ async def _snmp_row(
 
 
 def _resolve(survey: Survey) -> None:
+    dialling = dialling_terms()
     by_proto: dict[str, list[int]] = {}
     for v in survey.verdicts:
-        if v.state == "supported":
-            by_proto.setdefault(v.protocol, []).append(v.port)
+        if v.state != "supported":
+            continue
+        if v.kind == "term" and v.protocol not in dialling:
+            # A non-dialling term (dials_host=False, e.g. console) has no
+            # port on the host's own address -- its login row stays in
+            # survey.verdicts so the report still shows it, but it never
+            # becomes a "supported" port or a working-port pin; there is no
+            # port for a menu_pin *_options fragment to name. Keyed on the
+            # row's kind, not its name: "console" is also the embedded
+            # transfer backend, and that transfer row is a real supported
+            # protocol on the declared console port.
+            continue
+        by_proto.setdefault(v.protocol, []).append(v.port)
     survey.supported = sorted(by_proto)
     for proto, ports in by_proto.items():
         declared = survey.declared_ports.get(proto)
@@ -381,6 +405,26 @@ class _UnixSurvey:
         )
 
     async def declared_logins(self) -> None:
+        if self.host.term not in dialling_terms() and self.host.term in TERM_BACKENDS:
+            # A non-dialling own term (dials_host=False, e.g. console) never
+            # becomes a candidate -- dialling_terms() excludes it, so it has
+            # no port on the host's own address to dial. It still owns the
+            # session, so it runs the same own-term path as ssh/telnet below,
+            # just with no candidate, no dial, and no declared-port row.
+            own = Candidate(
+                self.host.term, "term", DEFAULT_PORTS.get(self.host.term, 0), declared=True
+            )
+            if self.deadline.spent:
+                self._budget_row(own, "login")
+            else:
+                got = await self._own_session()
+                self.own_ok = got is not None and got.state == "supported"
+                if got is None:
+                    self._budget_row(own, "login")
+                else:
+                    self.rows.append(
+                        _verdict(own, got.state, "login", _vantage(self.host), got.detail)
+                    )
         for c in self.cands:
             if c.kind != "term" and c.protocol != "ftp":
                 continue
@@ -510,8 +554,14 @@ class _UnixSurvey:
                 f"needs the host's own term ({self.host.term}); {other} logged in"
                 f" — set term={other} to use it"
             )
-        tried = ", ".join(c.protocol for c in self.cands if c.kind == "term")
-        return f"needs a term session; tried {tried}"
+        names = [c.protocol for c in self.cands if c.kind == "term"]
+        if self.host.term not in names:
+            # The own term is non-dialling (dials_host=False, e.g. console):
+            # it has no candidate, so it is never in `names` on its own --
+            # name it explicitly or a console-term host's own-session
+            # failure reads as though its own term was never tried at all.
+            names.append(self.host.term)
+        return f"needs a term session; tried {', '.join(names)}"
 
     def no_session_rows(self) -> None:
         detail = self._no_session_detail()
@@ -1005,7 +1055,7 @@ def _local_not_applicable(survey: Survey) -> Survey:
     and not-applicable in the same report.
     """
     answered = {v.protocol for v in survey.verdicts}
-    names = {n for n, _ in TERM_BACKENDS.items()} | {n for n, _ in TRANSFER_BACKENDS.items()}
+    names = set(dialling_terms()) | {n for n, _ in TRANSFER_BACKENDS.items()}
     survey.not_applicable = sorted(names - answered)
     return survey
 
@@ -1054,7 +1104,7 @@ async def _survey_local(host: "BaseHost") -> Survey:
 def _survey_docker(_host_cls: type) -> Survey:
     survey = Survey()
     verdicts: list[ProtocolVerdict] = []
-    for name, backend in TERM_BACKENDS.items():
+    for name, backend in dialling_terms().items():
         if "unix" in backend.host_families:
             verdicts.append(
                 ProtocolVerdict(
@@ -1110,7 +1160,7 @@ async def run_survey(
         return _with_user(_survey_docker(type(host)), user)
     survey = Survey(user=user)
     reason = f"no survey for {type(host).__name__}"
-    named: list[tuple[str, Kind]] = [(n, "term") for n, _ in TERM_BACKENDS.items()]
+    named: list[tuple[str, Kind]] = [(n, "term") for n in dialling_terms()]
     named.extend((n, "transfer") for n, _ in TRANSFER_BACKENDS.items())
     for name, kind in named:
         survey.verdicts.append(

@@ -14,8 +14,11 @@ The key differences are:
   persistent session with `run` and is **not** concurrency-safe.
 - **No bash.** No `$?`, no command substitution, no `scp`/`ftp`/`nc`.  Command
   framing and file transfer use a device-shell protocol, not Unix tools.
-- **Telnet only.** The shell is reached over telnet (optionally through an SSH
-  hop), never SSH directly.
+- **Telnet or console, never SSH.** The shell is reached over telnet at the
+  device's own address (optionally through an SSH hop), or over the
+  `console` term, through the telnet server fronting its serial port
+  ({ref}`console-term`). Either way there is no login step: an embedded
+  host always runs with `login` off.
 
 ## Host class taxonomy
 
@@ -68,22 +71,39 @@ frame's dialect.
 | Name | Class | Notes |
 |------|-------|-------|
 | `zephyr` | `ZephyrFrame` | Stock Zephyr `retval` shell (3.7 / 4.4 LTS).  Default for `ZephyrHost`. |
-| `zephyr-serial` | `ZephyrSerialFrame` | Same framing as `zephyr`; differs only in handshake.  For a UART shell bridged via QEMU `-serial telnet:` (raw byte bridge, not the in-guest `SHELL_BACKEND_TELNET`). |
+| `zephyr-serial` | `ZephyrSerialFrame` | Same framing as `zephyr`; differs only in handshake.  For a UART shell behind a telnet bridge — QEMU `-serial telnet:` or a console server — rather than the in-guest `SHELL_BACKEND_TELNET`. |
 | `bash` | `BashFrame` | POSIX bash; used internally by SSH/telnet Unix sessions. |
 | `ash` | `AshFrame` | BusyBox `ash`.  Uses `BashFrame`'s framing unchanged. |
 | `raw` | `RawFrame` | landing-only, no handshake and no framing, for a console whose landing state answers no frame; only valid as `landing_frame` with a `session_setup` hook; see {ref}`per-host-session-setup`. |
 
-Declare a frame by name on the host entry, inside its element:
+Declare a frame by name on the host entry, inside its element. This is a
+Zephyr target whose UART shell QEMU bridges to port 2325 on `test4`,
+reached over the `console` term — the frame and the term are chosen
+separately:
 
 ```json
 {
     "name": "zephyr37_nofs",
     "labs": ["embedded"],
     "hosts": [
-        { "ip": "192.0.2.1", "os_type": "zephyr", "command_frame": "zephyr-serial" }
+        {
+            "ip": "192.0.2.37",
+            "os_type": "zephyr",
+            "command_frame": "zephyr-serial",
+            "valid_terms": ["console"],
+            "console_options": {
+                "server": "test4",
+                "port": 2325,
+                "write_chunk_size": 64,
+                "write_chunk_delay": 0.015
+            }
+        }
     ]
 }
 ```
+
+`write_chunk_size` / `write_chunk_delay` pace long writes so the UART's
+receive buffer does not overrun (see {ref}`console-term`).
 
 ## Embedded filesystems
 

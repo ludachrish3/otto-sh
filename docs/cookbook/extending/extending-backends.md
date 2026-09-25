@@ -8,10 +8,11 @@ registers a class from an `init` module listed in `.otto/settings.toml`, so the
 registration runs before any lab data loads. The two seams are:
 
 - {func}`~otto.host.connections.register_term_backend` — the **connection** for
-  a host (`term` in lab data). The built-ins are `ssh` and `telnet`, both
-  {class}`~otto.host.connections.ConnectionManager`. Each term declares the host
-  families it serves (see below): `ssh` serves `{'unix'}`, `telnet` serves
-  `{'unix', 'embedded'}` (embedded hosts reach their console over telnet).
+  a host (`term` in lab data). The built-ins are `ssh`, `telnet` and
+  `console`, all {class}`~otto.host.connections.ConnectionManager`. Each term
+  declares the host families it serves (see below): `ssh` serves `{'unix'}`;
+  `telnet` and `console` (a serial console behind a telnet server,
+  {ref}`console-term`) serve `{'unix', 'embedded'}`.
 - {func}`~otto.host.transfer.register_transfer_backend` — the **file transfer**
   backend (`transfer` in lab data), which spans both host families. The built-ins are
   the unix protocols `scp` / `sftp` / `ftp` / `nc` and the embedded `console`
@@ -461,7 +462,10 @@ answer the frame fails there with the host and hook named.
 
 In a `"raw"` landing there is no landing dialect: `run()` raises
 {class}`~otto.host.errors.RawLandingError` until `enter_frame()`, and the
-hook works with `send`/`expect` alone. A cancelled `expect()` is fatal
+hook works with `send`/`expect` alone. On a `console` host with
+`console_options.login: false`, the hook logs in with
+`await session.console_login()` once it has the line at `login:`
+({ref}`console-term`). A cancelled `expect()` is fatal
 there — a raw frame has no recovery probe to render, so the session is
 marked dead and the open fails — so give the hook's `expect` timeouts
 generous budgets rather than tight ones.

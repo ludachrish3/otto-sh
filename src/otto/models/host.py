@@ -21,6 +21,7 @@ from ..host.capability import (
     TERM_RESOLVER,
     TRANSFER_RESOLVER,
     authenticating_protocols,
+    console_transfer_menu,
 )
 from ..host.command_frame import FRAME_CLASSES, BashFrame, build_command_frame
 from ..host.connections import TERM_BACKENDS
@@ -45,6 +46,7 @@ from ..logger.mode import LogMode
 from .base import OttoModel
 from .lab import resources_nonempty
 from .options import (
+    ConsoleOptionsSpec,
     FtpOptionsSpec,
     NcOptionsSpec,
     ScpOptionsSpec,
@@ -395,6 +397,11 @@ class HostSpec(OttoModel):
     interfaces: dict[str, InterfaceSpec] = Field(default_factory=dict)
     log: LogMode = LogMode.NORMAL
     telnet_options: TelnetOptionsSpec = TelnetOptionsSpec()
+    console_options: ConsoleOptionsSpec = ConsoleOptionsSpec()
+    """The ``console`` term's address and login behaviour: the lab host that
+    runs the telnet server, the port, the dial mode and the prompt
+    patterns. See :class:`~otto.models.options.ConsoleOptionsSpec`."""
+
     snmp: SnmpOptionsSpec | None = None
     toolchain: ToolchainSpec = ToolchainSpec()
     command_frame: str | None = None
@@ -675,6 +682,34 @@ class HostSpec(OttoModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_console_rules(self) -> "HostSpec":
+        """Require a console-term host to say where its console is.
+
+        Only the active term is checked: ``console_options`` on a host that
+        runs ssh today is inert data, and a lab may pre-declare it. Server
+        existence and the server's ssh cred are lab-wide facts, resolved
+        at connect time the way ``hop`` is.
+        """
+        if self._effective_term() != "console":
+            return self
+        opts = self.console_options
+        if not opts.server:
+            raise ValueError(
+                "term 'console' requires console_options.server: the lab host ID of the "
+                "telnet server fronting this console"
+            )
+        if not 1 <= opts.port <= 65535:  # noqa: PLR2004 — port range, not a magic constant
+            raise ValueError(
+                f"term 'console' requires console_options.port in 1..65535, got {opts.port}"
+            )
+        console_transfer_menu(
+            self.name or self.ip,
+            getattr(self, "valid_transfers", []),
+            getattr(self, "transfer", None),
+        )
+        return self
+
     def _common_host_kwargs(self) -> dict[str, Any]:
         """Build constructor kwargs for the common fields the spec *explicitly set*.
 
@@ -702,6 +737,8 @@ class HostSpec(OttoModel):
             kw["interfaces"] = {k: e.to_runtime() for k, e in self.interfaces.items()}
         if "telnet_options" in s:
             kw["telnet_options"] = self.telnet_options.to_runtime()
+        if "console_options" in s:
+            kw["console_options"] = self.console_options.to_runtime()
         if "snmp" in s:
             kw["snmp"] = self.snmp.to_runtime() if self.snmp is not None else None
         if "toolchain" in s:
@@ -809,8 +846,16 @@ class UnixHostSpec(HostSpec):
         kw["term"] = TERM_RESOLVER.resolve_active(
             self.valid_terms, pin=self.term, preference=prefs.get("term")
         )
+        # A console serves one client, so nc (whose listener needs a second
+        # session) leaves the menu there: an nc preference falls through to the
+        # next kind. Only the resolution narrows; the host keeps its full menu.
+        transfers = (
+            console_transfer_menu(self.name or self.ip, self.valid_transfers, self.transfer)
+            if kw["term"] == "console"
+            else self.valid_transfers
+        )
         kw["transfer"] = TRANSFER_RESOLVER.resolve_active(
-            self.valid_transfers, pin=self.transfer, preference=prefs.get("transfer")
+            transfers, pin=self.transfer, preference=prefs.get("transfer")
         )
         kw["impairer"] = IMPAIRER_RESOLVER.resolve_active(
             self.valid_impairers, pin=self.impairer, preference=prefs.get("impairer")

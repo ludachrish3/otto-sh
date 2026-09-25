@@ -465,3 +465,176 @@ async def test_a_hooks_own_switch_user_is_not_quieted_on_the_bridge():
         assert not any("HISTFILE" in p for p in probes), probes
     finally:
         SESSION_SETUPS.unregister("t7-switch")
+
+
+# ---------------------------------------------------------------------------
+# console_login() on the interactive bridge (`otto host <id> login`)
+# ---------------------------------------------------------------------------
+
+
+class _FakeConsoleClient:
+    """Records ``login_sequence`` calls; the bridge must delegate to it."""
+
+    def __init__(self) -> None:
+        self.login_calls = 0
+
+    async def login_sequence(self) -> None:
+        self.login_calls += 1
+
+
+@pytest.fixture
+def console_login_hook():
+    """A raw-landing boot-menu hook: it calls console_login() and nothing else."""
+    seen: list[str] = []
+
+    async def fn(session, ctx):
+        seen.append("hook")
+        await session.console_login()
+
+    register_session_setup("t10-console-login", fn, overwrite=True)
+    yield seen
+    SESSION_SETUPS.unregister("t10-console-login")
+
+
+def _console_bridge_kwargs(console: _Console, **extra):
+    return dict(
+        write_remote=console.write_remote,
+        read_remote=console.read_remote,
+        # DialectShell speaks "\n"; the newline is not what these tests are about.
+        newline=b"\n",
+        host_name="test2",
+        host_id="test2",
+        setup=SessionSetup(name="t10-console-login"),
+        landing_frame=RawFrame(),
+        target_frame=BashFrame(),
+        creds=[Cred(login="test", password="Password1")],
+        proxy_hops=[],
+        via_login="test",
+        log_line=lambda _l: None,
+        **extra,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_hook_on_the_console_bridge_can_run_the_console_login(console_login_hook):
+    """``otto host <id> login`` on a raw-landing console: the hook's
+    console_login() reaches the interactive client's login_sequence()."""
+    client = _FakeConsoleClient()
+    console = _Console(DialectShell())
+    await interact._run_session_setup_on_bridge(
+        **_console_bridge_kwargs(console, term="console", console_client=client)
+    )
+    assert console_login_hook == ["hook"]
+    assert client.login_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_hook_on_a_telnet_bridge_is_refused_console_login_naming_the_term(
+    console_login_hook,
+):
+    """No console client on the bridge: refused, and the refusal names the
+    real term rather than ``(term is None)``."""
+    from otto.host.session_setup import SessionSetupError
+
+    console = _Console(DialectShell())
+    with pytest.raises(
+        SessionSetupError, match=r"console_login\(\) needs a console term \(term is 'telnet'\)"
+    ):
+        await interact._run_session_setup_on_bridge(
+            **_console_bridge_kwargs(console, term="telnet")
+        )
+
+
+@pytest.mark.asyncio
+async def test_bridge_session_console_login_without_a_client_is_refused():
+    from otto.host.errors import ConsoleError
+
+    async def write_remote(data: bytes) -> None:
+        return None
+
+    async def read_remote() -> bytes:
+        return b""
+
+    s = interact._BridgeShellSession(
+        write_remote, read_remote, newline=b"\r", command_frame=BashFrame()
+    )
+    assert s.console_client is None
+    with pytest.raises(ConsoleError, match="needs a console term"):
+        await s.console_login()
+
+
+def _telnet_client() -> MagicMock:
+    client = MagicMock()
+    client.reader = AsyncMock()
+    client.writer = MagicMock()
+    return client
+
+
+async def _run_telnet_login_with_hook(**kw):
+    """Run ``run_telnet_login`` with a hook, capturing the bridge-setup kwargs."""
+    with (
+        patch.object(interact, "_run_bridge", new=AsyncMock()),
+        patch.object(
+            interact, "_run_session_setup_on_bridge", new=AsyncMock(return_value=b"")
+        ) as setup,
+        patch.object(interact, "_setup_raw_mode", return_value=None),
+        patch.object(interact, "_restore_terminal"),
+        patch.object(interact.sys, "stdin"),
+    ):
+        interact.sys.stdin.isatty = lambda: False
+        interact.sys.stdin.fileno = lambda: 0
+        await interact.run_telnet_login(
+            host_name="h",
+            session_setup=SessionSetup(name="t7-export"),
+            target_frame=BashFrame(),
+            creds=[],
+            **kw,
+        )
+    return setup.await_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_run_telnet_login_hands_a_console_client_to_the_hook_bridge(hook):
+    client = _telnet_client()
+    kw = await _run_telnet_login_with_hook(client=client, transport_label="console")
+    assert kw["term"] == "console"
+    assert kw["console_client"] is client
+
+
+@pytest.mark.asyncio
+async def test_run_telnet_login_gives_a_telnet_hook_bridge_no_console_client(hook):
+    kw = await _run_telnet_login_with_hook(client=_telnet_client())
+    assert kw["term"] == "telnet"
+    assert kw["console_client"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_ssh_login_names_the_ssh_term_to_the_hook_bridge(hook):
+    proc = MagicMock()
+    proc.stdin.write = MagicMock()
+    proc.stdout.read = AsyncMock(return_value=b"")
+    proc.close = MagicMock()
+    conn = MagicMock()
+    conn.create_process = AsyncMock(return_value=proc)
+    with (
+        patch.dict(sys.modules, {"asyncssh": _make_fake_asyncssh()}),
+        patch.object(interact, "_run_bridge", new=AsyncMock()),
+        patch.object(
+            interact, "_run_session_setup_on_bridge", new=AsyncMock(return_value=b"")
+        ) as setup,
+        patch.object(interact, "_setup_raw_mode", return_value=None),
+        patch.object(interact, "_restore_terminal"),
+        patch.object(interact.sys, "stdin"),
+    ):
+        interact.sys.stdin.isatty = lambda: False
+        interact.sys.stdin.fileno = lambda: 0
+        await interact.run_ssh_login(
+            conn=conn,
+            host_name="h",
+            session_setup=SessionSetup(name="t7-export"),
+            target_frame=BashFrame(),
+            creds=[],
+        )
+    kw = setup.await_args.kwargs
+    assert kw["term"] == "ssh"
+    assert kw.get("console_client") is None

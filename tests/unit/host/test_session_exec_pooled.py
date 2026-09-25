@@ -325,3 +325,96 @@ class TestTheSshRowPromotesOffTheRawChannel:
         assert ran == ["id"]
         assert mgr._exec_pool == [], "a plain ssh exec must never open a pooled shell"
         mgr._connections.ssh.assert_awaited_once()
+
+
+class TestConsoleTermExecRunsOnTheDefaultSession:
+    """A console serves one client: exec runs on the default session; no pool is ever built."""
+
+    @staticmethod
+    def _console_mgr() -> "tuple[SessionManager, AsyncMock]":
+        from types import SimpleNamespace
+
+        from otto.host.options import ConsoleOptions
+
+        console = AsyncMock()
+        conn = SimpleNamespace(
+            term="console",
+            console_options=ConsoleOptions(server="test1", port=4001, dial="direct"),
+            console=console,
+            proxy_hops=[],
+            login_target="test",
+        )
+        return SessionManager(connections=conn, name="test2"), console
+
+    @staticmethod
+    def _spy_default(mgr: SessionManager, monkeypatch: pytest.MonkeyPatch) -> list:
+        ran: list = []
+
+        async def fake_run_cmd(cmd, expects=None, timeout=0.0, log=None, write_progress=None):
+            ran.append((cmd, expects, timeout))
+            return CommandResult(status=Status.Success, value="out", command=cmd, retcode=0)
+
+        async def no_pool(name):
+            raise AssertionError(f"a console must never open a second session ({name})")
+
+        monkeypatch.setattr(mgr, "run_cmd", fake_run_cmd)
+        monkeypatch.setattr(mgr, "open_session", no_pool)
+        return ran
+
+    def test_the_route_is_the_default_session_whatever_the_call_needs(self):
+        mgr, _console = self._console_mgr()
+        assert mgr._exec_route() is _ExecRoute.DEFAULT_SESSION
+        assert mgr._exec_route(needs_shell=True) is _ExecRoute.DEFAULT_SESSION
+
+    @pytest.mark.asyncio
+    async def test_a_plain_exec_runs_on_the_default_session(self, monkeypatch):
+        mgr, _console = self._console_mgr()
+        ran = self._spy_default(mgr, monkeypatch)
+
+        result = await mgr.exec("id -un", timeout=5.0)
+
+        assert ran == [("id -un", None, 5.0)]
+        assert result.value == "out"
+        assert mgr._exec_pool == []
+        assert mgr._exec_pool_count == 0, "no pool session was ever asked for"
+
+    @pytest.mark.asyncio
+    async def test_an_exec_that_needs_a_shell_answers_on_the_default_session(self, monkeypatch):
+        mgr, _console = self._console_mgr()
+        ran = self._spy_default(mgr, monkeypatch)
+        expects = [("Password:", "pw")]
+
+        await mgr.exec("sudo -S true", expects=expects, needs_shell=True)
+
+        assert [(cmd, exp) for cmd, exp, _t in ran] == [("sudo -S true", expects)]
+        assert mgr._exec_pool_count == 0
+
+    @pytest.mark.asyncio
+    async def test_exec_as_another_user_is_refused_by_name_at_this_layer(self, monkeypatch):
+        """The host switches the one session before it calls in; a bare other user here is a bug."""
+        from otto.host.errors import ConsoleError
+
+        mgr, console = self._console_mgr()
+        ran = self._spy_default(mgr, monkeypatch)
+
+        with pytest.raises(ConsoleError, match=r"^test2: console is single-client.*'test'.*'root'"):
+            await mgr.exec("id -un", user="root")
+
+        assert ran == []
+        console.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_exec_as_the_session_user_is_the_session(self, monkeypatch):
+        mgr, _console = self._console_mgr()
+        ran = self._spy_default(mgr, monkeypatch)
+
+        await mgr.exec("id -un", user="test")
+
+        assert [cmd for cmd, _e, _t in ran] == ["id -un"]
+
+    def test_the_line_budget_is_the_typed_one(self):
+        """exec types into the console's shell, so a transfer must size its lines to it."""
+        from otto.host.session import typed_line_budget
+
+        mgr, _console = self._console_mgr()
+        assert mgr.exec_line_budget == typed_line_budget(mgr._command_frame)

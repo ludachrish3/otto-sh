@@ -35,6 +35,19 @@ def host():
     h._connections = None  # type: ignore[assignment]
 
 
+def _embedded_console() -> ZephyrHost:
+    from otto.host.options import ConsoleOptions
+
+    return ZephyrHost(
+        ip="127.0.0.1",
+        element=Element("z"),
+        valid_terms=["console"],
+        term="console",
+        console_options=ConsoleOptions(server="test4", port=2323),
+        log=LogMode.QUIET,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Generic embedded host: fail-loud without a command_frame
 # ---------------------------------------------------------------------------
@@ -184,6 +197,42 @@ class TestNotImplemented:
         still raise — a login-less RTOS shell has nothing to proxy."""
         with pytest.raises(NotImplementedError):
             await host.login(user="root")
+
+    @pytest.mark.asyncio
+    async def test_login_force_off_a_console_is_refused(self, host: EmbeddedHost):
+        """``--force`` is a console reset; on a telnet term it is refused as on unix."""
+        with pytest.raises(
+            ValueError, match=r"--force applies to console hosts only \(term is 'telnet'\)"
+        ):
+            await host.login(force=True)
+
+    @pytest.mark.asyncio
+    async def test_login_force_on_a_console_still_raises_not_implemented(self):
+        with pytest.raises(NotImplementedError):
+            await _embedded_console().login(force=True)
+
+    @pytest.mark.asyncio
+    async def test_logout_is_refused_off_a_console_term(self, host: EmbeddedHost):
+        with pytest.raises(
+            ValueError, match=r"logout applies to console hosts only \(term is 'telnet'\)"
+        ):
+            await host.logout()
+        with (
+            active_context(dry_run=True),
+            pytest.raises(ValueError, match="logout applies to console hosts only"),
+        ):
+            await host.logout()
+
+    @pytest.mark.asyncio
+    async def test_logout_on_a_console_term_reports_no_login(self):
+        """An RTOS shell has no login step (the host forces ``login=False``), so
+        there is nothing to reset: logout says so and dials nothing."""
+        z = _embedded_console()
+        target = AsyncMock()
+        z._connections.console_target = target  # type: ignore[method-assign]
+        result = await z.logout()
+        target.assert_not_awaited()
+        assert result.value == "z: this console has no login step; nothing to reset"
 
     @pytest.mark.asyncio
     async def test_exec_user_refused_on_embedded(self, host: EmbeddedHost):

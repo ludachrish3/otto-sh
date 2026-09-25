@@ -1,9 +1,14 @@
 """The lab context a HOPPED bed cell needs before it can open at all.
 
-19 of the bed venue's 51 cells name a host that is only reachable through
-another one: the five BusyBox guests hop ``test1`` (bb1350 twice, over
-telnet and over ssh) and the seven Zephyr guests hop ``test4`` (measured,
-``tests/_fixtures/lab_data/tech1/lab.json``).
+23 of the bed venue's 55 cells name a host that is only reachable through
+another one: the five BusyBox guests hop ``test1`` (bb1350 three times, over
+telnet, ssh and console), the seven Zephyr guests hop ``test4``, and
+``test2``'s three console cells dial their console server ``test1`` (measured,
+``tests/_fixtures/lab_data/tech1/lab.json``). A console server resolves by the
+same lab lookup a hop does. Both of today's servers are also hop targets, so
+the lab below holds them without naming them; a console server that hopped
+nobody would not be in it, and ``tests/unit/test_conformance_bed.py`` checks
+every console cell's server against the lab so that gap reddens there.
 :meth:`otto.host.remote_host.RemoteHost._build_hop_transport` resolves that
 hop id against the host's own ``_lab`` back-reference and, when there is
 none, against the active :class:`~otto.context.OttoContext`. A host built by

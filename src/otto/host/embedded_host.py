@@ -236,9 +236,11 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         TERM_RESOLVER.validate_choice(self.valid_terms, self.term)
         TRANSFER_RESOLVER.validate_choice(self.valid_transfers, self.transfer)
 
-        # An RTOS telnet shell has no login step — force ``login=False`` so the
-        # connection never blocks waiting for a ``login:`` prompt that the
-        # device will never send.
+        # An RTOS shell has no login step — force ``login=False`` on both the
+        # telnet and the console options so the connection never blocks
+        # waiting for a ``login:`` prompt that the device will never send.
+        if self.term == "console" and self.console_options.login:
+            logger.debug(f"{self.name}: console_options.login overridden to False (no RTOS login)")
         factory = self._connection_factory or ConnectionManager
         self._connections = factory(
             ip=self.ip,
@@ -247,6 +249,8 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             name=self.name,
             hop=hop_transport,
             telnet_options=replace(self.telnet_options, login=False, single_client_console=True),
+            console_options=replace(self.console_options, login=False),
+            console_endpoint=self.console_endpoint if self.term == "console" else None,
         )
         self._session_mgr = SessionManager(
             connections=self._connections,
@@ -284,25 +288,49 @@ class EmbeddedHost(UserlandHost, RemoteHost):
 
     @override
     async def _probe_connection(self) -> None:
-        """Open the single telnet console — the embedded connect probe."""
-        await self._connections.telnet()
+        """Open the single console (telnet or console term) — the embedded connect probe."""
+        await (
+            self._connections.console() if self.term == "console" else self._connections.telnet()
+        )
 
     ####################
     #  Command execution
     ####################
 
     @override
-    async def _login(self, user: str | None = None) -> None:
+    async def _login(self, user: str | None = None, force: bool = False) -> None:
         """Open an interactive shell bridged to the local terminal.
 
         Not yet implemented for embedded hosts — the telnet bridge for a
-        login-less RTOS shell lands in a later phase. ``user`` is accepted
-        for signature parity with :meth:`~otto.host.host.BaseHost._login`
-        but embedded hosts have no login-proxy chain to replay.
+        login-less RTOS shell lands in a later phase. ``user`` and ``force``
+        are accepted for signature parity with
+        :meth:`~otto.host.host.BaseHost._login` but embedded hosts have no
+        login-proxy chain to replay and no login to reset.
         """
         raise NotImplementedError(
             "Interactive sessions for embedded hosts are not yet implemented"
         ) from None
+
+    @override
+    def _refuse_console_verb(self, verb: str) -> None:
+        if self.term != "console":
+            raise ValueError(
+                f"{self.name}: {verb} applies to console hosts only (term is {self.term!r})"
+            )
+
+    @override
+    async def _logout(self) -> Result:
+        """Report that there is nothing to reset: an RTOS console has no login step.
+
+        The console term forces ``console_options.login`` off for an embedded
+        host, so no login prompt exists to return the line to; nothing is
+        dialled. Any other term is refused, as on a unix host.
+        """
+        self._refuse_console_verb("logout")
+        return Result(
+            Status.Success,
+            value=f"{self.name}: this console has no login step; nothing to reset",
+        )
 
     @override
     async def _exec_one(

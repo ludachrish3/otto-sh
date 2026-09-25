@@ -1421,3 +1421,94 @@ class TestRunLoginProxyHopWiring:
             )
 
         assert calls == [("replay", b"\r", [hop], "admin", "h1"), ("bridge",)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("label", "kwargs"), [("telnet", {}), ("console", {"transport_label": "console"})]
+)
+async def test_run_telnet_login_banner_names_the_transport(label, kwargs):
+    """The banner names the transport the human is on: ``telnet`` by default,
+    ``console`` for a serial console bridged by ``otto host <id> login``."""
+    client = MagicMock()
+    client.reader = AsyncMock()
+    client.writer = MagicMock()
+    captured: dict = {}
+
+    async def fake_bridge(**kw: object) -> None:
+        captured.update(kw)
+
+    with (
+        patch.object(interact, "_run_bridge", new=AsyncMock(side_effect=fake_bridge)),
+        patch.object(interact, "_setup_raw_mode", return_value=None),
+        patch.object(interact, "_restore_terminal"),
+        patch.object(interact.sys, "stdin"),
+    ):
+        interact.sys.stdin.isatty = lambda: False
+        interact.sys.stdin.fileno = lambda: 0
+        await interact.run_telnet_login(client=client, host_name="h", **kwargs)
+
+    assert captured["banner"] == (
+        f"[otto] interactive session with h ({label}). Press Ctrl+] to disconnect."
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_telnet_login_reports_a_notice_before_the_bridge(capsys):
+    """``login --force``'s reset outcome reaches the human as an ``[otto]``
+    status line, before the pumps start."""
+    client = MagicMock()
+    client.reader = AsyncMock()
+    client.writer = MagicMock()
+    seen_at_bridge: list[str] = []
+
+    async def fake_bridge(**kw: object) -> None:
+        seen_at_bridge.append(capsys.readouterr().err)
+
+    with (
+        patch.object(interact, "_run_bridge", new=AsyncMock(side_effect=fake_bridge)),
+        patch.object(interact, "_setup_raw_mode", return_value=None),
+        patch.object(interact, "_restore_terminal"),
+        patch.object(interact.sys, "stdin"),
+    ):
+        interact.sys.stdin.isatty = lambda: False
+        interact.sys.stdin.fileno = lambda: 0
+        await interact.run_telnet_login(
+            client=client,
+            host_name="h",
+            transport_label="console",
+            notice="h: console s:1 reset: login prompt restored",
+        )
+
+    assert "[otto] h: console s:1 reset: login prompt restored" in seen_at_bridge[0]
+
+
+@pytest.mark.asyncio
+async def test_run_telnet_login_writes_the_notice_to_the_session_log(tmp_path):
+    """The ``login --force`` reset outcome is recorded in ``session.log`` too,
+    not only printed: the log is the record of what the session found."""
+    client = MagicMock()
+    client.reader = AsyncMock()
+    client.writer = MagicMock()
+    log_path = tmp_path / "session.log"
+
+    with (
+        patch.object(interact, "_session_log_path", return_value=log_path),
+        patch.object(interact, "_run_bridge", new=AsyncMock()),
+        patch.object(interact, "_setup_raw_mode", return_value=None),
+        patch.object(interact, "_restore_terminal"),
+        patch.object(interact.sys, "stdin"),
+    ):
+        interact.sys.stdin.isatty = lambda: False
+        interact.sys.stdin.fileno = lambda: 0
+        await interact.run_telnet_login(
+            client=client,
+            host_name="h",
+            transport_label="console",
+            notice="h: console s:1 reset: login prompt restored",
+        )
+
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    assert any(
+        line.endswith("@h > | [otto] h: console s:1 reset: login prompt restored") for line in lines
+    ), lines

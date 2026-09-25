@@ -59,6 +59,7 @@ from otto.env.backends import BackendUnavailableError
 from otto.errors import EnsureStateError, OttoError
 from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, ParseMismatch
 from otto.host.errors import (
+    ConsoleError,
     CoverageToolMissingError,
     HostCommandError,
     HostUnreachableError,
@@ -140,6 +141,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (WaitTimeoutError, TimeoutError),
     (LoginProxyError, ConnectionError),
     (SessionSetupError, ConnectionError),
+    (ConsoleError, ConnectionError),
     (NcPortSharedError, ConnectionError),
     (LabRepositoryError, Exception),
     (LabNotFoundError, Exception),

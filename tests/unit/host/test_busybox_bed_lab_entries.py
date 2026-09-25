@@ -78,12 +78,15 @@ def test_every_busybox_guest_entry_builds_a_telnet_shell_unix_host():
         # it at the machine running otto.
         assert host.ip in {g.ip for g in GUEST_TABLE}
         # Telnet stays the resolved term on every guest, INCLUDING the one that
-        # also answers ssh: resolve_active falls through to the first entry of
-        # valid_terms, so the order is what keeps every existing session on
-        # the console path. The ssh entry is second, and only on the guest
-        # whose image carries a dropbear (GUEST_TABLE's sshd column).
+        # also answers ssh and a serial console: resolve_active falls through
+        # to the first entry of valid_terms, so the order is what keeps every
+        # existing session on the in-guest telnetd path. The ssh entry is
+        # second and the console entry third, so neither changes the resolved
+        # term -- and only on the guest whose image carries a dropbear
+        # (GUEST_TABLE's sshd column), which is also the one guest wired with a
+        # second UART.
         row = next(g for g in GUEST_TABLE if g.element == data["element"])
-        expected_terms = ["telnet", "ssh"] if row.sshd == "dropbear" else ["telnet"]
+        expected_terms = ["telnet", "ssh", "console"] if row.sshd == "dropbear" else ["telnet"]
         assert host.valid_terms == expected_terms, (data["element"], host.valid_terms)
 
 

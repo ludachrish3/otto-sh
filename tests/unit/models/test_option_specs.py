@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from otto.host.options import (
+    ConsoleOptions,
     FtpOptions,
     LocalPortForward,
     NcOptions,
@@ -20,6 +21,7 @@ from otto.host.options import (
 from otto.models.base import OttoModel
 from otto.models.options import (
     OPTION_SPEC_RUNTIME_PAIRS,
+    ConsoleOptionsSpec,
     FtpOptionsSpec,
     NcOptionsSpec,
     ScpOptionsSpec,
@@ -147,6 +149,35 @@ def test_telnet_spec_encodes_login_prompt_from_str():
 def test_telnet_spec_accepts_encoding_false():
     rt_obj = TelnetOptionsSpec(encoding=False).to_runtime()
     assert rt_obj.encoding is False
+
+
+def test_console_spec_defaults_match_runtime():
+    rt_obj = ConsoleOptionsSpec().to_runtime()
+    assert isinstance(rt_obj, ConsoleOptions)
+    assert rt_obj.server == ""
+    assert rt_obj.port == 0
+    assert rt_obj.dial == "ssh"
+    assert rt_obj.login is True
+    assert rt_obj.login_prompt is None
+    assert rt_obj.password_prompt is None
+    assert rt_obj.login_timeout == 10.0
+    assert rt_obj.settle == 0.5
+    assert rt_obj.logout is True
+
+
+def test_console_spec_rejects_unknown_dial():
+    with pytest.raises(ValidationError, match="dial"):
+        ConsoleOptionsSpec(dial="telnet")
+
+
+def test_console_spec_rejects_a_bad_prompt_regex():
+    with pytest.raises(ValidationError, match="login_prompt"):
+        ConsoleOptionsSpec(login_prompt="login: (")
+
+
+def test_console_spec_rejects_an_out_of_range_port():
+    with pytest.raises(ValidationError, match="port"):
+        ConsoleOptionsSpec(port=70000)
 
 
 def test_sftp_spec_defaults_and_extra():

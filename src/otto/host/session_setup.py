@@ -122,10 +122,17 @@ async def apply_session_setup(
     no shell that answers frame ...``). Wrapping here, inside the step,
     matters: ``SessionManager._ensure_session`` retries a bare
     ``ConnectionError`` as a transport race, and a hook failure is not one.
-    :class:`~otto.host.errors.RawLandingError` propagates as itself — it is
-    the hook author's bug, named for what it is.
+    Two exceptions pass through unchanged:
+    :class:`~otto.host.errors.RawLandingError` from the hook — it is the hook
+    author's bug, named for what it is — and
+    :class:`~otto.host.errors.ConsoleError` from frame entry — a named console
+    refusal (``login refused for '<user>'``, after a hook's
+    ``console_login()`` typed a bad password) that already says precisely
+    what failed and must not be relabelled as a hook that "left no shell".
+    A ``ConsoleError`` the hook itself raises is wrapped like any other hook
+    failure, its message kept in the ``SessionSetupError``'s.
     """
-    from .errors import RawLandingError
+    from .errors import ConsoleError, RawLandingError
 
     fn = SESSION_SETUPS.get(setup.name)
     try:
@@ -138,7 +145,15 @@ async def apply_session_setup(
         ) from exc
     try:
         await session.enter_frame(target_frame)
-    except SessionSetupError:
+    except (SessionSetupError, ConsoleError):
+        # A ConsoleError here is a NAMED refusal (e.g. "login refused for
+        # 'root'"), raised by TelnetSession._fail_init -> _refused_login ->
+        # ConsoleClient.refused_after_login once the post-hook handshake
+        # times out after console_login() typed a bad password. It already
+        # names the console and the failure precisely; relabelling it below
+        # as a generic "left no shell" would bury the actual diagnosis in
+        # __cause__ and mislead the operator into debugging the hook instead
+        # of the credential.
         raise
     except ConnectionError as exc:
         raise SessionSetupError(

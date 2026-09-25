@@ -10,6 +10,7 @@ from typing import (
     TypeVar,
 )
 
+from ..host.capability import TRANSFER_RESOLVER, console_transfer_menu
 from ..host.host import DEFAULT_COMMAND_TIMEOUT
 from .lab import Lab
 
@@ -76,7 +77,10 @@ def _apply_option_overrides(
     file-transfer backend is rebuilt for the chosen protocol via the registry
     ``create()`` seam. Switching to a value not in the menu is rejected; to
     select a custom backend it must be listed in the host's menu. This is the
-    only supported way to change a host's active protocol.
+    only supported way to change a host's active protocol. A ``term="console"``
+    override with no ``transfer`` override also drops a resolved ``nc``
+    transfer for the next kind in the menu, since a single-client console
+    cannot run nc.
     """
     candidates: dict[str, Any] = {
         k: v
@@ -102,6 +106,26 @@ def _apply_option_overrides(
     overrides = {k: v for k, v in candidates.items() if k in host_fields}
     if not overrides:
         return host
+    effective_term = overrides.get("term", getattr(host, "term", None))
+    if effective_term == "console" and "transfer" in overrides:
+        # An nc pin on a console is a config error, raised here as the
+        # ValueError every override caller already maps (the CLI to a
+        # --transfer parameter error) rather than as the ConsoleError the
+        # copy's transfer backend would raise.
+        console_transfer_menu(
+            host.name, getattr(host, "valid_transfers", []), overrides["transfer"]
+        )
+    if (
+        overrides.get("term") == "console"
+        and "transfer" not in overrides
+        and getattr(host, "transfer", None) == "nc"
+    ):
+        # The host resolved nc for its previous term; a single-client console
+        # refuses it (nc's listener needs a second session). Resolve from the
+        # same nc-less menu the lab model uses for a console host. This call
+        # sees no load-time transfer preference, so it takes the menu's order.
+        usable = console_transfer_menu(host.name, getattr(host, "valid_transfers", []), None)
+        overrides["transfer"] = TRANSFER_RESOLVER.resolve_active(usable)
     return dataclasses.replace(host, **overrides)
 
 

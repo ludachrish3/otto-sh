@@ -1278,6 +1278,7 @@ from tests._fixtures.labdata import (  # noqa: F401
     host_data,
     lab_data_path,
     lab_json_v2,
+    make_console_host,
     make_host,
     write_lab_json,
 )
@@ -1436,6 +1437,9 @@ async def host1(request):
       over telnet through the ``test1`` hop), built via the host factory from
       its lab-data entry; see :data:`_BUSYBOX_BACKEND_NE` for the id -> `ne`
       mapping.
+    - ``"console"``            -> UnixHost ``test2`` on the ``console`` term
+      (its serial getty behind ``test1``'s console server, ``shell``
+      transfer), built by :func:`~tests._fixtures.labdata.make_console_host`.
     """
     backend = request.param
     if backend == "local":
@@ -1456,6 +1460,11 @@ async def host1(request):
         # resolve from the entry's menus (telnet/shell), hop from test1.
         data = host_data(_BUSYBOX_BACKEND_NE[backend])
         h = create_host_from_dict(data, element=element_for(_BUSYBOX_BACKEND_NE[backend]))
+        yield h
+        await h.close()
+        return
+    if backend == "console":
+        h = make_console_host("test2")
         yield h
         await h.close()
         return
