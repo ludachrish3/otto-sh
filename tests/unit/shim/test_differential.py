@@ -16,6 +16,7 @@ from otto import _shim_complete as sc
 from otto import bootstrap as bs
 from otto.config import completion_cache as cc
 from otto.config.completion_tree import build_shim_payload
+from otto.suite.register import SUITES
 from tests._fixtures.shim_repo import make_shim_repo
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -117,14 +118,20 @@ def world(tmp_path, monkeypatch):
     bs._reset()  # the bracket tests/unit/cli/test_default_instructions.py:198-202 uses
     try:
         with warnings.catch_warnings():
-            # bootstrap() IMPORTS the SUT's top-level test files (Repo.import_test_file)
-            # inside THIS pytest process, whose marker registry is otto-sh's own — so
-            # `pytest.mark.slow`/`.smoke`, registered in the SUT's pyproject exactly as a
-            # real repo registers them, warn here and this repo's `filterwarnings=["error"]`
-            # would turn a foreign repo's perfectly valid marker into a BootstrapError.
-            # Scoped to that one warning class around that one call; nothing else is muted.
+            # The first SUITES read after bootstrap() IMPORTS the SUT's top-level test
+            # files (Repo.import_test_file) inside THIS pytest process, whose marker
+            # registry is otto-sh's own — so `pytest.mark.slow`/`.smoke`, registered in
+            # the SUT's pyproject exactly as a real repo registers them, warn here and
+            # this repo's `filterwarnings=["error"]` would turn a foreign repo's
+            # perfectly valid marker into a BootstrapError. Scoped to that one warning
+            # class around that one load; nothing else is muted.
+            #
+            # Migrated: bootstrap() used to import the test files itself. They now
+            # load on demand, so the load is triggered here, inside the filter,
+            # rather than later by the cache write's suite collection.
             warnings.filterwarnings("ignore", category=pytest.PytestUnknownMarkWarning)
             result = bs.bootstrap()
+            SUITES.names()
         assert not result.errors, result.errors
         repos = result.repos
         _write_cache_like_entry(repos)

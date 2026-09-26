@@ -14,7 +14,11 @@ test's tmp-imported modules on teardown, keeping discovery independent across
 repeat iterations.
 """
 
+import textwrap
+
 import pytest
+
+from tests._fixtures.sutrepo import make_sut_repo
 
 
 @pytest.fixture(autouse=True)
@@ -30,3 +34,20 @@ def _isolate_tmp_imports(purge_tmp_imports):
 # in-process ``bootstrap()`` in ``tests/e2e/suite``), and process-global state
 # takes a root-level guard — the same #132/#133 rule that moved
 # ``_isolate_registries`` there.
+
+
+def write_repo_with_test_body(tmp_path, stem: str, body: str) -> str:
+    """A repo whose one top-level test file is named ``test_<stem>.py`` and runs *body*.
+
+    *stem* must be unique per case. ``Repo.import_test_file`` keys ``sys.modules``
+    on the file STEM alone and early-returns when the name is already present, so
+    parametrized cases sharing a filename would silently skip the import after the
+    first and pass vacuously — a guard that cannot fail.
+    """
+    repo = make_sut_repo(
+        tmp_path / stem,
+        name=stem,
+        tests=["tests"],
+        files={f"tests/test_{stem}.py": textwrap.dedent(body)},
+    )
+    return str(repo)

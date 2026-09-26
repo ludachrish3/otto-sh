@@ -261,7 +261,7 @@ from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.remote_host import make_host_id
 from otto.host.unix_host import UnixHost
-from otto.registry import Registry
+from otto.registry import Registry, suspend_loaders
 from otto.suite._retry import report_retries, retry_hookwrapper
 from tests._fixtures import _conftest_rebind
 from tests._fixtures._coverage_preinit import (
@@ -955,7 +955,9 @@ def _restore_otto_logger_state():
 def _restore_bootstrap_state():
     """Snapshot-restore ``otto.bootstrap``'s discovery/registration caches.
 
-    ``bootstrap()`` memoizes into three module globals; discovery errors ride
+    ``bootstrap()`` memoizes into module globals (``_suites_loaded_for``
+    beside ``_result``: which result's test files the suites loader has
+    already imported); discovery errors ride
     the cached ``_discovered`` :class:`~otto.bootstrap.DiscoveryResult` itself
     (the old append-only ``_discovery_errors`` global is gone). So one test
     that drives the CLI with ``OTTO_SUT_DIRS`` pointing at a scratch repo —
@@ -997,6 +999,7 @@ def _restore_bootstrap_state():
         bootstrap._discovered,
         bootstrap._result,
         bootstrap._in_progress,
+        bootstrap._suites_loaded_for,
         bootstrap._completion_names,
     )
     yield
@@ -1008,6 +1011,7 @@ def _restore_bootstrap_state():
         bootstrap._discovered,
         bootstrap._result,
         bootstrap._in_progress,
+        bootstrap._suites_loaded_for,
         bootstrap._completion_names,
     ) = saved
 
@@ -2263,10 +2267,7 @@ def _isolate_registries():
     session-scoped fixtures BEFORE function-scoped ones, so anything they
     register is already inside every per-test snapshot and survives the restore.
     """
-    snapshots = [
-        (reg, {name: (reg.get(name), reg.origin(name)) for name in reg.names()})
-        for reg in _loaded_registries()
-    ]
+    snapshots = _snapshot_registries()
     modules_before = frozenset(sys.modules)
     host_specs = _host_spec_snapshot()
 
@@ -2277,6 +2278,21 @@ def _isolate_registries():
     # call above leaves behind. Same fixture rather than a sibling autouse one
     # so the order is stated here instead of inferred from collection order.
     _restore_host_specs(host_specs)
+
+
+def _snapshot_registries() -> list[tuple[Registry, dict[str, tuple[object, str]]]]:
+    """Return every loaded registry paired with its ``name -> (entry, origin)`` map.
+
+    The snapshot must never run a registry's loader, because the suites
+    registry loads a SUT's test files on first read: a per-test snapshot would
+    otherwise import them as a side effect. So it reads under
+    :func:`otto.registry.suspend_loaders`.
+    """
+    with suspend_loaders():
+        return [
+            (reg, {name: (reg.get(name), reg.origin(name)) for name in reg.names()})
+            for reg in _loaded_registries()
+        ]
 
 
 def _restore_registries(
@@ -2304,53 +2320,58 @@ def _restore_registries(
     ``otto`` module) must never be evicted: it isn't a re-importable extension,
     and dropping the running test file breaks ``inspect.getfile`` for every
     later registration in it.
+
+    Like the snapshot, the restore must never run a registry's loader, because
+    the suites registry loads a SUT's test files on first read; its whole body
+    runs under :func:`otto.registry.suspend_loaders`.
     """
-    evict_origins: set[str] = set()
+    with suspend_loaders():
+        evict_origins: set[str] = set()
 
-    def _drop_added(reg: Registry, name: str) -> None:
-        """Unregister *name*, evicting its origin when a re-import can restore it."""
-        origin = reg.origin(name)
-        if (
-            origin
-            and origin not in modules_before
-            and origin != "otto"
-            and not origin.startswith("otto.")
-        ):
-            evict_origins.add(origin)
-        reg.unregister(name)
-
-    for reg, parked in snapshots:
-        for name in list(reg.names()):
-            if name not in parked:
-                _drop_added(reg, name)
-        for name, (entry, origin) in parked.items():
-            reg.register(name, entry, overwrite=True, origin=origin)
-
-    # Registries that did not EXIST at snapshot time. The snapshot can only
-    # cover what was reachable when the test started, so a registry living in
-    # an ``otto.*`` module the test itself imported has no entry above — and
-    # iterating snapshots alone left everything the test registered there
-    # standing for the next test to trip over.
-    #
-    # Their baseline cannot be recovered by re-import (the module stays in
-    # ``sys.modules``, so a second import is a no-op), which is why the rule
-    # here is by ORIGIN rather than wholesale: an entry registered by otto's
-    # own module as an import side effect IS the process's state now, and
-    # dropping it would leave otto missing its own defaults for every later
-    # test — a worse failure than the leak. Anything else in a brand-new
-    # registry arrived from the test, and goes.
-    snapshotted = {id(reg) for reg, _ in snapshots}
-    for reg in _loaded_registries():
-        if id(reg) in snapshotted:
-            continue
-        for name in list(reg.names()):
+        def _drop_added(reg: Registry, name: str) -> None:
+            """Unregister *name*, evicting its origin when a re-import can restore it."""
             origin = reg.origin(name)
-            if origin == "otto" or origin.startswith("otto."):
-                continue
-            _drop_added(reg, name)
+            if (
+                origin
+                and origin not in modules_before
+                and origin != "otto"
+                and not origin.startswith("otto.")
+            ):
+                evict_origins.add(origin)
+            reg.unregister(name)
 
-    for origin in evict_origins:
-        sys.modules.pop(origin, None)
+        for reg, parked in snapshots:
+            for name in list(reg.names()):
+                if name not in parked:
+                    _drop_added(reg, name)
+            for name, (entry, origin) in parked.items():
+                reg.register(name, entry, overwrite=True, origin=origin)
+
+        # Registries that did not EXIST at snapshot time. The snapshot can only
+        # cover what was reachable when the test started, so a registry living in
+        # an ``otto.*`` module the test itself imported has no entry above — and
+        # iterating snapshots alone left everything the test registered there
+        # standing for the next test to trip over.
+        #
+        # Their baseline cannot be recovered by re-import (the module stays in
+        # ``sys.modules``, so a second import is a no-op), which is why the rule
+        # here is by ORIGIN rather than wholesale: an entry registered by otto's
+        # own module as an import side effect IS the process's state now, and
+        # dropping it would leave otto missing its own defaults for every later
+        # test — a worse failure than the leak. Anything else in a brand-new
+        # registry arrived from the test, and goes.
+        snapshotted = {id(reg) for reg, _ in snapshots}
+        for reg in _loaded_registries():
+            if id(reg) in snapshotted:
+                continue
+            for name in list(reg.names()):
+                origin = reg.origin(name)
+                if origin == "otto" or origin.startswith("otto."):
+                    continue
+                _drop_added(reg, name)
+
+        for origin in evict_origins:
+            sys.modules.pop(origin, None)
 
 
 @pytest.fixture(autouse=True)

@@ -6,7 +6,9 @@ phase 2 ({doc}`../lifecycle`). Registration is import-time and side-effect
 based: an init module calls `register_*` functions (or applies decorators),
 and from then on the new component behaves exactly like a built-in — same
 registries, same CLI listing and completion, same error messages
-({doc}`registries`).
+({doc}`registries`). Test files are not an extension point: they load only
+for the commands that read suites, so they may register suites and nothing
+else ({doc}`../lifecycle`).
 
 ## The seams
 

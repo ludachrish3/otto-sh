@@ -4,7 +4,9 @@
 under [the workspace home](../index.md#the-workspace-home) — the completion
 cache and its remote-path sidecar, the only two files it ever removes.
 Everything it removes is rebuildable: deleting it changes nothing about what
-otto does next, only how much it has to redo.
+otto does next, only how much it has to redo. What the completion cache holds,
+when otto trusts it, and which invocations rebuild it is explained on
+{doc}`the completion-cache architecture page <../../architecture/subsystems/completion-cache>`.
 
 ```{raw} html
 :file: ../../_static/generated/termynal/help-cache.html

@@ -108,9 +108,11 @@ otto-specific values a static shell script couldn't know: suite and
 instruction names, host ids and their per-class verbs, transfer/term
 backends, reservation usernames, and — multi-value lists included — `--lab`
 names (`+`-combined) and `--tests` names (comma-separated).  It is served
-from a cache in [the workspace home](#the-workspace-home) so the process
-answering the keystroke never runs your init modules or test code — true
-whether the fast path answers or the full path does.
+from a cache in [the workspace home](#the-workspace-home), so a keystroke
+answered from the cache never runs your init modules or test code. A TAB that
+finds the cache missing or out of date runs them once, to rebuild it, and the
+TABs after it are fast again; ordinary commands never read or rebuild the
+cache ({doc}`../architecture/subsystems/completion-cache`).
 
 When every file and directory the entry depends on still stats the same as
 when it was written, the `otto` console script answers straight from that

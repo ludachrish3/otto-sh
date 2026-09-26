@@ -10,7 +10,7 @@ the same ``try`` — the first lexical match wins.
 DEFINES, not raises, and the difference is not small: otto also raises plain
 stdlib exceptions at 387 sites — an argument otto validates and rejects is
 usually a bare ``ValueError``, not a named class. ``except OttoError``
-therefore means "one of otto's 63 NAMED failures", not "anything otto
+therefore means "one of otto's 64 NAMED failures", not "anything otto
 raised".
 
 There is no one clause that catches everything, and it is worth being exact
@@ -24,13 +24,13 @@ rather than offering a comforting near-miss:
   :class:`~otto.lifecycle.SyncPhaseInterrupt`, a ``KeyboardInterrupt`` on
   purpose (see below).
 * ``except (ValueError, RuntimeError)`` covers 337 of the 387 raise sites,
-  and 42 of the 63 named classes. Of the other 21, fourteen are rooted at
+  and 43 of the 64 named classes. Of the other 21, fourteen are rooted at
   plain ``Exception`` (the bootstrap, project-activation,
   project-instruction, lab-context, lab-repository, inventory, creds and
   reservation errors) and seven sit under
   ``OSError`` (``AppShellTimeoutError``, ``ConsoleError``, ``LoginProxyError``,
   ``NcPortSharedError``, ``RetryAttemptTimeoutError``, ``SessionSetupError``,
-  ``WaitTimeoutError``) — 42 + 14 + 7 = 63, so the split accounts for every
+  ``WaitTimeoutError``) — 43 + 14 + 7 = 64, so the split accounts for every
   named class.
 
 Those counts are measured, not maintained by arithmetic: a *raise site* is a
@@ -68,7 +68,7 @@ allow_module_level=True)`` raise ``Skipped``; ``pytest.fail()`` raises
 ``pytest.exit()``'s ``Exit`` is an ``Exception``, which is why the old seams
 caught that one and nothing else: the boundary was an accident, not a design.
 A seam that catches only ``Exception`` therefore lets a single
-optional-dependency test file traceback out of every otto command. Such a
+optional-dependency test file traceback out of every command that loads it. Such a
 seam should catch ``BaseException`` and re-raise what :func:`is_containable`
 rejects.
 """

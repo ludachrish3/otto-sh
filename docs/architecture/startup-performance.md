@@ -3,9 +3,11 @@
 otto's own engineering already removes most of what used to make startup
 slow: the console script's front door, `otto._shim:main`, answers a bare
 `otto --version` without ever importing the CLI (see
-{doc}`lifecycle`), and warm `otto --help` is served from a
-cache that validates cheaply instead of walking your test corpus (see the
-last section below). What's left after those fixes is genuinely yours to
+{doc}`lifecycle`), warm `otto --help` is served from a
+cache that validates cheaply instead of walking your test corpus, and an
+ordinary command neither checks that cache nor imports your test files (see
+[the cache's economics](#the-caches-economics-on-a-network-filesystem)
+below). What's left after those fixes is genuinely yours to
 control — which disk your interpreter and otto's own venv sit on, how many
 places Python has to look before it finds a module, and how your network
 filesystem is mounted. This page covers all three, in the order they pay
@@ -169,26 +171,53 @@ matters, rather than assuming it did.
 
 ## What holds these numbers in place
 
-otto's own release gate, `make profile`, measures **modules and file I/O,
-never wall-clock**: a cap on each CLI surface's non-stdlib module count, a
-golden set of the otto modules that surface may import, and — keyed per Python
-minor, because the interpreter's own import machinery is part of what gets
-counted — golden `os.scandir` and `os.listdir` counts plus the number of files
-opened *inside the workspace under measurement*. That last one is the number
-this page is about: a warm `otto --help` against a generated 50-file corpus
-opens exactly **two** files in the workspace — the repo's `.otto/settings.toml`
+otto's own release gate, `make profile` (`scripts/import_budget.py`),
+measures **modules, file I/O and path lookups, never wall-clock**. For each
+CLI surface it keeps a cap on the non-stdlib module count, a golden set of the
+otto modules that surface may import, and an I/O golden per Python minor,
+because the interpreter's own import machinery is part of what gets counted.
+The I/O golden holds two kinds of counter.
+
+**Audit-hook counters**, from Python's own audit events: `os.scandir` and
+`os.listdir` calls, and the files opened inside the workspace under
+measurement (`open_fixture`), of which `open_home` counts the ones under
+`$OTTO_HOME`. These are gated exactly.
+
+**strace counters.** CPython has no audit event for a `stat`, and a network
+filesystem charges a round trip for each one, so the harness runs every
+surface under `strace -f` and counts the stat family (`stat`, `lstat`,
+`newfstatat`, `statx`, `access`, `faccessat` and their variants) made by the
+measured Python process. Calls made by child processes such as git or ssh
+are the command's own work and are not counted. There are two counters, with
+two different gates:
+
+- **`stat_workspace`** counts the calls on paths inside the generated repos
+  and the surface's `$OTTO_HOME`. The repos' lib directories on `sys.path`
+  are left out, because the import system stats those once per later import
+  and the module caps already bound that. What remains is otto's own logic,
+  which is deterministic: two warm runs agree exactly. So the golden is
+  **exact**, and a single new stat inside the workspace fails it.
+- **`stat_total`** counts every stat-family call in the process. It is
+  dominated by the interpreter's import machinery, which moves by a few
+  calls between identical runs, so it cannot be exact. The golden records a
+  baseline, and a measurement more than **10%** above it fails. This is the
+  net for a large new cost anywhere in the process, which the workspace
+  slice alone would not show.
+
+strace is required. Without it the budget tests fail with an install hint
+instead of skipping, because a guard that quietly measured less would pass
+the very regressions it exists to catch.
+
+For scale: a warm `otto --help` against a generated 50-file corpus opens
+exactly **two** files in the workspace — the repo's `.otto/settings.toml`
 and the completion cache under `$OTTO_HOME` — where the cold fallback that
-rebuilds the cache opens 61 of them and scans 14 directories, and those same
-two are also all a steady-state TAB completion costs. Counts like those are
-system-agnostic in a way a timing number cannot be: the scan and
+rebuilds the cache opens 61 of them and scans 7 directories. Counts like
+those are system-agnostic in a way a timing number cannot be: the scan and
 workspace-open counts came out identical on CPython 3.10 through 3.14 here,
 and identical between two different virtualenvs of the same interpreter — while
 across those same two venvs the process-wide `open` total moved by 9 purely
 because one had nine more distributions installed for pygments' plugin lookup
-to open an `entry_points.txt` in. That is exactly why wall-clock is kept as a
-manual diagnostic rather than a gate: `make hyperfine` installs the tool, and
-`python scripts/import_budget.py --hyperfine` reports per-surface timings for
-the machine you run it on, which is the only machine they describe.
+to open an `entry_points.txt` in.
 
 ## The cache's economics on a network filesystem
 
@@ -211,16 +240,14 @@ precisely because `actimeo`/`nocto` (above) raise the odds of a stale
 stat-based digest going unnoticed for longer.
 
 What determines whether that one open is enough is what validating it has
-to touch. The `names` section, which serves root help and completion, is
-keyed to the small set of files that can actually register something: init
-trees, `.otto/settings.toml`, pytest configs, top-level test files, and the
-lab files — the same `lab.json` the `actimeo`/`nocto` section above warns
-can go stale. That set stays small regardless of corpus size, so a warm
-`otto --help` costs roughly **O(key set)**, not O(corpus) — validating it
-never walks the hundreds of test files a rebuild would have to. The `tests`
-section, which serves `--tests` completion, is the honest counterpoint: it
-validates against the *whole* corpus walk, because nothing smaller can
-answer "what tests exist right now" truthfully.
+to touch. Root help and most TABs validate only the cache's `names` section,
+which is keyed on the files that can register something — including the
+`lab.json` the `actimeo`/`nocto` section above warns can go stale — and not
+on the test corpus. So a warm `otto --help` costs roughly **O(key set)**, not
+O(corpus). A `--tests` TAB is the honest counterpoint: it validates against
+the *whole* corpus walk, because nothing smaller can answer "what tests exist
+right now" truthfully. The key sets, the digests and when the cache is
+rebuilt are described on {doc}`subsystems/completion-cache`.
 
 A cached payload isn't always worth writing, and otto skips it rather than
 paying for it anyway in two cases: no repos were discovered to register
@@ -230,6 +257,26 @@ third, simpler case — it touches neither the cache nor the corpus, because
 there's nothing in either one worth opening a file for. The cache is a
 lever that pays automatically when it can; it is never a tax charged on
 invocations that can't use it.
+
+That includes every ordinary command. Previously, every command checked the
+cache after bootstrap, whether it read the cache or not, and imported every
+repo's test files to register suites. On otto's two fixture repos the check
+was 431 of `otto host test1 exec whoami`'s path syscalls, and it grew by about
+four syscalls per test file: 239, 2,239 and 8,239 at 0, 500 and 2,000 nested
+test files, which is about 8 s per command at a 1 ms round trip. The test
+files brought in pytest, about 125 of that command's 851 modules. Now an
+ordinary command does no completion-cache I/O whatever the corpus size, and
+loads test files only if it reads suites. On the import budget's generated
+repo (50 test files, CPython 3.10) the ordinary-dispatch surface went from 584
+to 466 non-stdlib modules, from 118 to 20 stat calls inside the workspace, and
+from 3,256 to 2,641 stat calls in total.
+
+The rebuild itself got cheaper at the same time, which matters because a TAB
+that finds the cache stale now pays for it. A rebuild used to stat each
+nested test file about four times and list each directory five times; it now
+walks the corpus once, so between the budget's 50-file and 200-file repos the
+150 added files and 15 added directories cost 165 extra stats inside the
+workspace instead of 720.
 
 ## When `$HOME` is on NFS
 
@@ -254,15 +301,11 @@ that consult the completion cache, not simply whenever a repo is active —
 `otto --version` has one active and still touches the home zero times,
 because it [never opens the cache at
 all](#the-caches-economics-on-a-network-filesystem) — whether or not the
-settings file is there, finding out it isn't *is* the stat. Only the open is
-gated by name today: `open_home` joined the release profile's counters
-(`open_fixture`, `scandir`, `listdir` — see [What holds these numbers in
-place](#what-holds-these-numbers-in-place)) alongside a per-Python-minor
-golden, and every warm CLI surface now pins it at one. The two stats have no
-counterpart in that audit trail: there is no gated stat event at all, so both
-ride ungated regardless — the gated home-side event is `open_home`, already
-named above, not a stat. They stay a measured constant this page states
-rather than a number `make profile` can enforce; a cold invocation, with no
+settings file is there, finding out it isn't *is* the stat. All three are
+gated, not just measured: the open by `open_home`, and the two stats by
+`stat_workspace`, which strace counts for every path under the surface's
+`$OTTO_HOME` as well as inside the repos (see [What holds these numbers in
+place](#what-holds-these-numbers-in-place)). A cold invocation, with no
 valid cache to validate, cannot use the floor at all and pays the rebuild
 instead (write path included).
 

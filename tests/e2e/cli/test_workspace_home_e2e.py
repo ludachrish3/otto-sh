@@ -22,11 +22,37 @@ def _run(argv, *, home, xdir, sut_dirs=REPO1):
     )
 
 
+def _run_root_help(*, home, xdir, sut_dirs=REPO1):
+    """Seed/refresh the cache through root ``--help``, one of the two readers.
+
+    Migrated off ``run --list-instructions`` (spec §4.2): ordinary dispatch no
+    longer performs any completion-cache I/O, so an invocation that seeds the
+    cache must go through a reader — completion or root help. Root help needs
+    the bare ``["--help"]`` argv tail (``ROOT_HELP_ARGV`` is an exact-match
+    check against ``sys.argv[1:]``), so this skips ``_run``'s ``-R`` prefix,
+    which the reservation gate that root help never reaches doesn't need
+    anyway.
+    """
+    return run_otto(
+        ["--help"],
+        xdir=xdir,
+        sut_dirs=None,
+        extra_env={"OTTO_SUT_DIRS": str(sut_dirs), "OTTO_HOME": str(home)},
+    )
+
+
 class TestCacheLandsInTheWorkspaceHome:
-    def test_a_completion_warm_writes_under_the_home_and_leaves_the_xdir_clean(self, tmp_path):
+    def test_a_cache_warm_writes_under_the_home_and_leaves_the_xdir_clean(self, tmp_path):
+        """Migrated off ``run --list-instructions`` to root ``--help`` (spec §4.2).
+
+        The original premise -- an ordinary subcommand writes the cache -- no
+        longer holds: ordinary dispatch performs no completion-cache I/O at
+        all. Root help is one of the two remaining readers/writers, so it
+        seeds the cache here instead.
+        """
         home, xdir = tmp_path / "home", tmp_path / "xdir"
         xdir.mkdir()
-        result = _run(["run", "--list-instructions"], home=home, xdir=xdir)
+        result = _run_root_help(home=home, xdir=xdir)
         assert result.returncode == 0, result.stderr
 
         caches = list(home.rglob("completion_cache.json"))
@@ -48,6 +74,10 @@ class TestCacheLandsInTheWorkspaceHome:
 
         Not a restatement of the unit tests: those pin the key as a pure
         function, this pins that the running binary actually stores by it.
+
+        Migrated off ``run --list-instructions`` to root ``--help`` (spec
+        §4.2): ordinary dispatch no longer writes the cache, so seeding it
+        from each xdir now goes through root help, one of the two readers.
         """
         home = tmp_path / "home"
         first, second = tmp_path / "x1", tmp_path / "x2"
@@ -55,7 +85,7 @@ class TestCacheLandsInTheWorkspaceHome:
         second.mkdir()
 
         for xdir in (first, second):
-            result = _run(["run", "--list-instructions"], home=home, xdir=xdir)
+            result = _run_root_help(home=home, xdir=xdir)
             assert result.returncode == 0, result.stderr
 
         caches = sorted(home.rglob("completion_cache.json"))

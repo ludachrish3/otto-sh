@@ -8,9 +8,11 @@ today, and the warning is what keeps the staleness visible rather than silent.
 
 The cache also gives a remote backend the ``fingerprint()`` it could not
 produce on its own — the snapshot's content hash — which is what lets shell
-completion cache normally against NetBox (§11). That method is on the path of
-EVERY otto command (``otto.config.completion_cache`` resolves the inventory and
-calls this twice per invocation), so it answers from the two files on disk and
+completion cache normally against NetBox (§11). That method runs whenever the
+completion cache is validated or written — on every TAB the console-script shim
+hands over, on root ``otto --help``, and in the commands that record into the
+cache (``otto.config.completion_cache`` resolves the inventory and calls this
+twice per such invocation) — so it answers from the two files on disk and
 never, ever fetches — nor lies about what they hold.
 
 Construction does no I/O, the rule for every inventory object: the paths are

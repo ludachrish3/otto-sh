@@ -31,6 +31,7 @@ otto.config.cache_maintenance
 otto.config.cache_sections
 otto.config.completion_cache
 otto.config.completion_tree
+otto.config.corpus_snapshot
 otto.config.coverage_settings
 otto.config.dependencies
 otto.config.env
@@ -63,6 +64,7 @@ otto.docker.build
 otto.docker.compose
 otto.docker.staging
 otto.errors
+otto.filesystem
 otto.host
 otto.host.binary_loader
 otto.host.builtin_hosts
@@ -164,6 +166,17 @@ otto.models.link
 otto.models.monitor
 otto.models.options
 otto.models.settings
+otto.monitor
+otto.monitor.broadcast
+otto.monitor.collector
+otto.monitor.db
+otto.monitor.events
+otto.monitor.factory
+otto.monitor.parsers
+otto.monitor.rates
+otto.monitor.session
+otto.monitor.snmp
+otto.monitor.store
 otto.params
 otto.project
 otto.project.actions
@@ -187,6 +200,7 @@ otto.suite.markers
 otto.suite.register
 otto.suite.run
 otto.suite.selection
+otto.suite.suite
 otto.tls
 otto.tunnel
 otto.tunnel.carrier

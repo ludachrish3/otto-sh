@@ -184,13 +184,40 @@ sessions import this list rather than restating it.
 
 
 def find_suite(name: str) -> type:
-    """Resolve a registered ``OttoSuite`` subclass by class name via ``SUITES``."""
+    """Resolve a registered ``OttoSuite`` subclass by class name via ``SUITES``.
+
+    The first read loads the repos' test files (after bootstrap). A library
+    caller sees no CLI ``warning:`` line, so when the name is unknown and a
+    test file failed to load, the error names those files: the suite may be in
+    one of them.
+    """
     from .register import SUITES
 
     if name not in SUITES:
         registered = ", ".join(sorted(SUITES.names())) or "<none>"
-        raise LookupError(f"unknown suite {name!r}; registered: {registered}")
+        raise LookupError(
+            f"unknown suite {name!r}; registered: {registered}{_failed_test_files_clause()}"
+        )
     return SUITES.get(name).cls
+
+
+def _failed_test_files_clause() -> str:
+    """``"; some test files failed to load: …"``, or ``""``; never bootstraps."""
+    from ..bootstrap import bootstrap, is_bootstrapped
+
+    if not is_bootstrapped():
+        return ""
+    # `is_test_file` is set only by `load_test_suites`, for exactly the errors
+    # whose `source` is a test file's own name — not `source.endswith(".py")`,
+    # which an init-module typo (`init = ["foo.py"]` for a dotted module name)
+    # would also match, misreporting that repo's own config mistake as a
+    # broken test file.
+    failed = [
+        f"{err.source} (repo {err.sut_dir})" for err in bootstrap().errors if err.is_test_file
+    ]
+    if not failed:
+        return ""
+    return "; some test files failed to load: " + ", ".join(failed)
 
 
 def _final_exit_code(rc: int, unstable: bool) -> int:

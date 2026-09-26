@@ -327,6 +327,12 @@ def list_suites_callback(value: bool) -> None:
     if not value:
         return
     panels = [repo.get_test_suites_panel() for repo in get_repos()]
+    # Building the panels read SUITES, which loaded the test files; a broken
+    # one was found only now, after the startup emitter ran, so print it here.
+    from ..bootstrap import bootstrap
+    from .invoke import render_bootstrap_findings
+
+    render_bootstrap_findings(bootstrap())
     _render_panels(panels)
     raise typer.Exit
 
@@ -622,6 +628,18 @@ def main(  # noqa: PLR0913 — CLI command params
     """
     if ctx.resilient_parsing:
         return
+
+    # `otto test` is the command that reads suites, so it loads them first, and
+    # the loud gate in `command_preamble` then sees any broken test file. A
+    # named suite subcommand already loaded them while click resolved its name.
+    # The findings are printed here too, because `--list-tests` exits before
+    # any gate would print them. Never bootstraps by itself: a caller that has
+    # not bootstrapped has no suites to load and nothing to print.
+    from ..bootstrap import load_test_suites
+    from .invoke import render_pending_bootstrap_findings
+
+    load_test_suites()
+    render_pending_bootstrap_findings()
 
     if ctx.invoked_subcommand is not None and tests:
         raise typer.BadParameter(

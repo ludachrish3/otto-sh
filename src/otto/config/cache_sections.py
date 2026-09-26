@@ -1,7 +1,7 @@
 """Section registry for the shell-completion cache (spec 2026-09-01, Fix C).
 
-A *section* is a registration — ``(name, key_paths, collect)`` — over one
-shared digest (:func:`section_digest`), one generic reader
+A *section* is a registration — ``(name, key_paths or derived_from, collect)``
+— over one shared digest (:func:`section_digest`), one generic reader
 (:func:`read_section`) and one generic writer (:func:`write_section`). The
 cache file stores each section under its own name with its own digest, so a
 reader interested only in the cheap ``names`` key set never has to walk the
@@ -28,8 +28,8 @@ Three sections:
 - ``tests`` — the static ``--tests`` name floor. Keys on the full corpus
   walk: every file whose edit can change a statically-scanned test name.
 - ``shim`` — the self-describing entry the console-script shim answers a
-  bash TAB from; keys on both siblings' key sets (``names`` U ``tests``), so
-  it is rewritten whenever either is.
+  bash TAB from; its digest is DERIVED from both siblings' digests (``names``
+  and ``tests``), so it moves whenever either does, with no walk of its own.
 
 Adding a further cached item normally needs just ONE ``Section(...)`` entry
 in :data:`SECTIONS` — no new digest function, no reader branch, no schema
@@ -56,7 +56,7 @@ until edited and the digest would never move.
 
 import hashlib
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -170,11 +170,6 @@ def _collect_tests(repos: list[Repo]) -> dict[str, Any]:
     return {"tests": scan.names, "markers": _cc.collect_marker_names(repos, scan=scan)}
 
 
-def _shim_key_paths(repos: list[Repo]) -> list[Path]:
-    """Names U tests: the shim entry must be rewritten whenever EITHER sibling is (spec §3.1)."""
-    return [*_names_key_paths(repos), *_tests_key_paths(repos)]
-
-
 def _collect_shim(repos: list[Repo]) -> dict[str, Any]:
     from .completion_tree import build_shim_payload  # lazy: imports the CLI
 
@@ -183,23 +178,39 @@ def _collect_shim(repos: list[Repo]) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class Section:
-    """One cached item: a name, its invalidation key set, and its collector."""
+    """One cached item: a name, its invalidation key set, and its collector.
+
+    A section is keyed EITHER by its own paths (``key_paths``) OR by other
+    sections' digests (``derived_from``), never both. A derived section's key
+    set is exactly the union of its children's, so its digest is a hash of
+    theirs, and computing it costs no walk and no stat of its own.
+    """
 
     name: str
     """Storage key under ``"sections"`` in the cache file."""
 
-    key_paths: Callable[[list[Repo]], list[Path]]
+    collect: Callable[[list[Repo]], dict[str, Any]]
+    """Build this section's payload from live state (slow path only)."""
+
+    key_paths: Callable[[list[Repo]], list[Path]] | None = None
     """Every path whose edit must move this section's digest. Order and
     duplicates are irrelevant — :func:`section_digest` sorts and dedups."""
 
-    collect: Callable[[list[Repo]], dict[str, Any]]
-    """Build this section's payload from live state (slow path only)."""
+    derived_from: list[str] = field(default_factory=list)
+    """Sections whose digests this one's is composed from, in a fixed order."""
+
+    def __post_init__(self) -> None:
+        """Refuse a section with no key source, or with two."""
+        if (self.key_paths is None) == (not self.derived_from):
+            raise ValueError(
+                f"section {self.name!r} must declare exactly one of key_paths / derived_from"
+            )
 
 
 SECTIONS: list[Section] = [
     Section(name="names", key_paths=_names_key_paths, collect=_collect_names),
     Section(name="tests", key_paths=_tests_key_paths, collect=_collect_tests),
-    Section(name=SHIM_SECTION, key_paths=_shim_key_paths, collect=_collect_shim),
+    Section(name=SHIM_SECTION, derived_from=["names", "tests"], collect=_collect_shim),
 ]
 
 MERGED_VIEW_SECTIONS: list[str] = ["names", "tests"]
@@ -243,12 +254,18 @@ def _shared_tail(repos: list[Repo]) -> list[str]:
 
 
 def section_digest(section: Section, repos: list[Repo]) -> str:
-    """Stat-based sha256 over *section*'s key paths (plus the shared tail)."""
-    return _digest(section, repos, _shared_tail(repos))
+    """Stat-based sha256 over *section*'s key paths (plus the shared tail).
+
+    A thin wrapper over :func:`section_digests` for a single section — a
+    derived section has no key paths of its own to stat, so both shapes go
+    through the same memoized resolution rather than forking into two paths.
+    """
+    return section_digests(repos, [section])[section.name]
 
 
 def _digest(section: Section, repos: list[Repo], tail: list[str]) -> str:
     """:func:`section_digest` with the shared tail precomputed by the caller."""
+    assert section.key_paths is not None  # noqa: S101 — type narrows: a derived section never reaches here
     h = hashlib.sha256()
     # Via the module attribute, not a from-import: tests count digest work by
     # monkeypatching ``completion_cache.hash_file``, and a bound name here
@@ -282,16 +299,33 @@ def section_digests(
     <otto.config.completion_cache.read_sections>` fills the dict,
     :func:`completion_cache.write_sections
     <otto.config.completion_cache.write_sections>` consumes it).
+
+    A derived section's digest is ``sha256`` over ``<child>:<digest>`` lines,
+    computing (or reusing) the children through the same memo, so asking for
+    ``shim`` alone still works and a child is never hashed twice.
     """
     out: dict[str, str] = {}
+    memo: dict[str, str] = {} if known is None else dict(known)
     tail: list[str] | None = None
+
+    def digest_of(section: Section) -> str:
+        nonlocal tail
+        if section.name in memo:
+            return memo[section.name]
+        if section.derived_from:
+            h = hashlib.sha256()
+            for child in section.derived_from:
+                h.update(f"{child}:{digest_of(section_by_name(child))}\n".encode())
+            value = h.hexdigest()
+        else:
+            if tail is None:
+                tail = _shared_tail(repos)
+            value = _digest(section, repos, tail)
+        memo[section.name] = value
+        return value
+
     for section in sections:
-        if known is not None and section.name in known:
-            out[section.name] = known[section.name]
-            continue
-        if tail is None:
-            tail = _shared_tail(repos)
-        out[section.name] = _digest(section, repos, tail)
+        out[section.name] = digest_of(section)
     return out
 
 

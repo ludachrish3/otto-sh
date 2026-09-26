@@ -160,7 +160,7 @@ promoted here because they affect users today.
 
 | # | Bug | Effort |
 | --- | --- | --- |
-| 2.1 | **FIXED 2026-08-06.** All four containment seams (three in `bootstrap.py`, one in `completion_cache.collect_cli_commands`) now catch `BaseException` and re-raise via `otto.errors.is_containable`, so no otto command tracebacks on a declining module — the user gets one framed `warning:` line and a clean exit 1. That the declined load still gates dispatch is **by decision, not omission**: see 2b. | done |
+| 2.1 | **FIXED 2026-08-06.** All four containment seams (three in `bootstrap.py`, one in `completion_cache.collect_cli_commands`) now catch `BaseException` and re-raise via `otto.errors.is_containable`, so no otto command tracebacks on a declining module — the user gets one framed `warning:` line and a clean exit 1. That a declined test-file load gated every command was **by decision** (2026-08-06), since **reversed** (2026-09-25): it now fails only the commands that read suites — see 2b. | done |
 | 2.2 | **`otto test --tests <name>` panics when `tach` is in the venv.** `collect_tests` clears `sys.modules`; the next session re-imports `tach.extension`, whose Rust init re-registers a Ctrl-C handler → `PanicException: MultipleHandlers`. Self-inflicted by the gate wave. CI is safe (test envs exclude the `lint` group); a lint-synced dev venv is not. Workaround `PYTEST_ADDOPTS="-p no:tach"`. | S |
 | 2.3 | **`otto test <Suite>` reports 3× the true pass count.** 1-method suite prints `3 passed`; junit records 1. Reporting only, but user-facing. Root cause not established. | S–M |
 | 2.4 | **`otto docker up` has no `any_failed` accumulator.** `_build`/`_down` sweep every repo and report at the end; `_up` raises out of the first failing repo. `decbec97` added three new raises to `compose_up`, making this far more reachable than when it was filed. Give `_up` its siblings' shape. | S |
@@ -169,27 +169,41 @@ promoted here because they affect users today.
 
 ---
 
-### 2b. A module that declines to load gates dispatch — DECIDED 2026-08-06, not debt
+### 2b. A module that declines to load gates dispatch — REVERSED 2026-09-25
 
-The question was whether a pytest *skip* outcome at module level
-(`pytest.importorskip("torch")`) should be downgraded to a `BootstrapWarning`
-("rendered at startup, never gates dispatch") instead of a `BootstrapError`
-that makes every command exit 1.
+The original ruling, kept as the historical record:
 
-**Chris ruled: fail loud.** "It is unexpected for tests to fail registration,
-and the user should be made aware of that fact." The deciding weight is the
-silent-miss trade-off: a declined file's suites never register, so a warning
-path would let `otto test <Suite>` quietly not find them — and the containment
-fix already guarantees the loud path is *clean* (one framed `warning:` line
-naming the file and the missing module, one summary line, exit 1, zero
-traceback). A repo that wants an optional-dependency suite to coexist with a
-working CLI should guard registration itself rather than decline the whole
-module.
+> The question was whether a pytest *skip* outcome at module level
+> (`pytest.importorskip("torch")`) should be downgraded to a `BootstrapWarning`
+> ("rendered at startup, never gates dispatch") instead of a `BootstrapError`
+> that makes every command exit 1.
+>
+> **Chris ruled: fail loud.** "It is unexpected for tests to fail registration,
+> and the user should be made aware of that fact." The deciding weight is the
+> silent-miss trade-off: a declined file's suites never register, so a warning
+> path would let `otto test <Suite>` quietly not find them — and the containment
+> fix already guarantees the loud path is *clean* (one framed `warning:` line
+> naming the file and the missing module, one summary line, exit 1, zero
+> traceback). A repo that wants an optional-dependency suite to coexist with a
+> working CLI should guard registration itself rather than decline the whole
+> module.
 
-Recorded here so a future pass does not "helpfully" soften it. If this ever
-reopens, the earlier analysis is in git history at this section (the
-warn-route mechanics: detect the skip outcome via `sys.modules.get("pytest")`
-so the composition root never imports pytest itself).
+- **Reversed by Chris on 2026-09-25:** the marginal benefit does not justify
+  its cost. Every command paid for importing every repo's test files and
+  pytest (about +900 path syscalls, and seconds on NFS), and one broken test
+  file blocked unrelated commands.
+- **What replaces it:** test files load on demand
+  (`otto.bootstrap.load_test_suites`). A broken one fails the commands that
+  read suites (`otto test …`), prints its framed warning once wherever suites
+  are read, and blocks nothing else. The fail-loud framing is unchanged on
+  those commands (one `warning:` line, one summary line, exit 1, no
+  traceback), so the silent-miss concern above still holds where it matters:
+  `otto test <Suite>` cannot quietly miss a declined file. An init module that
+  fails to load still fails every command.
+- **Where the design lives:**
+  `docs/superpowers/specs/2026-09-25-dispatch-startup-cost-design.md` §5.
+- **Row 2.6 is still open** (the stem-keyed module name): unaffected by the
+  reversal.
 
 ---
 

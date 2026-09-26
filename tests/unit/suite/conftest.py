@@ -29,6 +29,7 @@ coupling beyond registry isolation.)
 
 import pytest
 
+from otto.registry import suspend_loaders
 from otto.suite.register import SUITES
 
 
@@ -41,15 +42,21 @@ def _isolate_suites():
     entries the test added and re-registers the originals. This keeps the
     registry byte-for-byte stable across tests and across repeat iterations of
     the same test in one process.
+
+    Parking and restoring must never run the registry's loader, because
+    ``SUITES`` loads a SUT's test files on first read; both run under
+    :func:`otto.registry.suspend_loaders`.
     """
-    parked = {name: (SUITES.get(name), SUITES.origin(name)) for name in SUITES.names()}
-    for name in list(SUITES.names()):
-        SUITES.unregister(name)
+    with suspend_loaders():
+        parked = {name: (SUITES.get(name), SUITES.origin(name)) for name in SUITES.names()}
+        for name in list(SUITES.names()):
+            SUITES.unregister(name)
 
     yield
 
     # Drop anything the test registered, then restore the original entries.
-    for name in list(SUITES.names()):
-        SUITES.unregister(name)
-    for name, (entry, origin) in parked.items():
-        SUITES.register(name, entry, overwrite=True, origin=origin)
+    with suspend_loaders():
+        for name in list(SUITES.names()):
+            SUITES.unregister(name)
+        for name, (entry, origin) in parked.items():
+            SUITES.register(name, entry, overwrite=True, origin=origin)

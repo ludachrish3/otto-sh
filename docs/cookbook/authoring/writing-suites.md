@@ -97,15 +97,27 @@ the subdirectory to the list — `tests` is a top-level key in
 tests = ["tests", "tests/device"]
 ```
 
-These files are **executed** at bootstrap on every otto command so that
-`__init_subclass__` fires, and a failure in any of them exits non-zero for
-*every* command — one broken test file stops `otto host list`.
+These files are **executed** so that `__init_subclass__` fires, but only by
+the commands that read suites — `otto test` and a rebuild of the completion
+cache — the first time they need the suite list. A failure in one of them
+makes `otto test` exit non-zero with a framed `warning:` line naming the file;
+`otto host list` and every other command that does not read suites are
+unaffected ({doc}`../../architecture/lifecycle`).
 
 This bounds *registration* only. `otto test` hands the same directories to
 pytest, which recurses as usual, so a nested `test_*` function still runs and
 still completes under `--tests` — including the methods of a nested `Test*`
 `OttoSuite`. Only the `otto test <Suite>` subcommand needs the file at the
 top level of a listed directory.
+:::
+
+:::{important}
+A test file registers **suites only**. An `@instruction()`, a backend or a
+CLI command registered from a test file is refused with a framed error,
+because test files load only for the commands that read suites and the
+registration would be missing from every other command. Put extensions in an
+init module (the `init` list in `.otto/settings.toml`); a test file may still
+*import* from one.
 :::
 
 Auto-registration is one seam among many; see

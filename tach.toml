@@ -478,6 +478,9 @@ depends_on = [
 
 [[modules]]
 path = "otto.registry"
+# otto.errors: RegistrationRefused roots at OttoError like every named class.
+# otto.errors is a leaf with no imports, so no cycle can form.
+depends_on = ["otto.errors"]
 
 [[modules]]
 path = "otto.reservations"
@@ -518,7 +521,11 @@ path = "otto.suite"
 # decorator), and nothing in otto.suite imports it. Retiring it means giving
 # instruction registration a home that is not otto.cli, which is the same fix
 # the config<->cli DEBT edge needs and belongs with it, not here.
-depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.utils", "otto.project"]
+# otto.bootstrap: `find_suite`'s unknown-name error names the test files that
+# failed to load (a library caller gets no CLI warning line). Read-only and
+# function-scope, and only when bootstrap already ran; otto.bootstrap never
+# imports otto.suite (SUITES names its loader by string), so no pair forms.
+depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.utils", "otto.project", "otto.bootstrap"]
 
 [[modules]]
 path = "otto.testing"

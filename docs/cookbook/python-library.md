@@ -18,12 +18,13 @@ submodules. Nothing under `.otto/settings.toml` `init` is imported just because
 `otto` is on `sys.path` — that happens in {func}`otto.bootstrap.bootstrap`.
 
 The composition root — repo discovery plus importing every configured `init`
-module and test file — is {func}`otto.bootstrap.bootstrap`, and it is
-idempotent (repeated calls return the same cached result). `open_context()`
-calls it for you before loading the lab, so any `@instruction`, `Test*`-named
-`OttoSuite` subclass, `@cli_command()`, or `register_*_backend()` call in your
-project's `init` modules has already run by the time the `async with` block
-starts:
+module — is {func}`otto.bootstrap.bootstrap`, and it is idempotent (repeated
+calls return the same cached result). `open_context()` calls it for you
+before loading the lab, so any `@instruction`, `@cli_command()`, or
+`register_*_backend()` call in your project's `init` modules has already run
+by the time the `async with` block starts. Test files, where `Test*`-named
+`OttoSuite` subclasses live, are imported later, on the first lookup of a
+suite (see below):
 
 ```python
 async with otto.open_context(lab="mylab") as ctx:
@@ -240,14 +241,17 @@ with `set_context` (or use `otto.open_context`, which does both for you).
 exceptions below — stays one level down, at `otto.suite` / `otto.suite.run` /
 `otto.suite.selection`.
 
-A suite class only exists once your project's `init` modules have imported the
-`test_*.py` file that defines it — the same composition root described above.
-`open_context()` runs it for you; a script that skips `open_context()` should
-call `bootstrap()` itself first. This matters most for
-{func}`~otto.suite.run.find_suite`: it looks a class up in the suite registry
-directly and does **not** trigger discovery itself, so calling it before
-`bootstrap()`/`open_context()` has run raises `LookupError` even for a suite
-that would otherwise be found.
+A suite class only exists once the `test_*.py` file that defines it has been
+imported. The suite registry does that itself: its first read after
+bootstrap imports every repo's top-level test files. So
+{func}`~otto.suite.run.find_suite` finds suites defined in test files as long
+as `bootstrap()` has run — `open_context()` runs it for you; a script that skips
+`open_context()` should call `bootstrap()` itself first. The lookup loads
+test files but never bootstraps, so calling `find_suite` before
+`bootstrap()`/`open_context()` raises `LookupError` even for a suite that
+would otherwise be found. When a name is unknown and a test file failed to
+load, the `LookupError` names the files that failed, since the suite may be
+in one of them.
 
 ```python
 import otto

@@ -530,3 +530,25 @@ class TestListTests:
         result = runner.invoke(suite_app, [])
         assert result.exit_code == 0
         assert "Usage" in result.stdout or "Commands" in result.stdout
+
+
+def test_list_suites_warns_once_for_a_broken_test_file(tmp_path):
+    """``--list-suites`` reads suites, so it loads them and prints the lazy finding once."""
+    import os
+    import subprocess
+    import sys
+
+    repo = make_sut_repo(
+        tmp_path / "r", name="r", tests=["tests"], files={"tests/test_bad.py": "def (:\n"}
+    )
+    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
+    env.update(OTTO_SUT_DIRS=str(repo), OTTO_HOME=str(tmp_path / "home"))
+    p = subprocess.run(
+        [str(Path(sys.executable).with_name("otto")), "test", "--list-suites"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert p.returncode == 0, p.stderr
+    assert p.stderr.count("failed to load test_bad.py") == 1, p.stderr

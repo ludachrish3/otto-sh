@@ -8,6 +8,7 @@ otto.cli.main
 otto.cli.registry
 otto.cli.run
 otto.config
+otto.config.corpus_snapshot
 otto.config.dependencies
 otto.config.env
 otto.config.repo

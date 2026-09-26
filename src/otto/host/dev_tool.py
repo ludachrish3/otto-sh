@@ -33,7 +33,7 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
 from ..declared import KindRegistry, declared_for_host
-from ..registry import get_registering_repo
+from ..registry import caller_module, get_registering_repo, refuse_during_test_load
 from ..result import Result
 
 if TYPE_CHECKING:
@@ -134,6 +134,11 @@ def register_dev_tool_provider(provider: DevToolProvider) -> None:
     inside that repo's init import, whereas the provider runs long after,
     when the marker is gone.
     """
+    refuse_during_test_load(
+        "dev tool provider",
+        getattr(provider, "__name__", repr(provider)),
+        getattr(provider, "__module__", None) or "<unknown>",
+    )
     _DEV_TOOL_PROVIDERS.append((provider, get_registering_repo()))
 
 
@@ -162,7 +167,7 @@ def register_dev_tool_kind(
     raise ``ValueError`` naming the entry on a bad one — a misdeclared entry
     fails ingest loudly, exactly as a misconfigured provider does.
     """
-    DEV_TOOL_KINDS.register(name, factory, overwrite=overwrite)
+    DEV_TOOL_KINDS.register(name, factory, overwrite=overwrite, origin=caller_module())
 
 
 def apply_declared_dev_tools(host: "Host") -> None:

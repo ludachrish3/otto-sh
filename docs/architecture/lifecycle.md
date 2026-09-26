@@ -22,9 +22,10 @@ digraph lifecycle {
 
     shim [label="otto._shim:main — console script\n--version answered here, CLI never imported", style=dashed];
     entry [label="entry() — the composition root"];
-    completion [label="completion fast path\ncache hit → zero user code", style=dashed];
+    completion [label="completion / root help fast path\ncache hit → zero user code", style=dashed];
     discovery [label="bootstrap phase 1: discovery\nOTTO_* env + settings.toml\n(no user code runs)"];
-    registration [label="bootstrap phase 2: registration\ninit modules + test files\n(per-file failures contained)"];
+    registration [label="bootstrap phase 2: registration\ninit modules\n(per-file failures contained)"];
+    suites [label="first read of SUITES\n(otto test, a cache rebuild)\nloads test files on demand", style=dashed];
     dispatch [label="dispatch\nresolve only the target command;\nevery other command stays a help stub"];
     preamble [label="invoke preamble\nload + merge labs → OttoContext →\noutput dir + log sinks → reservation gate\n(lab_free commands skip lab and gate)"];
     body [label="command body\n(command-specific — pages below)"];
@@ -36,6 +37,7 @@ digraph lifecycle {
     discovery -> registration;
     registration -> dispatch;
     dispatch -> preamble;
+    dispatch -> suites [style=dashed];
     preamble -> body;
     body -> teardown;
 }
@@ -70,19 +72,12 @@ effects with an explicit composition root:
   `Repo` objects. *No user code runs.* Environment-level failures raise —
   nothing can degrade gracefully if `OTTO_SUT_DIRS` itself is broken — but a
   single repo's malformed settings file is framed and skipped.
-- **Phase 2 — registration.** Add each repo's `libs` to `sys.path`, import its
-  `init` modules, and import its test files. Every user-module exec is wrapped:
-  one broken file becomes a framed {class}`~otto.bootstrap.BootstrapError`
-  in the returned {class}`~otto.bootstrap.BootstrapResult` instead of a
-  traceback that bricks the process. The CLI prints one warning line per
-  contained error; actually *dispatching* into broken code fails loud.
-
-Test files are imported only from the top level of each directory a repo
-lists under `tests`, never recursively, and the reason is blast radius rather
-than speed: a test file that fails to import stops *every* command, so one
-broken file under an unlisted subdirectory would take down `otto host list`.
-Listing the directories keeps that surface one the repo chose. `otto test`
-still hands the same directories to pytest, which recurses as usual.
+- **Phase 2 — registration.** Add each repo's `libs` to `sys.path` and import
+  its `init` modules. Every user-module exec is wrapped: one broken file
+  becomes a framed {class}`~otto.bootstrap.BootstrapError` in the returned
+  {class}`~otto.bootstrap.BootstrapResult` instead of a traceback that bricks
+  the process. The CLI prints one warning line per contained error; actually
+  *dispatching* into broken code fails loud.
 
 `bootstrap()` is idempotent: the CLI entry point calls it before argv parsing,
 {func}`~otto.context.open_context` calls it lazily for library users, and
@@ -91,6 +86,42 @@ repeated calls return the same result.
 Lab loading is deliberately **not** part of bootstrap. `otto --help`,
 `--list-*` flags, and shell completion never open `lab.json`, and a missing
 or malformed lab file only matters once a command that needs the lab runs.
+
+### Test files load on demand
+
+Test files are not part of bootstrap. They exist to register suites, and only
+a few paths read suites: `otto test` (running, listing and its help screen)
+and a rebuild of the completion cache ({doc}`subsystems/completion-cache`).
+The suites registry imports them on its first read after bootstrap: its
+loader, {func}`~otto.bootstrap.load_test_suites`, imports each repo's test
+files once, with the same per-file containment as phase 2
+({doc}`subsystems/registries`). The result is that `otto host … exec` never
+imports pytest, and a broken test file cannot block a command that has
+nothing to do with suites.
+
+A broken test file still fails loudly where it matters. Running suites
+through `otto test` prints a framed `warning:` line naming the file and the
+cause, then a summary, and exits 1. Listing suites, `otto test --help` and a
+cache rebuild print the same `warning:` line, once, and carry on. Every other
+command does not import the file at all. Init modules stay in phase 2, and a
+broken one still gates every dispatch as described above, because init
+modules are where extensions register and every command depends on them.
+
+A test file may register suites and nothing else. An instruction, a backend
+or a CLI command registered from a test file would exist for `otto test` and
+be missing everywhere else, so while test files load, any registration other
+than a suite is refused with a framed error that says to register it from an
+init module instead. How the refusal works, including why otto's own modules
+may still register when a test file imports them, is in
+{doc}`subsystems/registries`.
+
+Test files are imported only from the top level of each directory a repo
+lists under `tests`, never recursively, and the reason is blast radius rather
+than speed: a test file that fails to import fails every `otto test` run, so
+one broken file under an unlisted subdirectory would stop every suite from
+running. Listing the directories keeps that surface one the repo chose.
+`otto test` still hands the same directories to pytest, which recurses as
+usual.
 
 ## The preamble, and who opts out
 

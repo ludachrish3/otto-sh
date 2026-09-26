@@ -102,6 +102,9 @@ jobs:
           path: ~/.cache/otto/busybox
           key: busybox-artifacts-${{ hashFiles('tests/_fixtures/busybox_pins.json') }}
 
+      - name: Install strace (the import budget counts stat syscalls through it)
+        run: command -v strace || { sudo apt-get update && sudo apt-get install -y strace; }
+
       - name: Run tests under Python ${{ matrix.python }}
         run: uv run nox -s tests_hostless-${{ matrix.python }}
 
@@ -139,6 +142,9 @@ jobs:
         with:
           path: ~/.cache/otto/busybox
           key: busybox-artifacts-${{ hashFiles('tests/_fixtures/busybox_pins.json') }}
+
+      - name: Install strace (the import budget counts stat syscalls through it)
+        run: command -v strace || { sudo apt-get update && sudo apt-get install -y strace; }
 
       - name: Repeat tests/unit in one process (test-isolation leak guard)
         run: uv run nox -s tests_unit_repeat

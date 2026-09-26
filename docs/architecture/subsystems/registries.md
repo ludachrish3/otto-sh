@@ -54,6 +54,44 @@ Downstream repos register from their init modules (the `init` list in
 `.otto/settings.toml`), which bootstrap imports in phase 2
 ({doc}`../lifecycle`).
 
+## Lazy loaders, and what test files may register
+
+A registry may name a *loader*: a `"module:function"` string it resolves and
+calls at the start of every read (`get`, `names`, `items`, `origin`,
+`unregister`, `in` and `len`). The function decides whether there is anything
+left to load, so every read after the first costs almost nothing. A read made
+from inside the loader does not call it again, and
+{func}`~otto.registry.suspend_loaders` reads without calling it; the test
+harness's registry snapshots use it so that saving a registry never loads a
+repo's test files as a side effect.
+
+`SUITES` is the only registry with a loader. Its loader,
+{func}`otto.bootstrap.load_test_suites`, imports each repo's top-level test
+files on the first read after bootstrap, so only the commands that read suites
+pay for those imports or fail on them ({doc}`../lifecycle`).
+
+A test file may therefore register suites and nothing else; why is on
+{doc}`../lifecycle`. The mechanism: while test files load
+({func}`~otto.registry.loading_test_files`), every registry except `SUITES`
+refuses an entry whose origin is outside the `otto` package, with
+{class}`~otto.registry.RegistrationRefused`. Bootstrap frames the refusal like
+any other load failure, naming the file and saying to register the entry from
+an init module instead.
+
+- **The check is on origin, not only on the phase.** A test file is often the
+  first thing to import an otto module that registers its own entries when
+  imported; `otto.host.llext_kind`, for example, registers a product kind.
+  That registration belongs to otto and succeeds. The flip side is that every
+  public `register_*` wrapper must record the module that *called* it as the
+  origin: an entry attributed to the wrapper's own `otto.*` module would pass
+  the check.
+- **The two provider lists that are not registries** (product and dev-tool
+  providers) apply the same check, keyed on the provider's module.
+- **A guard test** (`tests/unit/test_registry_loading.py`) finds every
+  `Registry` otto constructs and asserts that each one except `SUITES`
+  refuses, so a registry added later is covered without anyone remembering to
+  list it.
+
 ## The CLI command registry
 
 The top-level CLI is itself registry-backed. A
@@ -96,13 +134,10 @@ The root group resolves commands in two tiers:
 ### The completion fast path
 
 Shell completion must be low-latency and must never traceback into the shell.
-Completion invocations first try a cache
-(`otto/config/completion_cache.py`) of command, suite, instruction, and
-host names snapshotted on previous runs. On a cache hit, completion runs
-*zero user code* — no bootstrap, no init modules. Cached third-party command
-names still appear in listings even though their registrations never ran;
-only actually dispatching one triggers the real import. Any discovery failure
-in completion mode is swallowed and falls back to the slow path.
+Completion and the root help screen are answered from the completion cache,
+so on a hit no user code runs and a cached third-party command still appears
+in listings although its registration never ran; what the cache holds, when
+it is trusted and who rebuilds it is on {doc}`completion-cache`.
 
 Completion must never print a warning either: text written into a completing
 shell corrupts the candidate list the shell is parsing, so a lab entry it
@@ -122,9 +157,10 @@ per-class host verbs ({doc}`../../cli/host/index`) plus registry-backed
 option values ({doc}`../../cli/host/connections`), and `--lab`
 ({doc}`../lifecycle`).
 
-The consistent rule behind all of them: the process answering the keystroke
-**never runs user code**. Registry names come from the cache the slow path
-already wrote; host ids and lab names are read from `lab.json` data;
+The consistent rule behind all of them: a keystroke answered from the cache
+**never runs user code**, and one that finds the cache missing or stale runs
+it once, to rebuild the cache. Registry names come from the completion cache
+({doc}`completion-cache`); host ids and lab names are read from `lab.json` data;
 `--tests` names come from a static `ast` scan of the test sources. The one
 case that genuinely needs a live pytest collection — dynamically generated
 tests — is handled without breaking that rule: the collection runs in a
@@ -146,7 +182,8 @@ stays as the always-available floor, so `--tests` completion is never empty.
 - {mod}`otto.cli.run` / {mod}`otto.suite.register` — the `@instruction()`
   decorator and the `SUITES` registration
   (`OttoSuite.__init_subclass__`)
-- `otto.config.completion_cache` — the completion fast path's cache
+- `otto.config.completion_cache` — the completion cache
+  ({doc}`completion-cache`)
 - the host-side registries live beside the strategy they select:
   {mod}`otto.host.os_profile`, {mod}`otto.host.connections`,
   {mod}`otto.host.transfer`, {mod}`otto.host.command_frame`,

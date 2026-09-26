@@ -126,8 +126,9 @@ remote backend gets a snapshot cache for free:
 
 - Return a **string** and you have opted out. You are saying you can report
   freshness yourself — cheaply, and without a network round trip. Otto calls
-  this on every command through the shell-completion cache, so it must never
-  fetch.
+  this whenever it validates or writes the shell-completion cache — on a TAB,
+  on root `otto --help`, and in the commands that record into it — so it must
+  never fetch.
 - Return **`None`** and otto wraps you in
   {class}`~otto.inventory.cache.SnapshotCache` whenever `cache_ttl` is greater
   than zero. A snapshot younger than the TTL is served without calling you at

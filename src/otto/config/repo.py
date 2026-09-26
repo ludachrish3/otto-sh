@@ -21,6 +21,7 @@ import tomli
 
 from ..result import CommandResult
 from ..utils import Status
+from . import corpus_snapshot
 from .scope import ProjectScopeConfig
 from .version import Version
 
@@ -939,31 +940,27 @@ class Repo:
         Deliberately NOT recursive, and deliberately not pytest's
         ``python_files`` — this is the third and narrowest of the three
         readers of a repo's tests dirs, and the only one that EXECUTES what it
-        returns. :meth:`import_test_files` execs each of these during
-        :func:`otto.bootstrap.bootstrap`, on every otto command (completion
-        skips it on a cache hit), to trigger ``OttoSuite.__init_subclass__``.
+        returns. :func:`otto.bootstrap.load_test_suites` execs each of these to
+        trigger ``OttoSuite.__init_subclass__``, on the first read of the
+        suites registry after bootstrap — i.e. only for the commands that read
+        suites (``otto test``, ``--list-suites``, a completion-cache rebuild).
+        A file that fails to load fails those commands, loudly, and no other.
 
-        The reason is blast radius, NOT cost. Importing is cheap — measured at
-        well under a millisecond per file after the first — and the same
-        startup path already rglobs and ``ast.parse``\ s the WHOLE tree in
-        ``completion_cache.collect_test_names``, an order of magnitude more
-        work than recursion here would add. What differs is exec versus parse.
-        A file listed here runs its module body, and
-        ``cli.invoke.fail_loud_on_bootstrap_errors`` turns any failure into a
-        non-zero exit for EVERY command, so one broken test file bricks
-        ``otto schema export``. Recursion would point all of that at the user's
-        whole test tree rather than at a handful of files they chose.
+        The reason for not recursing is blast radius, NOT cost. A file listed
+        here runs its module body, and a failure is a framed error that fails
+        every command reading suites; recursion would point that at the user's
+        whole test tree rather than at a handful of files they chose. Test
+        files load on demand rather than in bootstrap since 2026-09-25 (the
+        reversal of the "one broken test file fails every command" ruling),
+        which shrank that radius from every command to the suite commands.
 
-        Containment used to be incomplete on top of that: a module-level
+        Containment covers ``BaseException``: a module-level
         ``pytest.importorskip`` raises ``Skipped``, which is rooted at
-        ``BaseException``, so bootstrap's ``except Exception`` let a repo with
-        one optional-dependency test file traceback out of every command — and
-        out of shell completion, into the user's terminal mid-TAB. The seams
-        now catch ``BaseException`` and re-raise via
-        :func:`otto.errors.is_containable`, so declining to load is framed like
-        any other load failure. The blast-radius argument above is unchanged:
-        containment turns a crash into a non-zero exit, it does not make the
-        file harmless.
+        ``BaseException``, so an ``except Exception`` seam would let a repo
+        with one optional-dependency test file traceback out of the suite
+        commands — and out of shell completion, into the user's terminal
+        mid-TAB. The seam re-raises via :func:`otto.errors.is_containable`,
+        so declining to load is framed like any other load failure.
 
         The escape hatch is that ``tests`` is a LIST — a repo keeping suites
         under ``tests/device/`` adds that directory (``tests = ["tests",
@@ -990,7 +987,7 @@ class Repo:
             if test_dir.is_dir():
                 if visited is not None:
                     visited.add(test_dir)
-                found.extend(sorted(test_dir.glob("test_*.py")))
+                found.extend(corpus_snapshot.glob(test_dir, "test_*.py"))
         return found
 
     def import_test_file(self, test_file: Path) -> None:
@@ -1000,6 +997,9 @@ class Repo:
         class defined in the file, which populates
         ``otto.suite.register.SUITES`` at import time.  ``cli/test.py``'s
         ``suite_app`` resolves entries from that registry lazily.
+
+        A failed module is removed, so the next load re-raises instead of
+        silently skipping it.
         """
         import importlib.util
 
@@ -1011,10 +1011,18 @@ class Repo:
             return
         mod = importlib.util.module_from_spec(spec)
         sys.modules[mod_name] = mod
-        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        try:
+            spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        except BaseException:
+            sys.modules.pop(mod_name, None)
+            raise
 
     def import_test_files(self) -> None:
-        """Import all test files (uncontained; :mod:`otto.bootstrap` wraps per-file)."""
+        """Import all test files, uncontained.
+
+        The CLI does not call this: :func:`otto.bootstrap.load_test_suites`
+        imports the same files one at a time, containing each failure.
+        """
         for test_file in self.iter_test_files():
             self.import_test_file(test_file)
 

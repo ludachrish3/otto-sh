@@ -86,6 +86,7 @@ from otto.monitor.db import UnsupportedDBError
 from otto.monitor.event_ops import EventValidationError
 from otto.project.commands import OptionsCollisionError
 from otto.project.orchestrator import InactiveRequiredDependencyError
+from otto.registry import RegistrationRefused
 from otto.reservations.check import MissingReservationError, ReservationBackendError
 from otto.result import CommandNotRunError
 from otto.suite._retry import RetryAttemptTimeoutError
@@ -164,6 +165,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (LinkNotMeasuredError, RuntimeError),
     (CheckHostUnreachableError, RuntimeError),
     (CheckCommandFailedError, RuntimeError),
+    (RegistrationRefused, ValueError),
 ]
 
 

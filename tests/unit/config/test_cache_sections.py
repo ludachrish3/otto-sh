@@ -119,16 +119,24 @@ def test_unknown_section_names_raise_key_error(repos):
 
 
 def test_a_miss_then_write_hashes_each_section_key_set_at_most_once(repos, monkeypatch):
-    """The spec's never-compute-the-fingerprint-twice, as an executable claim.
+    """The spec's never-compute-the-fingerprint-twice, as an executable claim — two halves.
 
     Seed a valid entry, invalidate the tests section by editing a nested
-    file, then run the exact slow-path cycle entry() runs: the validity
-    check computes each section's digest ONCE, and write_cache must store
-    those digests instead of hashing every key set again.
+    file, then run the exact slow-path cycle entry() runs, inside the
+    ``corpus_snapshot()`` scope entry() opens around it.
+
+    1. HASHING: the validity check computes each section's digest once, and
+       write_cache stores those digests instead of hashing every key set
+       again. A path in more than one section's key set (the tests dir sits
+       in both ``names`` and ``tests``) is folded into each owning section's
+       digest, so the bound is once PER OWNING SECTION, not once overall.
+    2. STAT SYSCALLS: the scope collapses those hashes, and the shim's stored
+       triples, onto ONE ``os.stat`` per key path for the whole cycle.
     """
     from collections import Counter
 
     from otto.config import completion_cache as cc
+    from otto.config import corpus_snapshot as cs
     from otto.config.cache_sections import SECTIONS
 
     repo, discovered = repos
@@ -145,17 +153,67 @@ def test_a_miss_then_write_hashes_each_section_key_set_at_most_once(repos, monke
 
     monkeypatch.setattr(cc, "hash_file", counting)
 
-    digests: dict[str, str] = {}
-    assert cc.cache_rebuild_is_worthwhile(discovered, digests=digests) is True
-    cc.write_cache(discovered, [], [], [], digests=digests)
+    stats: Counter = Counter()
+    real_os = cs.os
+
+    class _CountingOs:
+        """The snapshot module's view of ``os``: ``stat`` counted, the rest passed through."""
+
+        def __getattr__(self, name):
+            return getattr(real_os, name)
+
+        def stat(self, path, *args, **kwargs):
+            stats[str(path)] += 1
+            return real_os.stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(cs, "os", _CountingOs())
+
+    with cs.corpus_snapshot():
+        digests: dict[str, str] = {}
+        assert cc.cache_rebuild_is_worthwhile(discovered, digests=digests) is True
+        cc.write_cache(discovered, [], [], [], digests=digests)
 
     assert counts, "no hashing observed at all — the validity check never ran"
     budget: Counter = Counter()
     for section in SECTIONS:
+        if section.key_paths is None:
+            continue
         for path in set(section.key_paths(discovered)):
             budget[path] += 1
     over = {str(p): (counts[p], budget[p]) for p in counts if counts[p] > budget[p]}
     assert not over, f"paths hashed more often than once per owning section (got, allowed): {over}"
+
+    assert any(n > 1 for n in budget.values()), "no path is shared by two key sets any more"
+    restated = {str(p): stats[str(p)] for p in budget if stats[str(p)] != 1}
+    assert not restated, f"key paths not stat'd exactly once inside the scope: {restated}"
+
+
+def test_shim_digest_moves_iff_a_child_digest_moves(repos):
+    from otto.config.cache_sections import SECTIONS, section_digests
+
+    repo, discovered = repos
+    before = section_digests(discovered, SECTIONS)
+    nested = next(repo.rglob("sub*/test_*.py"))
+    nested.write_text("def test_x():\n    pass\n\ndef test_moved():\n    pass\n")
+    after_nested = section_digests(discovered, SECTIONS)
+    assert after_nested["names"] == before["names"]
+    assert after_nested["tests"] != before["tests"]
+    assert after_nested["shim"] != before["shim"]
+    top = next((repo / "tests").glob("test_*.py"))
+    top.write_text(top.read_text() + "\n# edit\n")
+    after_top = section_digests(discovered, SECTIONS)
+    assert after_top["names"] != after_nested["names"]
+    assert after_top["shim"] != after_nested["shim"]
+    assert section_digests(discovered, SECTIONS) == after_top  # stable when nothing moves
+
+
+def test_a_derived_digest_alone_computes_its_children(repos):
+    """`section_digests(repos, [shim])` asks for the shim alone; its children compute inside."""
+    from otto.config.cache_sections import SECTIONS, section_by_name, section_digests
+
+    _repo, discovered = repos
+    alone = section_digests(discovered, [section_by_name("shim")])
+    assert alone["shim"] == section_digests(discovered, SECTIONS)["shim"]
 
 
 def test_a_third_registered_section_does_not_break_the_merged_view(repos, monkeypatch):

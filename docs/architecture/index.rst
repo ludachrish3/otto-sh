@@ -42,6 +42,7 @@ cross-cutting spines; the principles are the recurring design rules.
    subsystems/reservations
    subsystems/bootstrap
    subsystems/completion
+   subsystems/completion-cache
    subsystems/data-boundary
 
 .. toctree::

@@ -135,6 +135,9 @@ jobs:
           path: ~/.cache/otto/busybox
           key: busybox-artifacts-${{ hashFiles('tests/_fixtures/busybox_pins.json') }}
 
+      - name: Install strace (the import budget counts stat syscalls through it)
+        run: command -v strace || { sudo apt-get update && sudo apt-get install -y strace; }
+
       - name: Run nox unit tests ${{ inputs.nox_count || '5' }}x
         run: >-
           uv run nox -s tests_hostless-${{ matrix.python-version }} --
@@ -541,6 +544,9 @@ jobs:
       # do. Installed here rather than in a rung: it says nothing about 3.15.
       - name: Ensure sshd is available
         run: command -v sshd || { sudo apt-get update && sudo apt-get install -y openssh-server; }
+
+      - name: Install strace (the import budget counts stat syscalls through it)
+        run: command -v strace || { sudo apt-get update && sudo apt-get install -y strace; }
 
       - name: Climb the rungs and compare with the expected one
         run: |

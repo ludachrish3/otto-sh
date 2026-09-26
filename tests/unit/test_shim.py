@@ -436,19 +436,37 @@ def test_a_candidate_stdout_cannot_encode_falls_through_to_the_full_path(monkeyp
     import io
 
     from otto import _shim
+    from otto import _shim_complete as sc
 
     monkeypatch.setattr(sys, "argv", ["otto"])
     monkeypatch.setenv("_OTTO_COMPLETE", "complete_bash")
-    monkeypatch.setattr("otto._shim_complete.answer", lambda environ: "café")
+    monkeypatch.setattr(sc, "answer_or_reason", lambda environ: sc.Outcome(["café"]))
     stdout = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
     monkeypatch.setattr(sys, "stdout", stdout)
     fell_through = []
-    monkeypatch.setattr("otto.cli.main.entry", lambda: fell_through.append(True))
+    monkeypatch.setattr("otto.cli.main.entry", lambda **kw: fell_through.append(kw))
 
     _shim.main()  # no SystemExit(0), and no UnicodeEncodeError
 
-    assert fell_through == [True]
+    assert fell_through == [{"cache_stale": False}]
     assert stdout.buffer.getvalue() == b""
+
+
+def test_a_stale_handover_reaches_entry_as_cache_stale(monkeypatch):
+    import otto._shim as shim
+    from otto import _shim_complete as sc
+
+    seen = []
+    monkeypatch.setenv("_OTTO_COMPLETE", "complete_bash")
+    monkeypatch.setattr(
+        sc,
+        "answer_or_reason",
+        lambda environ: sc.Outcome(None, "stale: /x changed", stale=True),
+    )
+    monkeypatch.setattr("otto.cli.main.entry", lambda **kw: seen.append(kw))
+    monkeypatch.setattr(shim.sys, "argv", ["otto"])
+    shim.main()
+    assert seen == [{"cache_stale": True}]
 
 
 def test_a_non_bash_shell_takes_the_full_path(tmp_path):

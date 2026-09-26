@@ -39,13 +39,22 @@ def test_payload_keys_mirror_the_two_sections_key_sets(tmp_path, monkeypatch):
     assert "host_classes" in payload["tree"]
 
 
-def test_shim_section_keys_on_names_and_tests_together(tmp_path, monkeypatch):
-    _, repos = _repos(tmp_path, monkeypatch)
+def test_shim_digest_is_derived_from_names_and_tests():
     shim = section_by_name("shim")
-    assert set(shim.key_paths(repos)) == set(section_by_name("names").key_paths(repos)) | set(
-        section_by_name("tests").key_paths(repos)
-    )
+    assert shim.derived_from == ["names", "tests"]
+    assert shim.key_paths is None
     assert [s.name for s in SECTIONS] == ["names", "tests", "shim"]
+
+
+def test_a_section_declares_exactly_one_key_source():
+    import pytest
+
+    from otto.config.cache_sections import Section
+
+    with pytest.raises(ValueError, match="exactly one"):
+        Section(name="x", collect=lambda repos: {})
+    with pytest.raises(ValueError, match="exactly one"):
+        Section(name="x", collect=lambda repos: {}, key_paths=lambda r: [], derived_from=["names"])
 
 
 def test_write_cache_stores_the_shim_section_when_given(tmp_path, monkeypatch):

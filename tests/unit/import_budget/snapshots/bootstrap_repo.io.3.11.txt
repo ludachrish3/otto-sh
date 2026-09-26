@@ -1,5 +1,7 @@
-# I/O golden: surface `bootstrap_repo`, CPython 3.11. Regenerate with `make import-snapshot` UNDER THIS INTERPRETER.
-listdir 45
-open_fixture 7
+# I/O golden: surface `bootstrap_repo`, CPython 3.11. Regenerate with `make import-snapshot` UNDER THIS INTERPRETER. (stat_total is a ceiling baseline, +10%)
+listdir 48
+open_fixture 3
 open_home 0
-scandir 1
+scandir 0
+stat_workspace 6
+stat_total 1856

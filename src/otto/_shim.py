@@ -16,9 +16,12 @@ path, so the two cannot diverge.
 
 A third trivial invocation is answered here too: a bash TAB
 (``_OTTO_COMPLETE=complete_bash``), served from the completion cache by
-``otto._shim_complete.answer`` when the cache validates (docs/superpowers/
-specs/2026-09-04-shim-completion-design.md). Nothing is written to stdout
-before that decision is made — the same rule the resolver itself follows.
+``otto._shim_complete.answer_or_reason`` when the cache validates
+(docs/superpowers/specs/2026-09-04-shim-completion-design.md). Nothing is
+written to stdout before that decision is made — the same rule the resolver
+itself follows. When the cache itself is what failed (not merely a TAB the
+shim does not model), the outcome's ``stale`` flag rides along to ``entry()``
+so THIS TAB repairs the cache and the next one is answered from here again.
 
 Imports nothing from otto at module scope.
 """
@@ -45,14 +48,17 @@ def main() -> None:
         print(f"otto version: {get_version()}")  # noqa: T201
         raise SystemExit(0)
 
+    cache_stale = False
     if os.environ.get("_OTTO_COMPLETE") == "complete_bash":
         # A bash TAB: answered from the completion cache by the standard
         # library alone when the cache validates (docs/superpowers/specs/
         # 2026-09-04-shim-completion-design.md); anything else falls through
         # to the full path below, which is always right.
-        from ._shim_complete import answer
+        from ._shim_complete import answer_or_reason
 
-        text = answer(dict(os.environ))
+        outcome = answer_or_reason(dict(os.environ))
+        cache_stale = outcome.stale
+        text = None if outcome.items is None else "\n".join(outcome.items)
         if text is not None:
             try:
                 # What Typer's echo of comp.complete() prints: the values joined
@@ -72,4 +78,4 @@ def main() -> None:
 
     from .cli.main import entry
 
-    entry()
+    entry(cache_stale=cache_stale)

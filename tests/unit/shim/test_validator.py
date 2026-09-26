@@ -263,11 +263,13 @@ def test_a_node_missing_a_required_key_hands_over_rather_than_guessing(workspace
     assert out.reason.startswith("error: KeyError")
 
 
-def test_answer_never_raises(monkeypatch):
+def test_answer_or_reason_never_raises(monkeypatch):
     monkeypatch.setenv("_OTTO_COMPLETE", "complete_bash")
     monkeypatch.setenv("COMP_WORDS", "otto ")
     monkeypatch.setenv("COMP_CWORD", "not-an-int")
-    assert sc.answer(dict(os.environ)) is None
+    out = sc.answer_or_reason(dict(os.environ))
+    assert out.items is None
+    assert out.reason.startswith("error: ValueError")
 
 
 def test_schema_constants_track_the_product():
@@ -279,3 +281,79 @@ def test_schema_constants_track_the_product():
 
     assert sc.MARKER_FILENAMES == cmn.MARKER_FILENAMES
     assert sc.WINDOW_SECONDS == cmn.SHIM_WINDOW_SECONDS
+
+
+STALE_REASON_FRAGMENTS = [
+    "no cache file",
+    "schema mismatch",
+    "no sections",
+    "no shim section",
+    "no names section",
+    "no tests section",
+    "expired",
+    "stale: ",
+]
+
+
+def test_every_cache_state_raise_is_marked_stale_and_nothing_else_is():
+    """Source-level pin: a new raise cannot silently pick the wrong side."""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(sc))
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and getattr(node.func, "id", None) == "Handover"
+            and node.args
+        ):
+            continue
+        text = ast.unparse(node.args[0])
+        stale_kw = {k.arg: ast.unparse(k.value) for k in node.keywords}.get("stale")
+        is_state = any(frag in text for frag in STALE_REASON_FRAGMENTS)
+        assert (stale_kw == "True") is is_state, f"Handover({text}) stale={stale_kw}"
+
+
+def test_tainted_handover_is_not_stale(workspace):
+    """A tainted cache hands over but must never trigger a rebuild loop on every TAB."""
+    _, cache = workspace
+    data = _data(cache)
+    data["sections"]["shim"]["tainted"] = True
+    cache.write_text(json.dumps(data))
+    environ = dict(os.environ)
+    environ["_OTTO_COMPLETE"] = "complete_bash"
+    environ["COMP_WORDS"] = "otto ho"
+    environ["COMP_CWORD"] = "1"
+    outcome = sc.answer_or_reason(environ)
+    assert outcome.reason == "tainted"
+    assert outcome.stale is False
+
+
+@pytest.mark.parametrize(
+    ("mutate", "reason_prefix", "expected_stale"),
+    [
+        (lambda d: d["sections"]["shim"].__setitem__("generated_at", 0), "expired", True),
+        (lambda d: d.__setitem__("schema", 17), "schema mismatch", True),
+        (
+            lambda d: d["sections"]["shim"]["payload"].__setitem__("inventory", {"kind": "opaque"}),
+            "opaque inventory",
+            False,
+        ),
+    ],
+)
+def test_answer_or_reason_carries_the_stale_flag_a_real_tab_would_see(
+    workspace, mutate, reason_prefix, expected_stale
+):
+    """Driven through ``answer_or_reason`` on a mutated ON-DISK cache, not a synthetic
+    ``Handover(...)`` construction: proof the flag reaches a real TAB's outcome."""
+    _, cache = workspace
+    data = _data(cache)
+    mutate(data)
+    cache.write_text(json.dumps(data))
+    environ = dict(os.environ)
+    environ["_OTTO_COMPLETE"] = "complete_bash"
+    environ["COMP_WORDS"] = "otto ho"
+    environ["COMP_CWORD"] = "1"
+    outcome = sc.answer_or_reason(environ)
+    assert outcome.reason.startswith(reason_prefix)
+    assert outcome.stale is expected_stale

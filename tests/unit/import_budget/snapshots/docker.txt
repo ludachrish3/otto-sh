@@ -8,6 +8,7 @@ otto.cli.invoke
 otto.cli.main
 otto.cli.registry
 otto.config
+otto.config.corpus_snapshot
 otto.config.env
 otto.config.fleet
 otto.config.lab

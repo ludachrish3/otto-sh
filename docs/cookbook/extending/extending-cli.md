@@ -149,8 +149,10 @@ Registration must run **before** the root Typer group is consulted, which
 means it belongs in a module listed in your `.otto/settings.toml` `init`
 field (or a package pulled in transitively from one). {func}`otto.bootstrap.bootstrap`
 is otto's composition root: it discovers your repos, then imports each
-repo's `init` modules and test files, and runs before argv parsing for every
-real invocation (see {func}`otto.cli.main.entry`). Bootstrap is idempotent —
+repo's `init` modules, and runs before argv parsing for every real invocation
+(see {func}`otto.cli.main.entry`). Test files are not a place to register a
+command: they load only for the commands that read suites, and a
+`register_cli_command()` made from one is refused with a framed error. Bootstrap is idempotent —
 repeated calls return the same cached result.
 
 Bootstrap **contains** failures per module: if one `init` file raises on
@@ -237,24 +239,26 @@ different top-level name.
 Every registered command name appears automatically in `otto --help` and in
 shell tab completion — there is nothing extra to wire up. Two paths feed this:
 
-- **Slow path** (a real invocation): bootstrap runs, so the live
+- **Full path** (any invocation that bootstraps): the live
   {data}`~otto.cli.registry.CLI_COMMANDS` registry has every command from
   every loaded `init` module, first- and third-party alike.
 - **Fast path** (shell completion, `otto <TAB>`): bootstrap is *skipped*
   entirely — completion never executes arbitrary user code. A cache file
   records each third-party command's name, help text, and `lab_free` flag
-  from the most recent slow-path run — plus, for a group, its subcommand tree
+  from the most recent cache rebuild — plus, for a group, its subcommand tree
   (names, helps, option schemas), so `otto <your-group> <TAB>` completes
   children without importing your code.
   Built-in commands aren't cached — they re-register on every real
   invocation. On the fast path, otto serves stubs assembled purely from that
-  cached data; a name only the live registry knows about (never seen by a
-  completing shell before) is simply invisible until the next slow-path run
-  refreshes the cache.
+  cached data; a name only the live registry knows about is invisible until
+  the cache is rebuilt. That normally happens on its own: adding the command
+  edits an init module the cache is keyed on, so the next TAB or root
+  `otto --help` rebuilds it. Ordinary commands never do
+  ({doc}`../../architecture/subsystems/completion-cache`).
 
   One cost note for lazy `"pkg.mod:attr"` group loaders: serializing the
-  subcommand tree imports that module during the *slow-path* cache refresh
-  (never during completion itself). If the import fails, the cache degrades
+  subcommand tree imports that module during a cache rebuild (never when
+  completion is answered from the cache). If the import fails, the cache degrades
   to the group's name and help — and the real dispatch error stays loud.
 
 ## Return values

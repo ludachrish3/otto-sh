@@ -8,6 +8,7 @@ otto.cli.main
 otto.cli.registry
 otto.cli.test
 otto.config
+otto.config.corpus_snapshot
 otto.config.env
 otto.config.repo
 otto.config.scope

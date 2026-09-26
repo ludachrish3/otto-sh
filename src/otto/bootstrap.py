@@ -6,15 +6,18 @@ Between phase 1 and phase 2 the *dependency pass* (``config.dependencies``)
 validates each repo's declared dependencies, skips repos whose required deps
 are unsatisfied (framed ``DependencyError``\ s), and orders phase-2 registration
 topologically (stable — sut-dir order when no deps are declared). Phase 2
-(*registration*) imports each repo's init modules and test files, wrapping
-every user-module exec so one broken file becomes a framed
-:class:`BootstrapError` instead of bricking the process. After phase 2 — and
-only after, because the registries it reads are populated BY those imports —
-one check runs that does NOT get contained: a repo that registered product or
-dev-tool providers, OR that declares ``[[products]]``/``[[dev_tools]]``
-entries, must have declared the labs it applies to (:class:`ProjectScopeError`,
-spec §D2). Lab loading is deliberately NOT part of bootstrap — it happens
-lazily at first access.
+(*registration*) imports each repo's init modules, wrapping every user-module
+exec so one broken file becomes a framed :class:`BootstrapError` instead of
+bricking the process. Repo test files are NOT part of phase 2: they register
+suites only, so they load on demand through :func:`load_test_suites`, the
+suites registry's loader, on the first read of that registry after bootstrap
+— only the commands that read suites pay for them or fail on them. After
+phase 2 — and only after, because the registries it reads are populated BY
+those imports — one check runs that does NOT get contained: a repo that
+registered product or dev-tool providers, OR that declares
+``[[products]]``/``[[dev_tools]]`` entries, must have declared the labs it
+applies to (:class:`ProjectScopeError`, spec §D2). Lab loading is
+deliberately NOT part of bootstrap — it happens lazily at first access.
 
 ``bootstrap()`` is idempotent: the CLI entrypoint calls it before argv
 parsing, ``open_context()`` calls it lazily, and repeated calls return the
@@ -35,6 +38,21 @@ if TYPE_CHECKING:
 
 class BootstrapError(OttoError):
     """One user file failed to load during bootstrap registration."""
+
+    rendered: bool = False
+    """Set by the CLI once the error is printed, so a finding appended after
+    startup is printed exactly once. A class default, so the subclasses that
+    bypass this ``__init__`` carry it too."""
+
+    is_test_file: bool = False
+    """True only for the file-load failures :func:`load_test_suites` records,
+    whose ``source`` is genuinely a test file's own name. Every other site that
+    raises this error sets ``source`` from user config instead — an init
+    module's dotted path (``mod`` below), a settings file's path — and a user
+    typo there (``init = ["foo.py"]`` for a dotted module name) can
+    coincidentally end in ``.py`` too. A consumer naming "failed test files"
+    must match on this flag, set explicitly by the one site that means it,
+    never on ``source.endswith(".py")``."""
 
     def __init__(self, sut_dir: Any, source: str, cause: BaseException) -> None:
         """Frame *cause* as ``repo <sut_dir>: failed to load <source>``."""
@@ -114,12 +132,16 @@ _in_progress: BootstrapResult | None = None
 Set once discovery and the dependency pass are done — which is when ``repos``
 and ``ordered_repos`` are final — and cleared when ``bootstrap()`` leaves. It
 exists so a RE-ENTRANT ``bootstrap()`` has something true to answer with, and
-the reentrance is real: the import phase runs repo ``init`` modules and test
-files, i.e. user code, and anything there that reaches ``config.get_repos()``
+the reentrance is real: the import phase runs repo ``init`` modules, i.e. user
+code (test files load later, on demand, through :func:`load_test_suites`), and
+anything there that reaches ``config.get_repos()``
 — directly, or by way of a stamped host whose product providers consult
 :func:`~otto.config.scope.scope_for_repo` — lands back here with ``_result``
 still unset. Without this, that call composed a SECOND, nested root.
 """
+_suites_loaded_for: BootstrapResult | None = None
+"""The result whose repos' test files are loaded; identity-keyed, so a
+re-bootstrap after :func:`invalidate` loads again."""
 _completion_names: dict[str, Any] | None = None
 
 
@@ -316,13 +338,6 @@ def bootstrap() -> BootstrapResult:
                         if not is_containable(e):
                             raise
                         errors.append(BootstrapError(repo.sut_dir, mod, e))
-                for test_file in repo.iter_test_files():
-                    try:
-                        repo.import_test_file(test_file)
-                    except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
-                        if not is_containable(e):
-                            raise
-                        errors.append(BootstrapError(repo.sut_dir, test_file.name, e))
         # Every repo has spoken: publish one merged `otto run` command per
         # project instruction. Not contained -- a cross-repo options collision
         # is a declared conflict the user must resolve, not one repo's breakage.
@@ -353,6 +368,50 @@ def bootstrap() -> BootstrapResult:
         # re-run and fail the same way, not read a half-built answer.
         _in_progress = None
     return _result
+
+
+def load_test_suites() -> None:
+    """Import every active repo's top-level test files, once per bootstrap: ``SUITES``' loader.
+
+    On demand, not in :func:`bootstrap`: test files register suites and nothing
+    else (anything else is refused, see :func:`otto.registry.refuse_during_test_load`),
+    so only the commands that read suites pay for them, and a broken one fails
+    those commands rather than every command. This reverses the 2026-08-06
+    "fail loud on every invocation" ruling (Chris, 2026-09-25): every command was
+    paying for pytest's import (~900 path syscalls) to protect a benefit that
+    only suite commands use.
+
+    Does nothing until :func:`bootstrap` has COMPLETED: it never bootstraps by
+    itself, so a library read before ``bootstrap()``/``open_context()`` sees an
+    empty registry, as documented. Failures are contained per file and appended
+    to the live ``bootstrap().errors``, exactly like an init module's.
+    """
+    global _suites_loaded_for  # noqa: PLW0603 — module-level singleton/cache
+    result = _result
+    if result is None or _suites_loaded_for is result:
+        return
+    # Marked BEFORE the loop: a test file that reads SUITES while it loads
+    # re-enters here and must take the early return, not start a second load.
+    _suites_loaded_for = result
+    from .registry import loading_test_files
+
+    try:
+        for repo in result.ordered_repos:
+            with registering_repo(repo.name), loading_test_files():
+                for test_file in repo.iter_test_files():
+                    try:
+                        repo.import_test_file(test_file)
+                    except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY user-code failure becomes a framed error
+                        if not is_containable(e):
+                            raise
+                        err = BootstrapError(repo.sut_dir, test_file.name, e)
+                        err.is_test_file = True
+                        result.errors.append(err)
+    except BaseException:
+        # An uncontainable escape (KeyboardInterrupt) did not finish the load.
+        # Left marked, an embedder that catches it would never load again.
+        _suites_loaded_for = None
+        raise
 
 
 def is_bootstrapped() -> bool:
@@ -396,9 +455,10 @@ def invalidate() -> None:
     prior discovery's errors are discarded together with the discovery that
     produced them.
     """
-    global _discovered, _result, _in_progress, _completion_names  # noqa: PLW0603 — module-level singleton/cache
+    global _discovered, _result, _in_progress, _completion_names, _suites_loaded_for  # noqa: PLW0603 — module-level singleton/cache
     _discovered = None
     _result = None
+    _suites_loaded_for = None
     # Defence in depth. `bootstrap()` clears this in a `finally`, so it is
     # already None whenever anyone can call this — but "drop every cached
     # bootstrap result" must mean every one, or the day that invariant breaks

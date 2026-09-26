@@ -12,6 +12,37 @@
 > Also MISSED below: the dominant per-repo term is `otto/cli/main.py:878-895`, which rebuilds and
 > rewrites the completion cache — reading and `ast.parse`-ing the whole corpus — on EVERY command.
 
+> **RECONCILED 2026-09-26** against the code and `docs/architecture/startup-performance.md`, at the
+> end of the dispatch-startup work (`docs/superpowers/specs/2026-09-25-dispatch-startup-cost-design.md`).
+> Four of five items are done; one remains open, tracked elsewhere:
+>
+> - **A** (kill constant-drags-the-world imports) ✅ done, but not literally as written — `DEFAULT_COMMAND_TIMEOUT`
+>   still lives in `otto.host.host` and `otto.config.fleet` still imports it at module top level
+>   (`src/otto/config/fleet.py:14`). What actually removes the drag is **B**: `otto.config.__init__`
+>   no longer eagerly imports `.fleet`/`.lab` at all, so nothing forces `fleet.py`'s own imports to run
+>   on a cheap command. See item B below for the mechanism and the measured proof.
+> - **B** (lazy `otto.config`) ✅ done — `src/otto/config/__init__.py`'s PEP 562 `__getattr__`/`__dir__`
+>   (`_LAZY_EXPORTS`, ~line 88) resolves `.fleet`/`.lab`/`.dependencies`/`.user_settings` names on first
+>   access instead of at import. The docstring above `_LAZY_EXPORTS` records the same MEASURED
+>   reasoning this todo gave: an eager re-export pulled the whole 46-module `otto.host.*` subtree in.
+>   Confirmed: `otto.host` appears zero times in the `help`, `import_otto` and `run` import-budget
+>   snapshots (`tests/unit/import_budget/snapshots/`).
+> - **C** (defer command-tree construction) ❌ not done. Tracked by **GitHub issue #455** ("a general
+>   fast path for commands that do little work, instead of per-command shim special cases"), which
+>   names this exact item as its first direction to evaluate. Left open on purpose: the dispatch-startup
+>   work deliberately left the fixed per-command floor alone (it removed only the corpus-scaling costs).
+> - **D** (a syscall-budget guard) ✅ done, by the dispatch-startup branch: `scripts/import_budget.py`'s
+>   `stat_workspace`/`stat_total` strace counters and the `dispatch_repo_warm` surface (a real,
+>   bootstrapped, repo-bearing dispatch — the case this todo's item D asked to guard and that no
+>   surface exercised before). See `docs/architecture/startup-performance.md` § "What holds these
+>   numbers in place" and § "Diagnose which cost you're paying".
+> - **E** (user-facing environment guidance) ✅ done — `docs/architecture/startup-performance.md`
+>   covers every point this item asked for: local disk first, `__pycache__`/`PYTHONPYCACHEPREFIX`,
+>   short `sys.path`, NFS mount options (`actimeo`/`nocto`), why `PYTHONDONTWRITEBYTECODE` is the wrong
+>   lever, and the two diagnostic commands verbatim.
+>
+> Left to do: only item C, via #455. This file is kept (not deleted) until that issue lands.
+
 # Startup latency on network filesystems — lazy imports + environment guidance
 
 ## The report
@@ -114,7 +145,7 @@ number. This is the highest-leverage line in the codebase for this issue.
 
 Goal, in the order the wins arrive:
 
-### A. Kill the constant-drags-the-world imports (cheap, do first)
+### A. Kill the constant-drags-the-world imports (cheap, do first) ✅ (via B, see reconciliation above)
 
 1. Move `DEFAULT_COMMAND_TIMEOUT` out of `otto.host.host` into a leaf module with no otto imports
    (e.g. `otto/host/defaults.py` or an existing constants module), and have `otto.host.host` re-export it
@@ -125,13 +156,13 @@ Goal, in the order the wins arrive:
    Note: this repo bans `from __future__ import annotations` (trips Sphinx `-W`), so quote annotations
    individually rather than reaching for the future-import.
 
-### B. Make `otto.config.__init__` lazy
+### B. Make `otto.config.__init__` lazy ✅ done
 
 `otto/config/__init__.py` eagerly re-exports from five submodules. Give it a module-level `__getattr__`
 (PEP 562) so `from otto.config import X` resolves the submodule on first attribute access instead of at
 import. Keep the names in `__all__` and under `TYPE_CHECKING` so static tooling and `ty` still see them.
 
-### C. Defer command-tree construction in the CLI
+### C. Defer command-tree construction in the CLI ❌ not done — tracked by #455
 
 `otto/cli/main.py` calls `register_builtin_commands` and imports the config surface at module scope.
 Typer only needs the callback for the command the user actually typed. Options worth costing out:
@@ -139,7 +170,7 @@ lazy command registration (import the subcommand module inside its own callback)
 subclass that resolves a command's module on demand. `--version` and `--help` should touch neither
 `otto.host` nor `otto.models`.
 
-### D. Guard it so it does not regress
+### D. Guard it so it does not regress ✅ done (dispatch-startup branch)
 
 There is already an import-budget guard in this repo (see `project_import_budget_guard` — and the rule
 attached to it: fix at the source, never by raising the cap). Extend that idea with a **syscall budget**,
@@ -151,7 +182,7 @@ because module count alone will not catch a `sys.path` regression:
 - Assert `otto.host` and `otto.models` are **absent** from `sys.modules` after a `--version` run. That is
   the real contract and it is a guard that can genuinely fail, not a tautology.
 
-### E. Ship user-facing environment guidance
+### E. Ship user-facing environment guidance ✅ done — `docs/architecture/startup-performance.md`
 
 Docs page (user guide, installation/troubleshooting area — one home, link from anywhere else that mentions
 slow startup) covering, in payoff order:

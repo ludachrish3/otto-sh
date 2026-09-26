@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from _typeshed import DataclassInstance
     from typer.core import TyperGroup
 
+    from ..bootstrap import BootstrapResult
     from ..config.lab import Lab
     from ..config.repo import Repo
     from ..context import OttoContext
@@ -767,12 +768,42 @@ def validate_project_switches(ctx: typer.Context) -> None:
         fail(f"no project {value!r}{hint}", 2)
 
 
+def render_bootstrap_findings(result: "BootstrapResult") -> None:
+    """Print each contained error not yet printed, as one framed ``warning:`` line.
+
+    Startup prints what bootstrap found; a lazy suite load can find more later.
+    Every path that can surface a finding calls this, and ``rendered`` makes
+    each error print exactly once, whichever path got there first.
+    """
+    for err in result.errors:
+        if not err.rendered:
+            typer.echo(f"warning: {err}", err=True)
+            err.rendered = True
+
+
+def render_pending_bootstrap_findings() -> None:
+    """:func:`render_bootstrap_findings` for a read site that must never bootstrap.
+
+    The suites registry loads test files on its first read after bootstrap, and
+    click performs that read itself (listing ``otto test``'s subcommands for its
+    help, resolving a suite name) before any otto callback runs. Such a site
+    prints what the load found; before bootstrap there is nothing to print, and
+    asking must not start one.
+    """
+    from ..bootstrap import bootstrap, is_bootstrapped
+
+    if is_bootstrapped():
+        render_bootstrap_findings(bootstrap())
+
+
 def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
     """Exit(1) when bootstrap contained an ACTIVE repo's error — shared loud gate.
 
     The per-error ``warning:`` lines were already printed by ``entry()`` at
-    startup; print ONLY the framed summary here (don't re-print each error
-    in red) — the summary points back at those warnings. Used by the leaf
+    startup, except for findings a lazy suite load appended since, which
+    :func:`render_bootstrap_findings` prints first; then print ONLY the framed
+    summary here (don't re-print each error in red) — the summary points back
+    at those warnings. Used by the leaf
     preamble AND the root ``--show-lab``/``--list-hosts`` branch, so anything
     that inspects the registered world fails the same way.
 
@@ -792,6 +823,7 @@ def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
     from ..bootstrap import bootstrap
 
     result = bootstrap()
+    render_bootstrap_findings(result)
     if not result.errors:
         return
 
@@ -1806,7 +1838,12 @@ def make_registry_group(child_registry: "Registry[Any]") -> "type[TyperGroup]":
         @override
         def list_commands(self, ctx: Any) -> list[str]:
             static = super().list_commands(ctx)
-            return static + [n for n in child_registry.names() if n not in static]
+            names = child_registry.names()
+            # The read may have run a lazy loader (suites load test files on
+            # first read) whose findings click's help screen would otherwise
+            # swallow; printed once, before the help.
+            render_pending_bootstrap_findings()
+            return static + [n for n in names if n not in static]
 
         @override
         def get_command(self, ctx: Any, cmd_name: str) -> Any:
@@ -1814,6 +1851,9 @@ def make_registry_group(child_registry: "Registry[Any]") -> "type[TyperGroup]":
             if static is not None:
                 return static
             if cmd_name not in child_registry:
+                # A name missing because its file failed to load must not
+                # arrive as a bare "No such command": print why, first.
+                render_pending_bootstrap_findings()
                 return None
             # Converted-child cache with NO invalidation: fine for the CLI's
             # one-shot process lifetime, but a same-file suite re-registration

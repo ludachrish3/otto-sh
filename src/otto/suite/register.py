@@ -43,11 +43,17 @@ class SuiteEntry:
 
 # ---------------------------------------------------------------------------
 # Module-level registry — populated by register_suite_class() (called from
-# OttoSuite.__init_subclass__) as test files are imported during startup;
-# consumed lazily by cli/test.py's RegistryBackedGroup.
+# OttoSuite.__init_subclass__) as test files are imported. Those files load on
+# the first read after bootstrap (otto.bootstrap.load_test_suites, this
+# registry's loader), so only the commands that read suites pay for them.
+# The only registry that accepts entries while test files load: suites are
+# what test files are for. Consumed lazily by cli/test.py's RegistryBackedGroup.
 # ---------------------------------------------------------------------------
 SUITES: Registry[SuiteEntry] = Registry(
-    "test suite", register_hint="subclass otto.suite.OttoSuite with a Test*-prefixed name"
+    "test suite",
+    register_hint="subclass otto.suite.OttoSuite with a Test*-prefixed name",
+    loader="otto.bootstrap:load_test_suites",
+    accepts_test_files=True,
 )
 """Registered ``OttoSuite`` subclasses, keyed by class name; populated at import time."""
 

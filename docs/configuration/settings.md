@@ -135,11 +135,13 @@ libs
 
 tests
 : Defines where test discovery happens, in two different senses.  Every
-  `test_*.py` at the **top level** of a listed directory is imported at
-  startup, which auto-registers any `Test`-prefixed `OttoSuite` subclass as an
-  `otto test` subcommand — that scan is *not* recursive, and these files are
-  imported on every otto command (list a subdirectory too if you keep suites
-  there).  Selection runs (`otto test --tests NAME[,NAME...]` or
+  `test_*.py` at the **top level** of a listed directory is imported the first
+  time a command needs the suite list (`otto test`, or a rebuild of the
+  completion cache), which auto-registers any `Test`-prefixed `OttoSuite`
+  subclass as an `otto test` subcommand — that scan is *not* recursive (list a
+  subdirectory too if you keep suites there). Other commands never import
+  these files, and a test file may register suites only; everything else
+  belongs in `init`.  Selection runs (`otto test --tests NAME[,NAME...]` or
   `otto test -m EXPRESSION` with no suite name) hand the same directories to
   pytest, one session per repo, and pytest recurses as usual — so a plain
   `test_*` function in a subdirectory runs without being imported here.
@@ -326,8 +328,10 @@ occurs:
 3. **Apply settings** -- For each repo, otto:
    - Adds `libs` directories to `sys.path`
    - Imports modules listed in `init` (this registers instructions)
-   - Auto-imports each `test_*.py` at the top level of a `tests` directory
-     (this registers suites; it does not recurse — see above)
+
+   Test files are not imported here. Each `test_*.py` at the top level of a
+   `tests` directory is imported later, and only by a command that reads the
+   suite list (see `tests` above).
 
 4. **Lab loading** -- Otto builds the host source via `build_lab_sources`,
    concatenating every repo's `[[lab.sources]]` entries in `OTTO_SUT_DIRS`
@@ -473,7 +477,8 @@ otto for a team:
    `-R` / `--skip-reservation-check` break-glass overrides *before* they need
    them. See {doc}`../cli/reservation/index`.
 4. **Register shared code** — put instruction/option modules under `libs` and
-   list them in `init`; auto-import test suites from `tests`. See {doc}`../cli/run/index` and
+   list them in `init`; suites in top-level `test_*.py` files under `tests`
+   register when a command reads the suite list. See {doc}`../cli/run/index` and
    {doc}`../cli/test/index`.
 5. **Set per-product preferences** — optional `[host_preferences]` /
    `[os_profiles]` (this page, above, and {doc}`lab-config` / {doc}`os-profiles`).

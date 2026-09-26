@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-breaking hyperfine profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kgcov kgcov-matrix release-kgcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-breaking profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kgcov kgcov-matrix release-kgcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -24,8 +24,6 @@ BUMP ?=
 # importing it from the tree that is checked out:
 #   make check-breaking RANGE=v0.10.0..HEAD
 RANGE ?= origin/main..HEAD
-
-HYPERFINE_VERSION := 1.20.0
 
 # Release-flow tools (git-cliff, bump-my-version) live in the project venv and
 # are invoked DIRECTLY, never via `uv run` — `uv run` would sync and dirty
@@ -465,23 +463,14 @@ clean-dist:
 
 # ═══ Dev environment ════════════════════════════════════════════════════════
 
-dev: ## (Dev) Set up the dev environment (uv sync, git hooks, hyperfine, Chromium, web/ deps)
+dev: ## (Dev) Set up the dev environment (uv sync, git hooks, Chromium, web/ deps)
 	@$(SAY) "uv sync"
 	@uv sync
 	@$(SAY) "git hooks → .githooks"
 	@git config core.hooksPath .githooks
-	@$(MAKE) hyperfine
 	@$(MAKE) browsers
 	@$(MAKE) web-install
 	@$(SAY) "dev environment ready"
-
-hyperfine:
-	@if [ -x "$(VENV_BIN)/hyperfine" ] && "$(VENV_BIN)/hyperfine" --version | grep -qF "$(HYPERFINE_VERSION)"; then \
-		$(SAY) "hyperfine $(HYPERFINE_VERSION) already installed"; \
-	else \
-		$(SAY) "installing hyperfine $(HYPERFINE_VERSION)"; \
-		bash scripts/install_hyperfine.sh "$(HYPERFINE_VERSION)" "$(VENV_BIN)"; \
-	fi
 
 browsers: ## (Setup) Install the Playwright Chromium + Firefox + WebKit binaries: the dashboard e2e suite runs on all three engines, and the docs media pipeline uses Chromium. On a box missing a browser's system libs, run `uv run playwright install-deps <chromium|firefox|webkit>` once — the Vagrantfile's dev-root provisioner carries the exact apt package list + how to regenerate it.
 	@$(SAY) "playwright install: chromium firefox webkit"
@@ -656,15 +645,14 @@ docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, cl
 	@$(SAY) "capturing docs termynal blocks"
 	@uv run python scripts/capture_docs_termynal.py --mode force
 
-# THE WALL-CLOCK DIAGNOSTIC LEFT THIS GATE, IT DID NOT LEAVE THE REPO: it is
-# `make hyperfine` (installs the tool) plus `import_budget.py --hyperfine`, run
-# by hand. Wall-clock cannot gate — it fails for reasons outside the change
-# (machine load, thermals, page cache), which is monitoring, not gating. File
-# I/O can: the syscall counts this target now enforces reproduced a real NFS
-# deployment's cold start to the one significant figure that field observation
-# carries (2,427 syscalls x 1.2 ms RTT ~ 2.9 s against an observed ~3 s), where
-# a dev-box wall-clock number predicted nothing about that machine at all — and
-# they repeat identically run to run. See docs/architecture/startup-performance.md.
+# THIS GATE MEASURES MODULE SETS AND SYSCALL COUNTS, NEVER WALL-CLOCK: a
+# timing number fails for reasons outside the change (machine load, thermals,
+# page cache), which is monitoring, not gating. The syscall counts this target
+# enforces reproduced a real NFS deployment's cold start to the one
+# significant figure that field observation carries (2,427 syscalls x 1.2 ms
+# RTT ~ 2.9 s against an observed ~3 s), where a dev-box wall-clock number
+# predicted nothing about that machine at all — and they repeat identically
+# run to run. See docs/architecture/startup-performance.md.
 profile: ## (Dev) Enforce the import budget (module-count caps + snapshots + denylist + per-interpreter I/O goldens)
 	@$(SAY) "import budget (module caps + snapshots + denylist + I/O goldens)"
 	@uv run python scripts/import_budget.py --check

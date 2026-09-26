@@ -179,12 +179,16 @@ Otto uses [uv](https://docs.astral.sh/uv/) for dependency management. Once
 the repo is cloned in the dev VM:
 
 ```bash
-make dev              # uv sync, git hooks, hyperfine, browsers, and web/ deps
+make dev              # uv sync, git hooks, browsers, and web/ deps
 source project_env    # optional: sets up usage with test repos
 uv run pytest         # run the test suite
 ```
 
 `make dev` places `otto` at `otto-sh/.venv/bin/otto`.
+
+`strace` (≥ 5.3) is a separate dev prerequisite `make dev` does not install,
+used by the import-budget tests to count stat syscalls: `sudo apt-get install
+strace`.
 
 The test suite caches its bytecode under `$XDG_CACHE_HOME/otto/pytest-pycache`
 (falling back to `~/.cache`, then the system temp dir), never in `src/otto` —

@@ -13,7 +13,7 @@ digraph testpipeline {
     rankdir=TB;
     node [shape=box];
 
-    import [label="bootstrap phase 2 imports test files"];
+    import [label="first read of SUITES after bootstrap\nimports test files (on demand)"];
     reg [label="OttoSuite.__init_subclass__\nTest*-named subclass →\nregister_suite_class → SUITES registry\n+ synthesized Typer subcommand"];
     suite [label="otto test <Suite> [flags]\nbuild Options instance → run_suite\none pytest session, the suite's file"];
     select [label="otto test --tests a,b / -m EXPR\nsuite-less selection run:\nresolve names → one pytest\nsession per matching repo"];
@@ -49,7 +49,8 @@ For a **suite**, a class extends {class}`~otto.suite.suite.OttoSuite` with a
 `Test`-prefixed name (matching pytest's own `python_classes = Test*`
 collection rule), which triggers `__init_subclass__` to call
 {func}`~otto.suite.register.register_suite_class`. Registration does three
-things at import time — for repo test files, during bootstrap phase 2
+things at import time — for repo test files, when the suites registry first
+loads them, which only the commands that read suites do
 ({doc}`../lifecycle`):
 
 1. Reads the suite's `Options` class — any dataclass works; an `@options`

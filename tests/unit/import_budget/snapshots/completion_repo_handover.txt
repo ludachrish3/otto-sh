@@ -13,6 +13,7 @@ otto.cli.tunnel
 otto.config
 otto.config.cache_sections
 otto.config.completion_cache
+otto.config.corpus_snapshot
 otto.config.dependencies
 otto.config.env
 otto.config.fleet
@@ -26,6 +27,7 @@ otto.console
 otto.context
 otto.declared
 otto.errors
+otto.filesystem
 otto.host
 otto.host.binary_loader
 otto.host.builtin_hosts
@@ -103,6 +105,7 @@ otto.labs.registry
 otto.labs.sources
 otto.layout
 otto.link
+otto.link.derive
 otto.link.impairer
 otto.link.model
 otto.link.netem
@@ -118,9 +121,21 @@ otto.models.dependencies
 otto.models.host
 otto.models.inventory
 otto.models.lab
+otto.models.link
 otto.models.monitor
 otto.models.options
 otto.models.settings
+otto.monitor
+otto.monitor.broadcast
+otto.monitor.collector
+otto.monitor.db
+otto.monitor.events
+otto.monitor.factory
+otto.monitor.parsers
+otto.monitor.rates
+otto.monitor.session
+otto.monitor.snmp
+otto.monitor.store
 otto.params
 otto.project
 otto.project.actions

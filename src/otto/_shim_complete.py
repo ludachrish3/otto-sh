@@ -41,11 +41,17 @@ _MARKER_KEYWORDS = frozenset({"and", "or", "not"})
 
 # A control-flow signal the caller catches, not an error: no "Error" suffix.
 class Handover(Exception):  # noqa: N818
-    """The shim cannot answer this TAB; the reason is for `otto cache info` and tests."""
+    """The shim cannot answer this TAB; the reason is for `otto cache info` and tests.
 
-    def __init__(self, reason: str) -> None:
+    ``stale`` is True when the CACHE is what failed (missing, expired, or a key
+    path moved), so the full path should rebuild it; False when the cache is
+    fine and this TAB is simply one the shim does not model.
+    """
+
+    def __init__(self, reason: str, *, stale: bool = False) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.stale = stale
 
 
 # --- mirrors -----------------------------------------------------------------
@@ -588,23 +594,23 @@ def locate_cache(environ: dict[str, str]) -> str:
 def servable_shim(data: Any, now: float) -> dict[str, Any]:
     """Return the shim payload iff the file, schema, taint and TTL allow (spec 4.2 step 1)."""
     if not isinstance(data, dict) or data.get("schema") != SCHEMA:
-        raise Handover("schema mismatch")
+        raise Handover("schema mismatch", stale=True)
     sections = data.get("sections")
     if not isinstance(sections, dict):
-        raise Handover("no sections")
+        raise Handover("no sections", stale=True)
     shim = sections.get("shim")
     if not isinstance(shim, dict) or not isinstance(shim.get("payload"), dict):
-        raise Handover("no shim section")
+        raise Handover("no shim section", stale=True)
     if shim.get("tainted"):
         raise Handover("tainted")
     at = shim.get("generated_at")
     payload = shim["payload"]
     ttl = payload.get("ttl_seconds")
     if not isinstance(at, (int, float)) or not isinstance(ttl, (int, float)) or now - at > ttl:
-        raise Handover("expired")
+        raise Handover("expired", stale=True)
     names = sections.get("names")
     if not isinstance(names, dict) or not isinstance(names.get("payload"), dict):
-        raise Handover("no names section")
+        raise Handover("no names section", stale=True)
     return payload
 
 
@@ -615,11 +621,11 @@ def _stat_pass(triples: list[Any]) -> None:
         except OSError:
             if mtime_ns is None:
                 continue
-            raise Handover(f"stale: {path} is gone") from None
+            raise Handover(f"stale: {path} is gone", stale=True) from None
         if mtime_ns is None:
-            raise Handover(f"stale: {path} appeared")
+            raise Handover(f"stale: {path} appeared", stale=True)
         if st.st_mtime_ns != mtime_ns or st.st_size != size:
-            raise Handover(f"stale: {path} changed")
+            raise Handover(f"stale: {path} changed", stale=True)
 
 
 def _inventory_pass(block: Any) -> None:
@@ -664,7 +670,7 @@ def validate_keys(cache_path: Any, data: dict[str, Any], site: str, now: float) 
     payload = servable_shim(data, now)
     tests = data["sections"].get("tests", {})
     if site == "tests" and not isinstance(tests.get("payload"), dict):
-        raise Handover("no tests section")
+        raise Handover("no tests section", stale=True)
     cache_path = str(cache_path)
     cache_dir = os.path.dirname(cache_path)
     # The caller READ the file before this stat, so a rewrite landing between the
@@ -715,7 +721,7 @@ def _answer_items(environ: dict[str, str], now: float) -> list[str]:
         with open(cache_path, encoding="utf-8") as fh:
             data = json.load(fh)
     except OSError:
-        raise Handover("no cache file") from None
+        raise Handover("no cache file", stale=True) from None
     payload = servable_shim(data, now)
     names = data["sections"]["names"]["payload"]
     res = resolve(payload["tree"], args, names.get("host_classes_by_id", {}))
@@ -729,11 +735,12 @@ def _answer_items(environ: dict[str, str], now: float) -> list[str]:
 class Outcome:
     """What the shim decided for one TAB: the candidates, or ``None`` and the reason."""
 
-    __slots__ = ("items", "reason")
+    __slots__ = ("items", "reason", "stale")
 
-    def __init__(self, items: list[str] | None, reason: str = "") -> None:
+    def __init__(self, items: list[str] | None, reason: str = "", stale: bool = False) -> None:
         self.items = items
         self.reason = reason  # empty when answered; for `otto cache info` and tests otherwise
+        self.stale = stale  # True iff the CACHE (not just this TAB) needs a rebuild
 
 
 def answer_or_reason(environ: dict[str, str], now: float | None = None) -> Outcome:
@@ -741,7 +748,7 @@ def answer_or_reason(environ: dict[str, str], now: float | None = None) -> Outco
     try:
         items = _answer_items(environ, time.time() if now is None else now)
     except Handover as e:
-        return Outcome(None, e.reason)
+        return Outcome(None, e.reason, e.stale)
     except Exception as e:  # noqa: BLE001
         # a TAB never tracebacks; the full path decides
         return Outcome(None, f"error: {type(e).__name__}: {e}")
@@ -754,12 +761,6 @@ def _site_for(res: Resolution, frag: str) -> str:
     return site_of(param["source"]) if kind == "param" and param is not None else "names"
 
 
-def answer(environ: dict[str, str]) -> str | None:
-    """Render the text to print for this TAB (no trailing newline), or ``None`` to hand over."""
-    items = answer_or_reason(environ).items
-    return None if items is None else "\n".join(items)
-
-
 def inspect_shim(cache_path: Any, now: float | None = None) -> str:
     """Describe, for ``otto cache info``, whether the NEXT names-site TAB would be served."""
     now = time.time() if now is None else now
@@ -768,7 +769,7 @@ def inspect_shim(cache_path: Any, now: float | None = None) -> str:
             with open(str(cache_path), encoding="utf-8") as fh:
                 data = json.load(fh)
         except FileNotFoundError:
-            raise Handover("no cache file") from None
+            raise Handover("no cache file", stale=True) from None
         how = validate_keys(cache_path, data, "names", now)
         if how == "stat":
             return "served (validated now)"

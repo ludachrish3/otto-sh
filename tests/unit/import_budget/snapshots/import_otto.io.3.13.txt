@@ -1,5 +1,7 @@
-# I/O golden: surface `import_otto`, CPython 3.13. Regenerate with `make import-snapshot` UNDER THIS INTERPRETER.
+# I/O golden: surface `import_otto`, CPython 3.13. Regenerate with `make import-snapshot` UNDER THIS INTERPRETER. (stat_total is a ceiling baseline, +10%)
 listdir 2
 open_fixture 0
 open_home 0
 scandir 0
+stat_workspace 0
+stat_total 225

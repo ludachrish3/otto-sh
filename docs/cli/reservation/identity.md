@@ -31,8 +31,9 @@ input.
 The values are cached with the same policy as host ids (otto's completion cache,
 invalidated by the settings fingerprint and `otto cache clear`), except that a
 repo that configures a reservation backend gets a short cache lifetime
-(minutes, not a day). A cold cache yields no suggestions and refreshes on the
-next normal run — completion never blocks on the backend.
+(minutes, not a day). A missing or expired cache is rebuilt by the next TAB
+(or root `otto --help`), which asks the backend once; a backend that fails
+to list users yields no suggestions rather than an error.
 
 Real situations where `--holder` is the right tool:
 

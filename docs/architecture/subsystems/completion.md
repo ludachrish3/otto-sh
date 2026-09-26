@@ -39,24 +39,27 @@ mirrors, so a change to one side is a deliberate change to both.
 
 ## The entry
 
-`shim` is a third registered `Section` in `otto.config.cache_sections`,
-alongside `names` and `tests`, written by the same slow pass under the same
-schema and `tainted` flag. Its payload, built by
-`otto.config.completion_tree.build_shim_payload`, carries: `keys`, the
-`names` and `tests` key sets as `[path, mtime_ns, size]` triples
-(`stat_triple`) plus one triple per **directory** the key-path enumeration
-visited — a file that appears, is removed, or is renamed moves its
-directory's mtime, so the shim sees a new lab file or test file without
-re-running any glob itself; `inventory`, the process inventory's freshness as
-a stat check can verify it — `none` when none is declared, `stat` for a
-file-derived backend (the json backend), or `opaque` for a backend that
-cannot report which files it read at all (`inventory_block`), which always
-hands over; `ttl_seconds`, the same TTL the writer applied to the merged
-view (a day, or five minutes when any repo has a non-file-backed init
-module, a non-file-backed lab source, or a non-empty `[reservations]`
-table); `tests_digest`, the fingerprint the pytest-collected test set is
-stored under, so a warm `--tests`/`-m` set can still be found once the stat
-passes succeed; and `tree`, described next.
+`shim` is one of the completion cache's three sections, written in the same
+rebuild as `names` and `tests`. What the sections are, how they stay fresh,
+and who rebuilds them is on {doc}`completion-cache`. The shim reads these
+fields of its payload (built by
+`otto.config.completion_tree.build_shim_payload`):
+
+- `keys` — the `names` and `tests` key sets as `[path, mtime_ns, size]`
+  triples (`stat_triple`), directories included, so the shim sees a new or
+  removed file by its directory's mtime without running any glob;
+- `inventory` — the inventory's freshness as a stat check can verify it:
+  `none`, `stat` with the triples of the files a file-derived backend read,
+  or `opaque`, which always hands over (`inventory_block`);
+- `ttl_seconds` — the TTL the writer applied;
+- `tests_digest` — the fingerprint the pytest-collected test names are
+  stored under, so a warm `--tests`/`-m` set can be found once the stat
+  passes succeed;
+- `tree` — described next.
+
+When a check fails because the cache itself is stale, the hand-over carries
+`stale=True` and the TAB that finds it rebuilds the cache
+({doc}`completion-cache`, "Who reads, who refreshes").
 
 ## The tree
 
@@ -140,8 +143,8 @@ lifecycle under the cache commands is on {doc}`../../cli/cache/index`.
   `COMP_WORDS`, answer. Standard library only.
 - `otto.config.completion_tree` — the tree serialiser (`serialize_tree`,
   `build_shim_payload`, `inventory_block`); slow (write) path only.
-- `otto.config.cache_sections` — the `shim` section's registration and key
-  paths, alongside `names` and `tests`.
+- `otto.config.cache_sections` — the `shim` section's registration, its
+  digest composed from `names` and `tests` ({doc}`completion-cache`).
 - `otto.config.cache_maintenance` — the marker filenames and window
   constant, and the `clear`/`prune` walk that removes them.
 - `tests/unit/shim/test_differential.py` — the equality proof.

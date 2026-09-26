@@ -3,10 +3,11 @@
 otto composes one running process out of potentially many repos. Each repo
 directory named in `OTTO_SUT_DIRS` contributes independently — its own
 `.otto/settings.toml`, its own `libs` joining `sys.path`, its own `init`
-modules and test files — and bootstrap's two phases discover and register
-all of them together ({doc}`../lifecycle` walks the shared path), so
-instructions, suites, and host classes from every repo land in the same flat
-registries, indistinguishable to the CLI or to `all_hosts()`. See
+modules and test files. Bootstrap's two phases discover every repo and import
+its init modules; the test files load later, only for the commands that read
+suites ({doc}`../lifecycle` walks the shared path). Either way, instructions,
+suites, and host classes from every repo land in the same flat registries,
+indistinguishable to the CLI or to `all_hosts()`. See
 {doc}`../../configuration/settings` for the settings a repo contributes and
 what happens at startup from a user's point of view. `otto init`
 (`otto.cli.init`) works one repo at a time: it gets a single repo into
@@ -117,7 +118,9 @@ builds it. Its choices:
 
 - {mod}`otto.bootstrap` — the two-phase composition root: discovery (env +
   every repo's `settings.toml`) and contained registration (each repo's
-  `libs`, `init` modules, and test files). Phase 1 is
+  `libs` and `init` modules), plus {func}`~otto.bootstrap.load_test_suites`,
+  the suites registry's loader, which imports the test files on demand with
+  the same per-file containment. Phase 1 is
   {func}`~otto.bootstrap.discover`, and its
   {class}`~otto.bootstrap.DiscoveryResult` carries three fields — `env`,
   `repos`, and the `errors` for repos whose settings would not parse — which

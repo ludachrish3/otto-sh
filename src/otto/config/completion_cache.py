@@ -2,18 +2,25 @@
 
 Tab completion invokes ``otto`` just far enough to walk the Typer command
 tree. The expensive step during that walk is not parsing CLI args — it's the
-side effects in :mod:`otto.config` that populate dynamic subcommands:
+user code that populates dynamic subcommands:
 
-- :meth:`Repo.import_init_modules` — imports every user-defined instruction
-  module so ``@instruction()`` decorators can register into ``INSTRUCTIONS``.
-- :meth:`Repo.import_test_files` — exec's every ``test_*.py`` so
-  ``OttoSuite.__init_subclass__`` can auto-register ``Test*``-named classes
-  into the ``SUITES`` registry.
+- bootstrap imports every repo's ``init`` modules so ``@instruction()``
+  decorators can register into ``INSTRUCTIONS``;
+- the first read of the ``SUITES`` registry after bootstrap imports every
+  top-level ``test_*.py`` (:func:`otto.bootstrap.load_test_suites`) so
+  ``OttoSuite.__init_subclass__`` can auto-register ``Test*``-named classes.
 
 Both execute arbitrary user code. For completion all we actually need is the
 *names* those decorators would register and the *option schemas* the user can
 tab-complete against. This module captures both in a small JSON file and,
 when the cache is valid, lets the caller skip the user code entirely.
+
+Only completion and the root help screen read this cache, and only they
+validate and rebuild it (:func:`otto.cli.main.entry`); an ordinary command
+never touches it. So "slow path" in this module means a cache REBUILD — a TAB
+or root help that missed — not every real invocation, as it once did.
+``docs/architecture/subsystems/completion-cache.md`` is the design page:
+sections, freshness, taint, who reads and who rebuilds.
 
 Cache location
 --------------
@@ -24,8 +31,8 @@ The workspace home is keyed by the normalized ``OTTO_SUT_DIRS`` set under
 and one workspace has exactly one cache however many directories otto is
 invoked from.
 
-Cache schema (version 17)
--------------------------
+Cache schema
+------------
 
 One top-level ``"schema"`` stamp and one ``"sections"`` map — see
 :mod:`otto.config.cache_sections` for the registry defining the sections and
@@ -34,7 +41,7 @@ it was generated, and a taint flag, so a reader can validate exactly the
 section it needs without walking the corpus that keys the others::
 
     {
-        "schema": 16,
+        "schema": 20,
         "sections": {
             "names": {
                 "fingerprint": "<sha256 hex>",
@@ -158,6 +165,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
 from ..errors import is_containable
+from . import corpus_snapshot
 from .repo import configured_python_files, pytest_config_paths
 
 if TYPE_CHECKING:
@@ -214,7 +222,7 @@ CACHE_FILENAME = "completion_cache.json"
 #      serving the missing hosts for up to the TTL after the fix ships.
 # v18: the ``shim`` section — the self-describing entry the console-script
 #      shim answers a bash TAB from, keyed on ``names`` U ``tests``, written
-#      by every real invocation. Also folds in three prior CONTENT-only
+#      (at the time) by every real invocation. Also folds in three prior CONTENT-only
 #      changes that never got their own bump: the ``tests`` payload gained
 #      ``markers`` (a surviving v17 entry would make every ``-m`` TAB fall
 #      back to a live corpus scan for a full TTL, because the section would
@@ -245,10 +253,10 @@ SCHEMA_VERSION = 20
 # `python_files` collects from filenames the defaults never match.
 #
 # `Repo.iter_test_files` is a THIRD reader and deliberately not one of these:
-# it EXECUTES what it returns, at bootstrap, on every otto command. Its
-# narrowness is a contract rather than an oversight — see its docstring for
-# the reasoning and for the `tests`-list escape hatch. Do not "fix" it to
-# match these two.
+# it EXECUTES what it returns, whenever the suites registry loads (the commands
+# that read suites, and a cache rebuild). Its narrowness is a contract rather
+# than an oversight — see its docstring for the reasoning and for the
+# `tests`-list escape hatch. Do not "fix" it to match these two.
 
 # Directories pytest's default `norecursedirs` skips, minus the two patterns
 # handled by prefix/suffix in `_is_norecurse_dir`.
@@ -308,8 +316,8 @@ UNFINGERPRINTED_CACHE_TTL_SECONDS = 5 * 60
 #
 # It lives under its own reserved top-level key (never a real fingerprint), so
 # writing it never disturbs the main fingerprint entries. That separation is
-# load-bearing: the slow-path writer rewrites a whole main entry on every real
-# command and must NEVER run a collection pass, while this set is warmed only
+# load-bearing: the cache rebuild rewrites every section whenever one is stale
+# and must NEVER run a collection pass, while this set is warmed only
 # by a deliberate collection (a real ``otto test`` run, or a bounded subprocess
 # spawned at tab time). The two writers touch disjoint keys and can't clobber.
 COLLECTED_TESTS_KEY = "__collected_tests__"
@@ -586,10 +594,12 @@ def _match_py_files(
     so a caller building a stat-only key set can see a new or renamed file
     under a directory it already visited by that directory's own mtime,
     without re-running this walk.
+
+    The walk itself goes through :func:`otto.config.corpus_snapshot.walk`, so
+    a rebuild that asks about the same tree from several places walks it once.
     """
     found: set[Path] = set()
-    for root, dirs, files in os.walk(test_dir):
-        dirs[:] = [d for d in dirs if not _is_norecurse_dir(d)]
+    for root, _dirs, files in corpus_snapshot.walk(test_dir, _is_norecurse_dir):
         base = Path(root)
         if visited is not None:
             visited.add(base)
@@ -641,12 +651,26 @@ def hash_file(h: "hashlib._Hash", path: Path) -> None:
     shared primitive under :func:`compute_fingerprint` and
     :func:`otto.config.cache_sections.section_digest`.
     """
-    try:
-        st = path.stat()
-    except OSError:
+    st = corpus_snapshot.stat(path)
+    if st is None:
         h.update(f"missing:{path}\n".encode())
         return
     h.update(f"{path}|{st.st_mtime_ns}|{st.st_size}\n".encode())
+
+
+def _hash_lab_files(h: "hashlib._Hash", repo: "Repo") -> None:
+    """Fold every file a repo's compiled ``[[lab.sources]]`` entries read into *h*.
+
+    The lab-files half of :func:`compute_fingerprint`'s per-repo loop,
+    extracted so :func:`_tunnel_scope_digest` can reuse the exact same
+    hashing (not a re-derivation of it) without also walking the test corpus
+    compute_fingerprint's OTHER pieces cost. A non-file backend contributes no
+    lab files, so its digest never moves — see the fuller note where this was
+    inlined before extraction.
+    """
+    for src in repo.lab_sources:
+        for lab_file in src.lab_files():
+            hash_file(h, lab_file)
 
 
 def compute_fingerprint(repos: list["Repo"]) -> str:
@@ -682,9 +706,7 @@ def compute_fingerprint(repos: list["Repo"]) -> str:
         # on edits. A non-file backend has no such signal — it contributes no
         # lab files, so its digest never moves — and it falls back to a short
         # TTL instead (_cache_ttl_seconds / UNFINGERPRINTED_CACHE_TTL_SECONDS).
-        for src in repo.lab_sources:
-            for lab_file in src.lab_files():
-                hash_file(h, lab_file)
+        _hash_lab_files(h, repo)
 
     # Outside the per-repo loop: a process has exactly ONE inventory (spec §8),
     # resolved across every active repo plus the user file, so mixing it in
@@ -692,6 +714,28 @@ def compute_fingerprint(repos: list["Repo"]) -> str:
     # where the resolution itself is what changed.
     h.update(f"inventory:{_inventory_fingerprint(repos).text}\n".encode())
 
+    return h.hexdigest()
+
+
+def _tunnel_scope_digest(repos: list["Repo"]) -> str:
+    """Sha256 of what a tunnel id actually depends on: settings, lab, inventory.
+
+    Tunnel ids are discovered by process/argv inspection against the live
+    lab (spec 2026-09-25-dispatch-startup-cost-design.md §4.2) — they do not
+    depend on test sources at all, so keying them by :func:`compute_fingerprint`
+    (which hashes the whole corpus) made an ordinary ``otto tunnel
+    list``/``remove`` pay a corpus-proportional cost for no reason: nothing it
+    reads depends on a test file. This mixes in the same settings-file and
+    lab-file hashing compute_fingerprint uses (:func:`_hash_lab_files`, so the
+    two can never disagree about which lab files matter) plus the same
+    inventory term (:func:`_inventory_fingerprint`), and nothing else — no
+    init modules, no pytest config, no test sources.
+    """
+    h = hashlib.sha256()
+    for repo in sorted(repos, key=lambda r: str(r.sut_dir)):
+        hash_file(h, repo.sut_dir / ".otto" / "settings.toml")
+        _hash_lab_files(h, repo)
+    h.update(f"inventory:{_inventory_fingerprint(repos).text}\n".encode())
     return h.hexdigest()
 
 
@@ -765,8 +809,9 @@ def _fingerprint_is_ephemeral(repos: list["Repo"]) -> bool:
     entry, the collected test names, the tunnel ids), not just the largest:
     the payloads differ, the unbounded growth does not.
 
-    Costs one extra inventory resolution per write. Writers are slow-path
-    (once per command) and construction does no I/O, so the price is the
+    Costs one extra inventory resolution per write. Writers run at most once
+    per invocation (a rebuild, or a reserved-namespace record) and
+    construction does no I/O, so the price is the
     backend's own ``fingerprint()`` — which the digest was going to call
     anyway.
     """
@@ -1143,15 +1188,35 @@ def cache_rebuild_is_worthwhile(
 
     Also requires the ``shim`` section to validate (:func:`read_cache`'s
     *require*): a lost or stale ``shim`` entry is a miss for the WRITER, so a
-    deleted or hand-edited entry is rebuilt on the next real invocation
-    instead of handing over forever — without a second open of the cache
+    deleted or hand-edited entry is rebuilt by the next TAB or root help that
+    checks, instead of handing over forever — without a second open of the cache
     file, since the digest it needs is computed in the same
     :func:`read_sections` call as the merged-view check above.
     """
+    return cache_is_writable(repos) and cache_is_stale(repos, digests=digests)
+
+
+def cache_is_writable(repos: list["Repo"]) -> bool:
+    """Whether :func:`write_cache` would keep an entry for *repos* at all.
+
+    The cheap half of :func:`cache_rebuild_is_worthwhile`: no corpus I/O, so a
+    caller can ask it before paying for anything a rebuild needs — importing
+    the test files, say. False with no repos, no cache path, or an inventory
+    whose fingerprint is ephemeral; ``not repos`` first, for the reason
+    :func:`cache_rebuild_is_worthwhile` gives.
+    """
+    return bool(repos) and _cache_path() is not None and not _fingerprint_is_ephemeral(repos)
+
+
+def cache_is_stale(repos: list["Repo"], *, digests: dict[str, str] | None = None) -> bool:
+    """Whether any on-disk section, ``shim`` included, fails to validate for *repos*.
+
+    The O(corpus) half of :func:`cache_rebuild_is_worthwhile`, for a caller that
+    has already established :func:`cache_is_writable`. *digests* is filled as
+    :func:`cache_rebuild_is_worthwhile` documents.
+    """
     from .cache_sections import SHIM_SECTION
 
-    if not repos or _cache_path() is None or _fingerprint_is_ephemeral(repos):
-        return False
     return read_cache(repos, digests=digests, require=(SHIM_SECTION,)) is None
 
 
@@ -1400,9 +1465,12 @@ def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any
     """Read the currently-registered instructions and suites with options.
 
     Must be called after :func:`otto.bootstrap.bootstrap` has finished
-    populating ``otto.instructions.INSTRUCTIONS`` and
-    ``otto.suite.register.SUITES``. A source that never loaded simply has an
-    empty registry (no init modules → no ``@instruction()`` ran → no entries).
+    populating ``otto.instructions.INSTRUCTIONS``. Reading
+    ``otto.suite.register.SUITES`` here loads the repos' test files on demand
+    (:func:`otto.bootstrap.load_test_suites`), so a rebuild is where their
+    import cost is paid and where a broken one is found. A source that never
+    loaded simply has an empty registry (no init modules → no
+    ``@instruction()`` ran → no entries).
 
     Each item is ``{"name": str, "options": list[dict]}``; a command whose
     options can't be fully serialized is cached with ``options: []`` so
@@ -1545,8 +1613,8 @@ def collect_cli_commands() -> list[dict[str, Any]]:
         # `Exception` — straight past this seam and out of `entry()`, which
         # reaches `collect_cli_commands()` as a call ARGUMENT, so the
         # `suppress(OSError)` around the cache write never sees it. That
-        # tracebacks out of EVERY command, `otto --help` included, and into the
-        # shell mid-TAB. See `otto.errors.UNCONTAINABLE`.
+        # tracebacks out of every cache rebuild — root `otto --help` included —
+        # and into the shell mid-TAB. See `otto.errors.UNCONTAINABLE`.
         except BaseException as e:
             if not is_containable(e):
                 raise
@@ -2665,15 +2733,24 @@ def _warm_collected_tests(repos: list["Repo"], cache_path: Path) -> list[str] | 
 # independently of otto invocations, so a stale id list is wrong far sooner
 # than the main cache's config-derived data would be.
 DYNAMIC_TUNNELS_KEY = "__dynamic_tunnels__"
-DYNAMIC_TUNNELS_SCHEMA_VERSION = 1
+DYNAMIC_TUNNELS_SCHEMA_VERSION = 2
+"""Bumped 1 → 2 when tunnel ids stopped keying by :func:`compute_fingerprint`
+in favor of :func:`_tunnel_scope_digest` (spec §4.2): the two digests are
+computed differently, so an old-schema entry's key would never match a
+new-schema lookup anyway, but the bump makes that explicit rather than
+relying on an accidental digest mismatch. Old entries are simply never
+matched again — they expire on their own short TTL either way."""
 DYNAMIC_TUNNELS_TTL_SECONDS = 120  # tunnel state is volatile; short TTL (spec §11.2)
 
 
 def record_tunnel_ids(repos: list["Repo"], ids: list[str]) -> None:
     """Cache the freshly-discovered tunnel ids for ``remove <id>`` completion.
 
-    Skipped, like every fingerprint-keyed writer, when the digest is ephemeral
-    (:func:`_fingerprint_is_ephemeral`).
+    Keyed by :func:`_tunnel_scope_digest`, NOT :func:`compute_fingerprint`:
+    tunnel ids depend on the workspace's lab and inventory, never on test
+    sources, so this must not pay for (or invalidate on) a corpus walk.
+    Skipped, like every ephemeral-inventory-guarded writer, when the digest is
+    ephemeral (:func:`_fingerprint_is_ephemeral`).
     """
     if not repos or _fingerprint_is_ephemeral(repos):
         return
@@ -2692,7 +2769,7 @@ def record_tunnel_ids(repos: list["Repo"], ids: list[str]) -> None:
     namespace = existing.get(DYNAMIC_TUNNELS_KEY)
     if not isinstance(namespace, dict):
         namespace = {}
-    namespace[compute_fingerprint(repos)] = {
+    namespace[_tunnel_scope_digest(repos)] = {
         "schema_version": DYNAMIC_TUNNELS_SCHEMA_VERSION,
         "generated_at": int(time.time()),
         "ids": list(ids),
@@ -2702,7 +2779,10 @@ def record_tunnel_ids(repos: list["Repo"], ids: list[str]) -> None:
 
 
 def read_tunnel_ids(repos: list["Repo"]) -> list[str] | None:
-    """Fresh cached tunnel ids, or ``None`` (cold / expired / malformed)."""
+    """Fresh cached tunnel ids, or ``None`` (cold / expired / malformed).
+
+    Keyed by :func:`_tunnel_scope_digest` — see :func:`record_tunnel_ids`.
+    """
     if not repos:
         return None
     cache_path = _cache_path()
@@ -2713,7 +2793,7 @@ def read_tunnel_ids(repos: list["Repo"]) -> list[str] | None:
     except (OSError, json.JSONDecodeError):
         return None
     namespace = data.get(DYNAMIC_TUNNELS_KEY) if isinstance(data, dict) else None
-    entry = namespace.get(compute_fingerprint(repos)) if isinstance(namespace, dict) else None
+    entry = namespace.get(_tunnel_scope_digest(repos)) if isinstance(namespace, dict) else None
     if not isinstance(entry, dict) or entry.get("schema_version") != DYNAMIC_TUNNELS_SCHEMA_VERSION:
         return None
     generated_at = entry.get("generated_at")

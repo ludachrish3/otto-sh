@@ -22,6 +22,7 @@ from typer._types import TyperChoice
 from typer.core import TyperGroup, TyperOption
 
 from .cache_sections import SHIM_SECTION as SHIM_SECTION  # noqa: PLC0414 — explicit re-export
+from .corpus_snapshot import stat as _snapshot_stat
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -223,9 +224,8 @@ def stat_triple(path: "Path") -> list[Any]:
     The same facts :func:`otto.config.completion_cache.hash_file` folds into a
     digest, stored plainly so a reader can compare them without hashing.
     """
-    try:
-        st = path.stat()
-    except OSError:
+    st = _snapshot_stat(path)
+    if st is None:
         return [str(path), None, None]
     return [str(path), st.st_mtime_ns, st.st_size]
 
@@ -266,10 +266,11 @@ def build_shim_payload(repos: "list[Repo]", app: Any | None = None) -> dict[str,
 
         app = root_app
     tree = serialize_tree(typer.main.get_command(app)).tree
-    keys = {
-        name: [stat_triple(p) for p in sorted(set(section_by_name(name).key_paths(repos)))]
-        for name in ("names", "tests")
-    }
+    keys: dict[str, list[Any]] = {}
+    for name in ("names", "tests"):
+        section = section_by_name(name)
+        assert section.key_paths is not None  # noqa: S101 — narrows: neither loop member is derived
+        keys[name] = [stat_triple(p) for p in sorted(set(section.key_paths(repos)))]
     return {
         "ttl_seconds": _cache_ttl_seconds(repos),
         "keys": keys,

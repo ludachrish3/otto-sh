@@ -762,10 +762,13 @@ def _emit_bootstrap_findings(result: "BootstrapResult") -> None:
     """Startup render site for contained bootstrap findings: errors, then warnings.
 
     Errors gate dispatch later (``fail_loud_on_bootstrap_errors``); warnings
-    never do — both surface here as ``warning:`` stderr lines.
+    never do — both surface here as ``warning:`` stderr lines. Errors go through
+    :func:`~otto.cli.invoke.render_bootstrap_findings`, which marks each one
+    printed, so a later render site (after a lazy suite load) never repeats it.
     """
-    for err in result.errors:
-        typer.echo(f"warning: {err}", err=True)
+    from .invoke import render_bootstrap_findings
+
+    render_bootstrap_findings(result)
     for warn in result.warnings:
         typer.echo(f"warning: {warn.message}", err=True)
 
@@ -783,6 +786,17 @@ no arguments, which the root Typer turns into help via ``no_args_is_help``.
 ``["-h", "--help"]``; adding a spelling there without adding it here costs
 only the fast path, never correctness.
 """
+
+
+def _cache_is_writable(repos: list["Repo"]) -> bool:
+    """:func:`~otto.config.completion_cache.cache_is_writable`, imported only when asked.
+
+    ``entry()`` asks only on the paths that read the cache; an ordinary command
+    must not import the cache module just to skip it.
+    """
+    from ..config.completion_cache import cache_is_writable
+
+    return cache_is_writable(repos)
 
 
 RAW_ITERATED_NAMES_KEYS: tuple[str, ...] = ("commands", "suites", "instructions")
@@ -860,7 +874,7 @@ def _cached_names_payload(repos: "list[Repo]") -> "dict[str, Any] | None":
     :data:`DELEGATED_NAMES_KEYS` are DELEGATED — the split is not arbitrary.
     :func:`~otto.config.completion_cache.read_cache` type-checks all twelve
     keys and remains a live reader today —
-    :func:`~otto.config.completion_cache.cache_rebuild_is_worthwhile` calls it
+    :func:`~otto.config.completion_cache.cache_is_stale` calls it
     for the merged-view validity check — but a single-section read has no such
     pass, so each key needs an owner here. The three in
     :data:`RAW_ITERATED_NAMES_KEYS` reach a RAW iterator deep inside click's
@@ -893,14 +907,17 @@ def _cached_names_payload(repos: "list[Repo]") -> "dict[str, Any] | None":
     return payload
 
 
-def entry() -> None:
+def entry(cache_stale: bool = False) -> None:
     """Console-script entry: composition root, then the Typer app.
 
     Completion invocations and the ROOT HELP SCREEN take the cache fast path
     (zero user code); everything else runs :func:`otto.bootstrap.bootstrap`
     before argv parsing so registered third-party commands exist when the root
     group is consulted. Contained user-code failures print one framed warning
-    line each; real command dispatch fails loud in the invoke preamble.
+    line each; real command dispatch fails loud in the invoke preamble. Repo
+    test files are not part of that bootstrap: they load on the first read of
+    the suites registry (a cache rebuild is one), and a failure found then is
+    printed once, after the rebuild.
 
     Root help is served from the ``names`` section alone
     (:data:`ROOT_HELP_ARGV`), so it never validates — and therefore never
@@ -908,6 +925,17 @@ def entry() -> None:
     one-line helps, which init trees and top-level test files determine. On
     any miss it falls through to the same full bootstrap every other
     invocation runs, so a cold cache still lists third-party commands.
+
+    Root help and completion are also the ONLY paths that check the cache's
+    validity and rebuild it on a miss. Every other invocation bootstraps and
+    dispatches without touching the completion cache at all — no read, no
+    validity check, no write: that check is O(test corpus) in stats, and a
+    command that never consults the cache has no business paying for it.
+
+    *cache_stale* is set by the bash shim when it handed this TAB over
+    because the cache itself is stale. The names fast path is then skipped,
+    so this invocation bootstraps and rebuilds, and the next TAB is answered
+    by the shim again.
     """
     import contextlib
 
@@ -929,7 +957,9 @@ def entry() -> None:
             code = 0
         raise SystemExit(code)
 
-    if is_completion_mode():
+    completion = is_completion_mode()
+    reads_cache = completion or sys.argv[1:] in ROOT_HELP_ARGV
+    if completion and not cache_stale:
         # Completion must never traceback into the shell: any discovery
         # failure just leaves the cache unset and falls through to the
         # slow path below.
@@ -947,10 +977,12 @@ def entry() -> None:
         # through to the slow path.
         with contextlib.suppress(Exception):
             bs.set_completion_names(_cached_names_payload(bs.discover().repos))
-    elif sys.argv[1:] in ROOT_HELP_ARGV:
+    elif not completion and sys.argv[1:] in ROOT_HELP_ARGV:
         # Root help: the same names, the same reader, contained the same way —
         # a broken cache must cost a full load, not a traceback in front of
-        # the help screen.
+        # the help screen. Completion never reaches this branch: its argv
+        # tail (`sys.argv[1:] == []`) coincides with a root-help tail, but a
+        # bash TAB is never the root help screen.
         with contextlib.suppress(Exception):
             bs.set_completion_names(_cached_names_payload(bs.discover().repos))
 
@@ -973,90 +1005,127 @@ def entry() -> None:
             typer.echo(f"error: {e}", err=True)
             raise SystemExit(1) from e
         _emit_bootstrap_findings(result)
-        from ..config.completion_cache import cache_rebuild_is_worthwhile
 
-        # Filled by the validity check, consumed by write_cache: each
-        # section's key set is stat-hashed at most once per invocation.
-        section_digests: dict[str, str] = {}
-        if cache_rebuild_is_worthwhile(result.repos, digests=section_digests):
-            from ..config.completion_cache import (
-                collect_backend_names,
-                collect_cli_commands,
-                collect_current_commands,
-                collect_docker_capable_host_ids,
-                collect_docker_use_case_names,
-                collect_host_classes_by_id,
-                collect_host_drops,
-                collect_host_ids,
-                collect_host_ids_by_lab,
-                collect_lab_names,
-                collect_links,
-                collect_logins_by_host,
-                collect_marker_names,
-                collect_project_names,
-                collect_reservation_usernames,
-                scan_test_corpus,
-                write_cache,
-            )
-            from ..config.completion_tree import build_shim_payload
+        # Only the paths that READ the cache refresh it. Validating it is
+        # O(test corpus) in stats, and an ordinary command would pay that on
+        # every invocation for a cache it never consults: a round trip per
+        # file on a network filesystem. Completion and root help are the
+        # readers; a stale bash TAB reaches here with cache_stale set.
+        #
+        # Writability first: it costs no corpus I/O, and when no entry could
+        # be stored (no home, an inventory with no stable fingerprint) every
+        # root help and TAB lands here, so loading the suites for a rebuild
+        # that cannot happen would import every test file on each of them.
+        if reads_cache and _cache_is_writable(result.repos):
+            from ..config.completion_cache import cache_is_stale
+            from ..config.corpus_snapshot import corpus_snapshot
 
-            instructions, suites = collect_current_commands()
-            backends = collect_backend_names()
-            with contextlib.suppress(OSError):
-                # Inside the suppression, where the call it replaced sat as a
-                # write_cache keyword: it walks the corpus and reads pytest config,
-                # both of which guard OSError themselves today — but the containment
-                # is what this site promises, not what its callees happen to do.
-                scan = scan_test_corpus(result.repos)
-                write_cache(
-                    result.repos,
-                    instructions,
-                    suites,
-                    collect_host_ids(result.repos),
-                    docker_hosts=collect_docker_capable_host_ids(result.repos),
-                    docker_use_cases=collect_docker_use_case_names(result.repos),
-                    term_backends=backends["term_backends"],
-                    transfer_backends=backends["transfer_backends"],
-                    usernames=collect_reservation_usernames(result.repos),
-                    commands=collect_cli_commands(),
-                    labs=collect_lab_names(result.repos),
-                    tests=scan.names,
-                    markers=collect_marker_names(result.repos, scan=scan),
-                    hosts_by_lab=collect_host_ids_by_lab(result.repos),
-                    host_drops=collect_host_drops(result.repos),
-                    host_classes_by_id=collect_host_classes_by_id(result.repos),
-                    projects=collect_project_names(),
-                    links=collect_links(result.repos),
-                    logins_by_host=collect_logins_by_host(result.repos),
-                    # No explicit `app`: the Section's `_collect_shim` and this
-                    # call both default to `otto.cli.main.app`, so the tree
-                    # has one source and cannot drift between the two.
-                    shim=build_shim_payload(result.repos),
-                    digests=section_digests,
-                    # A contained bootstrap error means registration did not
-                    # finish, so what was just collected is a PARTIAL picture
-                    # of this workspace. Storing it untainted would serve that
-                    # partial answer from every later `--help` and TAB until
-                    # the TTL — and not even then in practice, because the
-                    # broken file's stats are stable until someone edits it,
-                    # so the digest never moves. Written-but-never-served is
-                    # what keeps the next run on the full path, where the
-                    # framed warning is printed again.
-                    #
-                    # Both sections, not just `names`. The taint is about the
-                    # WORKSPACE the collect ran against, and `errors` carries
-                    # discovery failures too: a repo whose `settings.toml`
-                    # will not parse is absent from `result.repos` entirely,
-                    # so its corpus is missing from the `tests` floor exactly
-                    # as its instructions are missing from `names`.
-                    tainted=bool(result.errors),
-                )
+            # The validity check and the rebuild ask about the same corpus from
+            # four places; the scope makes that one walk and one stat per path.
+            with corpus_snapshot():
+                # Load the suites FIRST, before anything in the scope stats the
+                # tree. The rebuild reads SUITES anyway, and importing a test
+                # file can create `__pycache__` beside it: a new entry in a
+                # directory the cache keys on, so that directory's mtime moves.
+                # Loaded after a memoized stat, the move would make the entry
+                # written stale on arrival, and the next root help or TAB would
+                # rebuild again. Inside the scope rather than before it: the one
+                # answer the load memoizes is the `test_*.py` glob of each tests
+                # dir, which an import cannot change, and the check reuses it.
+                bs.load_test_suites()
+
+                # Filled by the validity check, consumed by write_cache: each
+                # section's key set is hashed at most once per invocation, and
+                # the scope makes each path's stat one syscall.
+                section_digests: dict[str, str] = {}
+                if cache_is_stale(result.repos, digests=section_digests):
+                    from ..config.completion_cache import (
+                        collect_backend_names,
+                        collect_cli_commands,
+                        collect_current_commands,
+                        collect_docker_capable_host_ids,
+                        collect_docker_use_case_names,
+                        collect_host_classes_by_id,
+                        collect_host_drops,
+                        collect_host_ids,
+                        collect_host_ids_by_lab,
+                        collect_lab_names,
+                        collect_links,
+                        collect_logins_by_host,
+                        collect_marker_names,
+                        collect_project_names,
+                        collect_reservation_usernames,
+                        scan_test_corpus,
+                        write_cache,
+                    )
+                    from ..config.completion_tree import build_shim_payload
+
+                    instructions, suites = collect_current_commands()
+                    backends = collect_backend_names()
+                    with contextlib.suppress(OSError):
+                        # Inside the suppression, where the call it replaced sat as a
+                        # write_cache keyword: it walks the corpus and reads pytest config,
+                        # both of which guard OSError themselves today — but the containment
+                        # is what this site promises, not what its callees happen to do.
+                        scan = scan_test_corpus(result.repos)
+                        write_cache(
+                            result.repos,
+                            instructions,
+                            suites,
+                            collect_host_ids(result.repos),
+                            docker_hosts=collect_docker_capable_host_ids(result.repos),
+                            docker_use_cases=collect_docker_use_case_names(result.repos),
+                            term_backends=backends["term_backends"],
+                            transfer_backends=backends["transfer_backends"],
+                            usernames=collect_reservation_usernames(result.repos),
+                            commands=collect_cli_commands(),
+                            labs=collect_lab_names(result.repos),
+                            tests=scan.names,
+                            markers=collect_marker_names(result.repos, scan=scan),
+                            hosts_by_lab=collect_host_ids_by_lab(result.repos),
+                            host_drops=collect_host_drops(result.repos),
+                            host_classes_by_id=collect_host_classes_by_id(result.repos),
+                            projects=collect_project_names(),
+                            links=collect_links(result.repos),
+                            logins_by_host=collect_logins_by_host(result.repos),
+                            # No explicit `app`: the Section's `_collect_shim` and this
+                            # call both default to `otto.cli.main.app`, so the tree
+                            # has one source and cannot drift between the two.
+                            shim=build_shim_payload(result.repos),
+                            digests=section_digests,
+                            # A contained bootstrap error means registration did not
+                            # finish, so what was just collected is a PARTIAL picture
+                            # of this workspace. Storing it untainted would serve that
+                            # partial answer from every later `--help` and TAB until
+                            # the TTL — and not even then in practice, because the
+                            # broken file's stats are stable until someone edits it,
+                            # so the digest never moves. Written-but-never-served is
+                            # what keeps the next run on the full path, where the
+                            # framed warning is printed again.
+                            #
+                            # Both sections, not just `names`. The taint is about the
+                            # WORKSPACE the collect ran against, and `errors` carries
+                            # discovery failures too: a repo whose `settings.toml`
+                            # will not parse is absent from `result.repos` entirely,
+                            # so its corpus is missing from the `tests` floor exactly
+                            # as its instructions are missing from `names`.
+                            tainted=bool(result.errors),
+                        )
+            # Test files load on demand (the suites load above), so a broken one
+            # surfaced only after the startup emitter ran: print it here, once.
+            from .invoke import render_bootstrap_findings
+
+            render_bootstrap_findings(result)
 
     import traceback
 
     from ..context import reset_cli_context
     from ..errors import OttoError
-    from .invoke import print_error, render_instrumentation_refusal
+    from .invoke import (
+        print_error,
+        render_instrumentation_refusal,
+        render_pending_bootstrap_findings,
+    )
 
     try:
         app()
@@ -1112,4 +1181,15 @@ def entry() -> None:
         print_error(f"error: {render_instrumentation_refusal(e)}")
         raise SystemExit(1) from e
     finally:
+        # Reset FIRST. The late render below writes to stderr, and an OSError
+        # from that write (a broken pipe, say) would otherwise propagate out of
+        # this `finally` in place of the command's own SystemExit/exception —
+        # and skip the reset that follows it, leaving the composition root's
+        # context stuck for whatever runs next in this process.
         reset_cli_context()
+        # Catch-all for a suites read no render site covered (a leaf resolving
+        # a suite by name, say): the lazy load's findings still print, once.
+        # The render's own failure must not replace what `entry()` was already
+        # exiting with, so it is contained rather than left to propagate.
+        with contextlib.suppress(OSError):
+            render_pending_bootstrap_findings()

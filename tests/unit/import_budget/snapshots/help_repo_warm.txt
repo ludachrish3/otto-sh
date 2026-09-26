@@ -11,6 +11,7 @@ otto.cli.registry
 otto.config
 otto.config.cache_sections
 otto.config.completion_cache
+otto.config.corpus_snapshot
 otto.config.env
 otto.config.home
 otto.config.repo
