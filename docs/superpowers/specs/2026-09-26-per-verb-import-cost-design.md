@@ -105,6 +105,15 @@ A tracked surface becomes gated when someone optimizes it and wants the win pinn
 
 The ceilings pin today's cost; they do not say how low it should go. After §4 lands, the first measurement sets a target for each gated host and run surface as a **ratio to `otto --version`'s file operations**, for example "`host_exec` ≤ N× `version_repo`". It is recorded as an amendment to this section. A ratio survives dependency updates that make every import cheaper or dearer, because both sides move together.
 
+### 3.3 The before measurement
+
+Before any product change, the first task records the pre-change numbers, so the final report can compare before and after on the same terms. It measures two things on the unchanged tree:
+
+- **Old metrics:** for every existing surface, today's snapshot figures: the module count, `stat_workspace`, `stat_total` and the other I/O goldens, exactly as the current harness reports them.
+- **The new metric:** for every surface in §3.1, gated and tracked, including the ones that do not exist yet, the two §3 counters (file operations and workspace file operations) plus the breakdown by package and child process. The new surfaces are measured by running their commands under the new counting rule against the old code.
+
+The measurement uses at least CPython 3.10, and 3.14 as well. The table is committed with the harness change, so it outlives the plan's workspace. It is reproduced in the final report and in the squash message next to the after numbers.
+
 ## 4. Mechanism
 
 ### 4.1 Lazy package `__init__`s
@@ -225,10 +234,11 @@ Optimizations here stay structural, never conditional:
 - `host_exec` (local) does not import `asyncssh`.
 - The §4.3 guards pass, and each is proven able to fail. A deliberately re-introduced import-time registration turns the order-independence test red.
 - The §3.2 target is set and recorded.
-- A before/after table for every gated and tracked surface is in the final report.
+- A before/after table for every gated and tracked surface, from the §3.3 before measurement and the same measurement after, is in the final report and the squash message. For existing surfaces it shows the old snapshot metrics (module count, `stat_workspace`, `stat_total`) as well as the new counters.
 - The full gate suite is green before the squash: `make coverage`, `nox -s tests_hostless-3.14`, `make typecheck`, `make docs` and `make gate-fresh`.
 
 ## 9. Coordination
 
 - **Other branches.** The import-budget reshape touches `scripts/import_budget.py`, its tests and every I/O golden. Any other branch that regenerates import-budget goldens rebases after this lands and regenerates ceilings instead.
+- **#457 lands after this, and its cost is bought knowingly** (decided 2026-09-26). #457 (plain pytest tests and per-verb options) changes what `otto test` costs and touches `registry.py`, `host/session.py` and the budget. It starts from this work's ceilings and reuses its `Ref` type. Its plan must report, per surface, its file operations before and after against this work's ceilings. Any ceiling it raises is presented for explicit approval, with the breakdown, before the new ceiling becomes the baseline. A regression is accepted deliberately or fixed, never absorbed by a silent regeneration.
 - **Plugins.** `otto.host`'s public names are unchanged, so third-party init modules that import from it keep working. A plugin that relied on a built-in being registered because it happened to import `otto.host` gets the same built-ins through the reference, on first lookup.
