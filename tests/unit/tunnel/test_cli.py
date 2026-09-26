@@ -331,6 +331,61 @@ def test_add_passes_carrier_through():
     assert fake_add.await_args.kwargs["carrier"] == "custom"
 
 
+def test_add_passes_idle_timeout_through():
+    tunnel = Tunnel(
+        protocol="tcp",
+        service_port=161,
+        path=(TunnelHop(host="test1"), TunnelHop(host="test2")),
+    )
+    added = AddedTunnel(tunnel=tunnel, carrier_fwd=49200, carrier_rev=49201)
+    fake_add = AsyncMock(return_value=added)
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.cli.tunnel.add_tunnel", fake_add),
+    ):
+        result = runner.invoke(
+            tunnel_app,
+            ["add", "--hosts", "test1,test2", "--port", "161", "--idle-timeout", "90"],
+        )
+    assert result.exit_code == 0, result.output
+    assert fake_add.await_args.kwargs["idle_timeout"] == 90
+
+
+def test_add_has_no_idle_timeout_by_default():
+    tunnel = Tunnel(
+        protocol="tcp",
+        service_port=161,
+        path=(TunnelHop(host="test1"), TunnelHop(host="test2")),
+    )
+    added = AddedTunnel(tunnel=tunnel, carrier_fwd=49200, carrier_rev=49201)
+    fake_add = AsyncMock(return_value=added)
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.cli.tunnel.add_tunnel", fake_add),
+    ):
+        result = runner.invoke(tunnel_app, ["add", "--hosts", "test1,test2", "--port", "161"])
+    assert result.exit_code == 0, result.output
+    assert fake_add.await_args.kwargs["idle_timeout"] is None
+
+
+def test_add_idle_timeout_below_one_is_a_usage_error():
+    fake_add = AsyncMock()
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.cli.tunnel.add_tunnel", fake_add),
+    ):
+        result = runner.invoke(
+            tunnel_app,
+            ["add", "--hosts", "test1,test2", "--port", "161", "--idle-timeout", "0"],
+        )
+    assert result.exit_code == 2, result.output
+    # Not just "exited 2" — RED must fail for the right reason, not a bare
+    # "No such option" from a flag that was never wired up.
+    assert "--idle-timeout" in result.output
+    assert "not in the range x>=1" in result.output
+    assert fake_add.await_count == 0
+
+
 # ── `list` ───────────────────────────────────────────────────────────────────
 
 

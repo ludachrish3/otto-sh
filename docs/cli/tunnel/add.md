@@ -1,7 +1,7 @@
 # otto tunnel add
 
 ```text
-otto tunnel add --hosts <h0[@if0],h1[@if1],...,hn-1[@ifn-1]> --port <P> [--protocol tcp|udp] [--dest <host[@if]>]
+otto tunnel add --hosts <h0[@if0],h1[@if1],...,hn-1[@ifn-1]> --port <P> [--protocol tcp|udp] [--dest <host[@if]>] [--carrier <name>] [--idle-timeout <seconds>]
 ```
 
 ```bash
@@ -14,9 +14,39 @@ otto --lab unix tunnel add --hosts test1@eth2,test3,test2 --port 6001
 | ------ | -------- | ----------- |
 | `--hosts` | yes | Ordered, comma-separated `host[@iface]` path — **two or more entries**. The first and last entries are the tunnel's two endpoints; anything between is an explicit intermediate hop. |
 | `--port` | yes | The service port, used at **both** endpoints — a client sends to `--port` on either endpoint host, and (absent `--dest`) it's delivered to `--port` on the other. One value keeps the tunnel traceable by port at every hop. |
-| `--protocol` | no (default `tcp`) | The service protocol the endpoints speak, validated against the selected carrier's supported protocols. The default `socat` carrier supports `tcp` and `udp` and always relays between hops over a plain-TCP carrier stream. |
+| `--protocol` | no (default `tcp`) | The service protocol the endpoints speak, validated against the selected carrier's supported protocols. The default `socat` carrier supports `tcp` and `udp`, and carries each as itself between hops: a UDP tunnel keeps every datagram whole and separate, up to 65,507 bytes (the IPv4 maximum). |
 | `--dest` | no (default: loopback on the far endpoint) | Deliver the far endpoint's traffic on to a **third** host instead of terminating on that host's loopback — see *Relaying with `--dest`*, next. |
 | `--carrier` | no (default `socat`) | Tunnel transport — a registered `TunnelCarrier` name, applied chain-wide. See [Custom carriers](../../cookbook/network-api.md#custom-tunnel-carriers). |
+| `--idle-timeout` | no (default: never) | Seconds of silence after which a connection (TCP) or flow (UDP) is dropped; default never. See [Idle timeout](#idle-timeout). |
+
+## UDP limitations
+
+Two UDP flows that both start at the same instant — their first datagrams
+arriving together — can be mixed up by socat's `UDP4-LISTEN,fork`: the second
+flow's datagrams are handed to the first flow's already-forked process, so the
+first client receives the second client's replies and the second client gets
+none. A flow gets a process of its own once its first datagram has been
+answered; from then on the flows stay separate. The window exists at the
+tunnel's ingress and, with the default `socat` carrier, at every hop along the
+chain. This hits clients that open many flows at once — a DNS resolver using a
+fresh source port per query, or several pollers starting together — and it
+also hits a flow resuming after `--idle-timeout` has ended its processes.
+
+See [Host requirements](endpoints.md#host-requirements) for the other UDP
+caveat — the firewall requirement between hops — and the rest of what a chain
+host must offer.
+
+## Idle timeout
+
+`--idle-timeout` defaults to never: the tunnel and every flow through it stay
+up until `otto tunnel remove`. The tunnel itself never times out: a new
+connection, or the flow's next datagram, goes through as usual. Two
+consequences, both only when you set it: a TCP client whose connection was
+idle that long finds it closed, and a UDP reply or server-initiated datagram
+to a client that has been quiet that long is dropped. Set it for UDP clients
+that use a new source port per request (many DNS resolvers, some SNMP
+managers): without it, each such request leaves one socat process per hop
+until the tunnel is removed.
 
 ## `@iface` interface pinning
 
@@ -37,7 +67,7 @@ specify; it never auto-routes from the lab's topology. `--hosts a,c,b`
 tunnels through `c` as an explicit intermediate hop; `--hosts a,b` is
 direct. Every hop in the chain — intermediate or endpoint — needs a working
 `bash` and `socat` (see [Host requirements](endpoints.md#host-requirements)); an
-intermediate hop only relays the carrier TCP stream, it never terminates
+intermediate hop only relays the carrier onward, it never terminates
 the tunneled protocol itself.
 
 Each `add` places tagged processes on every host in the chain; how they are

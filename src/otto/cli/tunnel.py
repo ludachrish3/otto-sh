@@ -210,13 +210,25 @@ async def add(
     carrier: str = typer.Option(
         DEFAULT_CARRIER, "--carrier", help="Tunnel transport carrier (registered name)."
     ),
+    idle_timeout: int | None = typer.Option(
+        None,
+        "--idle-timeout",
+        min=1,
+        help="Drop a connection or UDP flow idle this many seconds. Default: never.",
+    ),
 ) -> None:
     """Create a bidirectional tunnel along an explicit host path. See spec §6."""
     lab = get_lab()
     try:
         dest_spec = _parse_endpoint(dest) if dest else None
         added = await add_tunnel(
-            lab, _parse_hosts(hosts), port=port, protocol=protocol, dest=dest_spec, carrier=carrier
+            lab,
+            _parse_hosts(hosts),
+            port=port,
+            protocol=protocol,
+            dest=dest_spec,
+            carrier=carrier,
+            idle_timeout=idle_timeout,
         )
     except (ValueError, RuntimeError) as e:
         # Known, expected failures (unknown host, ambiguous/empty interface,

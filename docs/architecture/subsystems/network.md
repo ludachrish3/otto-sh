@@ -104,9 +104,10 @@ one tunnel: an ordered path of hosts realized as processes spawned directly on
 each host in the chain. otto builds only the path named — it never auto-routes
 from the lab topology. Each host in the chain carries **two** tagged processes,
 one per direction; an endpoint's pair terminates the tunneled protocol
-(ingress and egress), an intermediate hop's pair only relays the carrier stream
-onward. What actually runs at each role is a pluggable `TunnelCarrier` — socat
-by default — applied chain-wide.
+(ingress and egress), an intermediate hop's pair only relays the carrier
+onward — a stream for a TCP tunnel, individual datagrams for a UDP one. What
+actually runs at each role is a pluggable `TunnelCarrier` — socat by default —
+applied chain-wide.
 
 **Bidirectional by construction.** Every tunnel is two mirrored chains. A
 single chain is already two-way for an in-flight exchange — socat relays

@@ -49,3 +49,8 @@ on every chain host regardless; `has_bash` is the declared capability that
 separately gates which hosts discovery (`list`, `remove`) bothers to scan
 at all.
 
+A UDP tunnel's carrier ports are UDP, so a firewall between hops must pass
+UDP on them, not just TCP. Carrier ports come from above each host's
+ephemeral range — see how they are allocated under **Previewing:
+`--dry-run`** in {doc}`index`.
+

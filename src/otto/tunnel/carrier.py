@@ -27,7 +27,10 @@ class TunnelCarrier:
 
     Stateless: implementations build argv lists; the orchestration layer
     (``otto.tunnel.manage``) launches them on hosts via
-    ``otto.host.daemon.launch_command``.
+    ``otto.host.daemon.launch_command``. ``idle_timeout`` of ``None`` means
+    nothing the carrier launches may time out; an int is the seconds of
+    silence after which a connection or flow may be dropped, but never a
+    listener.
     """
 
     supported_protocols: ClassVar[frozenset[str]] = frozenset[str]()
@@ -42,17 +45,32 @@ class TunnelCarrier:
     """Human summary of the required tools, for the missing-tools error."""
 
     def ingress_args(
-        self, protocol: str, service_port: int, bind_ip: str, next_ip: str, carrier_port: int
+        self,
+        protocol: str,
+        service_port: int,
+        bind_ip: str,
+        next_ip: str,
+        carrier_port: int,
+        *,
+        idle_timeout: int | None = None,
     ) -> list[str]:
         """Argv accepting client traffic on the service port, shipping to the carrier."""
         raise NotImplementedError
 
-    def relay_args(self, carrier_port: int, next_ip: str) -> list[str]:
+    def relay_args(
+        self, protocol: str, carrier_port: int, next_ip: str, *, idle_timeout: int | None = None
+    ) -> list[str]:
         """Argv for an intermediate-hop pass-through (same carrier port both sides)."""
         raise NotImplementedError
 
     def egress_args(
-        self, protocol: str, service_port: int, deliver_ip: str, carrier_port: int
+        self,
+        protocol: str,
+        service_port: int,
+        deliver_ip: str,
+        carrier_port: int,
+        *,
+        idle_timeout: int | None = None,
     ) -> list[str]:
         """Argv accepting the carrier and delivering to the local service."""
         raise NotImplementedError

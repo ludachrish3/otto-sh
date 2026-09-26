@@ -28,12 +28,12 @@ from .model import Direction, ProcKey, Role, Tunnel, TunnelHop
 from .sentinel import encode_sentinel
 from .socat import (
     FREE_PORT_PROBE_COMMAND,
-    SOCKET_DUMP_COMMAND,
     carrier_port_floor,
     parse_ephemeral_ceiling,
     parse_listening_ports,
     parse_port_holders,
     pick_free_port,
+    socket_dump_command,
 )
 
 if TYPE_CHECKING:
@@ -266,8 +266,14 @@ def _process_plan(
     p_rev: int,
     deliver_fwd: str,
     carrier: TunnelCarrier,
+    *,
+    idle_timeout: int | None,
 ) -> list[_ProcSpec]:
     """Build the 2n launch specs, downstream-first per direction (spec §6.1/§6.4).
+
+    *idle_timeout* is keyword-only with no default — reaches every one of the
+    2n carrier calls below, so no caller can drop it silently (spec 2026-09-25
+    §2.3).
 
     FWD rides ``p_fwd`` toward the last hop; REV rides ``p_rev`` toward the
     first. Launch order guarantees every listener exists before its upstream
@@ -283,12 +289,18 @@ def _process_plan(
             Direction.FWD,
             Role.EGRESS,
             p_fwd,
-            carrier.egress_args(proto, svc, deliver_fwd, p_fwd),
+            carrier.egress_args(proto, svc, deliver_fwd, p_fwd, idle_timeout=idle_timeout),
         )
     )
     plan.extend(
         [
-            _ProcSpec(i, Direction.FWD, Role.RELAY, p_fwd, carrier.relay_args(p_fwd, ips[i + 1]))
+            _ProcSpec(
+                i,
+                Direction.FWD,
+                Role.RELAY,
+                p_fwd,
+                carrier.relay_args(proto, p_fwd, ips[i + 1], idle_timeout=idle_timeout),
+            )
             for i in range(last - 1, 0, -1)
         ]
     )
@@ -298,18 +310,28 @@ def _process_plan(
             Direction.FWD,
             Role.INGRESS,
             p_fwd,
-            carrier.ingress_args(proto, svc, ips[0], ips[1], p_fwd),
+            carrier.ingress_args(proto, svc, ips[0], ips[1], p_fwd, idle_timeout=idle_timeout),
         )
     )
     # REV: egress at 0, relays 1..last-1, ingress at `last`.
     plan.append(
         _ProcSpec(
-            0, Direction.REV, Role.EGRESS, p_rev, carrier.egress_args(proto, svc, _LOOPBACK, p_rev)
+            0,
+            Direction.REV,
+            Role.EGRESS,
+            p_rev,
+            carrier.egress_args(proto, svc, _LOOPBACK, p_rev, idle_timeout=idle_timeout),
         )
     )
     plan.extend(
         [
-            _ProcSpec(i, Direction.REV, Role.RELAY, p_rev, carrier.relay_args(p_rev, ips[i - 1]))
+            _ProcSpec(
+                i,
+                Direction.REV,
+                Role.RELAY,
+                p_rev,
+                carrier.relay_args(proto, p_rev, ips[i - 1], idle_timeout=idle_timeout),
+            )
             for i in range(1, last)
         ]
     )
@@ -319,7 +341,9 @@ def _process_plan(
             Direction.REV,
             Role.INGRESS,
             p_rev,
-            carrier.ingress_args(proto, svc, ips[last], ips[last - 1], p_rev),
+            carrier.ingress_args(
+                proto, svc, ips[last], ips[last - 1], p_rev, idle_timeout=idle_timeout
+            ),
         )
     )
     return plan
@@ -571,7 +595,8 @@ async def _diagnose_missing(
             # that helper's own bound is the launch timeout, too long to spend
             # decorating an error that is already on its way up.
             result = await asyncio.wait_for(
-                _device_read(host_by_id[host_id], SOCKET_DUMP_COMMAND), _DIAGNOSIS_TIMEOUT
+                _device_read(host_by_id[host_id], socket_dump_command(tunnel.protocol)),
+                _DIAGNOSIS_TIMEOUT,
             )
         except Exception as e:  # noqa: BLE001 — diagnosis is best-effort by design
             logger.debug(f"otto tunnel: port diagnosis failed on {host_id!r}: {e}")
@@ -693,8 +718,9 @@ def _unresolved_addresses(unresolved: list[str]) -> str:
 
 _UNCHECKED_FREE_PORTS = (
     "which ports are already bound anywhere on the chain, and where each hop's kernel stops "
-    "handing out ephemeral ports. A real run probes every hop with `ss -Htln` / `netstat -tln` "
-    "first and skips what is listening, and starts allocating ABOVE the highest ephemeral "
+    "handing out ephemeral ports. A real run probes every hop for TCP and UDP listeners "
+    "(`ss -Htln` / `ss -Huln`, falling back to `netstat -tln` / `-uln`) first and skips every "
+    "port either holds, and starts allocating ABOVE the highest ephemeral "
     "ceiling it reads (commonly 61000 on Linux, vs the 49152 floor shown above), so the carrier "
     "pair above is PROVISIONAL — it was picked from the service port alone. Every argv above "
     "names those two ports, so a real run emits different command lines whenever either one is "
@@ -757,6 +783,7 @@ def _plan_add(
     protocol: str,
     dest: EndpointSpec | None,
     carrier_obj: TunnelCarrier,
+    idle_timeout: int | None,
 ) -> AddedTunnel:
     """Preview :func:`add_tunnel` without contacting anything.
 
@@ -816,7 +843,15 @@ def _plan_add(
     else:
         ips = [p.ip or "" for p in planned]
         deliver_fwd = dest_hop.ip if dest_hop is not None and dest_hop.ip else _LOOPBACK
-        procs = _process_plan(tunnel, ips, carrier_fwd, carrier_rev, deliver_fwd, carrier_obj)
+        procs = _process_plan(
+            tunnel,
+            ips,
+            carrier_fwd,
+            carrier_rev,
+            deliver_fwd,
+            carrier_obj,
+            idle_timeout=idle_timeout,
+        )
         would.append(_WOULD_LAUNCH_SHAPE)
         would.extend(
             f"{planned[proc.hop_index].hop.host} {proc.direction.value}/{proc.role.value}: "
@@ -866,6 +901,7 @@ async def add_tunnel(
     protocol: str = "tcp",
     dest: EndpointSpec | None = None,
     carrier: str = DEFAULT_CARRIER,
+    idle_timeout: int | None = None,
 ) -> AddedTunnel:
     """Build a bidirectional host-resident tunnel and verify it came up (spec §6).
 
@@ -877,6 +913,10 @@ async def add_tunnel(
     reached the host, so even a first-launch timeout triggers rollback.
     The *carrier* names a registered :class:`~otto.tunnel.carrier.TunnelCarrier`
     (chain-wide; default ``"socat"``).
+
+    *idle_timeout* ``None`` (the default) means the tunnel and every flow
+    through it stay up until removed; an int drops a connection or UDP flow
+    quiet for that many seconds, never the tunnel.
 
     Under ``--dry-run`` nothing below the short-circuit runs: the report comes
     back with :attr:`~AddedTunnel.plan` set and both carrier ports ``None``.
@@ -893,9 +933,22 @@ async def add_tunnel(
         raise ValueError(
             f"carrier {carrier!r} does not support protocol {protocol!r} (use {supported})"
         )
+    if idle_timeout is not None and (
+        isinstance(idle_timeout, bool) or not isinstance(idle_timeout, int) or idle_timeout < 1
+    ):
+        raise ValueError(
+            f"idle timeout must be a whole number of seconds, at least 1 (got {idle_timeout!r});"
+            " leave it unset for a tunnel that never times out"
+        )
     if is_dry_run():
         return _plan_add(
-            lab, hosts, port=port, protocol=protocol, dest=dest, carrier_obj=carrier_obj
+            lab,
+            hosts,
+            port=port,
+            protocol=protocol,
+            dest=dest,
+            carrier_obj=carrier_obj,
+            idle_timeout=idle_timeout,
         )
     resolved = await _resolve_chain(lab, hosts)
     dest_hop = await _resolve_one(lab, dest) if dest else None
@@ -919,7 +972,15 @@ async def add_tunnel(
 
         ips = [r.ip for r in resolved]
         deliver_fwd = dest_hop.ip if dest_hop else _LOOPBACK
-        plan = _process_plan(tunnel, ips, carrier_fwd, carrier_rev, deliver_fwd, carrier_obj)
+        plan = _process_plan(
+            tunnel,
+            ips,
+            carrier_fwd,
+            carrier_rev,
+            deliver_fwd,
+            carrier_obj,
+            idle_timeout=idle_timeout,
+        )
 
         launched = False
         try:

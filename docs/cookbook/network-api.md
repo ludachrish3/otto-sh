@@ -164,10 +164,23 @@ class TunnelCarrier:
     requirements_command: ClassVar[str] = ""
     tools_description: ClassVar[str] = ""
 
-    def ingress_args(self, protocol, service_port, bind_ip, next_ip, carrier_port) -> list[str]: ...
-    def relay_args(self, carrier_port, next_ip) -> list[str]: ...
-    def egress_args(self, protocol, service_port, deliver_ip, carrier_port) -> list[str]: ...
+    def ingress_args(
+        self, protocol, service_port, bind_ip, next_ip, carrier_port, *, idle_timeout=None
+    ) -> list[str]: ...
+    def relay_args(self, protocol, carrier_port, next_ip, *, idle_timeout=None) -> list[str]: ...
+    def egress_args(
+        self, protocol, service_port, deliver_ip, carrier_port, *, idle_timeout=None
+    ) -> list[str]: ...
 ```
+
+`idle_timeout` is `None` unless the tunnel was added with `--idle-timeout`:
+`None` means nothing the carrier launches may time out, and an int is the
+seconds of silence after which a connection or flow may be dropped, but never
+a listener.
+
+Listing `udp` in `supported_protocols` obliges a carrier to keep datagram
+boundaries between hops, the way the socat carrier does; a carrier that
+cannot make that guarantee should not list `udp`.
 
 `otto.tunnel.socat.SocatCarrier` (`supported_protocols = {"tcp", "udp"}`) is
 the only first-party registrant, built on `socat`. A custom carrier
@@ -185,14 +198,31 @@ class MyCarrier(TunnelCarrier):
     requirements_command: ClassVar[str] = "command -v my-tool >/dev/null 2>&1 && echo ok || echo no"
     tools_description: ClassVar[str] = "my-tool"
 
-    def ingress_args(self, protocol, service_port, bind_ip, next_ip, carrier_port):
-        return ["my-tool", "listen", f"{bind_ip}:{service_port}", f"{next_ip}:{carrier_port}"]
+    def _timeout_opts(self, idle_timeout):
+        return [] if idle_timeout is None else ["--timeout", str(idle_timeout)]
 
-    def relay_args(self, carrier_port, next_ip):
-        return ["my-tool", "relay", str(carrier_port), next_ip]
+    def ingress_args(
+        self, protocol, service_port, bind_ip, next_ip, carrier_port, *, idle_timeout=None
+    ):
+        return [
+            "my-tool",
+            "listen",
+            *self._timeout_opts(idle_timeout),
+            f"{bind_ip}:{service_port}",
+            f"{next_ip}:{carrier_port}",
+        ]
 
-    def egress_args(self, protocol, service_port, deliver_ip, carrier_port):
-        return ["my-tool", "deliver", str(carrier_port), f"{deliver_ip}:{service_port}"]
+    def relay_args(self, protocol, carrier_port, next_ip, *, idle_timeout=None):
+        return ["my-tool", "relay", *self._timeout_opts(idle_timeout), str(carrier_port), next_ip]
+
+    def egress_args(self, protocol, service_port, deliver_ip, carrier_port, *, idle_timeout=None):
+        return [
+            "my-tool",
+            "deliver",
+            *self._timeout_opts(idle_timeout),
+            str(carrier_port),
+            f"{deliver_ip}:{service_port}",
+        ]
 
 
 register_carrier("my_carrier", MyCarrier)

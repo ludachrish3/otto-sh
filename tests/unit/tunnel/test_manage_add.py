@@ -23,7 +23,7 @@ from otto.tunnel.manage import (
 )
 from otto.tunnel.model import Direction, ProcKey, Role, Tunnel, TunnelHop
 from otto.tunnel.sentinel import ParsedSentinel, encode_sentinel, parse_sentinel
-from otto.tunnel.socat import FREE_PORT_PROBE_COMMAND, SOCKET_DUMP_COMMAND, SocatCarrier
+from otto.tunnel.socat import FREE_PORT_PROBE_COMMAND, SocatCarrier, socket_dump_command
 from otto.utils import Status
 from tests.conftest import active_context
 
@@ -104,7 +104,7 @@ class FakeHost:
                 result = CommandResult(status=Status.Failed, value="boom", command=cmd, retcode=1)
             else:
                 result = CommandResult(status=Status.Success, value=self.probe_ports, command=cmd)
-        elif cmd == SOCKET_DUMP_COMMAND:
+        elif cmd in (socket_dump_command("tcp"), socket_dump_command("udp")):
             result = CommandResult(status=Status.Success, value=self.socket_dump, command=cmd)
         elif cmd == DISCOVERY_PS_COMMAND:
             if self.scan_fail:
@@ -383,6 +383,16 @@ class TestRollback:
         assert not any(cmd.startswith("kill ") for cmd in a.commands)
         assert any(cmd.startswith("kill ") for cmd in b.commands)
 
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_a_bad_idle_timeout_is_refused_before_any_host(self, bad: int) -> None:
+        lab, calls, _tunnel = _pair()
+
+        with pytest.raises(ValueError, match="idle timeout"):
+            asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080, idle_timeout=bad))
+
+        assert calls == []
+        assert all(not h.commands for h in lab.hosts.values())
+
     def test_verify_missing_process_rolls_back_and_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -448,6 +458,34 @@ class TestRollback:
         assert f"port {carrier_fwd}" in message
         assert "port held by" in message
         assert f"10.0.0.2:{carrier_fwd}" in message, "must name the actual holder"
+        assert socket_dump_command("tcp") in b.commands
+        assert socket_dump_command("udp") not in b.commands
+
+    def test_a_udp_verify_failure_names_the_udp_holder(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A UDP carrier port lost to a UDP socket is named; a TCP-only dump would call it free."""
+        monkeypatch.setattr(manage, "_VERIFY_RETRY_DELAY", 0.0)
+        lab, _calls, tunnel = _pair(protocol="udp")
+        a, b = lab.hosts["a"], lab.hosts["b"]
+        carrier_fwd, carrier_rev = _LO, _LO + 1
+        a.ps_texts = ["", _full_ps(tunnel, "a", carrier_fwd, carrier_rev)]
+        missing_key: ProcKey = ("b", Direction.FWD, Role.EGRESS)
+        b.ps_texts = [
+            "",
+            _full_ps(tunnel, "b", carrier_fwd, carrier_rev, omit=frozenset({missing_key})),
+        ]
+        b.socket_dump = f"UNCONN 0 0 0.0.0.0:{carrier_fwd} 0.0.0.0:*\n"
+
+        with pytest.raises(HostCommandError) as exc_info:
+            asyncio.run(
+                manage.add_tunnel(lab, [("a", None), ("b", None)], port=8080, protocol="udp")
+            )
+
+        message = str(exc_info.value)
+        assert f"port held by UNCONN 0 0 0.0.0.0:{carrier_fwd}" in message
+        assert socket_dump_command("udp") in b.commands
+        assert socket_dump_command("tcp") not in b.commands
 
     def test_verify_failure_says_so_when_the_port_is_free(
         self, monkeypatch: pytest.MonkeyPatch
@@ -904,6 +942,23 @@ class TestAddDryRunPlansInsteadOfAccusing:
         assert "delivering to far (10.0.0.9)" in would
         assert "b fwd/egress: socat" in would
         assert "TCP4:10.0.0.9:8080" in would
+        assert calls == []
+
+    def test_the_preview_shows_an_opted_in_idle_timeout(self) -> None:
+        lab, calls, _tunnel = _pair()
+        added = self._dry_add(lab, [("a", None), ("b", None)], port=8080, idle_timeout=30)
+        assert calls == []
+        would = "\n".join(added.plan.would)
+        assert would.count("socat -T 30 ") == 4
+
+    @pytest.mark.parametrize("bad", [0, -1, True, 1.5])
+    def test_a_bad_idle_timeout_is_refused_before_any_host(self, bad: object) -> None:
+        """``True`` is an ``int`` in Python — without the ``isinstance(bool)``
+        clause it would slip through and become ``socat -T True``. ``1.5`` is
+        the ordinary not-a-whole-number case."""
+        lab, calls, _tunnel = _pair()
+        with pytest.raises(ValueError, match="idle timeout"):
+            self._dry_add(lab, [("a", None), ("b", None)], port=8080, idle_timeout=bad)
         assert calls == []
 
 

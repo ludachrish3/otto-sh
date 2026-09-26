@@ -190,7 +190,8 @@ ours.
 
 **SSH carrier options (hop-aware phase forward-note, 2026-07-08):** when the
 carrier is an `ssh -L` forward (the deferred multi-hop phase — sub-project #2's
-direct-L2 tunnels use a plain TCP carrier, no SSH), it may need tunnel-specific
+direct-L2 tunnels carry each protocol as itself, UDP over UDP and TCP over
+TCP, with no SSH), it may need tunnel-specific
 SSH options set *strictly for the tunnel process*, independent of otto's
 management SSH sessions: keepalive intervals
 (`ServerAliveInterval`/`ClientAliveInterval`), `ExitOnForwardFailure`,

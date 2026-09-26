@@ -62,6 +62,7 @@ import contextlib
 import random
 import re
 import shlex
+import socket
 import subprocess
 import uuid
 from pathlib import Path
@@ -91,10 +92,13 @@ from tests._fixtures.tunnel_bed import (
     assert_reachable,
     build_bed_host,
     cli_sut_dir,
+    kill_tagged,
     random_outfile,
     remove_remote_file,
     resolved_ip,
     send_udp,
+    spawn_tcp_echo,
+    spawn_udp_echo,
     spawn_udp_listener,
     wait_for_listener_output,
 )
@@ -115,6 +119,9 @@ _PORT_MULTIHOP = 15001
 _PORT_CONTAINER = 15002
 _PORT_DEGRADE = 15003
 _PORT_CLI_CYCLE = 15004
+_PORT_UDP_ECHO = 15005
+_PORT_UDP_IDLE = 15006
+_PORT_TCP_IDLE = 15007
 _PORT_FOREIGN = 45003
 
 # Named in the bed-hygiene reports so a failure says which module it is about
@@ -640,3 +647,258 @@ def test_cli_cycle_add_list_remove_list_docker_free(tmp_path: Path) -> None:
         if cleanup_id:
             with contextlib.suppress(Exception):
                 _run_cycle(["tunnel", "remove", cleanup_id], sut)
+
+
+# ---------------------------------------------------------------------------
+# Test 6: datagram boundaries survive three hops (spec 2026-09-25 §5)
+# ---------------------------------------------------------------------------
+
+
+def _datagram(size: int, marker: int) -> bytes:
+    """*size* bytes that differ per *marker*, so a reply can't be mistaken for another's."""
+    return bytes((i * 31 + marker) % 251 for i in range(size))
+
+
+def _round_trip(sock: socket.socket, addr: tuple[str, int], payload: bytes) -> bytes:
+    sock.sendto(payload, addr)
+    data, _ = sock.recvfrom(65535)
+    return data
+
+
+def _collect(sock: socket.socket, want: int) -> list[bytes]:
+    got: list[bytes] = []
+    with contextlib.suppress(TimeoutError):
+        while len(got) < want * 2:  # read past `want` so a split datagram shows up as extras
+            got.append(sock.recvfrom(65535)[0])
+    return got
+
+
+@pytest.mark.asyncio
+async def test_udp_datagrams_cross_three_hops_whole(tunnel_lab, reap_tunnels) -> None:
+    """A 3-hop UDP tunnel keeps every datagram whole and separate (spec 2026-09-25 §5).
+
+    - 1 B, 1400 B and 65,000 B datagrams echo back byte for byte.
+    - A back-to-back burst of 20 distinct datagrams returns as exactly those 20.
+    - Two clients whose flows are already established (one round trip each)
+      stay isolated on the same ingress: each gets only its own replies. This
+      does NOT hold for two fresh clients whose first datagrams arrive
+      together — see the priming comment below.
+    """
+    test3 = tunnel_lab.hosts[_RELAY_DEST]
+    port = _PORT_UDP_ECHO
+    tag = f"otto-tunnel-e2e-echo-{uuid.uuid4().hex[:8]}"
+    added = await add_tunnel(
+        tunnel_lab,
+        [(_INGRESS, None), (_EXIT, None), (_RELAY_DEST, None)],
+        port=port,
+        protocol="udp",
+    )
+    reap_tunnels.append(added.tunnel.id)
+    try:
+        await spawn_udp_echo(test3, port, tag=tag, lifetime=LISTEN_TIMEOUT)
+        ingress = (resolved_ip(_INGRESS), port)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as c:
+            c.settimeout(5)
+            for size in (1, 1400, 65000):
+                payload = _datagram(size, size % 251)
+                echoed = _round_trip(c, ingress, payload)
+                assert echoed == payload, f"{size} B datagram came back as {len(echoed)} B"
+            burst = [_datagram(100 + 37 * i, i) for i in range(20)]
+            for payload in burst:
+                c.sendto(payload, ingress)
+            got = _collect(c, len(burst))
+            assert sorted(got) == sorted(burst), (
+                f"sent 20 datagrams, got {len(got)} back with sizes {sorted(len(g) for g in got)}"
+            )
+        with (
+            socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as a,
+            socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as b,
+        ):
+            a.settimeout(5)
+            b.settimeout(5)
+            # Prime each client with its own round trip BEFORE the interleaved
+            # burst below. socat's ``UDP4-LISTEN,fork`` forks a child on a new
+            # peer's first datagram and only THEN calls ``connect()`` to pin
+            # that child to its peer; two different clients' true first
+            # datagrams landing together race that fork/then-connect() window
+            # and collapse onto one child. This is a known ``UDP4-LISTEN,fork``
+            # defect at every hop of a UDP tunnel (ingress, relays and egress
+            # all listen with it), out of scope here; priming isolates what
+            # this test is for, which is framing.
+            assert _round_trip(a, ingress, b"prime-a") == b"prime-a"
+            assert _round_trip(b, ingress, b"prime-b") == b"prime-b"
+            for i in range(5):
+                a.sendto(_datagram(64, 100 + i), ingress)
+                b.sendto(_datagram(64, 200 + i), ingress)
+            assert sorted(_collect(a, 5)) == sorted(_datagram(64, 100 + i) for i in range(5))
+            assert sorted(_collect(b, 5)) == sorted(_datagram(64, 200 + i) for i in range(5))
+        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
+        reap_tunnels.remove(added.tunnel.id)
+    finally:
+        await kill_tagged(test3, tag)
+
+
+# ---------------------------------------------------------------------------
+# Test 7: an opted-in idle timeout drops idle children, the flow resumes
+# ---------------------------------------------------------------------------
+
+
+_IDLE_S = 5
+
+
+@pytest.mark.asyncio
+async def test_udp_flow_resumes_after_an_opted_in_idle_timeout(tunnel_lab, reap_tunnels) -> None:
+    """With idle_timeout, the relay hop's children exit, the parents stay, and the flow resumes."""
+    test2 = tunnel_lab.hosts[_EXIT]
+    test3 = tunnel_lab.hosts[_RELAY_DEST]
+    port = _PORT_UDP_IDLE
+    tag = f"otto-tunnel-e2e-echo-{uuid.uuid4().hex[:8]}"
+    added = await add_tunnel(
+        tunnel_lab,
+        [(_INGRESS, None), (_EXIT, None), (_RELAY_DEST, None)],
+        port=port,
+        protocol="udp",
+        idle_timeout=_IDLE_S,
+    )
+    reap_tunnels.append(added.tunnel.id)
+    # argv_pattern: the count never includes the shell running this pgrep.
+    tid = added.tunnel.id
+    count = f"pgrep -fc {shlex.quote(argv_pattern(tid))} || true"
+    try:
+        await spawn_udp_echo(test3, port, tag=tag, lifetime=LISTEN_TIMEOUT + _IDLE_S + 10)
+        ingress = (resolved_ip(_INGRESS), port)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as c:
+            c.settimeout(5)
+            assert _round_trip(c, ingress, b"before-idle") == b"before-idle"
+            busy = int((await test2.exec(count, timeout=15, log=LogMode.QUIET)).value.strip() or 0)
+            await asyncio.sleep(_IDLE_S + 10)
+            idle = int((await test2.exec(count, timeout=15, log=LogMode.QUIET)).value.strip() or 0)
+            # test2 (the relay hop) always holds the fwd and rev relay
+            # PARENTS -- this test's traffic is one-directional (client to
+            # echo and its reply both ride the fwd flow's own connected
+            # sockets), so the rev relay never forks -- plus exactly ONE fwd
+            # relay CHILD, forked for this test's single client, while busy.
+            assert busy == 3, f"expected 2 relay parents + 1 fwd child busy, got {busy}"
+            assert idle == 2, f"expected only the 2 relay parents left idle, got {idle}"
+            assert _round_trip(c, ingress, b"after-idle") == b"after-idle"
+        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
+        reap_tunnels.remove(added.tunnel.id)
+    finally:
+        await kill_tagged(test3, tag)
+
+
+# ---------------------------------------------------------------------------
+# Test 8: an opted-in idle timeout never takes down a TCP tunnel's listeners
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tcp_idle_timeout_never_takes_down_the_listeners(tunnel_lab, reap_tunnels) -> None:
+    """``--idle-timeout`` may drop an idle TCP connection, but never the tunnel's
+    own listening parents -- a new connection keeps working through them
+    after an idle wait longer than the timeout.
+
+    A connection closed by its own client unwinds via EOF once that close
+    propagates through the chain, nothing to do with ``-T`` -- so the count
+    settles back to the idle baseline shortly after, and taking it again
+    after the long sleep is what actually proves nothing was torn down by the
+    timeout in between.
+    """
+    test1 = tunnel_lab.hosts[_INGRESS]
+    test2 = tunnel_lab.hosts[_EXIT]
+    port = _PORT_TCP_IDLE
+    tag = f"otto-tunnel-e2e-tcpecho-{uuid.uuid4().hex[:8]}"
+    added = await add_tunnel(
+        tunnel_lab,
+        [(_INGRESS, None), (_EXIT, None)],
+        port=port,
+        protocol="tcp",
+        idle_timeout=_IDLE_S,
+    )
+    reap_tunnels.append(added.tunnel.id)
+    # argv_pattern: the count never includes the shell running this pgrep.
+    tid = added.tunnel.id
+    count = f"pgrep -fc {shlex.quote(argv_pattern(tid))} || true"
+
+    async def _tunnel_process_count(host: UnixHost) -> int:
+        result = await host.exec(count, timeout=15, log=LogMode.QUIET)
+        return int((result.value or "").strip() or 0)
+
+    # Both hosts are ENDPOINTS of this 2-hop tunnel (no relay hop in between),
+    # so each always holds exactly 2 parents: test2 the fwd egress that
+    # delivers to the local echo and the rev ingress, test1 the fwd ingress
+    # and the rev egress. Neither parent on either host
+    # is ever itself a party to a data transfer -- only a forked child is --
+    # so ``-T`` has nothing on either of them to time out, no matter how long
+    # they sit idle.
+    expected_parents = 2
+    try:
+        await spawn_tcp_echo(test2, port, tag=tag, lifetime=LISTEN_TIMEOUT + _IDLE_S + 10)
+        ingress = (resolved_ip(_INGRESS), port)
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as c:
+            c.settimeout(5)
+            c.connect(ingress)
+            c.sendall(b"before-idle")
+            assert c.recv(1024) == b"before-idle"
+        # The connection above is now closed on the client side. Its forked
+        # child on test2 exits on EOF once the close propagates through the
+        # ingress hop and the local echo -- not instantly, so poll briefly
+        # for the count to settle at the idle baseline rather than asserting
+        # it is already there in the same instant the socket was closed.
+        after_close = expected_parents
+
+        async def _settled_at_baseline() -> bool:
+            nonlocal after_close
+            after_close = await _tunnel_process_count(test2)
+            return after_close == expected_parents
+
+        settle_s = 5.0
+        with contextlib.suppress(TimeoutError):
+            await wait_for_async(_settled_at_baseline, settle_s, interval=0.2, on_timeout="")
+        assert after_close == expected_parents, (
+            f"expected {expected_parents} endpoint parents on test2 within {settle_s}s "
+            f"of the first connection closing, still {after_close}"
+        )
+
+        await asyncio.sleep(_IDLE_S + 10)
+        for host in (test1, test2):
+            after_idle = await _tunnel_process_count(host)
+            assert after_idle == expected_parents, (
+                f"expected the same {expected_parents} listening parents on {host.id} "
+                f"after an idle wait of {_IDLE_S + 10}s ({_IDLE_S}s idle_timeout + "
+                f"margin), got {after_idle} -- a listener was taken down by --idle-timeout"
+            )
+
+        # A brand-new connection still goes through the surviving listeners,
+        # end to end.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as c2:
+            c2.settimeout(5)
+            c2.connect(ingress)
+            c2.sendall(b"after-idle")
+            assert c2.recv(1024) == b"after-idle"
+
+            # Optional, but simple and deterministic: an idle OPEN connection
+            # is the thing --idle-timeout actually targets -- prove it gets
+            # closed once it outlives it, rather than staying up forever.
+            c2.settimeout(_IDLE_S + 15)
+            # A recv timeout means the connection outlived the timeout, so it
+            # must be caught before OSError, which TimeoutError subclasses.
+            try:
+                closed = c2.recv(1024) == b""
+            except TimeoutError:
+                closed = False
+            except ConnectionResetError:
+                closed = True
+            assert closed, (
+                f"expected the idle connection to be closed after {_IDLE_S}s "
+                f"idle_timeout, but it was still open"
+            )
+
+        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
+        reap_tunnels.remove(added.tunnel.id)
+    finally:
+        await kill_tagged(test2, tag)

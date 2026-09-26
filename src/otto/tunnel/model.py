@@ -29,7 +29,7 @@ class Role(enum.Enum):
     """Binds the service port on its endpoint's data-plane ip."""
 
     RELAY = "relay"
-    """TCP carrier pass-through on an intermediate hop."""
+    """Carrier pass-through on an intermediate hop."""
 
     EGRESS = "egress"
     """Delivers carrier traffic to the local service (or ``--dest``)."""

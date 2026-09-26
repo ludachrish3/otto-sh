@@ -22,6 +22,7 @@ from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, parse_process_discovery
 from otto.utils import wait_for_async
+from tests._fixtures.bed_hygiene import argv_pattern
 from tests._fixtures.labdata import flat_hosts, host_data, lab_json_v2, make_host
 from tests._fixtures.sutrepo import make_sut_repo
 from tests.e2e._otto_subprocess import REPO1, run_otto
@@ -254,6 +255,102 @@ async def spawn_udp_listener(host: UnixHost, port: int, outfile: str, timeout: f
     cmd = f"setsid python3 -c {shlex.quote(script)} </dev/null >/dev/null 2>&1 &"
     await host.exec(cmd, timeout=15, log=LogMode.QUIET)
     await wait_for_udp_bound(host, "127.0.0.1", port)
+
+
+def udp_echo_script(port: int, lifetime: float) -> str:
+    """A UDP echo bound to ``127.0.0.1:port`` that answers every datagram with itself.
+
+    Loopback-only for the same reason as :func:`listener_script`: the tunnel's
+    egress delivers to exactly ``127.0.0.1`` and the opposite direction's
+    ingress already binds this host's own ip on the same port. Exits after
+    *lifetime* seconds without traffic, so a crashed test cannot leave it forever.
+    """
+    return (
+        "import socket\n"
+        "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+        f"s.bind(('127.0.0.1', {port}))\n"
+        f"s.settimeout({lifetime})\n"
+        "while True:\n"
+        "    data, addr = s.recvfrom(65535)\n"
+        "    s.sendto(data, addr)\n"
+    )
+
+
+async def spawn_udp_echo(host: UnixHost, port: int, *, tag: str, lifetime: float) -> None:
+    """Start a detached, *tag*-carrying UDP echo on *host* and confirm it is bound."""
+    script = udp_echo_script(port, lifetime)
+    cmd = f"setsid python3 -c {shlex.quote(script)} {shlex.quote(tag)} </dev/null >/dev/null 2>&1 &"
+    await host.exec(cmd, timeout=15, log=LogMode.QUIET)
+    await wait_for_udp_bound(host, "127.0.0.1", port)
+
+
+async def wait_for_tcp_bound(
+    host: UnixHost, ip: str, port: int, timeout: float = BIND_CONFIRM_TIMEOUT
+) -> None:
+    """Poll until a TCP socket is LISTENing on *ip*:*port* on *host*.
+
+    Same launch race as :func:`wait_for_udp_bound`: ``host.exec`` returns once
+    the remote shell has accepted the backgrounded ``setsid python3 ... &``,
+    which is before the interpreter has actually called ``bind``/``listen``.
+    """
+    needle = f"{ip}:{port}"
+
+    async def _bound() -> bool:
+        result = await host.exec("ss -Htln 2>/dev/null || true", timeout=15, log=LogMode.QUIET)
+        return needle in (result.value or "")
+
+    await wait_for_async(
+        _bound,
+        timeout,
+        interval=0.1,
+        on_timeout=f"host {host.id!r}: no TCP listener bound to {needle} within {timeout}s",
+    )
+
+
+def tcp_echo_script(port: int, lifetime: float) -> str:
+    """A TCP echo bound to ``127.0.0.1:port`` that echoes every byte read back
+    on the same connection, one connection at a time, in sequence.
+
+    Loopback-only for the same reason as :func:`listener_script`. The listening
+    socket's own timeout re-arms after every ``accept()`` returns, so *lifetime*
+    is the idle budget between connections, not a hard deadline on the process;
+    a crashed test still cannot leave it running forever.
+    """
+    return (
+        "import socket\n"
+        "s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+        f"s.bind(('127.0.0.1', {port}))\n"
+        "s.listen(5)\n"
+        f"s.settimeout({lifetime})\n"
+        "while True:\n"
+        "    conn, _addr = s.accept()\n"
+        "    conn.settimeout(30)\n"
+        "    try:\n"
+        "        while True:\n"
+        "            data = conn.recv(65536)\n"
+        "            if not data:\n"
+        "                break\n"
+        "            conn.sendall(data)\n"
+        "    finally:\n"
+        "        conn.close()\n"
+    )
+
+
+async def spawn_tcp_echo(host: UnixHost, port: int, *, tag: str, lifetime: float) -> None:
+    """Start a detached, *tag*-carrying TCP echo on *host* and confirm it is bound."""
+    script = tcp_echo_script(port, lifetime)
+    cmd = f"setsid python3 -c {shlex.quote(script)} {shlex.quote(tag)} </dev/null >/dev/null 2>&1 &"
+    await host.exec(cmd, timeout=15, log=LogMode.QUIET)
+    await wait_for_tcp_bound(host, "127.0.0.1", port)
+
+
+async def kill_tagged(host: UnixHost, tag: str) -> None:
+    """Best-effort kill of every process whose argv carries *tag* (never raises)."""
+    with contextlib.suppress(Exception):
+        await host.exec(
+            f"pkill -f {shlex.quote(argv_pattern(tag))} || true", timeout=15, log=LogMode.QUIET
+        )
 
 
 async def wait_for_listener_output(

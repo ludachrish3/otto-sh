@@ -35,7 +35,7 @@ chains are on {doc}`add`; see also {doc}`endpoints`, {doc}`identity` and
 {doc}`portability`.
 
 ```text
-otto tunnel add    --hosts <h0[@if],h1[@if],...,hn-1[@if]> --port <P> [--protocol tcp|udp] [--dest <host[@if]>] [--carrier <name>]
+otto tunnel add    --hosts <h0[@if],h1[@if],...,hn-1[@if]> --port <P> [--protocol tcp|udp] [--dest <host[@if]>] [--carrier <name>] [--idle-timeout <seconds>]
 otto tunnel list
 otto tunnel remove [<id>] [--all] [-y]
 ```
@@ -56,6 +56,8 @@ otto tunnel remove [<id>] [--all] [-y]
 | `--port` | `add` | Service port, used at both endpoints |
 | `--protocol` | `add` | `tcp` (default) or `udp` |
 | `--dest` | `add` | Far-end delivery override; defaults to loopback on the last `--hosts` entry |
+| `--carrier` | `add` | Tunnel transport — a registered `TunnelCarrier` name, applied chain-wide; default `socat`. See [Custom carriers](../../cookbook/network-api.md#custom-tunnel-carriers) |
+| `--idle-timeout` | `add` | Drop a TCP connection or UDP flow idle this many seconds; default never. See [Idle timeout](add.md#idle-timeout) |
 | `--all` | `remove` | Reap every otto tunnel |
 | `-y, --yes` | `remove` | Skip the `--all` confirmation prompt |
 | `<id>` (argument) | `remove` | Id of the tunnel to remove |
@@ -96,8 +98,9 @@ Read both halves. The `would:` lines are the exact argv, but:
 
 :::{warning}
 **The two carrier ports are provisional, and every argv above names them.** A
-real `add` first probes every hop with `ss -Htln` / `netstat -tln` and skips
-what is already listening, then allocates from above the highest ephemeral
+real `add` first probes every hop for both TCP and UDP listeners
+(`ss -Htln`/`ss -Huln`, falling back to `netstat -tln`/`-uln`) and skips every
+port either protocol already holds, then allocates from above the highest ephemeral
 ceiling the chain reports (so no hop's kernel can hand the same port to an
 outgoing connection) — commonly 61000/61001 on Linux. A dry run has only your
 `--port` to go on and contacts nothing, so it shows the `[49152, 65535]` floor

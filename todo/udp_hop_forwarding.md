@@ -44,8 +44,11 @@ bridges are cleaned up with the hop.
 - **Dependency on `socat` at both ends.** Acceptable for the lab; for arbitrary
   hops, detect/fallback (or a pure-Python UDP relay coroutine on the otto side,
   avoiding the local socat at least).
-- **Datagram boundaries / MTU.** socat's UDP↔TCP framing is stream-based;
-  request/response SNMP is fine, but document the caveat for chunked UDP.
+- **Datagram boundaries / MTU.** Resolved for otto tunnels by
+  `docs/superpowers/specs/2026-09-25-udp-tunnel-carrier-design.md`: the socat
+  carrier carries UDP between hops, not framed onto a TCP stream. This item's
+  SSH-hop UDP forwarding is a different mechanism — no otto tunnel is
+  involved — and stays open.
 
 ### Done means
 

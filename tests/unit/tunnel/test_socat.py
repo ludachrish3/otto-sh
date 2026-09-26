@@ -6,7 +6,7 @@ from otto.host.daemon import launch_command
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND
 from otto.tunnel.socat import (
     FREE_PORT_PROBE_COMMAND,
-    SOCKET_DUMP_COMMAND,
+    UDP_BLOCK_BYTES,
     NoFreePortError,
     carrier_port_floor,
     egress_socat_args,
@@ -16,38 +16,77 @@ from otto.tunnel.socat import (
     parse_port_holders,
     pick_free_port,
     relay_socat_args,
+    socket_dump_command,
 )
+
+_UDP = ["socat", "-b", "65535"]
 
 
 class TestBuilders:
-    def test_ingress_binds_data_ip(self) -> None:
+    """Exact argv per role and protocol (spec 2026-09-25 §2): UDP crosses hops as UDP."""
+
+    def test_udp_ingress_ships_datagrams_as_datagrams(self) -> None:
         assert ingress_socat_args("udp", 5000, "10.10.200.11", "10.10.200.12", 50001) == [
-            "socat",
+            *_UDP,
             "UDP4-LISTEN:5000,bind=10.10.200.11,fork,reuseaddr",
-            "TCP4:10.10.200.12:50001",
+            "UDP4:10.10.200.12:50001",
         ]
 
-    def test_ingress_tcp(self) -> None:
-        args = ingress_socat_args("tcp", 8080, "10.0.0.1", "10.0.0.2", 49900)
-        assert args[1].startswith("TCP4-LISTEN:8080,bind=10.0.0.1,")
+    def test_udp_relay_is_udp_on_both_sides(self) -> None:
+        assert relay_socat_args("udp", 50001, "10.10.200.13") == [
+            *_UDP,
+            "UDP4-LISTEN:50001,fork,reuseaddr",
+            "UDP4:10.10.200.13:50001",
+        ]
 
-    def test_relay_same_port_both_sides(self) -> None:
-        assert relay_socat_args(50001, "10.10.200.13") == [
+    def test_udp_egress_takes_the_udp_carrier(self) -> None:
+        assert egress_socat_args("udp", 5000, "127.0.0.1", 50001) == [
+            *_UDP,
+            "UDP4-LISTEN:50001,fork,reuseaddr",
+            "UDP4:127.0.0.1:5000",
+        ]
+
+    def test_udp_egress_dest_override(self) -> None:
+        assert egress_socat_args("udp", 5000, "10.10.200.14", 50001)[-1] == "UDP4:10.10.200.14:5000"
+
+    def test_tcp_argv_is_unchanged_byte_for_byte(self) -> None:
+        assert ingress_socat_args("tcp", 8080, "10.0.0.1", "10.0.0.2", 49900) == [
+            "socat",
+            "TCP4-LISTEN:8080,bind=10.0.0.1,fork,reuseaddr",
+            "TCP4:10.0.0.2:49900",
+        ]
+        assert relay_socat_args("tcp", 50001, "10.10.200.13") == [
             "socat",
             "TCP4-LISTEN:50001,fork,reuseaddr",
             "TCP4:10.10.200.13:50001",
         ]
-
-    def test_egress_delivers_loopback_default_shape(self) -> None:
-        assert egress_socat_args("udp", 5000, "127.0.0.1", 50001) == [
+        assert egress_socat_args("tcp", 8080, "127.0.0.1", 50001) == [
             "socat",
             "TCP4-LISTEN:50001,fork,reuseaddr",
-            "UDP4:127.0.0.1:5000",
+            "TCP4:127.0.0.1:8080",
         ]
 
-    def test_egress_dest_override(self) -> None:
-        args = egress_socat_args("udp", 5000, "10.10.200.14", 50001)
-        assert args[2] == "UDP4:10.10.200.14:5000"
+    def test_the_udp_block_holds_the_largest_ipv4_datagram(self) -> None:
+        assert UDP_BLOCK_BYTES >= 65507
+
+    def test_no_role_times_out_by_default(self) -> None:
+        for proto in ("tcp", "udp"):
+            for argv in (
+                ingress_socat_args(proto, 5000, "10.0.0.1", "10.0.0.2", 50001),
+                relay_socat_args(proto, 50001, "10.0.0.3"),
+                egress_socat_args(proto, 5000, "127.0.0.1", 50001),
+            ):
+                assert "-T" not in argv, argv
+
+    def test_an_idle_timeout_reaches_every_role_of_both_protocols(self) -> None:
+        for proto, prefix in (("tcp", ["socat", "-T", "30"]), ("udp", [*_UDP, "-T", "30"])):
+            for argv in (
+                ingress_socat_args(proto, 5000, "10.0.0.1", "10.0.0.2", 50001, idle_timeout=30),
+                relay_socat_args(proto, 50001, "10.0.0.3", idle_timeout=30),
+                egress_socat_args(proto, 5000, "127.0.0.1", 50001, idle_timeout=30),
+            ):
+                assert argv[: len(prefix)] == prefix, argv
+                assert argv.count("-T") == 1, argv
 
 
 class TestLaunchAndDiscovery:
@@ -98,10 +137,18 @@ class TestEphemeralRange:
     dies with ``EADDRINUSE``.
     """
 
-    def test_probe_asks_for_the_ephemeral_range_and_the_listeners(self) -> None:
+    def test_probe_asks_for_the_ephemeral_range_and_tcp_and_udp_listeners(self) -> None:
         assert "ip_local_port_range" in FREE_PORT_PROBE_COMMAND
-        assert "ss -Htln" in FREE_PORT_PROBE_COMMAND
-        assert "netstat -tln" in FREE_PORT_PROBE_COMMAND
+        for needle in ("ss -Htln", "netstat -tln", "ss -Huln", "netstat -uln"):
+            assert needle in FREE_PORT_PROBE_COMMAND
+
+    def test_a_udp_listener_counts_as_used(self) -> None:
+        out = (
+            "otto-ephemeral 32768\t60999\n"
+            "LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*\n"
+            "UNCONN 0 0 10.10.200.12:61001 0.0.0.0:*\n"
+        )
+        assert parse_listening_ports(out) == {22, 61001}
 
     def test_parses_the_ceiling(self) -> None:
         out = "otto-ephemeral 32768\t60999\nLISTEN 0 128 0.0.0.0:49152 0.0.0.0:*\n"
@@ -155,10 +202,21 @@ class TestPortHolders:
     some other reason" without re-running the whole suite.
     """
 
-    def test_dump_asks_for_every_socket_state(self) -> None:
-        assert "ss -Htan" in SOCKET_DUMP_COMMAND
-        assert "netstat -tan" in SOCKET_DUMP_COMMAND
-        assert "-Htln" not in SOCKET_DUMP_COMMAND, "listeners-only would miss the thief"
+    def test_the_dump_is_per_protocol_and_every_state(self) -> None:
+        assert (
+            socket_dump_command("tcp") == "ss -Htan 2>/dev/null || netstat -tan 2>/dev/null || true"
+        )
+        assert (
+            socket_dump_command("udp") == "ss -Huan 2>/dev/null || netstat -uan 2>/dev/null || true"
+        )
+
+    def test_finds_a_udp_holder_ss(self) -> None:
+        dump = "UNCONN 0 0 127.0.0.1:5000 0.0.0.0:*\nUNCONN 0 0 0.0.0.0:61001 0.0.0.0:*\n"
+        assert parse_port_holders(dump, 61001) == ["UNCONN 0 0 0.0.0.0:61001 0.0.0.0:*"]
+
+    def test_finds_a_udp_holder_netstat(self) -> None:
+        dump = "udp        0      0 0.0.0.0:61001           0.0.0.0:*\n"
+        assert parse_port_holders(dump, 61001) == [dump.strip()]
 
     def test_finds_an_established_holder_ss(self) -> None:
         dump = "LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*\nESTAB  0 0    10.0.0.1:61000 10.0.0.9:443\n"

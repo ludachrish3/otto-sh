@@ -41,13 +41,17 @@ class TestRegistry:
             requirements_command = "command -v fake >/dev/null 2>&1 && echo ok || echo no"
             tools_description = "fake"
 
-            def ingress_args(self, protocol, service_port, bind_ip, next_ip, carrier_port):
+            def ingress_args(
+                self, protocol, service_port, bind_ip, next_ip, carrier_port, *, idle_timeout=None
+            ):
                 return ["fake", "ingress"]
 
-            def relay_args(self, carrier_port, next_ip):
+            def relay_args(self, protocol, carrier_port, next_ip, *, idle_timeout=None):
                 return ["fake", "relay"]
 
-            def egress_args(self, protocol, service_port, deliver_ip, carrier_port):
+            def egress_args(
+                self, protocol, service_port, deliver_ip, carrier_port, *, idle_timeout=None
+            ):
                 return ["fake", "egress"]
 
         register_carrier("fake", FakeCarrier)
@@ -64,9 +68,18 @@ class TestSocatCarrier:
         assert c.ingress_args("tcp", 8080, "10.0.0.1", "10.0.0.2", 50000) == ingress_socat_args(
             "tcp", 8080, "10.0.0.1", "10.0.0.2", 50000
         )
-        assert c.relay_args(50000, "10.0.0.3") == relay_socat_args(50000, "10.0.0.3")
+        assert c.relay_args("udp", 50000, "10.0.0.3") == relay_socat_args("udp", 50000, "10.0.0.3")
         assert c.egress_args("udp", 53, "127.0.0.1", 50001) == egress_socat_args(
             "udp", 53, "127.0.0.1", 50001
+        )
+        assert c.ingress_args("tcp", 1, "a", "b", 2, idle_timeout=9) == ingress_socat_args(
+            "tcp", 1, "a", "b", 2, idle_timeout=9
+        )
+        assert c.relay_args("tcp", 2, "b", idle_timeout=9) == relay_socat_args(
+            "tcp", 2, "b", idle_timeout=9
+        )
+        assert c.egress_args("tcp", 1, "b", 2, idle_timeout=9) == egress_socat_args(
+            "tcp", 1, "b", 2, idle_timeout=9
         )
 
     def test_ingress_argv_golden(self):
