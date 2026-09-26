@@ -44,6 +44,7 @@ extending/custom-parsers
 
 async-patterns
 sessions
+host-scopes
 suite-recipes
 connection-options
 dry-run-contract

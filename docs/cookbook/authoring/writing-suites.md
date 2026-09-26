@@ -186,7 +186,9 @@ once in a class fixture is live in every test and closed once after the last.
 Two rules follow:
 
 - never write `loop_scope=` on a class- or function-scoped async fixture — a
-  pin moves it *off* the suite's loop;
+  pin moves it *off* the suite's loop. The exception is tests you have pinned
+  to a module or session loop to share a host more widely: their async
+  fixtures pin to that same loop ({doc}`../host-scopes`);
 - a **module- or session-scoped** async fixture must pin `loop_scope` equal to
   its scope (`@pytest_asyncio.fixture(scope="session", loop_scope="session")`)
   or pytest-asyncio errors at setup with `ScopeMismatch: You tried to access

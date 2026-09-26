@@ -103,8 +103,8 @@ Pass that value back to replay the exact order that failed, or opt out for
 a suite whose tests genuinely depend on each other:
 
 ```bash
-otto --lab my_lab test TestDevice --seed 1234      # same order as the run that logged 1234
-otto --lab my_lab test TestDevice --no-random      # source order
+otto --lab my_lab test --seed 1234 TestDevice      # same order as the run that logged 1234
+otto --lab my_lab test --no-random TestDevice      # source order
 ```
 
 `--seed` implies `--random`; combining it with `--no-random` is a usage

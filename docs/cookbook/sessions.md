@@ -45,6 +45,8 @@ async with await host.open_session("monitor") as mon:
 | Setup cost | One connection, reused | New process per call |
 | Use case | Multi-step workflows in parallel | One-off independent commands |
 
+To share one host connection across many tests, see {doc}`host-scopes`.
+
 ## Send and expect
 
 For interactive programs that don't follow a simple command/response
