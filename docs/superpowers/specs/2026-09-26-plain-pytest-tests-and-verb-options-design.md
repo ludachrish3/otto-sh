@@ -115,6 +115,8 @@ At dispatch, otto builds every class registered for the dispatched verb from the
 
 The built instances are stored on the invocation's `OttoContext`, keyed by class.
 
+**A dry run builds them too.** `otto run NAME -n` and `otto test -n NAMES` build and validate the verb's options exactly as a real run would, so a bad value fails the dry run with the same exit-2 error, and the dry-run output shows the resolved value of every option that applies to the command. A dry run that skipped the options would not represent the command it previews.
+
 ### 4.4 Delivery
 
 - **Tests** call `ctx.options(Cls)` through the existing session-scoped `ctx` fixture and get back the typed instance. A repo that wants a short name writes a one-line conftest fixture:
@@ -183,17 +185,19 @@ The automatic stop fixes a trap: today a test that forgets `stop_monitor()` leak
 The layout mirrors the pytest test ID:
 
 ```
-<run output dir>/<module stem>/                            module_dir
-<run output dir>/<module stem>/<test name>/                test_dir, plain function
-<run output dir>/<module stem>/<ClassName>/<test name>/    test_dir, class test
+<run output dir>/<module path>/                            module_dir
+<run output dir>/<module path>/<test name>/                test_dir, plain function
+<run output dir>/<module path>/<ClassName>/<test name>/    test_dir, class test
 ```
+
+`<module path>` is the module's path under the repo test directory that contains it, without the `.py` suffix. A module directly in the test directory, the common case, is just its stem: `tests/test_router.py` gives `<run output dir>/test_router/`. A module in a subdirectory keeps that directory: `tests/router/test_basic.py` gives `<run output dir>/router/test_basic/`. A module under no configured test directory falls back to its stem.
 
 - **`module_dir`** replaces `suite_dir` and is module-scoped. It is the module's directory for every test in it. A class that wants its own shared space makes a subdirectory.
 - **`test_dir`** keeps its sanitized, parametrized names and its `iteration_N` level in stability runs.
 - **Both are created when requested,** like pytest's `tmp_path`, never eagerly.
-- **Multiple repos.** When more than one repo takes part in a run, a repo-name layer goes on top: `<run output dir>/<repo>/<module stem>/...`. That matches how JUnit files are already named per repo. A single-repo run keeps the shorter layout.
+- **Multiple repos.** When more than one repo takes part in a run, a repo-name layer goes on top: `<run output dir>/<repo>/<module path>/...`. That matches how JUnit files are already named per repo. A single-repo run keeps the shorter layout.
 
-Within one repo the layout can't collide: pytest's default import mode refuses two test modules with the same basename.
+Within one repo the layout can't collide. Keying on the stem alone would: pytest refuses two test modules with the same basename only when their directories have no `__init__.py`, so `tests/router/test_basic.py` and `tests/switch/test_basic.py` in packages both collect, and would otherwise share one directory.
 
 ### 5.4 Listing, dry run and the library API
 
@@ -235,7 +239,7 @@ Dispatch-startup made test files load on demand, through a loader on `SUITES`, a
 
 ### 6.1 What happens today
 
-Every otto command closes every host it handed out when the command's event loop ends, through the context's `HostScope`. Inside pytest, each test class runs on its own loop, and plain functions run on one loop per module. A connection belongs to the loop that opened it. When pytest closes that loop, otto can no longer close the connection gracefully. After `pytest.main()` returns, `HostScope.rebuild_connections` abandons it, and the operating system drops the socket at exit. Only `--cov` closes connections while the class loop is still alive, through `OttoSuite._otto_release_connections`, because a clean shutdown is what makes a device write its coverage data and frees a single-client console.
+Every otto command closes every host it handed out when the command's event loop ends, through the context's `HostScope`. Inside pytest, each test class runs on its own loop, and so does each plain function outside a class: pytest-asyncio's class-scoped loop falls back to function scope there. A connection belongs to the loop that opened it. When pytest closes that loop, otto can no longer close the connection gracefully. After `pytest.main()` returns, `HostScope.rebuild_connections` abandons it, and the operating system drops the socket at exit. Only `--cov` closes connections while the class loop is still alive, through `OttoSuite._otto_release_connections`, because a clean shutdown is what makes a device write its coverage data and frees a single-client console.
 
 The probe recorded on #457, run under `otto test` against lab hosts, found:
 
@@ -251,7 +255,7 @@ The probe recorded on #457, run under `otto test` against lab hosts, found:
 `HostScope` generalizes from one per command to one per event loop:
 
 - **Registration follows the loop.** When a host opens a connection, it registers with the scope of the running loop. Today hosts register when `get_host` hands them out. The plan locates the connection seam, since a host handed out on one loop may connect on another.
-- **Each loop closes what it owns, while it is still running.** `OttoPlugin` adds autouse cleanup fixtures at class, module and session scope, each with the matching `loop_scope`. The class fixture's teardown closes the hosts the class loop owns, before pytest-asyncio closes that loop. Plain functions use the module loop's fixture. A fixture pinned to a wider loop keeps its connection until that loop ends.
+- **Each loop closes what it owns, while it is still running.** `OttoPlugin` sweeps every pytest-asyncio loop, at function, class, module, package and session scope, closing the hosts that loop owns before pytest-asyncio closes it. A plain function outside a class has its own loop, swept when the function ends. A fixture pinned to a wider loop keeps its connection until that loop ends.
 - **The existing sweep order carries over.** A host that another registered host names as its `parent` closes after its dependents, and closes within a rank run concurrently.
 - **The command-level scope** is the scope of the command's own loop, so `run_command` behaves exactly as today.
 
