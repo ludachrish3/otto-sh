@@ -24,13 +24,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..check import FeatureResult, HostFingerprint, UnmeasuredReason, Verdict
+from ..check.clock import SOCAT_CONNECT_S
 from ..check.fingerprint import check_read, check_root_run
+from ..check.sweep import COMMAND_ALLOWANCE_S, probe_worst_s
 from ..host import CommandResult
 from .judge import judge_control, judge_delay, judge_loss, judge_port_range, judge_rate, judge_side
 from .model import Link, LinkEndpoint
 from .params import ImpairmentParams, Selector
 from .placement import FlowDirection
 from .probes import (
+    PING_REPLY_WAIT_S,
     PROBE_TIMEOUT_S,
     PingStats,
     ProbeBackend,
@@ -189,7 +192,7 @@ async def timed(ctx: ProbeCtx, cmd: str) -> float:
     """Run a timed probe client and return its elapsed milliseconds.
 
     Every client prints its own clock even when it fails, so a failed probe
-    whose clock reached :data:`~otto.link.probes.PROBE_TIMEOUT_S` gave up at
+    whose clock reached :data:`~otto.check.clock.PROBE_TIMEOUT_S` gave up at
     its bound: the path stalled it.
     """
     result = await root(ctx, cmd)
@@ -457,6 +460,39 @@ async def control(ctx: ProbeCtx) -> FeatureResult | None:
     if noisy is None:
         return None
     return dataclasses.replace(noisy, commands=[cmd], output=run.value)
+
+
+# --------------------------------------------------------------------------
+# Worst-case charges, for the leftover sweep's age bound (otto.check.sweep)
+# --------------------------------------------------------------------------
+
+
+def ping_worst_s(plan: PingPlan) -> float:
+    """One ping run with every reply lost: every probe sent, then the last reply's wait."""
+    return probe_worst_s(plan.seconds + PING_REPLY_WAIT_S)
+
+
+def connect_worst_s() -> float:
+    """One timed connect: the connect timeout, then the wait for the echoed byte."""
+    return probe_worst_s(SOCAT_CONNECT_S + PROBE_TIMEOUT_S)
+
+
+def transfer_worst_s() -> float:
+    """One timed transfer: the connect, a transfer that stops moving, and the wait after EOF."""
+    return probe_worst_s(SOCAT_CONNECT_S + 2 * PROBE_TIMEOUT_S)
+
+
+def listeners_worst_s() -> float:
+    """Start every echo listener, then try the readiness connect until the tries run out.
+
+    Hand-counted: update it when adding a probe or host command to
+    :func:`start_listeners`.
+    """
+    return (
+        len(LISTEN_PORTS) * COMMAND_ALLOWANCE_S
+        + _READY_TRIES * probe_worst_s(_READY_PROBE_S)
+        + (_READY_TRIES - 1) * _READY_INTERVAL_S
+    )
 
 
 def kill_pattern(tag: str) -> str:

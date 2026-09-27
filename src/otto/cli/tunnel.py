@@ -5,7 +5,8 @@ Thin consumer of the ``otto.tunnel`` library API. Reservation-group shaped
 keeps internal host I/O quiet (only warnings/errors surface).
 """
 
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 from rich import get_console
@@ -28,6 +29,7 @@ from .invoke import fail, print_error
 if TYPE_CHECKING:
     from ..config.repo import Repo
     from ..tunnel import DryRunPlan, Tunnel
+    from ..tunnel.check import TunnelCheckReport
 
 tunnel_app = typer.Typer(
     name="tunnel",
@@ -196,6 +198,21 @@ def _print_dry_run_plan(header: str, plan: "DryRunPlan") -> None:
         _row(f"  not checked: {line}")
 
 
+def _print_check_dry_run(path: str, plan: list[str]) -> None:
+    """Render ``check_tunnel``'s ``--dry-run`` preview: the plan, and nothing else.
+
+    Unlike ``add``/``remove``'s ``DryRunPlan`` (a ``would``/``unchecked``
+    split), ``check_tunnel`` hands back one flat, already-ordered line list —
+    so there is nothing to split here, only to print through ``_row`` the same
+    way: every line is lab/host data (a netdev, a host id, a socat argv), and
+    rich would eat a bracketed one (see ``_row``'s docstring). Mirrors
+    ``otto.cli.link._print_check_dry_run``.
+    """
+    get_console().print(f"[cyan]dry run[/cyan] {escape(path)}:", soft_wrap=True)
+    for line in plan:
+        _row(f"  {line}")
+
+
 @tunnel_app.command()
 async def add(
     hosts: str = typer.Option(
@@ -249,6 +266,106 @@ async def add(
         f"({t.path[0].host} <-> {t.path[-1].host}, via {_fmt_via(t)}, "
         f"carriers {added.carrier_fwd}/{added.carrier_rev})"
     )
+
+
+@tunnel_app.command()
+async def check(
+    hosts: str = typer.Option(
+        ...,
+        "--hosts",
+        help="Ordered host path h1\\[@if],h2\\[@if],...",
+        autocompletion=_hosts_completer,
+    ),
+    port: int = typer.Option(
+        ..., "--port", help="The service port you intend to tunnel (checked, never bound)."
+    ),
+    protocol: str = typer.Option("both", "--protocol", help="tcp, udp, or both."),
+    dest: str | None = typer.Option(None, "--dest", help="Far-end delivery target host\\[@if]."),
+    carrier: str = typer.Option(
+        DEFAULT_CARRIER, "--carrier", help="Tunnel transport carrier (registered name)."
+    ),
+    report: Annotated[
+        Path | None,
+        typer.Option("--report", help="Also write the full result as JSON to this path."),
+    ] = None,
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show every probe's raw output."),
+) -> None:
+    """Build a throwaway tunnel on this path and prove TCP/UDP payloads flow end to end."""
+    # Deferred, not module-scope: `check_tunnel` pulls in `otto.tunnel.check`
+    # (fingerprint/probe/sweep/echo machinery) and, through it, `otto.check.*`.
+    # A module-level import would make `otto.cli.tunnel` — and so every
+    # `otto --help` subcommand-group walk — pay for that whole tree on every
+    # invocation, not just on `otto tunnel check`. Same pattern as
+    # `otto.cli.link`'s `check` command. `requested_protocols`/`tunnel_sections`
+    # live in the same module as `check_tunnel`, so they are deferred for the
+    # same reason.
+    from ..check import render_sections, report_to_json
+    from ..host.host import is_dry_run
+    from ..tunnel import check_tunnel
+    from ..tunnel.check import requested_protocols, tunnel_sections
+
+    def write_report(result_: "TunnelCheckReport") -> None:
+        """``--report PATH`` → write the JSON *result_* there, or do nothing.
+
+        Never under a dry run, whatever the result: a dry run measured
+        nothing, and that includes a REFUSED path, whose result is built
+        before the dry-run plan and so reaches the refusal branch below
+        without one. It says why instead of going silent.
+        """
+        if report is None:
+            return
+        if result_.dry_run_plan or is_dry_run():
+            _row("no report was written — a dry run measures nothing")
+            return
+        try:
+            report.write_text(report_to_json(result_, kind="tunnel"))
+        except OSError as e:
+            # soft_wrap=True: the path is a token the reader copies, same
+            # reasoning as this module's `_row` helper.
+            fail(f"cannot write report {report}: {e}", soft_wrap=True)
+        _row(f"report: {report}")
+
+    # `requested_protocols` (an unknown `--protocol` name) and the `--hosts`/
+    # `--dest` syntax parsers are usage errors (2), validated on their own and
+    # BEFORE calling `check_tunnel` — never folded into the broader try below.
+    # `check_tunnel` itself still raises `ValueError`/`RuntimeError` for
+    # everything else it validates (an unknown host, a bad path): that is the
+    # command's own RESULT, not a usage error, exactly like `add`/`remove`'s
+    # `except (ValueError, RuntimeError) as e: fail(e)`.
+    try:
+        requested_protocols(protocol)
+    except ValueError as e:
+        fail(e, 2)
+    try:
+        host_specs = _parse_hosts(hosts)
+        dest_spec = _parse_endpoint(dest) if dest else None
+    except ValueError as e:
+        fail(e, 2)
+    lab = get_lab()
+    try:
+        result = await check_tunnel(
+            lab, host_specs, port=port, protocol=protocol, dest=dest_spec, carrier=carrier
+        )
+    except (ValueError, RuntimeError) as e:
+        fail(e)
+    path = " → ".join(result.path)
+    if result.dry_run_plan:
+        _print_check_dry_run(path, result.dry_run_plan)
+        write_report(result)
+        raise typer.Exit(0)
+    if result.refusal is not None:
+        print_error(f"cannot check tunnel {path}: {result.refusal}")
+        if result.refusal_hint:
+            print_error(result.refusal_hint)
+        # A refusal IS the check's result, so `--report` still gets one — the
+        # same shape `report_to_json` already serialises for the success
+        # path, since `refusal`/`refusal_hint` are ordinary fields on
+        # `TunnelCheckReport`.
+        write_report(result)
+        raise typer.Exit(1)
+    render_sections(get_console(), tunnel_sections(result), verbose=verbose)
+    write_report(result)
+    raise typer.Exit(0 if result.ok else 1)
 
 
 @tunnel_app.command(name="list")

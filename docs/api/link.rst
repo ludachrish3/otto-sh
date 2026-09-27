@@ -75,6 +75,7 @@ the Python API.
 
 .. automodule:: otto.link.probes
    :members:
+   :ignore-module-all:
 
 .. automodule:: otto.link.judge
    :members:

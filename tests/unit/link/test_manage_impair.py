@@ -922,7 +922,7 @@ class TestExpireOnAHostWithoutBash:
 
     otto's only OTHER caller of ``launch_command`` — the socat launch in
     ``otto.tunnel.manage.add_tunnel`` — is NOT reachable with such a host and
-    carries no guard, deliberately: ``_resolve_chain`` refuses a
+    carries no guard, deliberately: ``resolve_chain`` refuses a
     ``has_bash=False`` host as a chain member, loudly, before the launch plan is
     built. ``tests/unit/tunnel/test_manage_resolve.py``'s
     ``test_busybox_profile_host_rejected_as_chain_member`` pins that through the

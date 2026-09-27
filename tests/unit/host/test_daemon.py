@@ -9,6 +9,7 @@ from otto.host.daemon import (
     dec,
     enc,
     encode_token,
+    etime_seconds,
     kill_command,
     launch_command,
     parse_etime,
@@ -103,8 +104,29 @@ class TestParseEtime:
         assert parse_etime("") == 0
 
 
+class TestEtimeSeconds:
+    """Tells "just started" from "unreadable", which :func:`parse_etime`'s ``0`` hides."""
+
+    @pytest.mark.parametrize(
+        ("text", "seconds"),
+        [("0", 0), ("42", 42), ("02:03", 123), ("01:02:03", 3723), ("2-01:02:03", 176523)],
+    )
+    def test_reads_every_procps_form(self, text, seconds):
+        assert etime_seconds(text) == seconds
+
+    @pytest.mark.parametrize("text", ["", "garbage", "?", "1:2:3:4", "01:-5", "x-01:02"])
+    def test_unreadable_is_none(self, text):
+        assert etime_seconds(text) is None
+
+
 class TestParsePsOutput:
     PREFIX = "otto-test"
+
+    def test_an_unreadable_etime_is_an_unknown_age_not_a_young_one(self):
+        [proc] = parse_ps_output(f"7 ? {self.PREFIX}:v1:a", self.PREFIX)
+        assert (proc.age_seconds, proc.age_known) == (0, False)
+        [proc] = parse_ps_output(f"7 00:00 {self.PREFIX}:v1:a", self.PREFIX)
+        assert (proc.age_seconds, proc.age_known) == (0, True)
 
     def test_extracts_pid_age_and_token(self):
         out = parse_ps_output(f"  123 01:00 bash {self.PREFIX}:v1:a:b extra", self.PREFIX)

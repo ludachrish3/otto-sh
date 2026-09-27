@@ -121,6 +121,11 @@ checks it against every **live** tunnel discovered right now — declared
   `a,c,b` — both need ingress binds on the same two hosts) and any
   same-port re-plumbing over a different path or `--dest`.
 
+Each hop's traffic travels between two **carrier ports**, picked at random
+above every hop's ephemeral range (see **Previewing: `--dry-run`** in
+{doc}`index`) rather than the lowest free one, so two adds racing on shared
+hosts rarely reach for the same port.
+
 `add` then spawns the tagged processes and **verifies** every one of them
 actually came up before reporting success. If any is missing (a bind collision,
 a port race, a host that turned out not to have `socat`), `add` tears down

@@ -16,10 +16,10 @@ from otto.tunnel.manage import (
     AddedTunnel,
     ResolvedHop,
     _kill_tunnel_on,
-    _probe_port_budget,
     _require_tools,
     _verify_chain,
     add_tunnel,
+    probe_port_budget,
 )
 from otto.tunnel.model import Direction, ProcKey, Role, Tunnel, TunnelHop
 from otto.tunnel.sentinel import ParsedSentinel, encode_sentinel, parse_sentinel
@@ -31,6 +31,42 @@ _LAUNCH_PREFIX = "bash -c 'if command -v systemd-run"
 _SENTINEL_RE = re.compile(r"otto-tunnel:v1:\S+")
 
 _LO = 49152
+
+
+class _PickRNG:
+    """Stub for the ``random.Random`` seam :mod:`otto.tunnel.manage` draws carrier ports from.
+
+    ``choice`` returns the lowest candidate by default, so a test can name
+    the exact carrier ports an add launches. A test proving the pick is genuinely random pins a
+    preferred value with ``pick=`` — honored only while it is still a
+    candidate, so a caller that correctly excludes an already-chosen port
+    (e.g. ``carrier_fwd`` when picking ``carrier_rev``) is still exercised
+    rather than masked by a stub that ignores the candidate list.
+    """
+
+    def __init__(self, pick: int | None = None) -> None:
+        self.pick = pick
+        self.seen: list[list[int]] = []
+        """Every call's candidates, in call order: ``carrier_fwd``'s, then ``carrier_rev``'s."""
+
+    def choice(self, seq: list[int]) -> int:
+        self.seen.append(list(seq))
+        if self.pick is not None and self.pick in seq:
+            return self.pick
+        return min(seq)
+
+
+@pytest.fixture(autouse=True)
+def _lowest_first_carrier_rng(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test in this module gets lowest-first carrier ports unless it overrides this.
+
+    ``add_tunnel`` draws its two carrier ports at random
+    (:func:`~otto.tunnel.socat.pick_random_free_port`), so this whole file's
+    exact ``_LO``/``_LO + 1``-style port expectations would otherwise be a
+    coin flip. Pinning the seam here, not weakening any assertion, keeps
+    them exact.
+    """
+    monkeypatch.setattr(manage, "_carrier_rng", _PickRNG())
 
 
 @dataclass
@@ -340,6 +376,67 @@ class TestPortProbe:
 
         assert all(not cmd.startswith(_LAUNCH_PREFIX) for _h, cmd in calls)
         assert all(not cmd.startswith("kill ") for _h, cmd in calls)
+
+
+class TestCarrierPortRandomness:
+    """The real carrier-port pick goes through the RNG seam, with every exclusion intact.
+
+    Two DIFFERENT tunnels' adds share no lock, so lowest-first carrier
+    picking made them collide on the first free port whenever their probes
+    landed close together. These prove ``add_tunnel`` really asks its
+    module-level ``manage._carrier_rng`` for each carrier port — not a
+    reimplementation of ``pick_free_port``'s lowest-first search — and that
+    every exclusion the old path had (the probed ``used`` set, ``--port``,
+    the ephemeral floor, and ``carrier_fwd`` once it's chosen) still reaches
+    the picker.
+    """
+
+    def test_the_carrier_ports_are_drawn_from_the_whole_budget_not_hardcoded_to_the_floor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        lab, _calls, tunnel = _pair()
+        a, b = lab.hosts["a"], lab.hosts["b"]
+        far_fwd = _LO + 12000
+        a.ps_texts = ["", _full_ps(tunnel, "a", far_fwd, _LO)]
+        b.ps_texts = ["", _full_ps(tunnel, "b", far_fwd, _LO)]
+        # Prefers far_fwd while it's still a candidate, else the lowest free
+        # one — so a fixed pick, not a coincidence, proves the seam reaches
+        # `add_tunnel`, and a lowest-first fallback (once far_fwd is excluded
+        # for carrier_rev) proves carrier_fwd's own exclusion still works.
+        monkeypatch.setattr(manage, "_carrier_rng", _PickRNG(pick=far_fwd))
+
+        added = asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080))
+
+        assert added.carrier_fwd == far_fwd
+        assert added.carrier_rev == _LO
+
+    def test_the_probed_used_set_and_port_and_floor_still_exclude_candidates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        lab, _calls, tunnel = _pair(port=61050)
+        a, b = lab.hosts["a"], lab.hosts["b"]
+        a.probe_ports = "otto-ephemeral 32768\t60999\nLISTEN 0 128 0.0.0.0:61000 0.0.0.0:*\n"
+        b.probe_ports = "LISTEN 0 128 0.0.0.0:61001 0.0.0.0:*\n"
+        rng = _PickRNG()  # lowest-first, so the excluded floor/ports show up as gaps
+        monkeypatch.setattr(manage, "_carrier_rng", rng)
+        carrier_fwd, carrier_rev = 61002, 61003
+        a.ps_texts = ["", _full_ps(tunnel, "a", carrier_fwd, carrier_rev)]
+        b.ps_texts = ["", _full_ps(tunnel, "b", carrier_fwd, carrier_rev)]
+
+        added = asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=61050))
+
+        assert added.carrier_fwd == carrier_fwd  # 61000, 61001 and 61050 (--port) excluded
+        assert added.carrier_rev == carrier_rev  # carrier_fwd (61002) excluded too
+        fwd_candidates, rev_candidates = rng.seen
+        for candidates in (fwd_candidates, rev_candidates):
+            assert 61000 not in candidates
+            assert 61001 not in candidates
+            assert 61050 not in candidates  # --port
+            # The ephemeral ceiling (60999) itself is excluded by raising the floor,
+            # not by adding it to `used` — the lowest candidate must clear it.
+            assert min(candidates) >= 61000
+        assert carrier_fwd in fwd_candidates
+        assert carrier_fwd not in rev_candidates
 
 
 class TestRequireTools:
@@ -658,7 +755,7 @@ class TestInternals:
         with pytest.raises(HostUnreachableError, match="host 'a' timed out checking for socat"):
             asyncio.run(_require_tools(host, SocatCarrier()))
 
-    def test_probe_port_budget_gathers_across_hosts(self) -> None:
+    def testprobe_port_budget_gathers_across_hosts(self) -> None:
         a = FakeHost("a", ip="10.0.0.1", probe_ports="LISTEN 0 0.0.0.0:49200 *:*\n")
         b = FakeHost("b", ip="10.0.0.2", probe_ports="LISTEN 0 0.0.0.0:49201 *:*\n")
 
@@ -666,11 +763,11 @@ class TestInternals:
             ResolvedHop(hop=TunnelHop("a"), ip="10.0.0.1", host=a),
             ResolvedHop(hop=TunnelHop("b"), ip="10.0.0.2", host=b),
         ]
-        budget = asyncio.run(_probe_port_budget(resolved))
+        budget = asyncio.run(probe_port_budget(resolved))
         assert budget.used == {49200, 49201}
         assert budget.floor == 49152, "a chain that reports no range keeps the legacy floor"
 
-    def test_probe_port_budget_clears_the_highest_ephemeral_ceiling(self) -> None:
+    def testprobe_port_budget_clears_the_highest_ephemeral_ceiling(self) -> None:
         """#284: carrier ports must start above every chain kernel's range."""
         a = FakeHost(
             "a",
@@ -687,11 +784,11 @@ class TestInternals:
             ResolvedHop(hop=TunnelHop("a"), ip="10.0.0.1", host=a),
             ResolvedHop(hop=TunnelHop("b"), ip="10.0.0.2", host=b),
         ]
-        budget = asyncio.run(_probe_port_budget(resolved))
+        budget = asyncio.run(probe_port_budget(resolved))
         assert budget.used == {49200, 49201}
         assert budget.floor == 61235
 
-    def test_probe_port_budget_ignores_a_silent_host(self) -> None:
+    def testprobe_port_budget_ignores_a_silent_host(self) -> None:
         """One host without /proc must not drag the chain back into the range."""
         a = FakeHost(
             "a",
@@ -704,7 +801,7 @@ class TestInternals:
             ResolvedHop(hop=TunnelHop("a"), ip="10.0.0.1", host=a),
             ResolvedHop(hop=TunnelHop("b"), ip="10.0.0.2", host=b),
         ]
-        assert asyncio.run(_probe_port_budget(resolved)).floor == 61000
+        assert asyncio.run(probe_port_budget(resolved)).floor == 61000
 
     def test_kill_tunnel_on_is_best_effort_on_dead_host(self) -> None:
         """A host that raises during the rollback scan/kill must not blow up rollback."""

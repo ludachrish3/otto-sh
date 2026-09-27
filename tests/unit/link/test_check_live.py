@@ -10,6 +10,7 @@ the wrong thing measures the wrong thing.
 """
 
 import dataclasses
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -35,6 +36,7 @@ from otto.link.model import Link
 from otto.link.netem import NetEmImpairer
 from otto.link.params import ImpairmentParams, Selector
 from otto.link.placement import FlowDirection
+from otto.link.sandbox import new_sandbox
 from tests.unit.check.test_fingerprint import MODERN
 
 from ._check_fakes import EDGE, FakeLab, SandboxHost, bed, patch_sleep
@@ -186,8 +188,7 @@ async def test_live_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     assert [s.columns for s in link_sections(report)] == [["sandbox", "live"]] * 2
     assert fake.states == {A_TO_B: DirectionState(), B_TO_A: DirectionState()}
     for host in (test1, test2):
-        assert host.whole is None
-        assert not host.scoped
+        assert host.clean()
 
 
 @pytest.mark.asyncio
@@ -328,31 +329,176 @@ async def test_heal_check_fails_read_back_when_state_remains(
     assert not report.ok
 
 
-@pytest.mark.asyncio
-async def test_leftover_listeners_are_swept_and_said(monkeypatch: pytest.MonkeyPatch) -> None:
-    lab, _, test2, _ = bed()
-    test2.answer("pgrep -af", "4242 socat TCP-LISTEN:5299,fork,reuseaddr PIPE otto-check-abc123\n")
-    _fake(monkeypatch, lab)
-    report = await check_link(lab, "edge", live=True, from_host="test1")
-    said = "swept otto-check process otto-check-abc123 on test2 (earlier or concurrent run)"
-    assert report.live_swept == [said]
-    assert "pkill -f '[o]tto-check-[0-9a-f]{6}'" in test2.commands
-    [section] = link_sections(report)
-    assert said in section.subheadings
+class TestTheListenerSweepGoesByAge:
+    """A tag younger than ``SWEEP_MIN_AGE_S`` may be a check running against this host."""
 
+    @pytest.mark.asyncio
+    async def test_an_old_run_s_processes_are_killed_and_said(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        lab, _, test2, _ = bed()
+        test2.answer(
+            "ps -eo pid=",
+            "4242 01:00:00 socat TCP-LISTEN:5299,fork,reuseaddr PIPE otto-check-abc123\n"
+            "4243 00:03 socat TCP-LISTEN:5299,fork,reuseaddr PIPE otto-check-abc123\n",
+        )
+        _fake(monkeypatch, lab)
+        report = await check_link(lab, "edge", live=True, from_host="test1")
+        said = (
+            "swept otto-check process otto-check-abc123 on test2 "
+            "(earlier or concurrent run, started 60 min ago)"
+        )
+        assert report.live_swept == [said]
+        assert "kill 4242 4243" in test2.commands
+        [section] = link_sections(report)
+        assert said in section.subheadings
 
-@pytest.mark.asyncio
-async def test_a_pgrep_without_a_says_so_and_sweeps_anyway(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    lab, _, test2, _ = bed()
-    usage = "pgrep: invalid option -- 'a'\nUsage: pgrep [-flvx] PATTERN\n"
-    test2.answer("pgrep -af", usage, ok=False)
-    _fake(monkeypatch, lab)
-    report = await check_link(lab, "edge", live=True, from_host="test1")
-    [said] = report.live_swept
-    assert said.startswith("could not list otto-check processes on test2 (pgrep -a said: Usage:")
-    assert "pkill -f '[o]tto-check-[0-9a-f]{6}'" in test2.commands
+    @pytest.mark.asyncio
+    async def test_a_young_run_s_processes_are_left_and_said(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        lab, _, test2, _ = bed()
+        test2.answer("ps -eo pid=", "4242 00:40 socat PIPE otto-check-abc123\n")
+        _fake(monkeypatch, lab)
+        report = await check_link(lab, "edge", live=True, from_host="test1")
+        assert report.live_swept == [
+            (
+                "left otto-check process otto-check-abc123 on test2 "
+                "(started 40 s ago — may be a running check)"
+            )
+        ]
+        assert not any(c.startswith("kill ") and "4242" in c for c in test2.commands)
+
+    @pytest.mark.asyncio
+    async def test_a_run_whose_age_ps_cannot_say_is_killed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        lab, _, test2, _ = bed()
+        test2.answer("ps -eo pid=", "4242 ? socat PIPE otto-check-abc123\n")
+        _fake(monkeypatch, lab)
+        report = await check_link(lab, "edge", live=True, from_host="test1")
+        assert report.live_swept == [
+            (
+                "swept otto-check process otto-check-abc123 on test2 "
+                "(earlier or concurrent run, age unknown)"
+            )
+        ]
+        assert "kill 4242" in test2.commands
+
+    @pytest.mark.asyncio
+    async def test_a_ps_that_cannot_list_skips_the_sweep_and_says_so(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A busybox ``ps`` without ``-o`` support fails: the sweep says it saw nothing."""
+        lab, _, test2, _ = bed()
+        test2.answer("ps -eo pid=", "@ps-failed\n")
+        _fake(monkeypatch, lab)
+        report = await check_link(lab, "edge", live=True, from_host="test1")
+        assert report.live_swept == ["could not list processes on test2; sweep skipped"]
+        assert not any(c.startswith("kill ") for c in test2.commands)
+
+    @pytest.mark.asyncio
+    async def test_a_young_leftover_listener_this_run_reuses_is_said(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A young leftover listener holds 5299 on the link address, so this run's own
+        listener there cannot bind, and the leftover answers its probes: say so."""
+        lab, _, test2, _ = bed()
+        test2.answer(
+            "ps -eo pid=",
+            "4242 00:40 otto-check-abc123 TCP-LISTEN:5299,bind=10.10.202.12,fork,reuseaddr PIPE\n",
+        )
+        _fake(monkeypatch, lab)
+        report = await check_link(lab, "edge", live=True, from_host="test1")
+        assert report.live_swept == [
+            (
+                "left otto-check process otto-check-abc123 on test2 "
+                "(started 40 s ago — may be a running check)"
+            ),
+            "reusing leftover listener on test2:5299 (otto-check-abc123, started 40 s ago)",
+        ]
+        [section] = link_sections(report)
+        assert report.live_swept[1] in section.subheadings
+
+    @pytest.mark.asyncio
+    async def test_a_leftover_beside_this_run_s_own_listener_is_not_reused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """This run's listener is up on every port: a leftover elsewhere answers nothing."""
+        lab, _, test2, _ = bed()
+        monkeypatch.setattr(check_live, "new_sandbox", lambda: new_sandbox("fedcba"))
+        listen = "TCP-LISTEN:{},bind=10.10.202.12,fork,reuseaddr PIPE"
+        ours = "".join(
+            f"{pid} 00:01 otto-check-fedcba {listen.format(port)}\n"
+            for pid, port in [(5000, 5205), (5001, 5211), (5002, 5299)]
+        )
+        test2.answer(
+            "ps -eo pid=",
+            "4242 00:40 otto-check-abc123 TCP-LISTEN:5299,bind=10.10.9.9,fork,reuseaddr PIPE\n"
+            + ours,
+        )
+        _fake(monkeypatch, lab)
+        report = await check_link(lab, "edge", live=True, from_host="test1")
+        assert not [line for line in report.live_swept if line.startswith("reusing")]
+
+    @pytest.mark.parametrize(
+        ("args", "port"),
+        [
+            ("otto-check-abc123 TCP-LISTEN:5299,bind=10.10.202.12,fork,reuseaddr PIPE", 5299),
+            (
+                (
+                    "python3 -c import socket?s = socket.socket()?"
+                    "s.bind(('10.10.202.12', 5205)); s.listen(16)? otto-check-abc123"
+                ),
+                5205,
+            ),
+            ("otto-check-abc123 sleep 30", None),
+        ],
+    )
+    def test_a_listener_s_port_is_read_from_its_command_line(self, args, port) -> None:
+        assert check_live._listen_port(args) == port
+
+    def test_the_scan_marks_a_ps_that_fails(self, tmp_path) -> None:
+        """Run the scan in a real shell whose ``ps`` rejects ``-eo``: it prints the marker."""
+        fake_ps = tmp_path / "ps"
+        fake_ps.write_text("#!/bin/sh\necho 'ps: invalid option -- e' >&2\nexit 1\n")
+        fake_ps.chmod(0o755)
+        scanned = subprocess.run(
+            ["/bin/sh", "-c", check_live.SWEEP_SCAN],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=20,
+            env={"PATH": f"{tmp_path}:/usr/bin:/bin"},
+        )
+        assert scanned.stdout.splitlines() == ["@ps-failed"]
+        assert check_live._parse_scan(scanned.stdout) == []
+
+    def test_the_scan_never_matches_its_own_command_line(self) -> None:
+        """Run the scan in a real shell, beside a real tagged process: it finds only that one."""
+        from otto.check.fingerprint import one_command
+
+        for wrapper in (check_live.SWEEP_SCAN, one_command(check_live.SWEEP_SCAN)):
+            assert check_live._TAG_RE.search(wrapper) is None, wrapper
+        tag = f"otto-check-{secrets.token_hex(3)}"
+        planted = subprocess.Popen(["/bin/bash", "-c", f"exec -a {tag} sleep 30"])
+        try:
+            scanned = subprocess.run(
+                ["/bin/sh", "-c", check_live.SWEEP_SCAN],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=20,
+            )
+        finally:
+            planted.kill()
+            planted.wait(timeout=10)
+        found = check_live._parse_scan(scanned.stdout)
+        assert [(p.pid, p.tag) for p in found if p.tag == tag] == [(planted.pid, tag)]
+        # Every line grep let through carries a real tag: neither grep nor the shell running
+        # it matched its own command line.
+        lines = scanned.stdout.splitlines()
+        assert len(found) == len(lines), scanned.stdout
 
 
 @pytest.mark.asyncio
@@ -512,9 +658,12 @@ class TestEveryCommandSurvivesElevation:
         )
         raw: list[str] = []
         for fingerprint in (MODERN, python3):
-            lab, test1, test2, _ = bed(fingerprint=fingerprint, stale="otto-check-abc123 (id: 0)")
+            stale = (
+                "otto-check-abc123 (id: 0)\n@now 9000\n@mtime 10 /var/run/netns/otto-check-abc123"
+            )
+            lab, test1, test2, _ = bed(fingerprint=fingerprint, stale=stale)
             test2.fingerprint = fingerprint
-            test2.answer("pgrep -af", "4242 socat PIPE otto-check-abc123\n")
+            test2.answer("ps -eo pid=", "4242 01:00:00 socat PIPE otto-check-abc123\n")
             _fake(monkeypatch, lab)
             await check_link(lab, "edge", live=True)
             raw += test1.raw_commands + test2.raw_commands
@@ -526,7 +675,8 @@ class TestEveryCommandSurvivesElevation:
         from otto.host.local_host import LocalHost
 
         for needle in (
-            "ip netns add", "ip netns pids", "pgrep -af", "pkill -f", "ping -c", "TCP-LISTEN",
+            "ip netns add", "ip netns pids", "ps -eo pid=", "kill 4242", "pkill -f", "ping -c",
+            "TCP-LISTEN",
             "python3 -c", "EPOCHREALTIME", "tc qdisc replace", "tc qdisc del", "tc filter add",
             "id -u", "grep -qx x", "wc -c", ",bind=", "s.bind(", "-T 15",
         ):  # fmt: skip

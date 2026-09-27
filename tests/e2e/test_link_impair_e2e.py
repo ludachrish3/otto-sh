@@ -1025,11 +1025,19 @@ async def test_link_check_live_passes_and_heals(impair_lab: Lab) -> None:
 
 
 @pytest.mark.asyncio(loop_scope="module")
-async def test_link_check_sweeps_a_killed_runs_sandbox(impair_lab: Lab) -> None:
-    """A namespace left by a killed run is swept, named, and gone afterwards."""
+async def test_link_check_sweeps_a_killed_runs_sandbox(impair_lab: Lab, monkeypatch) -> None:
+    """A namespace left by a killed run is swept, named, and gone afterwards.
+
+    The planted namespace is seconds old on the host's clock, and a real
+    sweep leaves anything that young alone (the next test). So the sweep's
+    age bound, ``otto.check.sweep.SWEEP_MIN_AGE_S``, is patched to -1 here,
+    which even an age of 0 s is past: the planted namespace stands in for one
+    left longer ago than the bound.
+    """
     from otto.link import check_link
     from otto.link.sandbox import new_sandbox, setup_commands
 
+    monkeypatch.setattr("otto.check.sweep.SWEEP_MIN_AGE_S", -1)
     test1 = impair_lab.hosts[_TEST1]
     stale = new_sandbox("dead00")
     try:
@@ -1037,9 +1045,117 @@ async def test_link_check_sweeps_a_killed_runs_sandbox(impair_lab: Lab) -> None:
             await _root(test1, cmd)
         assert stale.name in await _check_netns_left(test1)
         report = await check_link(impair_lab, "edge", from_host=_TEST1, features=["delay"])
-        assert stale.name in report.hosts[0].swept
+        swept = report.hosts[0].swept
+        assert any(
+            line.startswith(f"swept leftover sandbox {stale.name} on {_TEST1} (earlier or")
+            for line in swept
+        ), swept
         assert not await _check_netns_left(test1)
     finally:
         # A failed sweep must not leave the planted namespace for the next run.
         await _root_best_effort(test1, f"ip netns del {stale.name}")
         await _root_best_effort(test1, f"ip link del {stale.veth}")
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_link_check_leaves_a_sandbox_too_young_to_sweep(impair_lab: Lab) -> None:
+    """A namespace seconds old may be a running check's: it is left, and the check still passes.
+
+    Both sandboxes then sit on test1 at once. Each has its own /30, so this
+    run's probes reach its own namespace, not the planted one, and ``delay``
+    passes. The test removes the planted namespace itself afterwards.
+    """
+    import re
+
+    from otto.check import Verdict
+    from otto.link import check_link
+    from otto.link.sandbox import new_sandbox, setup_commands
+
+    test1 = impair_lab.hosts[_TEST1]
+    young = new_sandbox("dead01")
+    try:
+        for cmd in setup_commands(young):
+            await _root(test1, cmd)
+        report = await check_link(impair_lab, "edge", from_host=_TEST1, features=["delay"])
+        swept = report.hosts[0].swept
+        assert any(
+            re.fullmatch(
+                rf"left {young.name} namespace on {_TEST1} \(created \d+ s ago — may be a "
+                r"running check\)",
+                line,
+            )
+            for line in swept
+        ), swept
+        verdicts = {r.feature: r.verdict for r in report.hosts[0].sandbox}
+        assert verdicts.get("delay") is Verdict.PASS, report.hosts[0]
+        assert set(verdicts.values()) == {Verdict.PASS}, report.hosts[0]
+        assert young.name in await _check_netns_left(test1)
+    finally:
+        await _root_best_effort(test1, f"ip netns del {young.name}")
+        await _root_best_effort(test1, f"ip link del {young.veth}")
+    assert not await _check_netns_left(test1)
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_link_check_two_sandbox_runs_at_once_on_one_host_both_pass(impair_lab: Lab) -> None:
+    """Two sandbox-only checks on test1 at once: both pass, and neither sweeps the other.
+
+    Each check runs on its own ``Lab`` of freshly built hosts, as two otto
+    processes (two terminals, or a CI job beside a person) would: a check's
+    privileged commands use the host's one persistent shell session, which
+    is not concurrency-safe within one host object. The second starts once
+    the first's namespace exists on test1, so its sweep finds that namespace
+    seconds old and must leave it. Each sandbox has its own /30, so each
+    run's ``delay`` measures its own namespace. Not ``--live``: two live runs
+    on one link impair the same interface, which the docs say not to do.
+    """
+    from otto.check import Verdict
+    from otto.link import check_link
+
+    second_lab = Lab(name="impair_e2e_second_check")
+    watcher = _build_host(_TEST1)
+    for ne in ("test1", "test2", "test3"):
+        second_lab.add_host(_build_host(ne))
+    second_lab.links.extend(impair_lab.links)
+    try:
+        assert not await _check_netns_left(watcher), "the bed must start clean"
+
+        async def a_namespace_is_up() -> bool:
+            return bool(await _check_netns_left(watcher))
+
+        async def once_the_first_has_its_namespace() -> LinkCheckReport:
+            await wait_for_async(
+                a_namespace_is_up,
+                timeout=30.0,
+                interval=0.2,
+                on_timeout="the first check never created its namespace on test1",
+            )
+            return await check_link(second_lab, "edge", from_host=_TEST1, features=["delay"])
+
+        # Both run to the end, each with its own teardown, even when one raises.
+        outcomes = await asyncio.gather(
+            check_link(impair_lab, "edge", from_host=_TEST1, features=["delay"]),
+            once_the_first_has_its_namespace(),
+            return_exceptions=True,
+        )
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                raise outcome
+        first, second = outcomes
+        assert isinstance(first, LinkCheckReport)
+        assert isinstance(second, LinkCheckReport)
+        for label, report in [("first", first), ("second", second)]:
+            _show(report)
+            (host,) = report.hosts
+            verdicts = {r.feature: r.verdict for r in host.sandbox}
+            assert verdicts == {"read-back": Verdict.PASS, "delay": Verdict.PASS}, (label, host)
+            swept = [line for line in host.swept if line.startswith("swept")]
+            assert not swept, (label, host.swept)
+        assert any(line.startswith("left otto-check-") for line in second.hosts[0].swept), (
+            "the second run's sweep saw the first's namespace, and left it",
+            second.hosts[0].swept,
+        )
+        assert not await _check_netns_left(watcher)
+    finally:
+        hosts = [watcher, *second_lab.hosts.values()]
+        await asyncio.gather(*(h.close() for h in hosts), return_exceptions=True)

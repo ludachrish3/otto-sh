@@ -228,11 +228,13 @@ def ps_scan_command(prefix: str) -> str:
     return f"ps -eo pid= -eo etime= -eo args= 2>/dev/null | \\grep -a ' {prefix}:' || true"
 
 
-def parse_etime(text: str) -> int:
-    """Procps ``etime`` (``[[DD-]HH:]MM:SS`` or bare ``SS``) → seconds.
+def etime_seconds(text: str) -> int | None:
+    """Procps ``etime`` (``[[DD-]HH:]MM:SS`` or bare ``SS``) → seconds, or ``None``.
 
-    Returns ``0`` for anything unparseable rather than raising — one host
-    emitting a malformed ``etime`` must not take down a whole scan.
+    ``None`` means the text is not an ``etime`` this parser can read: a caller
+    that must tell "just started" from "no idea" (a sweep deciding whether a
+    leftover is old enough to remove) needs the difference that
+    :func:`parse_etime`'s ``0`` hides.
     """
     try:
         days = 0
@@ -240,12 +242,25 @@ def parse_etime(text: str) -> int:
             d, _, text = text.partition("-")
             days = int(d)
         parts = [int(p) for p in text.split(":")]
-        while len(parts) < _ETIME_MAX_FIELDS:
-            parts.insert(0, 0)
-        h, m, s = parts[-3], parts[-2], parts[-1]
-        return days * 86400 + h * 3600 + m * 60 + s
     except ValueError:
-        return 0
+        return None
+    if len(parts) > _ETIME_MAX_FIELDS or min(parts) < 0:
+        return None
+    while len(parts) < _ETIME_MAX_FIELDS:
+        parts.insert(0, 0)
+    h, m, s = parts
+    return days * 86400 + h * 3600 + m * 60 + s
+
+
+def parse_etime(text: str) -> int:
+    """Procps ``etime`` (``[[DD-]HH:]MM:SS`` or bare ``SS``) → seconds.
+
+    Returns ``0`` for anything unparseable rather than raising — one host
+    emitting a malformed ``etime`` must not take down a whole scan. Use
+    :func:`etime_seconds` to tell that ``0`` from a process that just started.
+    """
+    seconds = etime_seconds(text)
+    return 0 if seconds is None else seconds
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,6 +270,9 @@ class DaemonProcess:
     pid: int
     age_seconds: int
     token: str
+    age_known: bool = True
+    """``False`` when ``ps`` printed an ``etime`` :func:`etime_seconds` could not
+    read; ``age_seconds`` is then ``0``, which does not mean young."""
 
 
 def parse_ps_output(output: str, prefix: str) -> list[DaemonProcess]:
@@ -272,8 +290,14 @@ def parse_ps_output(output: str, prefix: str) -> list[DaemonProcess]:
         token = next((w for w in fields[2:] if w.startswith(needle)), None)
         if token is None:
             continue
+        age = etime_seconds(fields[1])
         out.append(
-            DaemonProcess(pid=int(fields[0]), age_seconds=parse_etime(fields[1]), token=token)
+            DaemonProcess(
+                pid=int(fields[0]),
+                age_seconds=0 if age is None else age,
+                token=token,
+                age_known=age is not None,
+            )
         )
     return out
 

@@ -20,7 +20,8 @@ The rules the cycle keeps:
 - Probes run on the direction's origin endpoint and aim at the far
   endpoint's address. The echo listeners run on the far endpoint, tagged
   ``otto-check-<token>`` and killed in a ``finally``; before anything runs,
-  listeners an earlier, killed run left on either endpoint are swept.
+  listeners an earlier, killed run left on either endpoint are swept, once
+  they are older than :data:`~otto.check.sweep.SWEEP_MIN_AGE_S`.
 - A feature that failed in the sandbox is ``skipped`` live.
 - The cycle ends with a heal check: the link must read back clean in every
   direction, or the ``read-back`` row fails.
@@ -40,6 +41,15 @@ from typing import Any
 
 from ..check import FeatureResult, HostFingerprint, Verdict
 from ..check.fingerprint import LINK_TOOLS, LINK_VERSIONS, check_root_run, probe_fingerprint
+from ..check.sweep import (
+    COMMAND_ALLOWANCE_S,
+    age_text,
+    left_line,
+    run_age,
+    sweepable,
+    swept_note,
+)
+from ..host.daemon import etime_seconds, kill_command
 from ..host.errors import UnsupportedOnUserlandError
 from . import _check_rows as rows
 from ._check_rows import ProbeCtx, far_end, origin_end
@@ -70,9 +80,25 @@ _ROUND_TRIP_S = 1.0
 
 _TAG_RE = re.compile(r"otto-check-[0-9a-f]{6}")
 """Every ``otto-check-*`` tag: a sandbox namespace's name, or a listener's."""
-_SWEEP_PATTERN = shlex.quote(rows.kill_pattern("otto-check-") + "[0-9a-f]{6}")
-_SWEEP_LIST = f"pgrep -af {_SWEEP_PATTERN}"
-_SWEEP_KILL = f"pkill -f {_SWEEP_PATTERN}"
+PS_FAILED = "@ps-failed"
+"""The line :data:`SWEEP_SCAN` prints when ``ps`` itself failed, so found-nothing and
+could-not-look read differently."""
+SWEEP_SCAN = (
+    f"{{ ps -eo pid= -eo etime= -eo args= 2>/dev/null || echo {PS_FAILED}; }} | "
+    "\\grep -aE "
+    f"{shlex.quote(rows.kill_pattern('otto-check-') + '[0-9a-f]{6}|^' + PS_FAILED + '$')} || true"
+)
+"""Every process carrying an ``otto-check-<6 hex>`` tag, with its pid and age.
+
+The fields are separate ``-eo`` flags and ``etime``, not ``etimes``, for the
+same old procps :func:`~otto.host.daemon.ps_scan_command` supports. A ``ps``
+that rejects them (busybox built without its desktop options) prints
+:data:`PS_FAILED` instead, so the sweep says it could not look rather than
+that it found nothing. The pattern's ``[o]`` keeps ``grep`` from matching its
+own command line, or the ``sudo`` and shell around it (see
+``otto.link._check_rows.kill_pattern``), and ``\\grep`` skips a colouring
+alias."""
+_MIN_SCAN_FIELDS = 3
 
 
 @dataclass(frozen=True)
@@ -82,7 +108,8 @@ class LiveResults:
     by_direction: dict[FlowDirection, list[FeatureResult]]
     """Each checked direction's live rows, in the requested features' order."""
     swept: list[str] = field(default_factory=list)
-    """What the pre-cycle sweep of ``otto-check-*`` processes did, one line each."""
+    """What the pre-cycle sweep of ``otto-check-*`` processes did, one line each,
+    then one line per leftover listener the probes reached instead of this run's own."""
 
 
 class _RefusedError(Exception):
@@ -110,6 +137,10 @@ class _Live:
     """Directions ``impair_link`` was called for — what the heal check covers."""
     halted: str | None = None
     """Why no further step may run (a repair failed), once one did."""
+    left: set[str] = field(default_factory=set)
+    """Hosts on which the sweep left a younger run's processes running."""
+    reused: list[str] = field(default_factory=list)
+    """One line per leftover listener this run's probes reached instead of its own."""
 
     async def fingerprint(self, host: Any) -> HostFingerprint:
         """Return *host*'s fingerprint, probing it only the first time."""
@@ -304,6 +335,66 @@ def live_seconds(features: list[str]) -> int:
     return math.ceil(sum(_ROUND_TRIP_S + step.impaired_s for step in steps))
 
 
+_IMPAIR_COMMANDS = 10
+"""Host commands one ``impair_link`` call sends, at most: resolve the placement,
+cancel an old timer (list, kill), read the tree, apply it (a scoped apply is a
+root, a band and its filters), read it back, and launch the expire timer.
+Counted from :mod:`otto.link.manage`, rounded up: update it when adding a host
+command to :func:`~otto.link.manage.impair_link`."""
+_REPAIR_COMMANDS = 10
+"""Host commands one ``repair_link`` call sends, at most: resolve, cancel the
+timer, read, clear, read back. Counted from :mod:`otto.link.manage`, rounded up:
+update it when adding a host command to :func:`~otto.link.manage.repair_link`."""
+_STATE_COMMANDS = 6
+"""Host commands one ``read_link_state`` sends: the tree reads on each endpoint.
+
+Hand-counted: update it when adding a host command to
+:func:`~otto.link.manage.read_link_state`."""
+
+
+def _step_worst_s(features: list[str]) -> float:
+    """Each requested step: impair, measure every row with its probes timing out, repair.
+
+    Hand-counted: update it when adding a probe or host command to a
+    ``_step_*`` function.
+    """
+    impair = _IMPAIR_COMMANDS * COMMAND_ALLOWANCE_S
+    repair = _REPAIR_COMMANDS * COMMAND_ALLOWANCE_S
+    state = _STATE_COMMANDS * COMMAND_ALLOWANCE_S
+    measure: dict[Step, float] = {
+        _step_delay: state + rows.ping_worst_s(rows.DELAY_PING),
+        _step_port_range: 3 * rows.connect_worst_s(),
+        _step_side: 2 * rows.connect_worst_s(),
+        _step_rate: rows.transfer_worst_s(),
+        _step_loss: rows.ping_worst_s(rows.LOSS_PING),
+    }
+    steps = [step for step in _STEPS if any(f in features for f in step.features)]
+    return sum(impair + measure[step.run] + repair for step in steps)
+
+
+def live_worst_case_s(features: list[str], directions: int) -> float:
+    """Return the longest ``--live`` can run for *features* over *directions*, in seconds.
+
+    Before the cycle: one state read, and the listener sweep's scan and kill
+    on both endpoints. Per direction: both ends fingerprinted, the control
+    ping, the listeners and the scan for a leftover they reuse, every step
+    (``_step_worst_s``) and the listeners' kill. After it: the heal check's
+    state read. Hand-counted: update it when adding a probe or host command
+    to :func:`run_live` outside its steps.
+    """
+    state = _STATE_COMMANDS * COMMAND_ALLOWANCE_S
+    before = state + 2 * 2 * COMMAND_ALLOWANCE_S
+    direction = (
+        2 * COMMAND_ALLOWANCE_S
+        + rows.ping_worst_s(rows.CONTROL_PING)
+        + rows.listeners_worst_s()
+        + COMMAND_ALLOWANCE_S
+        + _step_worst_s(features)
+        + COMMAND_ALLOWANCE_S
+    )
+    return before + directions * direction + state
+
+
 # --------------------------------------------------------------------------
 # One direction, and the whole cycle
 # --------------------------------------------------------------------------
@@ -405,6 +496,8 @@ async def _run_direction(
             blocked = await rows.start_listeners(
                 ctx, far, await live.fingerprint(far), tag=live.tag, bind=ctx.target
             )
+            if blocked is None and far.id in live.left:
+                live.reused += await _reused_listeners(live, far)
         await _run_steps(live, ctx, direction, out, voided, blocked)
     finally:
         if listening:
@@ -437,35 +530,103 @@ def _occupied(link: Link, state: LinkState) -> str | None:
     return None
 
 
-async def _sweep(live: _Live) -> list[str]:
-    """Kill ``otto-check-*`` processes on either endpoint; return a line saying what went.
+@dataclass(frozen=True)
+class _Tagged:
+    """One ``otto-check-*`` tagged process a sweep scan found."""
 
-    The pattern matches ANY otto check's tag, so a check running concurrently
-    against the same host loses its listeners too — which is why the lines
-    say "earlier or concurrent run" rather than presume a crashed one.
+    pid: int
+    age_s: int | None
+    """Seconds since it started; ``None`` when ``ps`` printed an ``etime`` otto cannot read."""
+    tag: str
+    args: str = ""
+    """Its command line, as ``ps`` printed it."""
+
+
+def _parse_scan(output: str) -> list[_Tagged]:
+    """Read :data:`SWEEP_SCAN`'s lines: ``<pid> <etime> <args…>``, each carrying a tag."""
+    found = []
+    for line in output.splitlines():
+        fields = line.split(maxsplit=2)
+        if len(fields) < _MIN_SCAN_FIELDS or not fields[0].isdigit():
+            continue
+        tag = _TAG_RE.search(fields[2])
+        if tag is not None:
+            found.append(_Tagged(int(fields[0]), etime_seconds(fields[1]), tag.group(), fields[2]))
+    return found
+
+
+_LISTEN_PORT_RE = re.compile(r"TCP-LISTEN:(\d+)|\.bind\(\('[^']*', (\d+)\)\)")
+"""The port in a listener's command line: socat's ``TCP-LISTEN:<port>``, or the
+python3 echo's ``s.bind(('<addr>', <port>))``."""
+
+
+def _listen_port(args: str) -> int | None:
+    """Read the port from an echo listener's command line *args*; ``None`` if it is not one."""
+    found = _LISTEN_PORT_RE.search(args)
+    if found is None:
+        return None
+    return int(found.group(1) or found.group(2))
+
+
+async def _reused_listeners(live: _Live, far: Any) -> list[str]:
+    """Name each listener port on *far* a leftover holds instead of this run's own listener.
+
+    A young leftover ``--live`` listener is left by the sweep, and it sits on
+    the port and link address this run's listener needs, so this run's
+    cannot bind there. The leftover answers this run's probes instead, which
+    still measures the link, but the run says whose listener it was. One
+    scan, sent only when the sweep left something on *far*.
+    """
+    scanned = await check_root_run(far, SWEEP_SCAN)
+    procs = _parse_scan(scanned.value or "")
+    ours = {_listen_port(p.args) for p in procs if p.tag == live.tag}
+    said = []
+    for port in rows.LISTEN_PORTS:
+        theirs = [p for p in procs if p.tag != live.tag and _listen_port(p.args) == port]
+        if port in ours or not theirs:
+            continue
+        leftover = theirs[0]
+        age = run_age([p.age_s for p in procs if p.tag == leftover.tag])
+        started = "age unknown" if age is None else f"started {age_text(age)} ago"
+        said.append(f"reusing leftover listener on {far.id}:{port} ({leftover.tag}, {started})")
+    return said
+
+
+async def _sweep(live: _Live) -> list[str]:
+    """Kill old ``otto-check-*`` processes on either endpoint; say what went and what was left.
+
+    Every process carrying one tag is one run's: its listeners, and the
+    connections they forked. The run is as old as its oldest process
+    (:func:`~otto.check.sweep.run_age`), and is swept only when that is older
+    than :data:`~otto.check.sweep.SWEEP_MIN_AGE_S` (or ``ps`` could not say):
+    a younger run may be a check running against this host right now, so its
+    processes are left, with a line saying so.
+    What is swept still says "earlier or concurrent run" rather than presume
+    a crashed one.
     """
     said: list[str] = []
     for host_id in dict.fromkeys([live.link.a.host, live.link.b.host]):
         host = live.lab.hosts.get(host_id)
         if host is None:
             continue
-        listed = await check_root_run(host, _SWEEP_LIST)
-        output = (listed.value or "").strip()
-        tags = list(dict.fromkeys(_TAG_RE.findall(output)))
-        if not listed.is_ok and output and not tags:
-            # pgrep exits 1 silently when nothing matches; output AND no match
-            # is its usage text: this pgrep cannot list command lines (-a).
-            await check_root_run(host, _SWEEP_KILL)
-            said.append(
-                f"could not list otto-check processes on {host_id} (pgrep -a said: "
-                f"{output.splitlines()[-1]}); killed any without naming them"
-            )
-        elif tags:
-            await check_root_run(host, _SWEEP_KILL)
-            said += [
-                f"swept otto-check process {tag} on {host_id} (earlier or concurrent run)"
-                for tag in tags
-            ]
+        scanned = await check_root_run(host, SWEEP_SCAN)
+        if PS_FAILED in (scanned.value or "").split():
+            said.append(f"could not list processes on {host_id}; sweep skipped")
+            continue
+        by_tag: dict[str, list[_Tagged]] = {}
+        for proc in _parse_scan(scanned.value or ""):
+            by_tag.setdefault(proc.tag, []).append(proc)
+        old: list[int] = []
+        for tag, procs in by_tag.items():
+            age = run_age([p.age_s for p in procs])
+            if age is not None and not sweepable(age):
+                said.append(left_line(f"otto-check process {tag}", host_id, age))
+                live.left.add(host_id)
+                continue
+            old += [p.pid for p in procs]
+            said.append(f"swept otto-check process {tag} on {host_id} ({swept_note(age)})")
+        if old:
+            await check_root_run(host, kill_command(old))
     return said
 
 
@@ -525,7 +686,7 @@ async def run_live(
                 if "read-back" in found[d]:
                     found[d]["read-back"] = _heal_failed(link, found[d]["read-back"], state)
     by_direction = {d: [found[d][f] for f in features] for d in ordered}
-    return LiveResults(by_direction, swept)
+    return LiveResults(by_direction, swept + live.reused)
 
 
 _RANK = {Verdict.FAIL: 0, Verdict.UNSUPPORTED: 0, Verdict.UNMEASURED: 1, Verdict.SKIPPED: 2}

@@ -582,11 +582,11 @@ def _generate_kgcov_matrix(app):  # noqa: ARG001 — Sphinx event signature
 
 
 def _generate_proven_range(app):  # noqa: ARG001 — Sphinx event signature
-    """Render docs/cli/link/known-good.md from src/otto/check/proven.json.
+    """Render docs/cli/known-good.md from src/otto/check/proven.json.
 
     The sibling of the two matrix hooks above for the proven-range page; every
-    builder, for the same reason — the page is a real source file the link
-    toctree names, so every builder has to find it on disk, and a non-zero exit
+    builder, for the same reason — the page is a real source file the CLI
+    topics toctree names, so every builder has to find it on disk, and a non-zero exit
     RAISES so a proven-range file the renderer cannot read is a build FAILURE
     and not a warning.
     """

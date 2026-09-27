@@ -22,8 +22,28 @@ CHECK_HOST_TIMEOUT = 30.0
 LINK_TOOLS = ["tc", "ip", "ping", "socat", "python3", "bash"]
 LINK_VERSIONS = {"iproute2": "tc -V 2>&1 | head -n1"}
 
+TUNNEL_TOOLS = ["socat", "bash", "cksum", "mktemp", "head", "tr", "wc"]
+"""Tools the tunnel check's probes run on a hop; socat plays every role (spec §5.1)."""
+
+TUNNEL_VERSIONS = {
+    "socat": "socat -V 2>/dev/null | grep 'socat version' | head -n1",
+    "bash": "bash -c 'echo $BASH_VERSION' 2>/dev/null",
+    "epochrealtime": "bash -c 'echo ${EPOCHREALTIME:+yes}' 2>/dev/null",
+    "launcher": (
+        "if command -v systemd-run >/dev/null 2>&1 && timeout 5 systemd-run --user --collect"
+        " --quiet -- true >/dev/null 2>&1; then echo systemd-run; else echo setsid; fi"
+    ),
+}
+"""One single-line fact each. ``launcher`` asks the same question as
+:func:`otto.host.daemon.launch_command`'s branch, without enabling linger."""
+
 _IPROUTE2_RE = re.compile(r"iproute2-((?:ss\d{6})|(?:\d+(?:\.\d+)*))")
-_EXTRACTORS = {"iproute2": _IPROUTE2_RE}
+_SOCAT_RE = re.compile(r"socat version (\S+)")
+_BASH_RE = re.compile(r"^(\d+(?:\.\d+)+)")
+"""``$BASH_VERSION``'s dotted release: ``5.2.21(1)-release`` is ``5.2.21``. The patch
+level and ``-release`` tag only widen the facts line; the proven range keys on the
+dotted part anyway."""
+_EXTRACTORS = {"iproute2": _IPROUTE2_RE, "socat": _SOCAT_RE, "bash": _BASH_RE}
 
 
 @dataclass(frozen=True)

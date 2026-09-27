@@ -11,6 +11,10 @@ import json
 import re
 from dataclasses import dataclass
 from importlib import resources
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .fingerprint import HostFingerprint
 
 ORDERED_COMPONENTS = ["iproute2", "kernel", "socat", "bash"]
 """Components with a version order; the rest are compared by membership."""
@@ -98,3 +102,20 @@ def label_against_range(proven: ProvenRange, component: str, version: str | None
     if key > max(keys):
         return RangeLabel.NEWER
     return RangeLabel.WITHIN
+
+
+_FINGERPRINT_FIELDS = {"kernel", "isa", "userland"}
+
+
+def range_labels(fp: "HostFingerprint", components: list[str]) -> dict[str, str]:
+    """Label each of *fp*'s *components* against the proven range: component -> label value.
+
+    ``kernel``, ``isa`` and ``userland`` come from the fingerprint's own
+    fields; every other component is a probed version (``fp.versions``).
+    """
+    proven = load_proven_range()
+    labels = {}
+    for name in components:
+        version = getattr(fp, name) if name in _FINGERPRINT_FIELDS else fp.versions.get(name)
+        labels[name] = label_against_range(proven, name, version).value
+    return labels

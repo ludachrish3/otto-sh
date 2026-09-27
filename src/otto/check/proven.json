@@ -1,5 +1,5 @@
 {
-  "revision": "2026-09-25",
+  "revision": "2026-09-26",
   "components": {
     "iproute2": [
       {"version": "ss170501", "where": "unix bed, oldos container (CentOS 7) on test3", "when": "2026-09-24"},
@@ -14,8 +14,14 @@
     "userland": [
       {"version": "gnu", "where": "unix bed", "when": "2026-09-24"}
     ],
-    "socat": [],
-    "bash": [],
-    "launcher": []
+    "socat": [
+      {"version": "1.8.0.0", "where": "unix bed test1", "when": "2026-09-26"}
+    ],
+    "bash": [
+      {"version": "5.2.21", "where": "unix bed test1", "when": "2026-09-26"}
+    ],
+    "launcher": [
+      {"version": "systemd-run", "where": "unix bed test1", "when": "2026-09-26"}
+    ]
   }
 }

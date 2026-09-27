@@ -361,7 +361,7 @@ class TestTheDryRunBackstop:
     def test_a_lab_with_no_scannable_host_answers_rather_than_declining(self) -> None:
         """The one dry run that is NOT `not_measured`, and deliberately so.
 
-        Discovery only ever scans `has_bash` hosts, and `_validate_chain_shape`
+        Discovery only ever scans `has_bash` hosts, and `validate_path`
         refuses a non-bash chain member precisely so nothing otto builds can
         live outside that set. So on a lab that declares none, "there are no
         otto tunnels" follows from LAB DATA — the empty answer is complete, not

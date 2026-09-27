@@ -6,6 +6,7 @@ The CLI is a thin consumer of ``add_tunnel`` / ``remove_tunnel`` /
 
 import asyncio
 import logging
+import random
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from typing import TYPE_CHECKING, Any, TypeGuard
@@ -33,6 +34,7 @@ from .socat import (
     parse_listening_ports,
     parse_port_holders,
     pick_free_port,
+    pick_random_free_port,
     socket_dump_command,
 )
 
@@ -66,6 +68,25 @@ _LOOPBACK = "127.0.0.1"
 # participate: only add-vs-add shares a deterministic id's fate, and an add
 # racing a remove just fails its verify and rolls back clean.
 _ADD_LOCKS: dict[str, asyncio.Lock] = {}
+
+_carrier_rng = random.SystemRandom()
+"""Draws each real add's two carrier ports (see :func:`pick_random_free_port`).
+
+Two DIFFERENT tunnels' adds share no lock (only a same-id race is
+serialized, above), so their carrier-port probes can land before either has
+bound anything. Lowest-first picking made that collide often — every
+racing pair reaching for the exact same first free port; a random draw from
+the whole budget instead makes it rare. It does not make it impossible: a
+collision that does happen is still caught the way it always was, loudly,
+by the post-add verify (``_diagnose_missing`` below names the port and its
+holder) and rolled back — never a silent cross-talk.
+
+``SystemRandom`` draws from the OS's own entropy on every call, so two
+adds in the same event loop or two separate otto processes never share
+state that could correlate their draws. A module-level seam, not a
+parameter of :func:`add_tunnel`: a test pins the draw by monkeypatching
+this attribute directly (see ``otto.tunnel.check._scratch_rng`` for the
+matching seam on the check side)."""
 
 
 def _add_lock(tunnel_id: str) -> asyncio.Lock:
@@ -116,11 +137,11 @@ def _host_or_raise(lab: "Lab", host_id: str) -> Any:
 def _resolve_static(host_id: str, host: Any, iface: str | None) -> ResolvedHop:
     """Resolve a NON-container hop from declared lab data alone — no device (spec §6.3).
 
-    The pure half of :func:`_resolve_one`, split out so
-    :func:`_planned_hop` can reach it: a normal host's tunnel address is its
+    The pure half of :func:`resolve_endpoint`, split out so
+    :func:`planned_hop` can reach it: a normal host's tunnel address is its
     declared ``interfaces`` entry (or its management ``ip``), which a
     ``--dry-run`` reads perfectly well. A container's is not — see
-    :func:`_planned_hop`.
+    :func:`planned_hop`.
     """
     ifaces = getattr(host, "interfaces", {}) or {}
     if iface is not None:
@@ -145,8 +166,11 @@ def _resolve_static(host_id: str, host: Any, iface: str | None) -> ResolvedHop:
     return resolved
 
 
-async def _resolve_one(lab: "Lab", spec: EndpointSpec) -> ResolvedHop:
-    """Resolve ``(host_id, iface)`` off the live lab (iface rules per spec §6.3/§8)."""
+async def resolve_endpoint(lab: "Lab", spec: EndpointSpec) -> ResolvedHop:
+    """Resolve ``(host_id, iface)`` off the live lab (iface rules per spec §6.3/§8).
+
+    Public: ``otto tunnel check`` resolves each endpoint through this too.
+    """
     host_id, iface = spec
     host = _host_or_raise(lab, host_id)
     if _is_container(host):
@@ -171,11 +195,11 @@ async def _resolve_one(lab: "Lab", spec: EndpointSpec) -> ResolvedHop:
     return _resolve_static(host_id, host, iface)
 
 
-def _validate_chain_shape(lab: "Lab", specs: list[EndpointSpec]) -> None:
+def validate_path(lab: "Lab", specs: list[EndpointSpec]) -> None:
     """Every chain refusal that needs no device — length, duplicates, containers, bash.
 
-    Split out of :func:`_resolve_chain` so the ``--dry-run`` planner
-    (:func:`_planned_chain`) makes the SAME refusals from the SAME data rather
+    Split out of :func:`resolve_chain` so the ``--dry-run`` planner
+    (``planned_chain``) makes the SAME refusals from the SAME data rather
     than an approximation of them. All four read declared lab fields only, so
     a dry run answers each one completely; a chain refused here is not
     "not measured", it is decided.
@@ -186,6 +210,8 @@ def _validate_chain_shape(lab: "Lab", specs: list[EndpointSpec]) -> None:
     an open hole: the ``launch_command`` further down is unreachable on exactly
     the hosts that record covers. Both callers route through here, so adding a
     third cannot bypass it.
+
+    Public: ``otto tunnel check`` validates a path the same way before probing it.
     """
     min_hosts = 2
     if len(specs) < min_hosts:
@@ -223,10 +249,13 @@ def _validate_chain_shape(lab: "Lab", specs: list[EndpointSpec]) -> None:
             )
 
 
-async def _resolve_chain(lab: "Lab", specs: list[EndpointSpec]) -> list[ResolvedHop]:
-    """Resolve + validate the whole ordered chain (spec §6, §8 container rules)."""
-    _validate_chain_shape(lab, specs)
-    return [await _resolve_one(lab, spec) for spec in specs]
+async def resolve_chain(lab: "Lab", specs: list[EndpointSpec]) -> list[ResolvedHop]:
+    """Resolve + validate the whole ordered chain (spec §6, §8 container rules).
+
+    Public: ``otto tunnel check`` resolves the chain it will probe this same way.
+    """
+    validate_path(lab, specs)
+    return [await resolve_endpoint(lab, spec) for spec in specs]
 
 
 def _check_conflicts(discovery: TunnelDiscovery, tunnel: Tunnel) -> None:
@@ -405,7 +434,7 @@ class AddedTunnel:
     ``--dry-run``, where :attr:`plan` carries the provisional pair instead.
 
     NOT the provisional numbers, deliberately. A real run picks these from the
-    union of every chain host's LISTENING ports (``_probe_port_budget``)
+    union of every chain host's LISTENING ports (``probe_port_budget``)
     plus the service port; a dry run has only the service port, so it would
     hand back 49152/49153 on every lab in the world and a caller reading these
     two fields could not tell that from an allocation. The preview's own
@@ -455,19 +484,22 @@ class _HostPorts:
 
 
 @dataclass(frozen=True, slots=True)
-class _PortBudget:
-    """What one probe pass across the chain says about carrier-port choice."""
+class PortBudget:
+    """What one probe pass across the chain says about carrier-port choice.
+
+    Public: ``otto tunnel check`` reads the same probe pass to size its own budget.
+    """
 
     used: set[int]
     """Union of ports LISTENING anywhere on the chain — avoid these."""
 
     floor: int
-    """Lowest port to allocate from: above every chain kernel's ephemeral
+    """Lowest port to allocate from, above every chain kernel's ephemeral
     range, so no host can auto-assign a carrier port out from under us
     (:func:`~otto.tunnel.socat.carrier_port_floor`, #284)."""
 
 
-async def _probe_port_budget(resolved: list[ResolvedHop]) -> _PortBudget:
+async def probe_port_budget(resolved: list[ResolvedHop]) -> PortBudget:
     """Report listening ports and the ephemeral ceiling, across the chain (spec §6.2).
 
     A probe that *times out* raises (wedged host — the launch would hang
@@ -476,6 +508,8 @@ async def _probe_port_budget(resolved: list[ResolvedHop]) -> _PortBudget:
     that answers the listener half but not the range half likewise contributes
     no ceiling: absence of evidence, not a claim that its kernel assigns
     nothing.
+
+    Public: ``otto tunnel check`` probes the same budget before reporting on a path.
     """
 
     async def probe(r: ResolvedHop) -> _HostPorts:
@@ -490,7 +524,7 @@ async def _probe_port_budget(resolved: list[ResolvedHop]) -> _PortBudget:
         )
 
     replies = await asyncio.gather(*(probe(r) for r in resolved))
-    return _PortBudget(
+    return PortBudget(
         used=set().union(*(reply.used for reply in replies)),
         floor=carrier_port_floor([r.ceiling for r in replies if r.ceiling is not None]),
     )
@@ -650,11 +684,11 @@ def _raise_verify_failure(
 
 
 @dataclass(frozen=True, slots=True)
-class _PlannedHop:
+class PlannedHop:
     """One chain position resolved as far as lab data goes, and no further."""
 
     hop: TunnelHop
-    """Always known: the hop's identity is declared, not discovered."""
+    """The hop's identity, always known, because it is declared, not discovered."""
 
     ip: str | None
     """``None`` when only a device could say — a container endpoint, whose
@@ -663,13 +697,13 @@ class _PlannedHop:
     host: Any
 
 
-def _planned_hop(lab: "Lab", spec: EndpointSpec) -> _PlannedHop:
+def planned_hop(lab: "Lab", spec: EndpointSpec) -> PlannedHop:
     """Resolve one hop without contacting anything, or say the address is unknowable.
 
-    The pure half of :func:`_resolve_one`, and the split between the two hop
+    The pure half of :func:`resolve_endpoint`, and the split between the two hop
     kinds is the sharpest constraint on this whole feature:
 
-    * A NORMAL host is pure. :func:`_resolve_static` reads the DECLARED
+    * A NORMAL host is pure. ``_resolve_static`` reads the DECLARED
       ``interfaces`` map (or the management ``ip``), so a dry run names the
       address exactly, with no approximation, and makes every one of that
       function's refusals — unknown interface, ambiguous interface, no usable
@@ -678,7 +712,7 @@ def _planned_hop(lab: "Lab", spec: EndpointSpec) -> _PlannedHop:
       ``docker inspect`` on the parent, so a dry run cannot resolve it and must
       SAY that. Guessing is not available and neither is the old behaviour: the
       synthetic reply's ``is_ok`` is ``True`` and its value is non-empty, so
-      :func:`_container_ip`'s "no resolvable network address" guard did not
+      ``_container_ip``'s "no resolvable network address" guard did not
       fire and the literal string ``"[DRY RUN] Command not executed"`` became a
       container's IP address inside a socat argv.
 
@@ -692,15 +726,18 @@ def _planned_hop(lab: "Lab", spec: EndpointSpec) -> _PlannedHop:
             raise ValueError(
                 f"container {host_id!r} takes no @interface (containers have no modeled interfaces)"
             )
-        return _PlannedHop(hop=TunnelHop(host=host_id), ip=None, host=host)
+        return PlannedHop(hop=TunnelHop(host=host_id), ip=None, host=host)
     static = _resolve_static(host_id, host, iface)
-    return _PlannedHop(hop=static.hop, ip=static.ip, host=static.host)
+    return PlannedHop(hop=static.hop, ip=static.ip, host=static.host)
 
 
-def _planned_chain(lab: "Lab", specs: list[EndpointSpec]) -> list[_PlannedHop]:
-    """Validate and resolve the whole chain purely — :func:`_resolve_chain`'s twin, no device."""
-    _validate_chain_shape(lab, specs)
-    return [_planned_hop(lab, spec) for spec in specs]
+def planned_chain(lab: "Lab", specs: list[EndpointSpec]) -> list[PlannedHop]:
+    """Validate and resolve the whole chain purely — :func:`resolve_chain`'s twin, no device.
+
+    Public: ``otto tunnel check`` makes its refusals and plans its dry run from this too.
+    """
+    validate_path(lab, specs)
+    return [planned_hop(lab, spec) for spec in specs]
 
 
 def _unresolved_addresses(unresolved: list[str]) -> str:
@@ -788,7 +825,7 @@ def _plan_add(
     """Preview :func:`add_tunnel` without contacting anything.
 
     Everything reachable here is pure — the chain's four structural refusals
-    (:func:`_validate_chain_shape`), per-hop address resolution for normal
+    (:func:`validate_path`), per-hop address resolution for normal
     hosts, the ``--dest``-in-chain refusal, the tunnel id, free-port selection
     given a ``used`` set, the whole 2n process plan and every argv, the
     sentinel codec and :func:`~otto.host.daemon.launch_command`. Each refusal
@@ -797,18 +834,22 @@ def _plan_add(
     not safer.
 
     The carrier ports are the one place a pure computation is not a
-    measurement. :func:`pick_free_port` is deterministic given ``used``, and
-    a real run's ``used`` is the union of every hop's listening ports; a dry
-    run's is ``{service_port}``. The numbers are still worth printing — they
-    are what a clean chain would get — but they are marked provisional where
-    they appear AND named in :data:`_UNCHECKED_FREE_PORTS`, and they are kept
-    out of :attr:`AddedTunnel.carrier_fwd` so no caller can read them as an
+    measurement. This preview keeps :func:`pick_free_port`'s deterministic,
+    lowest-first search given ``used`` — a real run instead draws each port
+    at random from its budget (:func:`pick_random_free_port`, #442), so the
+    preview's pair is doubly provisional: a dry run's ``used`` is only
+    ``{service_port}`` where a real run's is the union of every hop's
+    listening ports, AND a dry run's search order is not the real one's. The
+    numbers are still worth printing — they are ports a clean chain has free
+    — but they are marked provisional where they appear AND named in
+    :data:`_UNCHECKED_FREE_PORTS`, and they are kept out of
+    :attr:`AddedTunnel.carrier_fwd` so no caller can read them as an
     allocation.
     """
-    planned = _planned_chain(lab, specs)
-    dest_hop = _planned_hop(lab, dest) if dest else None
+    planned = planned_chain(lab, specs)
+    dest_hop = planned_hop(lab, dest) if dest else None
     if dest_hop is not None:
-        _ensure_dest_outside_chain(dest_hop.hop.host, {p.hop.host for p in planned})
+        ensure_dest_outside_chain(dest_hop.hop.host, {p.hop.host for p in planned})
     tunnel = Tunnel(
         protocol=protocol,
         service_port=port,
@@ -881,8 +922,11 @@ def _sentinel_for(tunnel: Tunnel, proc: "_ProcSpec") -> str:
     )
 
 
-def _ensure_dest_outside_chain(dest_host: str, chain_host_ids: set[str]) -> None:
-    """Refuse a ``--dest`` that names a host already in the path (spec §6.3)."""
+def ensure_dest_outside_chain(dest_host: str, chain_host_ids: set[str]) -> None:
+    """Refuse a ``--dest`` that names a host already in the path (spec §6.3).
+
+    Public: ``otto tunnel check`` makes the same refusal before probing a ``--dest``.
+    """
     if dest_host in chain_host_ids:
         raise ValueError(
             f"--dest {dest_host!r} names a host already in the tunnel path "
@@ -920,7 +964,7 @@ async def add_tunnel(
 
     Under ``--dry-run`` nothing below the short-circuit runs: the report comes
     back with :attr:`~AddedTunnel.plan` set and both carrier ports ``None``.
-    The short-circuit sits ABOVE ``_resolve_chain`` — above the read
+    The short-circuit sits ABOVE ``resolve_chain`` — above the read
     backstop in ``otto.tunnel.discovery._device_read``, which would
     otherwise raise — because the preview needs this call's whole intent and a
     command string does not carry it. It sits BELOW the carrier lookup and the
@@ -950,10 +994,10 @@ async def add_tunnel(
             carrier_obj=carrier_obj,
             idle_timeout=idle_timeout,
         )
-    resolved = await _resolve_chain(lab, hosts)
-    dest_hop = await _resolve_one(lab, dest) if dest else None
+    resolved = await resolve_chain(lab, hosts)
+    dest_hop = await resolve_endpoint(lab, dest) if dest else None
     if dest_hop is not None:
-        _ensure_dest_outside_chain(dest_hop.hop.host, {r.hop.host for r in resolved})
+        ensure_dest_outside_chain(dest_hop.hop.host, {r.hop.host for r in resolved})
     tunnel = Tunnel(
         protocol=protocol,
         service_port=port,
@@ -965,10 +1009,10 @@ async def add_tunnel(
         for r in resolved:
             await _require_tools(r.host, carrier_obj)
 
-        budget = await _probe_port_budget(resolved)
+        budget = await probe_port_budget(resolved)
         used = budget.used | {port}
-        carrier_fwd = pick_free_port(used, lo=budget.floor)
-        carrier_rev = pick_free_port(used | {carrier_fwd}, lo=budget.floor)
+        carrier_fwd = pick_random_free_port(used, _carrier_rng, lo=budget.floor)
+        carrier_rev = pick_random_free_port(used | {carrier_fwd}, _carrier_rng, lo=budget.floor)
 
         ips = [r.ip for r in resolved]
         deliver_fwd = dest_hop.ip if dest_hop else _LOOPBACK

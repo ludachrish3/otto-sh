@@ -15,6 +15,7 @@ from otto.tunnel.socat import (
     parse_listening_ports,
     parse_port_holders,
     pick_free_port,
+    pick_random_free_port,
     relay_socat_args,
     socket_dump_command,
 )
@@ -123,6 +124,39 @@ class TestPorts:
         # `except (ValueError, RuntimeError)` renders it unchanged.
         with pytest.raises(NoFreePortError):
             pick_free_port(set(range(49152, 65536)))
+        assert issubclass(NoFreePortError, RuntimeError)
+
+
+class _StubRNG:
+    """Records the candidate list it was asked to pick from; always returns a fixed port."""
+
+    def __init__(self, pick: int) -> None:
+        self.pick = pick
+        self.seen: list[int] | None = None
+
+    def choice(self, seq: list[int]) -> int:
+        self.seen = list(seq)
+        return self.pick
+
+
+class TestRandomPort:
+    """The random free-port pick: any free port in range, not the lowest.
+
+    ``otto tunnel check`` draws its scratch port and ``otto tunnel add`` its
+    two carrier ports with it, so two runs racing on the same hosts almost
+    never collide, rather than both settling on the same lowest free port
+    every time.
+    """
+
+    def test_draws_from_every_free_port_in_range_not_just_the_lowest(self) -> None:
+        rng = _StubRNG(49155)
+        assert pick_random_free_port({49152, 49154}, rng, lo=49152, hi=49156) == 49155
+        # Every free port in [lo, hi] was a candidate, not only the lowest one.
+        assert rng.seen == [49153, 49155, 49156]
+
+    def test_exhaustion_raises(self) -> None:
+        with pytest.raises(NoFreePortError):
+            pick_random_free_port(set(range(49152, 65536)), _StubRNG(0))
         assert issubclass(NoFreePortError, RuntimeError)
 
 

@@ -5,13 +5,15 @@ so app-level tests drive ``tunnel_app`` through the production dispatch seam
 (``DispatchRunner``); direct-call tests ``await`` the command functions.
 """
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import typer
 
+from otto.check import CheckHostUnreachableError, FeatureResult, UnmeasuredReason, Verdict
 from otto.cli import tunnel as tunnel_cli
 from otto.cli.tunnel import (
     _fmt_age,
@@ -23,6 +25,7 @@ from otto.cli.tunnel import (
     tunnel_app,
 )
 from otto.tunnel import (
+    DEFAULT_CARRIER,
     AddedTunnel,
     DiscoveredTunnel,
     DryRunPlan,
@@ -31,6 +34,8 @@ from otto.tunnel import (
     TunnelDiscovery,
     TunnelHop,
 )
+from otto.tunnel.check import TunnelCheckColumn, TunnelCheckHop, TunnelCheckReport
+from otto.tunnel.socat import NoFreePortError
 from tests._fixtures.dispatch import DispatchRunner
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests.conftest import active_context
@@ -841,3 +846,306 @@ def test_a_plan_row_is_printed_verbatim_without_markup_or_wrapping():
         result = runner.invoke(tunnel_app, ["remove", "--all", "--yes"])
     assert result.exit_code == 0, result.output
     assert argv in result.output
+
+
+# ── `check` ──────────────────────────────────────────────────────────────────
+#
+# `check_tunnel` is deferred-imported inside the command body (see
+# `otto.cli.tunnel.check`'s own comment), so it is never bound at
+# `otto.cli.tunnel` module scope the way `add_tunnel`/`remove_tunnel` are —
+# every mock here patches it at its OWN module, `otto.tunnel.check`, exactly
+# the way `tests/unit/link/test_cli.py`'s check tests patch
+# `otto.link.check.check_link` rather than `otto.cli.link.check_link`.
+
+
+def _hop(host_id: str = "test1", address: str = "10.0.0.1") -> TunnelCheckHop:
+    return TunnelCheckHop(host_id=host_id, address=address, fingerprint=None, range_labels={})
+
+
+def _check_report(
+    *,
+    path: list[str] | None = None,
+    columns: list[TunnelCheckColumn] | None = None,
+    hops: list[TunnelCheckHop] | None = None,
+    refusal: str | None = None,
+    refusal_hint: str | None = None,
+    dry_run_plan: list[str] | None = None,
+) -> TunnelCheckReport:
+    path = path if path is not None else ["test1", "test2"]
+    return TunnelCheckReport(
+        path=path,
+        port=161,
+        dest=None,
+        carrier=DEFAULT_CARRIER,
+        protocols=["tcp"],
+        scratch_port=None,
+        hops=hops if hops is not None else [_hop(p) for p in path],
+        columns=columns if columns is not None else [],
+        refusal=refusal,
+        refusal_hint=refusal_hint,
+        dry_run_plan=dry_run_plan if dry_run_plan is not None else [],
+    )
+
+
+def test_check_all_pass_exits_0_and_prints_the_table():
+    column = TunnelCheckColumn("tcp", [FeatureResult("fwd 1 B", Verdict.PASS, measured="ok")])
+    report = _check_report(columns=[column])
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.tunnel.check.check_tunnel", AsyncMock(return_value=report)),
+    ):
+        result = runner.invoke(tunnel_app, ["check", "--hosts", "test1,test2", "--port", "161"])
+    assert result.exit_code == 0, result.output
+    assert "pass" in result.output
+    assert "test1" in result.output
+
+
+def test_check_any_fail_exits_1():
+    column = TunnelCheckColumn("tcp", [FeatureResult("fwd 1 B", Verdict.FAIL, detail="no reply")])
+    report = _check_report(columns=[column])
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.tunnel.check.check_tunnel", AsyncMock(return_value=report)),
+    ):
+        result = runner.invoke(tunnel_app, ["check", "--hosts", "test1,test2", "--port", "161"])
+    assert result.exit_code == 1, result.output
+    assert "fail" in result.output
+
+
+def test_check_unmeasured_only_exits_0():
+    column = TunnelCheckColumn(
+        "tcp",
+        [FeatureResult("rev bulk", Verdict.UNMEASURED, reason=UnmeasuredReason.MISSING_TOOL)],
+    )
+    report = _check_report(columns=[column])
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.tunnel.check.check_tunnel", AsyncMock(return_value=report)),
+    ):
+        result = runner.invoke(tunnel_app, ["check", "--hosts", "test1,test2", "--port", "161"])
+    assert result.exit_code == 0, result.output
+    assert "unmeasured" in result.output
+
+
+def test_check_unknown_protocol_exits_2_without_calling_the_check():
+    """``--protocol`` validation runs BEFORE ``check_tunnel`` (real, unmocked
+    ``requested_protocols``), so a bad value never reaches it at all — the
+    mock records zero calls, not just a matching exit code."""
+    mock = AsyncMock()
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.tunnel.check.check_tunnel", mock),
+    ):
+        result = runner.invoke(
+            tunnel_app,
+            ["check", "--hosts", "test1,test2", "--port", "161", "--protocol", "bogus"],
+        )
+    assert result.exit_code == 2, result.output
+    assert "unknown protocol" in result.output
+    assert "'bogus'" in result.output
+    mock.assert_not_called()
+
+
+def test_check_bad_hosts_syntax_exits_2():
+    """``_parse_hosts``' own ``ValueError`` (an empty ``--hosts``) is a usage
+    error, validated before ``check_tunnel`` runs at all."""
+    mock = AsyncMock()
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.tunnel.check.check_tunnel", mock),
+    ):
+        result = runner.invoke(tunnel_app, ["check", "--hosts", "", "--port", "161"])
+    assert result.exit_code == 2, result.output
+    assert "at least one host" in result.output
+    mock.assert_not_called()
+
+
+def test_check_refusal_exits_1_with_hint_and_writes_the_report(tmp_path):
+    dest = tmp_path / "out.json"
+    report = _check_report(
+        refusal="'test2' is missing socat and/or bash",
+        refusal_hint="install socat and bash, or point --hosts at a different path",
+    )
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.tunnel.check.check_tunnel", AsyncMock(return_value=report)),
+    ):
+        result = runner.invoke(
+            tunnel_app,
+            ["check", "--hosts", "test1,test2", "--port", "161", "--report", str(dest)],
+        )
+    assert result.exit_code == 1, result.output
+    assert "cannot check tunnel test1 → test2" in result.output
+    assert "missing socat" in result.output
+    assert "install socat and bash" in result.output
+    # A refusal IS the check's result, so `--report` still gets one.
+    assert dest.exists()
+    payload = json.loads(dest.read_text())
+    assert payload["kind"] == "tunnel"
+    assert payload["result"]["refusal"] == "'test2' is missing socat and/or bash"
+    assert str(dest) in result.output
+
+
+def test_check_report_writes_json_only_when_asked(tmp_path, monkeypatch):
+    column = TunnelCheckColumn("tcp", [FeatureResult("fwd 1 B", Verdict.PASS, measured="ok")])
+    report = _check_report(columns=[column])
+    dest = tmp_path / "out.json"
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.tunnel.check.check_tunnel", AsyncMock(return_value=report)),
+    ):
+        result = runner.invoke(
+            tunnel_app,
+            ["check", "--hosts", "test1,test2", "--port", "161", "--report", str(dest)],
+        )
+    assert result.exit_code == 0, result.output
+    assert dest.exists()
+    payload = json.loads(dest.read_text())
+    assert payload["schema"] == "otto-check/1"
+    assert payload["kind"] == "tunnel"
+    assert str(dest) in result.output
+
+    # `dest` was never passed to the second invoke, so an assertion about
+    # SOME other named path is vacuous — it can never fail. `chdir` into
+    # `tmp_path` instead and compare its whole listing before/after: any
+    # write anywhere under it, named or not, moves that listing.
+    before = sorted(tmp_path.iterdir())
+    monkeypatch.chdir(tmp_path)
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.tunnel.check.check_tunnel", AsyncMock(return_value=report)),
+    ):
+        result = runner.invoke(tunnel_app, ["check", "--hosts", "test1,test2", "--port", "161"])
+    assert result.exit_code == 0, result.output
+    assert sorted(tmp_path.iterdir()) == before, (
+        "check without --report wrote something under the cwd"
+    )
+    assert "report:" not in result.output
+
+
+def test_check_dry_run_prints_the_plan_writes_nothing_and_exits_0(tmp_path):
+    dest = tmp_path / "out.json"
+    plan = [
+        "would fingerprint test1, test2 (one probe command each)",
+        "no device was contacted — nothing was measured",
+    ]
+    report = _check_report(dry_run_plan=plan)
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.tunnel.check.check_tunnel", AsyncMock(return_value=report)),
+    ):
+        result = runner.invoke(
+            tunnel_app,
+            ["check", "--hosts", "test1,test2", "--port", "161", "--report", str(dest)],
+        )
+    assert result.exit_code == 0, result.output
+    assert "dry run" in result.output
+    assert "would fingerprint test1, test2" in result.output
+    assert "no device was contacted" in result.output
+    # A dry run measures nothing, so `--report` must not write a file that
+    # LOOKS like a real result, and must not go silent about why.
+    assert not dest.exists()
+    assert "no report was written" in result.output
+
+
+def test_check_host_unreachable_exits_1_with_no_traceback():
+    """``check_tunnel`` raises ``CheckHostUnreachableError`` (a ``RuntimeError``
+    subclass) when a hop stops answering, so the plain
+    ``except (ValueError, RuntimeError)`` below must turn a down host into the
+    clean host-named exit 1 the dispatch seam prints — never a traceback."""
+    error = CheckHostUnreachableError("a hop of test1 → test2 stopped answering: timed out")
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.tunnel.check.check_tunnel", AsyncMock(side_effect=error)),
+    ):
+        result = runner.invoke(tunnel_app, ["check", "--hosts", "test1,test2", "--port", "161"])
+    assert result.exit_code == 1, result.output
+    assert "stopped answering: timed out" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_check_no_free_scratch_port_exits_1_with_the_message():
+    """``check_tunnel`` raises ``NoFreePortError`` (a ``RuntimeError``) when no scratch
+    port is free; the command's own result, never a traceback."""
+    error = NoFreePortError("no free port in [61000, 65535]")
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.tunnel.check.check_tunnel", AsyncMock(side_effect=error)),
+    ):
+        result = runner.invoke(tunnel_app, ["check", "--hosts", "test1,test2", "--port", "161"])
+    assert result.exit_code == 1, result.output
+    assert "no free port in [61000, 65535]" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_check_passes_every_option_through():
+    mock = AsyncMock(return_value=_check_report())
+    render_mock = MagicMock()
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.tunnel.check.check_tunnel", mock),
+        patch("otto.check.render_sections", render_mock),
+    ):
+        result = runner.invoke(
+            tunnel_app,
+            [
+                "check",
+                "--hosts",
+                "test1@eth0,test2",
+                "--port",
+                "8080",
+                "--protocol",
+                "udp",
+                "--dest",
+                "test3@eth2",
+                "--carrier",
+                "custom",
+                "--verbose",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert mock.call_args.args[1] == [("test1", "eth0"), ("test2", None)]
+    assert mock.call_args.kwargs["port"] == 8080
+    assert mock.call_args.kwargs["protocol"] == "udp"
+    assert mock.call_args.kwargs["dest"] == ("test3", "eth2")
+    assert mock.call_args.kwargs["carrier"] == "custom"
+    assert render_mock.call_args.kwargs["verbose"] is True
+
+
+def test_bracketed_host_text_survives_end_to_end():
+    """A tunnel path can legally include a netdev name like ``eth0[dataplane]``,
+    which rich reads as a style tag and eats. Both the refusal header (built by
+    joining ``result.path``, printed via ``print_error``) and the
+    ``--dry-run`` header/plan (``_print_check_dry_run``) must survive it end
+    to end — asserted through ``runner.invoke``'s REAL render path, not an
+    isolated helper call that could pass while the wiring rots."""
+    refusal_report = _check_report(
+        path=["test1", "eth0[dataplane]"],
+        refusal="cannot use 'eth0[dataplane]' — it is the management interface",
+        refusal_hint="use a non-management interface, not eth0[dataplane]",
+    )
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.tunnel.check.check_tunnel", AsyncMock(return_value=refusal_report)),
+    ):
+        result = runner.invoke(tunnel_app, ["check", "--hosts", "test1,test2", "--port", "161"])
+    assert result.exit_code == 1, result.output
+    # Three times: the path in the header, the refusal body, and the hint
+    # each print it through their own call, and counting each separately
+    # keeps one surviving line from masking another's regression.
+    assert result.output.count("eth0[dataplane]") == 3, result.output
+
+    dry_report = _check_report(
+        path=["test1", "eth0[dataplane]"],
+        dry_run_plan=[
+            "would build a throwaway tunnel via eth0[dataplane]",
+            "no device was contacted — nothing was measured",
+        ],
+    )
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.tunnel.check.check_tunnel", AsyncMock(return_value=dry_report)),
+    ):
+        result = runner.invoke(tunnel_app, ["check", "--hosts", "test1,test2", "--port", "161"])
+    assert result.exit_code == 0, result.output
+    assert "eth0[dataplane]" in result.output

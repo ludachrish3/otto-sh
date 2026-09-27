@@ -12,8 +12,8 @@ Two areas:
   two timed clients (:func:`timed_connect_command`,
   :func:`timed_transfer_command`) built for whichever backend
   (:data:`ProbeBackend`) the target host actually has, plus
-  :func:`parse_elapsed_ms` for the elapsed-time text they print. Every
-  client ends on its own within :data:`PROBE_TIMEOUT_S`.
+  :func:`~otto.check.clock.parse_elapsed_ms` for the elapsed-time text they print. Every
+  client ends on its own within :data:`~otto.check.clock.PROBE_TIMEOUT_S`.
 """
 
 import re
@@ -21,6 +21,25 @@ import shlex
 import statistics
 from dataclasses import dataclass, field
 from typing import Literal
+
+from ..check.clock import PROBE_TIMEOUT_S, SOCAT_CONNECT_S, bash_script, parse_elapsed_ms
+
+__all__ = [
+    "PROBE_TIMEOUT_S",
+    "PingStats",
+    "ProbeBackend",
+    "listener_command",
+    "parse_elapsed_ms",
+    "parse_ping",
+    "pick_backend",
+    "ping_command",
+    "timed_connect_command",
+    "timed_transfer_command",
+]
+"""The names this module offers, including ``parse_elapsed_ms`` and
+:data:`~otto.check.clock.PROBE_TIMEOUT_S`, which live in :mod:`otto.check.clock`
+and are re-exported here on purpose: this module never calls
+``parse_elapsed_ms`` itself."""
 
 _REPLY_RE = re.compile(r"(?:icmp_)?seq=(\d+)\b.*?\btime[=<]([\d.]+)\s*ms(.*)$")
 _TX_RE = re.compile(r"(\d+) packets transmitted")
@@ -124,9 +143,13 @@ def parse_ping(output: str) -> PingStats | None:
     return PingStats(transmitted=int(tx.group(1)), rtts=rtts, seqs=seqs, duplicates=dups)
 
 
+PING_REPLY_WAIT_S = 2
+"""How long ``ping`` waits for a reply (``-W``) once the last probe has gone out."""
+
+
 def ping_command(target: str, *, count: int, interval: float) -> str:
     """Build a ``ping`` invocation."""
-    return f"ping -c {count} -i {interval} -W 2 {target}"
+    return f"ping -c {count} -i {interval} -W {PING_REPLY_WAIT_S} {target}"
 
 
 ProbeBackend = Literal["python3", "socat"]
@@ -145,18 +168,6 @@ def pick_backend(tools: dict[str, bool]) -> ProbeBackend | None:
         return "socat"
     return None
 
-
-PROBE_TIMEOUT_S = 15
-"""How long a timed probe client may take before it gives up on its own.
-
-Well under the check's per-command host timeout
-(``otto.check.CHECK_HOST_TIMEOUT``), so a probe that stalls —
-a path that drops full-size packets, a listener that accepts and never
-answers — ends as the probe's own failure, with its output, instead of as a
-host that stopped answering."""
-
-_SOCAT_CONNECT_S = 5
-"""socat's ``connect-timeout``, capped at the probe's bound: a link-local connect is instant."""
 
 _PY_ECHO = (
     "import socket\n"
@@ -207,16 +218,6 @@ def listener_command(
     return f"{prefix}setsid bash -c {shlex.quote(body)} >/dev/null 2>&1 < /dev/null &"
 
 
-def _bash(script: str) -> str:
-    """Run *script* under bash: the socat clients' clock is bash's ``$EPOCHREALTIME``.
-
-    The check hands every command to ``sh -c`` (dash or BusyBox ash on many
-    hosts), where ``$EPOCHREALTIME`` expands to nothing and the elapsed time
-    would not parse.
-    """
-    return f"bash -c {shlex.quote(script)}"
-
-
 _PY_CLOCK = (
     "import socket, sys, time\n"
     "t0 = time.monotonic()\n"
@@ -237,7 +238,7 @@ def _socat(ip: str, port: int, within: float) -> str:
     ``-t`` the wait for the echo once the input is sent. A stall anywhere
     ends within *within* seconds of the last byte that moved.
     """
-    connect = min(_SOCAT_CONNECT_S, within)
+    connect = min(SOCAT_CONNECT_S, within)
     return f"socat -T {within:g} -t {within:g} - TCP:{ip}:{port},connect-timeout={connect:g}"
 
 
@@ -262,7 +263,7 @@ def timed_connect_command(
             "print((time.monotonic() - t0) * 1000)\n"
             "sys.exit(0 if got == b'x' else 1)\n"
         )
-    return _bash(
+    return bash_script(
         "s=$EPOCHREALTIME; "
         f"echo x | {_socat(ip, port, within)} | grep -qx x; r=$?; "
         'e=$EPOCHREALTIME; echo "$s $e"; exit $r'
@@ -294,33 +295,10 @@ def timed_transfer_command(
             "print((time.monotonic() - t0) * 1000)\n"
             f"sys.exit(0 if n == {nbytes} else 1)\n"
         )
-    return _bash(
+    return bash_script(
         "s=$EPOCHREALTIME; "
         f"n=$(head -c {nbytes} /dev/zero | {_socat(ip, port, within)} | wc -c); "
         "e=$EPOCHREALTIME; n=$((n+0)); "
         f'[ $n -eq {nbytes} ] || echo "echoed $n of {nbytes} bytes"; '
         f'echo "$s $e"; [ $n -eq {nbytes} ]'
     )
-
-
-def parse_elapsed_ms(output: str) -> float | None:
-    """Elapsed time in ms from a timed client's last output line.
-
-    Accepts either one float (already ms, the python3 backend) or two floats
-    ``START END`` in seconds (bash ``$EPOCHREALTIME``, the socat backend) on
-    the last non-blank line. ``None`` when that line is empty or doesn't
-    parse — e.g. an old bash where ``$EPOCHREALTIME`` expands to nothing.
-    """
-    lines = [line for line in output.splitlines() if line.strip()]
-    if not lines:
-        return None
-    fields = lines[-1].split()
-    try:
-        match fields:
-            case [ms]:
-                return float(ms)
-            case [start, end]:
-                return (float(end) - float(start)) * 1000
-    except ValueError:
-        return None
-    return None

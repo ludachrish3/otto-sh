@@ -2672,7 +2672,7 @@ GAPS: list[Gap] = [
             "and an impairment that therefore never expired. "
             "What is refused is only the DAEMON: impair without `--expire` "
             "and repair when done, since `tc` needs no bash. `otto.tunnel`'s socat launch "
-            "is not refused here because it is unreachable -- `_resolve_chain` rejects "
+            "is not refused here because it is unreachable -- `resolve_chain` rejects "
             "such a host as a tunnel path member first"
         ),
         measured_on=(
@@ -2719,7 +2719,7 @@ GAPS: list[Gap] = [
             GapPath(
                 site="otto.tunnel.manage.add_tunnel",
                 state=PATH_PROTECTED,
-                checked_by="otto.tunnel.manage._validate_chain_shape",
+                checked_by="otto.tunnel.manage.validate_path",
                 detail=(
                     "otto's other tagged-daemon launch, and NOT a hole: `add_tunnel` refuses a "
                     "`has_bash=False` host as a tunnel path member before it plans anything -- "
@@ -2727,9 +2727,9 @@ GAPS: list[Gap] = [
                     "this record covers. It correctly has no guard, and adding one here would "
                     "be a guard that cannot fire. The refusal is loud, is a `ValueError` rather "
                     "than this table's error, and predates this record. Named at "
-                    "`_validate_chain_shape` and not at its caller because BOTH of "
-                    "`add_tunnel`'s modes route through it -- `_resolve_chain` on the real "
-                    "path, `_planned_chain` under `--dry-run`, which reaches no device and "
+                    "`validate_path` and not at its caller because BOTH of "
+                    "`add_tunnel`'s modes route through it -- `resolve_chain` on the real "
+                    "path, `planned_chain` under `--dry-run`, which reaches no device and "
                     "launches nothing -- so this is where deleting the refusal has to red"
                 ),
                 pinned_by=(

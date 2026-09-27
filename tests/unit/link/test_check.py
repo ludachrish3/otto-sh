@@ -4,12 +4,15 @@ The host doubles live in :mod:`tests.unit.link._check_fakes`; the ``--live``
 cycle has its own file, ``test_check_live.py``.
 """
 
+import asyncio
 import dataclasses
+from ipaddress import ip_network
 
 import pytest
 from rich.console import Console
 
 from otto.check import (
+    SWEEP_MIN_AGE_S,
     CheckHostUnreachableError,
     FeatureResult,
     UnmeasuredReason,
@@ -34,7 +37,7 @@ from otto.link.sandbox import new_sandbox
 from tests.conftest import active_context
 from tests.unit.check.test_fingerprint import MODERN
 
-from ._check_fakes import EDGE, NS_IP, SandboxHost, bed, patch_sleep
+from ._check_fakes import EDGE, NS_IP, SandboxHost, bed, patch_sleep, pin_sandbox
 
 
 @pytest.fixture(autouse=True)
@@ -105,11 +108,18 @@ class TestRefusalAndDryRun:
                 f"would fingerprint {host} (one read-only command) and check it can become root"
                 in plan
             )
-            assert f"would sweep leftover otto-check-* namespaces on {host}" in plan
             assert (
-                f"would build netns otto-check-<id> on {host} "
-                f"(198.18.0.1/30 on ock<id> ↔ 198.18.0.2 inside) and test: {tested}"
+                f"would sweep leftover otto-check-* namespaces older than 45 min on {host}; "
+                "a younger one may be a running check's, and would be left"
             ) in plan
+            assert (
+                f"would build netns otto-check-<id> on {host} (the /30 of 198.18.0.0/15 <id> "
+                f"picks: its first address on ock<id> ↔ its second inside) and test: {tested}"
+            ) in plan
+        assert (
+            "would sweep leftover otto-check processes older than 45 min on test1 and test2; "
+            "a younger one may be a running check's, and would be left"
+        ) in plan
         assert plan.count("would run echo listeners inside it on tcp 5205, 5211, 5299") == 2
         impairs = [line for line in plan if line.startswith("would impair edge ")]
         assert len(impairs) == 2
@@ -233,13 +243,135 @@ class TestSkips:
             await check_link(lab, "edge")
 
     @pytest.mark.asyncio
-    async def test_leftover_sandboxes_are_swept_and_reported(self) -> None:
-        lab, test1, *_ = bed(stale="otto-check-abc123 (id: 0)\nuser-ns\n")
+    async def test_an_old_leftover_sandbox_is_swept_and_reported(self) -> None:
+        stale = _stale("otto-check-abc123", age_s=SWEEP_MIN_AGE_S + 60)
+        lab, test1, *_ = bed(stale=f"{stale}user-ns\n")
         report = await check_link(lab, "edge", features=["read-back"], from_host="test1")
-        assert report.hosts[0].swept == ["otto-check-abc123"]
+        said = (
+            "swept leftover sandbox otto-check-abc123 on test1 "
+            "(earlier or concurrent run, created 46 min ago)"
+        )
+        assert report.hosts[0].swept == [said]
         assert "ip netns del otto-check-abc123 2>/dev/null || true" in test1.commands
         [section] = link_sections(report)
-        assert "swept leftover sandbox otto-check-abc123 from an earlier run" in section.subheadings
+        assert said in section.subheadings
+
+    @pytest.mark.asyncio
+    async def test_a_young_leftover_sandbox_is_left_and_the_check_still_runs(self) -> None:
+        lab, test1, *_ = bed(stale=_stale("otto-check-abc123", age_s=40))
+        report = await check_link(lab, "edge", features=["read-back"], from_host="test1")
+        assert report.hosts[0].swept == [
+            "left otto-check-abc123 namespace on test1 (created 40 s ago — may be a running check)"
+        ]
+        assert not any("otto-check-abc123" in c for c in test1.commands if "del" in c)
+        assert _verdicts(report) == {"read-back": Verdict.PASS}
+
+    @pytest.mark.asyncio
+    async def test_a_leftover_sandbox_whose_age_the_host_cannot_give_is_swept(self) -> None:
+        lab, test1, *_ = bed(stale="otto-check-abc123 (id: 0)\n@now 9000\n")
+        report = await check_link(lab, "edge", features=["read-back"], from_host="test1")
+        assert report.hosts[0].swept == [
+            (
+                "swept leftover sandbox otto-check-abc123 on test1 (earlier or concurrent run, "
+                "age unknown)"
+            )
+        ]
+        assert "ip netns del otto-check-abc123 2>/dev/null || true" in test1.commands
+
+
+class TestNoTwoSandboxesShareA30:
+    """A /30 another namespace on the host already routes would take this run's probes."""
+
+    @pytest.mark.asyncio
+    async def test_the_draw_steps_around_a_listed_namespace_s_30(self, monkeypatch) -> None:
+        from otto.link import sandbox
+
+        young = new_sandbox("000000")
+        lab, test1, *_ = bed(stale=_stale(young.name, age_s=40))
+        test1.routes["198.18.0.0/30"] = young.veth
+        draws = iter(["008000", "a1b2c3"])  # 0x8000 picks block 0 too: the young one's
+        monkeypatch.setattr(sandbox, "_draw_token", lambda: next(draws))
+        report = await check_link(lab, "edge", features=["read-back"], from_host="test1")
+        assert "ip netns add otto-check-a1b2c3" in test1.commands
+        assert not any("otto-check-008000" in c for c in test1.commands)
+        assert _verdicts(report) == {"read-back": Verdict.PASS}
+
+    @pytest.mark.asyncio
+    async def test_a_sandbox_whose_address_routes_elsewhere_fails_every_row(
+        self, monkeypatch
+    ) -> None:
+        """A namespace the sweep's listing did not show (one made just after it) holds this
+        sandbox's /30: every row fails, naming the clash, and the sandbox is torn down."""
+        pin_sandbox(monkeypatch)
+        lab, test1, *_ = bed()
+        test1.routes["198.18.0.0/30"] = "ock5ec0nd"
+        report = await check_link(lab, "edge", features=["read-back", "delay"], from_host="test1")
+        rows = report.hosts[0].sandbox
+        assert {r.verdict for r in rows} == {Verdict.FAIL}
+        clash = (
+            f"the sandbox's address {NS_IP} on test1 routes via ock5ec0nd, not ock000000: "
+            "another namespace there has the same /30 (another check?)"
+        )
+        assert {r.detail for r in rows} == {clash}
+        assert {tuple(r.commands) for r in rows} == {(f"ip route get {NS_IP}",)}
+        assert {r.hint for r in rows} == {"run the check again: a new sandbox draws new addresses"}
+        assert "ip netns del otto-check-000000 2>/dev/null || true" in test1.commands
+        assert not report.ok
+
+
+class TestTwoChecksAtOnceOnOneHost:
+    """Two ``check_link`` calls against one host at the same time (#442's acceptance)."""
+
+    @pytest.mark.asyncio
+    async def test_both_pass_neither_sweeps_the_other_and_their_30s_differ(
+        self, monkeypatch
+    ) -> None:
+        """The second starts once the first's namespace exists, so its sweep sees it young and
+        leaves it, and its first draw lands on the first's /30, so it draws again."""
+        from otto.link import sandbox
+
+        lab, test1, *_ = bed(interleave=True, signal_on="ip netns add otto-check-a1b2c3")
+        # 0xa232c3 is 0xa1b2c3 + 32768 blocks: the same /30 as the first run's.
+        draws = iter(["a1b2c3", "a232c3", "d4e5f6"])
+        monkeypatch.setattr(sandbox, "_draw_token", lambda: next(draws))
+
+        async def once_the_first_has_its_namespace() -> LinkCheckReport:
+            await test1.signalled.wait()
+            return await check_link(lab, "edge", from_host="test1")
+
+        first, second = await asyncio.gather(
+            check_link(lab, "edge", from_host="test1"), once_the_first_has_its_namespace()
+        )
+
+        commands = test1.commands
+        assert commands.index("ip netns add otto-check-d4e5f6") < commands.index(
+            "ip netns del otto-check-a1b2c3 2>/dev/null || true"
+        ), "the two sandboxes existed at the same time"
+        for report in (first, second):
+            assert {r.verdict for r in report.hosts[0].sandbox} == {Verdict.PASS}
+            assert report.ok
+        assert first.hosts[0].swept == []
+        assert second.hosts[0].swept == [
+            "left otto-check-a1b2c3 namespace on test1 (created 0 s ago — may be a running check)"
+        ]
+        assert not any(c.startswith("ip netns del otto-check-a232c3") for c in commands)
+        nets = {
+            str(ip_network(c.split()[3], strict=False))
+            for c in commands
+            if c.startswith("ip addr add ") and " dev ock" in c
+        }
+        assert nets == {_net("a1b2c3"), _net("d4e5f6")}
+        assert len(nets) == 2
+
+
+def _net(token: str) -> str:
+    """The /30 the sandbox of *token* addresses its veth pair from."""
+    return str(ip_network(f"{new_sandbox(token).root_ip}/30", strict=False))
+
+
+def _stale(name: str, *, age_s: int, now: int = 1_790_000_000) -> str:
+    """What the sweep's listing says of one leftover namespace *age_s* seconds old."""
+    return f"{name} (id: 0)\n@now {now}\n@mtime {now - age_s} /var/run/netns/{name}\n"
 
 
 class TestSandboxRows:
@@ -340,7 +472,8 @@ class TestSandboxRows:
         )
 
     @pytest.mark.asyncio
-    async def test_a_listener_that_never_answers_skips_the_probe_rows(self) -> None:
+    async def test_a_listener_that_never_answers_skips_the_probe_rows(self, monkeypatch) -> None:
+        pin_sandbox(monkeypatch)
         lab, test1, *_ = bed()
         test1.answer("TCP-LISTEN:5299", "socat[7] E bind: Address already in use", ok=False)
         test1.answer(
@@ -360,7 +493,8 @@ class TestSandboxRows:
         assert rows["delay"].verdict is Verdict.PASS
 
     @pytest.mark.asyncio
-    async def test_a_clockless_probe_is_unmeasured_no_clock(self) -> None:
+    async def test_a_clockless_probe_is_unmeasured_no_clock(self, monkeypatch) -> None:
+        pin_sandbox(monkeypatch)
         lab, test1, *_ = bed()
         test1.answer(f"TCP:{NS_IP}:5211,", " \n")
         report = await check_link(lab, "edge", features=["port range"], from_host="test1")
@@ -435,7 +569,8 @@ class TestEvidence:
         assert "did not read back as written" in detail
 
     @pytest.mark.asyncio
-    async def test_a_failed_timed_probe_fails_with_its_output(self) -> None:
+    async def test_a_failed_timed_probe_fails_with_its_output(self, monkeypatch) -> None:
+        pin_sandbox(monkeypatch)
         fingerprint = MODERN.replace("tool:socat=1", "tool:socat=0").replace(
             "tool:python3=0", "tool:python3=1"
         )
@@ -593,7 +728,10 @@ class TestRowsNotAborts:
 
 class TestReadinessTrustsOnlyOttosEcho:
     @pytest.mark.asyncio
-    async def test_a_foreign_service_on_the_port_is_a_listener_that_did_not_start(self) -> None:
+    async def test_a_foreign_service_on_the_port_is_a_listener_that_did_not_start(
+        self, monkeypatch
+    ) -> None:
+        pin_sandbox(monkeypatch)
         lab, test1, *_ = bed(fingerprint=PYTHON3)
         foreign = "echo answered b'S', not x\n3.1\n"
         test1.answer(timed_connect_command("python3", NS_IP, 5299, within=1), foreign, ok=False)

@@ -44,10 +44,10 @@ def build_bed_host(ne: str, **overrides) -> UnixHost:
 
 
 def resolved_ip(ne: str) -> str:
-    """The ip ``otto.tunnel.manage._resolve_one`` picks for these test-built hosts.
+    """The ip ``otto.tunnel.manage.resolve_endpoint`` picks for these test-built hosts.
 
     These ``UnixHost`` objects never carry a populated ``interfaces`` dict (see
-    the module docstring), so ``_resolve_one`` always falls back to the host's
+    the module docstring), so ``resolve_endpoint`` always falls back to the host's
     own management ip -- regardless of what ``lab.json`` declares.
     """
     return host_data(ne)["ip"]
@@ -77,6 +77,7 @@ PORT_BLOCKS: tuple[tuple[int, int, str], ...] = (
     (15000, 15099, "tests/e2e/test_tunnel_e2e.py"),
     (15100, 15199, "tests/e2e/tunnel_stability/ (make stability-tunnel)"),
     (15200, 15299, "tests/e2e/chaos/ (make chaos)"),
+    (15300, 15399, "tests/e2e/test_tunnel_check_e2e.py"),
 )
 
 

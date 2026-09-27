@@ -484,7 +484,7 @@ def _register_builtin_os_profiles() -> None:
         and detached command tagging goes through
         :func:`otto.host.daemon.launch_command`'s ``bash -c 'exec -a …'`` —
         ``exec -a`` is a bash builtin. Left at the unix default of
-        ``True``, ``otto.tunnel.manage._resolve_chain`` would accept the host
+        ``True``, ``otto.tunnel.manage.resolve_chain`` would accept the host
         as a tunnel path member and then emit a bash-only launch command to a
         shell that cannot run it.
 

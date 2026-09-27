@@ -6,6 +6,8 @@ from otto.check.errors import CheckHostUnreachableError
 from otto.check.fingerprint import (
     LINK_TOOLS,
     LINK_VERSIONS,
+    TUNNEL_TOOLS,
+    TUNNEL_VERSIONS,
     fingerprint_command,
     parse_fingerprint,
     probe_fingerprint,
@@ -60,6 +62,56 @@ netns=0
 netem=0
 ver:iproute2=BusyBox v1.36.1 (2023-11-01) multi-call binary.
 """
+
+
+TUNNEL_MODERN = MODERN + (
+    "ver:socat=socat version 1.7.4.4 on 06 Nov 2022 08:15:51\n"
+    "ver:bash=5.2.21(1)-release\n"
+    "ver:epochrealtime=yes\n"
+    "ver:launcher=systemd-run\n"
+)
+
+
+def test_tunnel_versions_are_parsed() -> None:
+    fp = parse_fingerprint("test1", "10.10.200.11", TUNNEL_MODERN)
+    assert fp.versions["socat"] == "1.7.4.4"
+    assert fp.versions["bash"] == "5.2.21"
+    assert fp.versions["epochrealtime"] == "yes"
+    assert fp.versions["launcher"] == "systemd-run"
+
+
+def test_an_old_bash_has_no_clock() -> None:
+    old = MODERN + "ver:bash=4.2.46(2)-release\nver:epochrealtime=\nver:launcher=setsid\n"
+    fp = parse_fingerprint("c7", "172.17.0.2", old)
+    assert fp.versions["bash"] == "4.2.46"
+    assert fp.versions["epochrealtime"] is None
+    assert fp.versions["launcher"] == "setsid"
+
+
+@pytest.mark.parametrize(
+    ("said", "version"),
+    [
+        ("5.2.21(1)-release", "5.2.21"),
+        ("5.1.4(1)-release", "5.1.4"),
+        ("4.2.46(2)-release", "4.2.46"),
+        ("5.2", "5.2"),
+        ("", None),
+        ("bash: not found", None),
+        ("5", None),
+    ],
+)
+def test_bash_keeps_only_its_dotted_release(said: str, version: str | None) -> None:
+    """``$BASH_VERSION``'s patch level and ``-release`` tag add width, not meaning."""
+    fp = parse_fingerprint("h", "10.0.0.1", MODERN + f"ver:bash={said}\n")
+    assert fp.versions["bash"] == version
+
+
+def test_the_tunnel_command_asks_for_every_tunnel_fact() -> None:
+    cmd = fingerprint_command(TUNNEL_TOOLS, TUNNEL_VERSIONS)
+    for needle in ("socat -V", "BASH_VERSION", "EPOCHREALTIME", "systemd-run --user"):
+        assert needle in cmd
+    for tool in TUNNEL_TOOLS:
+        assert tool in cmd
 
 
 class TestParse:

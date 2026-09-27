@@ -30,7 +30,7 @@ Inspect and impair the lab's static links (the topology edges `otto tunnel`
 rides). Units and merge semantics are on {doc}`impair`; see also
 {doc}`in-path`, {doc}`port-scoped` and {doc}`safety`. To find out which
 features work on your hosts before you rely on them, run {doc}`check`; the
-versions otto has been proven on are listed on {doc}`known-good`.
+versions otto has been proven on are listed on {doc}`../known-good`.
 
 ```text
 otto link impair <link> [--delay <time>] [--jitter <time>] [--loss <percent>] [--rate <rate>]
@@ -163,5 +163,4 @@ check
 in-path
 port-scoped
 safety
-known-good
 ```

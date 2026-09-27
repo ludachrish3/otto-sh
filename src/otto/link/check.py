@@ -25,16 +25,19 @@ from dataclasses import dataclass, field
 from ipaddress import ip_address
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import override
+
 from ..check import (
     CheckRow,
     CheckSection,
     FeatureResult,
     HostFingerprint,
+    ReportVerdicts,
     Verdict,
-    label_against_range,
-    load_proven_range,
+    range_labels,
 )
 from ..check.fingerprint import (
+    ELEVATION_TIMEOUT_S,
     LINK_TOOLS,
     LINK_VERSIONS,
     Elevation,
@@ -43,12 +46,27 @@ from ..check.fingerprint import (
     probe_elevation,
     probe_fingerprint,
 )
+from ..check.render import proven_range_line
+from ..check.sweep import (
+    COMMAND_ALLOWANCE_S,
+    SWEEP_MIN_AGE_S,
+    age_text,
+    probe_worst_s,
+    run_end_worst_s,
+)
 from ..host import CommandResult
 from ..host.errors import UnsupportedOnUserlandError
 from ..host.host import is_dry_run
 from . import _check_rows as rows
 from ._check_rows import ProbeCtx, far_end, origin_end
-from .check_live import LIVE_EXPIRE_S, LIVE_FEATURES, combine_directions, live_seconds, run_live
+from .check_live import (
+    LIVE_EXPIRE_S,
+    LIVE_FEATURES,
+    combine_directions,
+    live_seconds,
+    live_worst_case_s,
+    run_live,
+)
 from .impairer import FIRST_SELECTOR_BAND, ScopedState
 from .judge import (
     judge_corrupt,
@@ -71,7 +89,17 @@ from .placement import (
     parse_ip_addr,
 )
 from .probes import PingStats, pick_backend
-from .sandbox import Sandbox, new_sandbox, open_sandbox, sweep_stale
+from .sandbox import (
+    SUBNET,
+    Sandbox,
+    fresh_sandbox,
+    new_sandbox,
+    open_sandbox,
+    route_command,
+    setup_commands,
+    sweep_stale,
+    teardown_commands,
+)
 
 if TYPE_CHECKING:
     from ..config.lab import Lab
@@ -84,6 +112,9 @@ FEATURES = [
 
 NA_LEGEND = "n/a: sandbox result applies; a real link doesn't change this feature"
 
+_LABELLED = ["iproute2", "kernel", "isa", "userland"]
+"""The fingerprint components labelled against the proven range, in display order."""
+
 REFUSAL_HINT = (
     "declare this link in lab.json with an interface on each endpoint — "
     "see docs/configuration/lab-config (lab-links)"
@@ -93,6 +124,10 @@ _ADDR_SHOW_COMMAND = "ip -o addr show"
 _DELAY_MS = 100.0
 _EXPIRE_S = 3
 _EXPIRE_WAIT_S = 6
+_JITTER_PING = rows.PingPlan(20, 0.05)
+_DUPLICATE_PING = rows.PingPlan(50, 0.01)
+_REORDER_PING = rows.PingPlan(100, 0.01)
+_CORRUPT_PING = rows.PingPlan(100, 0.01)
 _SCOPED_NOT_APPLIED = "port-scoped tree not applied: tc rejected it (see port range)"
 
 
@@ -111,14 +146,18 @@ class LinkCheckHost:
     live: list[FeatureResult]
     """``--live`` results for :data:`~otto.link.check_live.LIVE_FEATURES` that were requested."""
     swept: list[str]
-    """Stale ``otto-check-*`` namespaces removed before this host's sandbox."""
+    """What the sweep of ``otto-check-*`` namespaces did before this host's
+    sandbox, one display line each.
+
+    It names what it removed, and what it left because it was too young to be
+    a dead run's."""
     addresses: dict[str, str] = field(default_factory=dict)
     """Placement netdev -> the address that netdev carries on this link; a
     netdev whose address otto does not know is absent, never guessed."""
 
 
 @dataclass(frozen=True)
-class LinkCheckReport:
+class LinkCheckReport(ReportVerdicts):
     """Everything one ``otto link check`` found — what the CLI renders and ``--report`` writes."""
 
     link_id: str
@@ -131,20 +170,13 @@ class LinkCheckReport:
     dry_run_plan: list[str] = field(default_factory=list)
     live_swept: list[str] = field(default_factory=list)
     """What ``--live``'s sweep of ``otto-check-*`` processes on the link's
-    endpoint hosts did before it started, one display line each."""
+    endpoint hosts did before it started, one display line each, then one line
+    per leftover listener its probes reached instead of this run's own."""
 
+    @override
     def results(self) -> list[FeatureResult]:
         """Every sandbox and live result, host by host."""
         return [r for host in self.hosts for r in (*host.sandbox, *host.live)]
-
-    def failed(self) -> list[FeatureResult]:
-        """Return the results that fail the run (``fail`` or ``unsupported``)."""
-        return [r for r in self.results() if r.verdict.fails]
-
-    @property
-    def ok(self) -> bool:
-        """True when the link was not refused and nothing failed."""
-        return self.refusal is None and not self.failed()
 
 
 # --------------------------------------------------------------------------
@@ -224,9 +256,7 @@ async def _run_delay(ctx: _SandboxCtx) -> FeatureResult:
 
 async def _run_jitter(ctx: _SandboxCtx) -> FeatureResult:
     params = ImpairmentParams(delay_ms=_DELAY_MS, jitter_ms=20.0)
-    return judge_jitter(
-        ctx.control, await _impaired_ping(ctx, params, rows.PingPlan(20, 0.05)), 20.0
-    )
+    return judge_jitter(ctx.control, await _impaired_ping(ctx, params, _JITTER_PING), 20.0)
 
 
 async def _run_loss(ctx: _SandboxCtx) -> FeatureResult:
@@ -236,17 +266,17 @@ async def _run_loss(ctx: _SandboxCtx) -> FeatureResult:
 
 async def _run_duplicate(ctx: _SandboxCtx) -> FeatureResult:
     params = ImpairmentParams(duplicate_pct=50.0)
-    return judge_duplicate(await _impaired_ping(ctx, params, rows.PingPlan(50, 0.01)), 50.0)
+    return judge_duplicate(await _impaired_ping(ctx, params, _DUPLICATE_PING), 50.0)
 
 
 async def _run_reorder(ctx: _SandboxCtx) -> FeatureResult:
     params = ImpairmentParams(delay_ms=50.0, reorder_pct=50.0)
-    return judge_reorder(await _impaired_ping(ctx, params, rows.PingPlan(100, 0.01)))
+    return judge_reorder(await _impaired_ping(ctx, params, _REORDER_PING))
 
 
 async def _run_corrupt(ctx: _SandboxCtx) -> FeatureResult:
     params = ImpairmentParams(corrupt_pct=50.0)
-    return judge_corrupt(await _impaired_ping(ctx, params, rows.PingPlan(100, 0.01)), 50.0)
+    return judge_corrupt(await _impaired_ping(ctx, params, _CORRUPT_PING), 50.0)
 
 
 async def _run_rate(ctx: _SandboxCtx) -> FeatureResult:
@@ -310,7 +340,7 @@ async def _sandbox_rows(
     ctx = _SandboxCtx(
         host,
         fp,
-        Sandbox.NS_IP,
+        sb.ns_ip,
         backend=pick_backend(fp.tools),
         sb=sb,
         imp=NetEmImpairer(),
@@ -336,17 +366,6 @@ def _all_rows(features: list[str], **kw: Any) -> list[FeatureResult]:
     return [FeatureResult(feature, Verdict.SKIPPED, **kw) for feature in features]
 
 
-def _range_labels(fp: HostFingerprint) -> dict[str, str]:
-    proven = load_proven_range()
-    versions = {
-        "iproute2": fp.versions.get("iproute2"),
-        "kernel": fp.kernel,
-        "isa": fp.isa,
-        "userland": fp.userland,
-    }
-    return {name: label_against_range(proven, name, v).value for name, v in versions.items()}
-
-
 def _unready(fp: HostFingerprint, elevation: Elevation) -> str | None:
     """Why *fp*'s host cannot run a sandbox at all, or ``None``."""
     if not elevation.ok and elevation.hint is not None:
@@ -364,13 +383,16 @@ def _unready(fp: HostFingerprint, elevation: Elevation) -> str | None:
     return None
 
 
+_CLASH_HINT = "run the check again: a new sandbox draws new addresses"
+
+
 async def _check_host(
     host: Any, placements: list[Placement], addresses: dict[str, str], features: list[str]
 ) -> LinkCheckHost:
     fp = await probe_fingerprint(host, tools=LINK_TOOLS, versions=LINK_VERSIONS)
     elevation = await probe_elevation(host)
     fp = dataclasses.replace(fp, privileged=elevation.ok)
-    labels = _range_labels(fp)
+    labels = range_labels(fp, _LABELLED)
     swept: list[str] = []
     hint = _unready(fp, elevation)
     if hint is not None:
@@ -379,13 +401,26 @@ async def _check_host(
         )
         sandbox = _all_rows(features, hint=hint, **evidence)
     else:
-        swept = await sweep_stale(host)
-        sb = new_sandbox()
-        async with open_sandbox(host, sb) as failure:
-            if failure is not None:
+        outcome = await sweep_stale(host)
+        swept = outcome.said
+        sb = fresh_sandbox(outcome.listed)
+        async with open_sandbox(host, sb) as problem:
+            if problem is not None and problem.clash is not None:
+                sandbox = [
+                    FeatureResult(
+                        feature,
+                        Verdict.FAIL,
+                        detail=problem.clash,
+                        hint=_CLASH_HINT,
+                        commands=[route_command(sb)],
+                        output=problem.result.value,
+                    )
+                    for feature in features
+                ]
+            elif problem is not None:
                 sandbox = _all_rows(
                     features,
-                    output=failure.value,
+                    output=problem.result.value,
                     hint=f"could not build the sandbox netns on {host.id}",
                 )
             else:
@@ -484,16 +519,25 @@ def _dry_run_plan(
         lab_host(lab, host_id)
         lines += [
             f"would fingerprint {host_id} (one read-only command) and check it can become root",
-            f"would sweep leftover otto-check-* namespaces on {host_id}",
             (
-                f"would build netns otto-check-<id> on {host_id} "
-                f"({Sandbox.ROOT_IP}/30 on ock<id> ↔ {Sandbox.NS_IP} inside) "
+                "would sweep leftover otto-check-* namespaces older than "
+                f"{age_text(SWEEP_MIN_AGE_S)} on {host_id}; a younger one may be a running "
+                "check's, and would be left"
+            ),
+            (
+                f"would build netns otto-check-<id> on {host_id} (the /30 of {SUBNET} "
+                f"<id> picks: its first address on ock<id> ↔ its second inside) "
                 f"and test: {', '.join(features)}"
             ),
         ]
         if probing:
             lines.append(f"would run echo listeners inside it on tcp {ports}")
     if live:
+        ends = " and ".join(dict.fromkeys([link.a.host, link.b.host]))
+        lines.append(
+            f"would sweep leftover otto-check processes older than {age_text(SWEEP_MIN_AGE_S)} "
+            f"on {ends}; a younger one may be a running check's, and would be left"
+        )
         steps = [f for f in LIVE_FEATURES if f in features]
         seconds = live_seconds(steps)
         for direction in FlowDirection:
@@ -630,18 +674,10 @@ def _heading(host: LinkCheckHost) -> str:
 
 def _subheadings(host: LinkCheckHost) -> list[str]:
     lines = []
-    fp, labels = host.fingerprint, host.range_labels
+    fp = host.fingerprint
     if fp is not None:
-        parts = [
-            f"iproute2 {labels['iproute2']}",
-            f"kernel {labels['kernel']}",
-            f"{fp.isa or 'isa'} {labels['isa']}",
-            f"{fp.userland} {labels['userland']}",
-        ]
-        lines.append(f"proven range: {' · '.join(parts)}")
-    if host.swept:
-        lines.append(f"swept leftover sandbox {', '.join(host.swept)} from an earlier run")
-    return lines
+        lines.append(proven_range_line(fp, host.range_labels, _LABELLED))
+    return lines + host.swept
 
 
 def link_sections(report: LinkCheckReport) -> list[CheckSection]:
@@ -672,3 +708,77 @@ def link_sections(report: LinkCheckReport) -> list[CheckSection]:
             )
         )
     return sections
+
+
+# --------------------------------------------------------------------------
+# The worst-case run length the leftover sweep's age bound must clear
+# --------------------------------------------------------------------------
+
+
+def _row_worst_s(feature: str) -> float:
+    """One sandbox row with every probe timing out, plus the clear that follows it.
+
+    Hand-counted: update it when adding a probe or host command to a
+    ``_run_*`` row.
+    """
+    k = COMMAND_ALLOWANCE_S
+    imp, sb = NetEmImpairer(), new_sandbox("000000")
+    filters = imp.scoped_filter_commands(sb.veth, FIRST_SELECTOR_BAND, rows.RANGE_SELECTOR)
+    scoped = (2 + len(filters)) * k  # the root, the band, then its filters
+    read = len(imp.scoped_read_commands(sb.veth)) * k
+    cost = {
+        "read-back": k + read + k + scoped + read,
+        "delay": k + rows.ping_worst_s(rows.DELAY_PING),
+        "jitter": k + rows.ping_worst_s(_JITTER_PING),
+        "loss": k + rows.ping_worst_s(rows.LOSS_PING),
+        "duplicate": k + rows.ping_worst_s(_DUPLICATE_PING),
+        "reorder": k + rows.ping_worst_s(_REORDER_PING),
+        "corrupt": k + rows.ping_worst_s(_CORRUPT_PING),
+        "rate": k + rows.transfer_worst_s(),
+        "port range": 3 * rows.connect_worst_s() + scoped,
+        "side": 2 * rows.connect_worst_s() + scoped,
+        "expire": k + k + _EXPIRE_WAIT_S + read,
+    }
+    return cost[feature] + k
+
+
+def _sandbox_worst_s(features: list[str]) -> float:
+    """One placement host's sandbox pass: fingerprint, elevation, sweep, the sandbox, its rows.
+
+    The sandbox is its setup, the route check that follows it, and its teardown.
+    Hand-counted: update it when adding a probe or host command to
+    ``_check_host``.
+    """
+    k = COMMAND_ALLOWANCE_S
+    sb = new_sandbox("000000")
+    sweep = k + len(teardown_commands(sb)) * k  # the listing, then one leftover's teardown
+    return (
+        k
+        + probe_worst_s(ELEVATION_TIMEOUT_S)
+        + sweep
+        + len(setup_commands(sb)) * k
+        + k  # the route check
+        + rows.ping_worst_s(rows.CONTROL_PING)
+        + rows.listeners_worst_s()
+        + sum(_row_worst_s(f) for f in features)
+        + len(teardown_commands(sb)) * k
+    )
+
+
+def worst_case_run_s(features: list[str], *, hosts: int, live: bool) -> float:
+    """Return the longest one ``otto link check`` can run, in seconds, every probe timing out.
+
+    *hosts* placement hosts each get a sandbox pass (``_sandbox_worst_s``),
+    one after the other; *live* adds ``--live`` in both directions
+    (:func:`~otto.link.check_live.live_worst_case_s`). The run ends on a host
+    that stopped answering, whose sandbox teardown then waits out each of its
+    commands (:func:`~otto.check.sweep.run_end_worst_s`).
+    :data:`~otto.check.sweep.SWEEP_MIN_AGE_S` must stay above this; a unit
+    test holds it there. Hand-counted: update it, and the total in
+    ``SWEEP_MIN_AGE_S``'s docstring, when adding a probe or host command to
+    :func:`check_link` outside its sandbox passes and ``--live``.
+    """
+    total = hosts * _sandbox_worst_s(features)
+    if live:
+        total += live_worst_case_s([f for f in features if f in LIVE_FEATURES], len(FlowDirection))
+    return total + run_end_worst_s(len(teardown_commands(new_sandbox("000000"))))

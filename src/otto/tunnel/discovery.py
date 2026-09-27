@@ -80,7 +80,7 @@ async def _device_read(host: Any, cmd: str) -> Any:
     parsed read in ``otto.tunnel`` goes through:
     :func:`~otto.tunnel.manage._container_ip`,
     :func:`~otto.tunnel.manage._require_tools`,
-    :func:`~otto.tunnel.manage._probe_port_budget` and :func:`_scan_hosts` all
+    :func:`~otto.tunnel.manage.probe_port_budget` and :func:`_scan_hosts` all
     arrive by it. A dry run reaching this line means some path above forgot to
     short-circuit, and the only safe answer is to fail loudly — see
     :class:`TunnelNotMeasuredError` for what each caller does with the banner
@@ -302,7 +302,7 @@ class TunnelDiscovery:
     declares no ``has_bash`` host has nothing to scan, so the refusal never
     fires and this stays ``False`` with an empty, COMPLETE answer. That is the
     honest verdict — :func:`discover_observations` only ever visits ``has_bash``
-    hosts and ``otto.tunnel.manage._validate_chain_shape`` refuses a
+    hosts and ``otto.tunnel.manage.validate_path`` refuses a
     non-bash chain member precisely so nothing otto builds can live outside
     that set, which makes "no otto tunnels" a conclusion from LAB DATA. A real
     pass over the same lab returns the identical value. Forcing ``True`` here

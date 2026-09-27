@@ -69,3 +69,26 @@ def count_verdicts(results: list[FeatureResult]) -> dict[Verdict, int]:
     for result in results:
         counts[result.verdict] += 1
     return counts
+
+
+class ReportVerdicts:
+    """The verdict roll-up every check report shares: what failed, and whether the run is ok.
+
+    A report supplies :meth:`results` and a ``refusal`` field; this adds the
+    rest, so ``otto link check`` and ``otto tunnel check`` judge a run alike.
+    """
+
+    refusal: str | None
+
+    def results(self) -> list[FeatureResult]:
+        """Every result the report holds."""
+        raise NotImplementedError
+
+    def failed(self) -> list[FeatureResult]:
+        """Return the results that fail the run (``fail`` or ``unsupported``)."""
+        return [r for r in self.results() if r.verdict.fails]
+
+    @property
+    def ok(self) -> bool:
+        """True when the check was not refused and nothing failed."""
+        return self.refusal is None and not self.failed()

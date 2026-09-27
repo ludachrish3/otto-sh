@@ -12,11 +12,11 @@ from otto.tunnel.discovery import DiscoveredTunnel, TunnelDiscovery, TunnelNotMe
 from otto.tunnel.manage import (
     _check_conflicts,
     _container_ip,
-    _planned_chain,
     _process_plan,
     _ProcSpec,
-    _resolve_chain,
-    _resolve_one,
+    planned_chain,
+    resolve_chain,
+    resolve_endpoint,
 )
 from otto.tunnel.model import Direction, Role, Tunnel, TunnelHop
 from otto.tunnel.socat import SocatCarrier
@@ -47,7 +47,7 @@ class TestResolveChain:
             a=FakeUnix("a", interfaces={"eth1": "10.0.0.1"}),
             b=FakeUnix("b", ip="10.0.0.2"),
         )
-        resolved = asyncio.run(_resolve_chain(lab, [("a", "eth1"), ("b", None)]))
+        resolved = asyncio.run(resolve_chain(lab, [("a", "eth1"), ("b", None)]))
         assert [r.ip for r in resolved] == ["10.0.0.1", "10.0.0.2"]
         assert resolved[0].hop == TunnelHop("a", "eth1")
         assert resolved[1].hop == TunnelHop("b", None)
@@ -55,28 +55,28 @@ class TestResolveChain:
     def test_single_host_chain_rejected(self) -> None:
         lab = _lab(a=FakeUnix("a", ip="10.0.0.1"))
         with pytest.raises(ValueError, match="at least 2"):
-            asyncio.run(_resolve_chain(lab, [("a", None)]))
+            asyncio.run(resolve_chain(lab, [("a", None)]))
 
     def test_duplicate_host_rejected(self) -> None:
         lab = _lab(a=FakeUnix("a", ip="10.0.0.1"), c=FakeUnix("c", ip="10.0.0.2"))
         with pytest.raises(ValueError, match="more than once"):
-            asyncio.run(_resolve_chain(lab, [("a", None), ("c", None), ("a", None)]))
+            asyncio.run(resolve_chain(lab, [("a", None), ("c", None), ("a", None)]))
 
     def test_unknown_host_and_iface_fail_loud(self) -> None:
         lab = _lab(a=FakeUnix("a", ip="10.0.0.1"), b=FakeUnix("b", ip="10.0.0.2"))
         with pytest.raises(ValueError, match="unknown host"):
-            asyncio.run(_resolve_chain(lab, [("a", None), ("ghost", None)]))
+            asyncio.run(resolve_chain(lab, [("a", None), ("ghost", None)]))
         with pytest.raises(ValueError, match="no interface"):
-            asyncio.run(_resolve_chain(lab, [("a", "eth9"), ("b", None)]))
+            asyncio.run(resolve_chain(lab, [("a", "eth9"), ("b", None)]))
 
     def test_ambiguous_and_addressless_fail_loud(self) -> None:
         multi = FakeUnix("m", interfaces={"eth0": "10.0.0.3", "eth1": "10.0.1.3"})
         bare = FakeUnix("bare")
         lab = _lab(m=multi, bare=bare, a=FakeUnix("a", ip="10.0.0.1"))
         with pytest.raises(ValueError, match="ambiguous interface"):
-            asyncio.run(_resolve_chain(lab, [("m", None), ("a", None)]))
+            asyncio.run(resolve_chain(lab, [("m", None), ("a", None)]))
         with pytest.raises(ValueError, match="no usable address"):
-            asyncio.run(_resolve_chain(lab, [("bare", None), ("a", None)]))
+            asyncio.run(resolve_chain(lab, [("bare", None), ("a", None)]))
 
     def test_non_bash_chain_host_rejected(self) -> None:
         """A chain host that can't run ``bash -c 'exec -a…'`` can't host the
@@ -87,7 +87,7 @@ class TestResolveChain:
             b=FakeUnix("b", ip="10.0.0.2"),
         )
         with pytest.raises(ValueError, match="has_bash"):
-            asyncio.run(_resolve_chain(lab, [("a", None), ("b", None)]))
+            asyncio.run(resolve_chain(lab, [("a", None), ("b", None)]))
 
     def test_busybox_profile_host_rejected_as_chain_member(self) -> None:
         """The busybox `os_type` profile's `has_bash=False` default is not just
@@ -102,8 +102,8 @@ class TestResolveChain:
         hop or path endpoint alike; this loop runs over every entry in
         ``specs``, not just interior ones). It can still be named via
         ``--dest`` (the far-end delivery target `add_tunnel` resolves through
-        `_resolve_one`, which carries no `has_bash` check at all) —
-        `test_resolve_one_accepts_a_busybox_host` below pins that other half
+        `resolve_endpoint`, which carries no `has_bash` check at all) —
+        `testresolve_endpoint_accepts_a_busybox_host` below pins that other half
         directly, so the split is asserted on both sides, not just claimed
         here.
         """
@@ -119,22 +119,22 @@ class TestResolveChain:
         )
         lab = _lab(bb=busybox, b=FakeUnix("b", ip="10.0.0.2"))
         with pytest.raises(ValueError, match="has_bash"):
-            asyncio.run(_resolve_chain(lab, [("bb", None), ("b", None)]))
+            asyncio.run(resolve_chain(lab, [("bb", None), ("b", None)]))
 
-    def test_resolve_one_accepts_a_busybox_host(self) -> None:
-        """The other half of the target-vs-hop split: `_resolve_one` — what
+    def testresolve_endpoint_accepts_a_busybox_host(self) -> None:
+        """The other half of the target-vs-hop split: `resolve_endpoint` — what
         `add_tunnel` resolves `--dest` through — carries no `has_bash` check
         at all, so a busybox host resolves here even though
         `test_busybox_profile_host_rejected_as_chain_member` above shows the
         same host refused as a `--hosts` chain member.
 
         This is not a redundant restatement of that test. A natural-looking
-        DRY refactor — hoisting the `has_bash` check out of `_resolve_chain`'s
-        per-spec loop and into `_resolve_one` itself, since `_resolve_chain`
-        calls `_resolve_one` once per host anyway — would silently take away
+        DRY refactor — hoisting the `has_bash` check out of `resolve_chain`'s
+        per-spec loop and into `resolve_endpoint` itself, since `resolve_chain`
+        calls `resolve_endpoint` once per host anyway — would silently take away
         busybox's only supported tunnel role (as `--dest`) while leaving
-        every other tunnel test green: none of them assert that `_resolve_one`
-        itself accepts a `has_bash=False` host, only that `_resolve_chain`
+        every other tunnel test green: none of them assert that `resolve_endpoint`
+        itself accepts a `has_bash=False` host, only that `resolve_chain`
         rejects one as a chain member. This test is what would catch that
         refactor.
         """
@@ -150,7 +150,7 @@ class TestResolveChain:
         )
         lab = _lab(bb=busybox)
 
-        resolved = asyncio.run(_resolve_one(lab, ("bb", None)))
+        resolved = asyncio.run(resolve_endpoint(lab, ("bb", None)))
 
         assert resolved.ip == "10.0.0.1"
         assert resolved.hop == TunnelHop("bb")
@@ -207,7 +207,7 @@ class TestContainerRules:
     def test_container_endpoint_with_parent_neighbor_ok(self) -> None:
         lab, parent, ctr, other = self._setup()
         resolved = asyncio.run(
-            _resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, None)])
+            resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, None)])
         )
         assert resolved[-1].ip == "172.17.0.2"
         assert resolved[-1].hop.interface is None
@@ -215,19 +215,17 @@ class TestContainerRules:
     def test_container_neighbor_must_be_parent(self) -> None:
         lab, _parent, ctr, other = self._setup()
         with pytest.raises(ValueError, match="parent"):
-            asyncio.run(_resolve_chain(lab, [(other.id, None), (ctr.id, None)]))
+            asyncio.run(resolve_chain(lab, [(other.id, None), (ctr.id, None)]))
 
     def test_container_cannot_be_relay(self) -> None:
         lab, parent, ctr, other = self._setup()
         with pytest.raises(ValueError, match="endpoint"):
-            asyncio.run(_resolve_chain(lab, [(parent.id, None), (ctr.id, None), (other.id, None)]))
+            asyncio.run(resolve_chain(lab, [(parent.id, None), (ctr.id, None), (other.id, None)]))
 
     def test_iface_on_container_rejected(self) -> None:
         lab, parent, ctr, other = self._setup()
         with pytest.raises(ValueError, match="interface"):
-            asyncio.run(
-                _resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, "eth0")])
-            )
+            asyncio.run(resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, "eth0")]))
 
     def test_inspect_timeout_raises_host_named(self) -> None:
         """``docker inspect`` timing out on the parent is a host-named
@@ -240,7 +238,7 @@ class TestContainerRules:
         lab = _lab(**{parent.id: parent, ctr.id: ctr, other.id: other})
 
         with pytest.raises(RuntimeError, match="timed out inspecting container"):
-            asyncio.run(_resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, None)]))
+            asyncio.run(resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, None)]))
 
 
 def _real_placeholder(running_cid: str = "", inspect_ip: str = "172.17.0.2"):
@@ -297,7 +295,7 @@ class TestContainerLiveness:
         lab, parent, other = self._lab_with(ctr)
 
         with pytest.raises(ValueError, match="otto docker up"):
-            asyncio.run(_resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, None)]))
+            asyncio.run(resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, None)]))
         compose_up.assert_not_awaited()
 
     def test_running_container_endpoint_resolves_from_probe(self) -> None:
@@ -305,7 +303,7 @@ class TestContainerLiveness:
         lab, parent, other = self._lab_with(ctr)
 
         resolved = asyncio.run(
-            _resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, None)])
+            resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, None)])
         )
 
         assert resolved[-1].ip == "172.17.0.2"
@@ -435,7 +433,7 @@ class TestProcessPlan:
 
 
 class TestPlannedChainRefusesFromLabDataAlone:
-    """``_planned_chain`` must make the SAME refusals ``_resolve_chain`` does.
+    """``planned_chain`` must make the SAME refusals ``resolve_chain`` does.
 
     Every one of them is decided from declared lab fields, so a dry run
     answers each completely — a chain refused here is not "not measured", it
@@ -449,7 +447,7 @@ class TestPlannedChainRefusesFromLabDataAlone:
             b=FakeUnix("b", ip="10.0.0.2"),
         )
         with active_context(dry_run=True):
-            planned = _planned_chain(lab, [("a", "eth1"), ("b", None)])
+            planned = planned_chain(lab, [("a", "eth1"), ("b", None)])
         assert [p.ip for p in planned] == ["10.0.0.1", "10.0.0.2"]
         assert [p.hop for p in planned] == [TunnelHop("a", "eth1"), TunnelHop("b", None)]
 
@@ -474,7 +472,7 @@ class TestPlannedChainRefusesFromLabDataAlone:
             nobash=FakeUnix("nobash", ip="10.0.0.9", has_bash=False),
         )
         with active_context(dry_run=True), pytest.raises(ValueError, match=match):
-            _planned_chain(lab, specs)
+            planned_chain(lab, specs)
 
     def test_a_container_hop_is_named_but_its_address_is_left_unread(self) -> None:
         parent = FakeUnix("test1", ip="10.10.200.11")
@@ -485,12 +483,12 @@ class TestPlannedChainRefusesFromLabDataAlone:
         # POSITIVE CONTROL: a real run DOES resolve it, off the device, to the
         # ip the parent's `docker inspect` reports.
         chain = [(other.id, None), (parent.id, None), (ctr.id, None)]
-        real = asyncio.run(_resolve_chain(lab, chain))
+        real = asyncio.run(resolve_chain(lab, chain))
         assert real[-1].ip == "172.17.0.2"
         ctr.parent.calls.clear()
 
         with active_context(dry_run=True):
-            planned = _planned_chain(lab, chain)
+            planned = planned_chain(lab, chain)
 
         # The hop's IDENTITY is declared, so it is known; its ADDRESS is not.
         assert planned[-1].hop == TunnelHop(ctr.id, None)
@@ -504,14 +502,14 @@ class TestPlannedChainRefusesFromLabDataAlone:
         other = FakeUnix("test2_soil", ip="10.10.200.12")
         lab = _lab(**{parent.id: parent, ctr.id: ctr, other.id: other})
         with active_context(dry_run=True), pytest.raises(ValueError, match="no @interface"):
-            _planned_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, "eth0")])
+            planned_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, "eth0")])
 
 
 class TestTheBackstopGuardsResolutionToo:
-    """``_resolve_one`` is public-API-reachable; a dry run must not fabricate there.
+    """``resolve_endpoint`` is public-API-reachable; a dry run must not fabricate there.
 
     Unreachable from ``add_tunnel`` today — it short-circuits into
-    ``_plan_add`` above — and closed anyway, because ``_resolve_one`` is what
+    ``_plan_add`` above — and closed anyway, because ``resolve_endpoint`` is what
     a future caller (or a re-ordered ``add_tunnel``) reaches first. Before the
     backstop, the ``docker ps -q`` probe's synthetic reply made the container
     read as RUNNING and cached the banner as its container id, and
@@ -528,7 +526,7 @@ class TestTheBackstopGuardsResolutionToo:
             active_context(dry_run=True),
             pytest.raises(TunnelNotMeasuredError, match="not probed for liveness"),
         ):
-            asyncio.run(_resolve_one(lab, (ctr.id, None)))
+            asyncio.run(resolve_endpoint(lab, (ctr.id, None)))
         assert ctr.container_id == ""
 
     def test_container_ip_raises_instead_of_returning_the_banner(self) -> None:

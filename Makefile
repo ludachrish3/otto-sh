@@ -1528,7 +1528,7 @@ check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; R
 # changed leaves docs/_build/html/index.html newer than every listed input,
 # `make docs` no-ops, and the release publishes a page disagreeing with the
 # artifact it just committed. src/otto/check/proven.json and its renderer are the
-# same shape again, for the link docs' known-good environments page.
+# same shape again, for the setup checks' known-good environments page.
 SPHINX_SRCS :=  docs/conf.py                        \
                 $(shell find docs -name '*.rst')    \
                 $(shell find docs -name '*.md')    \

@@ -50,7 +50,7 @@ Each row of the result is a verdict: `pass`, `fail`, `unsupported`,
 `unmeasured` or `skipped`. What each means, the exit codes, the report
 file, and the proven-range labels are defined once, on
 {doc}`../check-verdicts`. The versions otto has been proven on are listed on
-{doc}`known-good`.
+{doc}`../known-good`.
 
 ## Which hosts it checks
 
@@ -125,14 +125,24 @@ The sandbox pass always runs. On each host, otto:
    userland, `tc` version, whether the `sch_netem` module is there, and
    which tools are installed. Then it checks that it can become root (see
    [What each host needs](#what-each-host-needs)).
-2. Removes any namespace an earlier check left behind (see
-   [Cleanup](#cleanup-and-leftovers)).
+2. Removes any namespace an earlier check left behind longer ago than
+   [the sweep's age bound](../check-verdicts.md#leftovers-and-concurrent-checks) (see [Cleanup](#cleanup-and-leftovers)).
 3. Builds a namespace named `otto-check-<id>` (`<id>` is six random hex
-   digits) and a veth pair between it and the host. The host end is called
-   `ock<id>` and gets `198.18.0.1/30`; the namespace end gets `198.18.0.2`.
-   `198.18.0.0/15` is reserved for network benchmarking, so it shouldn't clash
-   with a real network. If your lab does route `198.18.0.0/30`, that route is
-   shadowed on the host while the check runs.
+   digits) and a veth pair between it and the host. `<id>` also picks the
+   sandbox's own `/30` from `198.18.0.0/15`: the host end, called `ock<id>`,
+   gets its first address, and the namespace end gets its second. For
+   `<id>` `000000` that's `198.18.0.1/30` and `198.18.0.2`. otto draws
+   `<id>` so that its `/30` misses every `otto-check-` namespace step 2
+   found on the host. Once the sandbox is up, otto asks the host which
+   device reaches the namespace's address, and it must be `ock<id>`. If
+   another namespace there has the same `/30` (one made after step 2, by a
+   check starting at the same moment), the host routes into whichever came
+   first, so every row fails, saying so, rather than measure the other
+   sandbox. Run the check again: it draws new addresses. `198.18.0.0/15` is
+   reserved for network benchmarking, so it shouldn't clash with a real
+   network. If your lab does route part of
+   it, a sandbox whose `/30` falls there shadows that route on the host while
+   the check runs.
 4. Pings the namespace with nothing applied: 10 pings, 0.2 seconds apart. This
    baseline must lose nothing and vary by no more than 5 ms (standard
    deviation). If it doesn't, every measured row is `unmeasured` rather than
@@ -283,31 +293,30 @@ Each host gets one block:
   module wasn't found. A version otto couldn't read shows as `?`. A
   middlebox that impairs both directions lists both interfaces.
 - **`proven range:`** compares each of those with the versions otto has been
-  proven on ({doc}`known-good`). The labels are defined on
+  proven on ({doc}`../known-good`). The labels are defined on
   [the verdicts page](../check-verdicts.md#proven-range-labels). A label
   never changes a verdict: `kernel older` in the sample only means this
   host's kernel predates every kernel otto has been proven on.
-- **Sweep lines**, if any, come next and name leftovers otto removed before
-  it started (see [Cleanup](#cleanup-and-leftovers)).
+- **Sweep lines**, if any, come next. Each names a leftover the sweep found
+  before the check started, and says whether otto removed it (`swept …`)
+  or left it because it may belong to a check running right now
+  (`left …`). With `--live`, the first host's block also gets the listener
+  sweep's lines, and a `reusing leftover listener …` line for each port
+  where a leftover answered this run's probes (see
+  [Cleanup](#cleanup-and-leftovers)).
 - **A shared `hint:` line**, when every row of the block has the same hint
-  (for example, every row `skipped` because otto couldn't become root). It
-  is printed once here instead of under each row. The report still carries
-  it on every row.
+  (for example, every row `skipped` because otto couldn't become root), is
+  printed once here instead of under each row; see [Reading the
+  table](../check-verdicts.md#reading-the-table) for how otto decides what
+  to collapse, on this line and under each row.
 - **The table** has one row per feature and one column per pass: `sandbox`,
-  plus `live` with `--live`. A row that passes everywhere is one line.
-- **Evidence** follows any cell that isn't `pass`. The `detail` column says
-  what went wrong: `measured` against `want`, with the tolerance; the reason
-  code for an `unmeasured` row; or a sentence. Beneath the row, in this
-  order:
-  1. `ran:` lines: every command otto ran for that cell, exactly as sent.
-     Live cells show the impair and repair steps as `impair_link …` and
-     `repair_link …`.
-  2. `said:`, for an `unsupported` cell: the last line the host's tool
-     printed when it rejected the command.
-  3. `hint:`: what to do, when otto knows the cause.
-
-  With `--live`, each evidence line starts with its column's name
-  (`sandbox ran:`, `live ran:`), so you can tell which pass it belongs to.
+  plus `live` with `--live`. A row that passes everywhere is one line. The
+  `detail` column, and the `ran:`/`said:`/`hint:` lines a non-`pass` cell
+  gets beneath it, follow [Reading the
+  table](../check-verdicts.md#reading-the-table). Live cells' `ran:` lines
+  show the impair and repair steps as `impair_link …` and `repair_link …`,
+  and with `--live` every evidence line starts with its pass's name
+  (`sandbox ran:`, `live ran:`) so you can tell which one it belongs to.
 - **The summary line** counts every cell, sandbox and live, by verdict.
 
 `-v` adds an `output:` block after each cell that printed anything, passing
@@ -325,9 +334,10 @@ $ otto -n --lab unix link check edge --from test1 --live --feature delay,rate
 dry run edge:
   placement a->b on test1/eth1.100
   would fingerprint test1 (one read-only command) and check it can become root
-  would sweep leftover otto-check-* namespaces on test1
-  would build netns otto-check-<id> on test1 (198.18.0.1/30 on ock<id> ↔ 198.18.0.2 inside) and test: read-back, delay, rate
+  would sweep leftover otto-check-* namespaces older than 45 min on test1; a younger one may be a running check's, and would be left
+  would build netns otto-check-<id> on test1 (the /30 of 198.18.0.0/15 <id> picks: its first address on ock<id> ↔ its second inside) and test: read-back, delay, rate
   would run echo listeners inside it on tcp 5205, 5211, 5299
+  would sweep leftover otto-check processes older than 45 min on test1 and test2; a younger one may be a running check's, and would be left
   would impair edge a->b on test1/eth1.100 for about 7s (read-back, delay, rate), each step with expire 60s
   would run echo listeners on test2 10.10.202.12 tcp 5205, 5211, 5299 for a->b
   no device was contacted — nothing was measured
@@ -361,18 +371,33 @@ A check that was killed outright can still leave something behind, so every
 run starts with a sweep:
 
 - **Namespaces.** Before building its sandbox, otto removes every namespace
-  on the host whose name starts with `otto-check-`, and says so under the
-  heading: `swept leftover sandbox otto-check-1a2b3c from an earlier run`.
+  on the host whose name starts with `otto-check-` and that was created longer
+  ago than [the sweep's age bound](../check-verdicts.md#leftovers-and-concurrent-checks), by the host's own clock. It says so under the heading:
+  `swept leftover sandbox otto-check-1a2b3c on test1 (earlier or concurrent
+  run, created 52 min ago)`.
 - **Listeners (`--live` only).** Before the live cycle, otto kills every
   process on either endpoint whose command line contains `otto-check-`
-  followed by six hex digits, and prints one line per tag:
-  `swept otto-check process otto-check-1a2b3c on test2 (earlier or concurrent
-  run)`. If that host's `pgrep` can't list command lines (`pgrep -a`, which
-  BusyBox lacks), otto kills them anyway and says it couldn't name them.
+  followed by six hex digits, once that tag's oldest process started longer
+  ago than that bound. It prints one line per tag: `swept otto-check process
+  otto-check-1a2b3c on test2 (earlier or concurrent run, started 52 min
+  ago)`. An endpoint whose `ps` can't list processes that way (a busybox
+  `ps` built without `-o` support) isn't swept, and the run says `could not
+  list processes on test2; sweep skipped`.
 
-Both sweeps match *any* check's names, including a check someone else is
-running against the same hosts right now. Don't run two checks against the
-same host at once.
+A younger namespace or tag may belong to a check running right now, so both
+sweeps leave it and print a `left …` line instead, for example `left
+otto-check-3fa9c1 namespace on test1 (created 40 s ago — may be a running
+check)`. A young leftover `--live` listener holds a port this run's own
+listener needs, so its probes reach the leftover instead, and the run says
+`reusing leftover listener on …`. How the age rule works, why the reused
+listener's answers still count, and how to clear a young leftover by hand,
+is under
+[Leftovers and concurrent checks](../check-verdicts.md#leftovers-and-concurrent-checks).
+
+Two sandbox passes on the same host at once don't disturb each other: each
+has its own namespace and addresses, and neither sweep takes the other's.
+Don't run two `--live` checks of the same link at once, though: both would
+impair it.
 
 ## When a row isn't `pass`
 
@@ -429,6 +454,7 @@ with segmentation offload off on that interface
 (`ethtool -K <interface> tso off gso off`), and include `--report` when you
 tell otto's developers about it.
 
+(link-check-mtu-black-hole)=
 **`rate` fails live with `probe did not finish within 15 s` while every ping
 row passes.** This can be a path-MTU black hole: something on the path
 silently drops full-size packets, and the rate row is the only one that
@@ -450,20 +476,14 @@ wrong. [Send a report](#sending-a-report).
 
 ## Sending a report
 
-Any report is welcome. One is most useful when a row isn't `pass` and you
-don't know why, or when a host reads `older`, `newer` or `outside` on its
-`proven range:` line. `unknown` alone is common and needs no report. Run the
-check again with `--report check.json` and attach `check.json` to
-[an issue](https://github.com/ludachrish3/otto-sh/issues). Say which command
-you ran. The file already holds the rest: each host's fingerprint and every
-row's verdict, measurements, commands and output. What it contains, and what
-you may want to redact first, is on
-[the verdicts page](../check-verdicts.md#the-report-file).
+When to send one, and how, is on the known-good page:
+[Sending a report](../known-good.md#sending-a-report).
 
 ## From Python
 
 `otto.link.check_link(lab, "edge", live=False, features=None,
 from_host=None)` runs the same check and returns the `LinkCheckReport` the
-CLI renders and `--report` writes. Use it to survey many links at once,
-which the CLI deliberately doesn't do. See the
+CLI renders and `--report` writes. To run several at once, give each its
+own `Lab` (see [Leftovers and concurrent
+checks](../check-verdicts.md#leftovers-and-concurrent-checks)). See the
 {doc}`API reference <../../api/link>`.

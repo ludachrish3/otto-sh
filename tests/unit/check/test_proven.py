@@ -78,3 +78,32 @@ def test_packaged_file_loads_and_names_its_seed_versions() -> None:
     versions = {e.version for e in proven.components["iproute2"]}
     assert {"ss170501", "6.1.0"} <= versions
     assert {e.version for e in proven.components["isa"]} == {"aarch64"}
+
+
+class TestRangeLabels:
+    def test_fields_come_from_the_fingerprint_and_the_rest_from_its_versions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from otto.check import proven
+        from otto.check.fingerprint import parse_fingerprint
+
+        monkeypatch.setattr(
+            proven,
+            "load_proven_range",
+            lambda: _range(kernel=["6.8.0"], isa=["aarch64"], socat=["1.7.4"], userland=["gnu"]),
+        )
+        fp = parse_fingerprint(
+            "h",
+            "10.0.0.1",
+            "kernel=6.8.0-86-generic\nisa=x86_64\ntool:socat=1\n"
+            "ver:socat=socat version 1.8.0.0 on 2023\n",
+        )
+        labels = proven.range_labels(fp, ["kernel", "isa", "userland", "socat", "bash"])
+        assert labels == {
+            "kernel": "within",
+            "isa": "outside",
+            "userland": "within",
+            "socat": "newer",
+            "bash": "unknown",
+        }
+        assert list(labels) == ["kernel", "isa", "userland", "socat", "bash"]

@@ -1,10 +1,20 @@
 """Stdout rendering for checks (spec 2026-09-24 §3.5)."""
 
+import dataclasses
+import json
+
 import pytest
 from rich.console import Console
 
-from otto.check import FeatureResult, UnmeasuredReason, Verdict
-from otto.check.render import CheckRow, CheckSection, render_sections, section_counts
+from otto.check import FeatureResult, HostFingerprint, UnmeasuredReason, Verdict, report_to_json
+from otto.check.render import (
+    RAN_LINE_CAP,
+    CheckRow,
+    CheckSection,
+    proven_range_line,
+    render_sections,
+    section_counts,
+)
 
 PASS = Verdict.PASS
 
@@ -201,11 +211,124 @@ def test_evidence_for_every_non_pass_cell_is_column_prefixed_in_order() -> None:
     i = next(n for n, line in enumerate(lines) if line.startswith("reorder"))
     tail = (line.strip() for line in lines[i + 1 :])
     evidence = [line for line in tail if line.startswith(("sandbox", "live"))]
+    # The two cells' own detail texts differ ("missing-tool: ..." vs. "measured
+    # 0% reordered, ..."), so the row prints "sandbox ..." on its own line (not
+    # captured by `tail`, which starts after the row) and "live ..." as a
+    # continuation line, before either cell's ran:/hint: evidence.
     assert evidence == [
+        "live measured 0% reordered, want 5% ±2%",
         "sandbox ran: which socat",
         "live ran: tc qdisc replace dev eth0 root netem reorder 5%",
         "live hint: see docs/cli/link/check#reorder",
     ]
+
+
+def test_two_columns_that_both_pass_with_the_same_value_print_once_unprefixed() -> None:
+    """The common case (spec 2026-09-24 §3.5): agreeing columns collapse to one line."""
+    section = CheckSection(
+        heading="h",
+        subheadings=[],
+        columns=["tcp", "udp"],
+        rows=[
+            CheckRow(
+                "service port",
+                [
+                    FeatureResult("service port", PASS, measured="free"),
+                    FeatureResult("service port", PASS, measured="free"),
+                ],
+            ),
+        ],
+        summary_name="h",
+    )
+    line = next(line for line in _text([section]).splitlines() if line.startswith("service port"))
+    assert line.rstrip().endswith("free")
+    assert "tcp free" not in line
+    assert "udp free" not in line
+
+
+def test_two_columns_that_both_pass_with_different_values_print_one_line_each() -> None:
+    """K2: two columns passing with DIFFERENT values are never silently collapsed to one.
+
+    Reproduces the tunnel check's own bug: ``otto tunnel check``'s "fwd bulk"
+    row passes on both tcp and udp with different byte counts, and the old
+    single-``target``-cell renderer showed only whichever cell it happened to
+    pick, hiding the other column's real value.
+    """
+    section = CheckSection(
+        heading="h",
+        subheadings=[],
+        columns=["tcp", "udp"],
+        rows=[
+            CheckRow(
+                "fwd bulk",
+                [
+                    FeatureResult("fwd 64 KiB", PASS, measured="got 65536 of 65536 B"),
+                    FeatureResult("fwd 65000 B", PASS, measured="got 65000 of 65000 B"),
+                ],
+            ),
+        ],
+        summary_name="h",
+    )
+    lines = _text([section]).splitlines()
+    i = next(n for n, line in enumerate(lines) if line.startswith("fwd bulk"))
+    assert lines[i].rstrip().endswith("tcp got 65536 of 65536 B")
+    assert lines[i + 1].strip() == "udp got 65000 of 65000 B"
+
+
+def test_a_hint_every_non_pass_cell_of_one_row_shares_prints_once_unprefixed() -> None:
+    """M3: a per-row shared hint (a cascade of skipped rows) collapses like the section-wide one.
+
+    The section carries a SECOND row with a different (here: absent) hint, so
+    ``shared_hint``'s section-wide dedup does not itself apply here — only the
+    per-row mechanism under test can collapse "build"'s two identical hints.
+    """
+    section = CheckSection(
+        heading="h",
+        subheadings=[],
+        columns=["tcp", "udp"],
+        rows=[
+            CheckRow(
+                "segment",
+                [
+                    FeatureResult("segment", Verdict.FAIL, detail="no echo"),
+                    FeatureResult("segment", Verdict.FAIL, detail="no echo"),
+                ],
+            ),
+            CheckRow(
+                "build",
+                [
+                    FeatureResult("build", Verdict.SKIPPED, hint="segment a → b failed"),
+                    FeatureResult("build", Verdict.SKIPPED, hint="segment a → b failed"),
+                ],
+            ),
+        ],
+        summary_name="h",
+    )
+    lines = _text([section]).splitlines()
+    hint_lines = [line.strip() for line in lines if "segment a → b failed" in line]
+    assert hint_lines == ["hint: segment a → b failed"]
+
+
+def test_a_hint_only_one_non_pass_cell_carries_keeps_its_own_column_prefix() -> None:
+    """A single non-passing cell is not a cascade: its hint stays column-prefixed."""
+    section = CheckSection(
+        heading="h",
+        subheadings=[],
+        columns=["tcp", "udp"],
+        rows=[
+            CheckRow(
+                "build",
+                [
+                    FeatureResult("build", Verdict.FAIL, detail="boom", hint="see the docs"),
+                    FeatureResult("build", PASS, measured="ok"),
+                ],
+            ),
+        ],
+        summary_name="h",
+    )
+    lines = _text([section]).splitlines()
+    hint_lines = [line.strip() for line in lines if "see the docs" in line]
+    assert hint_lines == ["tcp hint: see the docs"]
 
 
 _UNMEASURED_SHAPES = [
@@ -255,10 +378,196 @@ def test_a_hint_every_row_shares_prints_once_under_the_heading() -> None:
 
 
 def test_a_hint_only_some_rows_share_stays_on_each_row() -> None:
+    """Not every row shares it, so nothing is hoisted; rows apart each say it."""
     hint = "needs bash on test1"
-    out = _text([_skipped_section([hint, hint, None])])
+    out = _text([_skipped_section([hint, None, hint])])
     assert out.count(f"hint: {hint}") == 2
     assert f"\nhint: {hint}" not in out, "nothing is hoisted under the heading"
+
+
+def test_a_hint_the_row_before_printed_is_not_repeated() -> None:
+    """A cascade of skipped rows says its one cause once, under the first of them."""
+    hint = "segment a → b failed, so no tunnel was built across it"
+    lines = _text([_skipped_section([None, hint, hint, hint, None, hint])]).splitlines()
+    hint_at = [n for n, line in enumerate(lines) if line.strip() == f"hint: {hint}"]
+    rows = {line.split()[0]: n for n, line in enumerate(lines) if line.startswith("f")}
+    # Once under f1 (f2 and f3 follow it), and again under f5, after f4 broke the run.
+    assert hint_at == [rows["f1"] + 1, rows["f5"] + 1]
+
+
+def _two_column_section(rows: list[tuple[FeatureResult, FeatureResult]]) -> CheckSection:
+    return CheckSection(
+        heading="h",
+        subheadings=[],
+        columns=["tcp", "udp"],
+        rows=[CheckRow(tcp.feature, [tcp, udp]) for tcp, udp in rows],
+        summary_name="h",
+    )
+
+
+def test_a_row_shared_hint_the_row_before_printed_is_not_repeated() -> None:
+    hint = "segment a → b failed"
+    skipped = [(FeatureResult(f"r{i}", Verdict.SKIPPED, hint=hint),) * 2 for i in range(3)]
+    section = _two_column_section([
+        (FeatureResult("seg", Verdict.FAIL, detail="no echo"),) * 2,
+        *skipped,
+    ])  # fmt: skip
+    lines = [line.strip() for line in _text([section]).splitlines()]
+    assert lines.count(f"hint: {hint}") == 1
+    assert lines[lines.index(f"hint: {hint}") - 1].startswith("r0")
+
+
+def test_a_single_cell_hint_repeats_only_in_the_same_column() -> None:
+    hint = "see the docs"
+    ok = FeatureResult("x", PASS, measured="ok")
+    section = _two_column_section([
+        (FeatureResult("r0", Verdict.FAIL, detail="boom", hint=hint), ok),
+        (FeatureResult("r1", Verdict.FAIL, detail="boom", hint=hint), ok),
+        (ok, FeatureResult("r2", Verdict.FAIL, detail="boom", hint=hint)),
+    ])  # fmt: skip
+    lines = [line.strip() for line in _text([section]).splitlines()]
+    assert [line for line in lines if hint in line] == [f"tcp hint: {hint}", f"udp hint: {hint}"]
+
+
+def test_a_two_hint_cascade_is_not_repeated_per_row() -> None:
+    """N3: the collapse compares the row's WHOLE hint list, any length — not just one hint.
+
+    Two columns failing for two DIFFERENT causes give each row two hint
+    lines (``tcp hint: …`` and ``udp hint: …``), never a single shared row
+    hint. When several rows in a row repeat that identical pair, it must
+    still print once, under the first of them, exactly like the one-hint
+    cascade does.
+    """
+    tcp_hint = "segment a → b failed, so no tcp tunnel was built across it"
+    udp_hint = "segment a → b failed, so no udp tunnel was built across it"
+
+    def skipped() -> tuple[FeatureResult, FeatureResult]:
+        return (
+            FeatureResult("f", Verdict.SKIPPED, hint=tcp_hint),
+            FeatureResult("f", Verdict.SKIPPED, hint=udp_hint),
+        )
+
+    section = _two_column_section([
+        (FeatureResult("seg", Verdict.FAIL, detail="no echo"),) * 2,
+        *(skipped() for _ in range(3)),
+    ])  # fmt: skip
+    lines = [line.strip() for line in _text([section]).splitlines()]
+    assert lines.count(f"tcp hint: {tcp_hint}") == 1
+    assert lines.count(f"udp hint: {udp_hint}") == 1
+
+
+def test_a_passing_row_says_its_measurement_then_the_caveat_it_carries() -> None:
+    cell = FeatureResult(
+        "last segment → d",
+        PASS,
+        measured="handshake",
+        detail="only the handshake is proven, not the payload (#440)",
+    )
+    section = CheckSection("h", [], ["tcp"], [CheckRow(cell.feature, [cell])], "h")
+    line = next(line for line in _text([section]).splitlines() if line.startswith("last"))
+    assert line.rstrip().endswith(
+        "pass  handshake — only the handshake is proven, not the payload (#440)"
+    )
+
+
+def test_a_failing_row_says_measured_and_want_then_the_cause_it_names() -> None:
+    cell = FeatureResult(
+        "service port",
+        Verdict.FAIL,
+        measured="a: LISTEN 0 5 0.0.0.0:8080",
+        wanted="free",
+        detail="an otto tunnel already binds it: tun-0123456789ab-8080 on a",
+    )
+    section = CheckSection("h", [], ["tcp"], [CheckRow(cell.feature, [cell])], "h")
+    line = next(line for line in _text([section]).splitlines() if line.startswith("service"))
+    assert line.split("fail", 1)[1].strip() == (
+        "measured a: LISTEN 0 5 0.0.0.0:8080, want free — "
+        "an otto tunnel already binds it: tun-0123456789ab-8080 on a"
+    )
+
+
+def test_a_detail_that_repeats_the_measurement_is_said_once() -> None:
+    cell = FeatureResult("list", PASS, measured="ok", detail="ok")
+    section = CheckSection("h", [], ["tcp"], [CheckRow("list", [cell])], "h")
+    line = next(line for line in _text([section]).splitlines() if line.startswith("list"))
+    assert line.split()[-1] == "ok"
+    assert line.count("ok") == 1
+
+
+_LONG = "bash -c '" + "x" * 600 + "'"
+
+
+def _failing_with(command: str) -> CheckSection:
+    cell = FeatureResult("segment", Verdict.FAIL, detail="no echo", commands=[command])
+    return CheckSection("h", [], ["tcp"], [CheckRow("segment", [cell])], "h")
+
+
+def test_a_long_ran_line_is_cut_and_says_where_the_whole_command_is() -> None:
+    console = Console(record=True, width=1000, color_system=None)
+    render_sections(console, [_failing_with(_LONG)])
+    [ran] = [line.strip() for line in console.export_text().splitlines() if "ran:" in line]
+    whole = f"ran: {_LONG}"
+    assert ran == (
+        f"{whole[:RAN_LINE_CAP]} … (+{len(whole) - RAN_LINE_CAP} chars; "
+        "full command with -v or in --report)"
+    )
+
+
+def test_verbose_prints_a_long_ran_line_whole() -> None:
+    console = Console(record=True, width=1000, color_system=None)
+    render_sections(console, [_failing_with(_LONG)], verbose=True)
+    [ran] = [line.strip() for line in console.export_text().splitlines() if "ran:" in line]
+    assert ran == f"ran: {_LONG}"
+
+
+def test_a_ran_line_at_the_cap_is_whole() -> None:
+    command = "x" * (RAN_LINE_CAP - len("tcp ran: "))
+    cell = FeatureResult("segment", Verdict.FAIL, detail="no echo", commands=[command])
+    section = _two_column_section([(cell, cell)])
+    console = Console(record=True, width=1000, color_system=None)
+    render_sections(console, [section])
+    rans = [line.strip() for line in console.export_text().splitlines() if "ran:" in line]
+    assert rans == [f"tcp ran: {command}", f"udp ran: {command}"]
+
+
+def test_the_report_keeps_a_cut_command_whole() -> None:
+    cell = FeatureResult("segment", Verdict.FAIL, detail="no echo", commands=[_LONG])
+    doc = json.loads(report_to_json(_Holder([cell]), kind="tunnel"))
+    assert doc["result"]["cells"][0]["commands"] == [_LONG]
+
+
+@dataclasses.dataclass
+class _Holder:
+    cells: list[FeatureResult]
+
+
+_FP = HostFingerprint(
+    host_id="h",
+    address="10.0.0.1",
+    kernel="6.8.0",
+    isa="aarch64",
+    userland="gnu",
+    user="vagrant",
+    privileged=False,
+    netns=True,
+    netem_module=True,
+    tools={},
+    versions={},
+    raw="",
+)
+
+
+def test_proven_range_line_leads_isa_and_userland_with_their_value() -> None:
+    labels = {"iproute2": "within", "kernel": "older", "isa": "within", "userland": "outside"}
+    line = proven_range_line(_FP, labels, ["iproute2", "kernel", "isa", "userland"])
+    assert line == "proven range: iproute2 within · kernel older · aarch64 within · gnu outside"
+
+
+def test_proven_range_line_follows_the_order_it_is_given() -> None:
+    labels = dict.fromkeys(["kernel", "isa", "socat", "bash"], "unknown")
+    unread = dataclasses.replace(_FP, isa=None)
+    line = proven_range_line(unread, labels, ["socat", "isa", "kernel", "bash"])
+    assert line == "proven range: socat unknown · isa unknown · kernel unknown · bash unknown"
 
 
 def test_a_passing_row_shows_the_caveat_it_carries() -> None:

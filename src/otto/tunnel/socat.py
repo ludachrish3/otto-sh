@@ -6,7 +6,7 @@ module unit-testable (assert exact argv).
 """
 
 import re
-from typing import ClassVar
+from typing import ClassVar, Protocol
 
 from typing_extensions import override
 
@@ -264,6 +264,49 @@ def pick_free_port(used: set[int], lo: int = _LEGACY_PORT_FLOOR, hi: int = _MAX_
         if port not in used:
             return port
     raise NoFreePortError(f"no free port in [{lo}, {hi}]")
+
+
+class _PortRNG(Protocol):
+    """The one method :func:`pick_random_free_port` needs — satisfied by ``random.Random``.
+
+    A structural type, not ``random.Random`` itself, so a test can pin the
+    draw with a small stub instead of a real generator (see
+    ``otto.tunnel.check``'s ``_scratch_rng`` seam).
+    """
+
+    def choice(self, seq: list[int]) -> int: ...
+
+
+def pick_random_free_port(
+    used: set[int], rng: _PortRNG, lo: int = _LEGACY_PORT_FLOOR, hi: int = _MAX_PORT
+) -> int:
+    """Draw a port at random from every free one in ``[lo, hi]`` — not the lowest.
+
+    ``otto tunnel add`` draws its two carrier ports with this, and ``otto
+    tunnel check`` its scratch port. Two runs racing between their free-port
+    probe and their first listen would otherwise both settle on the same
+    lowest free port and collide; drawing uniformly from the whole budget
+    instead makes that a 1-in-``N`` chance, for ``N`` free ports currently in
+    range, rather than a near-certainty. It is not zero: nothing coordinates
+    two independent runs. A collision that does happen is never silent. A
+    carrier port another process holds fails ``add_tunnel``'s post-add
+    verify, naming the port and its holder. A check's scratch port another
+    check holds fails the row whose echo could not have it (a ``segment`` row
+    or ``build``) with ``scratch port <port> on <host> is held by something
+    else (another check?)``: the check confirms each echo it starts is its
+    own before it trusts the address (see ``otto.tunnel._tunnel_echoes``).
+
+    ``rng`` is passed in explicitly (anything with a ``choice(seq)`` method,
+    ``random.Random`` included) so a caller can pin the draw in a test;
+    nothing here reaches for a module-level generator of its own.
+
+    Raises:
+        NoFreePortError: no port in ``[lo, hi]`` is free.
+    """
+    free = [port for port in range(lo, hi + 1) if port not in used]
+    if not free:
+        raise NoFreePortError(f"no free port in [{lo}, {hi}]")
+    return rng.choice(free)
 
 
 class SocatCarrier(TunnelCarrier):

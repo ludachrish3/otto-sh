@@ -16,7 +16,7 @@ link's traffic (delay, loss, rate, ...) rather than tunneling over it, see
 
 Every capability is a plain callable first — `otto tunnel` is a thin CLI
 wrapper over `otto.tunnel.add_tunnel` / `remove_tunnel` /
-`remove_all_tunnels` / `discover_tunnels`. See the
+`remove_all_tunnels` / `discover_tunnels` / `check_tunnel`. See the
 {doc}`API reference <../../api/tunnel>` to call them directly from an
 instruction, a suite, or your own script.
 
@@ -32,12 +32,15 @@ end, each served by its own mirrored chain of processes. There is no
 
 Create, list, and remove host-resident bidirectional tunnels. Multi-hop
 chains are on {doc}`add`; see also {doc}`endpoints`, {doc}`identity` and
-{doc}`portability`.
+{doc}`portability`. To find out whether a path works before you build a
+tunnel on it, run {doc}`check`; the versions otto has been proven on are
+listed on {doc}`../known-good`.
 
 ```text
 otto tunnel add    --hosts <h0[@if],h1[@if],...,hn-1[@if]> --port <P> [--protocol tcp|udp] [--dest <host[@if]>] [--carrier <name>] [--idle-timeout <seconds>]
 otto tunnel list
 otto tunnel remove [<id>] [--all] [-y]
+otto tunnel check  --hosts <h0[@if],h1[@if],...,hn-1[@if]> --port <P> [--protocol tcp|udp|both] [--dest <host[@if]>] [--carrier <name>] [--report <path>] [-v]
 ```
 
 ## Subcommands
@@ -47,17 +50,20 @@ otto tunnel remove [<id>] [--all] [-y]
 | `add` | Create a bidirectional tunnel along an explicit host path (two or more hosts) |
 | `list` | List every live tunnel discovery finds right now |
 | `remove` | Remove a tunnel by id, or every tunnel with `--all` |
+| `check` | Build a throwaway tunnel on a path and prove TCP and UDP payloads flow through it, both ways |
 
 ## Options
 
 | Option | Applies to | Description |
 | ------ | ---------- | ----------- |
-| `--hosts` | `add` | Ordered `host[@iface]` path, two or more entries; `@iface` only needed when a host has more than one interface |
-| `--port` | `add` | Service port, used at both endpoints |
-| `--protocol` | `add` | `tcp` (default) or `udp` |
-| `--dest` | `add` | Far-end delivery override; defaults to loopback on the last `--hosts` entry |
-| `--carrier` | `add` | Tunnel transport — a registered `TunnelCarrier` name, applied chain-wide; default `socat`. See [Custom carriers](../../cookbook/network-api.md#custom-tunnel-carriers) |
+| `--hosts` | `add`, `check` | Ordered `host[@iface]` path, two or more entries; `@iface` only needed when a host has more than one interface |
+| `--port` | `add`, `check` | Service port, used at both endpoints; `check` only looks at it, and builds on a scratch port |
+| `--protocol` | `add`, `check` | `tcp` (default for `add`) or `udp`; `check` also takes `both`, its default |
+| `--dest` | `add`, `check` | Far-end delivery override; defaults to loopback on the last `--hosts` entry |
+| `--carrier` | `add`, `check` | Tunnel transport — a registered `TunnelCarrier` name, applied chain-wide; default `socat`. See [Custom carriers](../../cookbook/network-api.md#custom-tunnel-carriers) |
 | `--idle-timeout` | `add` | Drop a TCP connection or UDP flow idle this many seconds; default never. See [Idle timeout](add.md#idle-timeout) |
+| `--report` | `check` | Also write the full result as JSON to this path |
+| `-v, --verbose` | `check` | Also print every probe's raw output |
 | `--all` | `remove` | Reap every otto tunnel |
 | `-y, --yes` | `remove` | Skip the `--all` confirmation prompt |
 | `<id>` (argument) | `remove` | Id of the tunnel to remove |
@@ -100,14 +106,18 @@ Read both halves. The `would:` lines are the exact argv, but:
 **The two carrier ports are provisional, and every argv above names them.** A
 real `add` first probes every hop for both TCP and UDP listeners
 (`ss -Htln`/`ss -Huln`, falling back to `netstat -tln`/`-uln`) and skips every
-port either protocol already holds, then allocates from above the highest ephemeral
-ceiling the chain reports (so no hop's kernel can hand the same port to an
-outgoing connection) — commonly 61000/61001 on Linux. A dry run has only your
-`--port` to go on and contacts nothing, so it shows the `[49152, 65535]` floor
-instead. Expect the real pair to differ; if a real run also finds one taken,
-all 2n command lines change again. `AddedTunnel.carrier_fwd` / `carrier_rev`
-are `None` under a dry run for exactly this reason — the provisional pair is in
-the plan, labelled, and nowhere else.
+port either protocol already holds, then draws two at random from above the
+highest ephemeral ceiling the chain reports (so no hop's kernel can hand the
+same port to an outgoing connection). Each is drawn from every free port
+between that floor and 65535, thousands of candidates, so it can land
+anywhere in that span: 61000–65535 on the unix bed. This preview instead
+shows the lowest free one above the `[49152, 65535]` floor, since it has
+only your `--port` to go on and contacts nothing. Expect the real pair to differ every time —
+not just from this preview, but from the last real `add` too; if a real run
+also finds one taken, all 2n command lines change again.
+`AddedTunnel.carrier_fwd` / `carrier_rev` are `None` under a dry run for
+exactly this reason — the provisional pair is in the plan, labelled, and
+nowhere else.
 :::
 
 What each command shows:
@@ -122,6 +132,8 @@ What each command shows:
 - **`remove`** — the *scope* of the reap: which `has_bash` hosts would be
   scanned, and what the kill would match. It never prints
   `removed (none found)`; that line is a claim about live processes.
+- **`check`** — every step a real check would take, with the scratch port
+  left as `<scratch>`; see [its dry run](check.md#previewing---dry-run).
 - **`list`** — one line saying no host was scanned. Every row of that table is
   an observed process, so there is nothing left to show; a dry run also leaves
   the `remove <TAB>` completion cache alone rather than emptying it from a scan
@@ -172,6 +184,7 @@ no suggestions until the next `list`.
 add
 list
 remove
+check
 ```
 
 ```{toctree}

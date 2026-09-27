@@ -23,7 +23,7 @@ netdev refusal in ``otto.link`` is per-device). The library-API tests below
 still run over the management ips:
 ``make_host``/``_build_host`` never wires the lab-data ``interfaces`` dict
 onto the constructed ``UnixHost`` (its ``interfaces`` field defaults to
-empty), so ``otto.tunnel.manage._resolve_one`` falls back to the host's own
+empty), so ``otto.tunnel.manage.resolve_endpoint`` falls back to the host's own
 management ip (``10.10.200.x``), which the dev VM shares a subnet with --
 datagrams are sent directly from this process, exactly like the retired
 link e2e's ``_send_udp``. The CLI cycle test (test 5) is the one that loads
@@ -79,6 +79,7 @@ from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 from otto.tunnel.discovery import discover_observations
+from otto.tunnel.model import TunnelHop, make_tunnel_id
 from otto.utils import wait_for_async
 from tests._fixtures.bed_hygiene import argv_pattern
 from tests._fixtures.labdata import host_data
@@ -122,6 +123,8 @@ _PORT_CLI_CYCLE = 15004
 _PORT_UDP_ECHO = 15005
 _PORT_UDP_IDLE = 15006
 _PORT_TCP_IDLE = 15007
+_PORT_CONCURRENT_A = 15008
+_PORT_CONCURRENT_B = 15009
 _PORT_FOREIGN = 45003
 
 # Named in the bed-hygiene reports so a failure says which module it is about
@@ -902,3 +905,47 @@ async def test_tcp_idle_timeout_never_takes_down_the_listeners(tunnel_lab, reap_
         reap_tunnels.remove(added.tunnel.id)
     finally:
         await kill_tagged(test2, tag)
+
+
+# ---------------------------------------------------------------------------
+# Test 9: two concurrent adds on shared hosts do not collide on a carrier port
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_adds_on_shared_hosts_do_not_collide(tunnel_lab, reap_tunnels) -> None:
+    """Two ``add_tunnel`` calls test1<->test2 at once, same tick, no stagger, do not collide.
+
+    A cheap positive control for random carrier ports on the real bed: no
+    payload push (that is already covered above), just that both distinct
+    tunnels come up when their builds race, on carrier ports of their own:
+    each draws its two at random (``otto.tunnel.manage._carrier_rng``)
+    rather than both reaching for the same lowest free one.
+
+    Both tunnel ids are registered for reaping before the adds start, so a
+    tunnel that came up is removed even when the other add raised.
+    """
+    port_a, port_b = _PORT_CONCURRENT_A, _PORT_CONCURRENT_B
+    path = (TunnelHop(_INGRESS), TunnelHop(_EXIT))
+    reap_tunnels.extend(make_tunnel_id(path, "udp", port) for port in (port_a, port_b))
+    added_a, added_b = await asyncio.gather(
+        add_tunnel(tunnel_lab, [(_INGRESS, None), (_EXIT, None)], port=port_a, protocol="udp"),
+        add_tunnel(tunnel_lab, [(_INGRESS, None), (_EXIT, None)], port=port_b, protocol="udp"),
+    )
+    assert [added_a.tunnel.id, added_b.tunnel.id] == reap_tunnels[-2:]
+
+    assert {added_a.carrier_fwd, added_a.carrier_rev}.isdisjoint(
+        {added_b.carrier_fwd, added_b.carrier_rev}
+    )
+
+    discovery = await discover_tunnels(tunnel_lab)
+    for added in (added_a, added_b):
+        found = next((d for d in discovery.tunnels if d.tunnel.id == added.tunnel.id), None)
+        assert found is not None, f"tunnel {added.tunnel.id!r} not in discover_tunnels"
+        assert found.status == "ok", f"expected status 'ok', got {found.status!r}"
+        assert len(found.present) == 4, f"expected 4 processes, got {len(found.present)}"
+
+    for added in (added_a, added_b):
+        report = await remove_tunnel(tunnel_lab, added.tunnel.id)
+        assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
+        reap_tunnels.remove(added.tunnel.id)
