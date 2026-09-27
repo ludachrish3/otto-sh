@@ -271,13 +271,23 @@ A closed host reconnects on first use, on whatever loop uses it next, so the fir
 
 ### 6.4 Otto's own async fixtures follow the test's loop
 
-`_otto_ensure` and the monitor-event fixture are unpinned async fixtures. Otto forces `asyncio_default_fixture_loop_scope=class`, so they run on the class loop even when the test is pinned to a module or session loop. The converge's hosts then belong to a different loop from the test.
+`_otto_ensure` and the monitor-event fixture are unpinned async fixtures. Otto forces `asyncio_default_fixture_loop_scope=class` today, so they run on the class loop even when the test is pinned to a module or session loop. The converge's hosts then belong to a different loop from the test.
 
 After this change, otto's per-test async work runs on the test's own loop. The plan chooses the mechanism, subject to one constraint: whatever the test's `loop_scope` is, the converge and the monitor events run on the loop the test body runs on. Candidate mechanisms are running them inside the test's own coroutine from `pytest_pyfunc_call`, or giving the fixtures a loop scope chosen per item. A test pins it for each of the function, class, module and session loop scopes.
 
 ### 6.5 Hosts fail fast on the wrong loop
 
 Once hosts record the loop that owns their connection, which §6.2 needs anyway, a call from a different loop raises at once. The error names the host, says which fixture scope opened it, and points to the host-scoping cookbook page. It replaces today's raw asyncio `RuntimeError` or silent 30-second hang. A connection whose owning loop has already closed is not an error: it is dropped and the host reconnects, as `rebuild_connections` does today.
+
+### 6.6 The default loop is the session's
+
+Under `otto test`, every test and every async fixture runs on one session-wide event loop unless it pins a narrower one. Otto sets `asyncio_default_test_loop_scope=session` and `asyncio_default_fixture_loop_scope=session`, replacing today's `class` defaults.
+
+- **A host is shared across the whole run by default.** It connects on first use, every later test reuses that connection, and the session loop's sweep closes it once, when the session ends. That is how every other otto command already treats hosts, since each one runs on a single loop.
+- **Shared connections share shell state.** A `cd` or an exported variable in one test is still there in the next, now across the whole run rather than one class. Tests that must not see each other's shell state reset it, run stateless commands with `exec`, or use their own named session.
+- **Narrower scopes stay available.** A test or class pinned with `@pytest.mark.asyncio(loop_scope="class")` (or `module`, or `function`) gets its own loop. The hosts that loop opens belong to it and are closed when it ends, as §6.2 describes. A host the session loop already owns fails fast from a narrower loop (§6.5); the pinned code gets its own host by opening it on its own loop.
+- **Fixtures need no `loop_scope` for the common case.** A class- or module-scoped async fixture runs on the session loop without declaring one. A fixture used by narrower-pinned tests declares the matching `loop_scope`, as today.
+- **Letting a repo choose its own default** stays out of scope (#469).
 
 ## 7. Documentation
 
