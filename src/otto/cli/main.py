@@ -48,7 +48,7 @@ __version__ = get_version()
 _root_log_level: str | None = None
 """The ``--log-level`` value the root callback resolved, or None before it ran.
 
-Read by :func:`entry`'s boundary frame to decide whether a demoted traceback
+Read by :func:`print_traceback_if_debug` to decide whether a demoted traceback
 is wanted. Set from the callback because by the time the frame runs, the Typer
 context that carried ``RootOptions`` is gone.
 
@@ -903,6 +903,34 @@ def _cached_names_payload(repos: "list[Repo]") -> "dict[str, Any] | None":
     return payload
 
 
+def print_traceback_if_debug() -> None:
+    """Print the exception being handled to stderr, only when logging at DEBUG.
+
+    For an ``except`` leg that renders a failure as one line: the frames are
+    demoted, not destroyed, because the maintainer chasing a failure that
+    should not have happened needs them.
+
+    Both spellings of the one knob count: ``_root_log_level`` is what the root
+    callback actually resolved (the flag, or ``OTTO_LOG_LEVEL`` through
+    Typer's ``envvar=``), and the environment is read as well for the case
+    where the callback never got to run, which is also the case where nothing
+    has installed a handler.
+
+    Printed straight to stderr rather than through ``logger.debug``: a
+    traceback is not log text. The console handler renders rich markup and
+    folds at the console width, and frames carry both brackets and
+    significant leading whitespace. The raw write also works where no
+    handler was ever installed.
+    """
+    if "DEBUG" in (
+        (_root_log_level or "").upper(),
+        os.environ.get(LOG_LVL_ENV_VAR, "").upper(),
+    ):
+        import traceback
+
+        traceback.print_exc()
+
+
 def entry(cache_stale: bool = False) -> None:
     """Console-script entry: composition root, then the Typer app.
 
@@ -1113,8 +1141,6 @@ def entry(cache_stale: bool = False) -> None:
 
             render_bootstrap_findings(result)
 
-    import traceback
-
     from ..context import reset_cli_context
     from ..errors import OttoError
     from .invoke import (
@@ -1147,26 +1173,7 @@ def entry(cache_stale: bool = False) -> None:
         # The stack is not DESTROYED, only demoted: an OttoError raised from
         # somewhere it has no business being is a bug, and the maintainer
         # chasing it needs the frames. Debug logging prints them.
-        #
-        # Both spellings of that one knob count: `_root_log_level` is what the
-        # root callback actually resolved (the flag, or OTTO_LOG_LEVEL through
-        # Typer's `envvar=`), and the environment is read as well for the case
-        # where the callback never got to run — which is also the case where
-        # nothing has installed a handler.
-        #
-        # Printed straight to stderr rather than through `logger.debug`. The
-        # console handler IS up by now on every path that reached a command
-        # (spec 2026-08-30 §3.1), so this is no longer about reaching nobody —
-        # it is that a traceback is not log text: the console handler renders
-        # rich markup and folds at the console width, and frames carry both
-        # brackets and significant leading whitespace. The raw stderr write
-        # also keeps working on the branch above, where the callback never ran
-        # and there is no handler to write through.
-        if "DEBUG" in (
-            (_root_log_level or "").upper(),
-            os.environ.get(LOG_LVL_ENV_VAR, "").upper(),
-        ):
-            traceback.print_exc()
+        print_traceback_if_debug()
         # A coverage refusal carries its per-product verdicts as structure as
         # well as text; on a console those render as the rounded table and the
         # error line keeps only the headline. Here rather than in a leaf

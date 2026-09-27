@@ -9,6 +9,7 @@ with no extra wiring (the same first/third-party symmetry otto's own verbs use).
 """
 
 import inspect
+import sys
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +33,40 @@ def collect_exposed_methods(cls: type) -> dict[str, str]:
         if getattr(fn, "__cli_exposed__", False):
             out[getattr(fn, "__cli_name__", attr_name)] = attr_name
     return out
+
+
+def _is_unreachable_host_error(exc: Exception) -> bool:
+    """Whether *exc* says the host could not be reached or talked to, rather than a bug.
+
+    An ``OSError`` (a refused or reset connection, an unknown name, a missing
+    local file for ``put``) and any of asyncssh's own errors (a refused login,
+    a changed host key, a dropped connection) describe the lab, not otto, so
+    the verb prints them as one line naming the host. Anything else is a bug,
+    and a bug keeps its traceback. On 3.10 asyncio's ``TimeoutError`` is not
+    yet an ``OSError``, so it is named on its own. otto's own errors are left
+    to ``entry()``'s boundary, which already renders them as one line: several
+    are ``ConnectionError`` subclasses, and their messages name the host
+    themselves.
+
+    THE ONE PLACE OTTO ASKS ``sys.modules`` WHAT IS LOADED, and it may not
+    become a pattern. Importing ``asyncssh.Error`` to test against runs
+    asyncssh's package ``__init__``, which loads 63 modules, on the error leg
+    of every host verb, including the local ones that never load asyncssh.
+    The lookup cannot change the answer: an asyncssh exception exists only
+    once asyncssh has been imported, so a missing module means this is not
+    one. ``.ast-grep/rules/no-branching-on-import-state.yml`` allows this
+    exact shape in this function and nowhere else.
+    """
+    import asyncio
+
+    from ..errors import OttoError
+
+    if isinstance(exc, OttoError):
+        return False
+    if isinstance(exc, (OSError, asyncio.TimeoutError)):
+        return True
+    asyncssh = sys.modules.get("asyncssh")
+    return asyncssh is not None and isinstance(exc, asyncssh.Error)
 
 
 def make_method_command(
@@ -91,6 +126,14 @@ def make_method_command(
             result = await method(**call_kw)
         except NotImplementedError as e:
             fail(f"host {getattr(host, 'id', '?')!r} does not support {verb!r}: {e}")
+        except Exception as e:
+            if not _is_unreachable_host_error(e):
+                raise
+            from .main import print_traceback_if_debug
+
+            print_traceback_if_debug()
+            # `str()` of a bare timeout is empty, so its type names it instead.
+            fail(f"host {host_label!r} {verb}: {str(e) or type(e).__name__}")
         finally:
             with teardown_step(host_label, "post-verb host close"):
                 await host.close()

@@ -956,7 +956,9 @@ Startup savings are structural, never conditional.
   optimization that cannot be expressed structurally is not made.
 
 `.ast-grep/rules/no-branching-on-import-state.yml` flags a `sys.modules`
-probe; its `note:` says what it cannot see.
+probe; its `note:` says what it cannot see, and names the two sites it
+allows by exact shape. Neither is a precedent. A new one needs a
+maintainer's agreement and its own exemption in the rule.
 
 ### Import bans
 

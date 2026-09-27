@@ -209,13 +209,14 @@ class Surface:
     For a verb that bridges the user's terminal (``host login``): with a pipe
     on stdin it would measure a different code path, or refuse to start."""
 
-    expect_error: str | None = None
-    """The qualified type of the exception a real-entry run must end with, if any.
+    expect_loaded: str | None = None
+    """A module a real-entry run must have imported, if any.
 
     ``expect_exit`` alone cannot tell a refused connection from a command that
-    never reached the network: an unknown host id also exits 1. A surface
-    that fails by construction names the failure it measures here, as
-    ``<module>.<qualname>`` of the exception type that escapes the entry."""
+    never reached the network: an unknown host id also exits 1, with the same
+    one-line error and no exception. A surface that fails by construction
+    names a module only the path it measures imports, so a run that failed
+    earlier cannot pass as the surface with a smaller count."""
 
     ssh_lab: bool = False
     """Generate the repo with a second lab source holding one SSH host on a closed port.
@@ -264,7 +265,7 @@ def _verb_surface(
     expect_exit: int = 0,
     pty_input: str | None = None,
     ssh_lab: bool = False,
-    expect_error: str | None = None,
+    expect_loaded: str | None = None,
     target_ratio: float | None = None,
 ) -> Surface:
     """Build a surface measuring one real command, the way a user runs it day to day.
@@ -288,7 +289,7 @@ def _verb_surface(
         expect_exit=expect_exit,
         pty_input=pty_input,
         ssh_lab=ssh_lab,
-        expect_error=expect_error,
+        expect_loaded=expect_loaded,
         target_ratio=target_ratio,
     )
 
@@ -489,16 +490,18 @@ SURFACES: list[Surface] = [
     ),
     # THE SSH PATH WITH NO REAL HOST: `budget-ssh` is `127.0.0.1` on a port
     # the harness proves closed, so asyncssh's connect is refused at once.
-    # otto makes one attempt (no retry to disable), the exception escapes
-    # the verb, and the interpreter's excepthook ends the run with status 1.
-    # `expect_error` pins WHICH failure: an unknown host id exits 1 as well.
+    # otto makes one attempt (no retry to disable), and the verb prints one
+    # line naming the host and exits 1. `expect_loaded` pins WHICH failure: an
+    # unknown host id exits 1 as well, but never reaches asyncssh.
     _verb_surface(
         "host_ssh_exec",
         ["otto", "host", "budget-ssh", "exec", "true"],
         ssh_lab=True,
         expect_exit=1,
-        expect_error="builtins.ConnectionRefusedError",
-        target_ratio=8.47,
+        expect_loaded="asyncssh.connection",
+        # Re-derived once the refusal stopped rendering a traceback: the
+        # largest ratio was 6.978 (3.11), so 7.0 plus 10%.
+        target_ratio=7.7,
     ),
     # THE LOGIN PATH, on the same closed-port host, under a pty as a user's
     # terminal would be. Not the built-in `local` host: `LocalHost` implements
@@ -514,8 +517,8 @@ SURFACES: list[Surface] = [
         pty_input="exit\n",
         ssh_lab=True,
         expect_exit=1,
-        expect_error="builtins.ConnectionRefusedError",
-        target_ratio=8.47,
+        expect_loaded="asyncssh.connection",
+        target_ratio=7.7,
     ),
     # `dispatch_repo_warm`'s own sibling, dispatching `local_true` instead of
     # `noop`: `local_true` opens a persistent `LocalHost` session and runs one
@@ -662,14 +665,14 @@ _CHILD_CLI = _CHILD_PREAMBLE.replace("{", "{{").replace("}", "}}") + _CHILD_CLI_
 # `sys.excepthook` renders it (otto installs rich's, which reads source lines,
 # and that reading is part of what the user's failed command costs), and the
 # exit status is 1. Without the arm the child would die before writing its
-# payload, and a surface whose command fails by construction (a refused SSH
-# connection) could not be measured at all.
+# payload, and a surface that regressed into a traceback would report nothing
+# at all rather than the exception that escaped.
 #
 # THE ESCAPING EXCEPTION RIDES THE PAYLOAD (`exception`, "<module>.<qualname>:
 # <message>", or null), because exit status 1 alone names no cause: an unknown
 # host id exits 1 too, through `typer.Exit`, a `SystemExit` that is no
-# exception here. `Surface.expect_error` checks it, and a failure message
-# quotes it, since the traceback itself went to a stderr nobody keeps.
+# exception here. `check_exit` fails any run one escapes, and a failure
+# message quotes it, since the traceback itself went to a stderr nobody keeps.
 _CHILD_ENTRY_BODY = """
 import sys, json
 sys.argv = {argv!r}
@@ -1731,20 +1734,22 @@ BREAKDOWN_LINES = 12
 def check_exit(surface: Surface, result: dict) -> list[str]:
     """Return a violation unless a real-entry run ended the way *surface* expects (empty = pass).
 
-    Both halves of the ending are compared: the exit code against
-    ``expect_exit``, and the escaping exception's type against
-    ``expect_error``. The message always quotes the recorded exception, so a
-    crash names its cause without a re-run.
+    The exit code must be ``expect_exit``, and no exception may have escaped
+    the entry: every surface, the failing ones included, measures a command
+    that ends as a user's does, and an uncaught exception is a rendered
+    traceback, a cost of its own. A surface with ``expect_loaded`` must also
+    have imported that module. The message always quotes the recorded
+    exception, so a crash names its cause without a re-run.
     """
     if not surface.real_entry:
         return []
     exit_code = result.get("exit_code", 0)
     exception = result.get("exception")
-    raised = exception.split(":", 1)[0] if exception else None
-    if exit_code == surface.expect_exit and raised == surface.expect_error:
+    loaded = surface.expect_loaded is None or surface.expect_loaded in result.get("modules", [])
+    if exit_code == surface.expect_exit and exception is None and loaded:
         return []
-    expected = f"exit {surface.expect_exit}" + (
-        f" with {surface.expect_error}" if surface.expect_error else ""
+    expected = f"exit {surface.expect_exit} with no exception" + (
+        f" having imported {surface.expect_loaded}" if surface.expect_loaded else ""
     )
     message = (
         f"`{surface.key}`: the measured command exited {exit_code} with "
@@ -1811,10 +1816,10 @@ def check_surface(
     it measured. A gated one is checked in this order:
 
       1. its ending (:func:`check_exit`) — a ``real_entry`` surface must exit
-         ``surface.expect_exit`` AND raise ``surface.expect_error`` (the type
-         of the exception that escaped the entry, or none), or it measured a
-         failure path rather than the surface: a misspelled host id exits 1
-         too, and its smaller count would read as a saving;
+         ``surface.expect_exit`` with no exception escaping AND have imported
+         ``surface.expect_loaded``, or it measured a failure path rather than
+         the surface: a misspelled host id exits 1 too, and its smaller count
+         would read as a saving;
       2. its baseline — no entry for this surface in the RUNNING
          interpreter's ceilings file (see :func:`interpreter_tag`) is a named
          failure, never a skip, because "no file for this Python" is the shape

@@ -36,6 +36,18 @@ note: >
   load (the suite tests do it, with the suite registry rolled back), and a
   private record of loaded files would not see the eviction and would skip a
   load that must happen.
+
+  A second site is allowed, by shape: `sys.modules.get("asyncssh")` inside a
+  function named `_is_unreachable_host_error`
+  (otto.cli.expose._is_unreachable_host_error). It is the error leg every
+  host verb shares, deciding whether an exception is one of asyncssh's so
+  the verb can print one line instead of a traceback. The lookup cannot
+  change the answer, because an asyncssh exception exists only once asyncssh
+  is imported. Importing `asyncssh.Error` there instead runs the package
+  `__init__` (63 modules) on the local verbs' error legs too. This is not a
+  precedent: an import-state read is allowed only on an error leg that must
+  recognise a heavy library's exception type, and each new site needs its
+  own exemption here, agreed with a maintainer first.
 files:
 - src/otto/**/*.py
 rule:
@@ -73,11 +85,20 @@ rule:
             kind: delete_statement
             stopBy: end
   - not:
-      all:
-      - pattern: mod_name in sys.modules
-      - inside:
-          kind: function_definition
-          stopBy: end
-          has:
-            field: name
-            regex: '^import_test_file$'
+      any:
+      - all:
+        - pattern: mod_name in sys.modules
+        - inside:
+            kind: function_definition
+            stopBy: end
+            has:
+              field: name
+              regex: '^import_test_file$'
+      - all:
+        - pattern: sys.modules.get("asyncssh")
+        - inside:
+            kind: function_definition
+            stopBy: end
+            has:
+              field: name
+              regex: '^_is_unreachable_host_error$'

@@ -1,5 +1,6 @@
 """Unit tests for dynamic host-method CLI exposure."""
 
+import asyncio
 import inspect
 from pathlib import Path
 from typing import Annotated, ClassVar
@@ -1193,3 +1194,122 @@ def test_run_accepts_infinite_timeout(monkeypatch):
     r = DispatchRunner().invoke(app, ["h1", "run", "--timeout", "inf", "echo hi"])
     assert r.exit_code == 0, r.output
     assert captured["timeout"] == float("inf")
+
+
+# ---------------------------------------------------------------------------
+# A host that cannot be reached exits with one line, never a traceback (#482)
+# ---------------------------------------------------------------------------
+
+
+def _raising_host_command(exc: BaseException):
+    """A ``login`` command whose host raises *exc*, plus the host to inspect afterwards."""
+
+    class _Host:
+        id = "budget-ssh"
+        close = AsyncMock()
+
+        async def login(self):
+            raise exc
+
+    host = _Host()
+
+    class _Ctx:
+        obj = host
+        meta: ClassVar[dict] = {}
+
+    @cli_exposed
+    async def login(self): ...
+
+    return make_method_command("login", login), _Ctx(), host
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        pytest.param(
+            ConnectionRefusedError(111, "Connect call failed ('127.0.0.1', 43677)"),
+            "Connect call failed ('127.0.0.1', 43677)",
+            id="refused",
+        ),
+        pytest.param(
+            FileNotFoundError(2, "No such file or directory", "payload.txt"),
+            "No such file or directory: 'payload.txt'",
+            id="missing-local-file",
+        ),
+        # A timeout carries no message; the line must still say what failed.
+        # On 3.10 asyncio's TimeoutError is not an OSError, so it is named too.
+        pytest.param(asyncio.TimeoutError(), "TimeoutError", id="timeout"),
+    ],
+)
+async def test_an_unreachable_host_exits_with_one_line_naming_it(capsys, exc, expected):
+    cmd, ctx, host = _raising_host_command(exc)
+
+    with pytest.raises(typer.Exit) as ei:
+        await cmd(ctx)
+
+    assert ei.value.exit_code == 1
+    host.close.assert_awaited_once()
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "'budget-ssh'" in combined
+    assert "login" in combined
+    assert expected in combined
+    assert "Traceback" not in combined
+
+
+@pytest.mark.asyncio
+async def test_an_ssh_protocol_error_exits_with_one_line(capsys):
+    import asyncssh
+
+    cmd, ctx, _host = _raising_host_command(asyncssh.PermissionDenied("Permission denied"))
+
+    with pytest.raises(typer.Exit) as ei:
+        await cmd(ctx)
+
+    assert ei.value.exit_code == 1
+    combined = "".join(capsys.readouterr())
+    assert "'budget-ssh'" in combined
+    assert "Permission denied" in combined
+
+
+@pytest.mark.asyncio
+async def test_a_bug_in_a_host_verb_still_raises():
+    """Only the host being unreachable is framed: a bug keeps its traceback."""
+    cmd, ctx, host = _raising_host_command(ValueError("a bug"))
+
+    with pytest.raises(ValueError, match="a bug"):
+        await cmd(ctx)
+
+    host.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_debug_log_level_prints_the_unreachable_hosts_traceback(capsys, monkeypatch):
+    monkeypatch.setenv("OTTO_LOG_LEVEL", "debug")
+    cmd, ctx, _host = _raising_host_command(ConnectionRefusedError(111, "Connect call failed"))
+
+    with pytest.raises(typer.Exit) as ei:
+        await cmd(ctx)
+
+    assert ei.value.exit_code == 1
+    err = capsys.readouterr().err
+    assert "Traceback (most recent call last)" in err
+    assert "ConnectionRefusedError" in err
+
+
+@pytest.mark.asyncio
+async def test_ottos_own_connection_errors_pass_through_to_the_boundary():
+    """otto's named errors already read as a sentence; ``entry()`` renders them.
+
+    Several are ``ConnectionError`` and so ``OSError``: this leg must not
+    re-frame their message with a second host label.
+    """
+    from otto.host.errors import SessionSetupError
+
+    cmd, ctx, host = _raising_host_command(SessionSetupError("budget-ssh: setup hook failed"))
+
+    with pytest.raises(SessionSetupError, match="setup hook failed"):
+        await cmd(ctx)
+
+    host.close.assert_awaited_once()

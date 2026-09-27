@@ -136,23 +136,36 @@ def test_an_ssh_surface_that_never_reached_ssh_is_a_violation():
     """Exit 1 alone is not the refused connection: an unknown host id also exits 1.
 
     `otto host <typo> exec` prints "No host with ID" and raises `typer.Exit(1)`,
-    which escapes as no exception at all. If the exit code were the whole check,
-    a misspelled id or a lab source that failed to load would pass the SSH
-    surfaces green, and their shrunken count would read as a saving.
+    exactly as the refused connection now does. If the exit code were the whole
+    check, a misspelled id or a lab source that failed to load would pass the
+    SSH surfaces green, and their shrunken count would read as a saving. Only
+    the run that dialled imported asyncssh's connection module.
     """
-    unknown_host = {"exit_code": 1, "exception": None}
+    unknown_host = {"exit_code": 1, "exception": None, "modules": ["otto", "otto.cli.host"]}
     violations = harness.check_exit(_ssh_exec(), unknown_host)
     assert violations
-    assert "no exception" in violations[0]
+    assert "asyncssh.connection" in violations[0]
 
 
 def test_the_refused_connection_satisfies_an_ssh_surface():
-    refused = {
+    refused = {"exit_code": 1, "exception": None, "modules": ["asyncssh", "asyncssh.connection"]}
+    assert harness.check_exit(_ssh_exec(), refused) == []
+
+
+def test_a_refused_connection_that_tracebacks_is_a_violation():
+    """A surface that fails by construction still must fail as a user sees it: one line.
+
+    The refused connection used to escape the verb as a rendered traceback
+    (#482), and rendering it cost more than the command itself.
+    """
+    traceback_run = {
         "exit_code": 1,
         "exception": "builtins.ConnectionRefusedError: "
         "[Errno 111] Connect call failed ('127.0.0.1', 40123)",
+        "modules": ["asyncssh", "asyncssh.connection"],
     }
-    assert harness.check_exit(_ssh_exec(), refused) == []
+    [violation] = harness.check_exit(_ssh_exec(), traceback_run)
+    assert "ConnectionRefusedError" in violation
 
 
 def test_an_unexpected_exception_is_named_in_the_violation():

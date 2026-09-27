@@ -30,6 +30,14 @@ valid:
       mod_name = f"_otto_suite_{test_file.stem}"
       if mod_name in sys.modules:
           return
+# The host-verb error leg recognising asyncssh's errors, the other allowed site.
+- |
+  import sys
+
+
+  def _is_unreachable_host_error(exc):
+      asyncssh = sys.modules.get("asyncssh")
+      return asyncssh is not None and isinstance(exc, asyncssh.Error)
 # An optional platform module is not import state.
 - |
   def _setup_raw_mode(fd):
@@ -84,3 +92,19 @@ invalid:
   import sys
 
   sys.modules.setdefault("otto.fake", fake)
+# The asyncssh shape outside the error leg it is allowed in.
+- |
+  import sys
+
+
+  def warm_ssh(exc):
+      asyncssh = sys.modules.get("asyncssh")
+      return asyncssh is not None
+# Another module inside that error leg.
+- |
+  import sys
+
+
+  def _is_unreachable_host_error(exc):
+      rich = sys.modules.get("rich")
+      return rich is not None
