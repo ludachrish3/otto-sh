@@ -70,8 +70,8 @@
     },
     "completion_repo_handover": {
       "by_bucket": {
-        "fd": 115,
-        "other": 358,
+        "fd": 112,
+        "other": 204,
         "otto:*": 28,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -139,15 +139,15 @@
         "workspace": 60
       },
       "by_process": {
-        "python": 2635
+        "python": 2478
       },
-      "file_ops": 2635,
+      "file_ops": 2478,
       "workspace": 60
     },
     "completion_repo_warm": {
       "by_bucket": {
         "fd": 24,
-        "other": 103,
+        "other": 102,
         "otto:*": 5,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -167,9 +167,9 @@
         "workspace": 19
       },
       "by_process": {
-        "python": 391
+        "python": 390
       },
-      "file_ops": 391,
+      "file_ops": 390,
       "workspace": 19
     },
     "cov": {
@@ -214,8 +214,8 @@
     },
     "dispatch_local_warm": {
       "by_bucket": {
-        "fd": 126,
-        "other": 439,
+        "fd": 123,
+        "other": 281,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -286,16 +286,16 @@
       },
       "by_process": {
         "bash": 38,
-        "python": 2761,
+        "python": 2600,
         "stty": 30
       },
-      "file_ops": 2829,
+      "file_ops": 2668,
       "workspace": 35
     },
     "dispatch_repo_warm": {
       "by_bucket": {
-        "fd": 123,
-        "other": 371,
+        "fd": 120,
+        "other": 213,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -365,9 +365,9 @@
         "workspace": 35
       },
       "by_process": {
-        "python": 2758
+        "python": 2597
       },
-      "file_ops": 2758,
+      "file_ops": 2597,
       "workspace": 35
     },
     "docker": {
@@ -454,8 +454,8 @@
     },
     "help_repo": {
       "by_bucket": {
-        "fd": 182,
-        "other": 534,
+        "fd": 176,
+        "other": 349,
         "otto:*": 29,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -533,15 +533,15 @@
         "workspace": 220
       },
       "by_process": {
-        "python": 4219
+        "python": 4028
       },
-      "file_ops": 4219,
+      "file_ops": 4028,
       "workspace": 220
     },
     "help_repo_warm": {
       "by_bucket": {
-        "fd": 133,
-        "other": 408,
+        "fd": 130,
+        "other": 244,
         "otto:*": 23,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -606,9 +606,9 @@
         "workspace": 28
       },
       "by_process": {
-        "python": 3090
+        "python": 2923
       },
-      "file_ops": 3090,
+      "file_ops": 2923,
       "workspace": 28
     },
     "host": {
@@ -653,8 +653,8 @@
     },
     "host_local_exec": {
       "by_bucket": {
-        "fd": 126,
-        "other": 378,
+        "fd": 123,
+        "other": 220,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -724,16 +724,16 @@
         "workspace": 35
       },
       "by_process": {
-        "python": 2785,
+        "python": 2624,
         "sh": 7
       },
-      "file_ops": 2792,
+      "file_ops": 2631,
       "workspace": 35
     },
     "host_local_get": {
       "by_bucket": {
-        "fd": 123,
-        "other": 371,
+        "fd": 120,
+        "other": 213,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -803,15 +803,15 @@
         "workspace": 53
       },
       "by_process": {
-        "python": 2804
+        "python": 2643
       },
-      "file_ops": 2804,
+      "file_ops": 2643,
       "workspace": 53
     },
     "host_local_put": {
       "by_bucket": {
-        "fd": 123,
-        "other": 371,
+        "fd": 120,
+        "other": 213,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -881,15 +881,15 @@
         "workspace": 54
       },
       "by_process": {
-        "python": 2805
+        "python": 2644
       },
-      "file_ops": 2805,
+      "file_ops": 2644,
       "workspace": 54
     },
     "host_ssh_exec": {
       "by_bucket": {
-        "fd": 208,
-        "other": 1557,
+        "fd": 205,
+        "other": 1359,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -971,15 +971,15 @@
         "ld": 634,
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 4280
+        "python": 4079
       },
-      "file_ops": 5314,
+      "file_ops": 5113,
       "workspace": 56
     },
     "host_ssh_login": {
       "by_bucket": {
-        "fd": 208,
-        "other": 1557,
+        "fd": 205,
+        "other": 1359,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -1061,9 +1061,9 @@
         "ld": 634,
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 4277
+        "python": 4076
       },
-      "file_ops": 5311,
+      "file_ops": 5110,
       "workspace": 56
     },
     "import_otto": {
@@ -1366,8 +1366,8 @@
     },
     "test_repo": {
       "by_bucket": {
-        "fd": 244,
-        "other": 656,
+        "fd": 226,
+        "other": 387,
         "otto:*": 32,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -1551,15 +1551,15 @@
         "workspace": 169
       },
       "by_process": {
-        "python": 6134
+        "python": 5847
       },
-      "file_ops": 6134,
+      "file_ops": 5847,
       "workspace": 169
     },
     "version_repo": {
       "by_bucket": {
-        "fd": 47,
-        "other": 183,
+        "fd": 44,
+        "other": 119,
         "otto:*": 5,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -1578,9 +1578,9 @@
         "stdlib": 457
       },
       "by_process": {
-        "python": 754
+        "python": 687
       },
-      "file_ops": 754,
+      "file_ops": 687,
       "workspace": 0
     }
   }

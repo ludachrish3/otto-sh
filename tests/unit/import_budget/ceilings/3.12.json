@@ -70,15 +70,15 @@
     },
     "completion_repo_handover": {
       "by_bucket": {
-        "fd": 115,
-        "other": 349,
+        "fd": 112,
+        "other": 199,
         "otto:*": 28,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-312-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-312.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:_shim": 3,
+        "otto:_shim": 2,
         "otto:_shim.cpython-312.pyc": 1,
         "otto:_shim_complete": 2,
         "otto:_shim_complete.cpython-312.pyc": 1,
@@ -139,22 +139,22 @@
         "workspace": 63
       },
       "by_process": {
-        "python": 2618
+        "python": 2464
       },
-      "file_ops": 2618,
+      "file_ops": 2464,
       "workspace": 63
     },
     "completion_repo_warm": {
       "by_bucket": {
         "fd": 26,
-        "other": 101,
+        "other": 100,
         "otto:*": 5,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-312-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-312.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:_shim": 3,
+        "otto:_shim": 2,
         "otto:_shim.cpython-312.pyc": 1,
         "otto:_shim_complete": 2,
         "otto:_shim_complete.cpython-312.pyc": 1,
@@ -167,9 +167,9 @@
         "workspace": 19
       },
       "by_process": {
-        "python": 399
+        "python": 397
       },
-      "file_ops": 399,
+      "file_ops": 397,
       "workspace": 19
     },
     "cov": {
@@ -214,15 +214,15 @@
     },
     "dispatch_local_warm": {
       "by_bucket": {
-        "fd": 126,
-        "other": 431,
+        "fd": 123,
+        "other": 277,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-312-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-312.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:_shim": 3,
+        "otto:_shim": 2,
         "otto:_shim.cpython-312.pyc": 1,
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-312.pyc": 1,
@@ -286,23 +286,23 @@
       },
       "by_process": {
         "bash": 38,
-        "python": 2744,
+        "python": 2586,
         "stty": 30
       },
-      "file_ops": 2812,
+      "file_ops": 2654,
       "workspace": 37
     },
     "dispatch_repo_warm": {
       "by_bucket": {
-        "fd": 123,
-        "other": 363,
+        "fd": 120,
+        "other": 209,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-312-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-312.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:_shim": 3,
+        "otto:_shim": 2,
         "otto:_shim.cpython-312.pyc": 1,
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-312.pyc": 1,
@@ -365,9 +365,9 @@
         "workspace": 37
       },
       "by_process": {
-        "python": 2741
+        "python": 2583
       },
-      "file_ops": 2741,
+      "file_ops": 2583,
       "workspace": 37
     },
     "docker": {
@@ -454,8 +454,8 @@
     },
     "help_repo": {
       "by_bucket": {
-        "fd": 182,
-        "other": 534,
+        "fd": 176,
+        "other": 351,
         "otto:*": 29,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -533,15 +533,15 @@
         "workspace": 225
       },
       "by_process": {
-        "python": 4216
+        "python": 4027
       },
-      "file_ops": 4216,
+      "file_ops": 4027,
       "workspace": 225
     },
     "help_repo_warm": {
       "by_bucket": {
-        "fd": 133,
-        "other": 399,
+        "fd": 130,
+        "other": 239,
         "otto:*": 23,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -606,9 +606,9 @@
         "workspace": 30
       },
       "by_process": {
-        "python": 3071
+        "python": 2908
       },
-      "file_ops": 3071,
+      "file_ops": 2908,
       "workspace": 30
     },
     "host": {
@@ -653,15 +653,15 @@
     },
     "host_local_exec": {
       "by_bucket": {
-        "fd": 126,
-        "other": 370,
+        "fd": 123,
+        "other": 216,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-312-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-312.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:_shim": 3,
+        "otto:_shim": 2,
         "otto:_shim.cpython-312.pyc": 1,
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-312.pyc": 1,
@@ -724,23 +724,23 @@
         "workspace": 37
       },
       "by_process": {
-        "python": 2768,
+        "python": 2610,
         "sh": 7
       },
-      "file_ops": 2775,
+      "file_ops": 2617,
       "workspace": 37
     },
     "host_local_get": {
       "by_bucket": {
-        "fd": 123,
-        "other": 363,
+        "fd": 120,
+        "other": 209,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-312-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-312.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:_shim": 3,
+        "otto:_shim": 2,
         "otto:_shim.cpython-312.pyc": 1,
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-312.pyc": 1,
@@ -803,22 +803,22 @@
         "workspace": 55
       },
       "by_process": {
-        "python": 2787
+        "python": 2629
       },
-      "file_ops": 2787,
+      "file_ops": 2629,
       "workspace": 55
     },
     "host_local_put": {
       "by_bucket": {
-        "fd": 123,
-        "other": 363,
+        "fd": 120,
+        "other": 209,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-312-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-312.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:_shim": 3,
+        "otto:_shim": 2,
         "otto:_shim.cpython-312.pyc": 1,
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-312.pyc": 1,
@@ -881,22 +881,22 @@
         "workspace": 56
       },
       "by_process": {
-        "python": 2788
+        "python": 2630
       },
-      "file_ops": 2788,
+      "file_ops": 2630,
       "workspace": 56
     },
     "host_ssh_exec": {
       "by_bucket": {
-        "fd": 208,
-        "other": 1541,
+        "fd": 205,
+        "other": 1347,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-312-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-312.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:_shim": 6,
+        "otto:_shim": 5,
         "otto:_shim.cpython-312.pyc": 1,
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-312.pyc": 1,
@@ -971,22 +971,22 @@
         "ld": 634,
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 4257
+        "python": 4059
       },
-      "file_ops": 5291,
+      "file_ops": 5093,
       "workspace": 60
     },
     "host_ssh_login": {
       "by_bucket": {
-        "fd": 208,
-        "other": 1541,
+        "fd": 205,
+        "other": 1347,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-312-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-312.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:_shim": 6,
+        "otto:_shim": 5,
         "otto:_shim.cpython-312.pyc": 1,
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-312.pyc": 1,
@@ -1061,9 +1061,9 @@
         "ld": 634,
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 4254
+        "python": 4056
       },
-      "file_ops": 5288,
+      "file_ops": 5090,
       "workspace": 60
     },
     "import_otto": {
@@ -1366,15 +1366,15 @@
     },
     "test_repo": {
       "by_bucket": {
-        "fd": 244,
-        "other": 647,
+        "fd": 226,
+        "other": 382,
         "otto:*": 32,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-312-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-312.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:_shim": 3,
+        "otto:_shim": 2,
         "otto:_shim.cpython-312.pyc": 1,
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-312.pyc": 1,
@@ -1551,15 +1551,15 @@
         "workspace": 173
       },
       "by_process": {
-        "python": 6123
+        "python": 5839
       },
-      "file_ops": 6123,
+      "file_ops": 5839,
       "workspace": 173
     },
     "version_repo": {
       "by_bucket": {
-        "fd": 47,
-        "other": 179,
+        "fd": 44,
+        "other": 115,
         "otto:*": 5,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -1578,9 +1578,9 @@
         "stdlib": 457
       },
       "by_process": {
-        "python": 749
+        "python": 682
       },
-      "file_ops": 749,
+      "file_ops": 682,
       "workspace": 0
     }
   }

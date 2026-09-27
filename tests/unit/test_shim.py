@@ -38,6 +38,17 @@ def _no_pydantic_plugin_setting_leaks():
         os.environ["PYDANTIC_DISABLE_PLUGINS"] = saved
 
 
+@pytest.fixture(autouse=True)
+def _scratch_sys_path(monkeypatch):
+    """Run every test against a copy of ``sys.path``.
+
+    ``_shim.main()`` removes ``sys.path[0]`` when it is the directory of
+    ``sys.argv[0]``, and an in-process call here could otherwise take an
+    entry out of this worker's own path.
+    """
+    monkeypatch.setattr(sys, "path", list(sys.path))
+
+
 # Runs the shim exactly as the console script does, then reports which otto
 # modules the interpreter ended up carrying. A subprocess is mandatory: the
 # pytest process has already imported half of otto, so an in-process check
@@ -511,3 +522,70 @@ def test_a_non_bash_shell_takes_the_full_path(tmp_path):
         env={**os.environ, **env, "_OTTO_COMPLETE": "complete_zsh"},
     )
     assert "otto.cli.main" in out.stdout
+
+
+# ---------------------------------------------------------------------------
+# sys.path[0]: the console script's own directory is never searched (#485)
+# ---------------------------------------------------------------------------
+
+# A console script runs with its own directory (the venv's bin/) at
+# sys.path[0], so every top-level import that is not in bin/ costs a stat
+# there first — about a hundred per command, each a round trip on an NFS
+# venv. Nothing otto imports lives in bin/. The child is a script in its own
+# directory, exactly the shape a console script has, and reports sys.path
+# after the shim ran.
+_SCRIPT_DIR_CHILD = """
+import json, sys
+sys.argv = [__file__, "--version"]
+from otto import _shim
+try:
+    _shim.main()
+except SystemExit:
+    pass
+print(json.dumps(sys.path))
+"""
+
+
+def test_the_console_script_directory_leaves_sys_path(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    child = bin_dir / "otto"
+    child.write_text(_SCRIPT_DIR_CHILD)
+    out = subprocess.run([sys.executable, str(child)], capture_output=True, text=True, check=True)
+    path = json.loads(out.stdout.strip().splitlines()[-1])
+    assert str(bin_dir) not in path, path
+
+
+def test_python_dash_m_keeps_the_working_directory(tmp_path, monkeypatch):
+    """Under ``python -m otto``, sys.path[0] is the working directory, which a
+    user may rely on; only the console script's own directory is dropped."""
+    from otto import _shim
+
+    monkeypatch.setattr(sys, "argv", [str(PROJECT_ROOT / "src" / "otto" / "__main__.py")])
+    sys.path.insert(0, str(tmp_path))
+    _shim._drop_script_dir()
+    assert sys.path[0] == str(tmp_path)
+
+
+def test_a_symlinked_console_script_still_drops_its_real_directory(tmp_path, monkeypatch):
+    from otto import _shim
+
+    real_bin = tmp_path / "real-bin"
+    real_bin.mkdir()
+    (real_bin / "otto").write_text("")
+    link_bin = tmp_path / "link-bin"
+    link_bin.mkdir()
+    (link_bin / "otto").symlink_to(real_bin / "otto")
+    monkeypatch.setattr(sys, "argv", [str(link_bin / "otto")])
+    sys.path.insert(0, str(real_bin))  # CPython resolves the script's symlink
+    _shim._drop_script_dir()
+    assert str(real_bin) not in sys.path
+
+
+def test_an_unrelated_first_entry_is_kept(tmp_path, monkeypatch):
+    from otto import _shim
+
+    monkeypatch.setattr(sys, "argv", [str(tmp_path / "bin" / "otto")])
+    sys.path.insert(0, str(tmp_path / "elsewhere"))
+    _shim._drop_script_dir()
+    assert sys.path[0] == str(tmp_path / "elsewhere")

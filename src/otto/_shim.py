@@ -29,8 +29,27 @@ import os
 import sys
 
 
+def _drop_script_dir() -> None:
+    """Take the console script's own directory off ``sys.path``.
+
+    A console script runs with its directory (the venv's ``bin/``) at
+    ``sys.path[0]``, so every top-level import that lives elsewhere costs a
+    stat there first: about a hundred per command, each a round trip when the
+    venv is on NFS. Nothing otto imports lives in ``bin/``. CPython resolves
+    the script's symlinks before it computes that entry, so both sides are
+    compared resolved. Under ``python -m otto`` the entry is the working
+    directory instead, which a user may rely on, and it does not match.
+    """
+    if sys.path and sys.argv and sys.argv[0]:
+        script_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
+        if os.path.realpath(sys.path[0]) == script_dir:
+            del sys.path[0]
+
+
 def main() -> None:
     """Answer ``--version`` or a bash TAB directly; otherwise hand off to the full CLI."""
+    _drop_script_dir()
+
     # Exact match, never membership: `otto host put --version` is a real
     # subcommand invocation that needs the registry.
     if sys.argv[1:] == ["--version"]:
