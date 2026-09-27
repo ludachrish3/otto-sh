@@ -469,6 +469,32 @@ def read_golden() -> list[str]:
     return [ln for ln in text.splitlines() if ln and not ln.startswith("#")]
 
 
+def describe_drift(golden: list[str], current: list[str]) -> str:
+    """Say whether the public API only GREW, or CHANGED, since the golden was written.
+
+    For a person to read and decide on, never acted on: ``--check`` writes
+    nothing. Growth adds lines and leaves every existing one in place, so
+    no caller can break. A change removes or rewrites at least one line: a
+    rename, a dropped name, a parameter that moved. It lists the removed
+    lines because those are the ones callers depend on.
+    """
+    removed = sorted(set(golden) - set(current))
+    added = sorted(set(current) - set(golden))
+    if not removed:
+        return (
+            f"public API GREW: {len(added)} line(s) added, nothing removed or changed. "
+            "Review the additions; if they are meant to be public, record them with "
+            "`make api-snapshot` and commit the golden."
+        )
+    shown = "\n".join(f"  - {line}" for line in removed)
+    return (
+        f"public API CHANGED: {len(removed)} line(s) removed or rewritten, "
+        f"{len(added)} added. Callers of these break:\n{shown}\n"
+        "If the change is intended, record it with `make api-snapshot`, commit the "
+        "golden, and mark the commit breaking (`!` or `BREAKING CHANGE:`)."
+    )
+
+
 def main(argv: list[str]) -> int:
     """Print the current surface; optionally --update the golden or --check it."""
     ap = argparse.ArgumentParser(
@@ -509,7 +535,8 @@ def main(argv: list[str]) -> int:
                 )
             )
             print(diff)
-            print("\npublic API surface changed. If intentional, run `make api-snapshot`.")
+            print()
+            print(describe_drift(expected, lines))
             return 1
         if failures:
             return 1

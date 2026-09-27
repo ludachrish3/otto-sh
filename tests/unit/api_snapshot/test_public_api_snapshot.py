@@ -350,3 +350,37 @@ def test_red_an_empty_docs_root_finds_no_known_path(monkeypatch, tmp_path):
     assert not failures
     assert lines == []
     assert "otto.suite:OttoSuite" not in lines
+
+
+def _check_against(monkeypatch, tmp_path, golden_lines):
+    """Run ``--check`` against a golden holding *golden_lines*; return (exit, output, golden)."""
+    golden = tmp_path / "golden.txt"
+    golden.write_text("\n".join(golden_lines) + "\n", encoding="utf-8")
+    before = golden.read_bytes()
+    monkeypatch.setattr(mod, "GOLDEN_PATH", golden)
+    return mod.main(["--check"]), before, golden
+
+
+def test_check_says_the_api_grew_when_lines_were_only_added(monkeypatch, tmp_path, capsys):
+    """Growth breaks no caller, and the verdict says so rather than "changed"."""
+    current = mod.read_golden()
+    exit_code, before, golden = _check_against(monkeypatch, tmp_path, current[1:])
+
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert "public API GREW: 1 line(s) added, nothing removed or changed" in out
+    assert "CHANGED" not in out
+    assert golden.read_bytes() == before  # it reports; it never records
+
+
+def test_check_says_the_api_changed_and_names_what_callers_lose(monkeypatch, tmp_path, capsys):
+    current = mod.read_golden()
+    gone = "otto:NameThatWasRemoved"
+    exit_code, before, golden = _check_against(monkeypatch, tmp_path, sorted([*current, gone]))
+
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert "public API CHANGED: 1 line(s) removed or rewritten, 0 added" in out
+    assert f"  - {gone}" in out
+    assert "GREW" not in out
+    assert golden.read_bytes() == before
