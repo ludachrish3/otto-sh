@@ -357,10 +357,13 @@ Before pushing, run `make all` locally — it mirrors CI
 
 Run `make gate-fresh` before handing a branch back or squashing it onto `main`.
 
-It runs CI's assets-absent Python lanes — `lint-python`, `lint-arch`,
-`typecheck-python`, `coverage-hostless` — against your **committed** tree
-inside a throwaway pristine worktree, then removes it (or keeps it, if the
-gate went red, so you have somewhere to debug).
+It runs the lanes that catch what a clean checkout sees and your dev tree
+hides: `lint-python`, `lint-arch`, `check-api-snapshot` (the public-API
+golden), `typecheck-python`, `collect-check` and `docs`. It runs them against
+your **committed** tree inside a throwaway pristine worktree, then removes it
+(or keeps it, if the gate went red, so you have somewhere to debug). It does
+not run the test suites: they take longer than a push can wait, and CI runs
+them. `scripts/gate_fresh.py` says why each lane is in the list.
 
 The reason it uses a separate worktree is that your checkout is a *superset* of
 CI's environment. It accumulates gitignored build outputs — above all

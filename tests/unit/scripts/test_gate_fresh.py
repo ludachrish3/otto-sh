@@ -279,7 +279,14 @@ class TestGateLifecycle:
             runner=lambda wt, targets: captured.append(targets) or True,
         )
         assert captured == [
-            ["lint-python", "lint-arch", "typecheck-python", "collect-check", "docs"]
+            [
+                "lint-python",
+                "lint-arch",
+                "check-api-snapshot",
+                "typecheck-python",
+                "collect-check",
+                "docs",
+            ]
         ]
 
     def test_an_exception_mid_run_leaks_no_registered_worktree(self, tmp_path: Path):

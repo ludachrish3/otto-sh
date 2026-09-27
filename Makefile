@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-breaking profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kgcov kgcov-matrix release-kgcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-breaking profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kgcov kgcov-matrix release-kgcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -1461,7 +1461,7 @@ check-python: lint-python typecheck-python lint-arch ## (Quality) All Python sta
 # ever refactored, and avoids a plain `REF` in the child process's
 # environment shadowing anyone else's expectations of that name.
 gate-fresh: export GATE_FRESH_REF := $(if $(filter command line,$(origin REF)),$(value REF),)
-gate-fresh: ## (Quality) Run CI's assets-absent Python lanes (lint-python + lint-arch + typecheck-python + coverage-hostless) against the COMMITTED tree in a throwaway pristine worktree at REF (default HEAD). Catches gitignored-artifact, unsynced-uv.lock and forgotten-`git add` failures that the dev tree hides. Refuses if tracked files are modified or staged.
+gate-fresh: ## (Quality) Run the pre-push lanes (lint-python + lint-arch + check-api-snapshot + typecheck-python + collect-check + docs) against the COMMITTED tree in a throwaway pristine worktree at REF (default HEAD). Catches gitignored-artifact, unsynced-uv.lock and forgotten-`git add` failures that the dev tree hides. Refuses if tracked files are modified or staged.
 	@$(SAY) "gate-fresh: pristine worktree, assets-absent CI lanes"
 	@uv run python scripts/gate_fresh.py $(if $(filter command line,$(origin REF)),--ref "$$GATE_FRESH_REF",)
 
@@ -1512,6 +1512,10 @@ import-snapshot: ## (Dev) Regenerate this interpreter's file-operation ceilings 
 api-snapshot: ## (Dev) Regenerate the public-API golden snapshot (otto.__all__ + every deep import path the docs teach — run after adding/removing/renaming a public name or a documented import, then review the diff)
 	@$(SAY) "updating public-API golden snapshot"
 	@uv run python scripts/api_snapshot.py --update
+
+check-api-snapshot: ## (Quality) Fail if the public-API golden no longer matches the live surface, or a documented import no longer resolves (`make api-snapshot` regenerates it)
+	@$(SAY) "checking public-API golden snapshot"
+	@uv run python scripts/api_snapshot.py --check
 
 check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; RANGE must end at HEAD) that deletes a public-API golden line without a `!`/`BREAKING CHANGE:` mark
 	@$(SAY) "check-breaking-marks: $(RANGE)"

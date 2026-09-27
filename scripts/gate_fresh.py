@@ -43,6 +43,12 @@ from pathlib import Path
 #
 #   lint-python / lint-arch  — the architecture gates; cheap, and they read the
 #                              committed tree rather than the dev tree's state.
+#   check-api-snapshot       — the public-API golden (under a second). Every
+#                              hostless test lane pins it, but none runs here,
+#                              so a golden left stale by a docs or export change
+#                              went green locally and red on every CI Python
+#                              at once (#484). Right after lint so drift fails
+#                              before the slow lanes start.
 #   typecheck-python         — a module that is imported but never committed
 #                              fails here.
 #   collect-check            — imports EVERY test module with no artifacts
@@ -73,7 +79,14 @@ from pathlib import Path
 # it — trading it for a hook that finishes inside the transport's lifetime is
 # the better bargain, because a gate that cannot deliver its verdict protects
 # nothing.
-GATED_TARGETS = ["lint-python", "lint-arch", "typecheck-python", "collect-check", "docs"]
+GATED_TARGETS = [
+    "lint-python",
+    "lint-arch",
+    "check-api-snapshot",
+    "typecheck-python",
+    "collect-check",
+    "docs",
+]
 
 ZERO_SHA = "0" * 40
 _PRE_PUSH_LINE_FIELDS = 4
