@@ -15,7 +15,7 @@ from rich import get_console
 from rich import print as rprint
 from rich.markup import escape
 
-from ..config import get_lab, get_repos
+from ..config import get_repos
 from ..config.completion_cache import collect_link_ids
 from ..link import (
     DirectionState,
@@ -199,6 +199,8 @@ async def impair(  # noqa: PLR0913 — CLI command params
     ),
 ) -> None:
     """Impair a static link (merge-read-modify-replace, verified). See spec §9/§10."""
+    from ..config.fleet import get_lab
+
     given: dict[str, str | None] = {
         "--delay": delay,
         "--jitter": jitter,
@@ -279,6 +281,8 @@ async def repair(
     ),
 ) -> None:
     """Clear a link's impairment(s) and cancel its timers, or repair --all. See spec §9/§10."""
+    from ..config.fleet import get_lab
+
     # This usage-error exit is deliberately kept OUT of the try/except below,
     # for the same typer.Exit-is-a-RuntimeError reason as `impair` above.
     if bool(link) == bool(all_):
@@ -411,6 +415,8 @@ def _selector_rows(state: LinkState) -> list[str]:
 @link_app.command(name="list")
 async def list_links() -> None:
     """List every static link's current impairment state (spec §9)."""
+    from ..config.fleet import get_lab
+
     lab = get_lab()
     states = await read_link_states(lab)
     for state in states:
@@ -539,6 +545,7 @@ async def check(
     # as `otto.cli.monitor`'s command bodies. `requested_features` lives in
     # the same module as `check_link`, so it is deferred for the same reason.
     from ..check import render_sections, report_to_json
+    from ..config.fleet import get_lab
     from ..host.host import is_dry_run
     from ..link import check_link
     from ..link.check import link_sections, requested_features

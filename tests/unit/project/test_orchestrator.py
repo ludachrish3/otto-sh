@@ -1775,13 +1775,14 @@ def test_the_verb_list_is_derived_membership_not_memory():
     from the orchestrator would silently skip the D3 contract. Deriving the
     expected set from ``otto.project``'s own namespace makes forgetting
     impossible: exporting a 13th verb reds this test until it is enumerated
-    (and thereby gated) here.
+    (and thereby gated) here. ``dir()``, not ``vars()``: the package exports
+    lazily, so its module dict holds none of the verbs until they resolve.
     """
     exported = {
         name
-        for name, obj in vars(project).items()
+        for name in dir(project)
         if not name.startswith("_")
-        and callable(obj)
+        and callable(obj := getattr(project, name))
         and getattr(obj, "__module__", "") == "otto.project.orchestrator"
     }
     assert sorted(_PUBLIC_VERBS) == sorted(exported)

@@ -106,11 +106,6 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 from rich.markup import escape as escape_markup
 
-from ..coverage.errors import CoverageDataMismatchError, CoverageToolVersionError
-from ..coverage.reporter import TierSpec, run_coverage_report
-from ..coverage.store.model import TIER_SYSTEM
-from ..host.errors import CoverageToolMissingError
-
 if TYPE_CHECKING:
     # Type-only: never executed, so it carries no runtime import cost and
     # doesn't touch the `cov` import-budget surface (measured by `otto cov
@@ -122,6 +117,7 @@ if TYPE_CHECKING:
     from ..config.repo import Repo
     from ..coverage.exclusions.rules import ExclusionRule
     from ..coverage.overrides import OverrideConfig
+    from ..coverage.reporter import TierSpec
     from ..coverage.store.model import Thresholds
     from ..coverage.tickets import TicketSpec
     from ..coverage.tiers import TierConfig
@@ -166,14 +162,16 @@ def cov_callback(ctx: typer.Context) -> None:
         return
 
 
-def _parse_tier_specs(raw_tiers: list[str]) -> list[TierSpec]:
+def _parse_tier_specs(raw_tiers: list[str]) -> "list[TierSpec]":
     """Parse repeated ``--tier NAME[=PATH]`` values into ordered tier specs.
 
     Order is preserved (= precedence order).  ``--tier system`` without a
     path is allowed and represents the implicit lcov-merged system tier.
     Any other tier without a path is rejected.
     """
-    specs: list[TierSpec] = []
+    from ..coverage.store.model import TIER_SYSTEM
+
+    specs: "list[TierSpec]" = []
     seen: set[str] = set()
     for raw in raw_tiers:
         if "=" in raw:
@@ -331,6 +329,10 @@ def report(
     ] = None,
 ) -> None:
     """Generate a coverage report from otto test --cov output directories."""
+    from ..coverage.errors import CoverageDataMismatchError, CoverageToolVersionError
+    from ..coverage.store.model import TIER_SYSTEM
+    from ..host.errors import CoverageToolMissingError
+
     output_dirs = output_dirs or []
     # Validate output directories
     for d in output_dirs:
@@ -353,7 +355,7 @@ def report(
     overrides: "OverrideConfig | None" = None
     if tier:
         try:
-            tier_specs: list[TierSpec] = _parse_tier_specs(tier)
+            tier_specs: "list[TierSpec]" = _parse_tier_specs(tier)
         except typer.BadParameter as e:
             # A --tier usage error (missing path, duplicate name): the message
             # already names the offending value and the fix — print it clean,
@@ -371,6 +373,7 @@ def report(
     report_dir = report_dir.resolve()
 
     from ..coverage.capture.gitio import GitUnavailableError, NotAGitRepoError
+    from ..coverage.reporter import run_coverage_report
     from ..lifecycle import run_command
 
     try:
@@ -608,7 +611,7 @@ async def _connect_cov_hosts() -> tuple[
     """Bootstrap, locate ``[coverage]`` config, and discover matching lab hosts.
 
     Shared setup for both ``get``'s fetch flow and ``clean``: loads the
-    active lab's repos (:func:`~otto.config.get_repos`), locates the
+    active lab's repos (:func:`~otto.config.bootstrapped.get_repos`), locates the
     repo with a ``[coverage]`` section, compiles its ``hosts`` pattern, and
     enumerates every lab host that pattern matches — mirroring
     :func:`otto.coverage.collect.collect_coverage`'s fetch stage. Deliberately stops

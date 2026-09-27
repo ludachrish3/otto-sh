@@ -1,6 +1,6 @@
 """SFTP file transfer backend for UnixHost.
 
-Registers ``sftp`` into the shared transfer registry on import.
+``otto.host.transfer.registry`` registers it as ``sftp``, by reference.
 
 THE ONE GAPPED SURFACE OTTO DOES NOT PRE-CHECK, and the absence is a decision
 rather than an omission. ``sftp-transfer`` in
@@ -47,7 +47,6 @@ from .base import (
     resolve_concurrency_limit,
 )
 from .progress import _make_sftp_progress
-from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
 
 _logger = logging.getLogger(__name__)
@@ -329,6 +328,3 @@ class SftpFileTransfer(UnixFileTransfer):
             return Result(Status.Success, value=dest_dir / src.name)
 
         return await self._dispatch_per_file(src_files, _put_one, concurrent=concurrent)
-
-
-register_transfer_backend("sftp", SftpFileTransfer)

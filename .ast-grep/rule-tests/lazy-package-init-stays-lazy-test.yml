@@ -1,0 +1,86 @@
+# Rule test for .ast-grep/rules/lazy-package-init-stays-lazy.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+id: lazy-package-init-stays-lazy
+valid:
+# The house shape: the name lives in the lazy table and the TYPE_CHECKING
+# block, and the resolver imports importlib inside its own body.
+- |
+  from typing import TYPE_CHECKING
+
+  if TYPE_CHECKING:
+      from .collector import MetricCollector as MetricCollector
+
+  _LAZY_ATTRS: dict[str, str] = {
+      "MetricCollector": "otto.monitor.collector",
+  }
+
+
+  def __getattr__(name: str) -> object:
+      import importlib
+
+      if name in _LAZY_ATTRS:
+          return getattr(importlib.import_module(_LAZY_ATTRS[name]), name)
+      raise AttributeError(name)
+# An init with no imports at all: empty, or its docstring alone.
+- |
+  """Per-project coverage exclusion rules."""
+# The allow-listed module-scope imports, each in the file that needs it.
+- |
+  import logging as _logging
+  from typing import TYPE_CHECKING
+
+  _LAZY_EXPORTS: dict[str, tuple[str, str]] = {"app": ("otto.cli", "app")}
+- |
+  from typing import TYPE_CHECKING
+
+  from .base import (
+      MAX_FILE_MODE,
+      BaseFileTransfer,
+  )
+  from .registry import (
+      TRANSFER_BACKENDS,
+      build_transfer_backend,
+  )
+
+  _LAZY_ATTRS: dict[str, str] = {"NcFileTransfer": "otto.host.transfer.nc"}
+invalid:
+# An init with no lazy table is checked too: every package is lazy, so an
+# eager re-export in one that never converted is exactly what this catches.
+- |
+  from .main import app as app
+# The same for an init that holds its own code: its stdlib imports load with
+# every submodule of the package. The code moves to a named submodule.
+- |
+  import re
+  from pathlib import Path
+
+  INTERFACE = 1
+  _VERSION_LINE = re.compile(r"^#define KGCOV_OTTO_VERSION")
+# An eager re-export in a lazy package: every import of the package, and of
+# any of its submodules, now loads the collector.
+- |
+  from typing import TYPE_CHECKING
+
+  from .collector import MetricCollector
+
+  _LAZY_ATTRS: dict[str, str] = {
+      "MonitorServer": "otto.monitor.server",
+  }
+# The else branch of `if TYPE_CHECKING:` runs at import time.
+- |
+  from typing import TYPE_CHECKING
+
+  if TYPE_CHECKING:
+      from .collector import MetricCollector
+  else:
+      from .collector import MetricCollector
+
+  _LAZY_ATTRS: dict[str, str] = {}
+# `.base`/`.registry` are allowed only in the transfer package (anchored on
+# its names); another lazy package's `.registry` is checked like anything else.
+- |
+  from .registry import RESERVATION_BACKENDS
+
+  _LAZY_ATTRS: dict[str, str] = {}

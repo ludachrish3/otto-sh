@@ -233,11 +233,3 @@ declines at the first real touch, printing the resolved plan **and the exact
 per-host `docker compose` command it would have issued**, env prefix included.
 `down` declines the same way with its resolved plan. See
 {doc}`docker/use-cases` for what the plan's parts mean.
-
-## What a dry run still does
-
-One exception: otto reads **its own** SUT checkout's git HEAD under a dry run,
-to stamp the run's provenance — a local, read-only query about the machine otto
-is already running on, not a command on a device. It is the only such
-exemption, and it does not extend to anything else — including
-`otto host local exec`, which declines under `-n` exactly like every other host.

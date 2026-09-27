@@ -28,7 +28,7 @@ def test_measure_returns_module_inventory():
 def test_surfaces_table_well_formed():
     keys = [s.key for s in harness.SURFACES]
     assert len(keys) == len(set(keys)), "surface keys must be unique"
-    expected = {
+    gated = {
         "import_otto",
         "help",
         "run",
@@ -47,8 +47,63 @@ def test_surfaces_table_well_formed():
         "dispatch_repo_warm",
         "completion_repo_warm",
         "completion_repo_handover",
+        "test_repo",
+        "host_local_exec",
+        "host_local_put",
+        "host_local_get",
+        "host_ssh_exec",
+        "host_ssh_login",
+        "dispatch_local_warm",
     }
-    assert set(keys) == expected
+    tracked = {
+        *(
+            f"tracked_{verb}"
+            for verb in [
+                "init",
+                "env",
+                "cache",
+                "docker",
+                "link",
+                "tunnel",
+                "monitor",
+                "cov",
+                "reservation",
+                "inventory",
+                "schema",
+            ]
+        ),
+        "tracked_host_probe",
+        "tracked_host_power",
+    }
+    assert set(keys) == gated | tracked
+    assert {s.key for s in harness.SURFACES if s.tracked} == tracked
+    # The prefix is how a reader of the table, and of a ceilings file, tells
+    # a tier at a glance: a tracked key never appears in a ceilings file.
+    assert all(key.startswith("tracked_") for key in tracked)
+    assert not any(key.startswith("tracked_") for key in gated)
+
+
+def test_the_run_host_and_test_surfaces_carry_a_target_ratio():
+    """The verbs a user runs day to day have a target; ``otto --version`` is what they divide by.
+
+    ``host_ssh_login`` stands in for the login path: ``LocalHost`` has no
+    interactive session, so there is no local login surface to target.
+    """
+    targeted = {s.key for s in harness.SURFACES if s.target_ratio is not None}
+    assert targeted == {
+        "dispatch_repo_warm",
+        "host_local_exec",
+        "host_local_put",
+        "host_local_get",
+        "host_ssh_exec",
+        "host_ssh_login",
+        "test_repo",
+        "dispatch_local_warm",
+    }
+    assert not any(harness.surface_by_key(key).tracked for key in targeted)
+    floor = harness.surface_by_key(harness.RATIO_FLOOR)
+    assert not floor.tracked
+    assert floor.target_ratio is None
 
 
 def test_exactly_two_surfaces_cover_the_composition_root():
@@ -58,7 +113,7 @@ def test_exactly_two_surfaces_cover_the_composition_root():
     resolves a dispatch target WITHOUT calling `bootstrap()`, so bootstrap-time
     imports went unmeasured. Deleting `bootstrap=True` from the table (or
     letting `measure_surface` drop the flag) restores that hole silently — the
-    snapshots would simply be regenerated smaller — so the presence of the
+    ceilings would simply be regenerated smaller — so the presence of the
     surfaces is asserted here rather than inferred from a passing budget.
 
     THE PAIR IS EXACT, AND ORDERED. ``run_bootstrapped`` bootstraps ZERO repos
@@ -77,33 +132,15 @@ def test_exactly_two_surfaces_cover_the_composition_root():
     )
 
 
-def test_check_surface_passes_for_real_measurement():
-    surface = harness.SURFACES[0]  # import_otto
-    result = harness.measure_surface(surface)
-    assert harness.check_surface(surface, result) == []
-
-
-def test_check_surface_flags_cap_violation():
-    import dataclasses
-
-    surface = harness.SURFACES[0]
-    result = harness.measure_surface(surface)
-    # Force the cap below the real count; the snapshot still matches, so only
-    # the cap check fires.
-    tight = dataclasses.replace(surface, cap=0)
-    violations = harness.check_surface(tight, result)
-    assert any("non-stdlib modules >" in v for v in violations)
-
-
 def test_check_surface_flags_a_real_entry_failure_exit():
     """A real-entry surface that exits non-zero measured a failure path, not the surface.
 
-    Deleting this branch would let a crashing command pass every other gate
-    (denylist, cap, both goldens) silently: those checks only see the module
-    set and I/O counts a broken run happened to produce, never that it was
-    broken. ``exit_code`` is injected here rather than produced by an actually
-    failing surface — every real surface in the table is meant to succeed —
-    so this is the one place that failure path is exercised at all.
+    Deleting this branch would let a crashing command pass the ceilings
+    silently: they only see the file operations a broken run happened to
+    produce, never that it was broken. ``exit_code`` is injected here rather
+    than produced by an actually failing surface — every real surface in the
+    table is meant to end as it expects — so this is the one place that
+    failure path is exercised on a real measurement.
     """
     surface = harness.surface_by_key("version_repo")
     result = harness.measure_surface(surface)
@@ -112,42 +149,68 @@ def test_check_surface_flags_a_real_entry_failure_exit():
     assert any("measured a failure path" in v for v in violations), violations
 
 
+@pytest.fixture(scope="session")
+def ratio_floor_file_ops() -> int:
+    """``otto --version``'s file operations, measured once per test process.
+
+    Every target ratio divides by it. Session-scoped and requested only by a
+    surface that has a target, so each xdist worker measures it at most once,
+    in the same environment as the surfaces it divides.
+    """
+    return harness.measure_file_ops(harness.surface_by_key(harness.RATIO_FLOOR)).total
+
+
 @pytest.mark.parametrize("surface", harness.SURFACES, ids=lambda s: s.key)
-def test_import_budget(surface):
+def test_import_budget(surface, request):
+    """The gate: every surface measured ONCE, gated ones against their ceilings.
+
+    A tracked surface is never gated, but it still has to run the command it
+    names: a crash would print a meaningless row in ``make profile``'s table,
+    so its ending is checked here, the one place it is measured in the suite.
+
+    The surface-specific facts ride the same measurement rather than a second
+    pass: a transfer surface's file must really arrive, and the SSH surfaces
+    speak SSH in process (asyncssh), so no ``ssh`` program runs.
+
+    A surface with a target ratio is also checked against ``otto --version``'s
+    file operations (``ratio_floor_file_ops``).
+    """
     result = harness.measure_surface(surface)
-    violations = harness.check_surface(surface, result)
+    if surface.tracked:
+        violations = harness.check_exit(surface, result)
+    else:
+        floor = None
+        if surface.target_ratio is not None:
+            floor = request.getfixturevalue("ratio_floor_file_ops")
+        violations = harness.check_surface(surface, result, floor_file_ops=floor)
     assert not violations, "\n".join(violations)
+    assert result["file_ops"]["total"] > 0, result["file_ops"]
+    if surface.key in ("host_local_put", "host_local_get"):
+        dest = "put-dest" if surface.key == "host_local_put" else "get-dest"
+        assert (harness.fixture_root(surface) / dest / "payload.txt").is_file()
+    if surface.ssh_lab:
+        assert "ssh" not in result["file_ops"]["by_process"], result["file_ops"]["by_process"]
 
 
 def test_measure_reports_io_counts():
+    """The payload's I/O is strace's file operations, in the shape the ceilings store."""
     result = harness.measure(["python"])
-    io = result["io"]
-    assert set(io) == {
-        "open",
-        "scandir",
-        "listdir",
-        "listdir_calls",
-        "open_fixture",
-        "open_home",
-        "stat_workspace",
-        "stat_total",
-    }
-    assert all(isinstance(v, int) for v in io.values())
-    # `listdir` counts DIRECTORIES and `listdir_calls` the calls that visited
-    # them, so one can never exceed the other in a live measurement. Both ends
-    # matter: equality everywhere would mean no directory was ever revisited
-    # (nothing to be immune to), and a zero would mean the hook is dead.
-    assert 0 < io["listdir"] <= io["listdir_calls"], io
-    # Importing otto reads files. Zero here means the hook was installed after
-    # the work it exists to observe.
-    assert io["open"] > 0
+    ops = result["file_ops"]
+    assert set(ops) == {"total", "workspace", "by_bucket", "by_process"}
+    assert isinstance(ops["total"], int)
+    assert isinstance(ops["workspace"], int)
+    # Importing otto touches files. Zero here means strace observed nothing.
+    assert ops["total"] > 0
+    # The breakdowns partition the total: every counted call lands in exactly
+    # one bucket and one process.
+    assert sum(ops["by_bucket"].values()) == ops["total"]
+    assert sum(ops["by_process"].values()) == ops["total"]
     # ...and this child has neither a fixture nor an OTTO_HOME (a bare
     # `measure` call passes the sanitized env, which carries no OTTO_*), so
-    # both scoped halves read 0.
-    assert io["open_fixture"] == 0
-    assert io["open_home"] == 0
-    # Importing otto stats files. Zero here means strace observed nothing.
-    assert io["stat_total"] > 0
+    # there is no workspace to count.
+    assert ops["workspace"] == 0
+    # The audit-hook counters are gone: strace is the only I/O measurement.
+    assert "io" not in result
 
 
 def test_monitor_server_still_resolves():
@@ -250,10 +313,11 @@ def test_repo_bearing_surface_isolates_home_and_repo():
     ``__pycache__`` from existing, and the tree is cached per process
     (``_generated_repo_for``), so without the pin the first child in a process
     pays the `.pyc` probe misses and the writeback and every later one does
-    not. Measured on ``bootstrap_repo`` with the pin dropped: the GATED
-    ``open_fixture`` reads 10, then 4, then 4 — order-dependent inside one run,
-    which is precisely the flake class the whole-process ``open`` count was
-    rejected for. Asserted here rather than trusted to a comment.
+    not. Measured on ``bootstrap_repo`` with the pin dropped, with the
+    fixture-scoped open counter this harness used before its ceilings: 10,
+    then 4, then 4 — order-dependent inside one run, and the gated
+    ``workspace`` count carries those same probes. Asserted here rather than
+    trusted to a comment.
     """
     surface = harness.surface_by_key("version_repo")
     env = harness.surface_env(surface)
@@ -272,58 +336,86 @@ def test_repo_bearing_surface_isolates_home_and_repo():
     ]
     assert not unpinned, (
         f"repo-bearing surfaces writing bytecode into the fixture tree: {unpinned} — "
-        f"their gated open_fixture count becomes order-dependent"
+        f"their gated workspace count becomes order-dependent"
     )
 
 
-def test_a_repo_bearing_surface_never_inherits_a_bytecode_cache_prefix(monkeypatch):
-    """``PYTHONPYCACHEPREFIX`` is DROPPED for a repo surface and KEPT for the rest.
+def test_every_surface_reads_the_harness_bytecode_cache_and_writes_none(monkeypatch):
+    """Every child reads the harness's bytecode cache and writes none, whatever the runner says.
 
-    ``tests/conftest.py`` exports a session-wide prefix so no test process
-    writes ``__pycache__`` into the editable ``src/otto`` tree (#321, #343,
-    #360, #361). ``_sanitized_env`` copies the ambient environment, so every
-    child inherits it unless something says otherwise — and for a repo-bearing
-    surface that inheritance is not neutral: it moves the fixture modules'
-    ``.pyc`` PROBE out of the fixture root, so the gated ``open_fixture``
-    drops one per module (7 -> 4, 11 -> 8, 61 -> 58) against unchanged product
-    code. See :func:`scripts.import_budget.surface_env`.
+    ``tests/conftest.py`` exports a session-wide ``PYTHONPYCACHEPREFIX`` so no
+    test process writes ``__pycache__`` into the editable ``src/otto`` tree
+    (#321, #343, #360, #361), and ``_sanitized_env`` copies the ambient
+    environment. A child that inherited it would count whatever that cache
+    holds: cold on a fresh CI runner, warm on a developer's machine, and
+    about one file operation apart per module. See
+    :func:`scripts.import_budget.surface_env`.
 
-    The variable is SET here rather than read off the runner: under a bare
+    The variables are SET here rather than read off the runner: under a bare
     ``python scripts/import_budget.py`` no prefix exists, so a test that only
-    inherited one would be green on every machine with the pop deleted.
-    Asserting the non-repo half in the same breath keeps the pop from widening
-    into "strip it everywhere", which would put those children's writes back
-    into ``src/otto``.
+    inherited one would be green on every machine with the override deleted.
     """
     monkeypatch.setenv("PYTHONPYCACHEPREFIX", "/nowhere/a-prefix-a-child-must-not-see")
+    monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
 
-    repo_bearing = [s for s in harness.SURFACES if s.sut_files is not None]
-    plain = [s for s in harness.SURFACES if s.sut_files is None]
-    assert repo_bearing, "the repo-bearing half of the claim needs at least one surface"
-    assert plain, "the non-repo half of the claim needs at least one surface"
+    wrong = {
+        s.key: (env.get("PYTHONPYCACHEPREFIX"), env.get("PYTHONDONTWRITEBYTECODE"))
+        for s in harness.SURFACES
+        for env in [harness.surface_env(s)]
+        if (env.get("PYTHONPYCACHEPREFIX"), env.get("PYTHONDONTWRITEBYTECODE"))
+        != (harness.bytecode_prefix(), "1")
+    }
+    assert not wrong, f"surfaces not reading the harness's bytecode cache read-only: {wrong}"
 
-    leaked = [s.key for s in repo_bearing if "PYTHONPYCACHEPREFIX" in harness.surface_env(s)]
-    assert not leaked, (
-        f"repo-bearing surfaces inherited a bytecode-cache prefix: {leaked} — their "
-        f"gated open_fixture loses the in-tree .pyc probe the goldens describe"
-    )
-    dropped = [s.key for s in plain if "PYTHONPYCACHEPREFIX" not in harness.surface_env(s)]
-    assert not dropped, (
-        f"non-repo surfaces lost the session bytecode-cache prefix: {dropped} — they "
-        f"write bytecode, and without it they write it into src/otto"
-    )
+
+def test_a_count_does_not_follow_the_runners_bytecode_cache(tmp_path, monkeypatch):
+    """A cold cache in the runner's environment must not reach a measurement.
+
+    The hostile condition is a fresh CI runner: the session's bytecode cache
+    is empty, so the first child to import a module pays its compile. Before
+    the harness owned the cache, a non-repo surface inherited the runner's
+    and wrote into it, so its first measurement in a session was hundreds of
+    file operations dearer than its second.
+    """
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(tmp_path / "cold-runner-cache"))
+    monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+    surface = harness.surface_by_key("run")
+    first = harness.measure_surface(surface)["file_ops"]["total"]
+    second = harness.measure_surface(surface)["file_ops"]["total"]
+    assert abs(first - second) <= harness.MIN_SLACK, (first, second)
+
+
+def test_a_pydantic_plugin_setting_in_the_runner_does_not_reach_a_count(monkeypatch):
+    """The measured command decides ``PYDANTIC_DISABLE_PLUGINS``, never the runner.
+
+    The ``otto`` command sets it itself (``otto._shim.main``), and turning the
+    plugin scan off saves ~140 file operations on any child that builds a
+    model. A runner that happens to carry the variable (an in-process test
+    that ran the shim's fall-through, a developer's shell) must not hand that
+    saving to a child that would not have had it. ``host`` is the cheapest
+    surface whose child builds a model. Two measurements may differ by the
+    FileFinder-refill noise ``MIN_SLACK`` absorbs, which is far below that
+    saving.
+    """
+    surface = harness.surface_by_key("host")
+    monkeypatch.delenv("PYDANTIC_DISABLE_PLUGINS", raising=False)
+    without = harness.measure_file_ops(surface).total
+    monkeypatch.setenv("PYDANTIC_DISABLE_PLUGINS", "__all__")
+    with_var = harness.measure_file_ops(surface).total
+    assert abs(with_var - without) <= harness.MIN_SLACK, (without, with_var)
+    assert "PYDANTIC_DISABLE_PLUGINS" not in harness._sanitized_env()
 
 
 def test_every_surface_pins_a_private_otto_home():
     """``OTTO_HOME`` is pinned on EVERY surface, not only the repo-bearing ones.
 
-    ``open_home`` is gated, and it attributes by prefix against ``$OTTO_HOME``.
+    The gated ``workspace`` count attributes by prefix against ``$OTTO_HOME``.
     A surface that does not pin one therefore fails twice over: the child
     resolves ``~/.otto``, so whatever home I/O it performs lands on the
-    runner's real home — machine state, and the counter reads whatever that
-    box happens to carry — and the prefix tuple is empty, so ``open_home``
-    reads 0 no matter what the child does. Either alone disqualifies the
-    counter as a gate.
+    runner's real home — machine state, and the count carries whatever that
+    box happens to hold — and there is no home prefix, so none of that I/O
+    is charged to the workspace. Either alone disqualifies the counter as a
+    gate.
 
     Asserts the three properties that make the pin real: present, OUTSIDE the
     runner's home entirely, and FRESH per call (two calls to one surface must
@@ -352,64 +444,49 @@ def test_every_surface_pins_a_private_otto_home():
 
 
 def test_version_does_not_read_the_corpus():
-    """`otto --version` must not read the repo at all (Task 4's headline).
+    """`otto --version` must not read the repo at all.
 
     Before the console-script shim: 601 opens at 50 test files, growing ONE PER
     TEST FILE — a delta of 150 between a 200-file corpus and a 50-file one.
-    After: 73 opens and a delta of 0, because the shim answers `--version` off
+    After: a delta of 0, because the shim answers `--version` off
     `otto.version` alone and never bootstraps.
 
-    Asserts BOTH forms, and the delta is the load-bearing half. An absolute
-    bound alone is satisfied by a broken harness: if OTTO_SUT_DIRS stopped
-    reaching the child, or the fixture generation silently produced nothing,
-    the count would also be low and this would pass for the wrong reason. The
-    delta can only be zero because the corpus size stopped mattering.
+    The delta is the load-bearing form. An absolute bound alone is satisfied
+    by a broken harness: if OTTO_SUT_DIRS stopped reaching the child, or the
+    fixture generation silently produced nothing, the count would also be low
+    and this would pass for the wrong reason. The delta can only be zero
+    because the corpus size stopped mattering.
     """
     import dataclasses
 
     base = harness.surface_by_key("version_repo")
     large = dataclasses.replace(base, key="version_repo_large", sut_files=200)
-    small_io = harness.measure_surface(base)["io"]
-    delta = harness.measure_surface(large)["io"]["open"] - small_io["open"]
-    assert delta == 0, f"--version still scales with the corpus: delta {delta}"
-    assert small_io["open"] < 100, f"--version still reads the corpus: {small_io}"
-    assert small_io["scandir"] == 0, f"--version still walks the repo: {small_io}"
+    small_ops = harness.measure_surface(base)["file_ops"]
+    large_ops = harness.measure_surface(large)["file_ops"]
+    delta = large_ops["workspace"] - small_ops["workspace"]
+    assert delta == 0, f"--version still scales with the corpus: {small_ops} -> {large_ops}"
 
 
 def test_repo_bearing_surfaces_actually_walk_the_generated_repo():
-    """``scandir`` is the ONLY observable signal for the stat-only walk.
+    """The liveness pin: the harness's env injection reaches a child that finds a real repo.
 
-    There is no ``os.stat`` audit event, and on 3.10 ``pathlib`` binds its stat
-    accessor at import time, so an ``os.stat`` monkeypatch counts zero against
-    hundreds of real stats. A repo-bearing surface reporting ``scandir == 0``
-    is not measuring a repo at all — the env injection failed, and every later
-    task's acceptance would be a no-op that passes for the wrong reason.
+    A repo-bearing surface whose ``workspace`` count reads (close to) zero is
+    not measuring a repo at all — the env injection failed, and every ceiling
+    on the repo-bearing surfaces would pass for the wrong reason.
 
-    SCOPED TO ``help_repo`` SINCE TASK 4. ``version_repo`` legitimately stops
-    walking (that is the fix), so keeping it here would fail BECAUSE the fix
-    landed. The proof this test carries — that the harness's env injection
-    actually reaches a child and finds a real repo — is what must survive.
-
-    ``help_repo`` STILL CARRIES IT AFTER TASK 7, and that is why the surface
-    was kept rather than converted to ``warm=True``. Every measurement is
-    cold by construction (a fresh ``OTTO_HOME`` per call), and a cold
-    ``--help`` MUST take the full load — cache-or-load never degrades the
-    screen — so this surface walks the corpus exactly as it always did. The
-    fix is observed on ``help_repo_warm``, whose scandir count is 1.
+    SCOPED TO ``help_repo``. ``version_repo`` legitimately stops reading the
+    repo (the shim answers ``--version``), and the warm surfaces answer from
+    the cache. Every measurement is cold by construction (a fresh
+    ``OTTO_HOME`` per call), and a cold ``--help`` MUST take the full load —
+    cache-or-load never degrades the screen — so this surface reads every
+    generated file and lists every generated directory. Bounding on that
+    rather than on ``> 0`` also catches "found the repo but stopped walking
+    part-way", and a stat of the ``OTTO_HOME`` directory alone.
     """
     surface = harness.surface_by_key("help_repo")
-    io = harness.measure_surface(surface)["io"]
-    # The corpus walk goes through the single memoized `CorpusSnapshot`
-    # walker: the tests dir plus each subdirectory is listed exactly once.
-    # Bounding on `dirs + 1` rather than on `> 0` also catches "found the
-    # repo but stopped walking part-way".
-    floor = surface.sut_dirs_count + 1
-    assert io["scandir"] >= floor, f"help_repo walked {io['scandir']} < {floor}: {io}"
-    # spec §8 of `2026-09-25-dispatch-startup-cost-design.md`'s liveness
-    # criterion for the strace counter: a repo-bearing
-    # surface reporting stat_workspace == 0 has stopped seeing the repo, the
-    # same failure mode `scandir` guards above.
-    assert io["stat_workspace"] > 0, surface.key
+    ops = harness.measure_surface(surface)["file_ops"]
+    floor = surface.sut_files + surface.sut_dirs_count
+    assert ops["workspace"] >= floor, f"help_repo counted {ops['workspace']} < {floor}: {ops}"
 
 
 def test_repo_bearing_surface_does_not_grow_sys_path():
@@ -464,14 +541,11 @@ def test_fixture_path_entries_counts_the_paths_it_is_given(monkeypatch):
 
     Runs the harness's real preamble source (never a hand-copied
     reimplementation, which would drift) against a synthetic ``sys.path``.
-    ``sys.addaudithook`` is stubbed first because audit hooks CANNOT be
-    removed once installed, and this exec happens inside the pytest process.
     """
     import sys as _sys
 
     root = "/synthetic/fixture/root"
     monkeypatch.setenv(harness.FIXTURE_ROOT_ENV_VAR, root)
-    monkeypatch.setattr(_sys, "addaudithook", lambda hook: None)
     monkeypatch.setattr(
         _sys,
         "path",
@@ -484,14 +558,14 @@ def test_fixture_path_entries_counts_the_paths_it_is_given(monkeypatch):
         ],
     )
     namespace = {}
-    exec(harness._CHILD_IO_PREAMBLE, namespace)  # noqa: S102 — the harness's own source
+    exec(harness._CHILD_PREAMBLE, namespace)  # noqa: S102 — the harness's own source
     assert namespace["_fixture_path_entries"]() == 3
 
     # And the early-out branch: no fixture root in the env means 0 whatever
     # sys.path holds — which is why the 0s elsewhere cannot prove liveness.
     monkeypatch.delenv(harness.FIXTURE_ROOT_ENV_VAR)
     bare = {}
-    exec(harness._CHILD_IO_PREAMBLE, bare)  # noqa: S102 — the harness's own source
+    exec(harness._CHILD_PREAMBLE, bare)  # noqa: S102 — the harness's own source
     assert bare["_fixture_path_entries"]() == 0
 
 
@@ -513,18 +587,18 @@ def test_name_only_surfaces_execute_no_suite_modules():
 
 
 def test_help_io_does_not_scale_with_corpus_size():
-    """The cached help path must be O(1) in corpus size, not merely capped.
+    """The cached help path must be O(1) in corpus size, not merely under a ceiling.
 
-    A flat cap only catches a constant growing. Gates BOTH signals: `open` is
-    the per-file read signal, `scandir` the per-directory walk signal. otto
-    walks with os.walk, which fires one scandir per directory and no per-file
-    event at all — so omitting the scandir delta would leave the fingerprint
-    walk invisible.
+    A ceiling only catches a constant growing. Two measurements taken in one
+    environment differ only by the corpus, so their DELTA says whether the
+    cached path pays per file: ``workspace`` is the corpus's own reads, stats
+    and listings, and the whole-process ``file_ops`` delta catches the same
+    walk reaching the corpus by a path outside the workspace prefix. Its bound
+    is looser, because it also carries the import system's run-to-run wobble.
 
     Gates the WARM variants. Cold help still walks and still reads per file,
-    by design (measured before this task: open 724 -> 874 and scandir 14 -> 44
-    between the two sizes); the guarantee this task adds is that the SECOND
-    run stops paying for a corpus it never reports on.
+    by design; the guarantee is that the SECOND run stops paying for a corpus
+    it never reports on.
     """
     import dataclasses
 
@@ -532,18 +606,15 @@ def test_help_io_does_not_scale_with_corpus_size():
     small = dataclasses.replace(base, key="help_small", sut_files=50, sut_dirs_count=5)
     large = dataclasses.replace(base, key="help_large", sut_files=200, sut_dirs_count=20)
 
-    io_small = harness.measure_surface(small)["io"]
-    io_large = harness.measure_surface(large)["io"]
+    ops_small = harness.measure_surface(small)["file_ops"]
+    ops_large = harness.measure_surface(large)["file_ops"]
 
-    assert io_large["open"] - io_small["open"] <= 5, (
-        f"help reads scale with corpus: {io_small['open']} -> {io_large['open']}"
+    assert ops_large["workspace"] - ops_small["workspace"] <= 5, (
+        f"help workspace I/O scales with corpus: "
+        f"{ops_small['workspace']} -> {ops_large['workspace']}"
     )
-    assert io_large["scandir"] - io_small["scandir"] <= 5, (
-        f"help walks scale with corpus: {io_small['scandir']} -> {io_large['scandir']}"
-    )
-    assert io_large["stat_workspace"] - io_small["stat_workspace"] <= 5, (
-        f"help stats scale with corpus: "
-        f"{io_small['stat_workspace']} -> {io_large['stat_workspace']}"
+    assert ops_large["total"] - ops_small["total"] <= 15, (
+        f"help file ops scale with corpus: {ops_small['total']} -> {ops_large['total']}"
     )
 
 
@@ -551,36 +622,29 @@ def test_a_warm_surface_is_seeded_and_repeats_identically(tmp_path):
     """``warm=True`` must actually seed, and warm measurement must be repeatable.
 
     Two properties, and the first is what keeps the second honest. Determinism
-    alone cannot detect a broken seed: two COLD measurements agree too (Task 3
-    made every measurement independent, and ``PYTHONDONTWRITEBYTECODE`` keeps
-    the fixture tree from warming), so ``a == b`` would pass unchanged if
+    alone cannot detect a broken seed: two COLD measurements agree too (every
+    measurement is independent, and ``PYTHONDONTWRITEBYTECODE`` keeps the
+    fixture tree from warming), so ``a == b`` would pass unchanged if
     ``measure_surface`` stopped running the seed altogether. The strict
     inequality against the cold twin is the half that fails when it does.
 
     The two surfaces have the same shape and therefore byte-identical
     generated corpora; only the seed differs.
 
-    REPEATABILITY IS ASSERTED OVER ``repeatable_io``, NOT THE WHOLE ``io`` DICT.
-    Comparing the whole dict is what made this test flaky (issue #321), and
-    comparing ``exact_io`` made it flaky again on ``listdir`` (issue #343),
-    which the audit hook counts just as unscoped as ``open``. The
-    whole-process ``open`` total counts every open ATTEMPT in the child, which
-    the import machinery dominates, and a module whose ``.pyc`` is missing
-    costs TWO of them (the probe fires the audit event before it fails, then
-    the source is read) where a cached one costs one. That cache is shared,
-    mutable, cross-process state living outside BOTH defences ``surface_env``
-    raises — it is neither under the per-call ``OTTO_HOME`` nor inside the tree
-    ``PYTHONDONTWRITEBYTECODE`` protects — so any other process importing the
-    same module moves the number. CI measured 648 then 647, ``open`` alone, on
-    a dependabot bump that changed no product code.
+    REPEATABILITY IS ASSERTED ON ``workspace``, NOT ON ``file_ops``. The
+    whole-process total counts every probe the import machinery makes, and a
+    module whose ``.pyc`` is missing costs more of them than a cached one.
+    The harness reads a cache of its own that no child writes, but any cache
+    is state outside the per-call ``OTTO_HOME``, so the total is the counter
+    that would move if some process wrote into it (issue #321 was a test
+    comparing it). ``workspace`` must not move even then.
 
     So the hostile condition is INJECTED here rather than waited for. The two
-    measurements are taken either side of a child that writes bytecode, with
-    ``PYTHONPYCACHEPREFIX`` pointing the cache at ``tmp_path`` — so the real
-    trees are never touched, and the injection is total rather than whatever
-    this machine happens to have cached already. A repeatable counter must not move;
-    the ``open`` total MUST, or the injection has quietly stopped biting and
-    the independence being asserted is no longer being tested at all.
+    measurements read a throwaway cache in ``tmp_path`` (so the real one is
+    never touched), and a process that writes bytecode fills it between
+    them. ``workspace`` must not move; the total MUST, or the injection has
+    quietly stopped biting and the independence being asserted is no longer
+    being tested at all.
     """
     import dataclasses
 
@@ -591,102 +655,38 @@ def test_a_warm_surface_is_seeded_and_repeats_identically(tmp_path):
             env_extra=(*surface.env_extra, ("PYTHONPYCACHEPREFIX", str(tmp_path / "bytecode"))),
         )
 
-    warm = redirect_bytecode_cache(harness.surface_by_key("help_repo_warm"))
-    first = harness.measure_surface(warm)["io"]
-    # The perturbation: a sibling process filling the shared bytecode cache
-    # mid-flight. `import_otto` is the REAL writer rather than a stand-in — it
-    # is one of the surfaces that leave `PYTHONDONTWRITEBYTECODE` unset (only
-    # repo-bearing surfaces pin it, and only for their own fixture tree), and
-    # under `-n auto` it runs in another worker while this test measures.
-    harness.measure_surface(redirect_bytecode_cache(harness.surface_by_key("import_otto")))
-    second = harness.measure_surface(warm)["io"]
+    import subprocess
+    import sys
 
-    assert harness.repeatable_io(first) == harness.repeatable_io(second), (
-        f"repeat warm measurements disagree on the counters this harness owns: "
-        f"{harness.repeatable_io(first)} vs {harness.repeatable_io(second)}"
+    warm = redirect_bytecode_cache(harness.surface_by_key("help_repo_warm"))
+    first = harness.measure_surface(warm)["file_ops"]
+    # The perturbation: a process filling the bytecode cache mid-flight, by
+    # importing what root help imports with bytecode writing on.
+    writer_env = dict(harness._sanitized_env(), PYTHONPYCACHEPREFIX=str(tmp_path / "bytecode"))
+    writer_env.pop("PYTHONDONTWRITEBYTECODE", None)
+    subprocess.run(
+        [sys.executable, "-c", "import otto.cli.main, rich.markdown"],
+        env=writer_env,
+        check=True,
     )
-    assert first["open"] != second["open"], (
-        f"the bytecode-cache injection did not bite ({first['open']} both times), so this "
-        f"test no longer proves the gated counters are independent of that cache"
+    second = harness.measure_surface(warm)["file_ops"]
+
+    assert first["workspace"] == second["workspace"], (
+        f"repeat warm measurements disagree on the workspace count: "
+        f"{first['workspace']} vs {second['workspace']}"
+    )
+    assert first["total"] != second["total"], (
+        f"the bytecode-cache injection did not bite ({first['total']} both times), so this "
+        f"test no longer proves the workspace count is independent of that cache"
     )
 
     # The cold twin is measured WITHOUT the redirect, as every other test
-    # measures it: this arm compares `scandir`, which counts otto's walk of the
-    # corpus and which no bytecode cache can move, and redirecting it would
-    # only have it read the cache the injection above just warmed.
-    cold = harness.measure_surface(harness.surface_by_key("help_repo"))["io"]
-    assert first["scandir"] < cold["scandir"], (
+    # measures it: this arm compares `workspace`, which counts otto's reads of
+    # the corpus and which no bytecode cache outside the tree can move.
+    cold = harness.measure_surface(harness.surface_by_key("help_repo"))["file_ops"]
+    assert first["workspace"] < cold["workspace"], (
         f"the seed run left nothing behind: warm {first} vs cold {cold}"
     )
-
-
-def test_repeat_comparison_excludes_every_unscoped_counter():
-    """Only scoped (or otto-owned) counters may be asserted equal across two runs.
-
-    The audit hook tallies ``open`` and ``listdir`` for the WHOLE child process,
-    import machinery included, so both move with state no surface owns. Dropping
-    one of them from the repeat comparison while keeping the other is exactly
-    how #321's fix left #343 behind; this pins the classification as a check
-    instead of a docstring claim.
-    """
-    unscoped = {"open", "listdir"}
-    assert set(harness.REPEATABLE_IO_COUNTERS) <= set(harness.EXACT_IO_COUNTERS)
-    assert not unscoped & set(harness.REPEATABLE_IO_COUNTERS)
-    assert set(harness.EXACT_IO_COUNTERS) - unscoped == set(harness.REPEATABLE_IO_COUNTERS)
-    # CEILING counters are never repeat-gated: they are the whole-process
-    # totals the interpreter's import machinery moves on its own (§3.1 of
-    # `2026-09-25-dispatch-startup-cost-design.md`), which is exactly the
-    # drift REPEATABLE_IO_COUNTERS exists to exclude.
-    assert not set(harness.CEILING_IO_COUNTERS) & set(harness.REPEATABLE_IO_COUNTERS)
-    io = {
-        "open": 1,
-        "listdir": 2,
-        "open_fixture": 3,
-        "open_home": 4,
-        "scandir": 5,
-        "stat_workspace": 6,
-    }
-    assert harness.repeatable_io(io) == {
-        "open_fixture": 3,
-        "open_home": 4,
-        "scandir": 5,
-        "stat_workspace": 6,
-    }
-
-
-def test_cap_exemption_covers_exactly_the_repo_bearing_surfaces():
-    """The ``has no cap set`` exemption must not quietly widen — and must shrink.
-
-    Two sets, deliberately separate. ELIGIBLE is what ``check_surface`` would
-    excuse (``real_entry``); ACTUALLY CAPLESS is what still uses the excuse.
-    THE SECOND SET IS NOW EMPTY: Task 4 capped ``version_repo`` and Task 7 the
-    help pair, so the countdown this test tracked has reached zero. Pinning it
-    empty (rather than asserting it equals the first) is what keeps the
-    exemption from being re-used silently: a new capless surface, or a deleted
-    cap, fails here even though ``check_surface`` would still excuse it.
-    """
-    import dataclasses
-
-    eligible = {s.key for s in harness.SURFACES if s.real_entry}
-    assert eligible == {
-        "version_repo",
-        "help_repo",
-        "help_repo_warm",
-        "dispatch_repo_warm",
-        "completion_repo_warm",
-        "completion_repo_handover",
-    }
-    capless = {s.key for s in harness.SURFACES if s.cap is None}
-    assert capless == set(), f"every repo-bearing surface is capped now; still capless: {capless}"
-
-    # A capless surface OUTSIDE the exemption is still a violation...
-    capped = harness.surface_by_key("import_otto")
-    result = harness.measure_surface(capped)
-    capless = dataclasses.replace(capped, cap=None)
-    assert any("has no cap set" in v for v in harness.check_surface(capless, result))
-    # ...and one inside it is not.
-    exempted = dataclasses.replace(capless, real_entry=True)
-    assert not any("has no cap set" in v for v in harness.check_surface(exempted, result))
 
 
 def test_surface_by_key_refuses_an_unknown_key():
@@ -714,104 +714,33 @@ def test_hyperfine_is_gone():
     assert not hits, f"hyperfine still referenced: {hits}"
 
 
-# --- I/O goldens (Task 10) --------------------------------------------------
+# --- File-operation ceilings --------------------------------------------------
 #
 # The release gate's instrument. A wall-clock number fails for reasons outside
 # the change (load, thermals, page cache) and so can only ever be monitoring.
-# The counters below repeat identically and are what actually predicted a real
-# NFS deployment, so they are what gates.
+# File-operation counts repeat run to run and are what actually predicted a
+# real NFS deployment, so they are what gates.
 
 
-def test_every_surface_has_an_io_golden_for_this_interpreter():
-    """A missing golden is a NAMED failure — never a silent skip.
+def test_every_gated_surface_has_a_ceiling_for_this_interpreter():
+    """A missing baseline is a NAMED failure — never a silent skip.
 
-    Cheap and direct, ahead of the measuring gate: the goldens are keyed per
+    Cheap and direct, ahead of the measuring gate: the ceilings are keyed per
     Python minor, so "this interpreter has no file" is the shape a newly added
     interpreter (or a newly added surface) takes, and it must not be possible
-    for a leg to report green having compared nothing.
+    for a leg to report green having compared nothing. The other direction
+    too: a tracked surface, or one that no longer exists, has no business in
+    the file.
     """
-    missing = [s.key for s in harness.SURFACES if not harness.io_snapshot_path(s.key).exists()]
+    recorded = harness.read_ceilings()
+    gated = {s.key for s in harness.SURFACES if not s.tracked}
+    missing = sorted(gated - set(recorded))
     assert not missing, (
-        f"no I/O golden on CPython {harness.interpreter_tag()} for {missing} — "
+        f"no baseline on CPython {harness.interpreter_tag()} for {missing} — "
         f"run `make import-snapshot` under this interpreter"
     )
-
-
-def test_check_surface_flags_an_io_drift():
-    """Mutate one gated counter and the gate must fire, naming the surface.
-
-    The parametrized budget test above passes whether or not `check_surface`
-    still looks at I/O at all — deleting the comparison would simply make every
-    surface pass. This is the assertion that fails when it is deleted.
-    """
-    surface = harness.surface_by_key("help_repo_warm")
-    result = harness.measure_surface(surface)
-    assert harness.check_surface(surface, result) == []
-
-    result["io"]["scandir"] += 1
-    violations = harness.check_surface(surface, result)
-    assert any("I/O counts changed" in v and "help_repo_warm" in v for v in violations), violations
-
-
-def test_missing_io_golden_fails_by_name(monkeypatch):
-    """The message must carry the file, the interpreter, and the fix.
-
-    Driven through the real interpreter key rather than a fake surface: a
-    surface with no module snapshot would fail earlier, on a different check,
-    and prove nothing about this one.
-    """
-    monkeypatch.setattr(harness, "interpreter_tag", lambda: "9.99")
-    surface = harness.surface_by_key("version_repo")
-    result = harness.measure_surface(surface)
-    violations = [v for v in harness.check_surface(surface, result) if "I/O golden" in v]
-    assert len(violations) == 1, violations
-    message = violations[0]
-    assert "version_repo.io.9.99.txt" in message
-    assert "CPython 9.99" in message
-    assert "make import-snapshot" in message
-
-
-def test_gated_listdir_counts_directories_not_calls(tmp_path):
-    """Re-listing ONE directory must not move the gated counter.
-
-    CPython's ``FileFinder`` caches each ``sys.path`` directory's contents and
-    re-calls ``os.listdir`` on any of them whose ``st_mtime`` moved since it
-    cached it. The measured child imports from trees it SHARES with the rest of
-    the run — the editable install's ``src/otto/*``, and the cwd, which
-    ``python -c`` puts on ``sys.path`` — so a concurrent xdist sibling creating
-    ``src/otto/<pkg>/__pycache__/`` on its first import bumps that directory's
-    mtime and costs the measurement one extra call. ``PYTHONDONTWRITEBYTECODE``
-    (see :func:`surface_env`) keeps the CHILD from writing bytecode; it has no
-    say over the siblings writing the shared source tree.
-
-    That extra call is a fact about who else happened to be running, not about
-    otto's import graph, and it reddened the per-surface goldens on #360/#361 —
-    a fresh runner's cold bytecode cache is exactly when those ``__pycache__``
-    directories get created. #343 saw the same counter move under the same
-    mechanism one comparison over, and excluded it from the repeat check rather
-    than making it immune.
-
-    Counting DIRECTORIES makes a refill a no-op while a genuinely new directory
-    in the import graph still moves the number. The raw calls stay visible as
-    ``listdir_calls`` — context, like ``open``, never gated.
-    """
-    import json
-
-    body = f"""
-import json, os
-_d = {str(tmp_path)!r}
-_before = dict(_io_counts)
-os.listdir(_d)
-os.listdir(_d)
-print(json.dumps({{"before": _before, "after": dict(_io_counts)}}))
-"""
-    measured = json.loads(harness._run_child(harness._CHILD_IO_PREAMBLE + body))
-    before, after = measured["before"], measured["after"]
-
-    assert after["listdir"] - before["listdir"] == 1, measured
-    # ...and BOTH calls have to have been observed, or the assertion above goes
-    # green on a counter that simply stopped counting.
-    assert after["listdir_calls"] - before["listdir_calls"] == 2, measured
+    extra = sorted(set(recorded) - gated)
+    assert not extra, f"baselines for surfaces that are not gated: {extra}"
 
 
 def test_the_child_runs_in_a_private_empty_cwd(tmp_path, monkeypatch):
@@ -828,29 +757,29 @@ def test_the_child_runs_in_a_private_empty_cwd(tmp_path, monkeypatch):
 import json, os
 print(json.dumps({"cwd": os.getcwd(), "entries": os.listdir(".")}))
 """
-    child = json.loads(harness._run_child(harness._CHILD_IO_PREAMBLE + body))
+    child = json.loads(harness._run_child(harness._CHILD_PREAMBLE + body))
 
     assert Path(child["cwd"]).resolve() != tmp_path.resolve(), child
     assert child["entries"] == [], child
 
 
-def test_a_caller_writing_into_its_cwd_does_not_move_a_golden(tmp_path, monkeypatch):
+def test_a_caller_writing_into_its_cwd_does_not_move_a_count(tmp_path, monkeypatch):
     """A sibling writing into the caller's cwd mid-measurement must not reach the child.
 
-    The distinct-directory count (see ``test_gated_listdir_counts_directories_not_calls``)
-    absorbs a ``FileFinder`` refill only for a directory already IN the set.
-    From CPython 3.13 the cwd is the one import directory that never is:
-    ``FileFinder`` lists it during interpreter startup, before the preamble's
-    audit hook exists. With an inherited cwd, a sibling bumping its mtime made
-    the child re-list it AFTER the hook was live, and the absolute cwd joined
-    the set as a NEW directory: ``help_repo_warm`` read 62 against its golden
-    61 on CPython 3.14 (#428). On 3.10-3.12 the cwd is first listed after the
-    hook, so its goldens already count it and this test cannot go red there;
-    it is the 3.13/3.14 lanes that prove it.
+    CPython's ``FileFinder`` re-lists a ``sys.path`` directory whenever its
+    mtime moved, and ``python -c`` puts the cwd on ``sys.path``. With an
+    inherited cwd, a sibling bumping its mtime made the child re-list it
+    mid-measurement: ``help_repo_warm`` on CPython 3.14 read one more than
+    its baseline (#428). The child now starts in the harness's own empty
+    directory, so the caller's cwd is not on its path at all.
 
     The hostile condition is INJECTED rather than left to chance: a thread
     moves the caller's cwd mtime forward every few milliseconds for the whole
-    measurement, seed run included.
+    measurement, seed run included, and the whole-process count must equal
+    an undisturbed measurement's from the same cwd. The total, not
+    ``workspace``: the caller's cwd is under neither the fixture root nor
+    ``OTTO_HOME``, so a re-listing of it is charged to the total alone, and a
+    warm surface's total repeats exactly run to run.
     """
     import os
     import threading
@@ -858,6 +787,7 @@ def test_a_caller_writing_into_its_cwd_does_not_move_a_golden(tmp_path, monkeypa
 
     surface = harness.surface_by_key("help_repo_warm")
     monkeypatch.chdir(tmp_path)
+    quiet = harness.measure_surface(surface)["file_ops"]
     stop = threading.Event()
 
     def bump() -> None:
@@ -870,71 +800,12 @@ def test_a_caller_writing_into_its_cwd_does_not_move_a_golden(tmp_path, monkeypa
     bumper = threading.Thread(target=bump)
     bumper.start()
     try:
-        result = harness.measure_surface(surface)
+        bumped = harness.measure_surface(surface)["file_ops"]
     finally:
         stop.set()
         bumper.join()
 
-    recorded = harness.read_io_snapshot(surface.key)
-    recorded_exact = {name: recorded[name] for name in harness.EXACT_IO_COUNTERS}
-    assert harness.exact_io(result["io"]) == recorded_exact, result["io"]
-
-
-def test_open_fixture_is_the_gated_half_of_open():
-    """The scoped counter must count the workspace, and only the workspace.
-
-    ``open`` itself is deliberately NOT gated: it drifts with bytecode-cache
-    state and with how many distributions are installed (measured, and written
-    up on ``_CHILD_IO_PREAMBLE``), neither of which has anything to do with
-    otto. The scoped half carries the signal a startup-I/O budget is actually
-    about, so it has to be observed non-zero somewhere or it is a dead
-    instrument that every gate then leans on.
-    """
-    cold = harness.measure_surface(harness.surface_by_key("help_repo"))["io"]
-    assert cold["open_fixture"] > 0, cold
-    assert cold["open_fixture"] < cold["open"], cold
-
-    # ...and zero where there is no workspace at all, which is the other end.
-    assert harness.measure_surface(harness.surface_by_key("run"))["io"]["open_fixture"] == 0
-
-
-def test_open_home_is_the_home_side_half_of_open_fixture():
-    """``open_home`` must be observed non-zero, and INSIDE the fixture total.
-
-    The goldens pin every surface's exact number, so why this: ``--update``
-    re-blesses whatever is measured. A counter that stopped counting reads 0
-    everywhere, a regeneration writes those zeros down, and every golden goes
-    green on a dead instrument — the same trap
-    ``test_open_fixture_is_the_gated_half_of_open`` exists for. A non-zero pin
-    is what survives a regeneration.
-
-    The subset relation is the second half, and it is what says the counter is
-    pointed at the right root: a repo-bearing surface's ``OTTO_HOME`` lives
-    INSIDE its fixture root (``surface_env``), so every home-side open is also
-    a fixture open and ``open_home <= open_fixture`` must hold. A counter
-    matching some other prefix — the real ``~/.otto``, say — could exceed it.
-
-    THE COLD-VS-WARM COMPARISON IS THE THIRD, and it covers the half the warm
-    number cannot see. The home is touched by two different call paths — the
-    hit's ``Path.read_text`` (an ``_io.open``) and the miss's atomic write (a
-    ``tempfile`` ``os.open``) — so a counter that went dead on the WRITE path
-    alone would leave the warm surface reading exactly what it reads now, drop
-    the cold one by the write's share, and pass every assertion above once
-    ``--update`` re-blessed the new number. Cold must exceed warm because a
-    miss pays a write that a hit never does. No magic number: the relation is
-    between two measurements, so it survives a legitimate change to either.
-    """
-    warm = harness.measure_surface(harness.surface_by_key("help_repo_warm"))["io"]
-    assert warm["open_home"] > 0, warm
-    assert warm["open_home"] <= warm["open_fixture"], warm
-
-    cold = harness.measure_surface(harness.surface_by_key("help_repo"))["io"]
-    assert cold["open_home"] > warm["open_home"], (cold, warm)
-
-    # ...and zero where there is no workspace to resolve a home for, which is
-    # the other end. The home IS pinned there (every surface pins one), so this
-    # zero is measured rather than structural.
-    assert harness.measure_surface(harness.surface_by_key("run"))["io"]["open_home"] == 0
+    assert bumped["total"] == quiet["total"], (quiet, bumped)
 
 
 def test_bootstrap_repo_is_the_repo_bearing_sibling():
@@ -943,21 +814,17 @@ def test_bootstrap_repo_is_the_repo_bearing_sibling():
     ``run_bootstrapped`` isolates the composition root's own import graph, and
     can only do that against an empty workspace: the moment it grows a repo,
     the difference between the two stops being "what a workspace costs at
-    bootstrap" and the older surface's snapshot silently starts including it.
+    bootstrap" and the older surface's count silently starts including it.
 
-    Migrated: the second witness was ``scandir``, which bootstrap paid for by
-    globbing each tests dir to import the test files. Test files now load on
-    demand, only for the commands that read suites, so bootstrap enumerates no
-    directory at all; the repo is witnessed by the workspace stats bootstrap
-    still pays (reading the repo's settings, putting its lib dirs on the path).
+    The repo is witnessed by the workspace I/O bootstrap still pays (reading
+    the repo's settings, putting its lib dirs on the path, importing its init
+    tree); test files load on demand, only for the commands that read suites.
     """
-    empty = harness.measure_surface(harness.surface_by_key("run_bootstrapped"))["io"]
-    assert empty["stat_workspace"] == 0, empty
-    assert empty["open_fixture"] == 0, empty
+    empty = harness.measure_surface(harness.surface_by_key("run_bootstrapped"))["file_ops"]
+    assert empty["workspace"] == 0, empty
 
-    with_repo = harness.measure_surface(harness.surface_by_key("bootstrap_repo"))["io"]
-    assert with_repo["open_fixture"] > 0, with_repo
-    assert with_repo["stat_workspace"] > empty["stat_workspace"], (with_repo, empty)
+    with_repo = harness.measure_surface(harness.surface_by_key("bootstrap_repo"))["file_ops"]
+    assert with_repo["workspace"] > 0, with_repo
 
 
 def test_completion_env_reaches_the_child():
@@ -969,8 +836,8 @@ def test_completion_env_reaches_the_child():
     reaching the child.
 
     ON THE MODULE COUNT, NOT ON I/O, and the failure that produced this test
-    is the reason: the warm completion golden is 3 modules and ``scandir`` 0
-    — the shim answers the TAB straight from the cache without ever
+    is the reason: the warm completion surface loads 3 non-stdlib modules and
+    walks nothing — the shim answers the TAB straight from the cache without ever
     importing ``otto.cli`` — while bare ``otto`` (no ``_OTTO_COMPLETE`` in
     the env) falls through the shim and renders the root help through the
     full CLI path, pulling in the whole command tree. What separates them is
@@ -990,21 +857,14 @@ def test_completion_env_reaches_the_child():
 
 
 def test_completion_io_does_not_scale_with_corpus_size():
-    """The steady-state TAB cost must be O(1) in corpus size, not merely capped.
+    """The steady-state TAB cost must be O(1) in corpus size, not merely under a ceiling.
 
     The same guarantee ``test_help_io_does_not_scale_with_corpus_size`` makes
-    for warm root help, for the surface a user hits most often. Both signals,
-    for the reason written there: ``open`` is the per-file read and ``scandir``
-    the per-directory walk, and otto walks with ``os.walk``, which fires no
-    per-file event at all.
-
-    This is also where ``open`` stays gated. The absolute number is not
-    comparable across environments, but a DELTA between two measurements taken
-    in one environment is — whatever the bytecode cache and the installed dists
-    add, they add to both sides.
-
-    Stats are counted by strace and gated here too; the shim's stat pass is
-    over the NAMES key set on this site, which is O(top-level).
+    for warm root help, for the surface a user hits most often, with the same
+    two deltas. A DELTA between two measurements taken in one environment is
+    comparable where an absolute number is not: whatever the bytecode cache
+    and the installed dists add, they add to both sides. The shim's stat pass
+    is over the NAMES key set on this site, which is O(top-level).
     """
     import dataclasses
 
@@ -1012,18 +872,15 @@ def test_completion_io_does_not_scale_with_corpus_size():
     small = dataclasses.replace(base, key="completion_small", sut_files=50, sut_dirs_count=5)
     large = dataclasses.replace(base, key="completion_large", sut_files=200, sut_dirs_count=20)
 
-    io_small = harness.measure_surface(small)["io"]
-    io_large = harness.measure_surface(large)["io"]
+    ops_small = harness.measure_surface(small)["file_ops"]
+    ops_large = harness.measure_surface(large)["file_ops"]
 
-    assert io_large["open"] - io_small["open"] <= 5, (
-        f"completion reads scale with corpus: {io_small['open']} -> {io_large['open']}"
+    assert ops_large["workspace"] - ops_small["workspace"] <= 5, (
+        f"completion workspace I/O scales with corpus: "
+        f"{ops_small['workspace']} -> {ops_large['workspace']}"
     )
-    assert io_large["scandir"] - io_small["scandir"] <= 5, (
-        f"completion walks scale with corpus: {io_small['scandir']} -> {io_large['scandir']}"
-    )
-    assert io_large["stat_workspace"] - io_small["stat_workspace"] <= 5, (
-        f"completion stats scale with corpus: "
-        f"{io_small['stat_workspace']} -> {io_large['stat_workspace']}"
+    assert ops_large["total"] - ops_small["total"] <= 15, (
+        f"completion file ops scale with corpus: {ops_small['total']} -> {ops_large['total']}"
     )
 
 
@@ -1035,10 +892,10 @@ def test_completion_handover_io_does_not_scale_with_corpus_size():
     by construction. ``completion_repo_handover`` is the other side of the
     same TAB: a `live` site the shim hands over on, which falls through to
     the unchanged full CLI path — the one that resolves ``tunnel remove``'s
-    own module tree (spec `otto.cli.tunnel`, `otto.tunnel`, project/commands)
-    and DOES walk the generated repo to discover it. A corpus-size regression
-    on that walk is exactly the kind of thing the shim's cheapness on the warm
-    path would otherwise let slip past unnoticed, so it needs its own pin.
+    own module tree and DOES walk the generated repo to discover it. A
+    corpus-size regression on that walk is exactly the kind of thing the
+    shim's cheapness on the warm path would otherwise let slip past
+    unnoticed, so it needs its own pin.
     """
     import dataclasses
 
@@ -1050,41 +907,43 @@ def test_completion_handover_io_does_not_scale_with_corpus_size():
         base, key="completion_handover_large", sut_files=200, sut_dirs_count=20
     )
 
-    io_small = harness.measure_surface(small)["io"]
-    io_large = harness.measure_surface(large)["io"]
+    ops_small = harness.measure_surface(small)["file_ops"]
+    ops_large = harness.measure_surface(large)["file_ops"]
 
-    assert io_large["open"] - io_small["open"] <= 5, (
-        f"completion handover reads scale with corpus: {io_small['open']} -> {io_large['open']}"
+    assert ops_large["workspace"] - ops_small["workspace"] <= 5, (
+        f"completion handover workspace I/O scales with corpus: "
+        f"{ops_small['workspace']} -> {ops_large['workspace']}"
     )
-    assert io_large["scandir"] - io_small["scandir"] <= 5, (
-        f"completion handover walks scale with corpus: "
-        f"{io_small['scandir']} -> {io_large['scandir']}"
-    )
-    assert io_large["stat_workspace"] - io_small["stat_workspace"] <= 5, (
-        f"completion handover stats scale with corpus: "
-        f"{io_small['stat_workspace']} -> {io_large['stat_workspace']}"
+    assert ops_large["total"] - ops_small["total"] <= 15, (
+        f"completion handover file ops scale with corpus: "
+        f"{ops_small['total']} -> {ops_large['total']}"
     )
 
 
 def test_dispatch_io_does_not_scale_with_corpus_size():
     """A real command must not pay for the test corpus before doing its own work.
 
-    The branch of entry() every ordinary command takes: bootstrap, then dispatch.
-    Nothing on it reads the completion cache, so nothing on it may walk or stat
-    the corpus: the same three signals as the help and TAB pins, with the same
-    tolerance.
+    The branch of entry() every ordinary command takes: bootstrap, then
+    dispatch. Nothing on it reads the completion cache, so nothing on it may
+    walk or stat the corpus: the same two deltas as the help and TAB pins,
+    with the same tolerance.
     """
     import dataclasses
 
     base = harness.surface_by_key("dispatch_repo_warm")
     small = dataclasses.replace(base, key="dispatch_small", sut_files=50, sut_dirs_count=5)
     large = dataclasses.replace(base, key="dispatch_large", sut_files=200, sut_dirs_count=20)
-    io_small = harness.measure_surface(small)["io"]
-    io_large = harness.measure_surface(large)["io"]
-    for counter in ("open", "scandir", "stat_workspace"):
-        assert io_large[counter] - io_small[counter] <= 5, (
-            f"dispatch {counter} scales with corpus: {io_small[counter]} -> {io_large[counter]}"
-        )
+
+    ops_small = harness.measure_surface(small)["file_ops"]
+    ops_large = harness.measure_surface(large)["file_ops"]
+
+    assert ops_large["workspace"] - ops_small["workspace"] <= 5, (
+        f"dispatch workspace I/O scales with corpus: "
+        f"{ops_small['workspace']} -> {ops_large['workspace']}"
+    )
+    assert ops_large["total"] - ops_small["total"] <= 15, (
+        f"dispatch file ops scale with corpus: {ops_small['total']} -> {ops_large['total']}"
+    )
 
 
 def test_cold_rebuild_walks_the_corpus_once():
@@ -1092,135 +951,31 @@ def test_cold_rebuild_walks_the_corpus_once():
 
     Cold `help_repo` rebuilds the cache, which legitimately scales, so this pins
     a RATE rather than a constant. Between 50 files/5 dirs and 200 files/20
-    dirs, the added nested files cost at most one stat and one open each (the
-    AST parse), and the added directories one listing and one stat each. A
-    second walker anywhere in the rebuild doubles the per-file rate and fails
-    here, naming the counter.
+    dirs, each added nested file costs a few workspace operations (its stat,
+    its open for the AST parse) and each added directory a few more (its stat,
+    its open and listing). A second walker anywhere in the rebuild doubles the
+    per-file rate and fails here.
+
+    THE BOUND IS MEASURED, NOT ARGUED. The rebuild pays exactly 2 workspace
+    operations per added file and 2 per added directory: 226 -> 556 on
+    CPython 3.10 and 220 -> 550 on 3.14, a delta of 330 = 150 * 2 + 15 * 2 on
+    both. The limit is that rate plus 20%, so a second walker (4 per file)
+    is well over it.
     """
     import dataclasses
 
     base = harness.surface_by_key("help_repo")
     small = dataclasses.replace(base, key="rebuild_small", sut_files=50, sut_dirs_count=5)
     large = dataclasses.replace(base, key="rebuild_large", sut_files=200, sut_dirs_count=20)
-    io_small = harness.measure_surface(small)["io"]
-    io_large = harness.measure_surface(large)["io"]
+    ops_small = harness.measure_surface(small)["file_ops"]
+    ops_large = harness.measure_surface(large)["file_ops"]
     d_files, d_dirs = 150, 15
-    limits = {
-        "stat_workspace": d_files + d_dirs + 5,
-        "open": d_files + 5,
-        "scandir": d_dirs + 2,
-    }
-    over = {
-        c: (io_large[c] - io_small[c], lim)
-        for c, lim in limits.items()
-        if io_large[c] - io_small[c] > lim
-    }
-    assert not over, f"cold rebuild re-walks the corpus (delta, limit): {over}"
-
-
-def test_a_golden_of_the_wrong_shape_diagnoses_itself(tmp_path, monkeypatch):
-    """A golden carrying a non-gated key must fail with a REASON, not a blank diff.
-
-    The comparison is over the whole parsed file, so a stale or hand-edited
-    golden — a renamed counter, a leftover `open` line — is unequal while every
-    gated value still matches. Before this, that produced
-    ``golden -> measured: {}``: a red naming nothing. Both directions are
-    checked, since a golden can be missing a gated counter as easily as it can
-    carry one it should not.
-    """
-    surface = harness.surface_by_key("version_repo")
-    result = harness.measure_surface(surface)
-    assert harness.check_surface(surface, result) == []
-
-    monkeypatch.setattr(harness, "SNAPSHOT_DIR", tmp_path)
-    real = {name: result["io"][name] for name in harness.GOLDEN_IO_KEYS}
-    harness.write_snapshot(surface.key, result["otto_modules"])
-
-    # 1. every gated value correct, plus one key that is not gated at all.
-    body = "".join(f"{k} {v}\n" for k, v in real.items()) + "open 999\n"
-    harness.io_snapshot_path(surface.key).write_text(body)
-    violations = harness.check_surface(surface, result)
-    assert any(
-        "I/O golden mismatch" in v and "NOT gated" in v and "open" in v for v in violations
-    ), violations
-
-    # 2. the other direction: a gated counter the file does not carry.
-    dropped = dict(real)
-    dropped.pop("scandir")
-    harness.io_snapshot_path(surface.key).write_text(
-        "".join(f"{k} {v}\n" for k, v in dropped.items())
+    delta = ops_large["workspace"] - ops_small["workspace"]
+    limit = (d_files * 2 + d_dirs * 2) * 6 // 5
+    assert delta <= limit, (
+        f"cold rebuild re-walks the corpus: workspace delta {delta} > {limit} "
+        f"({ops_small['workspace']} -> {ops_large['workspace']})"
     )
-    violations = harness.check_surface(surface, result)
-    assert any("absent from the golden" in v and "scandir" in v for v in violations), violations
-
-
-def test_a_golden_recording_half_the_stat_total_fails_the_ceiling(tmp_path, monkeypatch):
-    """``stat_total`` is a CEILING, not an equality — and the ceiling must actually fire.
-
-    Every other test that touches this golden keeps ``stat_total`` at (or
-    within headroom of) the measured value, so none of them exercises the
-    branch of :func:`harness._check_io` that reports a ceiling breach. Deleting
-    that block would leave every other test green; this is the one that goes
-    red when it is.
-    """
-    surface = harness.surface_by_key("version_repo")
-    result = harness.measure_surface(surface)
-    assert harness.check_surface(surface, result) == []
-
-    monkeypatch.setattr(harness, "SNAPSHOT_DIR", tmp_path)
-    harness.write_snapshot(surface.key, result["otto_modules"])
-
-    # Every EXACT counter recorded as measured, so only the ceiling check can
-    # fire; stat_total recorded at about half the measured value, so the
-    # measured count is well over baseline * STAT_TOTAL_HEADROOM.
-    golden = {name: result["io"][name] for name in harness.EXACT_IO_COUNTERS}
-    golden["stat_total"] = result["io"]["stat_total"] // 2
-    harness.io_snapshot_path(surface.key).write_text(
-        "".join(f"{k} {v}\n" for k, v in golden.items())
-    )
-
-    violations = harness.check_surface(surface, result)
-    assert any("stat_total ceiling exceeded" in v for v in violations), violations
-
-
-def test_a_stale_high_stat_total_baseline_is_an_advisory_not_a_failure(
-    tmp_path, monkeypatch, capsys
-):
-    """A baseline far above the measurement widens the ceiling: say so, but never fail.
-
-    The ceiling test above covers a golden recorded too LOW. The opposite drift
-    is silent: a golden recorded before a real reduction lets every later
-    regression up to ``old * STAT_TOTAL_HEADROOM`` through. That is a note for
-    whoever runs ``--check`` — the golden should be regenerated — so it must
-    print and must not enter the violations list or the exit code.
-    """
-    surface = harness.surface_by_key("version_repo")
-    result = harness.measure_surface(surface)
-    assert harness.io_advisories(surface, result) == []  # the real golden is current
-
-    monkeypatch.setattr(harness, "SNAPSHOT_DIR", tmp_path)
-    harness.write_snapshot(surface.key, result["otto_modules"])
-    golden = {name: result["io"][name] for name in harness.EXACT_IO_COUNTERS}
-    golden["stat_total"] = result["io"]["stat_total"] * 2
-    harness.io_snapshot_path(surface.key).write_text(
-        "".join(f"{k} {v}\n" for k, v in golden.items())
-    )
-
-    assert harness.check_surface(surface, result) == []
-    advisories = harness.io_advisories(surface, result)
-    assert len(advisories) == 1, advisories
-    assert "version_repo" in advisories[0]
-    assert "make import-snapshot" in advisories[0]
-
-    # Through `--check` itself: a NOTE line, and still a passing exit.
-    monkeypatch.setattr(harness, "SURFACES", [surface])
-    monkeypatch.setattr(harness, "measure_surface", lambda _s: result)
-    monkeypatch.setattr("sys.argv", ["import_budget.py", "--check"])
-    assert harness.main() == 0
-    out = capsys.readouterr().out
-    assert "  NOTE `version_repo`: stat_total" in out, out
-    assert "FAIL" not in out, out
-    assert "import budget: OK" in out, out
 
 
 def test_env_extra_is_applied_after_the_sanitizer(monkeypatch):

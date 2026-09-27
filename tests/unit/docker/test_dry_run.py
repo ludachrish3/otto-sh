@@ -601,11 +601,11 @@ class TestEveryPublicDockerExportIsAdjudicated:
 
         with (
             active_context(lab=lab, dry_run=dry),
-            patch("otto.cli.docker.get_lab", get_lab),
+            patch("otto.config.fleet.get_lab", get_lab),
             patch("otto.cli.docker._canonicalize_on", return_value=None),
             patch("otto.cli.docker._select_repos", return_value=[]),
-            patch("otto.cli.docker.build_images", AsyncMock(side_effect=spy)),
-            patch("otto.cli.docker.compose_ps", AsyncMock(side_effect=spy)),
+            patch("otto.docker.build_images", AsyncMock(side_effect=spy)),
+            patch("otto.docker.compose_ps", AsyncMock(side_effect=spy)),
         ):
             result = DispatchRunner().invoke(
                 docker_app, [sub], spec_name="docker", async_leaves=True

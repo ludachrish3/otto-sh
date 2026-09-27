@@ -81,6 +81,19 @@ class MockSession(FeedAfterWriteMixin, ShellSession):
         self._alive = False
         self._initialized = False
 
+    def _connection_lost_errors(self) -> list[type[BaseException]]:
+        """MockSession stands in for any transport, including SSH's — its own
+        ``feed_connection_lost()`` raises a real ``asyncssh.ConnectionLost``
+        (see that method's docstring) to simulate asyncssh's keepalive giving
+        up. Overriding here, the same way :class:`~otto.host.session.SshSession`
+        does in production, keeps that simulation caught after the base
+        session's four choke points stopped naming asyncssh themselves (spec
+        2026-09-26 §5.1) — without this override, the tests exercising
+        ``feed_connection_lost()`` would see a raw traceback instead of the
+        truthful, already-rendered result they assert on.
+        """
+        return [*super()._connection_lost_errors(), asyncssh.ConnectionLost]
+
     def feed(self, data: str) -> None:
         """Feed data into the session's stdout (simulates shell output)."""
         assert self._out_reader is not None

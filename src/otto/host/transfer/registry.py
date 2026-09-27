@@ -6,35 +6,21 @@ init modules) and :func:`build_transfer_backend` (used by
 unified across host families — unix backends (``scp``, ``sftp``, ``ftp``,
 ``nc``) and embedded backends (``console``, ``tftp``) share one namespace so
 a cross-family protocol is a single entry.
+
+The built-in backends are registered here, by :class:`~otto.registry.Ref`:
+naming a protocol imports no backend module, and building one imports only
+that backend's.
 """
 
-from ...registry import Registry, caller_module
+from ...registry import Ref, Registry, caller_module
 from .base import BaseFileTransfer, ProgressGranularity
 
-# Unified registry of transfer-protocol name -> backend class, spanning BOTH
-# host families. ``EmbeddedFileTransfer`` registers ``console``/``tftp`` into
-# this same registry (see transfer/embedded.py), so one namespace holds every
-# transfer protocol and a future cross-family protocol (tftp) is a single
-# entry. ``build_*`` returns the class so the host can call ``.create(ctx)``.
-TRANSFER_BACKENDS: Registry[type[BaseFileTransfer]] = Registry(
-    "transfer backend", register_hint="otto.host.transfer.register_transfer_backend()"
-)
 
+def _validate_transfer_backend(name: str, cls: type[BaseFileTransfer]) -> None:
+    """Refuse a backend that does not declare its families, progress granularity and login.
 
-def register_transfer_backend(
-    name: str, cls: type[BaseFileTransfer], *, overwrite: bool = False
-) -> None:
-    """Make a custom transfer backend available to lab data under *name*.
-
-    Call from an init module listed in ``.otto/settings.toml``. The backend
-    must declare a non-empty :attr:`BaseFileTransfer.host_families` -- otherwise
-    it could never validate against any host -- and a
-    :class:`~otto.host.transfer.base.ProgressGranularity` in
-    :attr:`BaseFileTransfer.progress_granularity`, so what it promises the
-    progress bar is stated rather than inferred. Both are rejected here.
-
-    *overwrite* replaces an existing registration under *name* deliberately
-    (e.g. a built-in); by default a duplicate name raises.
+    ``TRANSFER_BACKENDS``'s *validate* hook: it runs on a plugin's class at
+    registration and on a built-in's class at its first lookup.
     """
     if not cls.host_families:
         raise ValueError(
@@ -58,6 +44,34 @@ def register_transfer_backend(
             f"declare True only for a backend that performs its own login "
             f"(ftp does; scp/sftp/nc/shell ride the term session)."
         )
+
+
+# Unified registry of transfer-protocol name -> backend class, spanning BOTH
+# host families, so one namespace holds every transfer protocol and a
+# cross-family protocol (tftp) is a single entry. ``build_*`` returns the class
+# so the host can call ``.create(ctx)``.
+TRANSFER_BACKENDS: Registry[type[BaseFileTransfer]] = Registry(
+    "transfer backend",
+    register_hint="otto.host.transfer.register_transfer_backend()",
+    validate=_validate_transfer_backend,
+)
+
+
+def register_transfer_backend(
+    name: str, cls: type[BaseFileTransfer], *, overwrite: bool = False
+) -> None:
+    """Make a custom transfer backend available to lab data under *name*.
+
+    Call from an init module listed in ``.otto/settings.toml``. The backend
+    must declare a non-empty :attr:`BaseFileTransfer.host_families` -- otherwise
+    it could never validate against any host -- and a
+    :class:`~otto.host.transfer.base.ProgressGranularity` in
+    :attr:`BaseFileTransfer.progress_granularity`, so what it promises the
+    progress bar is stated rather than inferred. Both are rejected here.
+
+    *overwrite* replaces an existing registration under *name* deliberately
+    (e.g. a built-in); by default a duplicate name raises.
+    """
     TRANSFER_BACKENDS.register(name, cls, overwrite=overwrite, origin=caller_module())
 
 
@@ -69,3 +83,23 @@ def build_transfer_backend(name: str) -> type[BaseFileTransfer]:
             names and suggests near-misses.
     """
     return TRANSFER_BACKENDS.get(name)
+
+
+def _register_builtin_backends() -> None:
+    """Register otto's built-in backends by reference.
+
+    Each entry's origin is its backend's own module, where the class lives.
+    """
+    for name, module, cls in [
+        ("console", "otto.host.transfer.console", "ConsoleFileTransfer"),
+        ("ftp", "otto.host.transfer.ftp", "FtpFileTransfer"),
+        ("nc", "otto.host.transfer.nc", "NcFileTransfer"),
+        ("scp", "otto.host.transfer.scp", "ScpFileTransfer"),
+        ("sftp", "otto.host.transfer.sftp", "SftpFileTransfer"),
+        ("shell", "otto.host.transfer.shell", "ShellFileTransfer"),
+        ("tftp", "otto.host.transfer.tftp", "TftpFileTransfer"),
+    ]:
+        TRANSFER_BACKENDS.register(name, Ref(f"{module}:{cls}"), origin=module)
+
+
+_register_builtin_backends()

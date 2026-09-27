@@ -10,6 +10,7 @@ is separate because only top-level test files can register (`iter_test_files` is
 non-recursive), which is the distinction the names cache section rests on.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -19,10 +20,8 @@ from tests._fixtures.sutrepo import make_sut_repo
 GENERATED_LIB_DIRS = ["pylib"]
 """The lib dirs every generated repo declares. Single source of truth for
 ``_EXTRA`` below (which builds its ``libs = [...]`` line from this list rather
-than hard-coding one) and for ``scripts/import_budget.py``'s
-``_excluded_lib_dirs``, which needs the same list to exclude the import
-system's per-import freshness probe of each lib dir from the ``stat_workspace``
-counter."""
+than hard-coding one) and for the tests that need to know where a repo's
+library code lives."""
 
 _EXTRA = (
     "libs = [" + ", ".join(f'"{d}"' for d in GENERATED_LIB_DIRS) + "]\n"
@@ -34,6 +33,47 @@ _LAB_SOURCE = """\
 backend = "json"
 paths = ["{lab}"]
 """
+
+BUDGET_SSH_HOST = "budget-ssh"
+"""The host id of the closed-port SSH host ``generate_repo(ssh_lab_port=...)`` declares.
+
+Hyphenated because a host id is a slug (``[a-z0-9-]``): an element named
+``budget_ssh`` would be addressed as ``budget-ssh`` anyway."""
+
+
+def _budget_ssh_lab(port: int) -> str:
+    """A JSON lab holding one unix host at ``127.0.0.1`` whose SSH port is *port*.
+
+    The host entry is the unix host shape of ``lab_data/tech1/lab.json``
+    (``test3``), so the SSH path is measured on the same kind of host a real
+    lab carries. Only the addresses differ: ``127.0.0.1`` for the host, so a
+    connection is refused at once when the port is closed, and an interface
+    address no tech1 host uses, so the merged lab keeps its IPs unique.
+    """
+    host = {
+        "ip": "127.0.0.1",
+        "os_type": "unix",
+        "valid_terms": ["ssh", "telnet"],
+        "valid_transfers": ["scp", "sftp", "ftp", "nc"],
+        "is_virtual": True,
+        "site": "lab-a",
+        "rack": 1,
+        "shelf": 4,
+        "docker_capable": True,
+        "roles": ["docker"],
+        "creds": [
+            {"login": "vagrant", "password": "vagrant"},
+            {"login": "test", "password": "Password1"},
+        ],
+        "interfaces": {"eth2": {"ip": "192.168.1.250", "subnet": "192.168.1.0/24"}},
+        "ssh_options": {"port": port},
+    }
+    # No top-level `labs` table: the element's own `labs` puts it in `unix`,
+    # and a second source redeclaring `unix` would override tech1's entry for
+    # it (a WARN on every run, and tech1's lab metadata lost).
+    lab = {"elements": [{"name": BUDGET_SSH_HOST, "labs": ["unix"], "hosts": [host]}]}
+    return json.dumps(lab, indent=4) + "\n"
+
 
 _TEST_BODY = "def test_x():\n    pass\n"
 
@@ -59,6 +99,21 @@ from otto.utils import Status
 async def noop() -> CommandResult:
     """Budget no-op: a real dispatch whose body does no work."""
     return CommandResult(Status.Success, value="", command="noop", retcode=0)
+
+
+@instruction()
+async def local_true() -> CommandResult:
+    """Budget local-session run: a real dispatch that opens a persistent
+    LocalHost session and runs one command through it, so the surface
+    measuring this instruction sees what a session's own choke points
+    cost — unlike ``noop``, which never opens a host session."""
+    from otto.host.local_host import LocalHost
+
+    h = LocalHost()
+    try:
+        return (await h.run("true")).only
+    finally:
+        await h.close()
 '''
 
 
@@ -70,6 +125,7 @@ def generate_repo(
     top_level: int = 2,
     name: str = "genrepo",
     realistic: bool = False,
+    ssh_lab_port: int | None = None,
 ) -> Path:
     """Write a sut-dir repo under *root*; return the path for ``OTTO_SUT_DIRS``.
 
@@ -81,6 +137,12 @@ def generate_repo(
     monitor parser, and a JSON lab source, so budget surfaces see what real
     repos cost. ``realistic=False`` behaves exactly as before: a bare init
     module and plain top-level test functions, no lab.
+
+    *ssh_lab_port* adds a second JSON lab source, ``budget_lab/lab.json``,
+    holding one unix host (:data:`BUDGET_SSH_HOST`) at ``127.0.0.1`` with SSH
+    on that port, in the ``unix`` lab. A caller that passes a closed port
+    measures otto's SSH path with no real host: the connection is refused at
+    once.
     """
     # Through `make_sut_repo`, not a hand-rolled write: `.otto/settings.toml`
     # has exactly one spelling in the suite (tests/_fixtures/sutrepo.py), and
@@ -90,13 +152,17 @@ def generate_repo(
     if realistic:
         extra += _LAB_SOURCE.format(lab=PROJECT_ROOT / "tests" / "_fixtures" / "lab_data" / "tech1")
         init_body = _REALISTIC_INIT
+    repo_files = {f"pylib/{name}_instructions.py": init_body}
+    if ssh_lab_port is not None:
+        extra += _LAB_SOURCE.format(lab=root / name / "budget_lab")
+        repo_files["budget_lab/lab.json"] = _budget_ssh_lab(ssh_lab_port)
     repo = make_sut_repo(
         root / name,
         name=name,
         version="0.1.0",
         tests=["tests"],
         extra=extra,
-        files={f"pylib/{name}_instructions.py": init_body},
+        files=repo_files,
     )
 
     tests_root = repo / "tests"

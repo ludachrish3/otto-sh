@@ -277,6 +277,7 @@ from tests._fixtures._loop_reaper import (
     reap_or_raise,
     running_loop_leak_reason,
 )
+from tests._fixtures._pytester_snapshot import install as install_product_preserving_snapshot
 from tests._fixtures._transport_leaks import (
     describe_referrers,
     install_transport_tracker,
@@ -319,6 +320,9 @@ def pytest_configure(config):  # type: ignore[no-untyped-def]
     _install_sigint_traceback_dump()
     _install_loop_origin_tracker()
     install_transport_tracker(lambda: _current_test)
+    # pytester's sys.modules restore must not orphan an otto submodule first
+    # imported inside an inner run (see tests/_fixtures/_pytester_snapshot.py).
+    install_product_preserving_snapshot()
     # Registered as a PLUGIN, never re-exported as a conftest hook:
     # pytest_collectstart is dispatched through a PATH-FILTERED proxy that
     # strips conftest hookimpls for non-anchor directories — a conftest-hosted
@@ -2153,7 +2157,7 @@ def _drop_richs_cached_console():
 # spec into this dict it cannot, because its discovery scans for ``Registry``
 # instances. Restoring only the registry leaves the two tables disagreeing, and
 # ``_nearest_registered_spec`` reads them TOGETHER
-# (``{HOST_CLASSES.get(n): _HOST_SPECS[n] for n in _HOST_SPECS}``): a spec left
+# (``{HOST_CLASSES.get(n): n for n in _HOST_SPECS}``): a spec left
 # behind for a class that was dropped makes the very next
 # ``register_host_class`` ANYWHERE in the process die with
 # ``ValueError: Unknown host class '<leaked name>'``.
@@ -2281,7 +2285,14 @@ def _isolate_registries():
 
 
 def _snapshot_registries() -> list[tuple[Registry, dict[str, tuple[object, str]]]]:
-    """Return every loaded registry paired with its ``name -> (entry, origin)`` map.
+    """Return every loaded registry paired with its ``name -> (raw_entry, origin)`` map.
+
+    Reads :meth:`Registry._raw_items` (test support, not part of the product
+    API) rather than ``reg.get(name)``: a built-in registered as a ``Ref``
+    must come back as that same ``Ref``, unresolved, so snapshotting a test
+    never imports a built-in's target as a side effect of running the test at
+    all — exactly the property the loader suspension below already gives the
+    suites registry's test files.
 
     The snapshot must never run a registry's loader, because the suites
     registry loads a SUT's test files on first read: a per-test snapshot would
@@ -2290,7 +2301,7 @@ def _snapshot_registries() -> list[tuple[Registry, dict[str, tuple[object, str]]
     """
     with suspend_loaders():
         return [
-            (reg, {name: (reg.get(name), reg.origin(name)) for name in reg.names()})
+            (reg, {name: (entry, origin) for name, entry, origin in reg._raw_items()})
             for reg in _loaded_registries()
         ]
 
@@ -2324,6 +2335,15 @@ def _restore_registries(
     Like the snapshot, the restore must never run a registry's loader, because
     the suites registry loads a SUT's test files on first read; its whole body
     runs under :func:`otto.registry.suspend_loaders`.
+
+    A parked entry is whatever the snapshot recorded raw: a real object, or an
+    unresolved ``Ref``. Restored via :meth:`Registry._restore_raw` (test
+    support, not ``register(..., overwrite=True)``): a validator is not
+    guaranteed pure once it can depend on state a test changed, so a restore
+    must never be the trigger that runs one. ``_restore_raw`` writes the entry
+    and origin back directly — for a ``Ref`` this puts back the ``Ref`` itself,
+    unresolved, so restoring a reference-registered built-in never imports its
+    target either.
     """
     with suspend_loaders():
         evict_origins: set[str] = set()
@@ -2345,7 +2365,7 @@ def _restore_registries(
                 if name not in parked:
                     _drop_added(reg, name)
             for name, (entry, origin) in parked.items():
-                reg.register(name, entry, overwrite=True, origin=origin)
+                reg._restore_raw(name, entry, origin)
 
         # Registries that did not EXIST at snapshot time. The snapshot can only
         # cover what was reachable when the test started, so a registry living in

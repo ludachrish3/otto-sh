@@ -39,7 +39,7 @@ from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
 from .kmod_tool_kind import kgcov_tool_for
-from .product import PRODUCT_KINDS, ShellProduct, cov_dir_of, cov_dir_of_name, sudo_gcda_delete
+from .product import ShellProduct, cov_dir_of, cov_dir_of_name, sudo_gcda_delete
 from .shell_kind import (
     bool_param,
     stage_dir_param,
@@ -414,6 +414,3 @@ def _kmod_kind(entry: DeclaredEntry, host: "Host") -> KmodProduct:
         coverage=coverage,
         gcov_path=gcov_path,
     )
-
-
-PRODUCT_KINDS.register("kmod", _kmod_kind, origin=__name__)

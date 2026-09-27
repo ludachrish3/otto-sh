@@ -462,11 +462,11 @@ class TestRegistry:
         assert isinstance(build_command_frame("bash"), CommandFrame)
 
 
-def test_builtins_registered_via_public_path():
+def test_builtins_are_registered_and_build():
     from otto.host import command_frame as cf
 
-    # The seed registry starts empty and is populated by _register_builtin_frames()
-    # through register_command_frame — the same path third parties use.
+    # _register_builtin_frames() registers each built-in by reference; building
+    # one resolves it through the registry's validator, as a third party's is.
     assert set(cf.FRAME_CLASSES.names()) >= {"bash", "zephyr", "zephyr-serial"}
     assert cf.build_command_frame("bash").type_name == "bash"
 

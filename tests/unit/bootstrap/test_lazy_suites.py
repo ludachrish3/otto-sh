@@ -112,26 +112,24 @@ def test_the_harness_registry_snapshot_never_loads_test_files(tmp_path, monkeypa
 def test_a_test_file_that_first_imports_an_otto_module_loads_cleanly(tmp_path, monkeypatch):
     """otto's own import-time registration is otto's, even when a test file triggers it.
 
-    ``otto.host.llext_kind`` registers the ``llext`` product kind when imported,
-    and SUT test files import it. Bootstrap already imports it, so the module is
+    A registry's defining module registers its built-ins (by reference) when
+    imported: ``otto.host.binary_loader`` registers ``llext-hex``, and a SUT
+    test file may import it. Bootstrap already imports it, so the module is
     evicted to make the test file its FIRST importer: the registration then runs
     inside the suite-loading phase, and must not be refused as the test file's.
     """
     import otto.host as host_pkg
-    from otto.host.product import PRODUCT_KINDS
-    from otto.registry import suspend_loaders
 
-    monkeypatch.setattr(host_pkg, "llext_kind", host_pkg.llext_kind)  # restored at teardown
-    body = "import otto.host.llext_kind\n" + GOOD.replace("TestLazy", "TestLlextFirst")
-    monkeypatch.setenv("OTTO_SUT_DIRS", write_repo_with_test_body(tmp_path, "llextfirst", body))
+    monkeypatch.setattr(host_pkg, "binary_loader", host_pkg.binary_loader)  # restored at teardown
+    body = "import otto.host.binary_loader\n" + GOOD.replace("TestLazy", "TestLoaderFirst")
+    monkeypatch.setenv("OTTO_SUT_DIRS", write_repo_with_test_body(tmp_path, "loaderfirst", body))
     result = bs.bootstrap()
-    monkeypatch.delitem(sys.modules, "otto.host.llext_kind")
-    with suspend_loaders():
-        PRODUCT_KINDS.unregister("llext")  # the registry isolation fixture restores it
-    assert "TestLlextFirst" in SUITES
+    monkeypatch.delitem(sys.modules, "otto.host.binary_loader")
+    assert "TestLoaderFirst" in SUITES
     assert result.errors == []
-    assert "otto.host.llext_kind" in sys.modules, "the test file was not the first importer"
-    assert PRODUCT_KINDS.origin("llext") == "otto.host.llext_kind"
+    reimported = sys.modules.get("otto.host.binary_loader")
+    assert reimported is not None, "the test file was not the first importer"
+    assert reimported.LOADER_CLASSES.origin("llext-hex") == "otto.host.binary_loader"
 
 
 def test_a_suites_read_inside_a_leaf_still_prints_its_finding_once(tmp_path):

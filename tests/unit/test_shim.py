@@ -18,6 +18,26 @@ import pytest
 
 from tests._fixtures.paths import PROJECT_ROOT
 
+
+@pytest.fixture(autouse=True)
+def _no_pydantic_plugin_setting_leaks():
+    """Keep ``PYDANTIC_DISABLE_PLUGINS`` out of this worker, whatever a test does.
+
+    A test that runs ``_shim.main()`` in-process and falls through to a
+    patched ``entry`` has the shim ``setdefault`` the variable into THIS
+    process's environment. It would then reach every later subprocess the
+    worker starts, among them the import-budget children, which count ~140
+    fewer file operations with it set. Restored by hand, not by
+    ``monkeypatch.delenv``: that records nothing for a variable that was
+    absent, so its teardown would leave the shim's value behind.
+    """
+    saved = os.environ.pop("PYDANTIC_DISABLE_PLUGINS", None)
+    yield
+    os.environ.pop("PYDANTIC_DISABLE_PLUGINS", None)
+    if saved is not None:
+        os.environ["PYDANTIC_DISABLE_PLUGINS"] = saved
+
+
 # Runs the shim exactly as the console script does, then reports which otto
 # modules the interpreter ended up carrying. A subprocess is mandatory: the
 # pytest process has already imported half of otto, so an in-process check

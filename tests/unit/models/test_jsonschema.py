@@ -265,11 +265,14 @@ class TestSelectorEnums:
 
     def test_custom_unix_transfer_appears_in_enum(self):
         from otto.host import transfer as xfer_mod
-        from otto.host.transfer import UnixFileTransfer
+        from otto.host.transfer import ProgressGranularity, UnixFileTransfer
         from otto.models.jsonschema import build_schemas
 
+        # A complete backend: the registry's own validator refuses a class
+        # that leaves its progress granularity undeclared.
         class XmodemTransfer(UnixFileTransfer):
             host_families = frozenset({"unix"})
+            progress_granularity = ProgressGranularity(put=128, get=128)
 
         xfer_mod.TRANSFER_BACKENDS.register("xmodem", XmodemTransfer)
         try:

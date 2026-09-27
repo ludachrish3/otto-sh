@@ -56,8 +56,8 @@ means a byte-size comparison instead, via the same
 already reads. Either way, a mismatch is a failed transfer with the temp
 removed -- never a warning, and never a ``Status.Success`` with a note.
 
-Registers ``shell`` into the shared transfer registry on import, and is the
-``busybox`` OS profile's default ``transfer`` (``otto.host.os_profile.
+``otto.host.transfer.registry`` registers it as ``shell``, by reference, and it
+is the ``busybox`` OS profile's default ``transfer`` (``otto.host.os_profile.
 _register_builtin_os_profiles``).
 """
 
@@ -91,7 +91,6 @@ from .base import (
     TransferProgressFactory,
     TransferProgressHandler,
 )
-from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
 
 _logger = logging.getLogger(__name__)
@@ -2063,6 +2062,3 @@ class ShellFileTransfer(UnixFileTransfer):
             temp.unlink(missing_ok=True)
         except OSError as e:
             _logger.debug(f"{self._name}: cleanup of local temp {temp} failed (ignored): {e}")
-
-
-register_transfer_backend("shell", ShellFileTransfer)

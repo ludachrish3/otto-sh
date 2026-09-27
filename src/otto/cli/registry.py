@@ -18,6 +18,7 @@ import typer
 from typer.models import TyperInfo
 
 from ..registry import Registry, caller_module
+from .builtin_commands import register_builtin_commands
 from .invoke import prepare_command_target
 
 
@@ -290,3 +291,10 @@ def resolve_spec_command(spec: CommandSpec) -> Any:
         if hasattr(leaf_converted, "commands")
         else leaf_converted
     )
+
+
+# otto's own top-level commands, registered beside the registry that holds them
+# like every registry's built-ins: importing this module lists all fourteen,
+# whether or not anything has imported the command tree (otto.cli.main). Each
+# loader is a "module:attr" string, so listing them imports no verb module.
+register_builtin_commands()

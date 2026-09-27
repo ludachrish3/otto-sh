@@ -8,20 +8,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Imported for its SIDE EFFECT on sys.modules, and the ensure_* tests below do
-# not work without it. `pytester.runpytest_inprocess` snapshots sys.modules at
-# fixture setup and restores it afterwards, which EVICTS every module first
-# imported during the test. `otto.project` is one of those (nothing else in
-# this file's outer session imports it), and eviction does not clear the
-# `project` attribute on the already-imported `otto` package — so the next
-# `monkeypatch.setattr("otto.project.ensure_installed", ...)` resolves through
-# that stale attribute and patches a dead module object, while the fixture's
-# own `from ..project import ...` re-imports a fresh one and calls the REAL
-# converge function. Importing it here puts it in the snapshot, so there is
-# only ever one module object. Symptom when this regresses: exactly one
-# ensure_* test — whichever runs next in the same worker — fails with
-# `calls == []`.
-import otto.project  # noqa: F401 — see above
 from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.errors import EnsureStateError
@@ -207,6 +193,7 @@ def _stub_ensures(monkeypatch: pytest.MonkeyPatch, calls: list[tuple], outcome: 
     from otto.suite.pytest_plugin import OttoOptionsPlugin
 
     monkeypatch.setattr(OttoOptionsPlugin, "_converge_loop", None, raising=False)
+    # One otto.project across pytester runs: tests/_fixtures/_pytester_snapshot.py.
     for name in CONVERGE_FUNCTIONS:
         monkeypatch.setattr(f"otto.project.{name}", _stub(calls, name, outcome))
     return calls

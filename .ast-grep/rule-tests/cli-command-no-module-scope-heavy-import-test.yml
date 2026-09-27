@@ -1,0 +1,84 @@
+# Rule test for .ast-grep/rules/cli-command-no-module-scope-heavy-import.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+id: cli-command-no-module-scope-heavy-import
+valid:
+# The sanctioned fix: import in the one function that uses it.
+- |
+  def report(tiers: str) -> None:
+      from ..coverage.reporter import run_coverage_report
+      from ..coverage.store.model import TIER_SYSTEM
+
+      run_coverage_report(tiers, TIER_SYSTEM)
+- |
+  async def _run_monitor(collector, server) -> None:
+      import asyncio
+
+      task = await collector.spawn_collection()
+      await asyncio.gather(task, return_exceptions=True)
+# The other sanctioned fix: a type-only name under TYPE_CHECKING, with the
+# annotations quoted.
+- |
+  from typing import TYPE_CHECKING
+
+  if TYPE_CHECKING:
+      from ..config import Repo
+      from ..config.lab import Lab
+      from ..host.unix_host import UnixHost
+
+
+  def _resolve_parent(repo: "Repo", lab: "Lab") -> "UnixHost": ...
+# Harmless module-scope imports: the names otto.config defines itself, a
+# lazy package's cheap names, and rich's light modules.
+- |
+  from rich import print as rprint
+  from rich.markup import escape
+
+  from ..config import get_repos
+  from ..models import MIN_INTERVAL_SECONDS
+invalid:
+# The edges this rule exists for, each re-added at module scope.
+- |
+  from ..coverage.reporter import TierSpec, run_coverage_report
+- |
+  import asyncio
+- |
+  from pydantic import ValidationError
+- |
+  from rich.table import Table
+- |
+  from ..config import Repo, get_repos
+- |
+  from ..config import get_repos, get_lab
+- |
+  from ..config.fleet import _apply_option_overrides
+- |
+  from ..host.unix_host import UnixHost
+- |
+  from ..host import UnixHost
+- |
+  from ..docker import build_images, compose_ps
+- |
+  from ..context import get_context
+# A lazy re-export that resolves into a denylisted module (otto.coverage's
+# CoverageReporter lives in otto.coverage.reporter).
+- |
+  from ..coverage import CoverageReporter
+# A deeper relative spelling, as a module in a package under src/otto/cli/
+# would write it.
+- |
+  from ...config.fleet import get_lab
+# The top-level package's lazy names reach the same modules.
+- |
+  from otto import get_lab, options
+- |
+  import otto.docker.build as build
+# The else branch of `if TYPE_CHECKING:` runs at import time.
+- |
+  from typing import TYPE_CHECKING
+
+  if TYPE_CHECKING:
+      from ..config.lab import Lab
+  else:
+      from ..config.lab import Lab

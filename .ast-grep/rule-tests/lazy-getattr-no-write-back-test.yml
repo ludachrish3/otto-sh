@@ -1,0 +1,99 @@
+# Rule test for .ast-grep/rules/lazy-getattr-no-write-back.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+id: lazy-getattr-no-write-back
+valid:
+# The house shape: resolve through the table, cache nothing.
+- |
+  _LAZY_ATTRS: dict[str, str] = {"UnixHost": "otto.host.unix_host"}
+
+
+  def __getattr__(name: str) -> object:
+      import importlib
+
+      if name in _LAZY_ATTRS:
+          return getattr(importlib.import_module(_LAZY_ATTRS[name]), name)
+      raise AttributeError(name)
+# A package init with no lazy table is not a lazy package.
+- |
+  def __getattr__(name: str) -> object:
+      value = _load(name)
+      globals()[name] = value
+      return value
+# A write outside `__getattr__` is not a resolver caching its answer.
+- |
+  _LAZY_ATTRS: dict[str, str] = {}
+  _cache: dict[str, object] = {}
+
+
+  def _prime() -> None:
+      _cache["x"] = 1
+invalid:
+- |
+  _LAZY_ATTRS: dict[str, str] = {"UnixHost": "otto.host.unix_host"}
+
+
+  def __getattr__(name: str) -> object:
+      import importlib
+
+      value = getattr(importlib.import_module(_LAZY_ATTRS[name]), name)
+      globals()[name] = value
+      return value
+- |
+  import sys
+
+  _LAZY_EXPORTS: dict[str, str] = {"management": "otto.logger.management"}
+
+
+  def __getattr__(name: str) -> object:
+      import importlib
+
+      module = importlib.import_module(_LAZY_EXPORTS[name])
+      setattr(sys.modules[__name__], name, module)
+      return module
+# The aliased and attribute spellings of the same write-back.
+- |
+  import sys
+
+  _LAZY_ATTRS: dict[str, str] = {"UnixHost": "otto.host.unix_host"}
+
+
+  def __getattr__(name: str) -> object:
+      import importlib
+
+      value = getattr(importlib.import_module(_LAZY_ATTRS[name]), name)
+      sys.modules[__name__].__dict__[name] = value
+      return value
+- |
+  _LAZY_ATTRS: dict[str, str] = {"UnixHost": "otto.host.unix_host"}
+
+
+  def __getattr__(name: str) -> object:
+      import importlib
+
+      value = getattr(importlib.import_module(_LAZY_ATTRS[name]), name)
+      globals().__setitem__(name, value)
+      return value
+- |
+  _LAZY_ATTRS: dict[str, str] = {"UnixHost": "otto.host.unix_host"}
+
+
+  def __getattr__(name: str) -> object:
+      import importlib
+
+      g = globals()
+      g[name] = getattr(importlib.import_module(_LAZY_ATTRS[name]), name)
+      return g[name]
+- |
+  import sys
+
+  _LAZY_ATTRS: dict[str, str] = {"UnixHost": "otto.host.unix_host"}
+
+
+  def __getattr__(name: str) -> object:
+      import importlib
+
+      value = getattr(importlib.import_module(_LAZY_ATTRS[name]), name)
+      sys.modules[__name__].UnixHost = value
+      return value

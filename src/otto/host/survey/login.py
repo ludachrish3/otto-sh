@@ -83,8 +83,31 @@ def host_copy_on_port(
     raise ValueError(msg)
 
 
-def _named_failure(exc: BaseException, *, who: str) -> "LoginOutcome | None":
-    """Return the verdict for a failure shape otto recognises by type, else None."""
+def _raised_by_asyncssh(exc: BaseException) -> bool:
+    """Whether *exc* (or anything in its MRO) is one of asyncssh's own exception classes.
+
+    Walks ``type(exc).__mro__`` rather than reading ``type(exc).__module__``
+    alone, so a subclass defined elsewhere (a local test double, otto's own
+    code) still counts as long as it inherits an asyncssh class -- otto never
+    defines one, but the check should not assume that. Compares only the
+    TOP-LEVEL package (the part before the first dot): asyncssh's own
+    exception classes live in submodules (``asyncssh.misc``, not the package
+    root), and this must recognise all of them without naming each one.
+
+    This branches on the exception's own lineage, never on import state --
+    ``exc`` already proves whether asyncssh raised it, so there is nothing to
+    probe in ``sys.modules``.
+    """
+    return any(cls.__module__.split(".", 1)[0] == "asyncssh" for cls in type(exc).__mro__)
+
+
+def _named_ssh_failure(exc: BaseException, *, who: str) -> "LoginOutcome | None":
+    """Return the verdict for one of the three asyncssh-specific shapes, else None.
+
+    Only called once :func:`_raised_by_asyncssh` has already confirmed *exc*
+    came from asyncssh, so the module is certainly loaded and this import
+    costs nothing beyond the attribute lookups below.
+    """
     import asyncssh
 
     if isinstance(exc, asyncssh.PermissionDenied):
@@ -104,6 +127,20 @@ def _named_failure(exc: BaseException, *, who: str) -> "LoginOutcome | None":
         # asyncssh's ``reason`` IS its ``str``, so both can be empty; a
         # not-checkable with no reason states nothing.
         return LoginOutcome("not-checkable", exc.reason or f"channel open failed (code {exc.code})")
+    return None
+
+
+def _named_failure(exc: BaseException, *, who: str) -> "LoginOutcome | None":
+    """Return the verdict for a failure shape otto recognises by type, else None.
+
+    SSH shapes are recognised only on an exception asyncssh itself raised
+    (:func:`_raised_by_asyncssh`), so a non-SSH failure never imports
+    asyncssh just to be classified.
+    """
+    if _raised_by_asyncssh(exc):
+        named = _named_ssh_failure(exc, who=who)
+        if named is not None:
+            return named
     if isinstance(exc, LoginProxyError):
         return LoginOutcome("login-failed", f"{who}: {exc}")
     if isinstance(exc, ConnectionRefusedError):

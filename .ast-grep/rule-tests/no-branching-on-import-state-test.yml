@@ -1,0 +1,86 @@
+# Rule test for .ast-grep/rules/no-branching-on-import-state.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+id: no-branching-on-import-state
+valid:
+# A loader installs and evicts a module: writes, not reads.
+- |
+  import sys
+
+  sys.modules[mod_name] = mod
+  try:
+      spec.loader.exec_module(mod)
+  except BaseException:
+      sys.modules.pop(mod_name, None)
+      raise
+- |
+  import sys
+
+  del sys.modules[name]
+  saved_modules = sys.modules.copy()
+  sys.modules.clear()
+  sys.modules.update(saved_modules)
+# The suite-file loader's idempotency check, the one allowed site.
+- |
+  import sys
+
+
+  def import_test_file(self, test_file):
+      mod_name = f"_otto_suite_{test_file.stem}"
+      if mod_name in sys.modules:
+          return
+# An optional platform module is not import state.
+- |
+  def _setup_raw_mode(fd):
+      try:
+          import termios
+      except ImportError:
+          return None
+      return termios.tcgetattr(fd)
+invalid:
+- |
+  import sys
+
+  if "asyncssh" in sys.modules:
+      warm_ssh_cache()
+- |
+  import sys
+
+  if "rich" not in sys.modules:
+      render = _plain_render
+- |
+  import sys
+
+  mod = sys.modules.get("otto.host.unix_host")
+- |
+  import sys
+
+  unix_host = sys.modules["otto.host.unix_host"]
+# The allowed shape, outside the loader it is allowed in.
+- |
+  import sys
+
+
+  def warm(mod_name):
+      if mod_name in sys.modules:
+          return
+# Iteration and the dict views are reads too.
+- |
+  import sys
+
+  loaded = [m for m in sys.modules if m.startswith("otto.")]
+- |
+  import sys
+
+  for name, module in sys.modules.items():
+      patch(module)
+- |
+  import sys
+
+  if "rich" in sys.modules.keys():
+      render = _rich_render
+- |
+  import sys
+
+  sys.modules.setdefault("otto.fake", fake)

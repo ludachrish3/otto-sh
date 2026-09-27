@@ -506,53 +506,6 @@ def ensure_cli_session(ctx: typer.Context) -> None:
     # the dry-run notice, which stays the first line of a dry run.
     management.apply_library_levels(merge_logging_levels(repos))
 
-    for repo in repos:
-        logger.debug(f"{repo.sut_dir}: {repo_provenance(repo)}")
-
-
-PROVENANCE_NOT_READ = "commit not read (the query was declined)"
-"""Stand-in logged when a repo's HEAD could not be read. See :func:`repo_provenance`."""
-
-
-def repo_provenance(repo: "Repo") -> str:
-    """Return *repo*'s commit SHA, or a stand-in saying it could not be read.
-
-    **A log line must never be able to fail the invocation it describes.**
-    ``Repo.commit`` shells out to git, so it can come back declined, and
-    reading a declined result's payload raises. The caller is a
-    ``logger.debug`` f-string, which is evaluated whatever the log level — so
-    before this function existed, a declined provenance query aborted the
-    command with a traceback from a line whose only job was to write one
-    sentence into ``verbose.log``.
-
-    That is the shape the dry-run sweep found eight times over in
-    ``otto.docker``: an eager ``.value`` inside a log string, surfacing a WRONG
-    STORY (here: "git was not run") in place of the real one (here: nothing,
-    because the line does not matter). Naming the error at the read is right
-    for a parser and wrong for a narrator.
-
-    This is the SECOND of two independent defences, and the other one is why
-    the ``except`` arm below does not fire today:
-    :meth:`~otto.config.repo.Repo.run_git_command` is exempt from the dry-run
-    decline (it reads the local checkout's HEAD and contacts no device), so
-    the provenance query succeeds and a dry run logs the same real SHA a live
-    run logs. Either defence alone stops the traceback; both are kept because
-    they fail for different reasons — the exemption could be dropped in a
-    refactor, and a future provenance source could decline for a reason that
-    has nothing to do with dry runs.
-
-    A NAMED arm above nothing wider, deliberately. Anything that is not a
-    decline — a git binary that is missing, a permission error — still
-    propagates, because those are real failures of a real query and this
-    function has no business swallowing them.
-    """
-    from ..result import CommandNotRunError
-
-    try:
-        return str(repo.commit)
-    except CommandNotRunError:
-        return PROVENANCE_NOT_READ
-
 
 def build_lab_from_repos(repos: "list[Repo]", labnames: "str | list[str]") -> "Lab":
     """Aggregate the repos' lab configuration and load the named lab(s).

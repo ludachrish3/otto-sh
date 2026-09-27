@@ -1,0 +1,333 @@
+id: builtin-registers-by-reference
+language: python
+severity: error
+message: this registers a real object when the module is imported, so every import of the module pays for it and the registry only knows the name once something happens to import it. Register the built-in as `Ref("pkg.mod:attr")` from the module that defines the registry instead.
+note: >
+  A built-in registry entry is a `Ref("pkg.mod:attr")` registered by the
+  module that DEFINES the registry, so listing the registry imports nothing
+  and a lookup imports only the entry it names. An implementation module
+  that registers itself at import time does the opposite: the entry exists
+  only once something imports that module, so its name is missing from a
+  listing until then, and importing it for any other reason pays for the
+  registration. The runtime guard (tests/unit/test_registry_refs_guard.py)
+  checks the built-in names it knows; a NEW built-in that registers itself as
+  an import side effect is missing from its table, so only this rule sees it.
+
+  What counts as a registration: a call of `register_<thing>(...)` (bare, or
+  as an attribute such as `otto.register_x(...)`), a call of
+  `<REGISTRY>.register(...)` on an UPPER_CASE registry constant (so
+  `atexit.register` and an ABC's `.register` are not registrations), and a
+  decorator spelled either way. A call counts when it runs at import: at
+  module scope (not in a function body, not in the consequence of
+  `if TYPE_CHECKING:`; a class body runs at import and is checked), or in the
+  body of a helper that the module calls at module scope, which is the
+  `_register_builtin_*()` idiom. A helper named `register_*` is judged at its
+  module-scope call site instead, where the object argument is visible.
+
+  What is allowed, by shape:
+
+    - an entry passed as `Ref(...)`, positionally or as a keyword value;
+    - a `register_*()` call with no arguments whose function is imported,
+      not defined in this file (`register_builtin_commands()` in
+      cli.registry, beside CLI_COMMANDS: its CommandSpecs already name their
+      loaders as "mod:attr" strings). A
+      no-argument call of a `register_*` function the file defines itself is
+      checked like any other, since its body is not;
+    - a `register_*(...)` call in a file that defines that function
+      (`def register_<thing>`), when the function's body registers into a
+      registry the same file assigns at module scope (`NAME = Registry(...)`,
+      or any `*Registry(...)` constructor such as KindRegistry) and into
+      nothing else: no `<X>.register(...)` on a receiver the file does not
+      assign that way, and no call of another `register_*` function. The
+      registration API, its registry and the entry then load together, so a
+      Ref would defer nothing. A local `register_*` helper that registers
+      into another module's registry is checked, even in a file that
+      assigns some unrelated registry of its own;
+    - a `<REGISTRY>.register(...)` call in the file that assigns `<REGISTRY>`
+      at module scope, for the same reason;
+    - project.actions' `register_project_instruction_bodies(ProjectActions,
+      None)`, matched by that function's name in a file that defines both it
+      and the class passed first. It registers into otto.instructions'
+      PROJECT_INSTRUCTIONS, so the same-file shape does not cover it, but it
+      is introspective: it registers the marked methods of a class defined
+      beside the call, those entries are bound to that class, and a
+      "mod:attr" reference cannot name one.
+
+  Four sites use the same-file shapes today: host.login_proxy's `su` proxy,
+  host.connections' term backends (their class, ConnectionManager, is
+  defined there), and host.os_profile's profiles and monitor.snmp's metrics
+  (data values, not implementations).
+
+  Not seen, and owned by review: a helper reached through another helper
+  (only a function the module calls directly, as a statement, is checked),
+  a helper called under a module-scope `if` or as the right side of an
+  assignment, and a registry bound to a lowercase alias
+  (`backends.register(...)`).
+
+  A decorator registration is never exempt: the decorated object is never a
+  Ref, and none exists in src/otto. Writing into a plain dict is not a
+  registry call and is not seen; review owns it.
+files:
+- src/otto/**/*.py
+utils:
+  by-reference:
+    has:
+      field: arguments
+      has:
+        any:
+        - kind: call
+          has:
+            field: function
+            regex: '^(\w+\.)*Ref$'
+        # A keyword entry (`cls=Ref(...)`), but not `origin=`, which names
+        # where an entry came from rather than the entry itself.
+        - kind: keyword_argument
+          all:
+          - has:
+              field: name
+              not:
+                regex: '^origin$'
+          - has:
+              field: value
+              kind: call
+              has:
+                field: function
+                regex: '^(\w+\.)*Ref$'
+  no-arguments:
+    has:
+      field: arguments
+      regex: '^\(\s*\)$'
+  at-module-scope:
+    all:
+    - not:
+        inside:
+          kind: function_definition
+          stopBy: end
+    - not:
+        inside:
+          kind: if_statement
+          field: consequence
+          stopBy: end
+          has:
+            field: condition
+            regex: '^(typing\.)?TYPE_CHECKING$'
+  # The body of a function that the module calls as a module-scope statement
+  # (`_register_builtin_backends()`), except a `register_*` API function,
+  # which is judged at its call site.
+  in-helper-called-at-module-scope:
+    inside:
+      kind: function_definition
+      stopBy: end
+      all:
+      - has:
+          field: name
+          pattern: $HELPER
+          not:
+            regex: '^register_'
+      - inside:
+          kind: module
+          has:
+            kind: expression_statement
+            has:
+              kind: call
+              has:
+                field: function
+                pattern: $HELPER
+  # `$R.register(...)`, binding the receiver as $R.
+  registry-register-call:
+    kind: call
+    has:
+      field: function
+      kind: attribute
+      all:
+      - has:
+          field: attribute
+          regex: '^register$'
+      - has:
+          field: object
+          pattern: $R
+  # `$R.register(...)` where this file assigns `$R = ...Registry(...)` at
+  # module scope.
+  into-a-local-registry:
+    all:
+    - matches: registry-register-call
+    - inside:
+        kind: module
+        stopBy: end
+        has:
+          kind: expression_statement
+          has:
+            kind: assignment
+            all:
+            - has:
+                field: left
+                pattern: $R
+            - has:
+                field: right
+                kind: call
+                has:
+                  field: function
+                  regex: '^(\w+\.)*\w*Registry$'
+  # `$FOREIGN.register(...)` where this file assigns no `$FOREIGN =
+  # ...Registry(...)`. Its own metavariable: $R is already bound to the
+  # local registry when this runs, and would pin the receiver to it.
+  into-a-foreign-registry:
+    all:
+    - kind: call
+    - has:
+        field: function
+        kind: attribute
+        all:
+        - has:
+            field: attribute
+            regex: '^register$'
+        - has:
+            field: object
+            pattern: $FOREIGN
+    - not:
+        inside:
+          kind: module
+          stopBy: end
+          has:
+            kind: expression_statement
+            has:
+              kind: assignment
+              all:
+              - has:
+                  field: left
+                  pattern: $FOREIGN
+              - has:
+                  field: right
+                  kind: call
+                  has:
+                    field: function
+                    regex: '^(\w+\.)*\w*Registry$'
+  runs-at-import:
+    any:
+    - matches: at-module-scope
+    - matches: in-helper-called-at-module-scope
+rule:
+  any:
+  # register_<thing>(name, obj, ...)
+  - all:
+    - kind: call
+    - has:
+        field: function
+        any:
+        - kind: identifier
+          regex: '^register_\w+$'
+          pattern: $API
+        - kind: attribute
+          has:
+            field: attribute
+            regex: '^register_\w+$'
+            pattern: $API
+    - not:
+        matches: by-reference
+    # No arguments, and the called API is imported, not defined here.
+    - not:
+        all:
+        - matches: no-arguments
+        - not:
+            inside:
+              kind: module
+              stopBy: end
+              has:
+                kind: function_definition
+                has:
+                  field: name
+                  pattern: $API
+    - not:
+        inside:
+          kind: decorator
+          stopBy: end
+    # The registration API is defined in this file, and registers into a
+    # registry this file assigns and into nothing else.
+    - not:
+        inside:
+          kind: module
+          stopBy: end
+          has:
+            kind: function_definition
+            all:
+            - has:
+                field: name
+                pattern: $API
+            - has:
+                stopBy: end
+                matches: into-a-local-registry
+            - not:
+                has:
+                  stopBy: end
+                  any:
+                  - matches: into-a-foreign-registry
+                  - kind: call
+                    has:
+                      field: function
+                      regex: '^(\w+\.)*register_\w+$'
+    # The one introspective site: project.actions registers the marked
+    # methods of ProjectActions, a class defined beside the call (see note).
+    - not:
+        all:
+        - has:
+            field: function
+            regex: '^register_project_instruction_bodies$'
+        - has:
+            field: arguments
+            has:
+              nthChild: 1
+              kind: identifier
+              pattern: $CLS
+        - inside:
+            kind: module
+            stopBy: end
+            all:
+            - has:
+                kind: function_definition
+                has:
+                  field: name
+                  regex: '^register_project_instruction_bodies$'
+            - has:
+                kind: class_definition
+                has:
+                  field: name
+                  pattern: $CLS
+    - matches: runs-at-import
+  # <REGISTRY>.register(name, obj, ...)
+  - all:
+    - kind: call
+    - has:
+        field: function
+        kind: attribute
+        all:
+        - has:
+            field: attribute
+            regex: '^register$'
+        - has:
+            field: object
+            regex: '^([a-z_]\w*\.)*[A-Z][A-Z0-9_]*$'
+            pattern: $REGISTRY
+    - not:
+        matches: by-reference
+    - not:
+        inside:
+          kind: decorator
+          stopBy: end
+    # The registry is assigned in this file.
+    - not:
+        inside:
+          kind: module
+          stopBy: end
+          has:
+            kind: expression_statement
+            has:
+              kind: assignment
+              has:
+                field: left
+                pattern: $REGISTRY
+    - matches: runs-at-import
+  # @register_<thing> / @register_<thing>(...) / @<REGISTRY>.register(...)
+  - all:
+    - kind: decorator
+    - regex: '^@\s*((\w+\.)*register_\w+|([a-z_]\w*\.)*[A-Z][A-Z0-9_]*\.register)\b'
+    - matches: at-module-scope

@@ -13,7 +13,7 @@ from rich import get_console
 from rich import print as rprint
 from rich.markup import escape
 
-from ..config import get_lab, get_repos
+from ..config import get_repos
 from ..config.completion_cache import read_tunnel_ids, record_tunnel_ids
 from ..tunnel import (
     DEFAULT_CARRIER,
@@ -235,6 +235,8 @@ async def add(
     ),
 ) -> None:
     """Create a bidirectional tunnel along an explicit host path. See spec §6."""
+    from ..config.fleet import get_lab
+
     lab = get_lab()
     try:
         dest_spec = _parse_endpoint(dest) if dest else None
@@ -300,6 +302,7 @@ async def check(
     # live in the same module as `check_tunnel`, so they are deferred for the
     # same reason.
     from ..check import render_sections, report_to_json
+    from ..config.fleet import get_lab
     from ..host.host import is_dry_run
     from ..tunnel import check_tunnel
     from ..tunnel.check import requested_protocols, tunnel_sections
@@ -373,6 +376,8 @@ async def list_tunnels() -> None:
     """List live tunnels (observed truth; spec §9)."""
     from rich.table import Table
 
+    from ..config.fleet import get_lab
+
     lab = get_lab()
     discovery = await discover_tunnels(lab)
     if discovery.not_measured:
@@ -443,6 +448,8 @@ async def remove(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the --all confirmation."),
 ) -> None:
     """Remove a tunnel by id (all hops, both directions), or all tunnels. Spec §10."""
+    from ..config.fleet import get_lab
+
     # These two usage-error exits are deliberately kept OUT of the try/except
     # below: typer's vendored click fork makes ``typer.Exit`` a ``RuntimeError``
     # subclass, so raising them inside a ``try`` guarded by

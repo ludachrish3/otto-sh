@@ -56,17 +56,48 @@ Review mode (serves a previously saved export; no live collection — see
         await server.serve()  # blocks until server.stop() is called
 
     asyncio.run(main())
+
+Every name is exported lazily (PEP 562): ``from otto.monitor import
+MetricCollector`` imports ``otto.monitor.collector`` and what it needs, and
+only a caller that names ``MonitorServer`` pays for fastapi and uvicorn. The
+resolver does not write a resolved name back into the module dict; see
+``otto.config``'s ``__dir__`` for why.
 """
 
 from typing import TYPE_CHECKING
 
-from .collector import MetricCollector
-from .events import MonitorEvent
-from .factory import build_monitor_collector
-from .parsers import DEFAULT_PARSERS, MetricParser
-
 if TYPE_CHECKING:
-    from .server import MonitorServer
+    from .collector import MetricCollector as MetricCollector
+    from .events import MonitorEvent as MonitorEvent
+    from .factory import build_monitor_collector as build_monitor_collector
+    from .parsers import DEFAULT_PARSERS as DEFAULT_PARSERS
+    from .parsers import MetricParser as MetricParser
+    from .server import MonitorServer as MonitorServer
+
+# name -> the module that defines it, imported on first access by __getattr__.
+_LAZY_ATTRS: dict[str, str] = {
+    "MetricCollector": "otto.monitor.collector",
+    "MonitorEvent": "otto.monitor.events",
+    "build_monitor_collector": "otto.monitor.factory",
+    "DEFAULT_PARSERS": "otto.monitor.parsers",
+    "MetricParser": "otto.monitor.parsers",
+    "MonitorServer": "otto.monitor.server",
+}
+
+
+def __getattr__(name: str) -> object:
+    """PEP 562 lazy resolver for otto.monitor's public exports."""
+    import importlib
+
+    if name in _LAZY_ATTRS:
+        return getattr(importlib.import_module(_LAZY_ATTRS[name]), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Include the lazy exports in dir()/tab-completion; the module dict holds none of them."""
+    return sorted(set(globals()) | set(_LAZY_ATTRS))
+
 
 __all__ = [
     "DEFAULT_PARSERS",
@@ -76,16 +107,3 @@ __all__ = [
     "MonitorServer",
     "build_monitor_collector",
 ]
-
-
-def __getattr__(name: str) -> object:
-    """Lazily resolve MonitorServer to keep importing otto.monitor import-light.
-
-    Importing otto.monitor (e.g. via otto.models -> monitor.collector) must not
-    pull in fastapi/uvicorn; the server is resolved only on attribute access.
-    """
-    if name == "MonitorServer":
-        from .server import MonitorServer
-
-        return MonitorServer
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

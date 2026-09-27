@@ -119,8 +119,8 @@ def live_mode_mocks():
     mock_lab.links = []
 
     with (
-        patch("otto.cli.monitor.all_hosts", return_value=iter([mock_host])),
-        patch("otto.cli.monitor.get_lab", return_value=mock_lab),
+        patch("otto.config.fleet.all_hosts", return_value=iter([mock_host])),
+        patch("otto.config.fleet.get_lab", return_value=mock_lab),
         # Patched at the source module, not on otto.cli.monitor: the CLI imports
         # the monitor runtime inside the command body (import budget), so there
         # is no module-level name to patch — and the call-time import picks this
@@ -192,7 +192,7 @@ class TestHostsArgument:
     def test_no_hosts_option_uses_all_hosts(self, live_mode_mocks):
         """Without --hosts, all_hosts() provides the list (called with pattern=None)."""
         with patch(
-            "otto.cli.monitor.all_hosts",
+            "otto.config.fleet.all_hosts",
             return_value=iter([live_mode_mocks["host"]]),
         ) as p:
             runner.invoke(monitor_app, ["--live"])
@@ -207,7 +207,7 @@ class TestHostsArgument:
         all, and a bare ``router`` would select nothing.
         """
         with patch(
-            "otto.cli.monitor.all_hosts",
+            "otto.config.fleet.all_hosts",
             return_value=iter([live_mode_mocks["host"]]),
         ) as p:
             runner.invoke(monitor_app, ["--live", "--hosts", "router.*"])
@@ -218,7 +218,7 @@ class TestHostsArgument:
         assert pattern.fullmatch("switch1") is None
 
     def test_no_matching_hosts_exits_nonzero(self, live_mode_mocks):
-        with patch("otto.cli.monitor.all_hosts", return_value=iter([])):
+        with patch("otto.config.fleet.all_hosts", return_value=iter([])):
             result = runner.invoke(monitor_app, ["--live", "--hosts", "nope"])
         assert result.exit_code != 0
 
@@ -267,7 +267,7 @@ class TestNoMonitorableHosts:
 
     def test_selected_but_unmonitorable_blames_the_host_not_the_regex(self, live_mode_mocks):
         host = self._unmonitorable()
-        with patch("otto.cli.monitor.all_hosts", return_value=iter([host])):
+        with patch("otto.config.fleet.all_hosts", return_value=iter([host])):
             result = runner.invoke(
                 monitor_app, ["--live", "--hosts", "board.*"], env={"COLUMNS": "300"}
             )
@@ -281,7 +281,7 @@ class TestNoMonitorableHosts:
 
     def test_the_message_says_what_makes_a_host_monitorable(self, live_mode_mocks):
         """Actionable, not merely accurate — it must name both collection routes."""
-        with patch("otto.cli.monitor.all_hosts", return_value=iter([self._unmonitorable()])):
+        with patch("otto.config.fleet.all_hosts", return_value=iter([self._unmonitorable()])):
             result = runner.invoke(monitor_app, ["--live"], env={"COLUMNS": "300"})
         err = " ".join(result.stderr.split())
         assert "shell" in err
@@ -294,7 +294,7 @@ class TestNoMonitorableHosts:
         CAN reach here over an empty base set — which is why this message must
         not mention the pattern either.
         """
-        with patch("otto.cli.monitor.all_hosts", return_value=iter([])):
+        with patch("otto.config.fleet.all_hosts", return_value=iter([])):
             result = runner.invoke(
                 monitor_app, ["--live", "--hosts", "anything.*"], env={"COLUMNS": "300"}
             )
@@ -324,7 +324,7 @@ class TestEmptySelectionIsFramed:
     def test_message_is_rendered_and_the_error_never_escapes(self, live_mode_mocks):
         from otto.config.scope import EmptySelectionError
 
-        with patch("otto.cli.monitor.all_hosts", self._raising_all_hosts):
+        with patch("otto.config.fleet.all_hosts", self._raising_all_hosts):
             result = runner.invoke(
                 monitor_app, ["--live", "--hosts", "sensor"], env={"COLUMNS": "300"}
             )
@@ -391,7 +391,7 @@ class TestDrivingRepoScopeGate:
             "app": cls._scope("app", excluded=excluded == "app"),
             "base": cls._scope("base", excluded=excluded == "base"),
         }
-        monkeypatch.setattr("otto.cli.monitor.all_hosts", _all_hosts)
+        monkeypatch.setattr("otto.config.fleet.all_hosts", _all_hosts)
         monkeypatch.setattr(
             "otto.config.get_repos",
             lambda: [SimpleNamespace(name="app"), SimpleNamespace(name="base")],
@@ -509,8 +509,8 @@ class TestDbOption:
             await collector.close()
 
         with (
-            patch("otto.cli.monitor.all_hosts", return_value=iter([_make_host("router1")])),
-            patch("otto.cli.monitor.get_lab", return_value=mock_lab),
+            patch("otto.config.fleet.all_hosts", return_value=iter([_make_host("router1")])),
+            patch("otto.config.fleet.get_lab", return_value=mock_lab),
             patch("otto.monitor.server.MonitorServer", return_value=MagicMock()),
             patch("otto.cli.monitor._run_monitor", _fake_run_monitor),
         ):

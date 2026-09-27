@@ -1,6 +1,6 @@
 """Unix/SSH-based file transfer backends (netcat) for UnixHost.
 
-Registers ``nc`` into the shared transfer registry on import.
+``otto.host.transfer.registry`` registers it as ``nc``, by reference.
 
 **NO DIRECTION ASKS THE DEVICE FOR AN OPTION IT MAY NOT HAVE.** Both GET arms
 read exactly the size their ``stat`` prefetch measured and close to terminate a
@@ -44,7 +44,6 @@ from .base import (
     derive_concurrency_limit,
     resolve_concurrency_limit,
 )
-from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
 
 _NC_BLOCK_SIZE = 8192
@@ -2051,6 +2050,3 @@ class NcFileTransfer(UnixFileTransfer):
         if all(r.is_ok for r in per_file.values()):
             _logger.debug("Finished nc transfers")
         return per_file
-
-
-register_transfer_backend("nc", NcFileTransfer)

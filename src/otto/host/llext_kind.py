@@ -23,7 +23,7 @@ from typing_extensions import override
 from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
-from .product import PRODUCT_KINDS, ShellProduct
+from .product import ShellProduct
 from .shell_kind import bool_param, reject_retired_params, str_list_param, str_param
 
 if TYPE_CHECKING:
@@ -159,6 +159,3 @@ def _llext_kind(entry: DeclaredEntry, host: "Host") -> LlextProduct:
         call_after_load=call_after_load,
         dump_fn=_DEFAULT_DUMP_FN if dump_fn is None else dump_fn,
     )
-
-
-PRODUCT_KINDS.register("llext", _llext_kind, origin=__name__)

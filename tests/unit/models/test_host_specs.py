@@ -515,11 +515,12 @@ def test_spec_rejects_products_as_lab_data():
 def test_registered_pairs_drift_guard():
     """Every registered (host_class, spec) pair has matching field sets — the
     same bidirectional check as HOST_SPEC_RUNTIME_PAIRS, but sourced from the
-    live registry so it covers built-ins registered through register_host_class.
+    live registry so it covers the built-ins as well as anything registered
+    through register_host_class.
     """
-    from otto.host.os_profile import _HOST_SPECS
+    from otto.host.os_profile import registered_host_specs
 
-    for name, spec_cls in _HOST_SPECS.items():
+    for name, spec_cls in registered_host_specs().items():
         runtime_cls = HOST_CLASSES.get(name)
         spec_fields = set(spec_cls.model_fields) - _SPEC_ONLY_FIELDS
         init_fields = {

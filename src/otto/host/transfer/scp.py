@@ -1,6 +1,6 @@
 """SCP file transfer backend for UnixHost.
 
-Registers ``scp`` into the shared transfer registry on import.
+``otto.host.transfer.registry`` registers it as ``scp``, by reference.
 
 **The classic protocol execs a REMOTE BINARY**, which is what makes this
 backend's one userland question worth asking: :func:`asyncssh.scp` speaks the
@@ -36,7 +36,6 @@ from .base import (
     resolve_concurrency_limit,
 )
 from .progress import _make_sftp_progress
-from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
 
 _logger = logging.getLogger(__name__)
@@ -428,6 +427,3 @@ class ScpFileTransfer(UnixFileTransfer):
             return Result(Status.Success, value=dest_dir / src.name)
 
         return await self._dispatch_per_file(src_files, _put_one, concurrent=concurrent)
-
-
-register_transfer_backend("scp", ScpFileTransfer)

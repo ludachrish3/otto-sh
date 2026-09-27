@@ -136,7 +136,7 @@ source-include = ["scripts/otto_build_backend.py"]
 # covapp coverage-report SPA must ship INSIDE the wheel — neither can be
 # fetched post-install. Both are BUILT (via `make web`) into the two
 # directories registered by otto._webassets (otto._webassets.MONITOR,
-# otto._webassets.COVAPP — see src/otto/_webassets/__init__.py), which are
+# otto._webassets.COVAPP — see src/otto/_webassets/artifacts.py), which are
 # .gitignore'd like any other build output.
 #
 # Unlike hatchling (whose default wheel contents come from the VCS file list

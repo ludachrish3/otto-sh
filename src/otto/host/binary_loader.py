@@ -20,7 +20,7 @@ from typing import ClassVar
 
 from typing_extensions import override
 
-from ..registry import Registry, caller_module
+from ..registry import Ref, Registry, caller_module
 
 
 class BinaryLoader(ABC):
@@ -124,12 +124,21 @@ class LlextHexLoader(BinaryLoader):
         return f"llext call_fn {name} {fn}"
 
 
-# Seeded empty here and populated by ``_register_builtin_loaders()`` at module
-# end, so otto's own built-ins travel the same ``register_binary_loader`` path
-# third parties use.
+def _validate_binary_loader(type_name: str, cls: type[BinaryLoader]) -> None:
+    """Refuse a loader whose ``type_name`` disagrees with the name it is registered under."""
+    if cls.type_name != type_name:
+        raise ValueError(
+            f"register_binary_loader: type_name {type_name!r} doesn't match "
+            f"{cls.__name__}.type_name = {cls.type_name!r}"
+        )
+
+
 LOADER_CLASSES: Registry[type[BinaryLoader]] = Registry(
-    "binary loader", register_hint="otto.host.binary_loader.register_binary_loader()"
+    "binary loader",
+    register_hint="otto.host.binary_loader.register_binary_loader()",
+    validate=_validate_binary_loader,
 )
+LOADER_CLASSES.register("llext-hex", Ref("otto.host.binary_loader:LlextHexLoader"))
 
 
 def register_binary_loader(
@@ -143,21 +152,9 @@ def register_binary_loader(
     *overwrite* replaces an existing registration under *type_name*
     deliberately (e.g. a built-in); by default a duplicate name raises.
     """
-    if cls.type_name != type_name:
-        raise ValueError(
-            f"register_binary_loader: type_name {type_name!r} doesn't match "
-            f"{cls.__name__}.type_name = {cls.type_name!r}"
-        )
     LOADER_CLASSES.register(type_name, cls, overwrite=overwrite, origin=caller_module())
 
 
 def build_binary_loader(type_name: str) -> BinaryLoader:
     """Construct the :class:`BinaryLoader` registered under *type_name*."""
     return LOADER_CLASSES.get(type_name)()
-
-
-def _register_builtin_loaders() -> None:
-    register_binary_loader(LlextHexLoader.type_name, LlextHexLoader)
-
-
-_register_builtin_loaders()

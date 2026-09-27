@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from otto import _webassets
+from otto._webassets import artifacts
 from tests._fixtures.paths import PROJECT_ROOT
 from tests._fixtures.webassets import CONSUMERS
 
@@ -42,8 +43,12 @@ def in_package_ignores(gitignore_text: str) -> list[str]:
 
 
 def _webassets_attr_name(path: Path) -> str:
-    """The otto._webassets module-level constant name bound to ``path``."""
-    for attr, value in vars(_webassets).items():
+    """The otto._webassets constant name bound to ``path``.
+
+    Read from :mod:`otto._webassets.artifacts`, where the constants are
+    defined: the package exports them lazily, so its own dict holds none.
+    """
+    for attr, value in vars(artifacts).items():
         if attr.isupper() and value == path:
             return attr
     raise AssertionError(f"no otto._webassets module-level constant equals {path!r}")
@@ -120,7 +125,7 @@ def test_all_covers_every_registry_constant():
     """
     constants = {
         value
-        for attr, value in vars(_webassets).items()
+        for attr, value in vars(artifacts).items()
         if attr.isupper() and not attr.startswith("_") and isinstance(value, Path)
     }
     assert constants == set(_webassets.ALL.values())

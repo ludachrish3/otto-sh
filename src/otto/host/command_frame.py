@@ -45,7 +45,7 @@ from typing import ClassVar
 
 from typing_extensions import override
 
-from ..registry import Registry, caller_module
+from ..registry import Ref, Registry, caller_module
 from .errors import RawLandingError
 
 
@@ -708,12 +708,23 @@ def history_prefix(frame: CommandFrame | None, shell_history: bool) -> str:
     return (frame or BashFrame()).quiet_history()
 
 
+def _validate_command_frame(type_name: str, cls: type[CommandFrame]) -> None:
+    """Refuse a frame whose ``type_name`` disagrees with the name it is registered under."""
+    if cls.type_name != type_name:
+        raise ValueError(
+            f"register_command_frame: type_name {type_name!r} doesn't match "
+            f"{cls.__name__}.type_name = {cls.type_name!r}"
+        )
+
+
 # Registry of dialect name -> frame class, mirroring
-# ``embedded_filesystem.FILESYSTEM_CLASSES``. Seeded empty here and populated
-# by ``_register_builtin_frames()`` at module end, so otto's own built-ins
-# travel the same ``register_command_frame`` path third parties use.
+# ``embedded_filesystem.FILESYSTEM_CLASSES``. Its built-ins are registered by
+# reference at module end, and its validator holds them to the same
+# ``type_name`` check as a third party's frame.
 FRAME_CLASSES: Registry[type[CommandFrame]] = Registry(
-    "command frame", register_hint="otto.host.command_frame.register_command_frame()"
+    "command frame",
+    register_hint="otto.host.command_frame.register_command_frame()",
+    validate=_validate_command_frame,
 )
 
 
@@ -736,11 +747,6 @@ def register_command_frame(
         If *type_name* doesn't match ``cls.type_name`` (the registry key and
         the class constant should agree).
     """
-    if cls.type_name != type_name:
-        raise ValueError(
-            f"register_command_frame: type_name {type_name!r} doesn't match "
-            f"{cls.__name__}.type_name = {cls.type_name!r}"
-        )
     FRAME_CLASSES.register(type_name, cls, overwrite=overwrite, origin=caller_module())
 
 
@@ -757,16 +763,18 @@ def build_command_frame(type_name: str) -> CommandFrame:
 
 
 def _register_builtin_frames() -> None:
-    """Register otto's built-in frames through the public path.
+    """Register otto's built-in frames by reference.
 
-    Ensures first-party and third-party registrations travel the same code (mirrors
-    ``os_profile._register_builtin_host_classes``).
+    Mirrors ``os_profile._register_builtin_host_classes``.
     """
-    register_command_frame(BashFrame.type_name, BashFrame)
-    register_command_frame(AshFrame.type_name, AshFrame)
-    register_command_frame(ZephyrFrame.type_name, ZephyrFrame)
-    register_command_frame(ZephyrSerialFrame.type_name, ZephyrSerialFrame)
-    register_command_frame(RawFrame.type_name, RawFrame)
+    for name, target in [
+        ("bash", "otto.host.command_frame:BashFrame"),
+        ("ash", "otto.host.command_frame:AshFrame"),
+        ("zephyr", "otto.host.command_frame:ZephyrFrame"),
+        ("zephyr-serial", "otto.host.command_frame:ZephyrSerialFrame"),
+        ("raw", "otto.host.command_frame:RawFrame"),
+    ]:
+        FRAME_CLASSES.register(name, Ref(target))
 
 
 _register_builtin_frames()

@@ -4,13 +4,18 @@ The direct analog of the backend registries' ``_register_builtin_*``
 functions: otto's fourteen subcommand groups travel the same public
 :func:`~otto.cli.registry.register_cli_command` path a third-party plugin
 uses, with lazy ``"module:attr"`` loaders so nothing imports until dispatch.
-"""
 
-from .registry import CLI_COMMANDS, register_cli_command
+:mod:`otto.cli.registry` calls :func:`register_builtin_commands` as it loads,
+so importing the registry lists every built-in. The dependency runs one way at
+import time: this module imports nothing at module scope, and reaches the
+registry only when the function runs.
+"""
 
 
 def register_builtin_commands() -> None:
     """Register otto's built-in subcommand groups (idempotent)."""
+    from .registry import CLI_COMMANDS, register_cli_command
+
     if "init" in CLI_COMMANDS:
         return
     register_cli_command(

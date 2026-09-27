@@ -19,9 +19,21 @@ class OttoModel(BaseModel):
     the lenient ``*Record`` spec variants in :mod:`otto.models.monitor`
     override ``extra`` to ``'ignore'`` so older otto builds can read exports
     written by newer ones.
+
+    ``defer_build=True`` means pydantic-core's schema/validator for a
+    subclass is not compiled at class-definition time (i.e. at import); it
+    builds on first use (validation, ``model_dump``, ``model_json_schema``,
+    …) instead. A subclass that overrides ``model_config`` still inherits
+    this, because pydantic merges config across the MRO rather than
+    replacing it wholesale. Not every ``OttoModel`` defers, though:
+    :class:`~otto.models.monitor.EventCreateBody` and
+    :class:`~otto.models.monitor.EventUpdateBody` opt back into an eager
+    build — see their own docstrings for why. ``tests/unit/models/test_defer_build.py``
+    proves both halves for everything else: every other ``OttoModel``
+    defers, and every one still builds.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", defer_build=True)
 
 
 def compact_validation_error(error: "ValidationError") -> str:

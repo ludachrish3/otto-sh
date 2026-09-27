@@ -98,6 +98,7 @@ from .options import (
     SshOptions,
     UserlandOptions,
 )
+from .os_profile import resolve_console_prompts
 from .power import power_control_from_spec
 from .privilege import PosixPrivilege
 from .remote_host import RemoteHost
@@ -539,10 +540,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         ``rebuild_connections`` (and the override-copy seam, via ``dataclasses.replace``) so a
         custom term backend builds the right class.
         """
-        # Lazy: os_profile registers the built-in host classes at import,
-        # which imports this module.
-        from .os_profile import resolve_console_prompts
-
         hop_transport = self._build_hop_transport() if self.hop else None
         term_ctx = TermContext(
             ip=self.ip,

@@ -574,7 +574,7 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
     """
     # Local, like SessionManager._apply_session_setup's: `otto.host.session_setup`
     # is off the CLI startup import graph and this module is on it, so a host
-    # without a hook must not pull it in (tests/unit/import_budget fences that).
+    # without a hook must not pull it in (pinned in test_import_contracts.py).
     from .session_setup import SetupContext, apply_session_setup
 
     landing_dialect = landing_frame or target_frame

@@ -216,7 +216,7 @@ class CompositeLabRepository:
         crash or warn into the user's TAB — a failing source is skipped with a
         debug log, unlike ``load_lab``/``list_labs`` which stay loud.
         """
-        from . import host_summaries  # lazy: package __init__ imports this module's siblings
+        from .summaries import host_summaries  # function-scope: only completion summarizes
 
         declared: set[str] = set()
         for source in self.sources:

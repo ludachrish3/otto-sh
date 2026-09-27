@@ -24,18 +24,17 @@ Three seams:
   mirroring their fields under new names, so the fragment cannot drift from
   the ``format:1`` payload it appends to.
 
-:data:`MIN_INTERVAL_SECONDS` / :func:`validate_interval` also live here rather
-than in ``otto.monitor`` — see their docstrings for why.
+Leaf isolation: this module imports only :mod:`otto.models.base`, pydantic,
+and the stdlib — no runtime or ``otto.monitor`` edge — so it stays a pure leaf
+inside the models package.
 
-Leaf isolation: this module imports only :mod:`otto.models.base`, pydantic, and
-the stdlib — no runtime or ``otto.monitor`` edge — so it stays a pure leaf inside
-the models package. This matters beyond tidiness: ``otto.cli.test`` needs
-``MIN_INTERVAL_SECONDS`` for its ``--monitor-interval`` option but must NOT pay
-for importing the monitor runtime package (collector/db/snmp/aiosqlite, ...)
-just to render ``--help`` — that regressed the import-budget guard once
-already (spec 2026-07-12 §monitor-live-streaming, the ``otto.monitor.interval``
-module). Keeping the floor in this already-leaf module gives every caller
-(CLI, library, pytest plugin) one definition without paying that cost.
+The collection-interval floor (:data:`otto.utils.MIN_INTERVAL_SECONDS`,
+:func:`otto.utils.validate_interval`) is re-exported from ``otto.models`` but
+is not defined or used here: ``otto test --help`` and ``otto monitor --help``
+need the floor for their interval options, and this module costs pydantic and
+the model classes to import. It regressed the import-budget guard once
+already when it lived in the monitor runtime package (spec 2026-07-12
+§monitor-live-streaming).
 """
 
 import re
@@ -44,7 +43,6 @@ from typing import Any, Literal
 
 from pydantic import (
     AliasChoices,
-    BaseModel,
     ConfigDict,
     Field,
     SerializationInfo,
@@ -55,29 +53,6 @@ from pydantic import (
 )
 
 from .base import OttoModel
-
-MIN_INTERVAL_SECONDS: float = 1.0
-"""The collection-interval floor — one home for the constant and the check.
-
-An interval below one second is not meaningful in practice: a host must be
-given time to answer every query in the interval without being taxed by the
-polling itself. The floor is enforced where a *human* names an interval — the
-CLI, the library, the pytest plugin — and NOT in
-:class:`~otto.monitor.collector.MetricCollector`, which is the mechanism
-rather than a knob: the monitor tests drive it at 0.01-0.2s against fake
-hosts, where no real host is ever polled.
-"""
-
-
-def validate_interval(seconds: float) -> float:
-    """Return *seconds*, or raise ``ValueError`` if it is below the floor."""
-    if seconds < MIN_INTERVAL_SECONDS:
-        raise ValueError(
-            f"monitor interval must be at least {MIN_INTERVAL_SECONDS}s, got {seconds}s — "
-            "a host needs time to answer every query in the interval without being "
-            "taxed by the polling itself."
-        )
-    return seconds
 
 
 class MetricPoint(OttoModel):
@@ -181,14 +156,15 @@ class MonitorMeta(OttoModel):
     interval: float | None = None
 
 
-class RowModel(BaseModel):
+class RowModel(OttoModel):
     """Lenient base for historical-data import/export rows.
 
-    Unlike :class:`~otto.models.base.OttoModel` (``extra='forbid'``, which exists
-    to turn a *config* typo into an error), data read-back is tolerant: an
-    unexpected key/column from a newer schema is ignored rather than rejected.
-    This matches the pre-pydantic ``.get()``/``[]`` parsing and keeps older otto
-    builds able to import exports written by newer ones.
+    It overrides :class:`~otto.models.base.OttoModel`'s ``extra='forbid'``
+    (which exists to turn a *config* typo into an error): data read-back is
+    tolerant, so an unexpected key/column from a newer schema is ignored rather
+    than rejected. This matches the pre-pydantic ``.get()``/``[]`` parsing and
+    keeps older otto builds able to import exports written by newer ones. The
+    rest of ``OttoModel``'s config, ``defer_build``, is inherited.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -243,7 +219,7 @@ VALID_DASH_STYLES = frozenset({"solid", "dot", "dash", "longdash", "dashdot", "l
 """Legal event dash styles. Lives in this leaf module (not otto.monitor.events,
 which re-imports it) so the HTTP body models below can validate against it
 without this module growing an otto.monitor edge — the same leaf-isolation
-rule that keeps MIN_INTERVAL_SECONDS here (see module docstring)."""
+rule this module's docstring describes."""
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -272,7 +248,28 @@ class EventCreateBody(OttoModel):
     ``timestamp=None`` means "server-now" (the Mark-now flow). When both
     timestamps are present the span must be forward; the server re-checks the
     pair after resolving a ``None`` timestamp to now.
+
+    ``defer_build=False``, overriding :class:`~otto.models.base.OttoModel`:
+    FastAPI wraps a request-body parameter in its own
+    ``TypeAdapter(Annotated[<model>, Field(alias=<param name>)])`` and builds
+    it inside a ``warnings.catch_warnings()`` block that deliberately
+    swallows pydantic's ``UnsupportedFieldAttributeWarning`` for that
+    (harmless, FastAPI-only) alias. A deferred model's schema is not
+    actually built there — pydantic hands back a placeholder and defers the
+    real build to the first ``validate_python()`` call, which happens
+    *outside* FastAPI's suppression window, on the request path. In
+    production, with pydantic's default warning filters, that is one stray
+    ``UnsupportedFieldAttributeWarning`` per server process (the first
+    request that reaches this route) — harmless, just a log line. Under any
+    warnings-as-errors runtime (this repo's test config, or a deployment run
+    with ``-W error`` / ``PYTHONWARNINGS=error``), the SAME warning is fatal:
+    every request 500s, not just the first, because the mock validator
+    re-raises it on every rebuild attempt. Building eagerly, as every model
+    did before this base gained ``defer_build``, keeps the build inside
+    FastAPI's own suppression window where it belongs, in both regimes.
     """
+
+    model_config = ConfigDict(defer_build=False)
 
     label: str
     timestamp: datetime | None = None
@@ -315,7 +312,12 @@ class EventUpdateBody(OttoModel):
     other fields null means unchanged, same as absent. The merged
     start/end ordering check happens in the route, where the existing event's
     values are known.
+
+    ``defer_build=False``: same FastAPI request-body reason as
+    :class:`EventCreateBody` — see its docstring.
     """
+
+    model_config = ConfigDict(defer_build=False)
 
     label: str | None = None
     timestamp: datetime | None = None

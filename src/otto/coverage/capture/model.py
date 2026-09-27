@@ -10,8 +10,9 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
+from ...models.base import OttoModel
 from . import gitio
 from .remap import LineRemapper, parse_u0_hunks
 
@@ -33,7 +34,7 @@ now-unknown ``pin`` key with an unfriendly traceback).
 """
 
 
-class CaptureFileCov(BaseModel):
+class CaptureFileCov(OttoModel):
     """Coverage for one source file, keyed in ``base_commit`` coordinates."""
 
     model_config = ConfigDict(extra="forbid")
@@ -43,7 +44,7 @@ class CaptureFileCov(BaseModel):
     branches: dict[int, list[tuple[int, int, int | None]]] = Field(default_factory=dict)
 
 
-class Capture(BaseModel):
+class Capture(OttoModel):
     """One (board, product) retrieval result — the universal capture artifact."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)

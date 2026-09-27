@@ -8,9 +8,7 @@ import dataclasses
 import inspect
 from typing import TYPE_CHECKING, Any, get_type_hints
 
-import pydantic
 import typer
-from pydantic.fields import FieldInfo
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -29,6 +27,8 @@ def build_options(opts_cls: type, kwargs: dict[str, Any]) -> Any:
     ``@otto.options``) and a field constraint (``Field(gt=0)``, a validator, ...)
     rejects the value.
     """
+    import pydantic
+
     try:
         return opts_cls(**kwargs)
     except pydantic.ValidationError as exc:
@@ -46,6 +46,8 @@ def options_params(opts_cls: "type[DataclassInstance]") -> list[inspect.Paramete
     fields because ``get_type_hints`` and ``dataclasses.fields`` both traverse
     the full MRO.
     """
+    from pydantic.fields import FieldInfo
+
     params: list[inspect.Parameter] = []
     hints = get_type_hints(opts_cls, include_extras=True)
     flds = {f.name: f for f in dataclasses.fields(opts_cls)}

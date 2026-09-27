@@ -43,7 +43,6 @@ import typer
 from rich import box
 from rich import print as rprint
 from rich.markup import escape
-from rich.table import Table
 
 from ..config.cache_maintenance import DEFAULT_MAX_AGE_DAYS
 
@@ -140,6 +139,8 @@ def _print_prune_report(report: "MaintenanceReport", *, dry_run: bool) -> None:
 @cache_app.command("info")
 def info() -> None:
     """List every workspace's cache footprint, oldest cache first."""
+    from rich.table import Table
+
     from ..config.cache_maintenance import iter_workspaces
     from ..config.home import otto_home
     from ..models.settings import OttoEnvSettings

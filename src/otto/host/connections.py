@@ -1183,8 +1183,35 @@ class TermBackend:
     """
 
 
+def _validate_term_backend(name: str, backend: TermBackend) -> None:
+    """Refuse a term backend whose declarations could never be honoured.
+
+    ``TERM_BACKENDS``'s *validate* hook, so otto's built-ins and a plugin's
+    backend are held to the same declarations.
+    """
+    if not backend.host_families:
+        raise ValueError(
+            f"register_term_backend({name!r}): host_families is empty; "
+            f"a term backend must declare at least one host family "
+            f"(e.g. frozenset({{'unix'}}))."
+        )
+    if not isinstance(backend.authenticates, bool):
+        raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see host_families above)
+            f"register_term_backend({name!r}): authenticates must be a bool "
+            f"(True when the term logs in with a cred, as ssh and telnet do)."
+        )
+    if not isinstance(backend.dials_host, bool):
+        raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see host_families above)
+            f"register_term_backend({name!r}): dials_host must be a bool "
+            f"(True when the term is reached by dialling the host's own address, "
+            f"as ssh and telnet are)."
+        )
+
+
 TERM_BACKENDS: Registry[TermBackend] = Registry(
-    "term backend", register_hint="otto.host.connections.register_term_backend()"
+    "term backend",
+    register_hint="otto.host.connections.register_term_backend()",
+    validate=_validate_term_backend,
 )
 
 
@@ -1227,23 +1254,6 @@ def register_term_backend(
     *overwrite* replaces an existing registration under *name* deliberately
     (e.g. a built-in); by default a duplicate name raises.
     """
-    if not host_families:
-        raise ValueError(
-            f"register_term_backend({name!r}): host_families is empty; "
-            f"a term backend must declare at least one host family "
-            f"(e.g. frozenset({{'unix'}}))."
-        )
-    if not isinstance(authenticates, bool):
-        raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see host_families above)
-            f"register_term_backend({name!r}): authenticates must be a bool "
-            f"(True when the term logs in with a cred, as ssh and telnet do)."
-        )
-    if not isinstance(dials_host, bool):
-        raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see host_families above)
-            f"register_term_backend({name!r}): dials_host must be a bool "
-            f"(True when the term is reached by dialling the host's own address, "
-            f"as ssh and telnet are)."
-        )
     TERM_BACKENDS.register(
         name,
         TermBackend(
@@ -1268,27 +1278,24 @@ def build_term_backend(name: str) -> type[ConnectionManager]:
 
 
 def _register_builtin_term_backends() -> None:
-    """Register otto's built-in term backends through the public path.
+    """Register otto's built-in term backends as values.
 
-    Ensures first-party and third-party registrations travel the same code (mirrors
-    ``os_profile._register_builtin_host_classes``).
+    Their class, :class:`ConnectionManager`, is defined in this module, so a
+    reference would defer no import. ``TERM_BACKENDS``'s validator checks their
+    declarations here, at registration, exactly as it checks a plugin's.
     """
-    register_term_backend(
-        "ssh", ConnectionManager, host_families=frozenset({"unix"}), authenticates=True
-    )
-    register_term_backend(
-        "telnet",
-        ConnectionManager,
-        host_families=frozenset({"unix", "embedded"}),
-        authenticates=True,
-    )
-    register_term_backend(
-        "console",
-        ConnectionManager,
-        host_families=frozenset({"unix", "embedded"}),
-        authenticates=True,
-        dials_host=False,
-    )
+    manager = ConnectionManager
+    for name, backend in [
+        ("ssh", TermBackend(manager, frozenset({"unix"}), authenticates=True)),
+        ("telnet", TermBackend(manager, frozenset({"unix", "embedded"}), authenticates=True)),
+        (
+            "console",
+            TermBackend(
+                manager, frozenset({"unix", "embedded"}), authenticates=True, dials_host=False
+            ),
+        ),
+    ]:
+        TERM_BACKENDS.register(name, backend)
 
 
 _register_builtin_term_backends()

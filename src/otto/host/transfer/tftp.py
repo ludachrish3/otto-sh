@@ -7,7 +7,6 @@ from typing_extensions import override
 from ...result import Result
 from .base import ProgressGranularity, TransferContext, TransferProgressFactory
 from .embedded_base import EmbeddedFileTransfer
-from .registry import register_transfer_backend
 
 
 class TftpFileTransfer(EmbeddedFileTransfer):
@@ -49,6 +48,3 @@ class TftpFileTransfer(EmbeddedFileTransfer):
         raise NotImplementedError(
             "TFTP transfer for embedded hosts is not yet implemented"
         ) from None
-
-
-register_transfer_backend("tftp", TftpFileTransfer)

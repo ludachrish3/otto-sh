@@ -17,7 +17,7 @@ name (``walk``, ``continue_on_failure``, ``require_dependencies``,
 a repo that adds a project instruction gets the same machinery otto's six use.
 
 * **Direction.** A ``forward`` walk takes dependencies first
-  (:func:`~otto.config.get_ordered_repos`'s own order); ``reverse`` takes
+  (:func:`~otto.config.bootstrapped.get_ordered_repos`'s own order); ``reverse`` takes
   dependents first, because a dependent must come down before the thing it
   depends on. The order is READ, never rewritten -- ``get_ordered_repos()``
   hands back bootstrap's own list, so ``_run_bodies`` reverses a COPY of
@@ -185,7 +185,7 @@ def _enforce_current_scope(ctx: "OttoContext") -> None:
     THE DRIVING REPO IS ``bootstrap().repos[0]`` -- the first ``OTTO_SUT_DIRS``
     entry, the project whose run this is -- and NOT the first repo of the walk
     order this module iterates. Those are two different repos in any lab with a
-    dependency: :func:`~otto.config.get_ordered_repos` hands back a topological
+    dependency: :func:`~otto.config.bootstrapped.get_ordered_repos` hands back a topological
     reorder, dependencies first, so its head is the thing being depended ON.
     Gating on that one would abort a healthy project's run over a dependency's
     declaration, which is precisely the veto D3's asymmetry exists to prevent.

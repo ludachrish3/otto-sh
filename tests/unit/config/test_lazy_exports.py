@@ -143,9 +143,9 @@ import sys
 import otto.inventory
 
 assert "pynetbox" not in sys.modules, (
-    "bare 'import otto.inventory' must not import pynetbox: _register_builtins imports "
-    "otto.inventory.netbox at package import, so an eager 'import pynetbox' there would "
-    "put pynetbox + requests + urllib3 on the bootstrap path of every otto verb"
+    "bare 'import otto.inventory' must not import pynetbox: the package re-exports "
+    "NetBoxInventory, importing otto.inventory.netbox eagerly, so an eager 'import pynetbox' "
+    "there would put pynetbox + requests + urllib3 on the bootstrap path of every otto verb"
 )
 assert "requests" not in sys.modules, "...and requests, which pynetbox drags in with it"
 
@@ -168,10 +168,9 @@ print("LAZY IMPORT OK")
 def test_pynetbox_is_imported_only_by_the_first_netbox_fetch():
     """R14: ``pynetbox`` stays off every surface that never talks to NetBox.
 
-    ``otto.inventory.registry._register_builtins`` imports
-    ``otto.inventory.netbox`` eagerly (a built-in must be reachable by the same
-    path a custom backend takes), so the module is on the bootstrap path even
-    for a deployment with no NetBox at all. Only the import of ``pynetbox``
+    ``otto.inventory`` re-exports ``NetBoxInventory``, importing
+    ``otto.inventory.netbox`` eagerly, so the module is on the bootstrap path
+    even for a deployment with no NetBox at all. Only the import of ``pynetbox``
     itself is deferred, and this asserts it in both directions: absent after a
     bare import AND after construction, present after the first fetch.
     """
@@ -226,7 +225,7 @@ def test_help_surface_does_not_load_host():
     assert [m for m in result["otto_modules"] if m.startswith("otto.host")] == []
 
 
-# name -> (owning module, attribute) for config's re-exported callables.
+# name -> (owning module, attribute) for config's re-exported names.
 # Written out BY HAND rather than read off `_LAZY_EXPORTS`: a test that derives
 # its expectation from the table it is checking asserts only that the table
 # equals itself, and would follow a typo straight into green.
@@ -238,6 +237,12 @@ _PUBLIC_CALLABLES = {
     "run_on_all_hosts": ("otto.config.fleet", "run_on_all_hosts"),
     "load_lab": ("otto.config.lab", "load_lab"),
     "load_otto_env": ("otto.config.env", "load_otto_env"),
+    "Repo": ("otto.config.repo", "Repo"),
+    "DockerCompose": ("otto.config.repo", "DockerCompose"),
+    "DockerImage": ("otto.config.repo", "DockerImage"),
+    "DockerSettings": ("otto.config.repo", "DockerSettings"),
+    "MonitorSettings": ("otto.config.repo", "MonitorSettings"),
+    "Version": ("otto.config.version", "Version"),
 }
 
 
@@ -256,7 +261,7 @@ def test_config_public_names_resolve_to_the_right_object():
     introspection while its ``getattr`` kept working. ``load_otto_env`` is in
     the table as the control: it is an ordinary module-dict entry, so it stays
     in ``dir()`` either way, and a mutation that only IT survives would mean
-    the check had stopped covering the lazy six.
+    the check had stopped covering the lazy names.
     """
     import otto.config as c
 

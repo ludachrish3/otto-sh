@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from dataclasses import field as dc_field
 from typing import ClassVar, Literal
 
-from ..registry import Registry, caller_module
+from ..registry import Ref, Registry, caller_module
 from .params import ImpairmentParams, Selector
 
 FIRST_SELECTOR_BAND = 4
@@ -118,9 +118,20 @@ class LinkImpairer:
         raise NotImplementedError
 
 
+def _validate_impairer(name: str, cls: type[LinkImpairer]) -> None:
+    """Refuse an impairer declaring no host family: it could never validate against any host."""
+    if not cls.host_families:
+        raise ValueError(
+            f"register_impairer({name!r}): cls.host_families is empty; an impairer "
+            f"must declare at least one host family (e.g. frozenset({{'unix'}}))."
+        )
+
+
 IMPAIRERS: Registry[type[LinkImpairer]] = Registry(
-    "impairer", register_hint="otto.link.register_impairer()"
+    "impairer", register_hint="otto.link.register_impairer()", validate=_validate_impairer
 )
+# The built-in, by reference; its origin stays the module that defines it.
+IMPAIRERS.register("netem", Ref("otto.link.netem:NetEmImpairer"), origin="otto.link.netem")
 
 
 def register_impairer(name: str, cls: type[LinkImpairer], *, overwrite: bool = False) -> None:
@@ -130,11 +141,6 @@ def register_impairer(name: str, cls: type[LinkImpairer], *, overwrite: bool = F
     must declare a non-empty :attr:`LinkImpairer.host_families`; otherwise it
     could never validate against any host and is rejected here.
     """
-    if not cls.host_families:
-        raise ValueError(
-            f"register_impairer({name!r}): cls.host_families is empty; an impairer "
-            f"must declare at least one host family (e.g. frozenset({{'unix'}}))."
-        )
     IMPAIRERS.register(name, cls, overwrite=overwrite, origin=caller_module())
 
 

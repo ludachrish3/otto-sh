@@ -33,3 +33,20 @@ def test_generate_repo_creates_requested_shape(tmp_path):
         "test_top1.py",
         "test_top2.py",
     ]
+
+
+def test_ssh_lab_port_adds_a_closed_port_host(tmp_path):
+    import json
+
+    from tests._fixtures.generated_repo import BUDGET_SSH_HOST, generate_repo
+
+    repo = generate_repo(tmp_path, files=2, dirs=1, realistic=True, ssh_lab_port=40123)
+    lab = json.loads((repo / "budget_lab" / "lab.json").read_text())
+    [element] = lab["elements"]
+    assert element["name"] == BUDGET_SSH_HOST == "budget-ssh"
+    assert element["labs"] == ["unix"]
+    [host] = element["hosts"]
+    assert (host["ip"], host["ssh_options"]["port"]) == ("127.0.0.1", 40123)
+    settings = (repo / ".otto" / "settings.toml").read_text()
+    assert settings.count("[[lab.sources]]") == 2
+    assert str(repo / "budget_lab") in settings

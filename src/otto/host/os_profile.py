@@ -27,7 +27,8 @@ The registry mirrors ``command_frame.FRAME_CLASSES`` and
 A companion registry — ``HOST_CLASSES`` / :func:`register_host_class` — maps
 a name to a concrete :class:`~otto.host.remote_host.RemoteHost` subclass.
 Built-in classes (``unix`` → ``UnixHost``, ``embedded`` → ``EmbeddedHost``,
-``zephyr`` → ``ZephyrHost``) are registered at module load. An
+``zephyr`` → ``ZephyrHost``) are registered at module load, by
+:class:`~otto.registry.Ref`, so naming them imports no host class. An
 :class:`OsProfile` names one of these via its ``base`` field, and registering a
 class auto-registers a same-named trivial profile, so ``os_type: <name>``
 resolves with no extra config.
@@ -54,9 +55,9 @@ specific defaults, and is registered under ``"zephyr"`` at module load.
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from ..registry import Registry, caller_module
+from ..registry import Ref, Registry, caller_module
 
 if TYPE_CHECKING:
     from ..models.host import HostSpec
@@ -73,21 +74,54 @@ Built-ins: ``unix`` (:class:`~otto.host.unix_host.UnixHost`), ``embedded``
 :func:`register_host_class`.
 """
 
+
+def _validate_host_class(name: str, cls: type) -> None:
+    """Refuse anything but a :class:`~otto.host.remote_host.RemoteHost` subclass with capabilities.
+
+    ``HOST_CLASSES``'s *validate* hook: it runs on a plugin's class at
+    registration and on a built-in's class at its first lookup.
+    """
+    from .capability_grid import HostCapabilities
+    from .remote_host import RemoteHost
+
+    if not (isinstance(cls, type) and issubclass(cls, RemoteHost)):
+        raise ValueError(  # noqa: TRY004 — existing API contract; test suite expects ValueError
+            f"register_host_class({name!r}): cls must be a RemoteHost subclass, got {cls!r}"
+        )
+    # isinstance, not hasattr: BaseHost carries the ClassVar ANNOTATION and no
+    # value, which creates no attribute but would satisfy a name check on a
+    # subclass — and a class declaring some other object under the name would
+    # promise nothing the guide page or the conformance surfaces can read. Same
+    # reasoning as ``transfer/registry.py``'s ``progress_granularity`` check.
+    if not isinstance(getattr(cls, "capabilities", None), HostCapabilities):
+        raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see the RemoteHost check above)
+            f"register_host_class({name!r}): cls.capabilities is missing; a host "
+            f"class must declare what its verbs promise for user=, progress and "
+            f"session identity (e.g. capabilities = HostCapabilities(...) — see "
+            f"otto.host.capability_grid)."
+        )
+
+
 # Registry of host-class name -> class, mirroring ``OS_PROFILES`` /
-# ``command_frame.FRAME_CLASSES``. Populated for built-ins at module load.
-# Registration here is always last-writer-wins (see register_host_class) —
-# unlike the other backend registries, re-registering a name is documented,
-# tested behavior, not a mistake to catch loudly.
+# ``command_frame.FRAME_CLASSES``. Registration here is always
+# last-writer-wins (see register_host_class) — unlike the other backend
+# registries, re-registering a name is documented, tested behavior, not a
+# mistake to catch loudly.
 HOST_CLASSES: Registry[type] = Registry(
-    "host class", register_hint="otto.host.os_profile.register_host_class()"
+    "host class",
+    register_hint="otto.host.os_profile.register_host_class()",
+    validate=_validate_host_class,
 )
 
-# Registry of host-class name -> its boundary HostSpec subclass, populated for
-# built-ins at module load alongside ``HOST_CLASSES``. Kept as a plain dict
-# (not a Registry): it has no independent register_*/build_* public wrapper of
-# its own — it is always written in lockstep with HOST_CLASSES from inside
-# register_host_class, and tests reach into it directly via monkeypatch.setitem.
-_HOST_SPECS: "dict[str, type[HostSpec]]" = {}
+# Registry of host-class name -> its boundary HostSpec subclass, written
+# alongside ``HOST_CLASSES``. A built-in's spec is a :class:`~otto.registry.Ref`
+# until :func:`_host_spec` first reads it, for the same reason its class is:
+# naming a built-in must not import the pydantic models that validate it. Kept
+# as a plain dict (not a Registry): it has no independent register_*/build_*
+# public wrapper of its own — it is always written in lockstep with
+# HOST_CLASSES from inside register_host_class, and tests reach into it
+# directly via monkeypatch.setitem.
+_HOST_SPECS: "dict[str, type[HostSpec] | Ref]" = {}
 
 
 @dataclass(frozen=True)
@@ -153,7 +187,8 @@ def register_host_class(
 
     Mirrors :func:`otto.host.command_frame.register_command_frame`. Call from an
     init module listed in ``.otto/settings.toml`` to ship a custom host
-    subclass. otto registers its own built-ins through this same call.
+    subclass. otto's own built-ins are registered by reference instead, and
+    meet the same class checks (``HOST_CLASSES``'s validator) at first lookup.
 
     Parameters
     ----------
@@ -191,13 +226,9 @@ def register_host_class(
         ``capabilities`` (inheriting the bare annotation on
         :class:`~otto.host.host.BaseHost` is not a declaration).
     """
-    from .capability_grid import HostCapabilities
-    from .remote_host import RemoteHost
-
-    if not (isinstance(cls, type) and issubclass(cls, RemoteHost)):
-        raise ValueError(  # noqa: TRY004 — existing API contract; test suite expects ValueError
-            f"register_host_class({name!r}): cls must be a RemoteHost subclass, got {cls!r}"
-        )
+    # Checked before the spec lookup, which walks cls's MRO and so needs a
+    # host class; HOST_CLASSES.register below runs the same pure check again.
+    _validate_host_class(name, cls)
     if spec is None:
         spec = _nearest_registered_spec(cls)
         if spec is None:
@@ -212,18 +243,6 @@ def register_host_class(
             raise ValueError(
                 f"register_host_class({name!r}): spec must be a HostSpec subclass, got {spec!r}"
             )
-    # isinstance, not hasattr: BaseHost carries the ClassVar ANNOTATION and no
-    # value, which creates no attribute but would satisfy a name check on a
-    # subclass — and a class declaring some other object under the name would
-    # promise nothing the guide page or the conformance surfaces can read. Same
-    # reasoning as ``transfer/registry.py``'s ``progress_granularity`` check.
-    if not isinstance(getattr(cls, "capabilities", None), HostCapabilities):
-        raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see the RemoteHost check above)
-            f"register_host_class({name!r}): cls.capabilities is missing; a host "
-            f"class must declare what its verbs promise for user=, progress and "
-            f"session identity (e.g. capabilities = HostCapabilities(...) — see "
-            f"otto.host.capability_grid)."
-        )
     if name in _BUILTIN_NAMES and (name in HOST_CLASSES or name in OS_PROFILES):
         logger.warning(f"register_host_class: overriding built-in host class {name!r}")
     # Last-writer-wins by design (see docstring) — always overwrite rather
@@ -241,19 +260,36 @@ def register_host_class(
     )
 
 
+def _host_spec(name: str) -> "type[HostSpec]":
+    """Return the spec stored for host-class *name*, resolving a :class:`~otto.registry.Ref` once.
+
+    Every read of ``_HOST_SPECS`` goes through here, so a built-in's spec is
+    imported on its first use and is a plain class from then on.
+
+    Raises:
+        KeyError: If *name* has no spec.
+    """
+    spec = _HOST_SPECS[name]
+    if isinstance(spec, Ref):
+        # Ref.resolve() returns `object`; the table's value type is the contract.
+        spec = cast("type[HostSpec]", spec.resolve())
+        _HOST_SPECS[name] = spec
+    return spec
+
+
 def _nearest_registered_spec(cls: type) -> "type[HostSpec] | None":
     """Return the spec registered for the nearest base of *cls* in its MRO."""
-    by_class = {HOST_CLASSES.get(n): _HOST_SPECS[n] for n in _HOST_SPECS}
+    by_class = {HOST_CLASSES.get(n): n for n in _HOST_SPECS}
     for base in cls.__mro__:
         if base in by_class:
-            return by_class[base]
+            return _host_spec(by_class[base])
     return None
 
 
 def build_host_spec(name: str) -> "type[HostSpec]":
     """Return the ``HostSpec`` subclass registered under host-class *name* (raises on miss)."""
     try:
-        return _HOST_SPECS[name]
+        return _host_spec(name)
     except KeyError:
         known = ", ".join(sorted(_HOST_SPECS))
         raise ValueError(
@@ -271,9 +307,7 @@ def registered_host_specs(*, builtins_only: bool = False) -> "dict[str, type[Hos
     result to the in-tree built-in types (``unix`` / ``embedded`` / ``zephyr``),
     excluding anything registered via init modules.
     """
-    if builtins_only:
-        return {n: s for n, s in _HOST_SPECS.items() if n in _BUILTIN_NAMES}
-    return dict(_HOST_SPECS)
+    return {n: _host_spec(n) for n in list(_HOST_SPECS) if not builtins_only or n in _BUILTIN_NAMES}
 
 
 def build_host_class(name: str) -> type:
@@ -302,7 +336,6 @@ def register_os_profile(
     *,
     login_prompt: str | None = None,
     password_prompt: str | None = None,
-    _builtin: bool = False,
 ) -> None:
     """Register an :class:`OsProfile` so lab data can select it by ``os_type``.
 
@@ -339,8 +372,6 @@ def register_os_profile(
     password_prompt : str | None
         Regex for this OS's password prompt (see
         :attr:`OsProfile.password_prompt`). Compiled at registration time.
-    _builtin : bool
-        private: built-in bootstrap only.
 
     Raises
     ------
@@ -377,7 +408,7 @@ def register_os_profile(
                     f"register_os_profile({name!r}): {field_name} is not a valid regex: {exc}"
                 ) from exc
 
-    if name in _BUILTIN_NAMES and name in OS_PROFILES and not _builtin:
+    if name in _BUILTIN_NAMES and name in OS_PROFILES:
         logger.warning(f"register_os_profile: overriding built-in profile {name!r}")
 
     # Last-writer-wins by design (see docstring) — always overwrite rather
@@ -430,11 +461,11 @@ def registered_profile_names() -> list[str]:
 # they build their base class with its stock field defaults, keeping existing
 # lab data (and an absent ``os_type``, which defaults to ``unix``) byte-for-byte
 # unchanged. ``zephyr`` maps to :class:`~otto.host.embedded_host.ZephyrHost`,
-# which re-declares the Zephyr-specific defaults on the class itself. Registering
-# each class also auto-registers a same-named trivial :class:`OsProfile`, so
-# ``os_type: <name>`` resolves with no extra config. ``busybox`` builds no new
-# class — it is a defaults-only profile over ``unix``, registered explicitly by
-# :func:`_register_builtin_os_profiles` below.
+# which re-declares the Zephyr-specific defaults on the class itself. Each class
+# has a same-named :class:`OsProfile`, as :func:`register_host_class` would give
+# it, so ``os_type: <name>`` resolves with no extra config. ``busybox`` builds no
+# new class — it is a defaults-only profile over ``unix``. Both are registered
+# by the two functions below.
 _BUILTIN_NAMES: frozenset[str] = frozenset(("unix", "embedded", "zephyr", "busybox"))
 
 UNIX_LOGIN_PROMPT = r"login: ?$"
@@ -445,27 +476,34 @@ UNIX_PASSWORD_PROMPT = r"[Pp]assword: ?$"  # noqa: S105 — a regex pattern, not
 
 
 def _register_builtin_host_classes() -> None:
-    """Register the built-in host classes and their boundary specs.
+    """Register the built-in host classes and their boundary specs, by reference.
 
-    Imported lazily to avoid an import cycle (the host/spec modules do not
-    import this one at module top).
+    Neither the classes nor the pydantic specs are imported here: each is a
+    :class:`~otto.registry.Ref`, imported on its first lookup, so listing the
+    built-in ``os_type`` names costs no host or model import.
+    ``HOST_CLASSES``'s validator checks each class when it resolves.
     """
-    from ..models.host import EmbeddedHostSpec, UnixHostSpec
-    from .embedded_host import EmbeddedHost, ZephyrHost
-    from .unix_host import UnixHost
-
-    register_host_class("unix", UnixHost, UnixHostSpec)
-    register_host_class("embedded", EmbeddedHost, EmbeddedHostSpec)
-    register_host_class("zephyr", ZephyrHost, EmbeddedHostSpec)
+    for name, cls, spec in [
+        ("unix", "otto.host.unix_host:UnixHost", "otto.models.host:UnixHostSpec"),
+        ("embedded", "otto.host.embedded_host:EmbeddedHost", "otto.models.host:EmbeddedHostSpec"),
+        ("zephyr", "otto.host.embedded_host:ZephyrHost", "otto.models.host:EmbeddedHostSpec"),
+    ]:
+        HOST_CLASSES.register(name, Ref(cls))
+        _HOST_SPECS[name] = Ref(spec)
 
 
 def _register_builtin_os_profiles() -> None:
-    """Register built-in profiles that are more than a bare host class.
+    """Register the built-in profiles.
 
-    ``unix``/``embedded``/``zephyr`` get trivial same-named profiles for free
-    when their classes register. ``busybox`` is the first profile that bundles
-    non-default fields, so it registers explicitly — through the same public
-    call a third party would use.
+    ``unix``/``embedded``/``zephyr`` are the same-named profiles
+    :func:`register_host_class` gives any class (``unix`` adds the getty
+    prompts). ``busybox`` is the first profile that bundles non-default fields.
+    They are written straight into ``OS_PROFILES``: :func:`register_os_profile`
+    checks ``defaults`` against the base CLASS's fields, which would import the
+    host class this module registers by reference.
+    ``test_builtin_profiles_pass_register_os_profiles_checks``
+    (``tests/unit/host/test_os_profile.py``) runs those same checks over every
+    built-in instead.
 
     What is here and what is NOT is the whole design. A BusyBox box is a unix
     host whose *userland* differs, and those differences are measured at runtime
@@ -532,8 +570,8 @@ def _register_builtin_os_profiles() -> None:
     *default* is what avoids that exposure for the common case.
 
     Naming a backend here is validated shallowly by design:
-    :func:`register_os_profile` checks only that ``defaults``'s *keys* are
-    fields on the base class, never that its *values* make sense — a
+    :func:`register_os_profile`'s checks cover only that ``defaults``'s *keys*
+    are fields on the base class, never that its *values* make sense — a
     typo'd or unregistered transfer name would register cleanly and only
     surface later, at host-build time, not here.
     ``TestBusyBoxProfile.test_busybox_names_the_shell_transfer_backend_and_it_is_registered``
@@ -543,26 +581,29 @@ def _register_builtin_os_profiles() -> None:
     for ``command_frame``: asserting not just the name but that the named
     backend is actually registered in ``TRANSFER_BACKENDS``.
     """
-    register_os_profile(
-        "unix",
-        base="unix",
-        login_prompt=UNIX_LOGIN_PROMPT,
-        password_prompt=UNIX_PASSWORD_PROMPT,
-        _builtin=True,
-    )
-    register_os_profile(
-        "busybox",
-        base="unix",
-        defaults={
-            "has_bash": False,
-            "command_frame": "ash",
-            "transfer": "shell",
-            "valid_transfers": ["shell", "scp", "sftp", "ftp", "nc"],
-        },
-        login_prompt=UNIX_LOGIN_PROMPT,
-        password_prompt=UNIX_PASSWORD_PROMPT,
-        _builtin=True,
-    )
+    for profile in [
+        OsProfile(
+            name="unix",
+            base="unix",
+            login_prompt=UNIX_LOGIN_PROMPT,
+            password_prompt=UNIX_PASSWORD_PROMPT,
+        ),
+        OsProfile(name="embedded", base="embedded"),
+        OsProfile(name="zephyr", base="zephyr"),
+        OsProfile(
+            name="busybox",
+            base="unix",
+            defaults={
+                "has_bash": False,
+                "command_frame": "ash",
+                "transfer": "shell",
+                "valid_transfers": ["shell", "scp", "sftp", "ftp", "nc"],
+            },
+            login_prompt=UNIX_LOGIN_PROMPT,
+            password_prompt=UNIX_PASSWORD_PROMPT,
+        ),
+    ]:
+        OS_PROFILES.register(profile.name, profile)
 
 
 def resolve_console_prompts(options: "ConsoleOptions", os_type: str) -> "ConsoleOptions":

@@ -25,20 +25,59 @@ some commands and not others.
 'the-json-backend'
 >>> r.names()
 ['json']
+
+References
+----------
+A registry entry may be a real object, or a :class:`Ref` wrapping a
+``"package.module:attribute"`` string that names one without importing it.
+:meth:`Registry.names`, ``in``, ``len()`` and :meth:`Registry.origin` never
+import a :class:`Ref`'s target: listing and attribution are free regardless
+of how many entries are built-ins registered by reference.
+:meth:`Registry.get` (and :meth:`Registry.items`, which resolves every entry
+the same way) is the only read that pays: the first ``get`` of a given name
+imports its target, runs the registry's *validate* hook (if any) on the resolved
+object, and caches the result in place of the ``Ref`` so later reads of that
+name are free too. Plugins may register either a real object or a ``Ref``;
+:meth:`Registry.register` treats them the same way except that a real
+object is validated immediately, at registration, rather than deferred to
+first lookup.
 """
 
 import contextlib
 import contextvars
+import dataclasses
 import difflib
 import inspect
 import weakref
-from collections.abc import Iterator
-from typing import Any, ClassVar, Generic, TypeVar
+from collections.abc import Callable, Iterator
+from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from otto.errors import OttoError
 
 T = TypeVar("T")
 """Type variable for the entry type stored in a :class:`Registry`."""
+
+
+@dataclasses.dataclass(frozen=True)
+class Ref:
+    """A ``"package.module:attribute"`` reference to a registry entry, imported on first lookup."""
+
+    target: str
+
+    def __post_init__(self) -> None:
+        module, sep, attr = self.target.partition(":")
+        if not sep or not module or not attr:
+            raise ValueError(f"Ref target must be 'package.module:attribute', got {self.target!r}")
+
+    def resolve(self) -> object:
+        """Import the module and return the attribute.
+
+        Import and attribute errors propagate unchanged.
+        """
+        import importlib
+
+        module, _, attr = self.target.partition(":")
+        return getattr(importlib.import_module(module), attr)
 
 
 def caller_module(depth: int = 1) -> str:
@@ -105,8 +144,8 @@ def refuse_during_test_load(kind: str, name: str, origin: str) -> None:
 
     Keyed on ORIGIN, not on the phase alone: a test file is often the first thing
     to import an otto module that registers its own entries at import time
-    (``otto.host.llext_kind`` registers a product kind), and that registration
-    is otto's, not the test file's.
+    (``otto.project.actions`` registers the built-in project instructions), and
+    that registration is otto's, not the test file's.
     """
     if _LOADING_TEST_FILES.get() and not _is_otto_origin(origin):
         raise RegistrationRefused(
@@ -129,6 +168,7 @@ class Registry(Generic[T]):
         collision_hint: str | None = None,
         loader: str | None = None,
         accepts_test_files: bool = False,
+        validate: "Callable[[str, T], None] | None" = None,
     ) -> None:
         """Create a registry for *kind* entries (e.g. ``"term backend"``).
 
@@ -146,6 +186,10 @@ class Registry(Generic[T]):
 
         *accepts_test_files* says whether entries may be registered while repo
         test files load (only the suites registry).
+
+        *validate* is this registry's own check of an entry. It runs exactly
+        once per entry: at :meth:`register` for a real object, or at the
+        entry's first :meth:`get` when it was registered as a :class:`Ref`.
         """
         self.defined_in = caller_module()
         """The module that constructed this registry.
@@ -155,10 +199,11 @@ class Registry(Generic[T]):
         self._kind = kind
         self._register_hint = register_hint
         self._collision_hint = collision_hint or "Pass overwrite=True to replace it deliberately."
-        self._entries: dict[str, T] = {}
+        self._entries: dict[str, "T | Ref"] = {}
         self._origins: dict[str, str] = {}
         self._loader = loader
         self._accepts_test_files = accepts_test_files
+        self._validate = validate
         self._loading = False
         Registry._instances.add(self)
 
@@ -180,9 +225,13 @@ class Registry(Generic[T]):
             self._loading = False
 
     def register(
-        self, name: str, obj: T, *, overwrite: bool = False, origin: str | None = None
+        self, name: str, obj: "T | Ref", *, overwrite: bool = False, origin: str | None = None
     ) -> None:
         """Register *obj* under *name*; duplicates are loud unless *overwrite*.
+
+        *obj* is either a real entry or a :class:`Ref` naming one; a real
+        object is validated now (see the *validate* constructor argument),
+        while a ``Ref`` is validated at its first :meth:`get`.
 
         *origin* attributes the entry (defaults to the caller's module); it is
         used in collision and listing messages.
@@ -193,7 +242,9 @@ class Registry(Generic[T]):
                 accept test-file registrations.
             ValueError: If *name* is already registered and *overwrite* is
                 false; the message names both registering modules and ends
-                with this registry's collision hint.
+                with this registry's collision hint. Also raised by
+                *validate*, for a real *obj* that fails the registry's check
+                (nothing is stored, and no collision state changes).
         """
         entry_origin = origin if origin is not None else caller_module()
         if not self._accepts_test_files:
@@ -204,11 +255,54 @@ class Registry(Generic[T]):
                 f"{self._origins[name]!r}; second registration from "
                 f"{entry_origin!r}. {self._collision_hint}"
             )
+        if not isinstance(obj, Ref) and self._validate is not None:
+            self._validate(name, obj)
         self._entries[name] = obj
         self._origins[name] = entry_origin
 
+    def _ensure_known(self, name: str) -> None:
+        """Raise the rich unknown-name error unless *name* is registered.
+
+        Shared by every read that must fail loudly on an unknown name without
+        resolving a :class:`Ref` (:meth:`origin`, :meth:`unregister`) as well
+        as by :meth:`get`.
+        """
+        if name in self._entries:
+            return
+        known = ", ".join(self._entries) or "<none>"
+        close = difflib.get_close_matches(name, list(self._entries), n=1)
+        suggestion = f" Did you mean {close[0]!r}?" if close else ""
+        raise ValueError(
+            f"Unknown {self._kind} {name!r}.{suggestion} Registered: {known}. "
+            f"Custom entries can be added via {self._register_hint}."
+        )
+
+    def _resolved(self, name: str) -> T:
+        """Return *name*'s entry, resolving and caching a :class:`Ref`.
+
+        Assumes the caller already ran ``_load()``, so :meth:`items` loads
+        once for every name it resolves.
+        """
+        self._ensure_known(name)
+        entry = self._entries[name]
+        if isinstance(entry, Ref):
+            # Ref.resolve() returns `object`; T has no runtime representation
+            # to narrow onto, so this cast bridges the two.
+            resolved = cast("T", entry.resolve())
+            if self._validate is not None:
+                self._validate(name, resolved)
+            self._entries[name] = resolved
+            return resolved
+        return entry
+
     def get(self, name: str) -> T:
-        """Return the entry registered under *name*.
+        """Return the entry registered under *name*, resolving a :class:`Ref` on first read.
+
+        A :class:`Ref` entry is imported, validated (if this registry has a
+        *validate* hook) and cached in place of the ``Ref`` before returning,
+        so later reads of the same name are free. An import or attribute
+        error from a failing ``Ref`` propagates unchanged, and the entry is
+        left as the ``Ref`` for a later retry.
 
         Raises:
             ValueError: If *name* is unknown; the message lists registered
@@ -216,24 +310,16 @@ class Registry(Generic[T]):
                 registration function.
         """
         self._load()
-        try:
-            return self._entries[name]
-        except KeyError:
-            known = ", ".join(self._entries) or "<none>"
-            close = difflib.get_close_matches(name, list(self._entries), n=1)
-            suggestion = f" Did you mean {close[0]!r}?" if close else ""
-            raise ValueError(
-                f"Unknown {self._kind} {name!r}.{suggestion} Registered: {known}. "
-                f"Custom entries can be added via {self._register_hint}."
-            ) from None
+        return self._resolved(name)
 
     def unregister(self, name: str) -> None:
-        """Remove the entry registered under *name*.
+        """Remove the entry registered under *name*, without resolving a :class:`Ref`.
 
         Raises:
             ValueError: If *name* is unknown (same rich error as :meth:`get`).
         """
-        self.get(name)  # reuse the rich unknown-name error
+        self._load()
+        self._ensure_known(name)
         del self._entries[name]
         del self._origins[name]
 
@@ -243,18 +329,52 @@ class Registry(Generic[T]):
         return list(self._entries)
 
     def origin(self, name: str) -> str:
-        """Return the module that registered *name*.
+        """Return the module that registered *name*, without resolving a :class:`Ref`.
 
         Raises:
             ValueError: If *name* is unknown (same rich error as :meth:`get`).
         """
-        self.get(name)
+        self._load()
+        self._ensure_known(name)
         return self._origins[name]
 
     def items(self) -> list[tuple[str, T]]:
-        """Return ``(name, entry)`` pairs in registration order."""
+        """Return ``(name, entry)`` pairs in registration order, resolving every :class:`Ref`.
+
+        Calls the loader once, up front, then resolves each entry the same
+        way :meth:`get` does (through the shared ``_resolved`` helper) rather
+        than calling ``get`` itself, which would run the loader again per
+        name.
+        """
         self._load()
-        return list(self._entries.items())
+        return [(name, self._resolved(name)) for name in list(self._entries)]
+
+    def _raw_items(self) -> "list[tuple[str, T | Ref, str]]":
+        """Return ``(name, raw_entry, origin)`` for every entry, without resolving or loading.
+
+        Test support: lets a fixture snapshot and restore a registry's exact
+        stored state — a real object or a :class:`Ref` — across a test without
+        importing every ``Ref``'s target as a side effect of the snapshot
+        itself. Product code has no reason to see an unresolved ``Ref``; use
+        :meth:`get` or :meth:`items`.
+        """
+        return [(name, self._entries[name], self._origins[name]) for name in self._entries]
+
+    def _restore_raw(self, name: str, entry: "T | Ref", origin: str) -> None:
+        """Write *entry* and *origin* back for *name* directly.
+
+        No validate, no refusal, no collision check.
+
+        Test support, the counterpart of :meth:`_raw_items`: a fixture uses the
+        pair to snapshot and restore a registry's exact stored state around a
+        test. Going through :meth:`register` instead would re-run *validate*
+        on every restored real object; once a validator's outcome can depend on
+        state a test changed, one raising here would leave every registry
+        after it in the snapshot list unrestored for the rest of the worker
+        process, not just the one entry.
+        """
+        self._entries[name] = entry
+        self._origins[name] = origin
 
     def __contains__(self, name: str) -> bool:
         """Return whether *name* is registered."""

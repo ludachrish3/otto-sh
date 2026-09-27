@@ -4,11 +4,11 @@ import types
 
 import pytest
 
-import otto.reservations as r
 from otto.reservations import (
     NullReservationBackend,
     ReservationBackendError,
     build_reservation_gate,
+    factory,
 )
 
 
@@ -20,7 +20,7 @@ def test_skip_does_not_build_backend(tmp_path, monkeypatch):
     def _spy(settings, repo_dir):
         raise AssertionError("build_backend must not be called under -R")
 
-    monkeypatch.setattr(r, "build_backend", _spy)
+    monkeypatch.setattr(factory, "build_backend", _spy)
     gate = build_reservation_gate(
         [_repo({"backend": "none"}, tmp_path)],
         holder=None,
@@ -72,7 +72,7 @@ def test_build_failure_propagates(tmp_path, monkeypatch):
     def _boom(settings, repo_dir, username=None):
         raise ReservationBackendError("unreachable")
 
-    monkeypatch.setattr(r, "build_backend", _boom)
+    monkeypatch.setattr(factory, "build_backend", _boom)
     with pytest.raises(ReservationBackendError):
         build_reservation_gate(
             [_repo({"backend": "x"}, tmp_path)],

@@ -1,0 +1,100 @@
+id: lazy-getattr-no-write-back
+language: python
+severity: error
+message: a lazy package's `__getattr__` writes the resolved name back into the module. Return the value and cache nothing; the lazy table is the single source of the package's names.
+note: >
+  A lazy package's `__getattr__` resolves a name through its `_LAZY_*` table
+  on every access and writes nothing back. A cached global makes laziness a
+  one-shot property: after the first access the name lives in the module
+  dict, so a later drift between the table, the `if TYPE_CHECKING:` block and
+  `__all__` is hidden from the drift guard (tests/unit/test_lazy_packages.py)
+  and from any test that asks whether the name is still lazy. PEP 562 only
+  calls `__getattr__` for a name the module dict lacks, so the cost of not
+  caching is one dict lookup and one `import_module` of an already-imported
+  module per access.
+
+  Flagged inside a lazy init's `__getattr__`: a subscript write into
+  `globals()`, `vars()` or any `<expr>.__dict__`
+  (`sys.modules[__name__].__dict__[name] = v` included); a `.update(...)`,
+  `.setdefault(...)` or `.__setitem__(...)` on one of them; binding
+  `globals()` or `vars()` to a name (`g = globals()`, which a resolver has
+  no reason to do, and which would hide a later `g[name] = v` from the
+  arms above); an attribute write on `sys.modules[...]`; any `setattr(...)`
+  call; and a `global` statement (the spelling that rebinds a module name
+  from a function). A write through a module object reached some other way
+  (an alias of `sys.modules[__name__]`, `importlib.import_module(__name__)`)
+  is not seen; review owns it.
+
+  The rest of the shape is required, and a presence check does not fit
+  ast-grep, so tests/unit/test_lazy_packages.py holds it: every lazy init
+  defines `__getattr__` and `__dir__`, and a module-scope `__all__` that is a
+  literal list of strings equal to its public lazy names plus the public
+  names it binds eagerly.
+
+  Scope: any src/otto/**/__init__.py that assigns a module-scope `_LAZY_*`
+  table, the same condition as lazy-package-init-stays-lazy.
+files:
+- src/otto/**/__init__.py
+utils:
+  namespace-dict:
+    regex: '^(globals\(\)|vars\(\)|.+\.__dict__)$'
+rule:
+  all:
+  - any:
+    # globals()[name] = value
+    - kind: assignment
+      has:
+        field: left
+        kind: subscript
+        has:
+          field: value
+          matches: namespace-dict
+    # globals().update(...) / .setdefault(...) / .__setitem__(...)
+    - kind: call
+      has:
+        field: function
+        kind: attribute
+        all:
+        - has:
+            field: object
+            matches: namespace-dict
+        - has:
+            field: attribute
+            regex: '^(update|setdefault|__setitem__)$'
+    # g = globals()
+    - kind: assignment
+      has:
+        field: right
+        regex: '^(globals|vars)\(\)$'
+    # sys.modules[__name__].name = value
+    - kind: assignment
+      has:
+        field: left
+        kind: attribute
+        has:
+          field: object
+          regex: '^sys\.modules\['
+    # setattr(sys.modules[__name__], name, value)
+    - kind: call
+      has:
+        field: function
+        regex: '^setattr$'
+    # global name; name = value
+    - kind: global_statement
+  - inside:
+      kind: function_definition
+      stopBy: end
+      has:
+        field: name
+        regex: '^__getattr__$'
+  # The file is a lazy package: its module node holds a `_LAZY_*` assignment.
+  - inside:
+      kind: module
+      stopBy: end
+      has:
+        kind: expression_statement
+        has:
+          kind: assignment
+          has:
+            field: left
+            regex: '^_LAZY_[A-Z_]+$'

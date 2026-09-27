@@ -33,7 +33,7 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
 from ..declared import KindRegistry, declared_for_host
-from ..registry import caller_module, get_registering_repo, refuse_during_test_load
+from ..registry import Ref, caller_module, get_registering_repo, refuse_during_test_load
 from ..result import Result
 
 if TYPE_CHECKING:
@@ -148,7 +148,11 @@ DEV_TOOL_KINDS: KindRegistry["DevTool"] = KindRegistry(
 """Named factories for settings-declared dev tools (spec 2026-09-01 §5-§6).
 
 Separate from :data:`otto.host.product.PRODUCT_KINDS` on purpose — each
-seam owns its registry, the same two-list reasoning as the providers."""
+seam owns its registry, the same two-list reasoning as the providers.
+
+The built-in kinds are registered below by :class:`~otto.registry.Ref`, each
+keeping its kind module as its origin, so no kind module is imported until a
+declared entry names it."""
 
 
 def register_dev_tool_kind(
@@ -248,3 +252,16 @@ def apply_dev_tool_providers(host: "Host") -> None:
                 tool.owner = provider_owner
             host.dev_tools.append(tool)
             seen.add(tool.name)
+
+
+def _register_builtin_kinds() -> None:
+    """Register otto's built-in kinds by reference, each with its kind module as origin."""
+    for kind, module, factory in [
+        ("shell", "otto.host.shell_kind", "_shell_kind"),
+        ("kmod", "otto.host.kmod_tool_kind", "_kmod_tool_kind"),
+        ("kgcov", "otto.host.kmod_tool_kind", "_kgcov_tool_kind"),
+    ]:
+        DEV_TOOL_KINDS.register(kind, Ref(f"{module}:{factory}"), origin=module)
+
+
+_register_builtin_kinds()

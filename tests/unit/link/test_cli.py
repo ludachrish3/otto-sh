@@ -42,7 +42,7 @@ class TestImpairCommand:
             ],
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.impair_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["impair", "edge", "--delay", "50"])
@@ -62,7 +62,7 @@ class TestImpairCommand:
 
     def test_known_failure_exits_1(self) -> None:
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch(
                 "otto.cli.link.impair_link",
                 AsyncMock(side_effect=ValueError("management interface")),
@@ -87,7 +87,7 @@ class TestRepairCommand:
 
         sweep = RepairAllReport(failures=["lnk-abc: host down"])
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.repair_all", AsyncMock(return_value=sweep)),
         ):
             result = runner.invoke(link_app, ["repair", "--all"])
@@ -104,7 +104,7 @@ class TestRepairCommand:
             skipped=["lnk-abc: test1/eth1.100 has a foreign qdisc otto did not create"]
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.repair_all", AsyncMock(return_value=sweep)),
         ):
             result = runner.invoke(link_app, ["repair", "--all"])
@@ -129,7 +129,7 @@ class TestRepairCommand:
             ],
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.repair_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["repair", "edge"])
@@ -149,7 +149,7 @@ class TestRepairCommand:
             cleared=[Placement("test1", "bbeth-1350", FlowDirection.A_TO_B)],
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.repair_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["repair", "edge"])
@@ -178,7 +178,7 @@ class TestListCommand:
             by_direction={FlowDirection.A_TO_B: None, FlowDirection.B_TO_A: None},
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.read_link_states", AsyncMock(return_value=[state, down])),
         ):
             result = runner.invoke(link_app, ["list"])
@@ -189,7 +189,7 @@ class TestListCommand:
     @staticmethod
     def _list_output(state: LinkState) -> str:
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.read_link_states", AsyncMock(return_value=[state])),
         ):
             result = runner.invoke(link_app, ["list"])
@@ -289,7 +289,7 @@ class TestScopedCli:
         report = ImpairReport(link_id="lnk-abc", applied=[])
         mock = AsyncMock(return_value=report)
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.impair_link", mock),
         ):
             result = runner.invoke(
@@ -311,7 +311,7 @@ class TestScopedCli:
             ],
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.impair_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["impair", "edge", "--delay", "200", "--port", "5201"])
@@ -331,7 +331,7 @@ class TestScopedCli:
     def test_impair_range_and_side_pass_one_selector(self) -> None:
         mock = AsyncMock(return_value=ImpairReport(link_id="lnk-abc", applied=[]))
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.impair_link", mock),
         ):
             result = runner.invoke(
@@ -371,7 +371,7 @@ class TestScopedCli:
     def test_collision_refusal_surfaces_as_a_failure(self) -> None:
         refusal = ValueError("5205/tcp collides with 5200:5220/tcp")  # short: Rich wraps at 80 cols
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.impair_link", AsyncMock(side_effect=refusal)),
         ):
             result = runner.invoke(
@@ -386,7 +386,7 @@ class TestScopedCli:
 
         mock = AsyncMock(return_value=RepairReport("lnk-abc"))
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.repair_link", mock),
         ):
             result = runner.invoke(link_app, ["repair", "edge", "--port", "53", "--proto", "udp"])
@@ -402,7 +402,7 @@ class TestScopedCli:
 
         mock = AsyncMock(return_value=RepairReport("lnk-abc"))
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.repair_link", mock),
         ):
             result = runner.invoke(
@@ -434,7 +434,7 @@ class TestScopedCli:
             },
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.read_link_states", AsyncMock(return_value=[scoped])),
         ):
             result = runner.invoke(link_app, ["list"])
@@ -462,7 +462,7 @@ class TestScopedCli:
             },
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.read_link_states", AsyncMock(return_value=[scoped])),
         ):
             result = runner.invoke(link_app, ["list"])
@@ -487,7 +487,7 @@ class TestScopedCli:
             },
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.read_link_states", AsyncMock(return_value=[broken])),
         ):
             result = runner.invoke(link_app, ["list"])
@@ -509,7 +509,7 @@ class TestScopedCli:
             read_errors={FlowDirection.B_TO_A: "'tc qdisc show' failed on 'test2': nope"},
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.read_link_states", AsyncMock(return_value=[mixed])),
         ):
             result = runner.invoke(link_app, ["list"])
@@ -532,7 +532,7 @@ class TestScopedCli:
             },
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.read_link_states", AsyncMock(return_value=[both])),
         ):
             result = runner.invoke(link_app, ["list"])
@@ -547,7 +547,7 @@ class TestScopedCli:
             by_direction={FlowDirection.A_TO_B: None},
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.read_link_states", AsyncMock(return_value=[gone])),
         ):
             result = runner.invoke(link_app, ["list"])
@@ -605,7 +605,7 @@ class TestCheckCommand:
         host = _check_host(sandbox=[FeatureResult("read-back", Verdict.PASS)])
         report = _check_report(hosts=[host])
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["check", "edge"])
@@ -618,7 +618,7 @@ class TestCheckCommand:
         host = _check_host(sandbox=[FeatureResult("delay", Verdict.FAIL)])
         report = _check_report(hosts=[host])
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["check", "edge"])
@@ -633,7 +633,7 @@ class TestCheckCommand:
         )
         report = _check_report(hosts=[host])
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["check", "edge"])
@@ -646,7 +646,7 @@ class TestCheckCommand:
         the mock records zero calls, not just a matching exit code."""
         mock = AsyncMock()
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", mock),
         ):
             result = runner.invoke(link_app, ["check", "edge", "--feature", "bogus"])
@@ -664,7 +664,7 @@ class TestCheckCommand:
         `except (ValueError, RuntimeError)`, not a usage error."""
         error = ValueError("no link 'nope' in this lab; known: edge, mgmt-edge")
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(side_effect=error)),
         ):
             result = runner.invoke(link_app, ["check", "nope"])
@@ -686,7 +686,7 @@ class TestCheckCommand:
             refusal_hint="declare this link in lab.json with an interface on each endpoint",
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["check", "edge"])
@@ -700,7 +700,7 @@ class TestCheckCommand:
         report = _check_report(hosts=[host])
         dest = tmp_path / "out.json"
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["check", "edge", "--report", str(dest)])
@@ -718,7 +718,7 @@ class TestCheckCommand:
         before = sorted(tmp_path.iterdir())
         monkeypatch.chdir(tmp_path)
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["check", "edge"])
@@ -733,7 +733,7 @@ class TestCheckCommand:
         report = _check_report(hosts=[host])
         dest = tmp_path / "missing-dir" / "out.json"
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["check", "edge", "--report", str(dest)])
@@ -750,7 +750,7 @@ class TestCheckCommand:
             refusal_hint="declare this link in lab.json with an interface on each endpoint",
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["check", "edge", "--report", str(dest)])
@@ -767,7 +767,7 @@ class TestCheckCommand:
         plan = ["placement a->b on test1/eth1.100", "no device was contacted"]
         report = _check_report(dry_run_plan=plan)
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["check", "edge", "--report", str(dest)])
@@ -786,7 +786,7 @@ class TestCheckCommand:
         )
         with (
             active_context(dry_run=True),
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["check", "edge", "--report", str(dest)])
@@ -807,7 +807,7 @@ class TestCheckCommand:
             refusal_hint="use a non-management interface, not eth0[dataplane]",
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(return_value=refusal_report)),
         ):
             result = runner.invoke(link_app, ["check", "edge"])
@@ -823,7 +823,7 @@ class TestCheckCommand:
             hosts=[host], live_swept=["swept otto-check-eth0[dataplane] from an earlier run"]
         )
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(return_value=swept_report)),
         ):
             result = runner.invoke(link_app, ["check", "edge"])
@@ -833,7 +833,7 @@ class TestCheckCommand:
     def test_check_passes_live_feature_and_from_through(self) -> None:
         mock = AsyncMock(return_value=_check_report())
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", mock),
         ):
             result = runner.invoke(
@@ -852,7 +852,7 @@ class TestCheckCommand:
         ]
         report = _check_report(dry_run_plan=plan)
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["check", "edge"])
@@ -869,7 +869,7 @@ class TestCheckCommand:
         host-named exit 1 the dispatch seam prints — never a traceback."""
         error = CheckHostUnreachableError("'tc qdisc show' timed out on 'test1'")
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.link.check.check_link", AsyncMock(side_effect=error)),
         ):
             result = runner.invoke(link_app, ["check", "edge"])
@@ -907,7 +907,7 @@ class TestDryRunRendering:
     def _dry_invoke(lab, args: list[str]):
         with (
             active_context(dry_run=True),
-            patch("otto.cli.link.get_lab", return_value=lab),
+            patch("otto.config.fleet.get_lab", return_value=lab),
         ):
             return runner.invoke(link_app, args)
 
@@ -971,7 +971,7 @@ class TestDryRunRendering:
             "the skip itself is lab data and must still be reported"
         )
 
-        with patch("otto.cli.link.get_lab", return_value=_bed(link=bare)[0]):
+        with patch("otto.config.fleet.get_lab", return_value=_bed(link=bare)[0]):
             real = runner.invoke(link_app, ["repair", "--all"])
         assert "repaired 0 link(s)" in real.output, (
             "the control: without it, a renderer that had lost the success line "
@@ -989,7 +989,7 @@ class TestDryRunRendering:
 
         sweep = RepairAllReport(repaired=[RepairReport("lnk-abc")])
         with (
-            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.config.fleet.get_lab", return_value=object()),
             patch("otto.cli.link.repair_all", AsyncMock(return_value=sweep)),
         ):
             result = runner.invoke(link_app, ["repair", "--all"])
@@ -1017,7 +1017,7 @@ class TestDryRunRendering:
         lab, test1, test2, _ = _bed()
         test1.qdisc_texts = [""]
         test2.qdisc_texts = [""]
-        with patch("otto.cli.link.get_lab", return_value=lab):
+        with patch("otto.config.fleet.get_lab", return_value=lab):
             result = runner.invoke(link_app, ["list"])
         assert result.exit_code == 0, result.output
         assert "a->b: -  b->a: -" in result.output

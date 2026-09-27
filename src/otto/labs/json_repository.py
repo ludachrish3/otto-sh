@@ -52,10 +52,10 @@ _MIGRATION_HINT = (
 _GLOB_CHARS = frozenset("*?[")
 
 # WHY `from ..inventory import ...` is function-local at every use site below
-# (three of them): this module is reached from every budgeted CLI surface
-# (scripts/import_budget.py), and a module-scope import would put
-# otto.inventory's nine modules on all ten of them for the overwhelmingly
-# common process that never resolves a single reference. The edge is real and
+# (three of them): every command that loads a lab reaches this module, and a
+# module-scope import would put otto.inventory's nine modules on each of them
+# for the overwhelmingly common process that never resolves a single
+# reference. The edge is real and
 # declared in tach.toml; only the timing is deferred, and the cost per call is
 # a sys.modules lookup beside a pydantic validation.
 

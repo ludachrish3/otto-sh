@@ -46,7 +46,8 @@ if TYPE_CHECKING:
     # Annotations only. `otto.host.session_setup` must stay OFF the CLI
     # startup import graph and this module is on it, so the runtime import
     # lives inside `SessionManager._apply_session_setup`, after the no-hook
-    # early return — see that method and tests/unit/import_budget.
+    # early return — see that method and its row in
+    # tests/unit/test_import_contracts.py.
     from .session_setup import SessionSetup, SetupKind
 
 import logging
@@ -471,6 +472,23 @@ class ShellSession(ABC):
         """
         return None
 
+    def _connection_lost_errors(self) -> list[type[BaseException]]:
+        """Exceptions that mean **this session's own transport** dropped mid-command.
+
+        Transport-neutral by default: EOF on the read side
+        (``asyncio.IncompleteReadError``) or a write landing on an
+        already-dead channel (``BrokenPipeError``). Overridden by
+        :class:`SshSession` to add asyncssh's own ``ConnectionLost`` —
+        asyncssh is a heavy import (its ``ctypes.util.find_library`` probe
+        for liboqs/nettle spawns ``ldconfig`` and, on a miss, gcc/ld/collect2),
+        so only the transport that can actually raise that error pays to
+        import it, and only when a session of that transport exists. Consulted
+        at every choke point that must treat "the transport is gone" as one
+        class of event regardless of which transport it is: :meth:`expect`,
+        :meth:`run_cmd`, :meth:`_recover_session`, :meth:`_confirm_recovered`.
+        """
+        return [asyncio.IncompleteReadError, BrokenPipeError]
+
     async def console_login(self) -> None:
         """Run the console login state machine on this session's own streams.
 
@@ -747,8 +765,6 @@ class ShellSession(ABC):
         Raises asyncio.TimeoutError if the pattern isn't seen within timeout.
         Marks the session as dead if EOF is received or the transport is lost.
         """
-        import asyncssh
-
         await self._ensure_ready()
         self._require_alive()
         compiled = re.compile(pattern) if isinstance(pattern, str) else pattern
@@ -757,7 +773,7 @@ class ShellSession(ABC):
                 self._read_until_pattern(compiled),
                 timeout=timeout,
             )
-        except (asyncio.IncompleteReadError, asyncssh.ConnectionLost, BrokenPipeError):
+        except tuple(self._connection_lost_errors()):
             # The try body above only reads, so BrokenPipeError has no
             # reachable path here the way it does at the write-adjacent choke
             # points (run_cmd, _recover_session): this is defensive symmetry
@@ -801,8 +817,6 @@ class ShellSession(ABC):
         Returns:
             CommandResult with exit code extracted from the sentinel.
         """
-        import asyncssh
-
         # An attached AppShell has this session parked inside an application
         # REPL (mysql, python3); typing the sentinel command frame into it would
         # be gibberish. Cheap `is not None` guard on the hot path — a no-op when
@@ -846,7 +860,7 @@ class ShellSession(ABC):
             # propagation and could leave the recover-marker write detached.
             self._needs_recovery = True
             raise
-        except (asyncio.IncompleteReadError, asyncssh.ConnectionLost, BrokenPipeError) as exc:
+        except tuple(self._connection_lost_errors()) as exc:
             # Same class of event either way — the transport is gone: EOF on
             # the stream, asyncssh's own keepalive giving up on a dead peer
             # (e.g. a blackholed SSH connection), or a write landing on a
@@ -860,9 +874,9 @@ class ShellSession(ABC):
             reason = (
                 "EOF"
                 if isinstance(exc, asyncio.IncompleteReadError)
-                else "connection lost"
-                if isinstance(exc, asyncssh.ConnectionLost)
                 else "broken pipe"
+                if isinstance(exc, BrokenPipeError)
+                else "connection lost"
             )
             return CommandResult(
                 status=Status.Error,
@@ -1052,12 +1066,10 @@ class ShellSession(ABC):
             self._alive = False
             return ""
 
-        import asyncssh
-
         logger.debug(f"{self._log_tag}: recover_session entry marker={self._recover_marker!r}")
         try:
             await self._write("\x03")
-        except (asyncio.IncompleteReadError, asyncssh.ConnectionLost, BrokenPipeError):
+        except tuple(self._connection_lost_errors()):
             # This entry write is its OWN choke point, upstream of
             # _confirm_recovered's: a dead-but-idle channel (e.g. a docker
             # daemon restart killing the container between two commands) can
@@ -1101,8 +1113,6 @@ class ShellSession(ABC):
             self._alive = False
             return ""
 
-        import asyncssh
-
         if deadline is None:
             deadline = _RECOVERY_TIMEOUT
         captured = ""
@@ -1123,7 +1133,7 @@ class ShellSession(ABC):
                 probe_timeout=_RECOVERY_PROBE_TIMEOUT,
                 deadline=deadline,
             )
-        except (asyncio.IncompleteReadError, asyncssh.ConnectionLost, BrokenPipeError):
+        except tuple(self._connection_lost_errors()):
             # Same class of event as the EOF case: the transport is gone
             # mid-recovery (e.g. a blackholed connection's keepalive giving up
             # during the post-timeout Ctrl+C probe, or a still-dead connection
@@ -1182,6 +1192,12 @@ class SshSession(ShellSession):
         # When set by a subclass, _open passes this as the command to
         # create_process() instead of opening the channel's default shell.
         self._open_cmd: str | None = None
+
+    @override
+    def _connection_lost_errors(self) -> list[type[BaseException]]:
+        import asyncssh
+
+        return [*super()._connection_lost_errors(), asyncssh.ConnectionLost]
 
     @override
     async def _open(self) -> None:
@@ -2557,7 +2573,7 @@ class SessionManager:
         The import is local and BELOW the early return, deliberately:
         ``otto.host.session_setup`` is off the CLI startup import graph and
         this module is on it, so a host without a hook must not pull it in
-        (tests/unit/import_budget fences eleven surfaces on exactly that).
+        (a row in tests/unit/test_import_contracts.py pins it).
         """
         if self._session_setup is None:
             return

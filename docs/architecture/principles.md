@@ -29,8 +29,8 @@ evolve on different clocks and are owned by different people.
 
 Every extension seam is a {class}`~otto.registry.Registry`: loud duplicates
 with origin attribution, did-you-mean lookups, uniform `--list-*` support.
-Built-ins register through the same public functions third parties use, so
-the seams cannot rot unnoticed. ({doc}`subsystems/registries`)
+Built-ins live in the same registries and meet the same validation as
+third-party entries, so the seams cannot rot unnoticed. ({doc}`subsystems/registries`)
 
 ## Dependencies flow through the context
 

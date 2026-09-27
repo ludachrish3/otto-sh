@@ -5,13 +5,13 @@ from datetime import timedelta
 import pytest
 from pydantic import ValidationError
 
-from otto.models.inventory import parse_cache_ttl
 from otto.models.settings import (
     CredsConfigSpec,
     InventoryConfigSpec,
     SettingsModel,
     UserSettingsModel,
 )
+from otto.utils import parse_cache_ttl
 
 
 def test_settings_model_accepts_inventory():

@@ -498,11 +498,9 @@ class CoverageReporter:
             # records and annotated FileRecord.excluded_lines, so the renderer
             # reads that annotation instead of scanning source itself.
             logger.info("=== Rendering coverage report ===")
-            # Deferred so importing this module (pulled onto the CLI startup
-            # path via cli.cov) does not drag in SpaRenderer's transitive
-            # imports (spa_data, and through it colors) —
-            # enforced by the import-budget guard
-            # (tests/unit/import_budget/test_import_budget.py).
+            # Deferred so importing this module does not drag in
+            # SpaRenderer's transitive imports (spa_data, and through it
+            # colors); a row in tests/unit/test_import_contracts.py pins it.
             from .renderer.spa_renderer import SpaRenderer
 
             renderer = SpaRenderer(

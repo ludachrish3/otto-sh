@@ -40,8 +40,9 @@ way to give a whole project consistent CLI flags ({doc}`../../cookbook/authoring
 
 ## What keeps third-party code honest
 
-- **Symmetry.** Built-ins use the same `register_*` calls, so the public
-  seams are exercised by otto itself on every run.
+- **Symmetry.** Built-ins sit in the same registries and pass the same
+  per-registry validation as a plugin's entries, so the seams are exercised
+  by otto itself on every run ({doc}`registries`).
 - **Conformance helpers.** For contract-shaped seams, `otto.testing`
   ships `assert_*_conforms` functions (e.g.
   {func}`~otto.testing.assert_reservation_backend_conforms`) — one pytest

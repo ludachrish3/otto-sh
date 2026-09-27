@@ -4,11 +4,11 @@ Mirrors :mod:`otto.reservations.registry` and otto's other extension
 registries (``register_term_backend`` / ``register_transfer_backend`` /
 ``register_host_class``): a custom backend registers a bare name from an
 ``init`` module, and a ``[[lab.sources]]`` entry's ``backend = "<name>"``
-selects it. The built-in ``json`` backend is pre-registered at import so it
-resolves through the same path.
+selects it. The built-in ``json`` backend is pre-registered at import, by
+:class:`~otto.registry.Ref`, so it resolves through the same lookup.
 """
 
-from ..registry import Registry, caller_module
+from ..registry import Ref, Registry, caller_module
 from .errors import LabRepositoryError
 
 # Name -> LabRepository-compatible class. ``build_lab_sources`` constructs the
@@ -46,10 +46,8 @@ def get_lab_repository_class(name: str) -> type:
 
 
 def _register_builtins() -> None:
-    """Register the built-in lab repositories through the public path."""
-    from .json_repository import JsonFileLabRepository
-
-    register_lab_repository("json", JsonFileLabRepository)
+    """Register the built-in lab repositories by reference."""
+    LAB_REPOSITORIES.register("json", Ref("otto.labs.json_repository:JsonFileLabRepository"))
 
 
 _register_builtins()

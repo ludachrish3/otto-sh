@@ -27,6 +27,13 @@ if TYPE_CHECKING:
     from .management import install as install
     from .management import reset as reset
 
+__all__ = [
+    "install",
+    "levels",
+    "management",
+    "reset",
+]
+
 _LAZY_EXPORTS: dict[str, str] = {
     "management": "otto.logger.management",
 }
@@ -55,3 +62,8 @@ def __getattr__(name: str) -> object:
     if name in _LAZY_ATTRS:
         return getattr(importlib.import_module(_LAZY_ATTRS[name]), name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Include the lazy exports in dir()/tab-completion; the module dict holds none of them."""
+    return sorted(set(globals()) | set(_LAZY_EXPORTS) | set(_LAZY_ATTRS))

@@ -1,9 +1,13 @@
 """Public API for the config package — lab loading, host access, and repo settings."""
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..models.settings import OttoEnvSettings
+    from .bootstrapped import get_completion_names as get_completion_names
+    from .bootstrapped import get_env as get_env
+    from .bootstrapped import get_ordered_repos as get_ordered_repos
+    from .bootstrapped import get_repos as get_repos
+    from .bootstrapped import is_bootstrapped as is_bootstrapped
     from .dependencies import ResolvedDependency as ResolvedDependency
     from .fleet import all_hosts as all_hosts
     from .fleet import do_for_all_hosts as do_for_all_hosts
@@ -11,29 +15,17 @@ if TYPE_CHECKING:
     from .fleet import get_lab as get_lab
     from .fleet import run_on_all_hosts as run_on_all_hosts
     from .lab import load_lab as load_lab
+    from .repo import DockerCompose as DockerCompose
+    from .repo import DockerImage as DockerImage
+    from .repo import DockerSettings as DockerSettings
+    from .repo import MonitorSettings as MonitorSettings
+    from .repo import Repo as Repo
     from .user_settings import load_user_settings as load_user_settings
     from .user_settings import user_settings_path as user_settings_path
+    from .version import Version as Version
 
 from .env import (
     load_otto_env as load_otto_env,
-)
-from .repo import (
-    DockerCompose as DockerCompose,
-)
-from .repo import (
-    DockerImage as DockerImage,
-)
-from .repo import (
-    DockerSettings as DockerSettings,
-)
-from .repo import (
-    MonitorSettings as MonitorSettings,
-)
-from .repo import (
-    Repo,
-)
-from .version import (
-    Version as Version,
 )
 
 # THE PUBLIC SURFACE, declared rather than inferred. A PEP 562 name never
@@ -82,13 +74,33 @@ __all__ = [
 # or import the submodule by hand, so the host graph only loads on the
 # surfaces that actually dispatch to a host.
 #
+# The .repo / .version names are lazy because .repo parses settings.toml: it
+# brings the TOML parser, .scope, .version and .corpus_snapshot, and the
+# command tree imports this package to build every `--help`, which reads no
+# repo. MEASURED: eager, they were 200 of `otto --help`'s 1379 file operations.
+#
+# The .bootstrapped accessors (get_repos, get_env, ...) cost nothing to import
+# either way, since each imports otto.bootstrap in its own body; they live in a
+# submodule because a package init holds no code of its own.
+#
 # NOT re-exported: `otto.config.fleet.get_hosts_in_play` — it is the
 # reservation readers' tolerant spelling (an empty declared fleet is zero hosts
 # in play, never an abort), and a walk written against the most discoverable
 # name would silently touch nothing. Its three readers import it from
 # `otto.config.fleet` / `otto.context` by hand, which is the point.
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+    "DockerCompose": ("otto.config.repo", "DockerCompose"),
+    "DockerImage": ("otto.config.repo", "DockerImage"),
+    "DockerSettings": ("otto.config.repo", "DockerSettings"),
+    "MonitorSettings": ("otto.config.repo", "MonitorSettings"),
+    "Repo": ("otto.config.repo", "Repo"),
+    "Version": ("otto.config.version", "Version"),
     "ResolvedDependency": ("otto.config.dependencies", "ResolvedDependency"),
+    "get_completion_names": ("otto.config.bootstrapped", "get_completion_names"),
+    "get_env": ("otto.config.bootstrapped", "get_env"),
+    "get_ordered_repos": ("otto.config.bootstrapped", "get_ordered_repos"),
+    "get_repos": ("otto.config.bootstrapped", "get_repos"),
+    "is_bootstrapped": ("otto.config.bootstrapped", "is_bootstrapped"),
     "all_hosts": ("otto.config.fleet", "all_hosts"),
     "do_for_all_hosts": ("otto.config.fleet", "do_for_all_hosts"),
     "get_host": ("otto.config.fleet", "get_host"),
@@ -121,74 +133,3 @@ def __dir__() -> list[str]:
     as they were.
     """
     return sorted(set(globals()) | set(_LAZY_EXPORTS))
-
-
-def get_repos() -> list[Repo]:
-    """Return the ``Repo`` objects for the configured SUT directories (bootstraps lazily)."""
-    from ..bootstrap import bootstrap
-
-    return bootstrap().repos
-
-
-def is_bootstrapped() -> bool:
-    """Report whether bootstrap has already STARTED (running or done), WITHOUT forcing it.
-
-    A probe, not a trigger: unlike :func:`get_repos`/:func:`get_ordered_repos`,
-    reading this never runs discovery or a repo's init imports. True for the
-    whole span from the phase-2 import pass onward — including mid-bootstrap,
-    where ``get_repos()`` already answers correctly and for free — and false
-    only for a process that has not started bootstrap at all. Callers that
-    must not pay bootstrap's cost as a side effect of merely asking — e.g.
-    :func:`otto.declared.declared_for_host`, reached from
-    ``create_host_from_dict`` in bare-library and pre-bootstrap processes —
-    check this first and treat ``False`` as "nothing loaded yet" rather than
-    calling :func:`get_repos`.
-    """
-    from ..bootstrap import is_bootstrapped as _is
-
-    return _is()
-
-
-def get_ordered_repos() -> list[Repo]:
-    """Return configured repos in dependency-topological order (bootstraps lazily).
-
-    Dependencies first, dependents after — the walk order the ``otto.project``
-    orchestrator installs in (and reverses to uninstall). Skipped repos
-    (unsatisfied required deps) are absent, exactly as they are absent from
-    phase-2 registration.
-    """
-    from ..bootstrap import bootstrap
-
-    return bootstrap().ordered_repos
-
-
-def get_env() -> "OttoEnvSettings":
-    """Return the startup environment settings (bootstraps discovery lazily)."""
-    from ..bootstrap import discover
-
-    return discover().env
-
-
-def get_completion_names() -> dict[str, Any] | None:
-    """Return cached instruction/suite/host data when the completion fast path is active.
-
-    Return ``None`` when not active.
-
-    Returned keys:
-
-    - ``instructions`` / ``suites``: each a list of
-      ``{"name": str, "options": [...]}`` dicts. :mod:`otto.cli.main` rebuilds
-      Typer stubs from them.
-    - ``hosts``: a plain list of host-ID strings. :mod:`otto.cli.host`'s
-      ``host_id`` completer prefers this over live ``lab.json`` parsing.
-    - ``term_backends``: a ``list[str]`` of registered term backend names.
-      :mod:`otto.cli.host`'s ``--term`` completer prefers this over the live
-      registry.
-    - ``transfer_backends``: a list of
-      ``{"name": str, "host_families": [str, ...]}`` dicts for registered
-      transfer backends. :mod:`otto.cli.host`'s ``--transfer`` completer
-      prefers this over the live registry.
-    """
-    from ..bootstrap import get_completion_names as _get
-
-    return _get()

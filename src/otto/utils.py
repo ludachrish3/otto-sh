@@ -1,11 +1,20 @@
-"""Shared utilities: status enums, CLI overlay sentinels, path helpers, and waiting."""
+"""Shared helpers that command modules and the runtime both import.
 
-import asyncio
+Among others: the :class:`Status` enum, the CLI overlays (:class:`Arg`,
+:class:`Opt`, ``Exclude``) and :func:`cli_exposed`, path anchoring
+(:func:`anchor_path`), the ``cache_ttl`` grammar (:func:`parse_cache_ttl`), the
+monitor collection-interval floor (:data:`MIN_INTERVAL_SECONDS`), list-option
+splitting and completion helpers, the dry-run headlines, and deadline polling
+(:func:`wait_for`, :func:`wait_for_async`).
+"""
+
 import inspect
 import math
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from enum import Enum
 from pathlib import Path
 from typing import (
@@ -33,6 +42,67 @@ def anchor_path(value: Path, root: Path) -> Path:
     """
     value = value.expanduser()
     return value if value.is_absolute() else root / value
+
+
+_TTL = re.compile(r"\A(?:0|([1-9]\d*)([mhd]))\Z")
+"""``\\Z``, not ``$``: ``$`` also matches before a trailing newline, so ``"24h\\n"``
+would parse — and a settings value with a stray newline must be refused, not guessed at."""
+
+_TTL_UNIT = {"m": timedelta(minutes=1), "h": timedelta(hours=1), "d": timedelta(days=1)}
+
+
+def parse_cache_ttl(text: str) -> timedelta:
+    """``"24h"`` → 24 hours; ``"0"`` → no caching (spec §9.5). Units: ``m``, ``h``, ``d``.
+
+    Lives here, beside :func:`anchor_path` and for the same reason, rather than
+    in the inventory package or beside the inventory record:
+    :class:`~otto.models.settings.InventoryConfigSpec` validates ``cache_ttl``
+    at the settings boundary on every command, a boundary model may not import
+    a runtime package, and :mod:`otto.models.inventory` is built from the host
+    specs, which would put the host classes on every command that reads
+    settings. Deliberately narrow: no leading zeros, no whitespace, no
+    fractions, no week/second units — one spelling per duration, so two
+    settings files that mean the same thing look the same.
+
+    Every rejection is a ``ValueError``, including an out-of-range one. The
+    grammar admits arbitrarily many digits but ``timedelta`` does not, and an
+    ``OverflowError`` escaping here would sail through every caller's
+    ``except ValueError`` (the pydantic validator, ``load_user_settings``,
+    ``build_inventory``) and reach the user as a bare traceback naming no file.
+    """
+    m = _TTL.match(text)
+    if m is None:
+        raise ValueError(f"cache_ttl must be '0' or <n>m / <n>h / <n>d, got {text!r}")
+    if m.group(1) is None:
+        return timedelta(0)
+    try:
+        return int(m.group(1)) * _TTL_UNIT[m.group(2)]
+    except OverflowError as e:
+        raise ValueError(f"cache_ttl {text!r} is out of range: {e}") from e
+
+
+MIN_INTERVAL_SECONDS: float = 1.0
+"""The monitor collection-interval floor — one home for the constant and the check.
+
+An interval below one second is not meaningful in practice: a host must be
+given time to answer every query in the interval without being taxed by the
+polling itself. The floor is enforced where a *human* names an interval — the
+CLI, the library, the pytest plugin — and NOT in
+:class:`~otto.monitor.collector.MetricCollector`, which is the mechanism
+rather than a knob: the monitor tests drive it at 0.01-0.2s against fake
+hosts, where no real host is ever polled.
+"""
+
+
+def validate_interval(seconds: float) -> float:
+    """Return *seconds*, or raise ``ValueError`` if it is below the floor."""
+    if seconds < MIN_INTERVAL_SECONDS:
+        raise ValueError(
+            f"monitor interval must be at least {MIN_INTERVAL_SECONDS}s, got {seconds}s — "
+            "a host needs time to answer every query in the interval without being "
+            "taxed by the polling itself."
+        )
+    return seconds
 
 
 def split_on(values: list[str] | str, sep: str = ",") -> list[str]:
@@ -229,6 +299,10 @@ async def wait_for_async(
     ``probe_first`` / *interval* / *on_timeout* semantics); the clock is the
     running loop's (``loop.time()``), the sleep is ``asyncio.sleep``.
     """
+    # Here, not at the top: every command's help imports this module, and
+    # only a caller already on an event loop reaches this line.
+    import asyncio
+
     loop = asyncio.get_running_loop()
 
     async def probe() -> bool:

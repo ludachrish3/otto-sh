@@ -430,6 +430,25 @@ export interface MonitorSessionFragment {
  * timestamps are present the span must be forward; the server re-checks the
  * pair after resolving a ``None`` timestamp to now.
  *
+ * ``defer_build=False``, overriding :class:`~otto.models.base.OttoModel`:
+ * FastAPI wraps a request-body parameter in its own
+ * ``TypeAdapter(Annotated[<model>, Field(alias=<param name>)])`` and builds
+ * it inside a ``warnings.catch_warnings()`` block that deliberately
+ * swallows pydantic's ``UnsupportedFieldAttributeWarning`` for that
+ * (harmless, FastAPI-only) alias. A deferred model's schema is not
+ * actually built there — pydantic hands back a placeholder and defers the
+ * real build to the first ``validate_python()`` call, which happens
+ * *outside* FastAPI's suppression window, on the request path. In
+ * production, with pydantic's default warning filters, that is one stray
+ * ``UnsupportedFieldAttributeWarning`` per server process (the first
+ * request that reaches this route) — harmless, just a log line. Under any
+ * warnings-as-errors runtime (this repo's test config, or a deployment run
+ * with ``-W error`` / ``PYTHONWARNINGS=error``), the SAME warning is fatal:
+ * every request 500s, not just the first, because the mock validator
+ * re-raises it on every rebuild attempt. Building eagerly, as every model
+ * did before this base gained ``defer_build``, keeps the build inside
+ * FastAPI's own suppression window where it belongs, in both regimes.
+ *
  * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
  * via the `definition` "EventCreateBody".
  */
@@ -449,6 +468,9 @@ export interface EventCreateBody {
  * other fields null means unchanged, same as absent. The merged
  * start/end ordering check happens in the route, where the existing event's
  * values are known.
+ *
+ * ``defer_build=False``: same FastAPI request-body reason as
+ * :class:`EventCreateBody` — see its docstring.
  *
  * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
  * via the `definition` "EventUpdateBody".

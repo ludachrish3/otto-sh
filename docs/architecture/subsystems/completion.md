@@ -148,7 +148,6 @@ lifecycle under the cache commands is on {doc}`../../cli/cache/index`.
 - `otto.config.cache_maintenance` — the marker filenames and window
   constant, and the `clear`/`prune` walk that removes them.
 - `tests/unit/shim/test_differential.py` — the equality proof.
-- `scripts/import_budget.py` — `completion_repo_warm` pins the warm TAB to
-  exactly three modules (`otto`, `otto._shim`, `otto._shim_complete`) and
-  pins `open_home 2` and `scandir 0` on its I/O golden;
-  `completion_repo_handover` pins the cost of a TAB the resolver hands over.
+- `scripts/import_budget.py` — `completion_repo_warm` gates the file
+  operations of a warm TAB the shim answers, and `completion_repo_handover`
+  those of a TAB the resolver hands over ({doc}`../startup-performance`).

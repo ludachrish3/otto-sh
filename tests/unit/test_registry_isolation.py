@@ -388,7 +388,9 @@ def test_host_specs_present_before_the_test_survive_the_restore() -> None:
         _guard_restore(state)
 
         assert os_profile._HOST_SPECS["preexistingos"] is _PreExistingSpec
-        assert os_profile._HOST_SPECS["unix"] is UnixHostSpec
+        # Read through build_host_spec: the built-in's entry may be the Ref it
+        # was registered as, which the restore puts back exactly as it found it.
+        assert os_profile.build_host_spec("unix") is UnixHostSpec
     finally:
         _guard_restore(pristine)
 

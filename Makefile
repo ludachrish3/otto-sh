@@ -645,7 +645,7 @@ docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, cl
 	@$(SAY) "capturing docs termynal blocks"
 	@uv run python scripts/capture_docs_termynal.py --mode force
 
-# THIS GATE MEASURES MODULE SETS AND SYSCALL COUNTS, NEVER WALL-CLOCK: a
+# THIS GATE ENFORCES FILE-OPERATION CEILINGS, NEVER WALL-CLOCK: a
 # timing number fails for reasons outside the change (machine load, thermals,
 # page cache), which is monitoring, not gating. The syscall counts this target
 # enforces reproduced a real NFS deployment's cold start to the one
@@ -653,8 +653,8 @@ docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, cl
 # RTT ~ 2.9 s against an observed ~3 s), where a dev-box wall-clock number
 # predicted nothing about that machine at all — and they repeat identically
 # run to run. See docs/architecture/startup-performance.md.
-profile: ## (Dev) Enforce the import budget (module-count caps + snapshots + denylist + per-interpreter I/O goldens)
-	@$(SAY) "import budget (module caps + snapshots + denylist + I/O goldens)"
+profile: ## (Dev) Enforce the import budget (per-surface file-operation ceilings)
+	@$(SAY) "import budget (per-surface file-operation ceilings)"
 	@uv run python scripts/import_budget.py --check
 
 build: ## (Build & Release) Build the project with uv
@@ -1505,8 +1505,8 @@ monitor-fixtures: ## (Dev) Regenerate the committed monitor dummy-data fixtures 
 	@$(SAY) "regenerating monitor fixtures → web/fixtures/"
 	@uv run python scripts/gen_monitor_fixtures.py web/fixtures
 
-import-snapshot: ## (Dev) Regenerate import-budget golden snapshots — module sets, plus the I/O goldens for THIS interpreter only (`<key>.io.<major.minor>.txt`; the other minors need their own run) + print per-surface counts (run after an intentional import change, then review the diff and update caps)
-	@$(SAY) "updating import-budget golden snapshots"
+import-snapshot: ## (Dev) Regenerate this interpreter's file-operation ceilings (other minors need their own run)
+	@$(SAY) "regenerating this interpreter's file-operation ceilings"
 	@uv run python scripts/import_budget.py --update
 
 api-snapshot: ## (Dev) Regenerate the public-API golden snapshot (otto.__all__ + every deep import path the docs teach — run after adding/removing/renaming a public name or a documented import, then review the diff)

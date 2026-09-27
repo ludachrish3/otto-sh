@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from typing_extensions import override
 
-from ..registry import Registry, caller_module
+from ..registry import Ref, Registry, caller_module
 from ..result import Result
 
 if TYPE_CHECKING:
@@ -121,9 +121,21 @@ class CommandPowerController(PowerController):
         return PowerState.ON if self.status_on in cmd_result.value else PowerState.OFF
 
 
+def _validate_power_controller(type_name: str, cls: type[PowerController]) -> None:
+    """Refuse a controller whose ``type_name`` disagrees with the name it is registered under."""
+    if cls.type_name != type_name:
+        raise ValueError(
+            f"register_power_controller: type_name {type_name!r} doesn't match "
+            f"{cls.__name__}.type_name = {cls.type_name!r}"
+        )
+
+
 POWER_CONTROLLERS: Registry[type[PowerController]] = Registry(
-    "power controller", register_hint="otto.host.power.register_power_controller()"
+    "power controller",
+    register_hint="otto.host.power.register_power_controller()",
+    validate=_validate_power_controller,
 )
+POWER_CONTROLLERS.register("command", Ref("otto.host.power:CommandPowerController"))
 
 
 def register_power_controller(
@@ -134,11 +146,6 @@ def register_power_controller(
     *overwrite* replaces an existing registration under *type_name*
     deliberately (e.g. a built-in); by default a duplicate name raises.
     """
-    if cls.type_name != type_name:
-        raise ValueError(
-            f"register_power_controller: type_name {type_name!r} doesn't match "
-            f"{cls.__name__}.type_name = {cls.type_name!r}"
-        )
     POWER_CONTROLLERS.register(type_name, cls, overwrite=overwrite, origin=caller_module())
 
 
@@ -163,10 +170,3 @@ def power_control_from_spec(value: Any) -> PowerController | None:
         type_name = cfg.pop("type")
         return build_power_controller(type_name)(**cfg)
     raise ValueError(f"cannot build a PowerController from {value!r}")
-
-
-def _register_builtin_power_controllers() -> None:
-    register_power_controller(CommandPowerController.type_name, CommandPowerController)
-
-
-_register_builtin_power_controllers()

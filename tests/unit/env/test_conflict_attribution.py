@@ -8,7 +8,7 @@ which merely MENTION repo names are not.
 
 from pathlib import Path
 
-from otto.env import _attribute_conflict
+from otto.env.manage import _attribute_conflict
 
 
 class _Repo:

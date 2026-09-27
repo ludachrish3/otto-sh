@@ -86,7 +86,8 @@ otto --lab my_lab --show-lab       # full lab details (use -v for expanded outpu
 
 Most environment variables below back a global option; where one does, the
 flag always wins when both are present.  `OTTO_SUT_DIRS`, `OTTO_HOME`,
-`OTTO_TEARDOWN_DEADLINE` and `OTTO_SSH_DEBUG` have no flag.
+`OTTO_TEARDOWN_DEADLINE`, `OTTO_SSH_DEBUG` and `PYDANTIC_DISABLE_PLUGINS` have
+no flag.
 
 | Variable | Backs | Notes |
 | --- | --- | --- |
@@ -100,6 +101,7 @@ flag always wins when both are present.  `OTTO_SUT_DIRS`, `OTTO_HOME`,
 | `OTTO_HOME` | *(no flag)* | otto's user-level home; defaults to `~/.otto`.  Holds one workspace home per `OTTO_SUT_DIRS` set — see [The workspace home](#the-workspace-home) |
 | `OTTO_TEARDOWN_DEADLINE` | *(no flag)* | Seconds an interrupted command's graceful cleanup may run before it is abandoned; defaults to `10` — see {doc}`../architecture/lifecycle` |
 | `OTTO_SSH_DEBUG` | *(no flag)* | asyncssh's own debug level, `1`..`3`; `2` prints the offered and chosen key-exchange, host-key, cipher and MAC lists under `--log-level DEBUG` (a valid value also lifts otto's own `asyncssh` logger floor to `DEBUG`) — see [Legacy SSH servers](../configuration/settings.md#legacy-ssh-servers) |
+| `PYDANTIC_DISABLE_PLUGINS` | *(no flag)* | pydantic's own switch, which the `otto` command sets to `__all__` when you have not set it. Looking for pydantic plugins opens a file in every installed package on the first model build, a network round trip each when the venv is on NFS, and otto uses no pydantic plugins. It covers everything in the process, including the tests `otto test` runs in-process, and every process otto starts inherits it (a host command on `local`, a subprocess of a suite). To use pydantic plugins, set it to the empty string (`PYDANTIC_DISABLE_PLUGINS=`); any value you set is kept. Importing otto as a library leaves it alone |
 
 ## Shell completion
 

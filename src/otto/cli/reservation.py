@@ -160,8 +160,8 @@ def check(ctx: typer.Context) -> None:
 
     # Function-scope: ``otto.cli.reservation`` is one of the budgeted import
     # surfaces, and pulling the fleet accessor (and rich's table machinery) in
-    # at module scope would move the snapshot for every ``otto`` invocation,
-    # not just this subcommand's.
+    # at module scope would charge them to every ``otto reservation``
+    # invocation, ``--help`` included, not just this subcommand's.
     from ..config.fleet import get_hosts_in_play
 
     # NOT rebound onto ``ctx`` — that name is the typer Context this command

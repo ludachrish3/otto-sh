@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import typer
 
+from otto import docker as docker_pkg
 from otto.cli import docker as docker_cli
+from otto.config import fleet as fleet_mod
 from otto.config.lab import Lab
 from otto.config.repo import DockerUseCase, Repo
 from otto.docker.deployment import UseCaseStack
@@ -110,7 +112,7 @@ def test_select_repos_filters_by_lab_applicability(tmp_path):
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[repo_in_lab, repo_out_of_lab]),
-        patch.object(docker_cli, "get_lab", return_value=fake_cfg.lab),
+        patch.object(fleet_mod, "get_lab", return_value=fake_cfg.lab),
     ):
         selected = docker_cli._select_repos(repo_name=None)
 
@@ -140,7 +142,7 @@ def test_select_repos_on_does_not_override_lab_filter(tmp_path, capsys):
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[repo]),
-        patch.object(docker_cli, "get_lab", return_value=fake_cfg.lab),
+        patch.object(fleet_mod, "get_lab", return_value=fake_cfg.lab),
         pytest.raises(typer.Exit) as excinfo,
     ):
         docker_cli._select_repos(repo_name=None, on="test3")
@@ -170,7 +172,7 @@ def test_select_repos_skip_notice_survives_rich_markup(tmp_path, capsys):
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[repo]),
-        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
         pytest.raises(typer.Exit) as excinfo,
     ):
         docker_cli._select_repos(repo_name=None)
@@ -198,7 +200,7 @@ def test_select_repos_filters_by_repo_name(tmp_path):
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[repo1, repo2]),
-        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
     ):
         result = docker_cli._select_repos(repo_name="repo2")
 
@@ -214,7 +216,7 @@ def test_select_repos_no_match_exits(tmp_path):
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[repo1]),
-        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
         patch.object(docker_cli, "rprint"),
         pytest.raises(typer.Exit) as exc,
     ):
@@ -232,7 +234,7 @@ def test_select_repos_bad_on_exits(tmp_path):
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[repo1]),
-        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
         patch.object(docker_cli, "rprint"),
         pytest.raises(typer.Exit) as exc,
     ):
@@ -283,7 +285,7 @@ def test_select_repos_is_blind_to_debris_deploy_time_still_refuses_it(tmp_path):
     # (test3 IS in the active lab) -- it never even looks at the key.
     with (
         patch.object(docker_cli, "get_repos", return_value=[repo1]),
-        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
     ):
         selected = docker_cli._select_repos(repo_name=None)
     assert [r.name for r in selected] == ["repo1"]
@@ -319,9 +321,9 @@ async def test_build_success(tmp_path):
 
     with (
         patch.object(docker_cli, "_select_repos", return_value=[repo]),
-        patch.object(docker_cli, "get_lab", return_value=MagicMock()),
+        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
         patch.object(docker_cli, "_resolve_parent_for_repo", return_value=MagicMock()),
-        patch.object(docker_cli, "build_images", mock_build),
+        patch.object(docker_pkg, "build_images", mock_build),
         patch.object(docker_cli, "rprint", mock_rprint),
     ):
         await docker_cli._build(repo=None, on=None, rebuild=False, image=None)
@@ -347,9 +349,9 @@ async def test_build_skipped(tmp_path):
 
     with (
         patch.object(docker_cli, "_select_repos", return_value=[repo]),
-        patch.object(docker_cli, "get_lab", return_value=MagicMock()),
+        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
         patch.object(docker_cli, "_resolve_parent_for_repo", return_value=MagicMock()),
-        patch.object(docker_cli, "build_images", mock_build),
+        patch.object(docker_pkg, "build_images", mock_build),
         patch.object(docker_cli, "rprint", mock_rprint),
     ):
         await docker_cli._build(repo=None, on=None, rebuild=False, image=None)
@@ -374,9 +376,9 @@ async def test_build_failed_exits(tmp_path):
 
     with (
         patch.object(docker_cli, "_select_repos", return_value=[repo]),
-        patch.object(docker_cli, "get_lab", return_value=MagicMock()),
+        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
         patch.object(docker_cli, "_resolve_parent_for_repo", return_value=MagicMock()),
-        patch.object(docker_cli, "build_images", mock_build),
+        patch.object(docker_pkg, "build_images", mock_build),
         patch.object(docker_cli, "rprint", MagicMock()),
         pytest.raises(typer.Exit) as exc,
     ):
@@ -395,8 +397,8 @@ async def test_build_skips_repo_with_no_images(tmp_path):
 
     with (
         patch.object(docker_cli, "_select_repos", return_value=[repo]),
-        patch.object(docker_cli, "get_lab", return_value=MagicMock()),
-        patch.object(docker_cli, "build_images", mock_build),
+        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
+        patch.object(docker_pkg, "build_images", mock_build),
         pytest.raises(typer.Exit) as excinfo,
     ):
         await docker_cli._build(repo=None, on=None, rebuild=False, image=None)
@@ -415,8 +417,8 @@ async def test_build_composes_only_workspace_fails_loud(tmp_path, capsys):
 
     with (
         patch.object(docker_cli, "_select_repos", return_value=[repo]),
-        patch.object(docker_cli, "get_lab", return_value=MagicMock()),
-        patch.object(docker_cli, "build_images", AsyncMock()),
+        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
+        patch.object(docker_pkg, "build_images", AsyncMock()),
         pytest.raises(typer.Exit) as excinfo,
     ):
         await docker_cli._build(repo=None, on=None, rebuild=False, image=None)
@@ -448,9 +450,9 @@ async def test_build_mixed_workspace_acts_on_one_prints_notice_for_other(tmp_pat
 
     with (
         patch.object(docker_cli, "_select_repos", return_value=[acted, skipped]),
-        patch.object(docker_cli, "get_lab", return_value=MagicMock()),
+        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
         patch.object(docker_cli, "_resolve_parent_for_repo", return_value=MagicMock()),
-        patch.object(docker_cli, "build_images", mock_build),
+        patch.object(docker_pkg, "build_images", mock_build),
     ):
         await docker_cli._build(repo=None, on=None, rebuild=False, image=None)  # must not raise
 
@@ -512,9 +514,9 @@ class TestGenuineSkipsStayedSkipped:
         mock_rprint = MagicMock()
         with (
             patch.object(docker_cli, "_select_repos", return_value=[repo]),
-            patch.object(docker_cli, "get_lab", return_value=MagicMock()),
+            patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
             patch.object(docker_cli, "_resolve_parent_for_repo", return_value=MagicMock()),
-            patch.object(docker_cli, "build_images", AsyncMock(return_value={"myimage": cached})),
+            patch.object(docker_pkg, "build_images", AsyncMock(return_value={"myimage": cached})),
             patch.object(docker_cli, "rprint", mock_rprint),
         ):
             await docker_cli._build(repo=None, on=None, rebuild=False, image=None)
@@ -925,11 +927,11 @@ async def test_build_narrows_to_the_use_case_winners(tmp_path):
 
     with (
         patch.object(docker_cli, "_select_repos", return_value=[winner, loser]),
-        patch.object(docker_cli, "get_lab", return_value=MagicMock()),
+        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
         patch.object(docker_cli, "get_repos", return_value=[winner, loser]),
         patch.object(docker_cli, "_resolve_parent_for_repo", return_value=MagicMock()),
         patch("otto.docker.resolve.select_fragments", return_value=selection),
-        patch.object(docker_cli, "build_images", AsyncMock(side_effect=_build_images)),
+        patch.object(docker_pkg, "build_images", AsyncMock(side_effect=_build_images)),
         patch.object(docker_cli, "rprint", MagicMock()),
     ):
         await docker_cli._build(use_case="integration")
@@ -946,10 +948,10 @@ async def test_build_use_case_narrowing_to_nothing_fails_loud(tmp_path, capsys):
     )
     with (
         patch.object(docker_cli, "_select_repos", return_value=[other]),
-        patch.object(docker_cli, "get_lab", return_value=MagicMock()),
+        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
         patch.object(docker_cli, "get_repos", return_value=[other]),
         patch("otto.docker.resolve.select_fragments", return_value=selection),
-        patch.object(docker_cli, "build_images", AsyncMock()),
+        patch.object(docker_pkg, "build_images", AsyncMock()),
         pytest.raises(typer.Exit) as excinfo,
     ):
         await docker_cli._build(use_case="integration")
@@ -967,13 +969,13 @@ async def test_build_surfaces_a_use_case_resolution_refusal(tmp_path, capsys):
     repo = _make_repo_with_image(tmp_path / "r1", name="repo1", host="test3")
     with (
         patch.object(docker_cli, "_select_repos", return_value=[repo]),
-        patch.object(docker_cli, "get_lab", return_value=MagicMock()),
+        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
         patch.object(docker_cli, "get_repos", return_value=[repo]),
         patch(
             "otto.docker.resolve.select_fragments",
             side_effect=UseCaseResolutionError("capability 'edge' is tied at priority 5"),
         ),
-        patch.object(docker_cli, "build_images", AsyncMock()),
+        patch.object(docker_pkg, "build_images", AsyncMock()),
         pytest.raises(typer.Exit) as excinfo,
     ):
         await docker_cli._build(use_case="integration")
@@ -997,7 +999,7 @@ def test_use_cases_lists_fragments_hosts_env_keys_and_displacements(capsys):
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[winner, loser]),
-        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
         patch("otto.docker.resolve.scope_for_repo", return_value=None),
     ):
         docker_cli._use_cases()
@@ -1032,7 +1034,7 @@ def test_use_cases_renders_the_compose_names_literally_not_as_rich_markup(capsys
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[repo]),
-        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
         patch("otto.docker.resolve.scope_for_repo", return_value=None),
     ):
         docker_cli._use_cases()
@@ -1050,7 +1052,7 @@ def test_use_cases_prints_the_resolution_error_instead_of_a_host(capsys):
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[repo]),
-        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
         patch("otto.docker.resolve.scope_for_repo", return_value=None),
     ):
         docker_cli._use_cases()  # exit 0
@@ -1076,7 +1078,7 @@ def test_use_cases_prints_a_provider_tie_refusal_instead_of_a_table_row(capsys):
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[a, b, healthy]),
-        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
         patch("otto.docker.resolve.scope_for_repo", return_value=None),
     ):
         docker_cli._use_cases()  # exit 0 — a listing reports, it does not raise
@@ -1095,7 +1097,7 @@ def test_use_cases_filters_to_the_named_use_case(capsys):
 
     with (
         patch.object(docker_cli, "get_repos", return_value=repos),
-        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
         patch("otto.docker.resolve.scope_for_repo", return_value=None),
     ):
         docker_cli._use_cases(use_case="soak")
@@ -1115,7 +1117,7 @@ def test_use_cases_filter_naming_nothing_refuses_loudly(capsys):
     """
     with (
         patch.object(docker_cli, "get_repos", return_value=[_uc_repo("repo1", _uc())]),
-        patch.object(docker_cli, "get_lab", return_value=Lab(name="unix")),
+        patch.object(fleet_mod, "get_lab", return_value=Lab(name="unix")),
         pytest.raises(typer.Exit) as excinfo,
     ):
         docker_cli._use_cases(use_case="integraton")
@@ -1129,7 +1131,7 @@ def test_use_cases_filter_naming_nothing_refuses_loudly(capsys):
 def test_use_cases_says_so_when_nothing_is_declared(capsys):
     with (
         patch.object(docker_cli, "get_repos", return_value=[_uc_repo("repo1")]),
-        patch.object(docker_cli, "get_lab", return_value=Lab(name="unix")),
+        patch.object(fleet_mod, "get_lab", return_value=Lab(name="unix")),
     ):
         docker_cli._use_cases()  # exit 0 — an empty inventory is an answer
 
@@ -1172,7 +1174,7 @@ def test_use_cases_runs_through_the_production_dispatch():
 
     with (
         patch.object(docker_cli, "get_repos", return_value=[_uc_repo("repo1", _uc())]),
-        patch.object(docker_cli, "get_lab", return_value=Lab(name="unix")),
+        patch.object(fleet_mod, "get_lab", return_value=Lab(name="unix")),
     ):
         result = DispatchRunner().invoke(docker_app, ["use-cases"], spec_name="docker")
 
@@ -1235,9 +1237,9 @@ async def test_ps_all_hosts_table(tmp_path):
     mock_rprint = MagicMock()
 
     with (
-        patch.object(docker_cli, "get_lab", return_value=lab),
-        patch.object(docker_cli, "compose_ps", mock_compose_ps),
-        patch.object(docker_cli, "Table", mock_table_cls),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
+        patch.object(docker_pkg, "compose_ps", mock_compose_ps),
+        patch("rich.table.Table", mock_table_cls),
         patch.object(docker_cli, "rprint", mock_rprint),
     ):
         await docker_cli._ps(on=None)
@@ -1265,7 +1267,7 @@ async def test_ps_bad_host_exits():
     lab.hosts["meh_host"] = host
 
     with (
-        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
         patch.object(docker_cli, "rprint", MagicMock()),
         pytest.raises(typer.Exit) as exc,
     ):
@@ -1292,8 +1294,8 @@ async def test_ps_all_docker_capable_hosts():
     mock_rprint = MagicMock()
 
     with (
-        patch.object(docker_cli, "get_lab", return_value=lab),
-        patch.object(docker_cli, "compose_ps", mock_compose_ps),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
+        patch.object(docker_pkg, "compose_ps", mock_compose_ps),
         patch.object(docker_cli, "rprint", mock_rprint),
     ):
         await docker_cli._ps(on=None)
@@ -1316,8 +1318,8 @@ async def test_ps_specific_capable_host():
     mock_rprint = MagicMock()
 
     with (
-        patch.object(docker_cli, "get_lab", return_value=lab),
-        patch.object(docker_cli, "compose_ps", mock_compose_ps),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
+        patch.object(docker_pkg, "compose_ps", mock_compose_ps),
         patch.object(docker_cli, "rprint", mock_rprint),
     ):
         await docker_cli._ps(on="cap_host")
@@ -1451,7 +1453,7 @@ def test_select_repos_empty_selection_fails_loud(tmp_path, capsys):
     lab.name = "unix"
     lab.hosts = {"test3": MagicMock(spec=UnixHost)}
     with (
-        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
         patch.object(docker_cli, "get_repos", return_value=[repo]),
         pytest.raises(typer.Exit) as excinfo,
     ):
@@ -1469,7 +1471,7 @@ def test_select_repos_prints_exclusions_even_when_others_selected(tmp_path, caps
     lab.name = "unix"
     lab.hosts = {"test3": MagicMock(spec=UnixHost)}
     with (
-        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
         patch.object(docker_cli, "get_repos", return_value=[kept, skipped]),
     ):
         selected = docker_cli._select_repos(None)
@@ -1491,7 +1493,7 @@ def test_select_repos_no_docker_repos_fails_loud(tmp_path, capsys):
     plain.docker_settings = DockerSettings()  # real empty settings — Mock attrs are
     # truthy and would defeat the `if not ... composes` guards
     with (
-        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
         patch.object(docker_cli, "get_repos", return_value=[plain]),
         pytest.raises(typer.Exit) as excinfo,
     ):

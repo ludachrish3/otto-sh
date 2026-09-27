@@ -6,6 +6,8 @@ sessions are never touched. Wire failures are classified, never guessed.
 """
 
 import asyncio
+import subprocess
+import sys
 
 import asyncssh
 import pytest
@@ -16,6 +18,7 @@ from otto.host.login_proxy import Cred, LoginProxyError
 from otto.host.options import FtpOptions, SshOptions, TelnetOptions
 from otto.host.survey.login import (
     LoginOutcome,
+    _raised_by_asyncssh,
     attempt_ftp_login,
     attempt_term_login,
     classify_login_error,
@@ -360,3 +363,69 @@ async def test_an_attempt_cancelled_by_the_outer_budget_still_closes_its_copy(
     with pytest.raises((TimeoutError, asyncio.TimeoutError)):
         await asyncio.wait_for(attempt(host), 0.05)
     assert closed, "the cancelled attempt never closed its copy"
+
+
+# ---------------------------------------------------------------------------
+# asyncssh belongs to the SSH shapes only (spec 2026-09-26 R18)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_login_error_never_imports_asyncssh_for_non_ssh_failures():
+    """Every non-SSH failure shape ``_named_failure`` recognises must classify
+    without ever loading asyncssh -- a fresh interpreter proves it, since a
+    module already in ``sys.modules`` (this test file imports asyncssh itself)
+    would hide an eager import back in the product code.
+    """
+    code = (
+        "import sys\n"
+        "from otto.host.login_proxy import LoginProxyError\n"
+        "from otto.host.survey.login import classify_login_error\n"
+        "\n"
+        "classify_login_error(ConnectionRefusedError(), who='login x')\n"
+        "classify_login_error(LoginProxyError('x'), who='login x')\n"
+        "classify_login_error(TimeoutError(), who='login x')\n"
+        "classify_login_error(\n"
+        "    ConnectionError('shell never became ready'), who='login x'\n"
+        ")\n"
+        "wrapped = ConnectionError('shell never became ready')\n"
+        "wrapped.__cause__ = ConnectionRefusedError()\n"
+        "classify_login_error(wrapped, who='login x')\n"
+        "print('asyncssh' in sys.modules)\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip().splitlines()[-1] == "False", out.stdout + out.stderr
+
+
+def test_asyncssh_timeout_error_still_classifies_as_timeout():
+    """``asyncssh.TimeoutError`` is recognised by :func:`_raised_by_asyncssh`
+    (it is asyncssh's own class), but none of ``_named_ssh_failure``'s three
+    arms match it, so it MUST fall through to the neutral timeout arm rather
+    than being swallowed as "no SSH shape matched, nothing else to try."
+
+    Mutation: skip the fall-through (return ``_named_ssh_failure``'s ``None``
+    straight to the caller) and this misclassifies as the generic
+    ``login-failed`` catch-all instead of ``timeout``.
+    """
+    exc = asyncssh.TimeoutError(
+        env=None,
+        command=None,
+        subsystem=None,
+        exit_status=None,
+        exit_signal=None,
+        returncode=None,
+        stdout="",
+        stderr="",
+    )
+    out = classify_login_error(exc, who="login 'admin'")
+    assert out.state == "timeout"
+
+
+def test_raised_by_asyncssh_walks_the_mro():
+    """Recognises an asyncssh exception, a local subclass of one, and rejects a builtin."""
+
+    class _LocalSubclass(asyncssh.PermissionDenied):
+        """A subclass defined outside asyncssh's own modules."""
+
+    assert _raised_by_asyncssh(asyncssh.PermissionDenied("denied"))
+    assert _raised_by_asyncssh(_LocalSubclass("denied"))
+    assert not _raised_by_asyncssh(ValueError("not ssh"))

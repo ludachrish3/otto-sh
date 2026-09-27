@@ -1,0 +1,83 @@
+id: no-branching-on-import-state
+language: python
+severity: error
+message: this reads `sys.modules` to decide what to do, so behaviour depends on what happens to be imported. Make the saving structural (a lazy table, a `Ref`, a function-scope import) or keep your own record of what you loaded.
+note: >
+  Startup savings are structural, never conditional (docs/contributing.md,
+  "Never branch on import state"). Code that asks `sys.modules` whether
+  something is loaded behaves differently depending on which command, test
+  order or plugin imported what first, and the ceilings cannot see a saving
+  that only exists on some paths.
+
+  Flagged: `x in sys.modules`, `x not in sys.modules`, `sys.modules.get(...)`,
+  `sys.modules[...]` in a read position, the views and `setdefault`
+  (`sys.modules.keys()`, `.items()`, `.values()`, `.setdefault(...)`, so
+  `x in sys.modules.keys()` too), and iterating `sys.modules` in a `for`
+  statement or a comprehension. Writes are how a loader installs
+  or evicts a module and are not flagged: `sys.modules[name] = mod`,
+  `del sys.modules[name]`, `sys.modules.pop(...)`, and the snapshot-restore
+  pair `sys.modules.copy()` / `.clear()` + `.update(...)`.
+
+  What the rule cannot see, and does not ban: `try: import X` /
+  `except ImportError` is legitimate for an optional dependency or a platform
+  module (termios), so only review can tell it apart from one used for speed;
+  a flag that records what is loaded is ordinary code; passing `sys.modules`
+  whole to a call (`list(sys.modules)`, `sorted(sys.modules)`) is not
+  matched; `from sys import
+  modules` and `import sys as s` spell `sys.modules` another way. Review owns
+  all of these.
+
+  One site is allowed, by shape: `mod_name in sys.modules` inside a function
+  named `import_test_file` (otto.config.repo.Repo.import_test_file). That is
+  the suite-file loader's idempotency check, not an import-cost probe: a
+  user's test file must load exactly once, because loading it registers its
+  suites. Its record has to be the module table: evicting an
+  `_otto_suite_*` module from `sys.modules` is how a caller asks for a fresh
+  load (the suite tests do it, with the suite registry rolled back), and a
+  private record of loaded files would not see the eviction and would skip a
+  load that must happen.
+files:
+- src/otto/**/*.py
+rule:
+  all:
+  - any:
+    - pattern: $KEY in sys.modules
+    - pattern: $KEY not in sys.modules
+    - pattern: sys.modules.get($$$)
+    - kind: call
+      has:
+        field: function
+        regex: '^sys\.modules\.(keys|items|values|setdefault)$'
+    # for name in sys.modules: / [m for m in sys.modules if ...]
+    - any:
+      - kind: for_statement
+      - kind: for_in_clause
+      has:
+        field: right
+        regex: '^sys\.modules$'
+    # A read subscript: not the target of an assignment or augmented
+    # assignment, and not under `del`.
+    - all:
+      - kind: subscript
+      - has:
+          field: value
+          regex: '^sys\.modules$'
+      - not:
+          inside:
+            any:
+            - kind: assignment
+            - kind: augmented_assignment
+            field: left
+      - not:
+          inside:
+            kind: delete_statement
+            stopBy: end
+  - not:
+      all:
+      - pattern: mod_name in sys.modules
+      - inside:
+          kind: function_definition
+          stopBy: end
+          has:
+            field: name
+            regex: '^import_test_file$'

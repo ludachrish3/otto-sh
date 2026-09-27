@@ -53,6 +53,25 @@ class TestBuiltins:
     def test_builtins_registered(self):
         assert set(registered_profile_names()) >= {"unix", "embedded", "zephyr"}
 
+    def test_builtin_profiles_pass_register_os_profiles_checks(self):
+        """The built-ins are written straight into OS_PROFILES, so run the public checks here.
+
+        ``register_os_profile`` validates ``defaults`` against the base class's
+        fields, which would import the host class the built-ins name by
+        reference; re-registering each built-in through it holds them to the
+        same checks a third party's profile gets, and changes nothing.
+        """
+        for name in ["unix", "embedded", "zephyr", "busybox"]:
+            profile = build_os_profile(name)
+            register_os_profile(
+                profile.name,
+                profile.base,
+                profile.defaults,
+                login_prompt=profile.login_prompt,
+                password_prompt=profile.password_prompt,
+            )
+            assert build_os_profile(name) == profile
+
     def test_unix_and_embedded_have_no_defaults(self):
         assert build_os_profile("unix") == OsProfile(
             "unix", "unix", {}, login_prompt=r"login: ?$", password_prompt=r"[Pp]assword: ?$"
@@ -229,12 +248,15 @@ class TestHostSpecRegistry:
 
     def test_register_no_spec_and_no_base_spec_raises(self):
         # A direct RemoteHost subclass: no base in its MRO has a registered
-        # spec, and none was passed -> fail loud rather than store None.
+        # spec, and none was passed -> fail loud rather than store None. It
+        # declares capabilities, so the class itself passes HOST_CLASSES's
+        # validator and the spec lookup is what refuses it.
         from otto.host.os_profile import register_host_class
         from otto.host.remote_host import RemoteHost
+        from otto.host.unix_host import UnixHost
 
         class BareRemoteHost(RemoteHost):
-            pass
+            capabilities = UnixHost.capabilities
 
         with pytest.raises(ValueError, match="no spec given"):
             register_host_class("bare", BareRemoteHost)

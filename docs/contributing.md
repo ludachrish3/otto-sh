@@ -187,7 +187,7 @@ uv run pytest         # run the test suite
 `make dev` places `otto` at `otto-sh/.venv/bin/otto`.
 
 `strace` (≥ 5.3) is a separate dev prerequisite `make dev` does not install,
-used by the import-budget tests to count stat syscalls: `sudo apt-get install
+used by the import-budget tests to count file operations: `sudo apt-get install
 strace`.
 
 The test suite caches its bytecode under `$XDG_CACHE_HOME/otto/pytest-pycache`
@@ -195,7 +195,7 @@ The test suite caches its bytecode under `$XDG_CACHE_HOME/otto/pytest-pycache`
 `tests/conftest.py` exports `PYTHONPYCACHEPREFIX` for you, so there is nothing
 to set, and a session that does write a `__pycache__` under `src/otto` fails
 with the directory named. Bytecode written into the editable tree bumps a
-package directory's mtime and moves another process's audited import counters
+package directory's mtime and moves another process's file-operation counts
 (#321/#343/#360/#361). That cache also lives outside the checkout, which is why
 `make clean` does not empty it.
 
@@ -896,6 +896,90 @@ diagnostics and `make typecheck` stay in sync.
 ```bash
 uv run pyinstrument -o profile.txt -m otto <subcommand> [args]
 ```
+
+### The import budget
+
+Every command's startup cost is gated in file operations, per surface and per
+Python minor. What is counted, how the ceilings and target ratios work, and
+the bytecode cache the harness keeps (including how to clear it) are on
+[Startup performance on network filesystems](architecture/startup-performance.md#what-holds-these-numbers-in-place).
+The workflow:
+
+```bash
+make profile                              # enforce the ceilings (scripts/import_budget.py --check)
+uv run python scripts/import_budget.py    # print the table, gated and tracked surfaces, without checking
+uv run python scripts/import_budget.py --report-json budget.json   # the same, with full breakdowns
+make import-snapshot                      # regenerate THIS interpreter's ceilings file
+```
+
+- **Regenerate per interpreter.** `make import-snapshot` rewrites only the
+  running interpreter's `tests/unit/import_budget/ceilings/<major>.<minor>.json`.
+  For another minor, install its nox env and run the script with that
+  interpreter: `uv run nox -s tests_hostless-3.14 --install-only`, then
+  `.nox/tests_hostless-3-14/bin/python scripts/import_budget.py --update`.
+  A missing-baseline failure prints the same commands for the interpreter
+  it ran on.
+- **Never regenerate to absorb a cost increase without saying so.** A
+  regeneration that raises a baseline goes in a commit whose message says
+  which surface grew, by how much, and why the verb needs it; the failure's
+  breakdown names what grew. The same holds for raising a `target_ratio`.
+- **An advisory `NOTE` is an invitation, not a failure.** It says a counter
+  now sits well under its ceiling; regenerate to pin the saving.
+
+### Register built-ins by reference
+
+A registry's built-in entries are registered in the module that defines the
+registry, as a {class}`~otto.registry.Ref` naming the implementation
+(`Ref("otto.host.transfer.nc:NcFileTransfer")`), never by the implementation
+module registering itself on import. Listing the registry then imports
+nothing, and a lookup imports only the entry it names. The mechanism and its
+guards are on {doc}`architecture/subsystems/registries`.
+
+### Never branch on import state
+
+Startup savings are structural, never conditional.
+
+- **Allowed:**
+  - declarative tables (a lazy package's `_LAZY_*` table, a registry's
+    references);
+  - one configuration line;
+  - an override on the class that owns the behaviour;
+  - deletion;
+  - a function-scope import in the one function that genuinely needs a
+    heavy dependency.
+- **Not allowed:**
+  - branching on import state: `sys.modules` probes, `try: import … except
+    ImportError` for speed, or flags recording what is loaded;
+  - helpers or guards whose only purpose is dodging an import.
+- **A deferral must earn its place.** Each change names its measured saving
+  on a gated surface. A change the ceilings cannot see is not made. An
+  optimization that cannot be expressed structurally is not made.
+
+`.ast-grep/rules/no-branching-on-import-state.yml` flags a `sys.modules`
+probe; its `note:` says what it cannot see.
+
+### Import bans
+
+The ceilings measure cost; they do not say which import caused it. Two
+layers name an edge that regrows:
+
+- **Direct edges** are ast-grep rules, run by `make lint-arch`, and name the
+  offending line itself:
+  `.ast-grep/rules/lazy-package-init-stays-lazy.yml` keeps every package's
+  `__init__` free of eager imports, and
+  `.ast-grep/rules/cli-command-no-module-scope-heavy-import.yml` keeps a short
+  denylist of heavy modules off the top of `src/otto/cli/` modules. A new
+  denylist entry needs a measured cut behind it; the rule's `note:` lists the
+  current ones. `tests/unit/test_import_ban_rules.py` keeps that denylist in
+  step with the lazy tables: a lazy name that loads a denylisted module is
+  banned too.
+- **Transitive edges** are rows in `IMPORT_CONTRACTS` in
+  `tests/unit/test_import_contracts.py`: an import statement mapped to the
+  modules it must never load. A failing row prints the chain of imports that
+  loaded the module, ending at the line that imported it; the last otto frame
+  in that chain is the edge to cut. `IMPORT_MUST_LOAD` in the same file is
+  the positive control: what an entry must load, so that a row cannot pass
+  by loading nothing at all.
 
 ## AI-Assisted Contributions
 

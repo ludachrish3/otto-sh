@@ -16,7 +16,6 @@ Review mode (serves a previously saved export; no live collection):
     otto monitor metrics.json
 """
 
-import asyncio
 import logging
 import re
 import ssl
@@ -25,10 +24,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import typer
-from pydantic import ValidationError
 
-from ..config import all_hosts, get_lab
-from ..models import MIN_INTERVAL_SECONDS, MonitorExport
+from ..models import MIN_INTERVAL_SECONDS
 
 # The monitor runtime (collector/db/export/factory/session) is deliberately NOT
 # imported here, matching this module's deferred-import convention and the
@@ -38,6 +35,7 @@ from ..models import MIN_INTERVAL_SECONDS, MonitorExport
 if TYPE_CHECKING:
     from ..config import MonitorSettings
     from ..host.remote_host import RemoteHost
+    from ..models import MonitorExport
     from ..monitor.collector import MetricCollector
     from ..monitor.db import MetricDB
     from ..monitor.server import MonitorServer
@@ -289,6 +287,7 @@ def monitor(
     present_reservation_gate(ctx)
 
     from ..bootstrap import ProjectScopeError
+    from ..config.fleet import all_hosts, get_lab
     from ..config.scope import EmptySelectionError
     from ..host import UnixHost
 
@@ -407,8 +406,12 @@ def monitor(
     )
 
 
-def _load_review_document(path: Path) -> MonitorExport:
+def _load_review_document(path: Path) -> "MonitorExport":
     """Load a saved format:1 export for review mode. Exits 1 on any failure."""
+    from pydantic import ValidationError
+
+    from ..models import MonitorExport
+
     suffix = path.suffix.lower()
     if suffix == ".json":
         try:
@@ -499,7 +502,7 @@ def _resolve_monitor_tls() -> "MonitorSettings | None":
 
 
 async def _serve_review(
-    export: MonitorExport,
+    export: "MonitorExport",
     source_name: str,
     tls: "MonitorSettings | None" = None,
     archive_path: Path | None = None,
@@ -548,6 +551,8 @@ async def _run_monitor(
 
     # Imported before the try: an ImportError inside the finally would mask
     # serve()'s own exception.
+    import asyncio
+
     from ..host.connections import teardown_step
 
     try:

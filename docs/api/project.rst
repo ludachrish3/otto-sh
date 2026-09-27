@@ -13,6 +13,7 @@ inherits (``InstallOptions`` and its five siblings) are exported from
 treatment, flag tables and all.
 
 .. automodule:: otto.project
+   :no-members:
 
 .. automodule:: otto.project.actions
 

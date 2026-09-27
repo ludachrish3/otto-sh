@@ -30,18 +30,19 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # anchor_path lives in ..utils (stdlib-only, imports nothing from otto) so
 # the runtime readers that need it (coverage, reservations) never have to
 # import this pydantic-heavy module just to anchor a path — see the
-# import-budget guard.
+# import-budget guard. parse_cache_ttl lives there for the mirror reason:
+# beside the inventory record it would put the host specs, and the host
+# classes under them, on every command that reads settings.
 # otto.logger.levels is stdlib-only and is imported eagerly by otto.logger's
 # package __init__ anyway; it costs this module nothing (no rich — `management`
 # is a lazy PEP 562 export) and it is what keeps the accepted level names below
 # from drifting out of the module that registers them.
 from ..declared import DeclaredEntry, MatchLeaf, validate_match_table
 from ..logger.levels import LEVEL_ALIASES
-from ..utils import anchor_path
+from ..utils import anchor_path, parse_cache_ttl
 from .base import OttoModel
 from .color import validate_color
 from .dependencies import clauses_satisfiable, normalize_name, parse_dependency_entry
-from .inventory import parse_cache_ttl
 from .options import (
     FtpOptionsSpec,
     NcOptionsSpec,

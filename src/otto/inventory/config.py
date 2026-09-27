@@ -14,8 +14,8 @@ IMPORT DISCIPLINE: everything this module needs from :mod:`otto.config` and
 the annotation-only names sit under ``TYPE_CHECKING``. Measured: importing
 them at module level takes a bare ``import otto.inventory`` from 77 to 96
 otto modules. ``otto.inventory`` sits on the bootstrap path, so that graph
-would land on every CLI surface and break the same import-budget caps the
-``otto.config`` lazy exports exist to defend. The edges are real and declared
+would land on every CLI surface, the same cost the ``otto.config`` lazy
+exports exist to keep off it. The edges are real and declared
 in ``tach.toml``; only the *timing* is deferred.
 """
 
@@ -28,8 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from ..models.inventory import parse_cache_ttl
-from ..utils import anchor_path
+from ..utils import anchor_path, parse_cache_ttl
 from .creds import CredsOverlay
 from .errors import InventoryError
 from .protocol import Inventory

@@ -4,10 +4,10 @@ Mirrors otto's other extension registries (``register_term_backend`` /
 ``register_transfer_backend`` / ``register_host_class``): a custom backend
 registers a bare name from an ``init`` module, and ``[reservations] backend =
 "<name>"`` selects it. Built-ins ``none`` and ``json`` are pre-registered at
-import so they resolve through the same path.
+import, by :class:`~otto.registry.Ref`, so they resolve through the same lookup.
 """
 
-from ..registry import Registry, caller_module
+from ..registry import Ref, Registry, caller_module
 
 # Name -> ReservationBackend-compatible class. ``build_backend`` constructs the
 # resolved class (built-ins keep their bespoke construction; custom backends get
@@ -42,12 +42,13 @@ def get_reservation_backend_class(name: str) -> type:
 
 
 def _register_builtins() -> None:
-    """Register the built-in reservation backends through the public path."""
-    from .json_backend import JsonReservationBackend
-    from .null_backend import NullReservationBackend
-
-    register_reservation_backend("none", NullReservationBackend)
-    register_reservation_backend("json", JsonReservationBackend)
+    """Register the built-in reservation backends by reference."""
+    RESERVATION_BACKENDS.register(
+        "none", Ref("otto.reservations.null_backend:NullReservationBackend")
+    )
+    RESERVATION_BACKENDS.register(
+        "json", Ref("otto.reservations.json_backend:JsonReservationBackend")
+    )
 
 
 _register_builtins()

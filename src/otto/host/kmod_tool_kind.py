@@ -16,7 +16,7 @@ params exist here.
 ``kgcov`` fixes the module name to ``otto_kgcov`` and adds the library's
 interface check: a built ``.ko`` reports ``<otto version>+kgcov<n>`` through
 ``MODULE_VERSION`` (:mod:`otto.kgcov`), and one whose ``n`` is not this
-otto's :data:`otto.kgcov.INTERFACE` is refused — at lab load when the file
+otto's :data:`otto.kgcov.library.INTERFACE` is refused — at lab load when the file
 exists, and again at ``install``, before it is ever loaded. Lab load also
 refuses both ways the binding can fail: a host matching two kgcov entries (a
 host has one kernel and holds one otto_kgcov), and a host whose
@@ -34,7 +34,7 @@ from typing_extensions import override
 from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
-from .dev_tool import DEV_TOOL_KINDS, DevTool
+from .dev_tool import DevTool
 from .product import resolve_stage_dir, stage_dir_key
 from .shell_kind import stage_dir_param, str_param
 
@@ -188,9 +188,6 @@ def _kmod_tool_kind(entry: DeclaredEntry, host: "Host") -> KmodTool:
     )
 
 
-DEV_TOOL_KINDS.register("kmod", _kmod_tool_kind, origin=__name__)
-
-
 @dataclass
 class KgcovTool(KmodTool):
     """A ``kind = "kgcov"`` dev tool: the otto_kgcov library built for one kernel."""
@@ -329,6 +326,3 @@ def _kgcov_tool_kind(entry: DeclaredEntry, host: "Host") -> KgcovTool:
         if problem is not None:
             raise ValueError(f"[[dev_tools]] {problem}")
     return tool
-
-
-DEV_TOOL_KINDS.register("kgcov", _kgcov_tool_kind, origin=__name__)

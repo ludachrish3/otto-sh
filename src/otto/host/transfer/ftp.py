@@ -1,6 +1,6 @@
 """FTP file transfer backend for UnixHost.
 
-Registers ``ftp`` into the shared transfer registry on import.
+``otto.host.transfer.registry`` registers it as ``ftp``, by reference.
 """
 
 import asyncio
@@ -24,7 +24,6 @@ from .base import (
     TransferContext,
     TransferProgressFactory,
 )
-from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
 
 _logger = logging.getLogger(__name__)
@@ -32,9 +31,10 @@ _logger = logging.getLogger(__name__)
 # aioftp's own block size, mirrored rather than imported. Both arms use it:
 # PUT reads `f.read(aioftp.DEFAULT_BLOCK_SIZE)` per `stream.write`, and
 # GET's `stream.iter_by_block()` defaults to `count=DEFAULT_BLOCK_SIZE`.
-# `aioftp` is imported LAZILY inside the transfer methods and is absent from
-# the `host` import-budget snapshot, so reading the constant at class-body
-# time would pull the package into every `otto host` invocation. The pin
+# `aioftp` is imported LAZILY inside the transfer methods, and host-class
+# discovery must never load it (a row in tests/unit/test_import_contracts.py),
+# so reading the constant at class-body time would pull the package into every
+# `otto host` invocation. The pin
 # against the real constant lives in the unit tests instead
 # (`test_transfer_registry.py::test_the_ftp_stride_is_aioftps_own_block_size`).
 _FTP_BLOCK_SIZE = 8192
@@ -298,6 +298,3 @@ class FtpFileTransfer(UnixFileTransfer):
             return Result(Status.Success, value=dst)
 
         return await self._dispatch_per_file(src_files, _put_one, concurrent=concurrent)
-
-
-register_transfer_backend("ftp", FtpFileTransfer)

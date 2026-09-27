@@ -18,7 +18,6 @@ from .impairer import (
     MAX_SELECTORS,
     LinkImpairer,
     ScopedState,
-    register_impairer,
 )
 from .params import ImpairmentParams, Selector, collides
 
@@ -538,6 +537,3 @@ class NetEmImpairer(LinkImpairer):
     def parse_scoped(self, qdisc_output: str, filter_output: str) -> ScopedState:
         """Parse :meth:`scoped_read_commands` outputs via :func:`parse_scoped_outputs`."""
         return parse_scoped_outputs(qdisc_output, filter_output)
-
-
-register_impairer("netem", NetEmImpairer)

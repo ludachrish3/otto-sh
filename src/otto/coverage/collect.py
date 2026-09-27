@@ -164,7 +164,7 @@ async def collect_coverage(
     Args:
         cov_dir: Destination directory for the collected coverage.
         repos: Repo list to resolve ``[coverage]`` from (defaults to
-            :func:`otto.config.get_repos`).
+            :func:`otto.config.get_repos <otto.config.bootstrapped.get_repos>`).
         tier: Tier name to annotate onto each capture; ``None`` resolves the
             sole e2e-kind tier. A caller that has already resolved a
             :class:`~otto.coverage.tiers.TierConfig` (e.g. ``otto cov get``,

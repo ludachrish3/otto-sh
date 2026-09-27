@@ -6,7 +6,11 @@ replaced with a virtual clock that advances only when the helper sleeps, so
 probe schedules are asserted exactly — no real waiting, no tolerance windows.
 """
 
+import asyncio
+from collections.abc import AsyncIterator
+
 import pytest
+import pytest_asyncio
 
 import otto.utils as utils_mod
 from otto.utils import WaitTimeoutError, wait_for, wait_for_async
@@ -27,22 +31,6 @@ class FakeClock:
         self.now += duration
 
 
-class FakeAsyncio:
-    """Stand-in for utils' ``asyncio`` reference: loop clock + sleep on a FakeClock."""
-
-    def __init__(self, clock: FakeClock) -> None:
-        self._clock = clock
-
-    def get_running_loop(self) -> "FakeAsyncio":
-        return self
-
-    def time(self) -> float:
-        return self._clock.now
-
-    async def sleep(self, duration: float) -> None:
-        self._clock.sleep(duration)
-
-
 @pytest.fixture
 def clock(monkeypatch) -> FakeClock:
     fake = FakeClock()
@@ -50,11 +38,27 @@ def clock(monkeypatch) -> FakeClock:
     return fake
 
 
-@pytest.fixture
-def async_clock(monkeypatch) -> FakeClock:
+@pytest_asyncio.fixture
+async def async_clock(monkeypatch) -> AsyncIterator[FakeClock]:
+    """Run the test loop's clock and ``asyncio.sleep`` on a FakeClock.
+
+    Those are the two things ``wait_for_async`` reads from asyncio; every
+    other asyncio attribute stays the real one.
+
+    The patches are undone in this fixture's own teardown, which runs before
+    the event loop's: the ``monkeypatch`` fixture itself is set up before the
+    loop, so its teardown would come after the loop's, and the loop would
+    shut down on the fake clock and the fake ``asyncio.sleep``.
+    """
     fake = FakeClock()
-    monkeypatch.setattr(utils_mod, "asyncio", FakeAsyncio(fake))
-    return fake
+
+    async def sleep(duration: float) -> None:
+        fake.sleep(duration)
+
+    with monkeypatch.context() as m:
+        m.setattr(asyncio.get_running_loop(), "time", fake.monotonic)
+        m.setattr(asyncio, "sleep", sleep)
+        yield fake
 
 
 def test_immediate_success_probes_once_and_never_sleeps(clock):

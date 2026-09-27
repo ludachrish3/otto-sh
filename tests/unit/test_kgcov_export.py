@@ -23,7 +23,7 @@ def test_every_shipped_file_exists_and_the_package_holds_nothing_else():
     for name in kgcov.SHIPPED_FILES:
         assert (PACKAGE / name).is_file(), name
     on_disk = {p.name for p in PACKAGE.iterdir() if p.name != "__pycache__"}
-    assert on_disk == {*kgcov.SHIPPED_FILES, kgcov.VERSION_HEADER, "__init__.py"}, (
+    assert on_disk == {*kgcov.SHIPPED_FILES, kgcov.VERSION_HEADER, "__init__.py", "library.py"}, (
         "the wheel ships every file under src/otto/: a build product or a stray file here "
         "would ship too"
     )

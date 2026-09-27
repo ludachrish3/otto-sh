@@ -169,55 +169,187 @@ above. Use it to see **where the syscalls actually go** — run it once
 before a change and once after to confirm the change moved the number that
 matters, rather than assuming it did.
 
+## Startup follows the verb
+
+Each command should pay only for its own verb: `otto host local exec`
+imports the host code it runs, but not the SSH stack (`asyncssh`,
+`cryptography`), `otto.coverage`, `otto.tunnel` or pytest, which other verbs
+need. Three structural choices keep it that way.
+
+- **Lazy packages.** `otto` and every one of its packages export their
+  names through PEP 562; an `__init__` with nothing to export holds only its
+  docstring. A `_LAZY_*` table maps each exported name to the module that
+  defines it, a generic module-level `__getattr__` resolves a name from that
+  table, `__dir__` answers from the table, a literal `__all__` serves star
+  imports, and a `TYPE_CHECKING` block of the real imports is what `ty`, IDEs
+  and Sphinx read. An `__init__` imports nothing else at module scope and
+  defines no code of its own, which sits instead in a named submodule the
+  table points at (`otto.env.manage`, `otto.kgcov.library`). The exceptions
+  are few: `otto`, `otto.logger`, `otto.config` and `otto.host.transfer`
+  keep the eager imports they cannot work without (and `otto` the library
+  `NullHandler` its `logging` import attaches), each an entry, with its
+  reason, in [the lazy-init rule's allow-list](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/lazy-package-init-stays-lazy.yml).
+  `from otto.host import LocalHost` imports `otto.host.local_host` and
+  nothing else, and importing a submodule runs its package's table plus
+  those allowed pieces. `tests/unit/test_lazy_packages.py` holds every
+  package init to that shape and keeps each table and its `TYPE_CHECKING`
+  block in step.
+
+  The house shape, trimmed from `src/otto/monitor/__init__.py` (the smallest
+  full example, and the one to copy):
+
+  ```python
+  from typing import TYPE_CHECKING
+
+  if TYPE_CHECKING:
+      from .collector import MetricCollector as MetricCollector
+
+  # name -> the module that defines it, imported on first access.
+  _LAZY_ATTRS: dict[str, str] = {
+      "MetricCollector": "otto.monitor.collector",
+  }
+
+
+  def __getattr__(name: str) -> object:
+      import importlib
+
+      if name in _LAZY_ATTRS:
+          return getattr(importlib.import_module(_LAZY_ATTRS[name]), name)
+      raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+  def __dir__() -> list[str]:
+      return sorted(set(globals()) | set(_LAZY_ATTRS))
+
+
+  __all__ = ["MetricCollector"]
+  ```
+
+  The table's values take three shapes. Most packages map a name to a
+  module-path string (`_LAZY_ATTRS`, as above), and the attribute of the
+  same name is read from it. `otto` and `otto.config` map a name to a
+  `(module, attr)` tuple (`_LAZY_EXPORTS: dict[str, tuple[str, str]]`),
+  because an exported name may differ from, or live outside, the module
+  that defines it (`otto.options` is `pydantic.dataclasses.dataclass`).
+  `otto.logger` also keeps a module-valued `_LAZY_EXPORTS`, whose entries
+  resolve to the submodule itself (`otto.logger.management`), beside its
+  `_LAZY_ATTRS`.
+- **Built-ins registered by reference.** A registry lists its built-in
+  entries without importing any of them, and a lookup imports only the
+  entry it names; see {doc}`subsystems/registries`.
+- **The code-shape rule.** Every saving is structural, never conditional;
+  the rule, and the import bans that keep a cut edge cut, are in
+  [Contributing](../contributing.md#never-branch-on-import-state).
+
+The `otto` command also switches off pydantic's plugin lookup, which would
+otherwise open a file in every installed package; `PYDANTIC_DISABLE_PLUGINS`
+under [Environment variables](../cli/index.md#environment-variables) says how
+to turn it back on.
+
 ## What holds these numbers in place
 
-otto's own release gate, `make profile` (`scripts/import_budget.py`),
-measures **modules, file I/O and path lookups, never wall-clock**. For each
-CLI surface it keeps a cap on the non-stdlib module count, a golden set of the
-otto modules that surface may import, and an I/O golden per Python minor,
-because the interpreter's own import machinery is part of what gets counted.
-The I/O golden holds two kinds of counter.
+The import budget, `scripts/import_budget.py`, measures **file operations,
+never wall-clock**, for a table of CLI surfaces (`SURFACES` in the script).
+`make profile` runs it with `--check`, and `tests/unit/import_budget/` runs the
+same check under pytest, so it gates in CI too. Most surfaces run a real
+command through the real console entry. The rest run a harness child
+instead: the bare-import surface only imports `otto`, and the `--help`
+surfaces measured without a repo and the two bootstrap surfaces import otto
+(the bootstrap ones also run the composition root) and resolve the command
+without rendering help, so they measure only the import-and-dispatch path. Every surface runs in a
+fresh subprocess with every `OTTO_*` variable stripped, a private, empty
+`OTTO_HOME`, and, where the surface needs one, a generated repo shaped like a
+real one, so the count depends on otto and not on the machine's labs.
 
-**Audit-hook counters**, from Python's own audit events: `os.scandir` and
-`os.listdir` calls, and the files opened inside the workspace under
-measurement (`open_fixture`), of which `open_home` counts the ones under
-`$OTTO_HOME`. These are gated exactly.
+**The metric.** A file operation is any path syscall: the stat family, opens,
+directory listings, link reads, access checks and execs (strace's `%file`
+class plus `getdents64`). The harness runs the command under `strace -f` and
+counts them across the **whole process tree**, child processes included,
+because a program the command starts costs the same round trips: asyncssh's
+import, for example, starts `ldconfig` and `gcc` to look for a library. Only
+the kernel's virtual filesystems (`/proc`, `/sys`, `/dev`) are left out. Every
+other path counts, since the harness cannot know which of your mounts are
+remote. Each surface has two counters:
 
-**strace counters.** CPython has no audit event for a `stat`, and a network
-filesystem charges a round trip for each one, so the harness runs every
-surface under `strace -f` and counts the stat family (`stat`, `lstat`,
-`newfstatat`, `statx`, `access`, `faccessat` and their variants) made by the
-measured Python process. Calls made by child processes such as git or ssh
-are the command's own work and are not counted. There are two counters, with
-two different gates:
+- **`file_ops`** is the whole count.
+- **`workspace`** is the subset under the generated repo and the surface's
+  `OTTO_HOME`: what otto itself reads and writes there, plus the import
+  system's probes of the repo's lib directories.
 
-- **`stat_workspace`** counts the calls on paths inside the generated repos
-  and the surface's `$OTTO_HOME`. The repos' lib directories on `sys.path`
-  are left out, because the import system stats those once per later import
-  and the module caps already bound that. What remains is otto's own logic,
-  which is deterministic: two warm runs agree exactly. So the golden is
-  **exact**, and a single new stat inside the workspace fails it.
-- **`stat_total`** counts every stat-family call in the process. It is
-  dominated by the interpreter's import machinery, which moves by a few
-  calls between identical runs, so it cannot be exact. The golden records a
-  baseline, and a measurement more than **10%** above it fails. This is the
-  net for a large new cost anywhere in the process, which the workspace
-  slice alone would not show.
+**Ceilings.** Each counter is gated by a ceiling: a recorded baseline plus
+headroom. The baselines are stored per surface and per Python minor, in
+`tests/unit/import_budget/ceilings/<major>.<minor>.json`, because each
+interpreter's stdlib and import machinery are part of every count. A check
+reads only the running interpreter's file, and a gated surface with no
+baseline there fails by name rather than skipping. The ceiling is
+`max(int(baseline × 1.1), baseline + 5)`: 10% headroom, with a floor of five
+operations so that the import system's one- or two-operation wobble (a
+`FileFinder` re-listing a directory another process touched) cannot trip a
+small counter. A surface may widen its own headroom, with a comment saying
+why. The files store baselines, not ceilings, so changing the headroom needs
+no regeneration.
 
-strace is required. Without it the budget tests fail with an install hint
-instead of skipping, because a guard that quietly measured less would pass
-the very regressions it exists to catch.
+- **Growing past a ceiling fails,** and the failure says what grew: the
+  command's file operations grouped by where they landed (the workspace,
+  each otto module, each site-packages package, the stdlib) and by child
+  program, against the baseline's own breakdown. `+598 site:asyncssh (0 → 598)`
+  names a dependency a verb should not load; `+12 process gcc (0 → 12)` a
+  program it should not start.
+- **Shrinking never fails.** When a counter measures under 0.8× its ceiling
+  and more than five below its baseline, `--check` prints an advisory `NOTE`:
+  the baseline is stale-high, and every later regression up to it would pass
+  unseen until someone regenerates it.
 
-For scale: a warm `otto --help` against a generated 50-file corpus opens
-exactly **two** files in the workspace — the repo's `.otto/settings.toml`
-and the completion cache under `$OTTO_HOME` — where the cold fallback that
-rebuilds the cache opens 61 of them and scans 7 directories. Counts like
-those are system-agnostic in a way a timing number cannot be: the scan and
-workspace-open counts came out identical on CPython 3.10 through 3.14 here,
-and identical between two different virtualenvs of the same interpreter — while
-across those same two venvs the process-wide `open` total moved by 9 purely
-because one had nine more distributions installed for pygments' plugin lookup
-to open an `entry_points.txt` in.
+**Gated and tracked surfaces.** A gated surface has baselines and is
+enforced. A tracked surface (its key starts with `tracked_`) is measured and
+printed in `make profile`'s table, and the test suite still checks that its
+command exits as expected, but it has no baseline and no ceiling. A verb nobody has optimized
+yet is tracked; it becomes gated when someone optimizes it and wants the win
+pinned.
+
+**Target ratios.** A ceiling pins today's cost; it does not say how low a
+verb should go. A gated surface may also carry a `target_ratio`: its
+`file_ops` may be at most that multiple of `otto --version`'s (the
+`version_repo` surface, an interpreter start plus the shim: the least any
+command can cost), with both measured in the same run. A ratio survives a
+dependency update that makes every import cheaper or dearer, because both
+sides move together, so one target serves every interpreter. Each target is
+derived from the largest ratio measured across CPython 3.10 to 3.14 when it
+was set, rounded up to one decimal, plus 10%. A breach lists the surface's
+largest groups and every child process. The current targets sit beside each
+surface in `SURFACES`.
+
+**The bytecode cache.** A module with no cached `.pyc` costs more file
+operations than one with, so a count would otherwise follow whatever bytecode
+the machine happens to hold. Deleting the in-tree bytecode, as a fresh CI
+checkout lacks it (`uv` compiles none at install), once moved one surface
+from 2,738 to 3,030 on unchanged code, over a 10% ceiling. The
+harness therefore keeps its own cache at
+`$XDG_CACHE_HOME/otto/import-budget-pycache` (`~/.cache/otto/import-budget-pycache`
+by default, or the system temp directory when there is no home). Once per
+process, before the first measurement, it compiles every module the measured
+interpreter can import into that directory with
+`compileall --invalidation-mode timestamp` (skipping what is already
+current), and every measured command reads its bytecode from there through
+`PYTHONPYCACHEPREFIX`, with bytecode writing off. Every measurement sees the
+same warm cache, the steady state of any installation after its first run.
+The cache mirrors each measured venv's paths, about 60 MB per interpreter per
+venv, and nothing prunes it; `make clean` does not touch it. Deleting the
+directory is safe: the next measurement compiles it again, which makes that
+first run slower. If the directory cannot be written, the harness fails and
+names it rather than record cold counts.
+
+strace is required. Without it the budget fails with an install hint instead
+of skipping, because a guard that quietly measured less would pass the very
+regressions it exists to catch.
+
+The numbers before the per-verb work, in the old metrics and the new, are
+recorded in
+[`tests/unit/import_budget/measurements/before.md`](https://github.com/ludachrish3/otto-sh/blob/main/tests/unit/import_budget/measurements/before.md),
+and the numbers after it, with the change per surface, in
+[`tests/unit/import_budget/measurements/after.md`](https://github.com/ludachrish3/otto-sh/blob/main/tests/unit/import_budget/measurements/after.md).
+How to run the budget and regenerate its ceilings is in
+[Contributing](../contributing.md#the-import-budget).
 
 ## The cache's economics on a network filesystem
 
@@ -290,7 +422,7 @@ the one directory you didn't get to relocate just by moving your checkout.
 
 A warm `otto --help` touches the home exactly **three** times for an *empty*
 home — no user `settings.toml`, no cached inventory backend, the same
-configuration the release-profile golden measures (see [What holds these
+configuration the import budget measures (see [What holds these
 numbers in place](#what-holds-these-numbers-in-place)): a fresh, empty
 `OTTO_HOME` per surface. Those three: one `open` — reading
 `completion_cache.json` whole, once, the floor described
@@ -302,10 +434,11 @@ that consult the completion cache, not simply whenever a repo is active —
 because it [never opens the cache at
 all](#the-caches-economics-on-a-network-filesystem) — whether or not the
 settings file is there, finding out it isn't *is* the stat. All three are
-gated, not just measured: the open by `open_home`, and the two stats by
-`stat_workspace`, which strace counts for every path under the surface's
-`$OTTO_HOME` as well as inside the repos (see [What holds these numbers in
-place](#what-holds-these-numbers-in-place)). A cold invocation, with no
+gated, not just measured: they fall in the import budget's `workspace`
+counter, which covers every path under the surface's `$OTTO_HOME` as well as
+inside the repo (see [What holds these numbers in
+place](#what-holds-these-numbers-in-place)). That counter is a ceiling, so it
+bounds the home's touches rather than pinning each one. A cold invocation, with no
 valid cache to validate, cannot use the floor at all and pays the rebuild
 instead (write path included).
 

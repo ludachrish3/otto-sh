@@ -1,3 +1,0 @@
-otto
-otto._shim
-otto.version

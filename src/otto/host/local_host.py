@@ -183,41 +183,6 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     name: str = field(default="localhost", init=False)
 
-    dry_run_exempt: bool = field(default=False, repr=False)
-    """Opt this instance's ``run`` out of the ``--dry-run`` decline.
-
-    **THE TEST, and all three parts must hold:** the commands this host will be
-    asked to run contact **no device**, **mutate nothing**, and exist only for
-    **otto's own bookkeeping** about the machine it is already running on.
-    Anything else — anything an operator would recognise as work on a host —
-    keeps the default and declines.
-
-    It exists because ``LocalHost`` does double duty. It is a lab host (``otto
-    host local exec …``, which must decline under ``-n`` like any other host)
-    AND it is otto's subprocess runner for questions about its own environment
-    (:meth:`otto.config.repo.Repo.run_git_command` reads the SUT checkout's
-    HEAD to stamp provenance on the run). The dry-run guard sits at the command
-    boundary, so it fires on **which abstraction was used** rather than on
-    **what was meant**, and it declined otto's own ``git log`` — a false
-    positive of the contract, not enforcement of it. This flag is the one thing
-    the two uses do not share, so it is what the policy is keyed on.
-
-    Deliberately narrow, in four ways:
-
-    * It is declared **at the construction site**, so an exemption is visible
-      in the same statement that creates the host — and every exemption in the
-      tree is one ``grep -rn dry_run_exempt src/`` away.
-    * It lives on ``LocalHost`` and nowhere else. A remote host is a device by
-      definition, so the exemption cannot even be spelled for one.
-    * It is per-instance, not a context manager over a shared flag: the host it
-      exempts is built for one call and thrown away, so there is no window in
-      which a concurrent coroutine could run a real device command inside
-      someone else's exemption.
-    * It is read by ``_run_one`` alone. ``exec``, the transfer verbs,
-      sessions and the power verbs all still decline on an exempt instance,
-      because none of them is covered by the justification above.
-    """
-
     _file_transfer: LocalFileTransfer = field(init=False, repr=False)
     """Local copy via shutil, routed through BaseFileTransfer so progress
     reporting works uniformly across every host backend."""
@@ -253,12 +218,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         Shell state (working directory, environment variables) persists between
         calls, matching UnixHost behavior.
 
-        The dry-run arm honours :attr:`dry_run_exempt` — the single seam that
-        reads it. See that attribute for the three-part test an exemption has
-        to pass; the default is to decline, and every host handed out by the
-        fleet takes the default.
-
-        The *user* refusal sits ABOVE that arm: this family can never honour
+        The *user* refusal sits ABOVE the dry-run arm: this family can never honour
         the parameter, and a dry run must say so rather than decline as though
         it could have.
         """
@@ -268,7 +228,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
                 f"already runs as the invoking user; as_user() still switches the "
                 f"persistent session"
             ) from None
-        if is_dry_run() and not self.dry_run_exempt:
+        if is_dry_run():
             return self._dry_run_result(cmd, log)
         return await self._session_mgr.run_cmd(
             cmd, expects=expects, timeout=timeout, log=self._effective_log(log)

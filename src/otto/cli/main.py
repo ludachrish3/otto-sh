@@ -32,7 +32,6 @@ from ..config.env import (
     XDIR_ENV_VAR,
 )
 from ..version import get_version
-from .builtin_commands import register_builtin_commands
 from .completers import completion_source
 
 if TYPE_CHECKING:
@@ -753,9 +752,6 @@ def _attach_cached_stubs(
             continue
         options = entry.get("options") or []
         parent.add_typer(build_stub_command(name, options))
-
-
-register_builtin_commands()
 
 
 def _emit_bootstrap_findings(result: "BootstrapResult") -> None:

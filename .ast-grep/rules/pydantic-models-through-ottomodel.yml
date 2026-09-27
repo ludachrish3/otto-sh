@@ -1,0 +1,83 @@
+id: pydantic-models-through-ottomodel
+language: python
+severity: error
+message: this builds a pydantic schema when the module is imported. Subclass `otto.models.base.OttoModel` instead of `BaseModel`/`RootModel`, and build a `TypeAdapter`, `create_model(...)` or `.model_rebuild()` inside the function that first needs it.
+note: >
+  OttoModel sets `defer_build=True`, so a model's schema and validator are
+  compiled on first use rather than when its module is imported. A class that
+  subclasses pydantic's `BaseModel` or `RootModel` directly skips that
+  config and pays the build on every import of its module, whether or not the
+  command validates anything. Module-scope `TypeAdapter(...)`,
+  `create_model(...)` and `.model_rebuild(...)` calls build at import the same
+  way.
+
+  The fix keeps the model's own config: subclass OttoModel and keep its
+  `model_config`, overriding what OttoModel sets where the model needs
+  otherwise (pydantic merges config across the MRO). OttoModel sets
+  `extra="forbid"`, so a model that relied on pydantic's default
+  `extra="ignore"` says so explicitly. A model FastAPI wraps as a request
+  body or response model sets `ConfigDict(defer_build=False)` and joins the
+  named exception set in tests/unit/models/test_defer_build.py: FastAPI builds
+  its TypeAdapter inside `catch_warnings`, and a deferred build lands on the
+  first request instead, where a pydantic warning becomes a 500 under
+  `-W error`.
+
+  Exempt by shape: the class named `OttoModel` itself (the one class that
+  must subclass BaseModel), and any build inside a function body or in the
+  consequence of `if TYPE_CHECKING:`. A class body runs at import and is
+  checked. An aliased import (`from pydantic import BaseModel as B`) is not
+  seen; review owns it.
+
+  Not covered: pydantic dataclasses (`@pydantic.dataclasses.dataclass`, and
+  otto's `@options`, which is the same decorator) build their schema at
+  import too, e.g. the port-forward classes in otto.host.options and the
+  project `@options` classes. The options machinery is being reworked
+  separately, so this rule covers BaseModel/RootModel subclasses and the
+  three module-scope builds only.
+files:
+- src/otto/**/*.py
+utils:
+  at-module-scope:
+    all:
+    - not:
+        inside:
+          kind: function_definition
+          stopBy: end
+    - not:
+        inside:
+          kind: if_statement
+          field: consequence
+          stopBy: end
+          has:
+            field: condition
+            regex: '^(typing\.)?TYPE_CHECKING$'
+rule:
+  any:
+  # class X(BaseModel) / class X(pydantic.BaseModel) / class X(RootModel[int])
+  - all:
+    - kind: class_definition
+    - has:
+        field: superclasses
+        has:
+          regex: '^((pydantic\.)?BaseModel|(pydantic\.)?RootModel(\[[\s\S]*\])?)$'
+    - not:
+        has:
+          field: name
+          regex: '^OttoModel$'
+  # TypeAdapter(...) / create_model(...) at import
+  - all:
+    - kind: call
+    - has:
+        field: function
+        regex: '^(pydantic\.)?(TypeAdapter|create_model)$'
+    - matches: at-module-scope
+  # Model.model_rebuild(...) at import
+  - all:
+    - kind: call
+    - has:
+        field: function
+        kind: attribute
+        has:
+          field: attribute
+          regex: '^model_rebuild$'
+    - matches: at-module-scope

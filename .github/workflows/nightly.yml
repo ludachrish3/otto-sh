@@ -512,10 +512,8 @@ jobs:
       #     suites, all four workers within 5 s) dies the same way. The xdist
       #     `KeyError: <WorkerController gw4>` INTERNALERROR that follows on
       #     rung 8 is xdist failing to recover from the segfaults, not the cause.
-      #   - rung 10 has no 3.15 goldens, and CPython 3.15 leaves its own
-      #     `_missing_stdlib_info` out of sys.stdlib_module_names so the guard
-      #     charges it to otto -- both deliberately parked until 3.15.0 final
-      #     (#333).
+      #   - rung 10 has no 3.15 ceilings file, deliberately parked until
+      #     3.15.0 final (#333).
       # Rungs 6, 7 and 9 pass (last seen 2026-09-21) but cannot lift this
       # number: `reached` is the highest CONSECUTIVE rung, and 5 is the gap.
       # When a greenlet release fixes the crash, expect the climb to reach 7
@@ -633,16 +631,16 @@ jobs:
              rung 4 "the hostless suite collects" uv run --frozen pytest --collect-only -q -n0 -p no:cacheprovider tests/unit tests/e2e -m "$hostless_marker"; then
             # THE TEST RUNGS, cheapest first, and every one runs even after a
             # failure: one nightly then names every lane 3.15 breaks rather
-            # than only the first. The budget is last by design -- its goldens
+            # than only the first. The budget is last by design -- its ceilings
             # are per-interpreter and are regenerated once 3.15 is final, so it
-            # must not hide a product failure behind a snapshot that was never
-            # taken (#333).
+            # must not hide a product failure behind a ceilings file that was
+            # never written (#333).
             rung 5 "the hostless session passes (budget aside)" uv run --frozen nox -s "tests_hostless-$CANARY_PYTHON" --extra-python "$CANARY_PYTHON" -- --ignore=tests/unit/import_budget || true
             rung 6 "the concurrency soak passes" make stability-unit COUNT=10 || true
             rung 7 "the chaos suites pass" canary_chaos || true
             rung 8 "the dashboard browser suite passes" canary_dashboard || true
             rung 9 "host-contract conformance passes" canary_conformance || true
-            rung 10 "the import budget holds" uv run --frozen pytest tests/unit/import_budget -p no:cacheprovider --no-cov || true
+            rung 10 "the import budget holds (ceilings are per-interpreter)" uv run --frozen pytest tests/unit/import_budget -p no:cacheprovider --no-cov || true
           fi
 
           echo >> "$GITHUB_STEP_SUMMARY"

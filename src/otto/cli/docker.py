@@ -19,11 +19,10 @@ per-repo mode and additionally accepts a use-case to narrow to the winners;
 Every leaf is a thin wrapper around the library API in :mod:`otto.docker`,
 which is also what instructions and suites import directly.
 
-IMPORT BUDGET: ``otto.docker.resolve`` and ``otto.docker.deployment`` are
-imported FUNCTION-SCOPE throughout. A module-scope import would put both (and
-their transitive config/lab imports) on the ``otto docker --help`` path, which
-``tests/unit/import_budget`` gates — the eager names at the top of this module
-are exactly the ones that surface was measured with.
+IMPORT BUDGET: everything from :mod:`otto.docker` and the host classes is
+imported FUNCTION-SCOPE, in the command that uses it. A module-scope import
+would put the compose and build machinery and the whole Unix host stack on the
+``otto docker --help`` path, which ``tests/unit/import_budget`` gates.
 """
 
 from pathlib import Path
@@ -32,12 +31,8 @@ from typing import TYPE_CHECKING, Annotated, Any, TypeVar
 import typer
 from rich import print as rprint
 from rich.markup import escape
-from rich.table import Table
 
-from ..config import Repo, get_lab, get_repos
-from ..config.lab import Lab
-from ..docker import build_images, compose_ps
-from ..host.unix_host import UnixHost
+from ..config import get_repos
 from ..utils import Status
 from .completers import completion_source
 from .invoke import fail, print_error
@@ -45,9 +40,11 @@ from .invoke import fail, print_error
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 
-    from ..config.repo import DockerUseCase
+    from ..config.lab import Lab
+    from ..config.repo import DockerUseCase, Repo
     from ..docker.deployment import UseCaseStack
     from ..docker.resolve import Displacement
+    from ..host.unix_host import UnixHost
 
 _T = TypeVar("_T")
 
@@ -295,7 +292,7 @@ async def _run_use_case(action: "Coroutine[Any, Any, _T]") -> "_T | _Declined":
         fail(e)
 
 
-def _select_repos(repo_name: str | None, on: str | None = None) -> list[Repo]:
+def _select_repos(repo_name: str | None, on: str | None = None) -> "list[Repo]":
     """Filter loaded repos by name AND by lab applicability.
 
     A repo is "applicable" if either:
@@ -338,6 +335,8 @@ def _select_repos(repo_name: str | None, on: str | None = None) -> list[Repo]:
     every candidate was excluded above — is a hard error (exit 1), never a
     silent no-op.
     """
+    from ..config.fleet import get_lab
+
     lab = get_lab()
 
     if on is not None and on not in lab.hosts:
@@ -404,14 +403,14 @@ def _select_repos(repo_name: str | None, on: str | None = None) -> list[Repo]:
     return applicable
 
 
-def _resolve_parent_for_repo(repo: Repo, lab: Lab, on: str | None) -> UnixHost:
+def _resolve_parent_for_repo(repo: "Repo", lab: "Lab", on: str | None) -> "UnixHost":
     """Reuse compose._resolve_parent — public via private import to avoid duplicate logic."""
     from ..docker.compose import _resolve_parent
 
     return _resolve_parent(repo, lab, on)
 
 
-def _canonicalize_on(lab: Lab, on: str | None) -> str | None:
+def _canonicalize_on(lab: "Lab", on: str | None) -> str | None:
     """Validate a ``--on`` CLI value against the active lab, returning the host id.
 
     ``--on`` is a CLI host-id INPUT — like the ``otto host`` positional and
@@ -431,7 +430,9 @@ def _canonicalize_on(lab: Lab, on: str | None) -> str | None:
     return host.id
 
 
-def _narrow_to_use_case(repos: list[Repo], use_case: str, provide: "dict[str, str]") -> list[Repo]:
+def _narrow_to_use_case(
+    repos: "list[Repo]", use_case: str, provide: "dict[str, str]"
+) -> "list[Repo]":
     """Keep only the repos whose fragments WON the competition for *use_case*.
 
     ``build <USE_CASE>`` exists so a deploy's image work can be done ahead of
@@ -493,6 +494,9 @@ async def _build(
     provider competition `otto docker up` runs, so the images that get built
     are the ones that deployment would actually use.
     """
+    from ..config.fleet import get_lab
+    from ..docker import build_images
+
     provide_map = _parse_provide(provide)
     lab = get_lab()
     on = _canonicalize_on(lab, on)
@@ -669,6 +673,9 @@ def _use_cases(
     # inventory, and "one of your six use-cases cannot place its edge fragment"
     # is exactly the answer the user came for — not a reason to hide the other
     # five, and not a reason to exit 1.
+    from rich.table import Table
+
+    from ..config.fleet import get_lab
     from ..docker.resolve import (
         UseCaseResolutionError,
         declared_use_cases,
@@ -779,6 +786,12 @@ async def _ps(
     ] = None,
 ) -> None:
     """List running containers on docker-capable lab hosts."""
+    from rich.table import Table
+
+    from ..config.fleet import get_lab
+    from ..docker import compose_ps
+    from ..host.unix_host import UnixHost
+
     lab = get_lab()
     parents: list[UnixHost] = []
     if on:

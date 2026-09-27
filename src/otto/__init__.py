@@ -115,3 +115,8 @@ def __getattr__(name: str) -> object:
         module_name, attr = _LAZY_EXPORTS[name]
         return getattr(importlib.import_module(module_name), attr)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Include the lazy exports in dir()/tab-completion; the module dict holds none of them."""
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))

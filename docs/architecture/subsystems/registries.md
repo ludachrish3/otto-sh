@@ -22,37 +22,120 @@ functions; the class is the shared engine behind them.
 
 | Registry | Kind | Register via | Built-ins |
 | --- | --- | --- | --- |
-| `CLI_COMMANDS` | top-level CLI command | {func}`otto.cli.registry.register_cli_command` / {func}`~otto.cli.registry.cli_command` | the nine first-party commands — see {doc}`../overview` |
+| `CLI_COMMANDS` | top-level CLI command | {func}`otto.cli.registry.register_cli_command` / {func}`~otto.cli.registry.cli_command` | the fourteen first-party verbs (`run`, `test`, `host`, …) |
 | `INSTRUCTIONS` | `otto run` subcommand | {func}`~otto.cli.run.instruction` | — |
+| `PROJECT_INSTRUCTIONS` | project instruction (a `ProjectActions` method) | {func}`~otto.cli.run.instruction` on a `ProjectActions` method | `install`, `uninstall`, `status`, `cleanup`, `get-logs`, `install-tools` (when `otto.project.actions` is imported) |
+| `PROJECT_ACTIONS` | a repo's `ProjectActions` subclass | `otto.project.actions.register_project_actions` | — |
 | `SUITES` | `otto test` subcommand | {func}`~otto.suite.register.register_suite_class` (auto-called by {class}`~otto.suite.suite.OttoSuite`'s `__init_subclass__`) | — |
-| `HOST_CLASSES` | host class | `otto.host.os_profile.register_host_class` | `unix`, `embedded` |
-| `OS_PROFILES` | `os_type` profile | `otto.host.os_profile.register_os_profile` | `unix`, `embedded`, `zephyr` |
-| `TERM_BACKENDS` | term (connection) backend | `otto.host.connections.register_term_backend` | `ssh`, `telnet` |
-| `TRANSFER_BACKENDS` | transfer backend | `otto.host.transfer.register_transfer_backend` | `sftp`, `scp`, `ftp`, `nc`, `console`, `tftp` |
+| `HOST_CLASSES` | host class | `otto.host.os_profile.register_host_class` | `unix`, `embedded`, `zephyr` |
+| `OS_PROFILES` | `os_type` profile | `otto.host.os_profile.register_os_profile` | `unix`, `embedded`, `zephyr`, `busybox` |
+| `LOGIN_PROXIES` | login proxy | `otto.host.login_proxy.register_login_proxy` | `su` |
+| `TERM_BACKENDS` | term (connection) backend | `otto.host.connections.register_term_backend` | `ssh`, `telnet`, `console` |
+| `TRANSFER_BACKENDS` | transfer backend | `otto.host.transfer.register_transfer_backend` | `sftp`, `scp`, `ftp`, `nc`, `shell`, `console`, `tftp` |
 | `FRAME_CLASSES` | command frame | `otto.host.command_frame.register_command_frame` | `bash`, `ash`, `zephyr`, `zephyr-serial`, `raw` |
 | `LOADER_CLASSES` | binary loader | `otto.host.binary_loader.register_binary_loader` | `llext-hex` |
-| `FILESYSTEM_CLASSES` | embedded filesystem type | `otto.host.embedded_filesystem.register_filesystem` | FAT-on-RAM, LittleFS, none |
-| `POWER_CONTROLLERS` | power controller | `otto.host.power.register_power_controller` | — |
+| `FILESYSTEM_CLASSES` | embedded filesystem type | `otto.host.embedded_filesystem.register_filesystem` | `fat-ram`, `littlefs`, `none` |
+| `POWER_CONTROLLERS` | power controller | `otto.host.power.register_power_controller` | `command` |
 | `SESSION_SETUPS` | session setup hook | `otto.host.session_setup.register_session_setup` | — |
+| `PRODUCT_KINDS` | settings-declared product kind | `otto.host.product.register_product_kind` | `shell`, `kmod`, `llext`, `docker_image` |
+| `DEV_TOOL_KINDS` | settings-declared dev tool kind | `otto.host.dev_tool.register_dev_tool_kind` | `shell`, `kmod`, `kgcov` |
 | `LAB_REPOSITORIES` | lab repository (host source) | {func}`otto.labs.register_lab_repository` | `json` |
+| `INVENTORY_BACKENDS` | inventory backend | `otto.inventory.register_inventory_backend` | `json`, `netbox` |
 | `RESERVATION_BACKENDS` | reservation backend | `otto.reservations.registry.register_reservation_backend` | `json`, `none` |
 | `CREDS_BACKENDS` | creds store | `otto.creds.register_creds_backend` | `json` |
-| `HOST_PARSERS` | monitor parser set | `otto.monitor.parsers.register_host_parsers` | default `/proc` parsers |
-| `SNMP_METRICS` | SNMP metric descriptor | `otto.monitor.snmp.register_snmp_metric` | standard OIDs |
+| `IMPAIRERS` | link impairer | `otto.link.register_impairer` | `netem` |
+| `CARRIERS` | tunnel carrier | `otto.tunnel.register_carrier` | `socat` |
+| `COMPOSE_ADAPTERS` | a repo's compose adapter, per use case | `otto.docker.register_compose_adapter` | — |
+| `HOST_PARSERS` | monitor parser set, per host id | `otto.monitor.parsers.register_host_parsers` | — (a host with no entry uses the default `/proc` parsers) |
+| `HOST_PATTERN_PARSERS` | monitor parser set, per host-id pattern | `otto.monitor.parsers.register_host_parsers` with a compiled pattern | — |
+| `PROJECT_PARSERS` | project-level monitor parser | `otto.monitor.parsers.register_parsers` | — |
+| `SNMP_METRICS` | SNMP metric descriptor | `otto.monitor.snmp.register_snmp_metric` | `sysUpTime`, plus CPU, heap and thread OIDs |
 
-(Product providers are the one seam that is a list, not a named registry —
-every registered provider runs for every host; see {doc}`hosts`.)
+(Product and dev-tool providers are the two seams that are lists, not named
+registries — every registered provider runs for every host; see {doc}`hosts`.)
 
-## Registration symmetry
+## References
 
-Built-in backends register through the **same public functions** third-party
-code uses — `sftp` goes through `register_transfer_backend` exactly like a
-custom protocol would. There is no privileged private path, which keeps the
-public seams honest: if a registration API is awkward for otto's own
-built-ins, it is awkward for everyone, and it gets fixed rather than bypassed.
-Downstream repos register from their init modules (the `init` list in
-`.otto/settings.toml`), which bootstrap imports in phase 2
-({doc}`../lifecycle`).
+A registry entry may be a real object or a {class}`~otto.registry.Ref`
+wrapping a `"package.module:attribute"` string that names one without
+importing it. What each read costs:
+
+- **Listing and attribution are free.** `names()`, `in`, `len()`,
+  `origin()` and `unregister()` never import a `Ref`'s target, so help and
+  completion can list every built-in without loading one. A registry with a
+  loader runs it first on every read, these included; see
+  [Lazy loaders](#lazy-loaders-and-what-test-files-may-register) below.
+- **`get(name)` resolves one entry.** Its first call imports the target,
+  runs the registry's *validate* hook (if it has one) on the object, and
+  caches the object in place of the `Ref`, so later reads are dictionary
+  lookups. If the import or the check fails, the error propagates and the
+  entry stays a `Ref`, to be tried again on the next lookup.
+- **`items()` resolves every entry,** the same way, so it costs every
+  import. Code that only needs names calls `names()`.
+
+A plugin may register either form through the registry's own `register`
+(the public `register_*` wrappers take real objects); a real object is
+validated at registration instead of at first lookup. By reference:
+
+```python
+from otto.host.command_frame import FRAME_CLASSES
+from otto.registry import Ref
+
+FRAME_CLASSES.register("ash", Ref("my_plugin.frames:AshFrame"))
+```
+
+The import runs, and the check with it, at the first `get("ash")`. See {class}`otto.registry.Ref` and
+{meth}`otto.registry.Registry.get` for the full contract.
+
+## Built-ins register by reference
+
+Every built-in entry is registered in the module that **defines its
+registry**, as a {class}`~otto.registry.Ref` naming the object's real home
+(`TRANSFER_BACKENDS` holds `Ref("otto.host.transfer.nc:NcFileTransfer")` under
+`nc`). Importing a registry therefore lists all of its built-ins without
+importing one implementation, and a lookup imports only the entry it names:
+`otto host --help` pays for no transfer backend, and building an `scp`
+transfer imports `scp` alone.
+
+Two consequences shape the code:
+
+- **No implementation module registers itself, and no package imports one
+  to make it register.** A registration left behind in a backend's own
+  module would collide loudly with the reference the first time the backend
+  is imported. Each entry keeps the origin it had before: the implementation
+  module for the entries that used to register themselves (transfer
+  backends, product and dev-tool kinds, `netem`, `socat`), the registry's own
+  module for the rest (host classes; the inventory, creds, lab and
+  reservation backends).
+- **Object checks live in the registry.** Each registry's checks of an entry
+  (a `type_name` that matches, declared host families, a transfer backend's
+  progress granularity) are its *validate* hook, which runs on a third
+  party's object at registration and on a built-in at its first lookup.
+  Wrappers keep what is more than a check of the object:
+  `register_host_class` finds the nearest spec, writes the same-named
+  profile and warns on overriding a built-in; `register_term_backend` builds
+  the `TermBackend` value. `OS_PROFILES` has no validator, so
+  `register_os_profile` keeps its checks (defaults against the base class's
+  fields, the prompt regexes); the built-in profiles, written straight into
+  the registry, are held to those checks by a unit test instead.
+
+Built-ins whose value is built beside the registry itself — an `os_type`
+profile, the `su` login proxy, the SNMP descriptors, the term backends (whose
+`ConnectionManager` class lives in the registry's own module) — are
+registered as values: there is no implementation module for a reference to
+defer.
+
+Downstream repos keep registering real objects through the public `register_*`
+functions, from their init modules (the `init` list in `.otto/settings.toml`),
+which bootstrap imports in phase 2 ({doc}`../lifecycle`). Two guards in
+`tests/unit/test_registry_refs_guard.py` hold the shape: every reference
+resolves, and a fresh interpreter importing only a registry's defining module
+lists every built-in, each still an unresolved reference. Both check the
+built-in names they know. A new built-in that registers itself on import is
+missing from their tables, so an ast-grep rule,
+`.ast-grep/rules/builtin-registers-by-reference.yml`, names that line
+instead: a registration that runs at import must pass a `Ref`, unless its
+file defines the registry.
 
 ## Lazy loaders, and what test files may register
 
@@ -80,7 +163,8 @@ an init module instead.
 
 - **The check is on origin, not only on the phase.** A test file is often the
   first thing to import an otto module that registers its own entries when
-  imported; `otto.host.llext_kind`, for example, registers a product kind.
+  imported; `otto.project.actions`, for example, registers the built-in
+  project instructions.
   That registration belongs to otto and succeeds. The flip side is that every
   public `register_*` wrapper must record the module that *called* it as the
   origin: an entry attributed to the wrapper's own `otto.*` module would pass
@@ -185,10 +269,14 @@ stays as the always-available floor, so `--tests` completion is never empty.
 - `otto.config.completion_cache` — the completion cache
   ({doc}`completion-cache`)
 - the host-side registries live beside the strategy they select:
-  {mod}`otto.host.os_profile`, {mod}`otto.host.connections`,
-  {mod}`otto.host.transfer`, {mod}`otto.host.command_frame`,
-  {mod}`otto.host.binary_loader`, {mod}`otto.host.embedded_filesystem`,
-  {mod}`otto.host.power`
-- `otto.labs`, {mod}`otto.reservations.registry`,
+  {mod}`otto.host.os_profile`, {mod}`otto.host.login_proxy`,
+  {mod}`otto.host.connections`, `otto.host.transfer.registry`,
+  {mod}`otto.host.command_frame`, {mod}`otto.host.binary_loader`,
+  {mod}`otto.host.embedded_filesystem`, {mod}`otto.host.power`,
+  {mod}`otto.host.session_setup`, {mod}`otto.host.product`,
+  {mod}`otto.host.dev_tool`
+- `otto.project.actions`, `otto.labs.registry`, `otto.inventory.registry`,
+  {mod}`otto.reservations.registry`, `otto.creds.registry`,
+  `otto.link.impairer`, `otto.tunnel.carrier`, `otto.docker.adapter`,
   {mod}`otto.monitor.parsers`, {mod}`otto.monitor.snmp` — the remaining
   registries in the inventory table

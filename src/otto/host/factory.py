@@ -2,17 +2,9 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..layout import validate_product_name
-from ..models.host import HostSpec
-
-# Imported for their registration side effect: the built-in "shell" kind must be
-# in both kind registries, "llext"/"kmod" in the product registry, and
-# "kmod" again (its own factory) in the dev-tool registry, before any
-# declared entry builds. The factory is the only build call site, so these
-# imports are the guarantee.
-from . import docker_image_kind, kmod_kind, kmod_tool_kind, llext_kind, shell_kind  # noqa: F401
 from .capability import select_option_defaults, select_preferences
 from .dev_tool import apply_declared_dev_tools, apply_dev_tool_providers
 from .element import Element
@@ -26,6 +18,9 @@ from .os_profile import (
 )
 from .product import apply_declared_products, apply_product_providers, stamp_cov_dir
 from .remote_host import RemoteHost, make_host_id
+
+if TYPE_CHECKING:
+    from ..models.host import HostSpec
 
 # Names of the option tables accepted on host dicts and in
 # ``[host_preferences."<selector>"]`` blocks. Kept here as the canonical
@@ -58,7 +53,7 @@ def _merge_host_dict(
     host_data: dict[str, Any],
     option_defaults: dict[str, dict[str, Any]] | None,
     profile: Any,
-    spec_cls: type[HostSpec],
+    spec_cls: "type[HostSpec]",
 ) -> dict[str, Any]:
     """Precedence-merge profile defaults, host fields, and product option defaults into one dict.
 

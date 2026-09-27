@@ -147,7 +147,7 @@ def test_live_requires_reservation_gate_before_host_selection() -> None:
     """The reservation gate must be consulted BEFORE hosts are selected.
 
     Records the order two mocked calls happen in: the gate's .evaluate() and
-    otto.cli.monitor.all_hosts(). No hosts match (all_hosts returns empty),
+    otto.config.fleet.all_hosts(). No hosts match (all_hosts returns empty),
     so monitor() exits 1 right after selection — this test only cares about
     what happened, and in what order, up to that point.
     """
@@ -168,7 +168,7 @@ def test_live_requires_reservation_gate_before_host_selection() -> None:
     ctx = _make_ctx({"otto_reservation": mock_res})
 
     with (
-        patch("otto.cli.monitor.all_hosts", side_effect=_fake_all_hosts),
+        patch("otto.config.fleet.all_hosts", side_effect=_fake_all_hosts),
         pytest.raises(typer.Exit) as excinfo,
     ):
         monitor(ctx, live=True)  # type: ignore[arg-type]

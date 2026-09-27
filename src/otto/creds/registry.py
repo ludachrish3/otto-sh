@@ -2,12 +2,13 @@
 
 Mirrors :mod:`otto.inventory.registry`: a custom store registers a bare name
 from an ``init`` module, and ``[creds] backend = "<name>"`` selects it. The
-built-in ``json`` store is pre-registered at import through the same path.
+built-in ``json`` store is pre-registered at import, by
+:class:`~otto.registry.Ref`, and resolves through the same lookup.
 """
 
 from typing import TYPE_CHECKING
 
-from ..registry import Registry, caller_module
+from ..registry import Ref, Registry, caller_module
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -37,9 +38,7 @@ def get_creds_backend_class(name: str) -> "Callable[..., CredsStore]":
 
 
 def _register_builtins() -> None:
-    from .json_store import JsonCredsStore
-
-    register_creds_backend("json", JsonCredsStore)
+    CREDS_BACKENDS.register("json", Ref("otto.creds.json_store:JsonCredsStore"))
 
 
 _register_builtins()

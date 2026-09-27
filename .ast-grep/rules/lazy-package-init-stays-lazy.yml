@@ -1,0 +1,94 @@
+id: lazy-package-init-stays-lazy
+language: python
+severity: error
+message: a package's __init__ imports this at module scope, so every import of the package, and of each of its submodules, pays for it. Add the name to the package's lazy table (_LAZY_ATTRS / _LAZY_EXPORTS) and mirror it in the `if TYPE_CHECKING:` block instead; code the init defines moves to a named submodule the table points at.
+note: >
+  Every otto package exports through a PEP 562 lazy table, so that
+  importing the package, or any one of its submodules (which runs this
+  __init__ first), costs nothing beyond the name actually used. On an NFS
+  venv every module file is a round trip, and one module-scope import here
+  lands on every command that touches the package. The code-shape rule
+  allows a declarative table entry, not an eager import: put the name in the
+  lazy table and in the `if TYPE_CHECKING:` block (the drift guard in
+  tests/unit/test_lazy_packages.py keeps those two in step).
+
+  Scope: every src/otto/**/__init__.py, lazy table or not: an init that
+  imports eagerly because it never became lazy is the case this rule exists
+  for. An init with no imports at all (empty, or a docstring) passes. The
+  rest of the shape (a table, `__getattr__`, `__dir__`, a literal `__all__`)
+  is tests/unit/test_lazy_packages.py's. Imports inside a function body (the
+  resolver's `import importlib`) and in the consequence of
+  `if TYPE_CHECKING:` are exempt; its `else:` branch is not.
+
+  The allow-list below covers the module-scope imports the inits genuinely
+  need, one entry per reason; each comment names the file that needs it. The
+  entries match a statement's SHAPE, not its file: ast-grep cannot tie an arm
+  to one path, so `import logging as _logging` would pass in any init, and
+  the `.env`/`.base`/`.registry` arms accept any names from those modules
+  once the anchoring name is present. Review owns the rest. Adding an entry
+  needs a reason as strong as these: the package cannot work, or cannot keep
+  a promise it makes, without the import.
+files:
+- src/otto/**/__init__.py
+rule:
+  all:
+  - any:
+    - kind: import_statement
+    - kind: import_from_statement
+  - not:
+      inside:
+        kind: function_definition
+        stopBy: end
+  - not:
+      inside:
+        kind: if_statement
+        field: consequence
+        stopBy: end
+        has:
+          field: condition
+          regex: '^(typing\.)?TYPE_CHECKING$'
+  - not:
+      any:
+      # Every init: the name its `if TYPE_CHECKING:` block needs. stdlib,
+      # and already loaded by src/otto/__init__.py, which runs before any
+      # subpackage.
+      - pattern: from typing import $$$
+      # src/otto/__init__.py: the library-citizen NullHandler on the "otto"
+      # logger must be attached on ANY import of otto, so a bare `import otto`
+      # is silent unless the application configures logging. stdlib only.
+      # (Not pinned to that file: the same statement passes in any init.)
+      - pattern: import logging as _logging
+      # src/otto/logger/__init__.py: registers the WARN/CRIT level-name
+      # aliases as a side effect, which must be live before any formatter
+      # renders a level name. stdlib only.
+      - pattern: from . import levels
+      # src/otto/config/__init__.py: otto.config.env is stdlib only (os, re,
+      # pathlib), and otto.cli.main imports it at module scope for the
+      # variables it reads before parsing argv, so every command loads it
+      # anyway; a lazy entry would save nothing. Matches an import from
+      # `.env` that contains `load_otto_env as load_otto_env`; other names
+      # from `.env` in the same statement would pass too.
+      - all:
+        - pattern: from .env import $$$
+        - has:
+            kind: aliased_import
+            regex: '^load_otto_env\s+as\s+load_otto_env$'
+      # src/otto/host/transfer/__init__.py: the package's documented contract
+      # is "importing this package imports only the shared base types and the
+      # registry". The registry's built-in entries are references, so no
+      # backend module loads until one is named or built. Each arm matches an
+      # import from `.base`/`.registry` that contains a name only that
+      # package exports, so another package's `.base`/`.registry` is still
+      # checked; any other names in the same statement pass with it.
+      # (`has` on the imported-name nodes, not `field: name`, which reads
+      # only the FIRST imported name.)
+      - all:
+        - pattern: from .base import $$$
+        - has:
+            kind: dotted_name
+            regex: '^BaseFileTransfer$'
+      - all:
+        - pattern: from .registry import $$$
+        - has:
+            kind: dotted_name
+            regex: '^TRANSFER_BACKENDS$'

@@ -19,8 +19,6 @@ from typing import (
 
 import tomli
 
-from ..result import CommandResult
-from ..utils import Status
 from . import corpus_snapshot
 from .scope import ProjectScopeConfig
 from .version import Version
@@ -340,12 +338,6 @@ class Repo:
 
     sut_dir: Path
     """SUT directory from which the settings came."""
-
-    _git_hash: str | None = field(default=None, init=False, repr=False)
-    """HEAD git hash of repo. None if `sut_dir` is not a git repo."""
-
-    _git_description: str | None = field(default=None, init=False, repr=False)
-    """HEAD git hash of repo. None if `sut_dir` is not a git repo."""
 
     name: str = field(init=False)
     """Product/repo name"""
@@ -1025,119 +1017,6 @@ class Repo:
         """
         for test_file in self.iter_test_files():
             self.import_test_file(test_file)
-
-    async def set_git_description(self) -> None:
-        """Populate ``_git_description`` from ``git describe`` output.
-
-        Sets ``_git_description`` to the parenthesised tag description on
-        success, or to an empty string when ``git describe`` fails (e.g. no
-        tags exist in the repo).
-        """
-        result = await self.run_git_command("describe")
-        if result.status == Status.Success:
-            self._git_description = f"({result.value.strip()})"
-
-        # `git describe` can fail if no names or tags exist for the repo.
-        # In this case, which is expected and can happen, set the description
-        # to an empty string
-        else:
-            self._git_description = ""
-
-    async def set_commit_hash(self) -> None:
-        """Populate ``_git_hash`` with the full SHA of the current HEAD commit.
-
-        The unguarded ``result.value`` is deliberate, and was reconsidered when
-        the dry-run contract landed. :meth:`run_git_command` is exempt from the
-        decline, so this read CANNOT see a ``Status.NotRun`` — a dry-run branch
-        here would be a guard that cannot fail, which this codebase treats as a
-        defect in its own right rather than as cheap insurance. The defence
-        that belongs to the consumer lives at the consumer:
-        :func:`otto.cli.invoke.repo_provenance` keeps a declined provenance
-        query from failing the log line that reads it, and it is exercised by
-        injecting the decline rather than by hoping for one.
-        """
-        result = await self.run_git_command("log -1 --format=%H")
-        self._git_hash = result.value
-
-    @property
-    def commit(self) -> str | None:
-        """Return the full HEAD commit SHA, fetching it on first access if needed."""
-        if self._git_hash is not None:
-            return self._git_hash
-
-        from ..lifecycle import run_command
-
-        run_command(self.set_commit_hash())
-        return self._git_hash
-
-    @property
-    def description(self) -> str | None:
-        """Return the cached ``git describe`` string, fetching it on first access.
-
-        The value is the parenthesised tag ``"(<tag>)"`` on success, or ``""``
-        when no tags exist (``None`` before the first access).
-        """
-        if self._git_description is not None:
-            return self._git_description
-
-        from ..lifecycle import run_command
-
-        run_command(self.set_git_description())
-        return self._git_description
-
-    @property
-    def commit_name(self) -> str:
-        """Return a display string combining the commit SHA and the git description."""
-        from ..host.host import SuppressCommandOutput
-
-        with SuppressCommandOutput():
-            return f"{self.commit} ({self.description})"
-
-    async def run_git_command(
-        self,
-        cmd: str,
-    ) -> CommandResult:
-        """Run a git sub-command in this repo's ``sut_dir`` and return the result.
-
-        Runs under a dry run, deliberately. The ``LocalHost`` below is not a
-        lab host being driven — it is a throwaway subprocess runner for a
-        question about the checkout otto is reading its own configuration from,
-        and it is constructed ``dry_run_exempt=True`` for that reason. The
-        exemption's three-part test (no device, no mutation, otto's own
-        bookkeeping) is documented on
-        :attr:`~otto.host.local_host.LocalHost.dry_run_exempt`; this method
-        passes it on every count, and so does each of its two call sites,
-        which are the only ones in the tree:
-
-        * :meth:`set_commit_hash` — ``git log -1 --format=%H``, read-only
-        * :meth:`set_git_description` — ``git describe``, read-only
-
-        Both exist to stamp provenance on the run. If a future caller wants a
-        git sub-command that WRITES, it does not inherit this exemption — it
-        needs its own host, and its own justification.
-
-        Without it, ``--dry-run`` declined the read and the caller's
-        ``result.value`` raised :exc:`~otto.result.CommandNotRunError`, which
-        took out every ``otto host <id> <verb> -n`` invocation: ``HostGroup``
-        installs the dry-run context at PARSE time, so the CLI preamble's
-        provenance log line ran with the decline already armed.
-
-        Args:
-            cmd: The git sub-command and its arguments (e.g. ``"log -1 --format=%H"``).
-
-        Returns:
-            A ``CommandResult`` containing the command's exit status and output.
-        """
-        from ..host.connections import teardown_step
-        from ..host.local_host import LocalHost
-        from ..logger.mode import LogMode
-
-        host = LocalHost(log=LogMode.QUIET, dry_run_exempt=True)
-        try:
-            return (await host.run(f"git -C {self.sut_dir} {cmd}")).only
-        finally:
-            with teardown_step(self.name, "git-helper host close"):
-                await host.close()
 
 
 def get_repos(

@@ -1,6 +1,6 @@
 """Console file transfer backend for embedded hosts.
 
-Registers ``console`` into the shared transfer registry on import.
+``otto.host.transfer.registry`` registers it as ``console``, by reference.
 """
 
 import errno
@@ -23,7 +23,6 @@ from .base import (
     TransferProgressHandler,
 )
 from .embedded_base import EmbeddedFileTransfer
-from .registry import register_transfer_backend
 
 
 def _label_errno(retcode: int) -> str:
@@ -402,6 +401,3 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
                 )
             out.extend(chunks[offset])
         return bytes(out)
-
-
-register_transfer_backend("console", ConsoleFileTransfer)

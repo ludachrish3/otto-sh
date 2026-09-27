@@ -1,0 +1,48 @@
+# Rule test for .ast-grep/rules/pydantic-models-through-ottomodel.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+id: pydantic-models-through-ottomodel
+valid:
+# The house shape: a model through OttoModel, keeping its own config.
+- |
+  from pydantic import ConfigDict
+
+  from otto.models.base import OttoModel
+
+
+  class RowModel(OttoModel):
+      model_config = ConfigDict(extra="ignore")
+# OttoModel itself is the one direct BaseModel subclass.
+- |
+  from pydantic import BaseModel, ConfigDict
+
+
+  class OttoModel(BaseModel):
+      model_config = ConfigDict(extra="forbid", defer_build=True)
+# A TypeAdapter or a rebuild inside the function that needs it.
+- |
+  def parse_hosts(raw: bytes) -> list[HostSpec]:
+      from pydantic import TypeAdapter
+
+      HostSpec.model_rebuild()
+      return TypeAdapter(list[HostSpec]).validate_json(raw)
+invalid:
+- |
+  from pydantic import BaseModel
+
+
+  class Capture(BaseModel):
+      tier: str
+- |
+  import pydantic
+
+
+  class Hosts(pydantic.RootModel[list[str]]):
+      pass
+- |
+  from pydantic import TypeAdapter
+
+  _HOSTS = TypeAdapter(list[HostSpec])
+- |
+  HostSpec.model_rebuild()

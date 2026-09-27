@@ -320,9 +320,13 @@ async def test_session_monitor_publishes_collector_and_exports_json(tmp_path):
         ) as p_build,
     ):
         gen = await _FixtureRunner.setup(plugin)
-        # While the fixture body is suspended at yield the class attr is set.
-        assert OttoSuite._session_monitor_collector is real_collector
-        await _FixtureRunner.teardown(gen)
+        # Teardown runs even when the assert fails, so a wrong collector never
+        # outlives this test on the OttoSuite class.
+        try:
+            # While the fixture body is suspended at yield the class attr is set.
+            assert OttoSuite._session_monitor_collector is real_collector
+        finally:
+            await _FixtureRunner.teardown(gen)
 
     # Build was invoked with the host list; db is None for .json output.
     assert p_build.call_args.kwargs["db"] is None
@@ -369,10 +373,14 @@ async def test_session_monitor_db_output_persists_real_lab_and_meta(tmp_path):
 
     with patch("otto.config.all_hosts", return_value=iter([_make_host("router1")])):
         gen = await _FixtureRunner.setup(plugin)
-        collector = OttoSuite._session_monitor_collector
-        assert collector is not None
-        await collector.init_db()  # session row INSERTed here
-        await _FixtureRunner.teardown(gen)  # collector.close() closes the DB
+        try:
+            collector = OttoSuite._session_monitor_collector
+            assert collector is not None
+            await collector.init_db()  # session row INSERTed here
+        finally:
+            # collector.close() closes the DB and the class attr is cleared,
+            # even when an assert above fails.
+            await _FixtureRunner.teardown(gen)
 
     (session,) = build_db_export(str(out_path)).sessions
     # lab: the real snapshot, not "{}"

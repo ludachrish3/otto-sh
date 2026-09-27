@@ -1,61 +1,119 @@
-"""Measure otto's import footprint per CLI surface — deterministic, host-independent.
+"""Measure otto's file operations per CLI surface — deterministic, host-independent.
 
-The metric is *module count / module identity* and *file I/O*, never wall-clock.
-Each surface is measured in a fresh subprocess with a sanitized env (all OTTO_*
-vars stripped) so the footprint reflects otto-core only, regardless of the dev's
-labs / SUT dirs. The one thing put BACK is a throwaway ``OTTO_HOME``, on every
-surface: the runner's real ``~/.otto`` is machine state, and ``open_home``
-gates what a startup reads there (see :func:`surface_env`).
+The metric is *file operations*: every path syscall (the stat family, opens,
+directory listings, link reads, access checks) across the command's WHOLE
+process tree, counted from outside by strace. Never wall-clock. Each surface is
+measured in a fresh subprocess with a sanitized env (all OTTO_* vars stripped)
+so the count reflects otto-core only, regardless of the dev's labs / SUT dirs.
+The one thing put BACK is a throwaway ``OTTO_HOME``, on every surface: the
+runner's real ``~/.otto`` is machine state (see :func:`surface_env`).
 
-Wall-clock cannot gate, because it fails for reasons outside the change; the
-gated signals are module sets and syscall counts, which repeat run to run.
-Syscall counts reproduced a real NFS deployment's cold `otto --version` to the
-one significant figure that field observation carries (2,427 syscalls x 1.2 ms
-RTT ~ 2.9 s against an observed ~3 s), where a dev-box wall-clock number
+Wall-clock cannot gate, because it fails for reasons outside the change; file
+operations repeat run to run. They are also what a network filesystem charges
+for: syscall counts reproduced a real NFS deployment's cold `otto --version` to
+the one significant figure that field observation carries (2,427 syscalls x
+1.2 ms RTT ~ 2.9 s against an observed ~3 s), where a dev-box wall-clock number
 predicted nothing about that machine at all. See
 docs/architecture/startup-performance.md.
 
-I/O goldens are keyed per Python minor (``<key>.io.<major.minor>.txt``) and
-are checked against the RUNNING interpreter's file; a missing file is a named
-failure, never a skip. `--update` regenerates only the running interpreter's.
+EVERY GATED COUNTER IS A CEILING: a measured baseline plus headroom
+(:func:`ceiling`). Two counters per surface, ``file_ops`` (the whole tree) and
+``workspace`` (the subset under the generated repo and ``OTTO_HOME``). Growing
+past a ceiling fails, with the growth broken down by package and by child
+process (:func:`breakdown_diff`); shrinking never fails, and a counter far below
+its ceiling earns an advisory NOTE (:func:`advisories`). A tracked surface is
+measured and printed, never enforced.
 
-The ``real_entry`` surfaces are the deliberate exception: they run the console
-entry path against a GENERATED repo, because startup I/O against an empty
-workspace is zero and therefore unmeasurable. They stay host-independent the
-same way — the harness creates what it measures.
+THE RUN, HOST AND TEST SURFACES ALSO CARRY A TARGET: a ceiling on their
+``file_ops`` as a multiple of ``otto --version``'s (``version_repo``) measured
+in the same run (:attr:`Surface.target_ratio`, :func:`check_ratio`). A ceiling
+pins today's cost; the ratio says how far above an interpreter start plus the
+shim a command may sit, and it survives a dependency update that makes every
+import dearer, because both sides move together.
+
+The baselines live in one file per Python minor
+(``tests/unit/import_budget/ceilings/<major.minor>.json``), because each
+interpreter's stdlib and import machinery differ, and are checked against the
+RUNNING interpreter's file; a missing baseline is a named failure, never a
+skip. `--update` regenerates only the running interpreter's file.
+
+The ``real_entry`` surfaces run the console entry path against a GENERATED
+repo, because startup I/O against an empty workspace is zero and therefore
+unmeasurable. They stay host-independent the same way — the harness creates
+what it measures.
 
 Usage:
-    python scripts/import_budget.py            # print a per-surface count table
-    python scripts/import_budget.py --update    # regenerate golden snapshots
-    python scripts/import_budget.py --check      # enforce the budget; exit non-zero on a breach
+    python scripts/import_budget.py            # print the per-surface table
+    python scripts/import_budget.py --check    # enforce the ceilings; exit non-zero on a breach
+    python scripts/import_budget.py --update   # rewrite this interpreter's ceilings file
+    python scripts/import_budget.py --report   # the table (an alias of no flag)
+    python scripts/import_budget.py --report-json PATH   # the same, with full breakdowns, as JSON
 """
 
 import argparse
 import atexit
+import errno
 import functools
 import json
 import os
+import pty
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SNAPSHOT_DIR = REPO_ROOT / "tests" / "unit" / "import_budget" / "snapshots"
+CEILINGS_DIR = REPO_ROOT / "tests" / "unit" / "import_budget" / "ceilings"
+
+HEADROOM = 0.10
+"""How far above its baseline a gated counter may grow before the gate fails.
+
+Ten percent is below what an unneeded heavy dependency costs (pulling
+``asyncssh`` and ``cryptography`` into a command is ~600 file operations on a
+~2,000 surface) and above what a dependency's patch release or a small otto
+change costs. A surface may widen its own (:attr:`Surface.headroom`), with a
+comment saying why."""
+
+MIN_SLACK = 5
+"""The absolute floor under :data:`HEADROOM`, for the small counters.
+
+Ten percent of a ``workspace`` count of 3 is nothing, and the import system's
+directory-listing wobble (a ``FileFinder`` re-listing a directory whose mtime a
+sibling process moved: #360, #361, #428) is worth one or two operations on any
+surface. Without a floor that wobble alone would trip a low counter."""
+
+RATIO_FLOOR = "version_repo"
+"""The surface every :attr:`Surface.target_ratio` divides by: ``otto --version``.
+
+The shim answers it without importing the CLI, so it is an interpreter start
+plus ``otto._shim`` and ``otto.version`` against the same generated repo: the
+least any command can cost."""
+
+STALE_RATIO = 0.8
+"""Below this fraction of its ceiling, a counter earns an advisory NOTE, never a failure.
+
+A ceiling is only as tight as its baseline: one recorded before a real
+reduction keeps the old, higher number, and every later regression up to it
+passes unseen. Tightening it is a regeneration, which is a human's call, not
+the gate's."""
+
+
+def ceiling(baseline: int, headroom: float) -> int:
+    """Return the most a counter with *baseline* may measure: *headroom* or MIN_SLACK more."""
+    return max(int(baseline * (1 + headroom)), baseline + MIN_SLACK)
 
 
 @dataclass(frozen=True)
 class Surface:
-    """One measured CLI surface: its argv, denied heavy stacks, and non-stdlib module cap."""
+    """One measured CLI surface: its argv, how it is run, and whether its ceilings gate."""
 
     key: str
     argv: list[str]
-    deny: tuple[str, ...]
-    cap: int | None = None
     bootstrap: bool = False
     """Run the composition root before resolving the dispatch target.
 
@@ -73,13 +131,13 @@ class Surface:
 
     sut_dirs_count: int = 1
     """Subdirectory count, scaled independently of ``sut_files``: a stat-only
-    walk is visible only per directory, via ``os.scandir``."""
+    walk is visible only per directory."""
 
     real_entry: bool = False
     """Run the console-script entry path instead of resolving a dispatch
-    target. Required to observe bootstrap and cache behaviour; carries its own
-    snapshots because it admits help-rendering imports the other surfaces
-    deliberately exclude."""
+    target. Required to observe bootstrap and cache behaviour, and it renders
+    help the way a user sees it, which the dispatch-only surfaces skip on
+    purpose."""
 
     warm: bool = False
     """Measure the SECOND run against one repo and one ``OTTO_HOME``.
@@ -95,27 +153,26 @@ class Surface:
     The seed writes ONLY into ``OTTO_HOME`` (the cache file). Nothing is
     written into the fixture tree — ``PYTHONDONTWRITEBYTECODE`` still keeps
     ``__pycache__`` out of it — so the pair stays deterministic and repeated
-    warm measurements read identical EXACT counts (:func:`exact_io`). Not
-    identical ``open`` totals: that counter also carries the state of a
-    bytecode cache this harness neither owns nor can quiesce, so it drifts
-    between two measurements of one surface whenever another process on the
-    machine imports the same module. Issue #321 was a test comparing it.
+    warm measurements read an identical ``workspace`` count. Not an identical
+    ``file_ops`` total: that counter also carries the state of a bytecode
+    cache this harness neither owns nor can quiesce, so it moves between two
+    measurements of one surface whenever another process on the machine
+    imports the same module. That is what the headroom absorbs.
     """
 
     seed_argv: list[str] | None = None
     """Argv the seed run uses instead of ``argv``, when the measured argv itself
     never reads or writes the cache.
 
-    ``None`` (every warm surface but one) means ``argv`` seeds itself: root
-    help and completion are cache readers, so their own first run already
-    takes the miss → full bootstrap → collect → write path and leaves a valid
-    cache for the second, measured run to find. An ordinary dispatch is not a
-    reader (``entry()``'s ``reads_cache`` is only ever true for those two), so
-    seeding ``dispatch_repo_warm`` with its own argv leaves ``OTTO_HOME`` empty
-    both runs — the measured ``open_home 0`` would then be true for the wrong
-    reason: there is nothing to open, not that dispatch declines to open it.
-    Seeding with root ``otto --help`` instead puts a real cache beside the
-    measured run, so its zero is the fact this surface exists to pin.
+    ``None`` means ``argv`` seeds itself: root help and completion are cache
+    readers, so their own first run already takes the miss → full bootstrap →
+    collect → write path and leaves a valid cache for the second, measured run
+    to find. An ordinary dispatch is not a reader (``entry()``'s
+    ``reads_cache`` is only ever true for those two), so seeding a dispatch
+    with its own argv leaves ``OTTO_HOME`` empty both runs, and a measured run
+    that ignores the cache would do so for the wrong reason: there is nothing
+    to open, not that dispatch declines to open it. Seeding with root
+    ``otto --help`` instead puts a real cache beside the measured run.
     """
 
     env_extra: tuple[tuple[str, str], ...] = ()
@@ -132,6 +189,64 @@ class Surface:
     otherwise have stripped.
     """
 
+    tracked: bool = False
+    """Measured and printed, never enforced: the tier for a verb nobody has optimized yet.
+
+    A tracked surface becomes gated when someone optimizes it and wants the
+    win pinned. Its key starts with ``tracked_``, and it has no baseline in
+    the ceilings files."""
+
+    expect_exit: int = 0
+    """The exit code a real-entry run must end with.
+
+    Zero for every surface but the ones whose command is a failure by
+    construction: the closed-port SSH surface measures a connection that is
+    refused at once, because that is the SSH path with no real host."""
+
+    pty_input: str | None = None
+    """When set, the child runs under a pseudo-terminal and this text is written to it.
+
+    For a verb that bridges the user's terminal (``host login``): with a pipe
+    on stdin it would measure a different code path, or refuse to start."""
+
+    expect_error: str | None = None
+    """The qualified type of the exception a real-entry run must end with, if any.
+
+    ``expect_exit`` alone cannot tell a refused connection from a command that
+    never reached the network: an unknown host id also exits 1. A surface
+    that fails by construction names the failure it measures here, as
+    ``<module>.<qualname>`` of the exception type that escapes the entry."""
+
+    ssh_lab: bool = False
+    """Generate the repo with a second lab source holding one SSH host on a closed port.
+
+    See ``generate_repo``'s ``ssh_lab_port``. The harness picks the port and
+    proves it refuses a connection before every measured run, so the surface
+    measures one refused attempt rather than whatever a stray listener says.
+    """
+
+    headroom: float = HEADROOM
+    """How far above its baseline this surface's counters may grow (see :func:`ceiling`).
+
+    Widen it only with a comment on the surface saying why; the default is
+    what every surface should be able to hold."""
+
+    target_ratio: float | None = None
+    """The most this surface's ``file_ops`` may be, as a multiple of :data:`RATIO_FLOOR`'s.
+
+    ``None`` sets no target. Each value is derived from the LARGEST ratio
+    measured across the supported CPython minors (3.10 to 3.14) when it was
+    set, rounded UP to one decimal, plus 10%, kept to two decimals: a largest
+    measured 4.003 becomes 4.1, then 4.51. One target serves every interpreter
+    because both sides of the ratio are measured in the same run
+    (:func:`check_ratio`); the largest ratio is the one the target must admit.
+
+    The SSH surfaces' ratios include the child processes asyncssh's import
+    starts to probe for liboqs (``ldconfig``, ``gcc``, ``ld``), measured on
+    the aarch64 dev VM. Another architecture's toolchain may cost a different
+    amount; if CI trips on those surfaces alone, re-derive their targets from
+    CI's own measurement."""
+
 
 def surface_by_key(key: str) -> Surface:
     """Return the surface named *key*. Never index SURFACES positionally."""
@@ -141,159 +256,117 @@ def surface_by_key(key: str) -> Surface:
     raise KeyError(f"no surface named {key!r}")
 
 
-# Heavy third-party stacks that must stay off the surfaces that don't own them.
-_ALL_HEAVY = ("fastapi", "uvicorn", "starlette", "pytest")
+def _verb_surface(
+    key: str,
+    argv: list[str],
+    *,
+    tracked: bool = False,
+    expect_exit: int = 0,
+    pty_input: str | None = None,
+    ssh_lab: bool = False,
+    expect_error: str | None = None,
+    target_ratio: float | None = None,
+) -> Surface:
+    """Build a surface measuring one real command, the way a user runs it day to day.
 
-# Caps are on the NON-STDLIB module count (otto + third-party), never the full
-# sys.modules total. The stdlib import graph drifts across Python versions
-# (e.g. 3.14 pulls in compression.zstd, annotationlib, asyncio.graph, ...):
-# noise unrelated to otto's own footprint. One cap (baseline + ~15 headroom)
-# then holds on every gated interpreter. This is the same "stable across
-# dependency/version upgrades" rule the design already applies to the
-# otto-only golden snapshot.
-#
-# THE NON-STDLIB COUNT IS NOT IDENTICAL ACROSS INTERPRETERS, so a cap is
-# baselined on the HIGHEST-MEASURING gated one — today 3.10. A third party may
-# import a compat module only on the older interpreter: `markdown_it._compat`
-# is on `help_repo` under 3.10 and gone under 3.11+, which puts 3.10 one module
-# above every other version on that surface (464 vs 463 as of typer 0.27.2).
-# A cap baselined on 3.11+ is therefore already breached on 3.10 the day it
-# lands, and the 3.10 lane is the only one that says so — #303.
-#
-# The ~15 headroom is for a FULL-PATH surface: one whose deny list still lets
-# some third-party stack (typer, click, rich, ...) through, so a version bump
-# in one of those can move its count without otto importing anything new —
-# exactly what opened #303, where typer 0.27.2 reparented its vendored click
-# exceptions onto a new `typer.exceptions` module and every typer-bearing
-# surface gained one module that otto neither imports nor can defer. A
-# surface whose deny list forbids every third party instead (`version_repo`,
-# `completion_repo_warm`) has a module set that is structurally fixed by that
-# deny list — nothing outside otto's own graph can ever appear — so it gets
-# an exact cap with no headroom, the same way the golden snapshot itself is
-# exact.
+    Every verb surface shares one shape, so the numbers compare across verbs:
+    the real console entry against a realistic generated repo, WARM (seeded
+    with root help, which writes the cache an ordinary command then finds
+    beside it, as ``dispatch_repo_warm`` explains), with ``OTTO_LAB`` naming
+    the JSON lab the repo declares so no command needs a real host.
+    """
+    return Surface(
+        key,
+        argv,
+        sut_files=50,
+        sut_dirs_count=5,
+        real_entry=True,
+        warm=True,
+        seed_argv=["otto", "--help"],
+        env_extra=(("OTTO_LAB", "unix"),),
+        tracked=tracked,
+        expect_exit=expect_exit,
+        pty_input=pty_input,
+        ssh_lab=ssh_lab,
+        expect_error=expect_error,
+        target_ratio=target_ratio,
+    )
+
+
+_TRACKED_VERBS = [
+    "init",
+    "env",
+    "cache",
+    "docker",
+    "link",
+    "tunnel",
+    "monitor",
+    "cov",
+    "reservation",
+    "inventory",
+    "schema",
+]
+"""The top-level verbs with no gated surface of their own; each is measured at ``--help``."""
+
+
 SURFACES: list[Surface] = [
-    Surface("import_otto", ["python"], _ALL_HEAVY, cap=19),  # lazy __init__ (Part D)
-    Surface("help", ["otto", "--help"], _ALL_HEAVY, cap=188),
-    Surface("run", ["otto", "run", "--help"], _ALL_HEAVY, cap=154),
-    Surface("host", ["otto", "host", "--help"], _ALL_HEAVY, cap=255),
-    Surface("reservation", ["otto", "reservation", "--help"], _ALL_HEAVY, cap=143),
-    Surface("docker", ["otto", "docker", "--help"], _ALL_HEAVY, cap=258),
-    Surface("schema", ["otto", "schema", "--help"], _ALL_HEAVY, cap=150),
-    # monitor owns the dashboard, so fastapi/uvicorn/starlette are allowed here.
-    Surface("monitor", ["otto", "monitor", "--help"], ("pytest",), cap=265),
-    # test runs the suite, so pytest is allowed here.
-    Surface("test", ["otto", "test", "--help"], ("fastapi", "uvicorn", "starlette"), cap=251),
-    Surface(
-        "cov", ["otto", "cov", "--help"], ("fastapi", "uvicorn", "starlette", "pytest"), cap=265
-    ),
+    Surface("import_otto", ["python"]),  # bare `import otto`: the lazy package init
+    # The `--help` surfaces resolve their dispatch target through the root
+    # group WITHOUT running Click's help rendering (see `_CHILD_CLI_BODY`).
+    Surface("help", ["otto", "--help"]),
+    Surface("run", ["otto", "run", "--help"]),
+    Surface("host", ["otto", "host", "--help"]),
+    Surface("reservation", ["otto", "reservation", "--help"]),
+    Surface("docker", ["otto", "docker", "--help"]),
+    Surface("schema", ["otto", "schema", "--help"]),
+    Surface("monitor", ["otto", "monitor", "--help"]),
+    Surface("test", ["otto", "test", "--help"]),
+    Surface("cov", ["otto", "cov", "--help"]),
     # THE COMPOSITION ROOT IS ON THE PATH OF EVERY REAL INVOCATION, and until
     # this surface existed nothing measured it: every surface above resolves a
     # dispatch target through the root group WITHOUT calling `bootstrap()`, so
-    # when bootstrap grew an import (it now imports `otto.project.actions`
-    # to register the first-party `otto run` verbs, which pulls otto.project
-    # and its dependents) the guard measured none of it and stayed green.
+    # when bootstrap grew an import (it imports `otto.project.actions` to
+    # register the first-party `otto run` verbs, which pulls otto.project and
+    # its dependents) the guard measured none of it and stayed green.
     #
     # Deliberately a SECOND surface over the same argv as `run` rather than a
     # change to that one: the pair is the measurement. `run` keeps reporting
     # what lazy dispatch costs by itself (what the completion fast path pays,
-    # which never bootstraps), and the DIFFERENCE between the two snapshots is
-    # the composition root's own footprint. `run` is the argv because the verbs
+    # which never bootstraps), and the DIFFERENCE between the two is the
+    # composition root's own footprint. `run` is the argv because the verbs
     # bootstrap registers are `otto run`'s.
-    # cap 267 -> 278 per #303: 263 measured on 3.10 + 15, restoring the
-    # headroom a full-path surface is supposed to carry.
-    Surface("run_bootstrapped", ["otto", "run", "--help"], _ALL_HEAVY, cap=278, bootstrap=True),
+    Surface("run_bootstrapped", ["otto", "run", "--help"], bootstrap=True),
     # EVERY SURFACE ABOVE MEASURES AN EMPTY WORKSPACE. The sanitized env strips
-    # OTTO_*, so `sut_dirs` is empty, discovery finds zero repos, and the walk
-    # this spec exists to remove costs nothing on any of them — `scandir` reads
-    # 0 across the whole table, including `run_bootstrapped`. A guard that
-    # cannot observe the defect cannot witness the fix either.
+    # OTTO_*, so `sut_dirs` is empty, discovery finds zero repos, and a walk of
+    # the workspace costs nothing on any of them. A guard that cannot observe a
+    # defect cannot witness its fix either.
     #
     # The surfaces below carry a GENERATED repo (deterministic by
     # construction, so they stay as host-independent as the rest of the table)
     # and — `bootstrap_repo`, which drives the composition root directly, aside
     # — run the REAL entry path, so they observe bootstrap and cache
-    # behaviour no other surface can see. They carry their own snapshots:
-    # entry() renders help, admitting rich-markdown and pygments that the
-    # dispatch-only surfaces exclude on purpose.
-    # Capped as of Task 4: the console script now answers `--version` from
-    # `otto._shim` without importing the CLI, so the measured non-stdlib set is
-    # exactly {otto, otto._shim, otto.version} — 3, capped at 4.
+    # behaviour no other surface can see.
     #
-    # THE HEADROOM IS ONE, DELIBERATELY. The usual reason for slack — stdlib
-    # and dependency drift across 3.10-3.14 — cannot apply: this path imports
-    # no third party at all, so the measured set is structurally fixed, and
-    # any legitimate growth regenerates the snapshot anyway (which is a
-    # reviewed diff, not a silent raise). Slack here buys nothing and costs
-    # detection: measured directly, a stray module-scope `import rich` adds
-    # only TWO non-stdlib modules (rich's submodules are lazy) and
-    # `platformdirs` five, so a cap of 4 would wave neither through only
-    # because it is this tight.
-    #
-    # The denylist is the second, independent edge, and it is what actually
-    # caught the rich case: click/typer/rich ARE the framework whose
-    # ~2400-syscall import this fast path exists to skip, so their presence is
-    # the regression at ANY module count — including one.
-    Surface(
-        "version_repo",
-        ["otto", "--version"],
-        ("pytest", "rich", "typer", "click"),
-        cap=4,
-        sut_files=50,
-        sut_dirs_count=5,
-        real_entry=True,
-    ),
+    # `--version` is answered by `otto._shim` without importing the CLI, so
+    # this surface is the floor every other command is compared against: an
+    # interpreter start plus the shim and `otto.version`.
+    Surface("version_repo", ["otto", "--version"], sut_files=50, sut_dirs_count=5, real_entry=True),
     # THE HELP PAIR. `help_repo` is COLD — a fresh OTTO_HOME per measurement,
     # so it is the fallback path: cache miss → full bootstrap → collect →
     # write, which is what cache-or-load promises and must keep costing what
     # a complete answer costs. It is therefore also the surface that PROVES
-    # THE HARNESS still finds a real repo (`scandir >= 2 * dirs`), which is
-    # why it stays in the table unchanged rather than being replaced.
+    # THE HARNESS still finds a real repo (its `workspace` count covers every
+    # generated file), which is why it stays in the table unchanged.
     #
     # `help_repo_warm` is the same surface measured on its SECOND run against
-    # one home, i.e. the cached path Task 7 built: root help resolves the
-    # command list from the `names` section and never walks the corpus. The
-    # scaling gate keys on this one — a cold help legitimately scales,
-    # because a full load legitimately reads everything.
-    Surface(
-        "help_repo",
-        ["otto", "--help"],
-        # pytest is ALLOWED here: a cold rebuild collects suites, which loads
-        # the suite files by design, and the realistic repo's suite files
-        # import pytest.
-        (),
-        # 411 -> 463: a cold cache write now calls build_shim_payload,
-        # which serialises the WHOLE CLI tree (every subcommand group, not
-        # just the root) to build the `shim` section's tree — resolving each
-        # one for the first time pulls in its own module plus its backends
-        # (otto.coverage.*, otto.docker.*, otto.tunnel.*, otto.link.*, ...).
-        # help_repo_warm is unaffected: a warm run never reaches the slow
-        # path that calls it.
-        #
-        # 463 -> 479: 463 was the RAW 3.10 measurement, i.e. a full-path
-        # surface carrying zero headroom, so the first third-party module to
-        # appear anywhere on it was a CI failure (#303). Re-baselined to the
-        # policy above: 464 measured on 3.10 + 15.
-        # 479 -> 612: the realistic generated repo (suite files import pytest;
-        # the init imports a monitor parser) — 597 measured on 3.10 + 15.
-        cap=612,
-        sut_files=50,
-        sut_dirs_count=5,
-        real_entry=True,
-    ),
+    # one home, i.e. the cached path: root help resolves the command list
+    # from the `names` section and never walks the corpus. The scaling test
+    # keys on this one — a cold help legitimately scales, because a full load
+    # legitimately reads everything.
+    Surface("help_repo", ["otto", "--help"], sut_files=50, sut_dirs_count=5, real_entry=True),
     Surface(
         "help_repo_warm",
         ["otto", "--help"],
-        ("pytest",),
-        # 390 -> 404: raw-measurement baseline, same #303 re-baseline as its
-        # cold twin — 389 measured on 3.10 + 15.
-        # 404 -> 414: NOT the realistic generated repo — this surface never
-        # bootstraps (a warm root help answers from the `names` section
-        # alone), and its otto module set carries no suite/monitor/pytest
-        # modules either before or after. The 10-module drift already sits in
-        # the otto module GOLDEN (otto.console, otto.host.telnet,
-        # otto.host.transfer.console — console-term, 32c4e71a); only the cap
-        # integer was never bumped to match. 399 measured on 3.10 + 15.
-        cap=414,
         sut_files=50,
         sut_dirs_count=5,
         real_entry=True,
@@ -301,63 +374,42 @@ SURFACES: list[Surface] = [
     ),
     # `run_bootstrapped`'s REPO-BEARING SIBLING, and the pair is again the
     # measurement. That surface runs the composition root against an EMPTY
-    # workspace — zero repos discovered, `scandir` 0 — which is what isolates
-    # bootstrap's own import graph from anything a workspace drags in, and it
-    # must keep doing exactly that. This one runs the same root against a
-    # generated repo, so the work bootstrap does PER REPO (reading the repo's
-    # settings, putting its lib dirs on the path, importing its init tree) is
-    # charged to a surface for the first time. Same argv for the same reason
-    # the original chose it: the verbs bootstrap registers are `otto run`'s.
+    # workspace — zero repos discovered — which is what isolates bootstrap's
+    # own import graph from anything a workspace drags in, and it must keep
+    # doing exactly that. This one runs the same root against a generated
+    # repo, so the work bootstrap does PER REPO (reading the repo's settings,
+    # putting its lib dirs on the path, importing its init tree) is charged to
+    # a surface. Same argv for the same reason the original chose it: the
+    # verbs bootstrap registers are `otto run`'s.
     Surface(
         "bootstrap_repo",
         ["otto", "run", "--help"],
-        # pytest is denied: test files load only for commands that read suites,
-        # so a dispatch or a bootstrap must not import it.
-        _ALL_HEAVY,
-        # 274 -> 288: raw-measurement baseline, re-baselined per #303 —
-        # 273 measured on 3.10 + 15.
-        # 288 -> 434: the realistic generated repo (suite files import pytest;
-        # the init imports a monitor parser) — 419 measured on 3.10 + 15.
-        # 434 -> 317: test files load on demand, only for commands that read
-        # suites, so bootstrap no longer imports them or pytest — 302 measured
-        # on 3.10 + 15.
-        cap=317,
         bootstrap=True,
         sut_files=50,
         sut_dirs_count=5,
     ),
     # THE COMMON CASE: a real command, dispatched through the real entry with
-    # a warm cache. Every other real-entry surface is `--version`, root help or
-    # a TAB, so until this existed nothing measured what `otto host X exec` or
-    # `otto run Y` pays before its own work starts — which is where a
-    # completion-cache check and every repo's test-file import were hiding.
-    # `-R` skips the reservation check and OTTO_LAB names a JSON lab the
-    # generated repo declares, so the run contacts no host.
+    # a warm cache. Every other real-entry surface above is `--version`, root
+    # help or a TAB, so until this existed nothing measured what `otto run Y`
+    # pays before its own work starts — which is where a completion-cache
+    # check and every repo's test-file import were hiding. `-R` skips the
+    # reservation check and OTTO_LAB names a JSON lab the generated repo
+    # declares, so the run contacts no host.
     #
-    # `seed_argv=root --help`, NOT this surface's own argv. An ordinary
-    # dispatch never reads or writes the cache (`entry()`'s `reads_cache` is
-    # only ever true for root help and completion), so seeding with
-    # `-R run noop` itself would leave OTTO_HOME exactly as empty as a cold
-    # run — the measured `open_home 0` would then be trivially true (nothing
-    # to open) rather than the fact this surface exists to pin (dispatch
-    # ignores a cache that is really there). Root help is a real cache
-    # reader/writer, so it leaves that real cache behind for the measured run.
+    # `seed_argv=root --help`, NOT this surface's own argv: see
+    # `Surface.seed_argv`. Root help is a real cache reader/writer, so it
+    # leaves a real cache behind, and the measured run shows dispatch
+    # ignoring a cache that is really there.
     Surface(
         "dispatch_repo_warm",
         ["otto", "-R", "run", "noop"],
-        # pytest is denied: test files load only for commands that read suites,
-        # so a dispatch or a bootstrap must not import it.
-        _ALL_HEAVY,
-        # 599 -> 481: test files load on demand, only for commands that read
-        # suites, so a dispatch no longer imports them or pytest — 466
-        # measured on 3.10 + 15 (was 584).
-        cap=481,
         sut_files=50,
         sut_dirs_count=5,
         real_entry=True,
         warm=True,
         seed_argv=["otto", "--help"],
         env_extra=(("OTTO_LAB", "unix"),),
+        target_ratio=4.4,
     ),
     # THE STEADY-STATE TAB COST. Completion is the surface a user hits most
     # often and notices most sharply, and it is a MODE rather than an argv:
@@ -367,19 +419,13 @@ SURFACES: list[Surface] = [
     #
     # WARM, like `help_repo_warm` and for the same reason: a cold cache means
     # a miss, and a miss is a full bootstrap by design — completion never
-    # degrades to a wrong answer. The seed run now also leaves the `shim`
-    # section (written by `entry()` on every cache write, spec §3.1 of
-    # `2026-09-25-dispatch-startup-cost-design.md`), and the
-    # measured run is the shim's stat pass plus one JSON read: `otto._shim`
+    # degrades to a wrong answer. The seed run leaves the `shim` section, and
+    # the measured run is the shim's stat pass plus one JSON read: `otto._shim`
     # answers the TAB from the cache without ever importing `otto.cli`,
-    # `otto.config`, typer, click, or rich. The steady state is the
-    # second and every later TAB, served from the shim's stat-and-marker
-    # validator, and that is what a budget should bound.
+    # `otto.config`, typer, click, or rich.
     Surface(
         "completion_repo_warm",
         ["otto"],
-        (*_ALL_HEAVY, "typer", "click", "rich", "pydantic", "pydantic_settings"),
-        cap=3,
         sut_files=50,
         sut_dirs_count=5,
         real_entry=True,
@@ -391,45 +437,20 @@ SURFACES: list[Surface] = [
         ),
     ),
     # THE FALLBACK'S TAB COST. `otto tunnel remove <TAB>` (COMP_CWORD=3) is a
-    # `live` site (spec §1 decision 3): the resolver hands over rather than
-    # answering, and the shim falls through to the unchanged full CLI path.
-    # This is a DIFFERENT site than `completion_repo_warm`'s — that one
-    # completes top-level command NAMES (COMP_CWORD=1), which never resolves
-    # a specific command's module; this one resolves three levels deep into
-    # `tunnel remove`'s own argument completer, which imports `otto.cli.tunnel`
-    # and, transitively, all of `otto.tunnel`, `otto.project`,
-    # `otto.instructions`, `otto.host.daemon`, and `otto.config.fleet`/`lab`/
-    # `dependencies` — modules the top-level site never touches. Its module
-    # set is therefore what THIS SAME TAB cost before the shim existed, plus
-    # `otto._shim_complete` (the one new import the resolver adds on the way
-    # to deciding to hand over). The goldens show `open_home 4, scandir 2`
-    # against the warm surface's `2, 0`, and that is not a regression against
-    # it: the warm surface is a different, shallower site with a different,
-    # much smaller baseline, so "as cheap as the warm path" was never the bar
-    # here. This site has no pre-shim golden to diff against, so the
-    # shim's own contribution here is not a measured delta; it is a fact of
-    # `otto._shim.main`'s construction — a cache read, the stat pass, and a
-    # marker touch always happen before it can decide to hand over, on every
-    # path, this one included.
+    # `live` site: the resolver hands over rather than answering, and the shim
+    # falls through to the unchanged full CLI path. This is a DIFFERENT site
+    # than `completion_repo_warm`'s — that one completes top-level command
+    # NAMES (COMP_CWORD=1), which never resolves a specific command's module;
+    # this one resolves three levels deep into `tunnel remove`'s own argument
+    # completer, which imports `otto.cli.tunnel` and, transitively, all of
+    # `otto.tunnel`, `otto.project`, `otto.instructions`, `otto.host.daemon`,
+    # and `otto.config.fleet`/`lab`/`dependencies` — modules the top-level
+    # site never touches. So "as cheap as the warm path" was never the bar
+    # here; the shim's own part is a cache read, the stat pass, and a marker
+    # touch, which always happen before it can decide to hand over.
     Surface(
         "completion_repo_handover",
         ["otto"],
-        # pytest is denied: test files load only for commands that read suites,
-        # so a dispatch or a bootstrap must not import it. A handover
-        # bootstraps, but `tunnel remove`'s completer never reads suites.
-        _ALL_HEAVY,
-        # cap=315: measured 300 non-stdlib modules + ~15 headroom, like every
-        # other full-CLI-path surface (see the SURFACES-level comment above) —
-        # this surface's deny list does not fix its module set the way
-        # `completion_repo_warm`'s does, so a typer/click dependency bump that
-        # every peer absorbs in headroom would otherwise make this the one
-        # surface that goes red on it.
-        # 315 -> 463: the realistic generated repo (suite files import pytest;
-        # the init imports a monitor parser) — 448 measured on 3.10 + 15.
-        # 463 -> 346: test files load on demand and this completer never reads
-        # suites, so the handover no longer imports them or pytest — 331
-        # measured on 3.10 + 15.
-        cap=346,
         sut_files=50,
         sut_dirs_count=5,
         real_entry=True,
@@ -440,149 +461,106 @@ SURFACES: list[Surface] = [
             ("COMP_CWORD", "3"),
         ),
     ),
+    # THE COMMANDS A USER RUNS. The surfaces above measure `--version`, help,
+    # completion and one dispatch; nothing measured what `otto host X exec`
+    # or `otto test` costs before its own work starts, which is where each
+    # verb paid for every other verb's imports.
+    #
+    # `{root}` in an argv is the surface's fixture root, filled in at
+    # measurement time. A surface that names it gets the transfer fixture
+    # there: a one-line `payload.txt` and EMPTY `put-dest/` and `get-dest/`,
+    # reset before every run so each measurement transfers into a directory
+    # that has never held the file.
+    #
+    # Loads the suites: the one verb that must import pytest.
+    _verb_surface("test_repo", ["otto", "test", "TestTop0"], target_ratio=9.46),
+    # The built-in `local` host stands in for the ~30 host subverbs that run a
+    # shell command: every one is a `@cli_exposed` method on the same class.
+    _verb_surface("host_local_exec", ["otto", "host", "local", "exec", "true"], target_ratio=4.4),
+    _verb_surface(
+        "host_local_put",
+        ["otto", "host", "local", "put", "{root}/payload.txt", "{root}/put-dest"],
+        target_ratio=4.51,
+    ),
+    _verb_surface(
+        "host_local_get",
+        ["otto", "host", "local", "get", "{root}/payload.txt", "{root}/get-dest"],
+        target_ratio=4.51,
+    ),
+    # THE SSH PATH WITH NO REAL HOST: `budget-ssh` is `127.0.0.1` on a port
+    # the harness proves closed, so asyncssh's connect is refused at once.
+    # otto makes one attempt (no retry to disable), the exception escapes
+    # the verb, and the interpreter's excepthook ends the run with status 1.
+    # `expect_error` pins WHICH failure: an unknown host id exits 1 as well.
+    _verb_surface(
+        "host_ssh_exec",
+        ["otto", "host", "budget-ssh", "exec", "true"],
+        ssh_lab=True,
+        expect_exit=1,
+        expect_error="builtins.ConnectionRefusedError",
+        target_ratio=8.47,
+    ),
+    # THE LOGIN PATH, on the same closed-port host, under a pty as a user's
+    # terminal would be. Not the built-in `local` host: `LocalHost` implements
+    # no interactive session, so its `login` refuses before connecting.
+    # `budget-ssh` takes `UnixHost._login`'s SSH branch and is refused at the
+    # connect that precedes the terminal bridge (`interact.run_ssh_login`
+    # needs the connection), so the bridge module is counted as far as the
+    # host module imports it, and the bridge itself never runs. It ends as
+    # `host_ssh_exec` does.
+    _verb_surface(
+        "host_ssh_login",
+        ["otto", "host", "budget-ssh", "login"],
+        pty_input="exit\n",
+        ssh_lab=True,
+        expect_exit=1,
+        expect_error="builtins.ConnectionRefusedError",
+        target_ratio=8.47,
+    ),
+    # `dispatch_repo_warm`'s own sibling, dispatching `local_true` instead of
+    # `noop`: `local_true` opens a persistent `LocalHost` session and runs one
+    # command through it (tests/_fixtures/generated_repo.py), so this surface
+    # is the one that can see what a session's own connection-lost choke
+    # points cost. `dispatch_repo_warm` never opens a host session at all, so
+    # it never could.
+    # Typer renders an underscored Python name with hyphens on the command
+    # line ("local_true" -> "local-true"); the argv must say what a user
+    # would actually type.
+    _verb_surface("dispatch_local_warm", ["otto", "-R", "run", "local-true"], target_ratio=4.51),
+    # TRACKED: measured and printed, never enforced.
+    *(
+        _verb_surface(f"tracked_{verb}", ["otto", verb, "--help"], tracked=True)
+        for verb in _TRACKED_VERBS
+    ),
+    # `--help`, not the real verb: a real probe or power cycle of the local
+    # host measures the machine it runs on, not otto.
+    _verb_surface("tracked_host_probe", ["otto", "host", "local", "probe", "--help"], tracked=True),
+    _verb_surface("tracked_host_power", ["otto", "host", "local", "power", "--help"], tracked=True),
 ]
 
-# non_stdlib_modules is the gated metric: total sys.modules minus the stdlib
-# (classified via the *child's own* sys.stdlib_module_names, so each Python
-# version self-classifies). Excluding the stdlib makes the count version-robust:
-# the stdlib graph grows release to release, otto's footprint does not.
+# The payload still carries the module inventory (`modules`, `otto_modules`,
+# `non_stdlib_modules`): nothing gates on it, but a failure is easier to read
+# with it, and tests that ask "is this module loaded on this path" read it.
+# `non_stdlib_modules` is total sys.modules minus the stdlib, classified via
+# the *child's own* sys.stdlib_module_names, so each Python version
+# self-classifies.
 
-# Prepended to every child, BEFORE `import otto`, so every file-I/O operation
-# otto's own import graph performs is observed. Audit events, not an os.stat
-# wrapper: verified on 3.10.20, pathlib binds its stat accessor at import time,
-# so patching os.stat afterwards counts 0 against 500 real stats, and there is
-# no os.stat audit event. Path.read_text does fire "open". rglob/glob are
-# deliberately not counted: otto's own walk is os.walk, and glob event
-# behaviour differs across versions.
-#
-# ``open_fixture`` IS THE GATED HALF OF ``open``, and the split is forced by
-# measurement, not taste. The whole-process ``open`` total is dominated by the
-# import machinery and moves with the ENVIRONMENT rather than with otto:
-#
-#   * bytecode-cache state. A module whose ``.pyc`` is missing costs TWO
-#     counted opens (the failed ``open`` of the cache file — the audit event
-#     fires before the attempt — plus the source read), and a third when the
-#     interpreter writes the cache back. Measured on one machine, one
-#     interpreter (3.10.20): the `run` surface reads 552 opens the first time
-#     it runs in a fresh venv and 249 every time after, and `help_repo_warm`
-#     636 with a warm cache against 796 with a cold one — the repo-bearing
-#     surfaces set ``PYTHONDONTWRITEBYTECODE`` (see :func:`surface_env`), so
-#     for them the cold number never converges on its own.
-#   * the installed distribution set. Rendering help imports pygments, whose
-#     plugin lookup opens one ``entry_points.txt`` PER INSTALLED DIST: the dev
-#     venv and a ``nox`` ``dev``-group venv of the SAME interpreter measured
-#     645 against 636 on ``help_repo_warm`` with byte-identical module sets
-#     (605 modules both), the 9 being exactly the 9 lint/arch dists the dev
-#     venv carries.
-#
-# Neither drift has anything to do with the change under test, which makes an
-# exact whole-process ``open`` golden a check that fails for reasons outside
-# the change — monitoring, not gating. Opens UNDER THE FIXTURE ROOT carry
-# neither: site-packages and the stdlib live outside it, and the fixture's OWN
-# bytecode caches are kept out by ``PYTHONDONTWRITEBYTECODE``, which
-# :func:`surface_env` pins on every repo-bearing child. THAT PIN IS LOAD-BEARING
-# FOR THIS COUNTER, not just for leaving the tree clean. Drop it and the
-# fixture's `.pyc` probe misses and writebacks land INSIDE the gated number:
-# measured on `bootstrap_repo` with the pin removed, `open_fixture` reads 10 on
-# the first child in a process and 4 on every later one — order-dependent
-# within one run, because `_generated_repo_for` caches the tree per process. It
-# is the exact flake class ``open`` was rejected for, so
-# `test_repo_bearing_surface_isolates_home_and_repo` asserts the pin rather
-# than leaving it to a comment.
-#
-# ATTRIBUTION IS A PREFIX MATCH, AND IT CARRIES BOTH SPELLINGS OF THE ROOT.
-# The harness hands the child a path built from `tempfile.mkdtemp`, while otto
-# may resolve what it opens — so on a box whose TMPDIR is a symlink the two
-# would not share a prefix and the counter would silently read low. The child
-# therefore matches against the raw root AND its `realpath`. Bytes paths are
-# decoded; an `int` (an `open` on an existing fd) is skipped. RELATIVE paths
-# are out of scope and cannot occur here: every path under measurement is
-# built from the ABSOLUTE `OTTO_SUT_DIRS` / `OTTO_HOME` the harness injects,
-# and a miss would undercount, which the non-zero liveness pins in
-# `tests/unit/import_budget/` would catch.
-#
-# What remains under the root is exactly the workspace I/O this budget exists
-# to bound (a warm `otto --help` opens two files there: the repo's
-# `.otto/settings.toml` and `completion_cache.json`). Both envs above measured
-# it identical. The whole-process total stays in the payload as CONTEXT for a
-# failure and as the input to the corpus-scaling deltas the unit suite
-# asserts — those compare two measurements from ONE environment, so the drift
-# cancels and ``open`` stays gated where it can be.
-#
-# ``open_home`` IS THE SAME MECHANISM POINTED AT ``OTTO_HOME`` — same dual
-# spelling, same bytes decode, same str-only guard — and it is a SECOND VIEW
-# rather than a partition. On a repo-bearing surface the temp home lives
-# inside the fixture root (`surface_env` puts it there so one atexit sweep
-# collects both), so the cache file a warm start reads is counted by BOTH
-# counters. The overlap is the point: `open_fixture` bounds the workspace I/O
-# as a whole, and inside that total a repo read and a home read are
-# indistinguishable, while the home half is the one that hurts when `$HOME` is
-# on a network filesystem and the repo half is not.
-#
-# IT GATES THE OPEN, NOT THE WHOLE FOOTPRINT. There is no stat audit event —
-# the same fact that makes `scandir` the only observable for the corpus walk —
-# so the warm read's existence stat and the user `settings.toml` probe ride
-# invisibly. The warm home footprint is 1 open + 2 stats; this counter is an
-# exact bound on the open, which is the term that dominates on a network home,
-# and NOT a claim that the open is all of it.
-#
-# IT ALSO NEEDS ``OTTO_HOME`` ON EVERY SURFACE, which is why
-# :func:`surface_env` mints one for the non-repo surfaces too. Without the var
-# (the sanitizer strips `OTTO_*`) two things are true at once: the prefix
-# tuple is empty, so the counter is structurally 0 for that surface — a gate
-# that cannot observe anything — and the child resolves `~/.otto`, so whatever
-# home I/O it does perform lands on the DEVELOPER'S REAL HOME and is charged
-# to `open` and to the gated `scandir`/`listdir`. A counter whose value
-# depends on what one box happens to keep under `~/.otto` is the drift class
-# `open` was rejected for.
-_CHILD_IO_PREAMBLE = """
+# Prepended to every child. It installs nothing: every file operation is
+# counted from OUTSIDE the child, by strace, so the child must do no path work
+# of its own beyond what otto does. That is why the fixture root is used as the
+# raw string the harness passed in, never resolved: a `realpath` here would
+# charge one `lstat` per path component to every surface.
+_CHILD_PREAMBLE = """
 import os as _os
 import sys as _sys
 _fixture_root = _os.environ.get("IMPORT_BUDGET_FIXTURE_ROOT")
-_fixture_prefixes = ()
-if _fixture_root:
-    _fixture_prefixes = (_fixture_root + _os.sep,)
-    _fixture_real = _os.path.realpath(_fixture_root) + _os.sep
-    if _fixture_real not in _fixture_prefixes:
-        _fixture_prefixes += (_fixture_real,)
-_home_root = _os.environ.get("OTTO_HOME")
-_home_prefixes = ()
-if _home_root:
-    _home_prefixes = (_home_root + _os.sep,)
-    _home_real = _os.path.realpath(_home_root) + _os.sep
-    if _home_real not in _home_prefixes:
-        _home_prefixes += (_home_real,)
-_io_counts = {"open": 0, "scandir": 0, "listdir": 0, "listdir_calls": 0,
-              "open_fixture": 0, "open_home": 0}
-_listdir_dirs = set()
-def _io_hook(event, args):
-    if event == "open":
-        _io_counts["open"] += 1
-        if _fixture_prefixes or _home_prefixes:
-            _path = args[0]
-            if isinstance(_path, bytes):
-                _path = _os.fsdecode(_path)
-            if isinstance(_path, str):
-                if _fixture_prefixes and _path.startswith(_fixture_prefixes):
-                    _io_counts["open_fixture"] += 1
-                if _home_prefixes and _path.startswith(_home_prefixes):
-                    _io_counts["open_home"] += 1
-    elif event == "os.scandir":
-        _io_counts["scandir"] += 1
-    elif event == "os.listdir":
-        _io_counts["listdir_calls"] += 1
-        _dir = args[0]
-        if isinstance(_dir, bytes):
-            _dir = _os.fsdecode(_dir)
-        _listdir_dirs.add(_dir if isinstance(_dir, str) else repr(_dir))
-        _io_counts["listdir"] = len(_listdir_dirs)
-_sys.addaudithook(_io_hook)
 def _fixture_path_entries():
     if not _fixture_root:
         return 0
     return sum(1 for p in _sys.path
                if p == _fixture_root or p.startswith(_fixture_root + _os.sep))
 """
+
 
 # Child script for `import otto` surface: bare import, no CLI invocation.
 _CHILD_IMPORT_BODY = """
@@ -592,11 +570,11 @@ mods = sorted(sys.modules)
 otto_mods = [m for m in mods if m == "otto" or m.startswith("otto.")]
 non_std = [m for m in mods if m.split(".")[0] not in sys.stdlib_module_names]
 print(json.dumps({"count": len(mods), "modules": mods, "otto_modules": otto_mods,
-                  "non_stdlib_modules": non_std, "io": _io_counts,
+                  "non_stdlib_modules": non_std,
                   "sys_path_len": len(sys.path),
                   "fixture_path_entries": _fixture_path_entries()}))
 """
-_CHILD_IMPORT = _CHILD_IO_PREAMBLE + _CHILD_IMPORT_BODY
+_CHILD_IMPORT = _CHILD_PREAMBLE + _CHILD_IMPORT_BODY
 
 # Child script for CLI surfaces: resolve the dispatch target through the
 # registry-backed root group (otto.cli.main._OttoGroup.get_command) the same
@@ -604,7 +582,10 @@ _CHILD_IMPORT = _CHILD_IO_PREAMBLE + _CHILD_IMPORT_BODY
 # help-rendering pipeline (which would additionally pull in rich's markdown
 # renderer, pygments, etc. — a measurement artifact unrelated to otto's own
 # lazy-import footprint). Every surface's argv is `[..., "<name>", "--help"]`
-# except the bare `help` surface (`["otto", "--help"]`, no dispatch target).
+# except the bare `help` surface (`["otto", "--help"]`, no dispatch target),
+# which instead lists the root's commands: the walk a real `otto --help` makes
+# to fill its command table (the command registry, the completion cache's
+# names), still without rendering it.
 #
 # `Surface.bootstrap` additionally runs the composition root, in the position
 # `otto.cli.main.entry` runs it: BEFORE argv is parsed, so every import
@@ -617,6 +598,11 @@ _CHILD_CLI_BODY = """
 import sys, json
 import typer
 sys.argv = {argv!r}
+if {bootstrap!r}:
+    # Mirror otto._shim.main: the real command sets this before any model
+    # builds, so pydantic's plugin scan is not a cost a user pays.
+    import os
+    os.environ.setdefault("PYDANTIC_DISABLE_PLUGINS", "__all__")
 import otto
 if {bootstrap!r}:
     from otto import bootstrap as _bs
@@ -626,15 +612,17 @@ ctx = cmd.make_context("otto", sys.argv[1:], resilient_parsing=True)
 target = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else None
 if target is not None:
     _ = cmd.get_command(ctx, target)
+else:
+    _ = cmd.list_commands(ctx)
 mods = sorted(sys.modules)
 otto_mods = [m for m in mods if m == "otto" or m.startswith("otto.")]
 non_std = [m for m in mods if m.split(".")[0] not in sys.stdlib_module_names]
 print(json.dumps({{"count": len(mods), "modules": mods, "otto_modules": otto_mods,
-                   "non_stdlib_modules": non_std, "io": _io_counts,
+                   "non_stdlib_modules": non_std,
                    "sys_path_len": len(sys.path),
                    "fixture_path_entries": _fixture_path_entries()}}))
 """
-_CHILD_CLI = _CHILD_IO_PREAMBLE.replace("{", "{{").replace("}", "}}") + _CHILD_CLI_BODY
+_CHILD_CLI = _CHILD_PREAMBLE.replace("{", "{{").replace("}", "}}") + _CHILD_CLI_BODY
 
 # Child script for the REAL console-script entry path — the only child that
 # observes bootstrap and cache behaviour, because it is the only one that runs
@@ -651,13 +639,12 @@ _CHILD_CLI = _CHILD_IO_PREAMBLE.replace("{", "{{").replace("}", "}}") + _CHILD_C
 #
 # `sys_path_len` and `fixture_path_entries` ride EVERY child's payload (not
 # just this one) so `measure()` returns one uniform shape whichever child
-# produced it. The second is the gate: `Repo.add_libs_to_pythonpath` prepends
-# each discovered repo's lib dirs, and every later import probe pays for every
-# entry — a regression class the module count cannot see. It counts only the
-# entries under the FIXTURE ROOT, because the total length is a budget on the
-# whole interpreter and moves with editable-vs-wheel installs, layout changes,
-# and any dev dependency shipping a `.pth`. `sys_path_len` stays as context for
-# a failure, never as a threshold.
+# produced it. `Repo.add_libs_to_pythonpath` prepends each discovered repo's
+# lib dirs, and every later import probe pays for every entry, so the tests
+# read `fixture_path_entries`: the entries under the FIXTURE ROOT only, because
+# the total length moves with editable-vs-wheel installs, layout changes, and
+# any dev dependency shipping a `.pth`. `sys_path_len` is context for a
+# failure, never a threshold.
 #
 # THE PAYLOAD IS WRITTEN TO A FILE, NEVER PRINTED. A real dispatch is the
 # first child that runs otto's own business logic, and that logic logs: `otto
@@ -670,28 +657,46 @@ _CHILD_CLI = _CHILD_IO_PREAMBLE.replace("{", "{{").replace("}", "}}") + _CHILD_C
 # the surface that actually dispatches. Writing to a private file otto never
 # touches removes the shared channel instead of racing to stay ahead of it —
 # unconditionally, since this is the only child kind that can log mid-payload.
+#
+# AN EXCEPTION THAT ESCAPES THE ENTRY ENDS THE RUN AS THE INTERPRETER WOULD:
+# `sys.excepthook` renders it (otto installs rich's, which reads source lines,
+# and that reading is part of what the user's failed command costs), and the
+# exit status is 1. Without the arm the child would die before writing its
+# payload, and a surface whose command fails by construction (a refused SSH
+# connection) could not be measured at all.
+#
+# THE ESCAPING EXCEPTION RIDES THE PAYLOAD (`exception`, "<module>.<qualname>:
+# <message>", or null), because exit status 1 alone names no cause: an unknown
+# host id exits 1 too, through `typer.Exit`, a `SystemExit` that is no
+# exception here. `Surface.expect_error` checks it, and a failure message
+# quotes it, since the traceback itself went to a stderr nobody keeps.
 _CHILD_ENTRY_BODY = """
 import sys, json
 sys.argv = {argv!r}
 _result_path = _os.environ["IMPORT_BUDGET_RESULT_PATH"]
 from otto._shim import main as _console_entry
 _exit_code = 0
+_exception = None
 try:
     _console_entry()
 except SystemExit as _e:
     _exit_code = _e.code if isinstance(_e.code, int) else (0 if _e.code is None else 1)
+except BaseException as _e:
+    sys.excepthook(*sys.exc_info())
+    _exit_code = 1
+    _exception = f"{{type(_e).__module__}}.{{type(_e).__qualname__}}: {{_e}}"
 mods = sorted(sys.modules)
 otto_mods = [m for m in mods if m == "otto" or m.startswith("otto.")]
 non_std = [m for m in mods if m.split(".")[0] not in sys.stdlib_module_names]
 _payload = json.dumps({{"count": len(mods), "modules": mods, "otto_modules": otto_mods,
-                   "non_stdlib_modules": non_std, "io": _io_counts,
+                   "non_stdlib_modules": non_std,
                    "sys_path_len": len(sys.path),
                    "fixture_path_entries": _fixture_path_entries(),
-                   "exit_code": _exit_code}})
+                   "exit_code": _exit_code, "exception": _exception}})
 with open(_result_path, "w") as _f:
     _f.write(_payload)
 """
-_CHILD_ENTRY = _CHILD_IO_PREAMBLE.replace("{", "{{").replace("}", "}}") + _CHILD_ENTRY_BODY
+_CHILD_ENTRY = _CHILD_PREAMBLE.replace("{", "{{").replace("}", "}}") + _CHILD_ENTRY_BODY
 
 
 # Child script measuring the empty baseline: what a bare interpreter already has
@@ -705,17 +710,11 @@ print(json.dumps([m for m in sorted(sys.modules)
 
 def _sanitized_env() -> dict[str, str]:
     """Env with all OTTO_* vars stripped, so measurement is lab/host independent."""
-    return {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
+    # The measured command must set this itself, as the `otto` command does.
+    env.pop("PYDANTIC_DISABLE_PLUGINS", None)
+    return env
 
-
-STAT_FAMILY = frozenset(
-    {"stat", "lstat", "newfstatat", "fstatat64", "statx", "access", "faccessat", "faccessat2"}
-)
-"""The syscalls a path lookup costs, as ``startup-performance.md``'s Diagnose section names them.
-
-On a network filesystem each one can be a server round trip. CPython's audit
-hooks see none of them (there is no stat audit event), which is why they are
-counted from outside the process, by strace."""
 
 _STRACE_CALL = re.compile(r"^(\d+)\s+([a-z_0-9]+)\((.*)$")
 _FIRST_QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
@@ -724,79 +723,274 @@ _FIRST_QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
 def strace_executable() -> str:
     """Return the strace binary, or FAIL naming how to install it — never skip.
 
-    The stat counters are the only view this guard has of path lookups, which is
-    what a network filesystem charges for. A guard that quietly measured less on
-    a machine without strace would report green for exactly the regressions it
-    exists to catch.
+    strace is the only view this guard has of file operations, which are what
+    a network filesystem charges for (CPython's audit hooks see no stat at
+    all). A guard that quietly measured less on a machine without strace would
+    report green for exactly the regressions it exists to catch.
     """
     exe = shutil.which("strace")
     if exe is None:
         raise RuntimeError(
-            "the import budget needs strace to count stat syscalls; install it "
+            "the import budget needs strace to count file operations; install it "
             "(Debian/Ubuntu: `sudo apt-get install strace`)"
         )
     return exe
 
 
-def parse_strace(
-    text: str, *, workspace_prefixes: list[str], excluded_paths: frozenset[str]
-) -> dict[str, int]:
-    """Count stat-family calls made by the measured Python process in strace ``-f -o`` output.
+FILE_OP_CALLS = frozenset(
+    {
+        # The stat family and the access checks: the lookups an import makes.
+        "stat",
+        "lstat",
+        "newfstatat",
+        "fstatat64",
+        "stat64",
+        "lstat64",
+        "oldstat",
+        "oldlstat",
+        "statx",
+        "statfs",
+        "statfs64",
+        "access",
+        "faccessat",
+        "faccessat2",
+        # Opens, listings and link reads.
+        "open",
+        "openat",
+        "openat2",
+        "creat",
+        "getdents64",
+        "readlink",
+        "readlinkat",
+        "getcwd",
+        "chdir",
+        "chroot",
+        # Process images: a child process costs its own exec lookups.
+        "execve",
+        "execveat",
+        "uselib",
+        # Writes to the namespace.
+        "mkdir",
+        "mkdirat",
+        "mknod",
+        "mknodat",
+        "rmdir",
+        "unlink",
+        "unlinkat",
+        "rename",
+        "renameat",
+        "renameat2",
+        "link",
+        "linkat",
+        "symlink",
+        "symlinkat",
+        "truncate",
+        "truncate64",
+        # Metadata writes.
+        "chmod",
+        "fchmodat",
+        "fchmodat2",
+        "chown",
+        "chown32",
+        "lchown",
+        "lchown32",
+        "fchownat",
+        "utime",
+        "utimes",
+        "utimensat",
+        "futimesat",
+        "setxattr",
+        "lsetxattr",
+        "getxattr",
+        "lgetxattr",
+        "listxattr",
+        "llistxattr",
+        "removexattr",
+        "lremovexattr",
+        "setxattrat",
+        "getxattrat",
+        "listxattrat",
+        "removexattrat",
+        # Watches, handles and mounts: never on a measured path today, but the
+        # filter emits them, so the set names them.
+        "inotify_add_watch",
+        "fanotify_mark",
+        "name_to_handle_at",
+        "mount",
+        "umount",
+        "umount2",
+        "pivot_root",
+        "open_tree",
+        "move_mount",
+        "fspick",
+        "mount_setattr",
+        "swapon",
+        "swapoff",
+        "acct",
+        "quotactl",
+    }
+)
+"""Every syscall name the harness's strace filter, ``trace=%file,getdents64``, can emit.
 
-    Attribution is by thread id. A tid that ever execs is a child command (git,
-    ssh, a shell), and its work is the command's, not otto's startup, so it is
-    excluded. Every other tid is the Python process or one of its threads.
-    ``<... resumed>`` lines are the second half of a call already counted from its
-    ``<unfinished ...>`` line, so the regex never matches them.
+``%file`` is strace's class of syscalls that take a file name; ``getdents64``
+is added because a directory listing is a network round trip too, and it
+takes an fd, not a name. :func:`parse_file_ops` counts EVERY call line the
+trace holds rather than filtering on this set, so a syscall a newer strace
+adds to the class is counted before anyone lists it here: a ceiling must
+never undercount. The set is the names a reader of a breakdown can expect.
+"""
 
-    ``stat_workspace`` counts calls whose first path argument lies under a
-    workspace prefix (the fixture root and ``OTTO_HOME``), minus *excluded_paths*.
-    Those are the repo lib dirs on ``sys.path``, which the import system
-    re-stats once per later import, so that count follows the module graph (already
-    capped) rather than otto's own logic.
+EXCLUDED_ROOTS: list[str] = ["/proc/", "/sys/", "/dev/"]
+"""The kernel's virtual filesystems, the only paths a file-op count leaves out.
 
-    Two blind spots, both accepted because nothing measured hits them today:
+They are never on a network filesystem, whatever the user's mounts: the
+kernel answers them locally. Every other path counts, because the harness
+cannot know which of a user's mounts are remote, and for the NFS user this
+metric exists for, the venv and the interpreter's stdlib are both remote."""
 
-    * Only ``execve`` marks a child. A child started with ``execveat`` (or any
-      other exec spelling) is never marked, so its stats count as the Python
-      process's own, in ``stat_total`` and possibly ``stat_workspace``.
-    * The workspace test is a string prefix on the first quoted path. A stat
-      relative to a directory fd (``newfstatat(3, "x", ...)``) or to the cwd
-      (``stat("tests/x")``) never matches an absolute prefix, so it counts
-      toward ``stat_total`` only, never ``stat_workspace`` — even when the
-      file it names is in the workspace.
+
+@dataclass
+class PathBuckets:
+    """Where the paths of one measured interpreter live, for grouping a file-op count.
+
+    Every root is a directory prefix WITH a trailing ``/``, so a prefix match
+    cannot confuse ``site-packages`` with ``site-packages-old``; a list root
+    may carry both a raw and a resolved spelling, as ``_workspace_prefixes``
+    does. The paths come from the measured interpreter
+    (:func:`_interpreter_paths`), not from whichever one runs the harness.
     """
-    parsed: list[tuple[str, str, str]] = []
+
+    site_packages: list[str]
+    stdlib: list[str]
+    otto_src: str
+    workspace: list[str]
+
+    def bucket(self, path: str) -> str:
+        """Return the group *path* is charged to, checking the roots in a fixed order.
+
+        The order is load-bearing, because the roots nest. The workspace is
+        first because it is what otto itself reads. ``otto_src`` comes before
+        ``site_packages`` because a wheel install puts otto inside
+        site-packages. ``site_packages`` comes before ``stdlib`` because a
+        system interpreter keeps its site-packages under its stdlib.
+
+        A root directory ITSELF belongs to its root: the import system stats
+        each ``sys.path`` directory once per import to check its mtime, and
+        that is the stdlib's, otto's or site-packages' cost, not "other".
+        Measured on ``version_repo``, 72 of its ~700 operations are stats of
+        the stdlib directory alone. Such a stat names no module, so under
+        ``otto`` and ``site`` it is charged to the pseudo-name ``*``.
+        """
+        if _root_of(path, self.workspace) is not None:
+            return "workspace"
+        if _root_of(path, [self.otto_src]) is not None:
+            return "otto:" + _first_component(path, self.otto_src).removesuffix(".py")
+        root = _root_of(path, self.site_packages)
+        if root is not None:
+            return "site:" + _import_name(_first_component(path, root))
+        if _root_of(path, self.stdlib) is not None:
+            return "stdlib"
+        return "other"
+
+
+def _root_of(path: str, roots: list[str]) -> str | None:
+    """Return the first of *roots* (each ending in ``/``) that *path* is, or lies under."""
+    for root in roots:
+        if path.startswith(root) or path == root.rstrip("/"):
+            return root
+    return None
+
+
+def _first_component(path: str, root: str) -> str:
+    """Return *path*'s first component below *root* (ending in ``/``), or ``*`` for the root."""
+    return path[len(root) :].split("/", 1)[0] or "*"
+
+
+def _import_name(entry: str) -> str:
+    """Reduce a site-packages entry to the import name it belongs to.
+
+    A breakdown groups by what a reader would ``import``: a package's
+    ``*.dist-info`` metadata directory, its compiled extension and its
+    ``*.libs`` bundle are all the same dependency's cost.
+    ``pydantic_core-2.33.dist-info`` and ``_cffi_backend.cpython-310-...so``
+    reduce to ``pydantic_core`` and ``_cffi_backend``. A ``__pycache__``
+    directory stays as it is.
+    """
+    if entry.endswith((".dist-info", ".egg-info")):
+        return entry.split("-", 1)[0]
+    return entry.split(".", 1)[0] or entry
+
+
+@dataclass
+class FileOps:
+    """One command's file operations: the total, the workspace subset, and two breakdowns."""
+
+    total: int = 0
+    workspace: int = 0
+    by_bucket: dict[str, int] = field(default_factory=dict)
+    """Calls per :meth:`PathBuckets.bucket` group, plus ``fd`` for the calls that
+    name no path (a listing, or a stat relative to an open directory)."""
+    by_process: dict[str, int] = field(default_factory=dict)
+    """Calls per program, keyed by the basename a child ``execve``d (``python``
+    for the measured interpreter), summed over every tid running it."""
+
+
+def parse_file_ops(
+    text: str, *, workspace_prefixes: list[str], buckets: PathBuckets, bytecode_prefix: str = ""
+) -> FileOps:
+    """Count every file operation in strace ``-f -o`` output, over the WHOLE process tree.
+
+    Child processes count, deliberately: a program otto starts (``gcc``
+    behind ``ctypes.util.find_library``, ``git``, a shell) makes file
+    operations the user pays for on the same filesystem, so a count of the
+    interpreter's own calls alone would call a command cheap while it spawns
+    a compiler.
+
+    - A call is excluded only when its first quoted path starts with one of
+      :data:`EXCLUDED_ROOTS`.
+    - A call with no quoted path (``getdents64``, an ``fd``-relative stat with
+      ``""`` and ``AT_EMPTY_PATH``) counts under the bucket ``fd``.
+    - ``<... resumed>`` lines never match :data:`_STRACE_CALL`, so a call strace
+      split across two lines counts once, from its ``<unfinished ...>`` half.
+    - ``workspace`` is the subset under *workspace_prefixes*, the roots
+      themselves included (see :meth:`PathBuckets.bucket`). Nothing is
+      subtracted: this is a ceiling, and a ceiling may carry the import
+      system's per-import probes of a repo's lib dirs.
+    - The first tid in the trace is the measured interpreter, which never
+      execs. Any other tid is named by the program it ``execve``s; its
+      ``execve`` counts under that name.
+    - A path under *bytecode_prefix* (``PYTHONPYCACHEPREFIX``, a mirror of
+      the source tree) is charged as the source path it mirrors: a cached
+      ``rich`` module's ``.pyc`` read is ``site:rich``'s cost, and a fixture
+      module's ``.pyc`` probe is the workspace's, exactly as they are when
+      the cache sits beside the source.
+    """
+    ops = FileOps()
+    excluded = tuple(EXCLUDED_ROOTS)
+    program: dict[str, str] = {}
     main_tid: str | None = None
-    exec_tids: set[str] = set()
     for line in text.splitlines():
         m = _STRACE_CALL.match(line)
         if m is None:
             continue
-        tid, name, rest = m.groups()
-        if main_tid is None:
-            main_tid = tid
-        elif name == "execve" and tid != main_tid:
-            exec_tids.add(tid)
-        parsed.append((tid, name, rest))
-    counts = {"stat_workspace": 0, "stat_total": 0}
-    prefixes = tuple(workspace_prefixes)
-    for tid, name, rest in parsed:
-        if tid in exec_tids or name not in STAT_FAMILY:
-            continue
-        counts["stat_total"] += 1
+        tid, call, rest = m.groups()
+        main_tid = main_tid or tid
         quoted = _FIRST_QUOTED.search(rest)
-        if quoted is None:
+        path = quoted.group(1) if quoted else ""
+        if bytecode_prefix and path.startswith(bytecode_prefix + "/"):
+            path = path[len(bytecode_prefix) :]
+        if call == "execve" and tid != main_tid and path:
+            program[tid] = Path(path).name
+        if path.startswith(excluded):
             continue
-        path = quoted.group(1)
-        if prefixes and path.startswith(prefixes) and path not in excluded_paths:
-            counts["stat_workspace"] += 1
-    return counts
-
-
-def within_ceiling(*, measured: int, baseline: int) -> bool:
-    """Whether a ceiling-gated counter is within ``STAT_TOTAL_HEADROOM`` of its baseline."""
-    return measured <= int(baseline * STAT_TOTAL_HEADROOM)
+        ops.total += 1
+        bucket = buckets.bucket(path) if path else "fd"
+        ops.by_bucket[bucket] = ops.by_bucket.get(bucket, 0) + 1
+        if _root_of(path, workspace_prefixes) is not None:
+            ops.workspace += 1
+        name = program.get(tid, "python")
+        ops.by_process[name] = ops.by_process.get(name, 0) + 1
+    return ops
 
 
 def _workspace_prefixes(env: dict[str, str] | None) -> list[str]:
@@ -815,29 +1009,12 @@ def _workspace_prefixes(env: dict[str, str] | None) -> list[str]:
     return out
 
 
-def _excluded_lib_dirs(env: dict[str, str] | None) -> frozenset[str]:
-    """Each generated repo's lib dirs, raw and resolved: the import system's per-import probes."""
-    if env is None or not env.get("OTTO_SUT_DIRS"):
-        return frozenset()
-    # `tests._fixtures` is not importable from the script's own sys.path[0]
-    # (`scripts/`), so standalone `python scripts/import_budget.py` needs the
-    # repo root on the path. Done lazily, here, the same way `_generated_repo_for`
-    # reaches the same package, so merely importing this module never mutates
-    # sys.path.
-    if str(REPO_ROOT) not in sys.path:
-        sys.path.insert(0, str(REPO_ROOT))
-    from tests._fixtures.generated_repo import GENERATED_LIB_DIRS
-
-    out: set[str] = set()
-    for sut in env["OTTO_SUT_DIRS"].split(os.pathsep):
-        for lib in GENERATED_LIB_DIRS:
-            out.add(str(Path(sut) / lib))
-            out.add(str(Path(os.path.realpath(sut)) / lib))
-    return frozenset(out)
-
-
 def _run_child(
-    code: str, env: dict[str, str] | None = None, *, trace_to: Path | None = None
+    code: str,
+    env: dict[str, str] | None = None,
+    *,
+    trace_to: Path | None = None,
+    pty_input: str | None = None,
 ) -> str:
     """Run *code* in a fresh interpreter and return its JSON payload line.
 
@@ -850,8 +1027,7 @@ def _run_child(
 
     With *trace_to*, the child runs under ``strace -f`` writing to that file.
     ``--seccomp-bpf`` means only the traced syscall classes stop the child, so
-    the audit-hook counters and the module inventory measured alongside are
-    unaffected.
+    the module inventory measured alongside is unaffected.
 
     THE RESULT TRAVELS THROUGH A PRIVATE FILE, NOT STDOUT, for the real-entry
     child (``_CHILD_ENTRY_BODY`` — see the comment there) — unconditionally,
@@ -868,6 +1044,11 @@ def _run_child(
     ``result_path`` empty check below is what decides which one happened, per
     call, rather than per child kind, so a future body that starts writing the
     file needs no change here.
+
+    With *pty_input*, the child's stdin, stdout and stderr are a
+    pseudo-terminal instead (:func:`_run_under_pty`), and *pty_input* is
+    typed into it. Only the real-entry child is run this way, so its result
+    still comes back through the file.
     """
     result_fd, result_name = tempfile.mkstemp(prefix="otto-budget-result-", suffix=".json")
     os.close(result_fd)
@@ -888,6 +1069,9 @@ def _run_child(
                 str(trace_to),
                 *argv,
             ]
+        if pty_input is not None:
+            _run_under_pty(argv, child_env, pty_input)
+            return result_path.read_text()
         out = subprocess.run(  # noqa: S603 (fixed interpreter + measured argv, no shell)
             argv,
             capture_output=True,
@@ -918,6 +1102,44 @@ def _run_child(
         result_path.unlink(missing_ok=True)
 
 
+def _run_under_pty(argv: list[str], env: dict[str, str], text: str) -> None:
+    """Run *argv* on a fresh pseudo-terminal, type *text* into it, and wait for it to end.
+
+    The terminal is the child's stdin, stdout AND stderr, as a user's would
+    be, so a verb that checks ``isatty`` or puts the terminal in raw mode
+    takes the path it takes for a user. The output is drained in this loop
+    until the terminal closes, never on a thread: a child blocks once the
+    terminal's buffer fills, so the drain has to keep pace with it, and it
+    returns EOF (``EIO`` on Linux) once every process holding the terminal
+    has exited. Raises ``CalledProcessError`` with the output on a non-zero
+    exit, as ``subprocess.run(check=True)`` does on the pipe path.
+    """
+    master, slave = pty.openpty()
+    try:
+        proc = subprocess.Popen(  # noqa: S603 (fixed interpreter + measured argv, no shell)
+            argv, stdin=slave, stdout=slave, stderr=slave, env=env, cwd=_quiet_cwd()
+        )
+    finally:
+        os.close(slave)
+    output = bytearray()
+    try:
+        os.write(master, text.encode())
+        while True:
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            output += chunk
+    finally:
+        os.close(master)
+    if proc.wait() != 0:
+        raise subprocess.CalledProcessError(
+            proc.returncode, argv, output=output.decode(errors="replace")
+        )
+
+
 # Every temp tree the harness mints — generated fixture roots, and the parent
 # of the throwaway ``OTTO_HOME``s handed to surfaces that carry no fixture —
 # so the atexit sweep below removes them all. They live under the system temp
@@ -938,8 +1160,8 @@ def _home_parent_for_non_repo_surfaces() -> Path:
 
     A repo-bearing surface's home sits beside its generated repo, inside the
     fixture root, so one sweep collects both. A surface with no fixture has no
-    such parent, and it still needs a pinned home (see
-    :data:`_CHILD_IO_PREAMBLE`) — so one throwaway parent is made on first use
+    such parent, and it still needs a pinned home (see :func:`surface_env`)
+    — so one throwaway parent is made on first use
     and registered for the same sweep. Made ONCE per process, not per call:
     only the leaf home has to be fresh per measurement, and the leaf is a name
     rather than a directory the harness creates.
@@ -954,15 +1176,12 @@ def _quiet_cwd() -> Path:
     """Return the empty directory every measured child starts in.
 
     ``python -c`` puts the cwd on ``sys.path``, so the child imports from it,
-    and the gated ``listdir`` counter cannot tolerate a shared one. That
-    counter counts DIRECTORIES, which absorbs a ``FileFinder`` refill (see
-    :data:`EXACT_IO_COUNTERS`) only for a directory already in the set — and
-    from CPython 3.13 the cwd is not: ``FileFinder`` lists it during
-    interpreter startup, before the preamble's audit hook exists. Inheriting
+    and every import probes it. CPython's ``FileFinder`` caches a directory's
+    listing and re-lists it whenever the directory's mtime moved, so a
+    shared cwd charges the child for whoever else writes there. Inheriting
     the caller's cwd handed the child the repo root, which every other test
-    process in the run writes into; one such write mid-measurement made the
-    child re-list it with the hook live, and the absolute cwd joined the set
-    as a new directory (``help_repo_warm`` 61 -> 62 on 3.14, issue #428).
+    process in the run writes into; one such write mid-measurement cost the
+    child an extra listing (``help_repo_warm`` on 3.14, issue #428).
 
     Nothing writes here — the child writes only into its ``OTTO_HOME`` — so
     this directory's mtime never moves while a child is importing from it.
@@ -974,7 +1193,7 @@ def _quiet_cwd() -> Path:
 
 
 @functools.cache
-def _generated_repo_for(key: str, files: int, dirs: int) -> Path:
+def _generated_repo_for(key: str, files: int, dirs: int, ssh_lab_port: int | None = None) -> Path:
     """Build (once per surface) a generated sut-dir repo and return its path.
 
     Keyed on the surface's NAME and shape rather than on the ``Surface`` itself:
@@ -996,10 +1215,75 @@ def _generated_repo_for(key: str, files: int, dirs: int) -> Path:
     # realistic=True (spec §3.5 of `2026-09-25-dispatch-startup-cost-design.md`):
     # top-level suite files import pytest, the init module registers an
     # instruction and imports a monitor parser, and a JSON
-    # lab source is declared — so every repo-bearing surface's goldens show
+    # lab source is declared — so every repo-bearing surface's count shows
     # what a real repo actually costs, rather than an empty init module nobody
     # ships.
-    return generate_repo(root, files=files, dirs=dirs, realistic=True)
+    return generate_repo(root, files=files, dirs=dirs, realistic=True, ssh_lab_port=ssh_lab_port)
+
+
+@functools.cache
+def _budget_ssh_port() -> int:
+    """Return a loopback port with no listener, picked once per process.
+
+    Bound and released: nothing listens on it afterwards, so a connection is
+    refused at once. That is not a guarantee it stays free, which is why
+    :func:`_prove_port_closed` checks it again before every measured run.
+    """
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _prove_port_closed(port: int) -> None:
+    """FAIL, naming *port*, unless a connection to it on ``127.0.0.1`` is refused.
+
+    The SSH surface measures one refused connection. A listener that appeared
+    on the port since it was picked would turn that into a handshake with
+    whatever answers, which measures something else entirely.
+    """
+    with socket.socket() as sock:
+        err = sock.connect_ex(("127.0.0.1", port))
+    if err != errno.ECONNREFUSED:
+        raise RuntimeError(
+            f"import_budget: the closed-port SSH surface needs 127.0.0.1:{port} to refuse "
+            f"connections, but connecting returned {errno.errorcode.get(err, err)}"
+        )
+
+
+def _surface_repo(surface: Surface) -> Path:
+    """Return *surface*'s generated repo, built once per process."""
+    if surface.sut_files is None:
+        raise ValueError(f"surface {surface.key!r} carries no generated repo")
+    port = _budget_ssh_port() if surface.ssh_lab else None
+    return _generated_repo_for(surface.key, surface.sut_files, surface.sut_dirs_count, port)
+
+
+def fixture_root(surface: Surface) -> Path:
+    """Return the fixture root ``{root}`` names in *surface*'s argv: its repo's parent."""
+    return _surface_repo(surface).parent
+
+
+ROOT_PLACEHOLDER = "{root}"
+"""Stands for the surface's fixture root in an argv; see :data:`SURFACES`."""
+
+
+def _uses_fixture_root(surface: Surface) -> bool:
+    """Whether *surface*'s argv names paths under its fixture root."""
+    return any(ROOT_PLACEHOLDER in arg for arg in surface.argv)
+
+
+def _reset_transfer_fixture(root: Path) -> None:
+    """Write the file a transfer surface moves, and empty the directories it moves it into.
+
+    Reset before every measured run, because the repo (and so the root) is
+    cached per process: a destination that already held the file from an
+    earlier measurement would let a later one measure an overwrite, or pass a
+    "the file arrived" check the run itself never earned.
+    """
+    (root / "payload.txt").write_text("import budget transfer payload\n")
+    for dest in ("put-dest", "get-dest"):
+        shutil.rmtree(root / dest, ignore_errors=True)
+        (root / dest).mkdir()
 
 
 FIXTURE_ROOT_ENV_VAR = "IMPORT_BUDGET_FIXTURE_ROOT"
@@ -1030,9 +1314,9 @@ def surface_env(surface: Surface) -> dict[str, str]:
     = ``$OTTO_HOME`` else ``~/.otto``, and the sanitizer strips ``OTTO_*`` — so
     without injection a child reads (and, on the surfaces that run the real
     entry path, WRITES) the developer's real ``~/.otto``, whose contents are
-    machine state. Since ``open_home`` gates opens under this root, an
-    unpinned surface would also be structurally blind: no var, no prefix, a
-    counter that reads 0 whatever the child does. A non-repo surface's home
+    machine state. The ``workspace`` counter also attributes by prefix
+    against this root, so an unpinned surface would charge its home reads to
+    whatever that box keeps under ``~/.otto``. A non-repo surface's home
     therefore comes from :func:`_home_parent_for_non_repo_surfaces` rather
     than from a fixture root it does not have.
 
@@ -1045,48 +1329,40 @@ def surface_env(surface: Surface) -> dict[str, str]:
 
     - The child writes ``completion_cache.json`` into its ``OTTO_HOME``, so the
       home is a fresh directory per call. For a repo-bearing surface it stays
-      inside the fixture root, so the atexit sweep still collects it — and so
-      that a home-side open is ALSO an ``open_fixture``, which is what makes
-      the two counters comparable on one surface.
+      inside the fixture root, so the atexit sweep still collects it.
     - The dominant one: importing the repo's init module and its top-level test
       files writes ``__pycache__`` INTO THE FIXTURE TREE, which is cached and
-      therefore shared across calls. Measured directly — ``open`` reads 607,
-      then 598, 598, 598; deleting the two ``__pycache__`` dirs returns it to
-      exactly 607. ``PYTHONDONTWRITEBYTECODE`` keeps the harness from mutating
+      therefore shared across calls. Measured directly with the audit-hook
+      open count this harness used before strace — 607, then 598, 598, 598;
+      deleting the two ``__pycache__`` dirs returned it to exactly 607.
+      ``PYTHONDONTWRITEBYTECODE`` keeps the harness from mutating
       the tree it is measuring, so every call is the cold number.
 
     Only these need to be fresh. The repo tree stays cached: generating a
     200-file corpus per call is pure cost, and with no bytecode written it
     never warms.
 
-    A REPO-BEARING SURFACE ALSO DROPS ANY INHERITED ``PYTHONPYCACHEPREFIX``,
-    and the write pin is why it can afford to. ``tests/conftest.py`` exports a
-    prefix for the whole pytest session so that no test process writes
-    ``__pycache__`` into the editable ``src/otto`` tree a sibling worker's
-    child is importing from. That is the right answer for a child that WRITES
-    bytecode — a non-repo surface, which pins no ``PYTHONDONTWRITEBYTECODE``:
-    its writes land in the prefix tree, which nothing imports from and nobody
-    lists, instead of in ``src/otto``, and no gated counter moves (measured:
-    every non-repo surface's gated four are identical either way).
-
-    A repo-bearing surface is the opposite case. It writes nothing anywhere,
-    so it has nothing to relocate — and a prefix would relocate its READS. A
-    module with no cached ``.pyc`` costs TWO audited opens (the probe fires the
-    audit event before it fails, then the source is read) where a cached one
-    costs one, and for a fixture module BOTH land inside the fixture root, so
-    both are ``open_fixture`` — a GATED counter. Pointing the cache elsewhere
-    moves the probe out of the tree and silently drops one open per fixture
-    module: measured, ``bootstrap_repo`` 7 -> 4, ``completion_repo_handover``
-    11 -> 8, ``help_repo`` 61 -> 58, on unchanged product code. The goldens
-    describe an in-tree probe, so the child that produces them must see one.
+    EVERY SURFACE READS BYTECODE FROM THE HARNESS'S OWN CACHE AND WRITES
+    NONE (:func:`bytecode_prefix`), whatever the runner exports. A module
+    whose ``.pyc`` is missing costs one more file operation than a cached one
+    (the failed probe, then the source read), and a child that may write
+    adds the write too, so the count otherwise follows whatever bytecode the
+    machine happens to hold: measured on ``bootstrap_repo`` under CPython
+    3.10, deleting the venv's and ``src/otto``'s in-tree ``.pyc`` files, as a
+    fresh CI checkout has them (``uv`` compiles none at install), moved
+    ``file_ops`` from 2738 to 3030, over a 10% ceiling on unchanged product
+    code. The cache is compiled before the first measurement
+    (:func:`_warm_bytecode`) and no child writes to it, so every measurement
+    sees the same warm cache: the steady state of any installation after its
+    first run. The fixture repo's own modules are never compiled, so they
+    are cold on every run alike, and their probes are charged back to the
+    workspace (:func:`parse_file_ops`).
     """
     env = _sanitized_env()
     if surface.sut_files is not None:
-        repo = _generated_repo_for(surface.key, surface.sut_files, surface.sut_dirs_count)
+        repo = _surface_repo(surface)
         env["OTTO_SUT_DIRS"] = str(repo)
         env[FIXTURE_ROOT_ENV_VAR] = str(repo.parent)
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
-        env.pop("PYTHONPYCACHEPREFIX", None)
         home_parent = repo.parent
     else:
         home_parent = _home_parent_for_non_repo_surfaces()
@@ -1096,6 +1372,8 @@ def surface_env(surface: Surface) -> dict[str, str]:
     # per call keeps that write deterministic and non-accumulating — the same
     # reason OTTO_HOME above is fresh per call rather than shared.
     env["OTTO_XDIR"] = str(home_parent / f"xdir-{uuid.uuid4().hex}")
+    env["PYTHONPYCACHEPREFIX"] = bytecode_prefix()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     # LAST, so a surface can set what the sanitizer strips (see Surface.env_extra).
     env.update(surface.env_extra)
     return env
@@ -1110,9 +1388,9 @@ def baseline_modules() -> frozenset[str]:
     package into ``sys.modules`` before user code runs. In this venv
     ``sphinxcontrib-jsmath`` does exactly that, so ``sphinxcontrib`` is present
     in ``python -c pass`` — nothing in otto imports it. ``_virtualenv`` and
-    ``__main__`` arrive the same way. Charging these to otto's budget would
-    make the cap depend on which unrelated dev/docs dependencies happen to be
-    installed, so they are measured and subtracted rather than counted.
+    ``__main__`` arrive the same way. Charging these to otto would make the
+    module inventory depend on which unrelated dev/docs dependencies happen
+    to be installed, so they are measured and subtracted rather than counted.
     """
     return frozenset(json.loads(_run_child(_CHILD_BASELINE)))
 
@@ -1124,10 +1402,140 @@ def _is_measurement_artifact(module: str) -> bool:
     ``<hash>__mypyc`` backing the whole compiled group. Those wheels are built
     per-platform, so an x86_64 CI runner loads it where an aarch64 machine
     falls back to pure Python and does not — a one-module difference that has
-    nothing to do with how much otto imports. Counting it makes the cap
-    architecture-dependent, which is exactly what this guard promises not to be.
+    nothing to do with how much otto imports. Counting it would make the
+    module inventory architecture-dependent.
     """
     return module.endswith("__mypyc")
+
+
+_CHILD_PATHS = """
+import json, os, site, sys, sysconfig
+import otto
+_paths = sysconfig.get_paths()
+print(json.dumps({"site_packages": site.getsitepackages(),
+                  "stdlib": [_paths["stdlib"], _paths["platstdlib"]],
+                  "otto_src": os.path.dirname(os.path.realpath(otto.__file__)),
+                  "import_dirs": [p for p in sys.path if p and os.path.isdir(p)]}))
+"""
+
+
+@functools.cache
+def _interpreter_paths() -> dict:
+    """Return where the measured interpreter keeps site-packages, the stdlib and otto.
+
+    Asked of the CHILD interpreter (``sys.executable`` in the sanitized env,
+    exactly what every measured child runs), because the harness itself may
+    be imported by another. Asked ONCE, in a child of its own that nobody
+    traces, rather than by each measured child as it writes its payload:
+    ``import sysconfig`` alone costs 60-80 file operations (measured on 3.10,
+    3.12, 3.13 and 3.14), and ``realpath`` one ``lstat`` per path component.
+    A measured child that looked these up would charge that to every
+    surface, inflating exactly the counter it is bucketing.
+
+    ``import_dirs`` is the child's ``sys.path``, the directories it imports
+    from, spelled exactly as the child spells them: :func:`_warm_bytecode`
+    compiles them, and a cached ``.pyc`` is found under the source path as
+    the importer spells it.
+    """
+    return json.loads(_run_child(_CHILD_PATHS))
+
+
+def bytecode_prefix() -> str:
+    """Return the bytecode cache every measured child reads (``PYTHONPYCACHEPREFIX``).
+
+    The harness's own directory, outside the checkout and outside the venv:
+    nothing else writes there, so its state is whatever :func:`_warm_bytecode`
+    made it. It persists across runs (the compile it holds is the slow part)
+    and is shared by every interpreter, whose ``.pyc`` names carry their own
+    ``cpython-XY`` tag. It lives beside ``tests/conftest.py``'s session cache
+    and follows the same ``XDG_CACHE_HOME`` rule.
+    """
+    try:
+        base = Path(os.environ.get("XDG_CACHE_HOME") or "~/.cache").expanduser()
+    except RuntimeError:
+        # No $HOME and no passwd entry for this uid: a scratch container.
+        base = Path(tempfile.gettempdir())
+    return str(base / "otto" / "import-budget-pycache")
+
+
+@functools.cache
+def _warm_bytecode() -> None:
+    """Compile every module the measured interpreter can import into :func:`bytecode_prefix`.
+
+    Once per process, before the first measurement, in a child nobody
+    traces. ``compileall`` skips a module whose cached ``.pyc`` is current,
+    so a warm cache costs only its checks. Its exit status is not checked:
+    a distribution may ship a file this interpreter cannot compile (test
+    data, another Python's syntax), which no import can load either, and
+    the rest of the cache is compiled regardless. What IS checked is that
+    otto's own package landed in the cache: a prefix nobody can write to
+    would otherwise leave every module cold, and an ``--update`` would
+    record those inflated counts as baselines without a word.
+
+    The invalidation mode is pinned to ``timestamp``, the mode the import
+    system writes and checks by default: an ambient ``SOURCE_DATE_EPOCH``
+    would otherwise switch ``compileall`` to checked-hash ``.pyc`` files,
+    which cost a full source read on every import.
+    """
+    prefix = bytecode_prefix()
+    env = _sanitized_env()
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
+    env["PYTHONPYCACHEPREFIX"] = prefix
+    import_dirs = _interpreter_paths()["import_dirs"]
+    done = subprocess.run(  # noqa: S603 (fixed interpreter + fixed module, no shell)
+        [
+            sys.executable,
+            "-m",
+            "compileall",
+            "-q",
+            "--invalidation-mode",
+            "timestamp",
+            *import_dirs,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        cwd=_quiet_cwd(),
+    )
+    otto_init = next(
+        (
+            Path(d, "otto", "__init__.py")
+            for d in import_dirs
+            if Path(d, "otto", "__init__.py").is_file()
+        ),
+        None,
+    )
+    cached = None if otto_init is None else cached_bytecode(prefix, otto_init)
+    if cached is None or not cached.is_file():
+        raise RuntimeError(
+            f"import_budget: compiling the bytecode cache left no {cached or 'otto/__init__'}; "
+            f"every measurement would read cold modules. Check that {prefix} is writable "
+            f"(it follows XDG_CACHE_HOME).\n{done.stderr[-2000:]}"
+        )
+
+
+def cached_bytecode(prefix: str, source: Path) -> Path:
+    """Where the import system looks for *source*'s ``.pyc`` under the bytecode cache *prefix*.
+
+    ``PYTHONPYCACHEPREFIX`` mirrors the source tree: the source's directory,
+    rooted at the prefix, holding ``<name>.<cache tag>.pyc`` with no
+    ``__pycache__`` level.
+    """
+    return Path(prefix, *source.parent.parts[1:]) / (
+        f"{source.stem}.{sys.implementation.cache_tag}.pyc"
+    )
+
+
+def _dir_prefixes(dirs: list[str]) -> list[str]:
+    """Each of *dirs*, raw and resolved, with a trailing separator, without duplicates."""
+    out: list[str] = []
+    for d in dirs:
+        for spelling in (d, os.path.realpath(d)):
+            prefix = spelling.rstrip(os.sep) + os.sep
+            if prefix not in out:
+                out.append(prefix)
+    return out
 
 
 def measure(
@@ -1136,6 +1544,7 @@ def measure(
     bootstrap: bool = False,
     real_entry: bool = False,
     env: dict[str, str] | None = None,
+    pty_input: str | None = None,
 ) -> dict:
     """Import otto in a fresh subprocess for *argv*; return its module inventory.
 
@@ -1144,6 +1553,11 @@ def measure(
     way to observe bootstrap AND the completion/name caches on one path.
     *env* defaults to the sanitized env; a surface passes its own
     (:func:`surface_env`), which is where ``OTTO_HOME`` comes from.
+    *pty_input* runs the child on a pseudo-terminal (see :func:`_run_child`).
+
+    ``result["file_ops"]`` is :func:`parse_file_ops` over the same trace, as a
+    dict, and the result also carries the interpreter paths it was bucketed
+    by (:func:`_interpreter_paths`).
     """
     if real_entry:
         code = _CHILD_ENTRY.format(argv=argv)
@@ -1153,12 +1567,21 @@ def measure(
         code = _CHILD_CLI.format(argv=argv, bootstrap=bootstrap)
     with tempfile.TemporaryDirectory(prefix="otto-budget-strace-") as tmp:
         trace = Path(tmp) / "trace"
-        result = json.loads(_run_child(code, env, trace_to=trace))
-        result["io"].update(
-            parse_strace(
-                trace.read_text(errors="replace"),
+        result = json.loads(_run_child(code, env, trace_to=trace, pty_input=pty_input))
+        text = trace.read_text(errors="replace")
+        paths = _interpreter_paths()
+        result.update({key: paths[key] for key in ("site_packages", "stdlib", "otto_src")})
+        result["file_ops"] = asdict(
+            parse_file_ops(
+                text,
                 workspace_prefixes=_workspace_prefixes(env),
-                excluded_paths=_excluded_lib_dirs(env),
+                bytecode_prefix=(env or {}).get("PYTHONPYCACHEPREFIX", ""),
+                buckets=PathBuckets(
+                    site_packages=_dir_prefixes(paths["site_packages"]),
+                    stdlib=_dir_prefixes(paths["stdlib"]),
+                    otto_src=os.path.realpath(paths["otto_src"]).rstrip(os.sep) + os.sep,
+                    workspace=_workspace_prefixes(env),
+                ),
             )
         )
     baseline = baseline_modules()
@@ -1176,7 +1599,7 @@ def measure_surface(surface: Surface) -> dict:
     Every caller goes through this rather than ``measure(surface.argv)``: a
     surface carries options (``bootstrap``, ``warm``) that a bare argv does
     not, and a caller that dropped one would measure a DIFFERENT surface than
-    the one whose snapshot it then compares against. The script and
+    the one whose baseline it then compares against. The script and
     ``tests/unit/import_budget/`` share this for the same reason they share
     :func:`check_surface`.
 
@@ -1185,7 +1608,12 @@ def measure_surface(surface: Surface) -> dict:
     the state the measurement exists to observe. Two calls still get two
     homes, which is what keeps repeated measurements independent.
     """
+    _warm_bytecode()
     env = surface_env(surface)
+    argv = surface.argv
+    if _uses_fixture_root(surface):
+        root = env[FIXTURE_ROOT_ENV_VAR]
+        argv = [arg.replace(ROOT_PLACEHOLDER, root) for arg in argv]
     if surface.warm:
         # The seed. Same child, same repo, same home — so it performs exactly
         # the work the measured run would have had to, and leaves exactly the
@@ -1193,240 +1621,307 @@ def measure_surface(surface: Surface) -> dict:
         # the surface's own UNLESS ``seed_argv`` overrides it — see
         # ``Surface.seed_argv`` for when the measured argv cannot seed itself.
         measure(
-            surface.seed_argv or surface.argv,
+            surface.seed_argv or argv,
             bootstrap=surface.bootstrap,
             real_entry=surface.real_entry,
             env=env,
         )
+    # Immediately before the measured run, after the seed: the seed never
+    # transfers or connects, and these must hold for the run that counts.
+    if _uses_fixture_root(surface):
+        _reset_transfer_fixture(Path(env[FIXTURE_ROOT_ENV_VAR]))
+    if surface.ssh_lab:
+        _prove_port_closed(_budget_ssh_port())
     return measure(
-        surface.argv,
+        argv,
         bootstrap=surface.bootstrap,
         real_entry=surface.real_entry,
         env=env,
+        pty_input=surface.pty_input,
     )
 
 
-def snapshot_path(key: str) -> Path:
-    """Path to the golden snapshot file for surface *key*."""
-    return SNAPSHOT_DIR / f"{key}.txt"
-
-
-def write_snapshot(key: str, otto_modules: list[str]) -> None:
-    """Write *otto_modules* as the golden snapshot for surface *key*."""
-    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    snapshot_path(key).write_text("\n".join(otto_modules) + "\n")
-
-
-def read_snapshot(key: str) -> list[str]:
-    """Return the otto-owned module list recorded in surface *key*'s golden snapshot."""
-    return [ln for ln in snapshot_path(key).read_text().splitlines() if ln]
-
-
-EXACT_IO_COUNTERS = ("listdir", "open_fixture", "open_home", "scandir", "stat_workspace")
-"""The I/O counters an I/O golden records and enforces EXACTLY.
-
-Not ``open``. The whole-process open total drifts with the environment rather
-than with otto — bytecode-cache state and the installed distribution set, both
-measured, both explained at :data:`_CHILD_IO_PREAMBLE` — so an exact golden on
-it would be a check that fails for reasons outside the change. Of these five,
-``scandir`` observes otto's own corpus walk, ``open_fixture`` its file reads
-inside the workspace under measurement, ``open_home`` the half of those
-that land in the user's home — the term that dominates when ``$HOME`` is on a
-network filesystem, and the one a fixture total cannot be read back apart into
-— and ``stat_workspace`` otto's own stat-family calls under the workspace
-(spec §3.1 of ``2026-09-25-dispatch-startup-cost-design.md``), which is
-deterministic for the same reason ``scandir``/``open_fixture``
-are: it is otto's own logic, not the interpreter's import machinery.
-
-``listdir`` is gated here but is NOT scoped: it spans the child's whole
-``sys.path`` walking, the interpreter's own included. IT COUNTS DIRECTORIES,
-NOT CALLS, and that is what makes it giveable to a golden at all. CPython's
-``FileFinder`` caches a directory's contents and re-lists it whenever that
-directory's ``st_mtime`` moved, so a raw call count also counts whoever else
-wrote to a tree the child imports from — and the child imports from trees it
-SHARES with the rest of the run (the editable install's ``src/otto/*``, and the
-cwd). A sibling xdist worker creating ``src/otto/<pkg>/__pycache__/`` on its
-first import bought exactly one such call, which is how a raw count reddened
-the goldens on #360/#361 and the repeat comparison on #343. Counting the
-directory set drops the refill and keeps the signal: a new directory in the
-import graph still moves the number. The raw calls survive as ``listdir_calls``
-— context beside ``open``, never gated.
-
-The directory count only absorbs a refill of a directory it has already
-counted, and one import directory is listed BEFORE the audit hook exists: the
-child's cwd, which ``FileFinder`` fills during startup from CPython 3.13 on. So
-the cwd is not shared at all — every child starts in :func:`_quiet_cwd`, which
-nothing writes to (issue #428).
-
-That made the MEASUREMENT tolerant of the race. The race itself is closed at
-the WRITER: ``tests/conftest.py`` exports ``PYTHONPYCACHEPREFIX`` for the whole
-session, so no test process creates a ``__pycache__`` under ``src/otto`` and no
-package directory's mtime moves while a child is importing from it (pinned by
-that module's ``pytest_sessionfinish``). Both halves are wanted — the counters
-stay honest about what otto imports, and the tolerance stops being the only
-thing standing between a sibling's first import and a red golden.
-"""
-
-
-CEILING_IO_COUNTERS = ("stat_total",)
-"""Counters gated by a CEILING, not equality: whole-process totals the interpreter's
-import machinery dominates, which drift with bytecode state and ``sys.path`` (two
-identical back-to-back runs differed by 4). The golden records the baseline; a
-measurement above ``baseline * STAT_TOTAL_HEADROOM`` fails."""
-
-STAT_TOTAL_HEADROOM = 1.10
-
-STAT_TOTAL_STALE_RATIO = 0.8
-"""Below ``baseline * STAT_TOTAL_STALE_RATIO`` a ``stat_total`` measurement earns an
-ADVISORY (:func:`io_advisories`), never a failure. A ceiling is only as tight as its
-baseline: a golden recorded before a real reduction keeps the old, higher number,
-and every later regression up to ``old * STAT_TOTAL_HEADROOM`` passes unseen. The
-fix is to regenerate the golden, which is a human's call, not the gate's."""
-
-GOLDEN_IO_KEYS = EXACT_IO_COUNTERS + CEILING_IO_COUNTERS
-"""Every key an I/O golden carries: its shape is part of the comparison."""
-
-
-REPEATABLE_IO_COUNTERS = ("open_fixture", "open_home", "scandir", "stat_workspace")
-"""The gated counters two measurements of one surface must agree on EXACTLY.
-
-:data:`EXACT_IO_COUNTERS` minus every counter the audit hook tallies
-whole-process and unscoped. ``open`` left the repeat comparison for that reason
-(issue #321); ``listdir`` meets the same criterion and reddened the same
-comparison one counter over (issue #343: 59 then 60 on CPython 3.11, with the
-per-surface goldens green on every lane). What remains is either path-scoped
-by the hook or otto's own walk. ``stat_workspace`` is otto's own walk too — it
-is EXACT, not CEILING, so it belongs here the same way ``scandir`` does.
-"""
-
-
-def exact_io(io: dict[str, int]) -> dict[str, int]:
-    """Return only the counters this harness OWNS and gates EXACTLY, out of a child's full ``io``.
-
-    The one place the distinction is made for a golden; a repeat measurement
-    compares the narrower :func:`repeatable_io`. The
-    dropped counters are ``open`` and ``stat_total``: a whole-process total is a
-    fact about the machine's bytecode cache and import machinery as much as
-    about otto, and that state is shared, mutable, cross-process state sitting
-    outside both defences :func:`surface_env` raises. Two measurements of one
-    surface may therefore disagree on it while agreeing on everything otto
-    actually did. Comparing full ``io`` dicts is how that reached CI as a flake
-    (issue #321). ``stat_total`` is instead bounded by :func:`within_ceiling`.
-    """
-    return {name: io[name] for name in EXACT_IO_COUNTERS}
-
-
-def repeatable_io(io: dict[str, int]) -> dict[str, int]:
-    """Return the counters a REPEAT measurement must reproduce, out of a child's ``io``.
-
-    Narrower than :func:`exact_io`: see :data:`REPEATABLE_IO_COUNTERS` for why
-    ``listdir`` is golden-gated yet not repeat-gated.
-    """
-    return {name: io[name] for name in REPEATABLE_IO_COUNTERS}
+def measure_file_ops(surface: Surface) -> FileOps:
+    """Measure *surface* and return only its file operations."""
+    return FileOps(**measure_surface(surface)["file_ops"])
 
 
 def interpreter_tag() -> str:
-    """Return the running interpreter's ``major.minor``, which keys an I/O golden.
+    """Return the running interpreter's ``major.minor``, which keys a ceilings file.
 
-    I/O counts are only comparable WITHIN one Python minor version: the
-    interpreter's own import machinery is part of what the audit hook observes,
-    and it changes release to release. Module counts do not need this — the
-    non-stdlib set is identical across 3.10-3.14 by design — which is why the
-    module snapshots stay version-free and only these are keyed.
+    File-operation counts are only comparable WITHIN one Python minor: the
+    interpreter's own stdlib and import machinery are part of every count, and
+    they change release to release.
     """
     return f"{sys.version_info.major}.{sys.version_info.minor}"
 
 
-def io_snapshot_path(key: str) -> Path:
-    """Path to the I/O golden for surface *key* on the RUNNING interpreter."""
-    return SNAPSHOT_DIR / f"{key}.io.{interpreter_tag()}.txt"
+def ceilings_path(tag: str | None = None) -> Path:
+    """Path to the ceilings file for interpreter *tag* (``major.minor``; default: this one)."""
+    return CEILINGS_DIR / f"{tag or interpreter_tag()}.json"
 
 
-def write_io_snapshot(key: str, io: dict) -> None:
-    """Write the exact and ceiling I/O counters for surface *key* on the running interpreter."""
-    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    headroom_pct = round((STAT_TOTAL_HEADROOM - 1) * 100)
-    header = (
-        f"# I/O golden: surface `{key}`, CPython {interpreter_tag()}. "
-        f"Regenerate with `make import-snapshot` UNDER THIS INTERPRETER. "
-        f"(stat_total is a ceiling baseline, +{headroom_pct}%)\n"
-    )
-    body = "".join(f"{name} {io[name]}\n" for name in GOLDEN_IO_KEYS)
-    io_snapshot_path(key).write_text(header + body)
+def read_ceilings() -> dict[str, dict]:
+    """Return the running interpreter's baselines, keyed by surface.
 
-
-def read_io_snapshot(key: str) -> dict[str, int]:
-    """Return the recorded I/O counters for surface *key* on the running interpreter.
-
-    Raises ``FileNotFoundError`` when this interpreter has no golden — which
-    :func:`check_surface` turns into a NAMED failure rather than a skip.
+    Each value holds ``file_ops``, ``workspace``, ``by_bucket`` and
+    ``by_process``. A missing file reads as no baselines at all, which
+    :func:`check_surface` turns into a NAMED failure per gated surface rather
+    than a skip. A file that is present but wrong fails by name here: one
+    recorded under another interpreter (a copied or renamed file), or an
+    entry missing a gated counter (a hand edit), would otherwise gate
+    against the wrong numbers or end in a bare ``KeyError``.
     """
-    recorded: dict[str, int] = {}
-    for line in io_snapshot_path(key).read_text().splitlines():
-        if not line or line.startswith("#"):
-            continue
-        name, _, value = line.partition(" ")
-        recorded[name] = int(value)
-    return recorded
+    path = ceilings_path()
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text())
+    tag = interpreter_tag()
+    if data.get("interpreter") != tag:
+        raise ValueError(
+            f"import_budget: {_display_path(path)} records interpreter "
+            f"{data.get('interpreter')!r}, not {tag!r}; regenerate it with "
+            f"`make import-snapshot` under CPython {tag}"
+        )
+    surfaces = data["surfaces"]
+    for key, baseline in surfaces.items():
+        missing = [name for name in CEILING_COUNTERS if name not in baseline]
+        if missing:
+            raise ValueError(
+                f"import_budget: the baseline for `{key}` in {_display_path(path)} has no "
+                f"{', '.join(missing)}; regenerate the file with `make import-snapshot` "
+                f"under CPython {tag}"
+            )
+    return surfaces
 
 
-def check_surface(surface: Surface, result: dict) -> list[str]:
+def write_ceilings(results: dict[str, FileOps]) -> None:
+    """Write *results* as the running interpreter's baselines, for the gated surfaces only.
+
+    The file stores BASELINES, not ceilings: :func:`ceiling` is applied at
+    check time, so a headroom change never needs a regeneration. The
+    breakdowns are stored beside the totals so a breach can say which
+    package or child process grew (:func:`breakdown_diff`). A tracked surface
+    is never written, because nothing reads its baseline. The whole file is
+    replaced: a regeneration records one interpreter's measurement, not a
+    merge with an older one.
+    """
+    surfaces = {
+        key: {
+            "file_ops": ops.total,
+            "workspace": ops.workspace,
+            "by_bucket": ops.by_bucket,
+            "by_process": ops.by_process,
+        }
+        for key, ops in results.items()
+        if not surface_by_key(key).tracked
+    }
+    CEILINGS_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {"interpreter": interpreter_tag(), "surfaces": surfaces}
+    ceilings_path().write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+CEILING_COUNTERS: dict[str, str] = {"file_ops": "total", "workspace": "workspace"}
+"""The gated counters: each baseline key, and the :class:`FileOps` field it bounds."""
+
+BREAKDOWN_LINES = 12
+"""The most lines :func:`breakdown_diff` prints; ``--report-json`` has every group."""
+
+
+def check_exit(surface: Surface, result: dict) -> list[str]:
+    """Return a violation unless a real-entry run ended the way *surface* expects (empty = pass).
+
+    Both halves of the ending are compared: the exit code against
+    ``expect_exit``, and the escaping exception's type against
+    ``expect_error``. The message always quotes the recorded exception, so a
+    crash names its cause without a re-run.
+    """
+    if not surface.real_entry:
+        return []
+    exit_code = result.get("exit_code", 0)
+    exception = result.get("exception")
+    raised = exception.split(":", 1)[0] if exception else None
+    if exit_code == surface.expect_exit and raised == surface.expect_error:
+        return []
+    expected = f"exit {surface.expect_exit}" + (
+        f" with {surface.expect_error}" if surface.expect_error else ""
+    )
+    message = (
+        f"`{surface.key}`: the measured command exited {exit_code} with "
+        f"{exception or 'no exception'}, not {expected}, so it measured a failure "
+        f"path, not the surface"
+    )
+    return [message]
+
+
+RATIO_BREAKDOWN_LINES = 8
+"""How many of a surface's largest buckets and child processes a ratio failure lists."""
+
+
+def check_ratio(surface: Surface, measured: FileOps, floor_file_ops: int | None) -> list[str]:
+    """Return a violation if *surface* costs more than its target multiple of ``otto --version``.
+
+    *floor_file_ops* is :data:`RATIO_FLOOR`'s ``file_ops`` from the same run.
+    A surface with no :attr:`Surface.target_ratio` passes whatever it is
+    given; one with a target and no floor is the caller's mistake, raised
+    rather than passed, because a target never checked is no target.
+
+    A failure lists the surface's largest buckets and every child process
+    beside the numbers, because a ratio breach need not come with a ceiling
+    breach, whose breakdown would otherwise be the only one printed.
+    """
+    target = surface.target_ratio
+    if target is None:
+        return []
+    if floor_file_ops is None:
+        raise ValueError(
+            f"`{surface.key}` has a target ratio of {target:g}; checking it needs "
+            f"{RATIO_FLOOR}'s file_ops from the same run"
+        )
+    if measured.total <= target * floor_file_ops:
+        return []
+    ratio = measured.total / floor_file_ops
+    largest = sorted(measured.by_bucket.items(), key=lambda kv: (-kv[1], kv[0]))
+    children = sorted(
+        (name, count) for name, count in measured.by_process.items() if name != "python"
+    )
+    lines = [f"{count} {name}" for name, count in largest[:RATIO_BREAKDOWN_LINES]]
+    lines += [f"{count} process {name}" for name, count in children]
+    breakdown = "".join(f"\n  {line}" for line in lines)
+    message = (
+        f"`{surface.key}`: file_ops {measured.total} is {ratio:.2f}x {RATIO_FLOOR}'s "
+        f"{floor_file_ops} (`otto --version`), over its target of {target:g}x "
+        f"(at most {int(target * floor_file_ops)}) on CPython {interpreter_tag()}. "
+        f"The verb is paying for something it does not need: an import or a child "
+        f"process. Its largest buckets and every child process follow; "
+        f"`--report-json` has the full `by_bucket` and `by_process`. Raise "
+        f"`target_ratio` only with a commit saying why the verb needs the cost."
+        f"{breakdown}"
+    )
+    return [message]
+
+
+def check_surface(
+    surface: Surface, result: dict, *, floor_file_ops: int | None = None
+) -> list[str]:
     """Return human-readable import-budget violations for a surface (empty = pass).
 
-    Runs the five checks the unit test enforces, so the script (`--check`) and
-    `tests/unit/import_budget/` share one source of truth:
-      1. real-entry exit — a `real_entry` surface's measured command must have
-         exited 0, or it measured a failure path rather than the surface
-      2. denylist     — heavy third-party stacks must be absent
-      3. count cap     — non-stdlib module count must not exceed surface.cap
-      4. golden snapshot — the otto-owned module set must match exactly
-      5. I/O golden     — the gated I/O counters must match exactly, against
-         the golden for the RUNNING interpreter (see :func:`interpreter_tag`)
+    The script (``--check``) and ``tests/unit/import_budget/`` share this, so
+    they share one source of truth. A TRACKED surface returns ``[]`` whatever
+    it measured. A gated one is checked in this order:
+
+      1. its ending (:func:`check_exit`) — a ``real_entry`` surface must exit
+         ``surface.expect_exit`` AND raise ``surface.expect_error`` (the type
+         of the exception that escaped the entry, or none), or it measured a
+         failure path rather than the surface: a misspelled host id exits 1
+         too, and its smaller count would read as a saving;
+      2. its baseline — no entry for this surface in the RUNNING
+         interpreter's ceilings file (see :func:`interpreter_tag`) is a named
+         failure, never a skip, because "no file for this Python" is the shape
+         a newly added interpreter or surface takes;
+      3. its ceilings — ``file_ops`` and ``workspace`` must each stay at or
+         under :func:`ceiling` of their baseline with ``surface.headroom``. A
+         breach is followed by :func:`breakdown_diff`'s lines, so it names
+         what grew;
+      4. its target ratio (:func:`check_ratio`), against *floor_file_ops*:
+         :data:`RATIO_FLOOR`'s ``file_ops`` from the same run, which a
+         surface with a ``target_ratio`` requires.
     """
-    violations: list[str] = []
-
-    if surface.real_entry and result.get("exit_code", 0) != 0:
+    if surface.tracked:
+        return []
+    violations = check_exit(surface, result)
+    measured = FileOps(**result["file_ops"])
+    ratio_violations = check_ratio(surface, measured, floor_file_ops)
+    baseline = read_ceilings().get(surface.key)
+    if baseline is None:
+        tag = interpreter_tag()
         violations.append(
-            f"`{surface.key}`: the measured command exited {result['exit_code']}, "
-            f"so it measured a failure path, not the surface"
+            f"`{surface.key}`: no baseline for CPython {tag} in "
+            f"{_display_path(ceilings_path())}. Every interpreter that runs this "
+            f"check needs its own file (the counts are not comparable across minors). "
+            f"Regenerate it by running `make import-snapshot` UNDER CPython {tag} — "
+            f"for another minor, `uv run nox -s tests_hostless-{tag} --install-only`, then "
+            f"`.nox/tests_hostless-{tag.replace('.', '-')}/bin/python "
+            f"scripts/import_budget.py --update`.\n"
+            f"  measured now: file_ops {measured.total}, workspace {measured.workspace}"
         )
+        return violations + ratio_violations
+    breaches = []
+    for name, attr in CEILING_COUNTERS.items():
+        value, base = getattr(measured, attr), baseline[name]
+        limit = ceiling(base, surface.headroom)
+        if value > limit:
+            breaches.append(f"{name} {value} > ceiling {limit} (baseline {base})")
+    if breaches:
+        growth = "".join(f"\n  {line}" for line in breakdown_diff(baseline, measured))
+        violations.append(
+            f"`{surface.key}`: over its ceiling on CPython {interpreter_tag()} "
+            f"({_display_path(ceilings_path())}): {'; '.join(breaches)}. If the growth "
+            f"is intended, regenerate with `make import-snapshot` under this "
+            f"interpreter and say why in the commit.{growth}"
+        )
+    return violations + ratio_violations
 
-    leaked = [d for d in surface.deny if d in result["modules"]]
-    if leaked:
-        violations.append(f"`{surface.key}`: heavy modules leaked onto the path: {leaked}")
 
-    if surface.cap is None:
-        # A `real_entry` surface is capless ON PURPOSE until the fix it exists
-        # to witness lands: its module set until then includes everything the
-        # defect drags in, so a cap written earlier would enshrine the defect
-        # as the budget. Task 4 landed `version_repo`'s (cap=4) and Task 7 the
-        # help pair's, so NOTHING uses this branch any more — the countdown
-        # reached zero and a unit test pins the used set as empty. The branch
-        # itself stays: it is the mechanism a future repo-bearing surface
-        # needs while its own fix is being written, and it is keyed on
-        # `real_entry` rather than on a key list so it cannot widen silently.
-        if not surface.real_entry:
-            violations.append(f"`{surface.key}` has no cap set")
-    else:
-        non_stdlib = result["non_stdlib_modules"]
-        if len(non_stdlib) > surface.cap:
-            violations.append(
-                f"`{surface.key}`: {len(non_stdlib)} non-stdlib modules > cap {surface.cap}. "
-                f"If intentional, re-run `make import-snapshot` and raise the cap.\n"
-                f"  non-stdlib modules: {non_stdlib}"
+def breakdown_diff(baseline: dict, measured: FileOps) -> list[str]:
+    """Return one line per bucket or child process that grew, largest growth first.
+
+    ``+598 site:asyncssh (0 → 598)`` is a package's file operations;
+    ``+12 process gcc (0 → 12)`` a child program's. Groups that shrank or held
+    are left out: a breach is explained by what grew. Capped at
+    :data:`BREAKDOWN_LINES`, the last line then saying how many were left out.
+    """
+    grown: list[tuple[int, str, int, int]] = []
+    for label, before, now in [
+        ("", baseline.get("by_bucket", {}), measured.by_bucket),
+        ("process ", baseline.get("by_process", {}), measured.by_process),
+    ]:
+        for name, count in now.items():
+            was = before.get(name, 0)
+            if count > was:
+                grown.append((count - was, f"{label}{name}", was, count))
+    grown.sort(key=lambda row: (-row[0], row[1]))
+    lines = [f"+{delta} {name} ({was} → {count})" for delta, name, was, count in grown]
+    if len(lines) > BREAKDOWN_LINES:
+        left_out = len(lines) - (BREAKDOWN_LINES - 1)
+        lines = [*lines[: BREAKDOWN_LINES - 1], f"... and {left_out} more that grew"]
+    return lines
+
+
+def advisories(surface: Surface, result: dict) -> list[str]:
+    """Return non-failing notes about *surface*'s ceilings (empty = nothing to say).
+
+    Kept apart from :func:`check_surface` on purpose: a note never fails a
+    run, so it must never reach the violations list. A note says a counter
+    measured below :data:`STALE_RATIO` of its ceiling, i.e. the
+    baseline is stale-high and the ceiling admits more than it should.
+
+    A counter within :data:`MIN_SLACK` of its baseline never earns one, even
+    under the ratio: on a small counter the absolute floor alone puts the
+    measurement under 80% of its ceiling (a ``workspace`` of 1 has a ceiling
+    of 6), and that is the floor doing its job, not a stale baseline. A
+    missing baseline says nothing here; :func:`check_surface` already fails
+    it by name.
+    """
+    if surface.tracked:
+        return []
+    baseline = read_ceilings().get(surface.key)
+    if baseline is None:
+        return []
+    measured = FileOps(**result["file_ops"])
+    notes = []
+    for name, attr in CEILING_COUNTERS.items():
+        value, base = getattr(measured, attr), baseline[name]
+        limit = ceiling(base, surface.headroom)
+        if value < STALE_RATIO * limit and value < base - MIN_SLACK:
+            notes.append(
+                f"`{surface.key}`: {name} {value} is below {STALE_RATIO:g}x its ceiling "
+                f"{limit} (baseline {base}) on CPython {interpreter_tag()}. A stale-high "
+                f"baseline widens the ceiling silently; consider regenerating "
+                f"{_display_path(ceilings_path())} with `make import-snapshot` under "
+                f"this interpreter."
             )
-
-    expected = read_snapshot(surface.key)
-    if result["otto_modules"] != expected:
-        violations.append(
-            f"`{surface.key}`: otto module set changed. "
-            f"If intentional, re-run `make import-snapshot` and review the diff.\n"
-            f"  added:   {sorted(set(result['otto_modules']) - set(expected))}\n"
-            f"  removed: {sorted(set(expected) - set(result['otto_modules']))}"
-        )
-
-    violations.extend(_check_io(surface, result))
-    return violations
+    return notes
 
 
 def _display_path(path: Path) -> str:
@@ -1434,9 +1929,9 @@ def _display_path(path: Path) -> str:
 
     A message formatter must never be the thing that raises. ``relative_to``
     throws on any path outside ``REPO_ROOT`` — which a redirected
-    ``SNAPSHOT_DIR`` (a test driving the golden machinery against ``tmp_path``)
-    or a symlinked checkout produces — turning a diagnosable budget failure
-    into a ``ValueError`` traceback from inside the diagnosis.
+    ``CEILINGS_DIR`` (a test driving the ceilings against ``tmp_path``) or a
+    symlinked checkout produces — turning a diagnosable budget failure into a
+    ``ValueError`` traceback from inside the diagnosis.
     """
     try:
         return str(path.relative_to(REPO_ROOT))
@@ -1444,168 +1939,129 @@ def _display_path(path: Path) -> str:
         return str(path)
 
 
-def _check_io(surface: Surface, result: dict) -> list[str]:
-    """Return I/O-golden violations for *surface* (empty = pass).
-
-    A MISSING GOLDEN IS A FAILURE, NAMED — never a silent skip. The goldens
-    are per interpreter minor, so "no file for this Python" is the shape a
-    newly added interpreter takes, and a skip there would gate four of five
-    CI legs while reporting green on all five. The message carries the three
-    things needed to fix it: which file, which interpreter, and the command
-    that writes it.
-
-    Two independent checks follow, because the golden now carries two kinds of
-    counter (spec §3.1 of ``2026-09-25-dispatch-startup-cost-design.md``):
-    :data:`EXACT_IO_COUNTERS` compared by equality, and
-    :data:`CEILING_IO_COUNTERS` bounded by :func:`within_ceiling`. A surface can
-    fail either, both, or neither.
-    """
-    io = result["io"]
-    measured = exact_io(io)
-    try:
-        recorded = read_io_snapshot(surface.key)
-    except FileNotFoundError:
-        return [
-            (
-                f"`{surface.key}`: no I/O golden for CPython {interpreter_tag()} — "
-                f"expected {_display_path(io_snapshot_path(surface.key))}. "
-                f"Every interpreter that runs this check needs its own file (the counts "
-                f"are not comparable across minors). Regenerate it by running "
-                f"`make import-snapshot` UNDER CPython {interpreter_tag()} — e.g. "
-                f"`uv run nox -s tests_hostless-{interpreter_tag()} --install-only` then "
-                f"that session's python.\n"
-                f"  measured now: {measured}"
-            )
-        ]
-    violations: list[str] = []
-    drift = {
-        name: (recorded[name], measured[name])
-        for name in EXACT_IO_COUNTERS
-        if name in recorded and recorded[name] != measured[name]
+def report_row(surface: Surface, result: dict) -> dict:
+    """One ``--report`` row: *surface*'s file operations out of a measurement *result*."""
+    ops = result["file_ops"]
+    return {
+        "surface": surface.key,
+        "tier": "tracked" if surface.tracked else "gated",
+        "file_ops": ops["total"],
+        "workspace": ops["workspace"],
+        "exit": result.get("exit_code"),
+        "by_bucket": ops["by_bucket"],
+        "by_process": ops["by_process"],
     }
-    # THE SHAPE OF THE FILE IS PART OF THE COMPARISON, NOT JUST ITS VALUES.
-    # A file carrying a key that is no longer gated (a renamed counter, a
-    # hand-edit) or missing one that is would otherwise be a mismatch with an
-    # EMPTY value diff — a red with no diagnosis, which is the worst kind. Name
-    # the shape drift explicitly, computed against the FULL golden shape
-    # (:data:`GOLDEN_IO_KEYS`, exact + ceiling) rather than against the exact
-    # counters alone, so a golden missing/gaining ``stat_total`` is caught here
-    # too.
-    missing = sorted(set(GOLDEN_IO_KEYS) - set(recorded))
-    unknown = sorted(set(recorded) - set(GOLDEN_IO_KEYS))
-    if drift or missing or unknown:
-        detail = f"  golden -> measured: {drift}\n" if drift else ""
-        if missing:
-            detail += f"  counters GATED but absent from the golden (regenerate it): {missing}\n"
-        if unknown:
-            detail += (
-                f"  counters in the golden that are NOT gated — a stale or hand-edited "
-                f"file; regenerate it: {unknown}\n"
-            )
-        # "counts changed" is the common case and the useful headline; a golden
-        # whose SHAPE is wrong reports as a mismatch instead, because no count
-        # changed.
-        headline = "I/O counts changed" if drift else "I/O golden mismatch"
-        violations.append(
-            f"`{surface.key}`: {headline} on CPython {interpreter_tag()} "
-            f"(golden {_display_path(io_snapshot_path(surface.key))}). "
-            f"If intentional, re-run `make import-snapshot` under this interpreter "
-            f"and review the diff.\n"
-            f"{detail}"
-            f"  gated counters measured: {measured}\n"
-            f"  full io (open is context, not gated): {io}"
-        )
-
-    if "stat_total" in recorded and not within_ceiling(
-        measured=io["stat_total"], baseline=recorded["stat_total"]
-    ):
-        violations.append(
-            f"`{surface.key}`: stat_total ceiling exceeded on CPython {interpreter_tag()}: "
-            f"{io['stat_total']} > {recorded['stat_total']}x{STAT_TOTAL_HEADROOM:g} "
-            f"(golden {_display_path(io_snapshot_path(surface.key))})"
-        )
-    return violations
 
 
-def io_advisories(surface: Surface, result: dict) -> list[str]:
-    """Return non-failing notes about *surface*'s I/O golden (empty = nothing to say).
+REPORT_TOP_BUCKETS = 5
+"""How many of a row's largest buckets the ``--report`` table prints; the JSON has them all."""
 
-    Kept apart from :func:`check_surface` on purpose: a note never fails a
-    run, so it must never reach the violations list. Today there is one: a
-    ``stat_total`` measured well below its ceiling baseline (see
-    :data:`STAT_TOTAL_STALE_RATIO`). A missing golden says nothing here;
-    :func:`check_surface` already fails it by name.
+
+REPORT_HEADER = (
+    f"{'surface':26} {'tier':7} {'file_ops':>8} {'workspace':>9} {'exit':>4}"
+    f"  top buckets | child processes"
+)
+
+
+def format_report_row(row: dict) -> str:
+    """Render one ``--report`` row as a line of the table under :data:`REPORT_HEADER`.
+
+    The top buckets say where a surface's file operations go; the child
+    processes (every program but ``python``, the measured interpreter) say
+    what it started. Buckets are cut to fit a line; ``--report-json`` keeps
+    the full breakdowns.
     """
-    try:
-        recorded = read_io_snapshot(surface.key)
-    except FileNotFoundError:
-        return []
-    baseline = recorded.get("stat_total")
-    measured = result["io"]["stat_total"]
-    if baseline is None or measured >= baseline * STAT_TOTAL_STALE_RATIO:
-        return []
-    return [
-        (
-            f"`{surface.key}`: stat_total {measured} is below "
-            f"{STAT_TOTAL_STALE_RATIO:g}x its baseline {baseline} on CPython {interpreter_tag()}. "
-            f"A stale-high baseline widens the ceiling silently; consider regenerating "
-            f"{_display_path(io_snapshot_path(surface.key))} with `make import-snapshot` "
-            f"under this interpreter."
-        )
-    ]
+    ranked = sorted(row["by_bucket"].items(), key=lambda kv: (-kv[1], kv[0]))
+    top = " ".join(f"{name}={n}" for name, n in ranked[:REPORT_TOP_BUCKETS])
+    children = " ".join(
+        f"{name}={n}" for name, n in sorted(row["by_process"].items()) if name != "python"
+    )
+    exit_code = "-" if row["exit"] is None else str(row["exit"])
+    return (
+        f"{row['surface']:26} {row['tier']:7} {row['file_ops']:8d} {row['workspace']:9d} "
+        f"{exit_code:>4}  {top} | {children or '-'}"
+    )
 
 
-def main() -> int:
-    """Print the per-surface count table; optionally --update / --check."""
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--update", action="store_true", help="regenerate golden snapshots")
-    ap.add_argument(
+def main(argv: list[str] | None = None) -> int:
+    """Print the per-surface table; with ``--check`` enforce it, with ``--update`` record it."""
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument(
         "--check",
         action="store_true",
-        help="enforce the import budget (caps + snapshots + denylist); exit non-zero on violation",
+        help="enforce the file-operation ceilings; exit non-zero on a breach",
     )
-    args = ap.parse_args()
-
-    # flush=True: interleaves correctly when stdout is piped/redirected (e.g. `make profile > log`).
-    print(
-        f"{'surface':20} {'total':>6} {'non_std':>7} {'otto':>5} "
-        f"{'open':>6} {'open_fx':>7} {'scandir':>7} {'listdir':>7} {'stat_ws':>7} {'stat_tot':>8}"
-        f"  heavy_present",
-        flush=True,
+    mode.add_argument(
+        "--update",
+        action="store_true",
+        help="rewrite THIS interpreter's ceilings file from a fresh measurement of the gated "
+        "surfaces (other minors need their own run)",
     )
-    failed = False
-    for s in SURFACES:
-        r = measure_surface(s)
-        present = [d for d in s.deny if d in r["modules"]]
-        non_std, otto = len(r["non_stdlib_modules"]), len(r["otto_modules"])
-        io = r["io"]
-        print(
-            f"{s.key:20} {r['count']:6d} {non_std:7d} {otto:5d} "
-            f"{io['open']:6d} {io['open_fixture']:7d} {io['scandir']:7d} {io['listdir']:7d}"
-            f" {io['stat_workspace']:7d} {io['stat_total']:8d}"
-            f"  {present}",
-            flush=True,
+    ap.add_argument(
+        "--report",
+        action="store_true",
+        help="print the table (what no flag does); measures only, never checks or updates",
+    )
+    ap.add_argument(
+        "--report-json",
+        metavar="PATH",
+        type=Path,
+        help="also write the table, with full bucket and process breakdowns, as JSON; "
+        "measures only, never checks or updates",
+    )
+    args = ap.parse_args(argv)
+    # The report flags promise a measurement and nothing else. Accepting one
+    # beside --check would print a table and exit 0 without having checked it.
+    if (args.report or args.report_json) and (args.check or args.update):
+        ap.error(
+            "--report and --report-json only measure; they cannot be combined with "
+            "--check or --update"
         )
-        if args.update:
-            write_snapshot(s.key, r["otto_modules"])
-            write_io_snapshot(s.key, io)
-            print(
-                f"  -> wrote {snapshot_path(s.key).relative_to(REPO_ROOT)} "
-                f"({len(r['otto_modules'])} modules) and "
-                f"{io_snapshot_path(s.key).relative_to(REPO_ROOT)}",
-                flush=True,
-            )
+
+    # A tracked surface has no baseline to record, so --update skips it.
+    surfaces = [s for s in SURFACES if not (args.update and s.tracked)]
+    # The ratio floor first (a stable sort keeps the rest in table order), so
+    # every target ratio is checked against a floor from this same run.
+    surfaces.sort(key=lambda s: s.key != RATIO_FLOOR)
+    # flush=True: interleaves correctly when stdout is piped/redirected
+    # (e.g. `make profile > log`), and a row appears as soon as it is measured:
+    # the whole table takes minutes.
+    print(REPORT_HEADER, flush=True)
+    rows = []
+    measured: dict[str, FileOps] = {}
+    failed = False
+    for s in surfaces:
+        r = measure_surface(s)
+        rows.append(report_row(s, r))
+        print(format_report_row(rows[-1]), flush=True)
+        measured[s.key] = FileOps(**r["file_ops"])
+        violations: list[str] = []
         if args.check:
-            violations = check_surface(s, r)
-            for v in violations:
-                print(f"  FAIL {v}", flush=True)
+            floor = measured.get(RATIO_FLOOR)
+            violations = check_surface(s, r, floor_file_ops=floor.total if floor else None)
+        elif args.update:
+            # The ending is checked here too: a baseline recorded from a
+            # failure path would pin the cost of a crash.
+            violations = check_exit(s, r)
+        for v in violations:
+            print(f"  FAIL {v}", flush=True)
+        if args.check:
             # Advisory only: printed, never counted toward `failed`.
-            for note in io_advisories(s, r):
+            for note in advisories(s, r):
                 print(f"  NOTE {note}", flush=True)
-            failed = failed or bool(violations)
+        failed = failed or bool(violations)
+    if args.report_json:
+        args.report_json.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n")
     if failed:
-        print("\nimport budget: FAILED — see FAIL lines above.", flush=True)
+        what = "nothing written" if args.update else "see FAIL lines above"
+        print(f"\nimport budget: FAILED — {what}.", flush=True)
         return 1
+    if args.update:
+        write_ceilings(measured)
+        print(f"\nwrote {_display_path(ceilings_path())}", flush=True)
     if args.check:
         print("\nimport budget: OK", flush=True)
     return 0

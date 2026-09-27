@@ -162,10 +162,8 @@ if TYPE_CHECKING:
 
 import typer
 from rich import print as rprint
-from rich.table import Table
 
 from ..config import get_repos
-from ..context import get_context
 from ..models import MIN_INTERVAL_SECONDS
 from ..suite.register import SUITES
 
@@ -290,6 +288,8 @@ def run_selection(ctx: typer.Context) -> None:
     the only place that can cover ``otto test <Suite> --cov``, since a named
     suite runs through the suite registry rather than through this function.
     """
+    from ..context import get_context
+
     stored = ctx.meta.get(RUN_OPTIONS_KEY)
     opts = stored if isinstance(stored, RunOptions) else RunOptions()
 
@@ -315,6 +315,8 @@ def run_selection(ctx: typer.Context) -> None:
 
 
 def _render_panels(panels: "list[Panel]") -> None:
+    from rich.table import Table
+
     table = Table(show_header=False, show_footer=False, box=None, expand=True, padding=(0, 1, 1, 1))
     for _ in panels:
         table.add_column(ratio=1)

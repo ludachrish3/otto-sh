@@ -5,10 +5,9 @@ otto's framework import graph costs ~2400 path syscalls, paid at MODULE IMPORT
 ``entry`` cannot remove that, because the entry module IS the cost. Moving the
 entry point earlier is the only thing that does.
 
-Lives at ``otto._shim`` rather than ``otto.cli._shim`` deliberately:
-``otto/cli/__init__.py`` is ``from .main import app``, so importing anything
-under ``otto.cli`` loads 440 modules first. ``otto/__init__.py`` is PEP-562
-lazy, so this module's import costs almost nothing.
+Lives at ``otto._shim``, outside the command package it decides whether to
+load. ``otto/__init__.py`` is PEP-562 lazy, so this module's import costs
+almost nothing; the 440-module graph arrives only with ``otto.cli.main``.
 
 Both entry paths route here — the ``otto`` console script (``pyproject.toml``'s
 ``[project.scripts]``) and ``python -m otto`` (``otto/__main__.py``). One fast
@@ -75,6 +74,17 @@ def main() -> None:
                 pass
             else:
                 raise SystemExit(0)
+
+    # pydantic looks for its plugins on the first model build by opening
+    # every installed distribution's entry_points.txt: one file operation per
+    # installed package, each a network round trip when the venv is on NFS.
+    # otto ships no pydantic plugin and uses none, so the CLI turns the scan
+    # off before anything can build a model. It is set here, not in
+    # `otto/__init__.py`, so library use of otto never changes the caller's
+    # environment; every process the CLI starts inherits it. setdefault
+    # keeps a value the user already set: an empty PYDANTIC_DISABLE_PLUGINS
+    # turns the plugins, and the scan, back on.
+    os.environ.setdefault("PYDANTIC_DISABLE_PLUGINS", "__all__")
 
     from .cli.main import entry
 

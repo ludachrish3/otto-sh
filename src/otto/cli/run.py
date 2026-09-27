@@ -12,7 +12,6 @@ from typing import (
 
 import typer
 from rich import print as rprint
-from rich.table import Table
 
 from ..instructions import (
     FIRST_PARTY_INSTRUCTIONS,
@@ -84,6 +83,8 @@ def list_instructions_callback(value: bool) -> None:
     """Print all available run instructions (one panel per repo) and exit when the flag is set."""
     if not value:
         return
+    from rich.table import Table
+
     from ..config import get_repos  # lazy import — avoids circular dependency
 
     panels = [repo.get_instructions_panel() for repo in get_repos()]

@@ -423,14 +423,14 @@ def is_bootstrapped() -> bool:
     :func:`invalidate`. Mid-bootstrap counts as bootstrapped ON PURPOSE: an
     init module that builds a host — directly, or by way of a stamped host
     whose product/dev-tool providers apply — is running INSIDE that window,
-    and :func:`~otto.config.get_repos` already answers correctly and for free
+    and :func:`~otto.config.bootstrapped.get_repos` already answers correctly and for free
     there (the re-entrant branch in :func:`bootstrap` returns
     ``_in_progress``, whose ``repos``/``ordered_repos`` are final by then).
     Treating that window as "not bootstrapped" would make a host built mid-
     bootstrap silently drop its declared entries while its providers still
     applied. The non-forcing probe: a caller that must not TRIGGER discovery
     or repo init imports as a side effect of merely asking reads this instead
-    of calling :func:`bootstrap` or :func:`~otto.config.get_repos` — only a
+    of calling :func:`bootstrap` or :func:`~otto.config.bootstrapped.get_repos` — only a
     process that has not started bootstrap at all collects nothing.
     """
     return _result is not None or _in_progress is not None

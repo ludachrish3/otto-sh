@@ -30,8 +30,8 @@ from typing_extensions import override
 from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
-from .dev_tool import DEV_TOOL_KINDS, DevTool
-from .product import PRODUCT_KINDS, ShellProduct, cov_dir_of_name, validate_stage_dir
+from .dev_tool import DevTool
+from .product import ShellProduct, cov_dir_of_name, validate_stage_dir
 
 if TYPE_CHECKING:
     from .host import Host
@@ -258,7 +258,3 @@ def _shell_kind(entry: DeclaredEntry, host: "Host") -> DeclaredShell:  # noqa: A
         check_cmd=check,
         instrumented_override=instrumented,
     )
-
-
-PRODUCT_KINDS.register("shell", _shell_kind, origin=__name__)
-DEV_TOOL_KINDS.register("shell", _shell_kind, origin=__name__)

@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 
 from otto.cli import cov as cov_module
 from otto.cli.cov import cov_app
+from otto.coverage import reporter as reporter_module
 from otto.coverage.capture import produce as produce_module
 from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import Thresholds
@@ -181,7 +182,7 @@ class TestCovReportMergeErrors:
 
         with (
             patch.object(
-                cov_module,
+                reporter_module,
                 "run_coverage_report",
                 side_effect=CoverageDataMismatchError("x.gcda:stamp mismatch with notes file"),
             ),
@@ -201,7 +202,7 @@ class TestCovReportMergeErrors:
 
         with (
             patch.object(
-                cov_module,
+                reporter_module,
                 "run_coverage_report",
                 side_effect=CoverageToolVersionError("Your test was built with '4.8'."),
             ),
@@ -221,7 +222,7 @@ class TestCovReportMergeErrors:
 
         with (
             patch.object(
-                cov_module,
+                reporter_module,
                 "run_coverage_report",
                 side_effect=CoverageToolMissingError(
                     "Coverage data for product 'app' on host 'test1' was written by "
@@ -242,7 +243,7 @@ class TestCovReportMergeErrors:
     def test_generic_merge_failure_reports_cleanly(self, cov_dir):
         with (
             patch.object(
-                cov_module,
+                reporter_module,
                 "run_coverage_report",
                 side_effect=RuntimeError("lcov --capture failed:\nsome lcov noise"),
             ),
@@ -255,7 +256,7 @@ class TestCovReportMergeErrors:
 
     def test_prefix_option_forwards_to_reporter(self, cov_dir):
         with patch.object(
-            cov_module, "run_coverage_report", new=AsyncMock(return_value=None)
+            reporter_module, "run_coverage_report", new=AsyncMock(return_value=None)
         ) as rcr:
             runner.invoke(cov_app, ["report", str(cov_dir), "--prefix", "/repo"])
         assert rcr.call_args.kwargs["prefix"] == Path("/repo")
@@ -281,7 +282,7 @@ class TestCovReportSuccess:
         mock_store.file_count.return_value = 3
 
         mock = AsyncMock(return_value=mock_store)
-        with patch.object(cov_module, "run_coverage_report", mock):
+        with patch.object(reporter_module, "run_coverage_report", mock):
             yield mock, mock_store
 
     def test_report_success(self, cov_tree, mock_run_report):
@@ -440,7 +441,7 @@ class TestCovReportTicketsJson:
         mock_store.overall_pct.return_value = 75.0
         mock_store.file_count.return_value = 3
         mock = AsyncMock(return_value=mock_store)
-        with patch.object(cov_module, "run_coverage_report", mock):
+        with patch.object(reporter_module, "run_coverage_report", mock):
             yield mock, mock_store
 
     @pytest.fixture
@@ -541,7 +542,7 @@ class TestCovReportCollectionModel:
         mock_store.overall_pct.return_value = 50.0
         mock_store.file_count.return_value = 1
         mock = AsyncMock(return_value=mock_store)
-        with patch.object(cov_module, "run_coverage_report", mock):
+        with patch.object(reporter_module, "run_coverage_report", mock):
             yield mock
 
     def test_no_tier_resolves_repo_root_and_tier_configs_from_settings(

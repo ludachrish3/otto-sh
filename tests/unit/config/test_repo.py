@@ -43,11 +43,6 @@ def test_repo_config_location(default_mock_repo):
     assert repo_settings_file.exists()
 
 
-def test_repo_commit_name(default_mock_repo):
-
-    assert mock_repo.commit_name == f"{mock_repo.commit} ({mock_repo.description})"
-
-
 def test_repo_settings_tests_sut_dir_variable(default_mock_repo):
 
     assert mock_repo.tests == [mock_repo.sut_dir / "tests"]

@@ -1,0 +1,147 @@
+# Rule test for .ast-grep/rules/builtin-registers-by-reference.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+id: builtin-registers-by-reference
+valid:
+# The house shape: the module that defines the registry registers the
+# built-in by reference.
+- |
+  from otto.registry import Ref
+
+  TRANSFER_BACKENDS.register(
+      "nc", Ref("otto.host.transfer.nc:NcFileTransfer"), origin="otto.host.transfer.nc"
+  )
+# A plugin registers at call time, from a function body nothing calls at import.
+- |
+  from otto.host import register_transfer_backend
+
+
+  def setup() -> None:
+      register_transfer_backend("mine", MyTransfer)
+# The `_register_builtin_*()` idiom with references.
+- |
+  def _register_builtin_backends() -> None:
+      for name, target in [("nc", "otto.host.transfer.nc:NcFileTransfer")]:
+          TRANSFER_BACKENDS.register(name, Ref(target))
+
+
+  _register_builtin_backends()
+# A registration in the file that defines the registration API and its
+# registry.
+- |
+  LOGIN_PROXIES = Registry("login proxies")
+
+
+  def register_login_proxy(name, proxy, *, prompt=None) -> None:
+      LOGIN_PROXIES.register(name, LoginProxy(proxy, prompt))
+
+
+  register_login_proxy("su", _su_proxy, prompt=_SU_PROMPT)
+# The introspective project.actions site: the class's own marked methods.
+- |
+  class ProjectActions: ...
+
+
+  def register_project_instruction_bodies(cls, repo) -> None:
+      for attr, mark in _marked(cls):
+          register_project_instruction_body(cls, attr, mark, repo=repo)
+
+
+  register_project_instruction_bodies(ProjectActions, None)
+# Not registrations: a stdlib hook and a function with no arguments.
+- |
+  import atexit
+
+  atexit.register(_stop_listener)
+  register_builtin_commands()
+invalid:
+# An implementation module registering itself at import: the registry
+# knows "nc" only once something imports this module.
+- |
+  from .registry import register_transfer_backend
+
+
+  class NcFileTransfer(BaseFileTransfer): ...
+
+
+  register_transfer_backend("nc", NcFileTransfer)
+# The same through the registry object.
+- |
+  TRANSFER_BACKENDS.register("nc", NcFileTransfer)
+# The same through a helper the module calls at import.
+- |
+  def _register_builtin_backends() -> None:
+      register_transfer_backend("nc", NcFileTransfer)
+
+
+  _register_builtin_backends()
+# A module-scope decorator registration.
+- |
+  @register_compose_adapter("deploy")
+  def deploy(ctx): ...
+# A local zero-argument `register_*` wrapper around a real registration:
+# its body is not checked, so its call site is.
+- |
+  from otto.host.transfer.registry import register_transfer_backend
+
+
+  class NcFileTransfer: ...
+
+
+  def register_nc() -> None:
+      register_transfer_backend("nc", NcFileTransfer)
+
+
+  register_nc()
+# A local `register_*` wrapper around another module's registry: the file
+# defines the function but no registry, so the exemption does not apply.
+- |
+  from otto.host.transfer.registry import TRANSFER_BACKENDS
+
+
+  class NcFileTransfer: ...
+
+
+  def register_nc_backend(name, cls) -> None:
+      TRANSFER_BACKENDS.register(name, cls)
+
+
+  register_nc_backend("nc", NcFileTransfer)
+# `origin=` names where an entry came from; it does not make the entry a Ref.
+- |
+  register_transfer_backend("nc", NcFileTransfer, origin=Ref("otto.host.transfer.nc:NcFileTransfer"))
+# A local `register_*` helper that registers into an imported registry, in a
+# file that assigns an unrelated registry of its own.
+- |
+  from otto.host.transfer.registry import TRANSFER_BACKENDS as OTHER_BACKENDS
+  from otto.registry import Registry
+
+  LOCAL_REGISTRY = Registry("local")
+
+
+  class NcFileTransfer: ...
+
+
+  def register_thing(name, obj):
+      OTHER_BACKENDS.register(name, obj)
+
+
+  register_thing("nc", NcFileTransfer)
+# The same helper registering into both: the local one does not excuse the
+# other.
+- |
+  LOCAL_REGISTRY = Registry("local")
+
+
+  def register_thing(name, obj):
+      LOCAL_REGISTRY.register(name, obj)
+      OTHER_BACKENDS.register(name, obj)
+
+
+  register_thing("nc", NcFileTransfer)
+# The introspective call, outside the file that defines its class.
+- |
+  from otto.project.actions import ProjectActions, register_project_instruction_bodies
+
+  register_project_instruction_bodies(ProjectActions, None)

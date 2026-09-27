@@ -5,20 +5,24 @@ Commands are synthesised dynamically from ``@cli_exposed`` methods on the
 resolved host's class — see ``otto.cli.expose``.
 """
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 from rich import print as rprint
 
-from ..config import get_host
-from ..config.fleet import _apply_option_overrides
-from ..context import get_context
-from ..host.remote_host import RemoteHost
-from ..host.unix_host import UnixHost
 from .callbacks import list_hosts_callback
 from .completers import completion_source
 from .expose import HostGroup
 from .invoke import fail, print_error
+
+if TYPE_CHECKING:
+    # Annotations only: the verb menu comes from the resolved host's class
+    # (`otto.cli.expose`), so resolving `otto host` needs no host class, and
+    # importing one here would put the whole host stack on `otto host --help`.
+    # The fleet and the run context are imported where a host is resolved,
+    # for the same reason: both import the host base class.
+    from ..host.remote_host import RemoteHost
+    from ..host.unix_host import UnixHost
 
 
 @completion_source(kind="payload", key="hosts", lab_scoped=True, sort=True)
@@ -88,7 +92,10 @@ host_app = typer.Typer(
 )
 
 
-def _resolve_host(host_id: str) -> UnixHost:
+def _resolve_host(host_id: str) -> "UnixHost":
+    from ..config.fleet import get_host
+    from ..context import get_context
+
     try:
         return get_host(host_id)
     except KeyError:
@@ -270,7 +277,7 @@ def _check_named_host_reservations(ctx: typer.Context, named: "list[RemoteHost]"
         warn_expiring_reservations(active_reservations(gate.backend), needed)
 
 
-def resolve_cli_host(ctx: typer.Context) -> RemoteHost:
+def resolve_cli_host(ctx: typer.Context) -> "RemoteHost":
     """Build the host the ``otto host`` callback recorded (lab is ready by now).
 
     Reproduces the construction the callback used to do inline: resolve the
@@ -291,8 +298,10 @@ def resolve_cli_host(ctx: typer.Context) -> RemoteHost:
         # work itself or leave ctx.obj unset.
         return ctx.obj
 
+    from ..config.fleet import _apply_option_overrides
+
     request = ctx.meta["_otto_host_request"]
-    host: RemoteHost = _resolve_host(request["host_id"])
+    host: "RemoteHost" = _resolve_host(request["host_id"])
 
     # Resolved BEFORE the reservation check so the hop is one of the hosts
     # that check covers, and its id is what gets stored — a hop that names no

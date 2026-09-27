@@ -63,6 +63,16 @@ def test_a_lazy_export_never_degrades_into_its_own_submodule():
         "deploy",
         "deployed",
         "teardown",
+        "context_hash",
+        "build_images",
+        "image_full_tag",
+        "image_latest_tag",
+        "compose_down",
+        "compose_ps",
+        "compose_up",
+        "composed",
+        "get_container_host",
+        "get_user_compose_project",
     }
     for name in docker_mod._LAZY_ATTRS:
         first = getattr(docker_mod, name)

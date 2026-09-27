@@ -1,0 +1,142 @@
+id: cli-command-no-module-scope-heavy-import
+language: python
+severity: error
+message: a CLI module imports this heavy module at module scope, so every invocation of the verb pays for it, `--help` included. Import it inside the function that uses it; for a name used only in annotations, import it under `if TYPE_CHECKING:` and quote the annotations.
+note: >
+  Every module under src/otto/cli/ is on some command's import path, and the
+  command tree imports the verb's module to build even its `--help`. On an
+  NFS venv every module file is a round trip, so a heavy import at the top of
+  a CLI module is paid by every invocation of the verb, whether or not the
+  command it serves runs. The code-shape rule sanctions exactly two fixes: a
+  function-scope import in the one function that needs the dependency, or a
+  `TYPE_CHECKING` import with quoted annotations when the name is only a type.
+  A test that patched the module attribute patches the owning module instead
+  (e.g. `otto.config.fleet.get_lab`, not `otto.cli.docker.get_lab`).
+
+  The denylist is SHORT on purpose: every entry is a module that was cut from
+  a CLI module's top, with a measured saving, while the per-verb import cost
+  was reduced (#455). It is not a list of everything heavy. A new entry needs
+  the same evidence: a measured cut. Entries, with where each was cut:
+
+    - asyncio: cli.monitor (about 150 file ops on `otto monitor --help`);
+    - pydantic: cli.monitor (`ValidationError`);
+    - rich.table: cli.test, cli.run, cli.docker, cli.cache, cli.inventory;
+    - otto.coverage.reporter/merge/store/tree/errors: cli.cov (also
+      spelled as otto.coverage's lazy CoverageReporter/CoverageStore and
+      its two error names);
+    - otto.host.errors/unix_host/remote_host: cli.cov, cli.docker, cli.host
+      (also spelled as otto.host's lazy UnixHost/RemoteHost/OsType);
+    - otto.config.fleet/lab/repo: cli.docker, cli.host, cli.monitor,
+      cli.callbacks, cli.link, cli.tunnel (also spelled as otto.config's lazy
+      get_lab/get_host/all_hosts/... and Repo/Docker*/MonitorSettings);
+    - otto.context: cli.test, cli.host;
+    - the top-level otto package's lazy names for the entries above (its
+      context and fleet/lab names, and `options`, which is pydantic's
+      dataclass) are banned on the same grounds;
+    - otto.docker (any submodule): cli.docker.
+
+  Module scope means: not inside a function body and not in the consequence
+  of `if TYPE_CHECKING:` (its `else:` branch, a `try:` block and a class body
+  all run at import, so they are checked).
+
+  The transitive edges (a module-scope import of something harmless that
+  itself imports a denylisted module) are layer 2's job:
+  tests/unit/test_import_contracts.py runs each verb's CLI module in a fresh
+  interpreter and prints the import chain of anything it must not load.
+files:
+- src/otto/cli/**
+ignores:
+# Not on any command's import path: otto.cli.param_synth imports it inside a
+# completer, at TAB time only, and every live listing it serves runs through
+# asyncio (otto.lifecycle.run_command), so its module-scope asyncio costs
+# nothing a function-scope import would save.
+- src/otto/cli/remote_completion.py
+utils:
+  # A denylisted module's dotted path, absolute (`otto.x`) or relative
+  # (`..x` from src/otto/cli/, `...x` from a package under it), optionally
+  # followed by a submodule.
+  denied-module-path:
+    regex: '^(asyncio|pydantic|rich\.table|(\.{2,}|otto\.)(coverage\.(reporter|merge|store|tree|errors)|host\.(errors|unix_host|remote_host)|config\.(fleet|lab|repo)|context|docker))(\.[\w.]+)?$'
+rule:
+  all:
+  - any:
+    # import asyncio / import rich.table / import otto.docker.build as b
+    - kind: import_statement
+      has:
+        any:
+        - kind: dotted_name
+        - kind: aliased_import
+        regex: '^(asyncio|pydantic|rich\.table|otto\.(coverage\.(reporter|merge|store|tree|errors)|host\.(errors|unix_host|remote_host)|config\.(fleet|lab|repo)|context|docker))(\.[\w.]+)?(\s+as\s+\w+)?$'
+    # from asyncio import ... / from ..config.fleet import ... / from ..docker import ...
+    - kind: import_from_statement
+      has:
+        field: module_name
+        matches: denied-module-path
+    # The same edges spelled through a parent package: a submodule by name,
+    # or a lazy re-export that resolves into a denylisted module. (`has` on
+    # the imported-name nodes, not `field: name`, which reads only the FIRST
+    # imported name.) The lazy names are enumerated from each package's lazy
+    # table; tests/unit/test_import_ban_rules.py fails when a table gains a
+    # name that resolves into a denylisted module and the list here lacks it.
+    - kind: import_from_statement
+      all:
+      - has:
+          field: module_name
+          regex: '^(\.{2,}|otto)$'
+      - has:
+          any:
+          - kind: dotted_name
+          - kind: aliased_import
+          regex: '^(context|docker|OttoContext|get_context|open_context|try_get_context|all_hosts|get_host|get_lab|load_lab|run_on_all_hosts|options)(\s+as\s+\w+)?$'
+    - kind: import_from_statement
+      all:
+      - has:
+          field: module_name
+          regex: '^rich$'
+      - has:
+          any:
+          - kind: dotted_name
+          - kind: aliased_import
+          regex: '^table(\s+as\s+\w+)?$'
+    - kind: import_from_statement
+      all:
+      - has:
+          field: module_name
+          regex: '^(\.{2,}|otto\.)config$'
+      - has:
+          any:
+          - kind: dotted_name
+          - kind: aliased_import
+          regex: '^(fleet|lab|repo|get_lab|get_host|all_hosts|do_for_all_hosts|run_on_all_hosts|load_lab|Repo|DockerCompose|DockerImage|DockerSettings|MonitorSettings)(\s+as\s+\w+)?$'
+    - kind: import_from_statement
+      all:
+      - has:
+          field: module_name
+          regex: '^(\.{2,}|otto\.)host$'
+      - has:
+          any:
+          - kind: dotted_name
+          - kind: aliased_import
+          regex: '^(errors|unix_host|remote_host|UnixHost|RemoteHost|OsType)(\s+as\s+\w+)?$'
+    - kind: import_from_statement
+      all:
+      - has:
+          field: module_name
+          regex: '^(\.{2,}|otto\.)coverage$'
+      - has:
+          any:
+          - kind: dotted_name
+          - kind: aliased_import
+          regex: '^(reporter|merge|store|tree|errors|CoverageReporter|CoverageStore|CoverageNotInstrumentedError|NoCoverageDataError)(\s+as\s+\w+)?$'
+  - not:
+      inside:
+        kind: function_definition
+        stopBy: end
+  - not:
+      inside:
+        kind: if_statement
+        field: consequence
+        stopBy: end
+        has:
+          field: condition
+          regex: '^(typing\.)?TYPE_CHECKING$'

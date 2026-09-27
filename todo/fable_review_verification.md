@@ -356,9 +356,9 @@ session.py:998 imports `_normalize_expects`/`_resolve_command`/
   tokens with `{"--help", "--list-tests", ...}`; an option *value* equal to one
   of those tokens skips lab bootstrap while the subcommand still executes,
   landing on a confusing `get_context()` RuntimeError.
-- **`Repo.commit`/`Repo.description` call `asyncio.run()` inside properties**
+- ✅ **`Repo.commit`/`Repo.description` call `asyncio.run()` inside properties**
   (repo.py:743,756) — raises `RuntimeError` if touched from suite/instruction
-  code already inside a loop.
+  code already inside a loop. Resolved by deleting the provenance query.
 - **Telnet oneshot pool re-appends dead sessions** (session.py:1382-1384) —
   filtered on next acquire but transports reclaimed only at `close_all`; a long
   flaky-telnet fleet run could accumulate `__oneshot_pool_N__` entries.

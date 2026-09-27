@@ -11,7 +11,7 @@ from typing import ClassVar, Protocol
 from typing_extensions import override
 
 from ..errors import OttoError
-from .carrier import TunnelCarrier, register_carrier
+from .carrier import TunnelCarrier
 
 
 class NoFreePortError(OttoError, RuntimeError):
@@ -355,6 +355,3 @@ class SocatCarrier(TunnelCarrier):
         return egress_socat_args(
             protocol, service_port, deliver_ip, carrier_port, idle_timeout=idle_timeout
         )
-
-
-register_carrier("socat", SocatCarrier)

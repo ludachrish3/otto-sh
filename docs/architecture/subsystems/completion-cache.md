@@ -367,20 +367,23 @@ The import-budget guard (`scripts/import_budget.py`, run by `make profile`)
 pins these rates on a generated repo shaped like a real one:
 
 - `test_cold_rebuild_walks_the_corpus_once` measures a cold rebuild at 50
-  and at 200 nested test files. The added files may cost at most one stat and
-  one open each, and the added directories one listing and one stat each. A
-  second walker anywhere in the rebuild doubles the per-file rate and fails
-  the test, which names the counter.
-- The warm scaling pins assert that corpus size adds nothing (at most five,
-  for noise) to `open`, `scandir` and `stat_workspace`:
+  and at 200 nested test files. The added files and directories may cost at
+  most two `workspace` file operations each, plus 20%: the rebuild pays two
+  for a file (its stat and its open) and two for a directory. A second walker
+  anywhere in the rebuild doubles the per-file rate and fails the test, which
+  prints both counts.
+- The warm scaling pins assert that corpus size adds nothing to the same two
+  runs' file operations: at most five to `workspace`, and at most fifteen to
+  the whole-process `file_ops`, which also carries the import system's
+  run-to-run wobble:
   `test_help_io_does_not_scale_with_corpus_size`,
   `test_completion_io_does_not_scale_with_corpus_size`,
   `test_completion_handover_io_does_not_scale_with_corpus_size` and
   `test_dispatch_io_does_not_scale_with_corpus_size`.
 
-Stat calls produce no Python audit event, so the guard counts them with
-strace. The counters and their gates are described in
-{doc}`../startup-performance` ("What holds these numbers in place").
+These pins assert a shape, not a count, so they hold whatever the ceilings
+are. The counters are described in {doc}`../startup-performance` ("What holds
+these numbers in place").
 
 ## Deliberate non-goals
 

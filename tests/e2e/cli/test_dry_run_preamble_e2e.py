@@ -5,20 +5,24 @@
 with ``lab_free=True``, and the leaf preamble calls ``ensure_lab_session`` only
 ``if not spec.lab_free`` (``otto/cli/invoke.py``) — so
 :func:`otto.cli.invoke.ensure_cli_session` never executes in any of the 91
-``--dry-run`` seam tests, and neither does the provenance log line inside it.
-``tests/unit/cli/test_host.py`` compounds it by patching ``ensure_cli_session``
-out by name. The defect this guards was invisible to all of them and took out
-the whole ``otto host`` surface under ``-n``:
+``--dry-run`` seam tests. ``tests/unit/cli/test_host.py`` compounds it by
+patching ``ensure_cli_session`` out by name. The defect this guard was
+originally written against was invisible to all of them and took out the
+whole ``otto host`` surface under ``-n``:
 
     CommandNotRunError: 'git -C <sut_dir> log -1 --format=%H' was not run on
     host 'localhost': this is a dry run, which contacts no device.
 
 ``HostGroup.get_command`` installs the dry-run ``OttoContext`` at PARSE time
 (the soft lab probe that scopes the verb menu to the host's class), so by the
-time the preamble reads each repo's HEAD to stamp provenance, the decline is
-already armed. Only a real invocation of the real binary, with a lab loaded and
-a host id on the command line, reproduces that ordering — which is what
-``run_otto`` gives us. See ``todo/test-harness-declares-registration-2026-08-16.md``.
+time the preamble ran, the decline was already armed — it was the per-repo git
+provenance query that used to live in ``ensure_cli_session`` (deleted; spec
+2026-09-26 §5.2) that raised. That query is gone, but what this test still
+guards is the ordering that made it dangerous: the real, unstubbed preamble
+executing while a dry run is already in force. Only a real invocation of the
+real binary, with a lab loaded and a host id on the command line, reproduces
+that ordering — which is what ``run_otto`` gives us. See
+``todo/test-harness-declares-registration-2026-08-16.md``.
 
 The host is ``local`` throughout: it is the one host in every lab that a
 positive control can drive for real without touching lab hardware.

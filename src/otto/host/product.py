@@ -38,7 +38,7 @@ from typing_extensions import override
 
 from .. import layout
 from ..declared import KindRegistry, declared_for_host
-from ..registry import caller_module, get_registering_repo, refuse_during_test_load
+from ..registry import Ref, caller_module, get_registering_repo, refuse_during_test_load
 from ..result import Result
 from ..utils import Status
 from .log_haul import haul_globs
@@ -554,7 +554,11 @@ PRODUCT_KINDS: KindRegistry["Product"] = KindRegistry(
 """Named factories for settings-declared products (spec 2026-09-01 §5-§6).
 
 Separate from :data:`otto.host.dev_tool.DEV_TOOL_KINDS` on purpose — each
-seam owns its registry, the same two-list reasoning as the providers."""
+seam owns its registry, the same two-list reasoning as the providers.
+
+The built-in kinds are registered below by :class:`~otto.registry.Ref`, each
+keeping its kind module as its origin, so no kind module is imported until a
+declared entry names it."""
 
 
 def register_product_kind(
@@ -657,3 +661,17 @@ def apply_product_providers(host: "Host") -> None:
                 product.owner = provider_owner
             host.products.append(product)
             seen.add(product.name)
+
+
+def _register_builtin_kinds() -> None:
+    """Register otto's built-in kinds by reference, each with its kind module as origin."""
+    for kind, module, factory in [
+        ("shell", "otto.host.shell_kind", "_shell_kind"),
+        ("docker_image", "otto.host.docker_image_kind", "_docker_image_kind"),
+        ("kmod", "otto.host.kmod_kind", "_kmod_kind"),
+        ("llext", "otto.host.llext_kind", "_llext_kind"),
+    ]:
+        PRODUCT_KINDS.register(kind, Ref(f"{module}:{factory}"), origin=module)
+
+
+_register_builtin_kinds()

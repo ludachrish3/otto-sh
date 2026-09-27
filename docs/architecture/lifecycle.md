@@ -221,12 +221,6 @@ has a real plan to show. `otto host exec` does not opt in — running its body
 would widen the surface for no gain — and neither does `ls`, because a
 directory listing is precisely what a dry run cannot honestly produce.
 
-**One declared exemption.** Reading otto's own SUT checkout's git HEAD to
-stamp a run's provenance is a local, read-only query about the machine otto is
-already running on, so declining it would be a false positive of the contract
-rather than enforcement of it. It is declared at the one call site that uses
-it and extends to nothing else.
-
 ## Interrupts: two stages, one exit code
 
 Ctrl-C is decided in one place. Every command body reaches the event loop

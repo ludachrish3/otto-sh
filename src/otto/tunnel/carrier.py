@@ -15,7 +15,7 @@ pid, so it tears down any carrier's processes.
 
 from typing import ClassVar
 
-from ..registry import Registry, caller_module
+from ..registry import Ref, Registry, caller_module
 
 DEFAULT_CARRIER = "socat"
 """Name of the first-party carrier — the ``--carrier`` default at the CLI and
@@ -76,9 +76,20 @@ class TunnelCarrier:
         raise NotImplementedError
 
 
+def _validate_carrier(name: str, cls: type[TunnelCarrier]) -> None:
+    """Refuse a carrier declaring no protocol: it could never validate any tunnel."""
+    if not cls.supported_protocols:
+        raise ValueError(
+            f"register_carrier({name!r}): cls.supported_protocols is empty; a carrier "
+            f"must declare at least one protocol (e.g. frozenset({{'tcp'}}))."
+        )
+
+
 CARRIERS: Registry[type[TunnelCarrier]] = Registry(
-    "carrier", register_hint="otto.tunnel.register_carrier()"
+    "carrier", register_hint="otto.tunnel.register_carrier()", validate=_validate_carrier
 )
+# The built-in, by reference; its origin stays the module that defines it.
+CARRIERS.register("socat", Ref("otto.tunnel.socat:SocatCarrier"), origin="otto.tunnel.socat")
 
 
 def register_carrier(name: str, cls: type[TunnelCarrier], *, overwrite: bool = False) -> None:
@@ -88,11 +99,6 @@ def register_carrier(name: str, cls: type[TunnelCarrier], *, overwrite: bool = F
     must declare a non-empty :attr:`TunnelCarrier.supported_protocols`;
     otherwise it could never validate any tunnel and is rejected here.
     """
-    if not cls.supported_protocols:
-        raise ValueError(
-            f"register_carrier({name!r}): cls.supported_protocols is empty; a carrier "
-            f"must declare at least one protocol (e.g. frozenset({{'tcp'}}))."
-        )
     CARRIERS.register(name, cls, overwrite=overwrite, origin=caller_module())
 
 

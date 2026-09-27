@@ -109,10 +109,6 @@ async def _login_over_a_console(host: UnixHost, console: _Console, *, login_targ
         credentials=("admin", "pw"), login_target=login_target, ssh=ssh
     )
     fake_asyncssh = _make_fake_asyncssh()
-    # The bridge session reaches session.py, which names the TOP-LEVEL
-    # `asyncssh.ConnectionLost` in its except clauses; a MagicMock attribute
-    # there is a TypeError, not a caught error.
-    fake_asyncssh.ConnectionLost = fake_asyncssh.misc.ConnectionLost
     with (
         patch.dict(sys.modules, {"asyncssh": fake_asyncssh}),
         patch.object(interact, "_run_bridge", new=AsyncMock()),

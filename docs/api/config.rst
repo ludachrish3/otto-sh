@@ -18,6 +18,8 @@ settings parsing, and lab loading.
 .. automodule:: otto.config
    :ignore-module-all:
 
+.. automodule:: otto.config.bootstrapped
+
 .. automodule:: otto.config.fleet
 
 .. automodule:: otto.config.env

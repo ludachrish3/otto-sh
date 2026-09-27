@@ -36,7 +36,7 @@ from typing_extensions import override
 from ..declared import DeclaredEntry
 from ..result import CommandResult, Result
 from ..utils import Status, anchor_path
-from .product import PRODUCT_KINDS, ShellProduct, cov_dir_of, cov_dir_of_name, sudo_gcda_delete
+from .product import ShellProduct, cov_dir_of, cov_dir_of_name, sudo_gcda_delete
 from .shell_kind import (
     bool_param,
     stage_dir_param,
@@ -319,6 +319,3 @@ def _docker_image_kind(entry: DeclaredEntry, host: "Host") -> DockerImageProduct
         run_args=expanded,
         container_name=container_name or "",
     )
-
-
-PRODUCT_KINDS.register("docker_image", _docker_image_kind, origin=__name__)

@@ -17,8 +17,6 @@ with no host-spec twin at all: an opaque table otto never reads, carried onto
 the host as ``host.inventory_ref.extra``.
 """
 
-import re
-from datetime import timedelta
 from typing import Any
 
 from pydantic import Field, field_validator, model_validator
@@ -106,37 +104,3 @@ FILLABLE_INVENTORY_FIELDS: frozenset[str] = (
     frozenset[str](InventoryRecord.model_fields) - SUPPLIES_EXEMPT_FIELDS
 )
 """The MOST a backend may supply (spec §4). Derived, so a new field cannot dodge enforcement."""
-
-
-_TTL = re.compile(r"\A(?:0|([1-9]\d*)([mhd]))\Z")
-"""``\\Z``, not ``$``: ``$`` also matches before a trailing newline, so ``"24h\\n"``
-would parse — and a settings value with a stray newline must be refused, not guessed at."""
-
-_TTL_UNIT = {"m": timedelta(minutes=1), "h": timedelta(hours=1), "d": timedelta(days=1)}
-
-
-def parse_cache_ttl(text: str) -> timedelta:
-    """``"24h"`` → 24 hours; ``"0"`` → no caching (spec §9.5). Units: ``m``, ``h``, ``d``.
-
-    Lives here rather than in the inventory package because
-    :class:`~otto.models.settings.InventoryConfigSpec` validates ``cache_ttl``
-    at the settings boundary, and a boundary model may not import a runtime
-    package. Deliberately narrow: no leading zeros, no whitespace, no
-    fractions, no week/second units — one spelling per duration, so two
-    settings files that mean the same thing look the same.
-
-    Every rejection is a ``ValueError``, including an out-of-range one. The
-    grammar admits arbitrarily many digits but ``timedelta`` does not, and an
-    ``OverflowError`` escaping here would sail through every caller's
-    ``except ValueError`` (the pydantic validator, ``load_user_settings``,
-    ``build_inventory``) and reach the user as a bare traceback naming no file.
-    """
-    m = _TTL.match(text)
-    if m is None:
-        raise ValueError(f"cache_ttl must be '0' or <n>m / <n>h / <n>d, got {text!r}")
-    if m.group(1) is None:
-        return timedelta(0)
-    try:
-        return int(m.group(1)) * _TTL_UNIT[m.group(2)]
-    except OverflowError as e:
-        raise ValueError(f"cache_ttl {text!r} is out of range: {e}") from e

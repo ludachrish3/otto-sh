@@ -16,9 +16,9 @@ context an inventory answer depends on.
 IMPORT DISCIPLINE: everything from :mod:`otto.inventory` and
 ``otto.models`` is imported INSIDE the verb that uses it. This module is
 reachable from ``otto --help`` (the root group resolves a spec's loader on
-dispatch, and the completion cache walks the registry), and the budgeted
-import surfaces in ``scripts/import_budget.py`` cap what a bare ``--help``
-may pull in. The edges are real and declared in ``tach.toml``; only the
+dispatch, and the completion cache walks the registry), and the
+file-operation ceilings in ``scripts/import_budget.py`` bound what a bare
+``--help`` costs. The edges are real and declared in ``tach.toml``; only the
 *timing* is deferred.
 """
 
@@ -30,7 +30,6 @@ import typer
 from rich import box, get_console
 from rich import print as rprint
 from rich.markup import escape
-from rich.table import Table
 
 from .invoke import fail
 
@@ -226,6 +225,8 @@ def lookup(
     key: Annotated[str, typer.Argument(help="Inventory key to resolve.")],
 ) -> None:
     """Show the resolved record for KEY — creds as login names only, never passwords."""
+    from rich.table import Table
+
     inventory = _inventory()
     from ..inventory import InventoryError
 
@@ -303,6 +304,8 @@ def _skip_rows(inventory: "Inventory") -> "list[str]":
 @inventory_app.command("list")
 def list_records() -> None:
     """List every inventory key with its address."""
+    from rich.table import Table
+
     inventory = _inventory()
     records = _records(inventory)
     table = Table(box=box.ROUNDED)
@@ -411,6 +414,8 @@ def diff(
     export against today's — and the configured inventory is not resolved at
     all, because nothing in the answer depends on it.
     """
+    from rich.table import Table
+
     from ..inventory import diff_records
 
     if other is not None:

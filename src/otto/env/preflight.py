@@ -23,12 +23,12 @@ dependencies only (transitive consistency is the installer's promise, not
 otto's).
 
 ``packaging`` is imported INSIDE the evaluation path, never at module scope.
-It appears in zero import-budget snapshots, every repo without a pyproject
-returns before reaching the evaluation, and every sample repo is that shape --
-so the lazy import is what keeps a real run's footprint where it was. The
-guard for it is a direct one (``test_importing_the_module_does_not_import_packaging``):
-no measured surface runs the CLI preamble, so the budget snapshots cannot
-witness this import moving.
+Every repo without a pyproject returns before reaching the evaluation, and
+every sample repo is that shape -- so the lazy import is what keeps a real
+run's footprint where it was. The guard for it is a direct one
+(``test_importing_the_module_does_not_import_packaging``): the import budget's
+file-operation ceilings would see this import only as about a hundred more
+file operations, inside their 10% headroom.
 """
 
 import dataclasses
