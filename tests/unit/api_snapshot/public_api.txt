@@ -47,6 +47,7 @@ otto.examples.options:RepoOptions
 otto.examples.reservations:ExampleReservationBackend
 otto.examples.reservations_cli:run_check
 otto.host.command_frame:CommandFrame
+otto.host.command_frame:FRAME_CLASSES
 otto.host.command_frame:SessionMarkers
 otto.host.command_frame:ZephyrFrame
 otto.host.command_frame:register_command_frame
@@ -145,6 +146,7 @@ otto.monitor.snmp:register_snmp_metric
 otto.project:InstallOptions
 otto.project:ProjectActions
 otto.project:register_project_actions
+otto.registry:Ref
 otto.reservations:Reservation
 otto.reservations:ReservationBackendBase
 otto.reservations:register_reservation_backend

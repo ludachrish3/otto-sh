@@ -81,11 +81,12 @@ validated at registration instead of at first lookup. By reference:
 from otto.host.command_frame import FRAME_CLASSES
 from otto.registry import Ref
 
-FRAME_CLASSES.register("ash", Ref("my_plugin.frames:AshFrame"))
+FRAME_CLASSES.register("fish", Ref("my_plugin.frames:FishFrame"))
 ```
 
-The import runs, and the check with it, at the first `get("ash")`. See {class}`otto.registry.Ref` and
-{meth}`otto.registry.Registry.get` for the full contract.
+The import runs, and the check with it, at the first `get("fish")`. A name
+that is already registered (such as the built-in `ash`) raises unless you pass
+`overwrite=True`. See {class}`otto.registry.Ref` and {meth}`otto.registry.Registry.get` for the full contract.
 
 ## Built-ins register by reference
 
