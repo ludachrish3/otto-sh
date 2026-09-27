@@ -1201,6 +1201,12 @@ def test_run_accepts_infinite_timeout(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def _not_debugging(monkeypatch):
+    """No DEBUG from the developer's shell: at DEBUG the leg prints the traceback too."""
+    monkeypatch.delenv("OTTO_LOG_LEVEL", raising=False)
+
+
 def _raising_host_command(exc: BaseException):
     """A ``login`` command whose host raises *exc*, plus the host to inspect afterwards."""
 
@@ -1224,6 +1230,7 @@ def _raising_host_command(exc: BaseException):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("_not_debugging")
 @pytest.mark.parametrize(
     ("exc", "expected"),
     [
@@ -1259,6 +1266,7 @@ async def test_an_unreachable_host_exits_with_one_line_naming_it(capsys, exc, ex
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("_not_debugging")
 async def test_an_ssh_protocol_error_exits_with_one_line(capsys):
     import asyncssh
 

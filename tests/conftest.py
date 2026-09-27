@@ -813,6 +813,27 @@ def _reset_otto_context():
 
 
 @pytest.fixture(autouse=True)
+def _restore_cli_root_log_level():
+    """Snapshot-restore ``otto.cli.main._root_log_level`` around every test.
+
+    The root callback records the ``--log-level`` it resolved in that module
+    global, and nothing resets it: one CLI invocation per process needs no
+    reset, but a test process runs hundreds in-process. A test that ran
+    ``--log-level DEBUG`` left every later test on its xdist worker in debug
+    mode, so ``print_traceback_if_debug()`` printed tracebacks those tests
+    asserted away, depending on test order. Read only when the module is
+    already loaded: most tests never import the CLI, and this guard must not
+    import it for them.
+    """
+    main = sys.modules.get("otto.cli.main")
+    before = getattr(main, "_root_log_level", None)
+    yield
+    main = sys.modules.get("otto.cli.main")
+    if main is not None:
+        main._root_log_level = before
+
+
+@pytest.fixture(autouse=True)
 def _restore_otto_logger_state():
     """Snapshot-restore otto's logging-management state around every test.
 
