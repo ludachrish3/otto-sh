@@ -213,9 +213,17 @@ once, in an init module:
 
 ```python
 # pylib/acme_instructions/__init__.py, listed in `init`
-from otto import register_options
+from typing import Annotated
 
-register_options("acme_options:RepoOptions", verbs=["run", "test"])
+import typer
+
+import otto
+
+
+@otto.options(verbs=["run", "test"])
+class RepoOptions:
+    device_type: Annotated[str, typer.Option(help="Type of device under test.")] = "router"
+    lab_env: Annotated[str, typer.Option(help="Lab environment to target.")] = "staging"
 ```
 
 An instruction that wants the values declares a parameter annotated with the
@@ -226,7 +234,7 @@ import logging
 
 from otto.cli.run import instruction
 
-from acme_options import RepoOptions  # registered for ["run", "test"]
+from acme_instructions import RepoOptions  # registered for ["run", "test"]
 
 logger = logging.getLogger(__name__)
 

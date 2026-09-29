@@ -17,19 +17,24 @@ from typing import Annotated
 
 import typer
 
-from otto import options, register_options
+from otto import options
 from otto.cli.run import instruction
 from otto.project import InstallOptions, ProjectActions, register_project_actions
 from otto.result import Result
 
 
-@options
+# Registered for both verbs: every `otto run` command and `otto test` take
+# --variant, and under `otto test` it reaches the install body an
+# `@pytest.mark.ensure("installed")` test converges through.
+@options(verbs=["run", "test"])
 class BedVariant:
     """The one flag this repo adds, shared by ``otto run`` and ``otto test``."""
 
     variant: Annotated[str, typer.Option(help="Agent build variant to install.")] = "field"
 
 
+# install's own options, never registered: that would put --ensure on every
+# command of both verbs.
 @options
 class BedInstall(BedVariant, InstallOptions):  # inherits --ensure / --recover-partial
     """``otto run install``'s flags, plus the one this repo adds."""
@@ -48,11 +53,3 @@ class BedActions(ProjectActions):
 
 
 # doc: end actions
-
-# doc: begin register-variant
-# Every `otto run` command and `otto test` take --variant; under `otto test` it
-# reaches the install body an `@pytest.mark.ensure("installed")` test
-# converges through. BedInstall is install's own options, never registered:
-# that would put --ensure on every command of both verbs.
-register_options(BedVariant, verbs=["run", "test"])
-# doc: end register-variant

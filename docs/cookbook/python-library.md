@@ -254,7 +254,7 @@ which runs tests through `pytest.main()` and returns a
 import otto
 from otto.bootstrap import bootstrap
 
-from acme_options import DeviceTestOptions  # registered for "test"
+from acme_instructions import DeviceTestOptions  # registered for "test"
 
 bootstrap()  # or: async with otto.open_context(lab="mylab") as ctx: ...
 

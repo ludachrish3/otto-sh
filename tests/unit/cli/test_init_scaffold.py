@@ -141,6 +141,7 @@ def test_tests_scaffold_is_plain_pytest(tmp_path: Path) -> None:
     src = (tmp_path / "tests" / "test_example.py").read_text()
     assert "class TestExample:" in src
     assert "ctx.options(RepoOptions)" in src
+    assert "from widget_instructions import RepoOptions" in src
     assert "logger = logging.getLogger(__name__)" in src
     assert '@pytest.fixture(scope="class", autouse=True)\n    @classmethod' in src
     assert "def test_example_function" in src
@@ -155,6 +156,7 @@ def test_tests_scaffold_is_plain_pytest(tmp_path: Path) -> None:
         "testDir",
         "register_suite",
         "ensure_installed",
+        "of old",
     ):
         assert old not in src, old
     conftest = (tmp_path / "tests" / "conftest.py").read_text()
@@ -182,45 +184,53 @@ def test_detect_flips_after_scaffold(tmp_path: Path) -> None:
         assert area.detect(tmp_path)
 
 
-def test_tests_scaffold_creates_shared_options_module(tmp_path: Path) -> None:
+def test_the_tests_scaffold_writes_no_options_module(tmp_path: Path) -> None:
+    """The example tests import ``RepoOptions`` from the init module; no other module holds it."""
     created = BY_NAME["tests"].scaffold(tmp_path, CFG)
-    options_mod = tmp_path / "pylib" / "widget_options.py"
-    assert options_mod in created
-    src = options_mod.read_text()
-    assert "class RepoOptions" in src
-    assert "hello from widget" in src
-    test_src = (tmp_path / "tests" / "test_example.py").read_text()
-    assert "from widget_options import RepoOptions" in test_src
+    assert created == [tmp_path / "tests" / "test_example.py", tmp_path / "tests" / "conftest.py"]
+    assert not (tmp_path / "pylib" / "widget_options.py").exists()
 
 
-def test_instructions_scaffold_creates_shared_options_module(tmp_path: Path) -> None:
+def test_the_init_module_declares_and_registers_repo_options(tmp_path: Path) -> None:
+    """``RepoOptions`` is declared in the init module, registered by its own decorator."""
     created = BY_NAME["instructions"].scaffold(tmp_path, CFG)
-    assert tmp_path / "pylib" / "widget_options.py" in created
-    src = (tmp_path / "pylib" / "widget_instructions" / "__init__.py").read_text()
-    assert "from widget_options import RepoOptions" in src
-    # The init module registers the shared class for both verbs, and the
-    # instruction receives it by injection rather than inheriting it.
-    assert 'register_options("widget_options:RepoOptions", verbs=["run", "test"])' in src
+    init_file = tmp_path / "pylib" / "widget_instructions" / "__init__.py"
+    assert created == [init_file]
+    assert not (tmp_path / "pylib" / "widget_options.py").exists()
+    src = init_file.read_text()
+    assert '@otto.options(verbs=["run", "test"])\nclass RepoOptions:' in src
+    assert "register_options" not in src
+    assert "hello from widget" in src
+    # The instruction receives the class by injection rather than inheriting it.
     assert "@instruction()\nasync def smoke(\n    opts: RepoOptions," in src
     # The decorator rejects a sync handler, so scaffolding one would make
     # `otto init` emit a repo that cannot import.
     assert "async def smoke" in src
 
 
-def test_options_module_scaffold_is_idempotent_either_order(tmp_path: Path) -> None:
-    first = BY_NAME["tests"].scaffold(tmp_path, CFG)
-    options_mod = tmp_path / "pylib" / "widget_options.py"
-    assert options_mod in first
-    marker = "# user edited\n" + options_mod.read_text()
-    options_mod.write_text(marker)
-    second = BY_NAME["instructions"].scaffold(tmp_path, CFG)
-    assert options_mod not in second  # not re-created...
-    assert options_mod.read_text() == marker  # ...and never overwritten
-    # reverse order in a fresh tree
-    other = tmp_path / "other"
-    other.mkdir()
-    assert other / "pylib" / "widget_options.py" in BY_NAME["instructions"].scaffold(other, CFG)
-    assert other / "pylib" / "widget_options.py" not in BY_NAME["tests"].scaffold(other, CFG)
+def test_importing_the_init_module_registers_repo_options_for_both_verbs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Importing the scaffolded init module is what registers ``RepoOptions``.
+
+    The root conftest's registry isolation drops the registration (and the
+    ``smoke`` instruction) when the test ends.
+    """
+    import importlib.util
+    import sys
+
+    from otto.params import verbs_for
+
+    BY_NAME["instructions"].scaffold(tmp_path, CFG)
+    init_file = tmp_path / "pylib" / "widget_instructions" / "__init__.py"
+    spec = importlib.util.spec_from_file_location("widget_instructions", init_file)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "widget_instructions", module)
+    spec.loader.exec_module(module)
+    assert verbs_for(module.RepoOptions) == ["run", "test"]
+    assert module.RepoOptions().message == "hello from widget"
 
 
 def test_module_names_are_sanitized_identifiers(tmp_path: Path) -> None:
@@ -234,7 +244,6 @@ def test_module_names_are_sanitized_identifiers(tmp_path: Path) -> None:
     assert data["name"] == "my-repo 2.0"  # display name keeps the raw value
     assert data["init"] == ["my_repo_2_0_instructions"]
     assert (tmp_path / "pylib" / "my_repo_2_0_instructions" / "__init__.py").exists()
-    assert (tmp_path / "pylib" / "my_repo_2_0_options.py").exists()
 
 
 def test_schemas_scaffold_writes_schema_files(tmp_path: Path) -> None:

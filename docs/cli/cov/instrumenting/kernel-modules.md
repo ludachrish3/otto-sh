@@ -353,9 +353,9 @@ binding are checked at lab load: a host carrying a `coverage = "module"`
 product with no matching `kgcov` entry is refused, naming the products, the
 host and the kind, and so is a host matching two of them. `cleanup` unloads
 the library after the products, which is the order dev tools always come
-down in; a suite that drives the products itself and never runs `cleanup`
-unloads it in its own teardown, the way
-`tests/repo5/tests/test_kmod_demo.py`'s suite does.
+down in; a test module that drives the products itself and never runs
+`cleanup` unloads it in its own teardown, the way
+`tests/repo5/tests/test_kmod_demo.py` does.
 
 `otto_kmod_demo` sets `coverage = "module"` and a `cov_dir` for `otto_kgcov`
 to write under. A module built with the sentinel/macro snippet above refuses
@@ -396,7 +396,7 @@ reports a `dropped` counter alongside `enqueued` and `drained`: under the
 `fifo`/`lifo` policies it counts rejected enqueues into a full queue, but
 under `drop-oldest` — which never rejects — it counts evicted items instead.
 The exit routine's lines — `demo_exit`'s cleanup and its `pr_info` calls —
-show real hits rather than zero, because the suite leaves the queue non-empty
+show real hits rather than zero, because the tests leave the queue non-empty
 before teardown unloads the module and the exit dump captures what the exit
 routine did. Three paths stay uncovered: sending `drain` with an argument
 (`demo_parse.c`'s `if (arg)` guard), lowering `limit` below the queue's

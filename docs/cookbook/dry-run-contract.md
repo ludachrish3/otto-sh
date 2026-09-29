@@ -77,7 +77,7 @@ $ otto --lab my_lab -n host dut1 write-file /etc/motd "hello there"
 Eleven bytes, named destination, no eleven bytes. When you write a preview,
 **suppress the payload, never the announcement** — a dry run with no output is
 a bug. The announcement appears twice: once from the library layer, which is
-what a script or suite sees, and once from the renderer, so it reaches the
+what a script or a test sees, and once from the renderer, so it reaches the
 console even on a host whose standing log mode is quiet.
 
 Verbs with nothing to preview keep the seam default and print the ordinary

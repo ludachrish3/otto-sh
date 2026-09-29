@@ -1,7 +1,7 @@
 # otto host
 `otto host` provides direct access to host operations from the command line --
 running commands, transferring files, opening an interactive shell, and invoking
-host capabilities -- without writing a test suite or instruction.
+host capabilities -- without writing a test or an instruction.
 
 Hosts are *defined* in `lab.json` — see {doc}`../../configuration/lab-config`.
 This section is about *using* them.

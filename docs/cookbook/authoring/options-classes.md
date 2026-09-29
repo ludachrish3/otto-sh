@@ -6,28 +6,26 @@ and `otto test`), adds its flags to that verb: to `otto test`, to every
 `otto run` command, or to both. Tests and instructions then read the values
 as one typed object.
 
-## Anatomy of an options class
+## Declaring and registering a class
 
-An options class has fields annotated with `Annotated[T, typer.Option(...)]`.
-Each field becomes a CLI flag named after it, underscores turned into dashes;
-the `typer.Option(...)` carries the help text and, when you want one, a
-different flag spelling. A `bool` field becomes an on/off pair of flags.
-
-The examples on this page use one repo, `acme`, whose shared options live in
-`pylib/acme_options.py` (the layout is in
+The easiest route is one decorator in the repo's **init module**, a module
+named in the `init` list of `.otto/settings.toml`
+({doc}`../../configuration/settings`), which otto imports at startup for
+every command. The examples on this page use one repo, `acme`, whose init
+module is `pylib/acme_instructions/__init__.py` (the layout is in
 [Writing tests](writing-tests.md#an-example-repo)):
 
 ```python
-# pylib/acme_options.py
+# pylib/acme_instructions/__init__.py, the init module
 from typing import Annotated
 
 import typer
 from pydantic import Field
 
-from otto import options
+import otto
 
 
-@options
+@otto.options(verbs=["run", "test"])
 class RepoOptions:
     device_type: Annotated[
         str, typer.Option(help="Type of device under test (e.g. 'router', 'switch').")
@@ -39,7 +37,7 @@ class RepoOptions:
     ] = Field(default=3, ge=0)
 
 
-@options
+@otto.options(verbs=["test"])
 class DeviceTestOptions:
     firmware: Annotated[str, typer.Option(help="Firmware version to validate.")] = "latest"
     check_interfaces: Annotated[
@@ -47,18 +45,25 @@ class DeviceTestOptions:
     ] = True
 ```
 
-Once registered ([below](#registering-a-class-for-a-verb)), `RepoOptions`
-gives `--device-type`, `--lab-env` and `--retries`, and `DeviceTestOptions`
-gives `--firmware` and the pair `--check-interfaces/--no-check-interfaces`.
-Declaring a class adds no flag anywhere; registering it for a verb does, and
-so does naming it as an instruction's own `options=` class
-({doc}`writing-instructions`).
+Each field is annotated with `Annotated[T, typer.Option(...)]` and becomes a
+CLI flag named after it, underscores turned into dashes; the
+`typer.Option(...)` carries the help text and, when you want one, a
+different flag spelling. A `bool` field becomes an on/off pair of flags.
+`verbs=[...]` names every verb whose flags the class joins:
 
-`@options` (`from otto import options`) is otto's name for **pydantic's**
-dataclass decorator, `pydantic.dataclasses.dataclass`, and passes pydantic's
-own keyword arguments through. It is not the standard library's
-`@dataclass`: the fields of an `@options` class are validated when the class
-is constructed. Use it for every options class.
+- `RepoOptions` gives `--device-type`, `--lab-env` and `--retries` to
+  `otto test` and to every `otto run` command.
+- `DeviceTestOptions` gives `--firmware` and the pair
+  `--check-interfaces/--no-check-interfaces` to `otto test` only.
+
+`otto.options` (also `from otto import options`) is otto's name for
+**pydantic's** dataclass decorator, `pydantic.dataclasses.dataclass`, and
+passes pydantic's own keyword arguments through. It is not the standard
+library's `@dataclass`: the fields of an options class are validated when
+the class is constructed. Use it for every options class. Without `verbs=`,
+`@otto.options` declares a class and registers nothing: that is how you
+declare an instruction's own `options=` class ({doc}`writing-instructions`)
+or a base class that others inherit.
 
 ## Validating fields
 
@@ -79,8 +84,9 @@ otto test TestDevice --retries -1
 A dry run (`otto -n test ...`, `otto -n run ...`) builds and validates the
 options too, so it fails the same way; see {doc}`../../cli/dry-run`.
 
-The classes on this page ship in otto as `otto.examples.options`
-(`src/otto/examples/options.py`), ready to copy:
+The fields on this page ship in otto as `otto.examples.options`
+(`src/otto/examples/options.py`), declared without `verbs=` so that
+importing them registers nothing, ready to copy:
 
 ```{doctest}
 >>> from otto.examples.options import RepoOptions
@@ -96,57 +102,49 @@ rejected
 
 ## Registering a class for a verb
 
-Register an options class from an **init module**: a module named in the
-`init` list of `.otto/settings.toml` ({doc}`../../configuration/settings`),
-which otto imports at startup for every command. Name every verb whose flags
-the class joins:
+A registration exists from the moment its module is imported, so it must run
+at startup, before otto builds any command's flags:
 
-```python
-# pylib/acme_instructions/__init__.py, listed in `init`
-from otto import register_options
-
-register_options("acme_options:RepoOptions", verbs=["run", "test"])
-register_options("acme_options:DeviceTestOptions", verbs=["test"])
-```
-
-`RepoOptions`' flags are now on `otto test` and on every `otto run` command.
-`DeviceTestOptions`' flags are on `otto test` only.
-
-The first argument is the class itself or a `"package.module:Attr"` string.
-The string form doesn't import the class's module until a verb it is
-registered for runs, so `otto host` and every other command stay fast. Pass
-the string the class's own module defines it under, not a re-export: otto
-refuses a string that resolves to a class defined somewhere else.
-
-The same registration can sit on the class itself:
-
-```python
-@options(verbs=["test"])
-class DeviceTestOptions: ...
-```
-
-`@options(verbs=[...])` is exactly `register_options(Cls, verbs=[...])` right
-after the class. It registers when its module is imported, so that module
-must be an init module or one an init module imports, and it is imported at
-startup for every command. When that cost matters, use the string form of
-`register_options` instead. Plain `@options`, without `verbs=`, registers
-nothing: that is how you declare an instruction's own options class or a
-base class that others inherit.
-
-The rules, all checked when the registration runs:
-
+- **Register from an init module, or a module an init module imports.** A
+  test module or `conftest.py` that registers a class, by either form below,
+  fails with {class}`~otto.registry.RegistrationRefused`. pytest imports test
+  modules and conftests only inside `otto test`'s pytest session, after the
+  flags are built, so a registration there would exist for some commands and
+  not others. The same holds for anything else a test module might register
+  (an `@instruction()`, a backend, a CLI command). A test module may still
+  *import* a class that an init module registers, which is how a test reads
+  it.
 - **Verbs** come from `run` and `test`, the verbs that take registered
   options. An unknown verb, an empty list or a verb named twice raises
   {class}`~otto.params.OptionsRegistrationError`.
 - **One registration per class.** A class that serves both verbs names both
-  in one call; registering it a second time raises.
-- **Init modules only.** A test file or `conftest.py` that registers a class,
-  by either form, fails with {class}`~otto.registry.RegistrationRefused`.
-  Test files load only inside `otto test`'s pytest session, so a registration
-  there would exist for some commands and not others. The same holds for
-  anything else a test file might register (an `@instruction()`, a backend, a
-  CLI command). A test file may still *import* a class that an init module
-  registers.
+  in one registration; registering it a second time raises.
+
+### The lazy form: `register_options`
+
+With `@otto.options(verbs=[...])`, the class's module is loaded at startup
+with the init module, for every command, `otto host` included. When that
+module is slow to import, declare the class with plain `@otto.options` in a
+module of its own,
+`pylib/acme_device_options.py` say, and register it from the init module by
+name:
+
+```python
+# pylib/acme_instructions/__init__.py, the init module
+from otto import register_options
+
+register_options("acme_device_options:DeviceTestOptions", verbs=["test"])
+```
+
+The string form, `"package.module:Attr"`, doesn't import the class's module
+until a verb it is registered for runs, so every other command stays fast.
+Pass the string the class's own module defines it under, not a re-export:
+otto refuses a string that resolves to a class defined somewhere else. A
+test then imports the class from that module,
+`from acme_device_options import DeviceTestOptions`.
+`register_options` also takes the class itself,
+`register_options(DeviceTestOptions, verbs=["test"])`, which is exactly what
+`@otto.options(verbs=["test"])` does after the class.
 
 ### A registration reaches every command of the verb
 
@@ -176,11 +174,12 @@ works through the example.
 
 ## Reading the values
 
-- **In a test**, call `ctx.options(Cls)` on the `ctx` fixture. It returns this
-  run's instance of the registered class:
+- **In a test**, import the class from the module that defines it (the init
+  module, for a class declared there) and call `ctx.options(Cls)` on the
+  `ctx` fixture. It returns this run's instance of the registered class:
 
   ```python
-  from acme_options import DeviceTestOptions
+  from acme_instructions import DeviceTestOptions
 
 
   class TestDevice:
@@ -194,7 +193,7 @@ works through the example.
   ```python
   import pytest
 
-  from acme_options import DeviceTestOptions
+  from acme_instructions import DeviceTestOptions
 
 
   @pytest.fixture(scope="session")
@@ -209,10 +208,15 @@ works through the example.
 `ctx.options(Cls)` raises {class}`~otto.params.OptionsNotAvailableError`,
 with a message that says which case applies, when:
 
-- `Cls` is not registered at all: `DeviceTestOptions is not registered; call
-  register_options(DeviceTestOptions, verbs=[...]) from an init module`;
+- `Cls` is not registered at all: `DeviceTestOptions is not registered;
+  declare it with @otto.options(verbs=[...]) in an init module`;
 - `Cls` is registered for another verb only: `RunOnly is registered for run,
   not test`;
+- `Cls` was registered only after the verb's options were bound, for
+  example by a script that registers a class after binding them: `Late was
+  registered after otto test bound its options`. A test or fixture that
+  tries to register one fails earlier, with `RegistrationRefused`
+  ([Registering a class for a verb](#registering-a-class-for-a-verb));
 - no verb's options are bound in this context, for example in a script that
   opened a context without running `otto test` or `otto run`.
 
@@ -252,13 +256,13 @@ adds `--debug/--no-debug` of its own.
 from typing import Annotated
 
 import typer
-from otto import options
+import otto
 from otto.cli.run import instruction
 
-from acme_options import RepoOptions  # registered for ["run", "test"]
+from acme_instructions import RepoOptions  # registered for ["run", "test"]
 
 
-@options
+@otto.options
 class _DeployOpts(RepoOptions):  # --device-type, --lab-env, --retries: one flag each
     debug: Annotated[
         bool, typer.Option(help="Deploy debug products instead of field products.")

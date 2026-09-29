@@ -18,7 +18,6 @@ created lab_data/lab.json
 created lab_data/inventory.json
 created lab_data/creds.json
 created lab_data/README.md
-created pylib/acme_options.py
 created tests/test_example.py
 created tests/conftest.py
 created pylib/acme_instructions/__init__.py

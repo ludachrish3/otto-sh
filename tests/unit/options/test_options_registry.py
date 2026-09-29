@@ -183,8 +183,9 @@ def test_flattening_instances_merges_fields_and_refuses_unregistered_or_conflict
     register_options(RunOnly, verbs=["run", "test"])
     flat = flatten_option_instances([ForTestOnly(firmware="2.1")], verb="test")
     assert flat == {"lab_env": "staging", "firmware": "2.1"}
-    with pytest.raises(OptionsRegistrationError, match="Rival is not registered"):
+    with pytest.raises(OptionsRegistrationError, match="Rival is not registered") as err:
         flatten_option_instances([Rival()], verb="test")
+    assert "@otto.options(verbs=['test', ...]) in an init module" in str(err.value)
     with pytest.raises(ValueError, match="lab_env"):
         flatten_option_instances([ForTestOnly(lab_env="a"), RunOnly(lab_env="b")], verb="test")
 
@@ -292,3 +293,11 @@ def test_the_decorator_is_refused_while_test_files_load():
         @options(verbs=["test"])
         class Late:
             x: int = 0
+
+
+def test_an_unknown_options_key_names_the_decorator_as_the_remedy():
+    """A registry lookup miss points at ``@otto.options(verbs=[...])`` in an init module."""
+    from otto.params import OPTIONS
+
+    with pytest.raises(ValueError, match=r"@otto\.options\(verbs=\[\.\.\.\]\) in an init module"):
+        OPTIONS.get("nowhere:Missing")

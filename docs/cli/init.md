@@ -38,8 +38,12 @@ area with no prompts. Passing one or more of `--lab`/`--tests`/
 `--instructions` scaffolds exactly those areas, plus `settings` automatically
 whenever it's missing — every other area depends on it. `--tests` also
 scaffolds the instructions area when it is missing, and says so: the example
-tests read the scaffold's `RepoOptions`, and the instructions module is the
-init module that registers it for `otto test`. `--kgcov` is
+tests import `RepoOptions` from the instructions module, the init module that
+declares it. When the repo already has an init module, the tests import from
+the first one its `init` setting names instead, and `otto init` prints what
+that module must declare for them to run:
+`@otto.options(verbs=["run", "test"]) class RepoOptions` with a
+`message: str` field. `--kgcov` is
 **opt-in**: it is never scaffolded by `--all` and never offered by the
 interactive prompt, only by its own flag.
 
@@ -60,6 +64,22 @@ you are in — neither does the other's job), `otto --lab example_lab
 --list-hosts`, `otto test --list-tests`, `otto --lab example_lab test
 TestExample`, `otto --lab example_lab test test_example_function`,
 and `otto --lab example_lab run smoke`.
+
+## What it scaffolds: tests and instructions
+
+- **`pylib/<name>_instructions/__init__.py`** is the init module that
+  `settings.toml`'s `init` names, so otto imports it at startup for every
+  command. It declares `RepoOptions` with
+  `@otto.options(verbs=["run", "test"])`, which puts its `--message` flag on
+  `otto test` and on every `otto run` command, and a `smoke` instruction that
+  reads it.
+- **`tests/test_example.py`** holds the test class `TestExample` and the test
+  function `test_example_function`. The tests import `RepoOptions` from the
+  init module and read it with `ctx.options(RepoOptions)`.
+- **`tests/conftest.py`** holds a fixture every test under `tests/` can use.
+
+{doc}`../cookbook/authoring/options-classes` covers options classes, and
+{doc}`../cookbook/authoring/writing-tests` covers tests.
 
 ## What it scaffolds: lab files
 

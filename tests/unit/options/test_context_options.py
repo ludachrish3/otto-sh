@@ -75,8 +75,10 @@ def test_a_class_registered_after_binding_says_so(ctx):
 
 def test_an_unregistered_class_names_itself(ctx):
     ctx.bind_verb_options("test", {})
-    with pytest.raises(OptionsNotAvailableError, match="Unregistered is not registered"):
+    with pytest.raises(OptionsNotAvailableError, match="Unregistered is not registered") as err:
         ctx.options(Unregistered)
+    # The remedy is the form the docs lead with, in the place it must live.
+    assert "@otto.options(verbs=[...]) in an init module" in str(err.value)
 
 
 def test_nothing_bound_says_no_verb_is_bound(ctx):

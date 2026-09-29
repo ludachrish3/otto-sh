@@ -135,8 +135,9 @@ otto -l my_lab run deploy --debug
 
 ### Tests (`otto test`)
 
-otto tests are plain pytest: `Test`-prefixed classes and `test_`-prefixed
-functions in your repo's test directories, with no base class to inherit.
+otto tests are pytest tests: `Test`-prefixed classes and `test_`-prefixed
+functions in your repo's test directories. Fixtures, `conftest.py`, markers,
+parametrize and pytest plugins all work as pytest documents them.
 `otto test` runs them by name or marker expression. Its flags include those of
 every options class a repo registers for the `test` verb, and a test reads
 their values with `ctx.options(...)`:
@@ -144,7 +145,7 @@ their values with `ctx.options(...)`:
 ```python
 import logging
 
-from my_project.options import DeviceOptions  # registered for "test" in an init module
+from my_project_instructions import DeviceOptions  # the init module declares it
 
 logger = logging.getLogger(__name__)
 
@@ -164,10 +165,12 @@ Tests get pytest markers (`timeout`, `retry`, `parametrize`, `integration`),
 non-fatal assertions via the `expect` fixture, per-test artifact directories,
 and built-in monitoring.
 
-Options classes are shared by registering them per verb. For flags that are
-repo-wide (device type, lab environment, etc.), define one `RepoOptions` class
-and register it for both `otto run` and `otto test` from an init module; every
-instruction and every test run then takes the same flags.
+An options class is declared in an init module (a module listed in your
+`init` setting), with the verbs whose flags it joins:
+`@otto.options(verbs=["test"])` for flags only tests take, or
+`@otto.options(verbs=["run", "test"])` for repo-wide flags such as a device
+type or a lab environment, which every instruction and every test run then
+take.
 
 ### Monitor (`otto monitor`)
 

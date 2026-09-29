@@ -31,7 +31,6 @@ from .init_templates import (
     KGCOV_STARTER_README_TEMPLATE,
     LAB_JSON_TEMPLATE,
     LAB_README_TEMPLATE,
-    OPTIONS_TEMPLATE,
     SETTINGS_TEMPLATE,
     TEST_EXAMPLE_TEMPLATE,
     VSCODE_EXTENSIONS_TEMPLATE,
@@ -61,6 +60,11 @@ class InitConfig:
         """``name`` sanitized into a valid module-name base (``my-repo`` -> ``my_repo``)."""
         base = re.sub(r"\W", "_", self.name)
         return f"_{base}" if base[:1].isdigit() else base
+
+    @property
+    def init_module(self) -> str:
+        """The init module the scaffold writes and ``settings.toml``'s ``init`` names."""
+        return f"{self.module_base}_instructions"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -171,22 +175,6 @@ def _lab_files(root: Path) -> list[Path]:
     :func:`_lab_file_groups` for the per-source view the duplicate rules need.
     """
     return [lab_file for group in _lab_file_groups(root) for lab_file in group]
-
-
-def _ensure_options_module(root: Path, cfg: InitConfig) -> list[Path]:
-    """Create ``pylib/<module_base>_options.py`` if absent; never overwrite.
-
-    Shared plumbing between the tests and instructions areas: both samples
-    read ``RepoOptions``, so whichever scaffold runs first creates it and
-    the other reuses it (idempotent — the module is user-owned once written).
-    """
-    pylib = root / "pylib"
-    pylib.mkdir(parents=True, exist_ok=True)
-    target = pylib / f"{cfg.module_base}_options.py"
-    if target.exists():
-        return []
-    target.write_text(OPTIONS_TEMPLATE.format(name=cfg.name))
-    return [target]
 
 
 def _schemas_dir(root: Path) -> Path:
@@ -324,9 +312,7 @@ def _scaffold_settings(root: Path, cfg: InitConfig) -> list[Path]:
     target = root / ".otto" / "settings.toml"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
-        SETTINGS_TEMPLATE.format(
-            name=cfg.name, version=cfg.version, init_module=f"{cfg.module_base}_instructions"
-        )
+        SETTINGS_TEMPLATE.format(name=cfg.name, version=cfg.version, init_module=cfg.init_module)
     )
     # Pre-wired paths must exist so later area scaffolds (and bootstrap) never
     # trip over a missing conventional dir.
@@ -363,25 +349,26 @@ def _scaffold_lab(root: Path, cfg: InitConfig) -> list[Path]:  # noqa: ARG001 �
 
 
 def _scaffold_tests(root: Path, cfg: InitConfig) -> list[Path]:
-    created = _ensure_options_module(root, cfg)
+    """Write the example tests; they import ``RepoOptions`` from the init module.
+
+    That is the repo's first ``init`` module (:func:`_tests_init_module`).
+    """
     tests_dir = root / "tests"
     tests_dir.mkdir(parents=True, exist_ok=True)
     example = tests_dir / "test_example.py"
-    example.write_text(TEST_EXAMPLE_TEMPLATE.format(options_module=f"{cfg.module_base}_options"))
+    example.write_text(TEST_EXAMPLE_TEMPLATE.format(init_module=_tests_init_module(root, cfg)))
     conftest = tests_dir / "conftest.py"
     conftest.write_text(CONFTEST_TEMPLATE)
-    return [*created, example, conftest]
+    return [example, conftest]
 
 
 def _scaffold_instructions(root: Path, cfg: InitConfig) -> list[Path]:
-    created = _ensure_options_module(root, cfg)
-    module_dir = root / "pylib" / f"{cfg.module_base}_instructions"
+    """Write the init module: ``RepoOptions``, registered by its decorator, and ``smoke``."""
+    module_dir = root / "pylib" / cfg.init_module
     module_dir.mkdir(parents=True, exist_ok=True)
     init_file = module_dir / "__init__.py"
-    init_file.write_text(
-        INSTRUCTIONS_TEMPLATE.format(name=cfg.name, options_module=f"{cfg.module_base}_options")
-    )
-    return [*created, init_file]
+    init_file.write_text(INSTRUCTIONS_TEMPLATE.format(name=cfg.name))
+    return [init_file]
 
 
 def _existing_settings_name(root: Path) -> str | None:
@@ -402,6 +389,25 @@ def _existing_settings_name(root: Path) -> str | None:
         return None
     name = data.get("name")
     return name if isinstance(name, str) and name else None
+
+
+def _tests_init_module(root: Path, cfg: InitConfig) -> str:
+    """Return the init module the example tests import ``RepoOptions`` from.
+
+    The first entry of an existing ``settings.toml``'s ``init`` list when there
+    is one: that module is imported at startup, and it is the one a found
+    instructions area holds. Otherwise the module the scaffold writes.
+    Error-tolerant like :func:`_existing_settings_name`.
+    """
+    settings_path = root / ".otto" / "settings.toml"
+    try:
+        data = tomli.loads(settings_path.read_text()) if settings_path.is_file() else {}
+    except (tomli.TOMLDecodeError, OSError):
+        data = {}
+    init_modules = data.get("init")
+    if isinstance(init_modules, list) and init_modules and isinstance(init_modules[0], str):
+        return init_modules[0]
+    return cfg.init_module
 
 
 def _detect_settings(root: Path) -> bool:
@@ -971,23 +977,25 @@ A kernel-module coverage library does not belong in every new repo."""
 AREA_PREREQUISITES: dict[str, list[str]] = {"tests": ["instructions"]}
 """Areas a scaffolded area cannot run without, scaffolded with it when missing.
 
-The example tests read ``RepoOptions`` through ``ctx.options``, and the
-instructions module — the init module ``settings.toml`` names — is what
-registers it for ``otto test``. The scaffold loop learns an area's
-prerequisites as it passes that area, so each prerequisite comes after the
-area that needs it in :data:`AREAS`."""
+The example tests import ``RepoOptions`` from the instructions module — the
+init module ``settings.toml`` names — which declares it and registers it for
+``otto test``. The scaffold loop learns an area's prerequisites as it passes
+that area, so each prerequisite comes after the area that needs it in
+:data:`AREAS`."""
 
 
-def _note_prerequisites_found(found: set[str]) -> None:
+def _note_prerequisites_found(found: set[str], root: Path, cfg: InitConfig) -> None:
     """Say what a scaffolded area needs from a prerequisite area that was already there.
 
-    otto reads no init module to see what it registers, so it names the call.
+    otto reads no init module to see what it declares, so it names the module
+    the tests import from and exactly what that module must declare.
     """
     if "instructions" in found:
+        module = _tests_init_module(root, cfg)
         typer.echo(
-            "the example tests read RepoOptions through ctx.options: make sure an init "
-            'module calls register_options(RepoOptions, verbs=["run", "test"]) '
-            "(the instructions area otto scaffolds does)."
+            f"the example tests import RepoOptions from {module}: make sure {module} "
+            'declares @otto.options(verbs=["run", "test"]) class RepoOptions with a '
+            "`message: str` field (the instructions area otto scaffolds does)."
         )
 
 
@@ -1033,7 +1041,7 @@ async def init_command(
             "--tests",
             help=(
                 "Scaffold the tests area (example tests + conftest), plus the "
-                "instructions area when missing: its init module registers the "
+                "instructions area when missing: its init module declares the "
                 "options the tests read."
             ),
         ),
@@ -1131,7 +1139,7 @@ async def init_command(
             typer.echo(f"created {created.relative_to(root)}")
         scaffolded.append(area.name)
         prerequisites.update(AREA_PREREQUISITES.get(area.name, []))
-    _note_prerequisites_found(prerequisites - set(scaffolded))
+    _note_prerequisites_found(prerequisites - set(scaffolded), root, cfg)
 
     from rich import print as rprint
     from rich.markup import escape

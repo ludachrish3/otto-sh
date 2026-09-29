@@ -11,22 +11,30 @@ test of your own and runs it with `otto test`.
 `otto --lab example_lab test test_example_function` both work immediately.
 This page hand-writes a more realistic test.
 
-otto tests are plain pytest: a `Test`-prefixed class or a `test_`-prefixed
-function, in a `test_*.py` file under the repo's `tests` directory. There is
-no base class and nothing to register.
+otto tests are pytest tests, and everything pytest documents about writing
+them applies. {doc}`../cookbook/authoring/writing-tests` names the parts in
+pytest's terms and covers what otto adds.
 
 ## Flags for your tests
 
-A test's flags come from an **options class**. The scaffold already has one,
-`RepoOptions` in `pylib/acme_options.py`, whose `--message` flag every
-`otto test` and `otto run` command takes. Add a second class to the same file
-for flags only `otto test` needs:
+A test's flags come from an **options class**, declared in the repo's init
+module: the module otto imports at startup for every command. The scaffold's
+is `pylib/acme_instructions/__init__.py`, and it already declares one,
+`RepoOptions`, whose `--message` flag every `otto test` and `otto run`
+command takes:
 
 ```python
-from pydantic import Field  # with the file's other imports
+@otto.options(verbs=["run", "test"])
+class RepoOptions: ...
+```
+
+Add a second class under it, for flags only `otto test` needs:
+
+```python
+from pydantic import Field  # the one new import; Annotated, typer and otto are already there
 
 
-@options
+@otto.options(verbs=["test"])
 class DeviceOptions:
     """Flags only `otto test` takes."""
 
@@ -37,14 +45,11 @@ class DeviceOptions:
     ] = Field(default=3, ge=0)
 ```
 
-A class becomes flags once it is registered for a verb. Registrations go in an
-init module, the one module otto imports at startup for every command; the
-scaffold's is `pylib/acme_instructions/__init__.py`, which already registers
-`RepoOptions`. Add a line under that one:
-
-```python
-register_options("acme_options:DeviceOptions", verbs=["test"])
-```
+`verbs=["test"]` registers the class for `otto test`, which puts
+`--firmware` and `--retries` on it. The class has to live in the init module,
+or in a module the init module imports, never in a test module or
+`conftest.py`
+([why](../cookbook/authoring/options-classes.md#registering-a-class-for-a-verb)).
 
 ## A test
 
@@ -55,7 +60,7 @@ replaces the scaffolded `test_example_function` too; the fixture in
 ```python
 import logging
 
-from acme_options import DeviceOptions
+from acme_instructions import DeviceOptions
 
 logger = logging.getLogger(__name__)
 
@@ -89,25 +94,20 @@ A name can be a test (`test_reachable`), a class (`TestExample`) or both
 {doc}`../cli/test/index` for every flag and {doc}`../cli/test/selection` for
 how names and markers select tests.
 
-`@options` (`from otto import options`) is otto's name for **pydantic's**
-dataclass decorator: decorating an options class with it makes the class a
-pydantic dataclass, so its fields are validated.
+`@otto.options` is otto's name for **pydantic's** dataclass decorator, so an
+options class's fields are validated when it is built, before any test runs:
 `otto --lab example_lab test TestExample --retries -1` fails with a clean CLI
-error (exit code 2) before any test runs, instead of being silently accepted.
-The same classes give `otto run` instructions their flags. See
-{doc}`../cookbook/authoring/options-classes` for the full picture, and
-{doc}`../cookbook/authoring/writing-tests` for everything else a test can
-use.
-
-The validation runs at construction time, so an out-of-range value is rejected
-before any test runs:
+error (exit code 2). The same classes give `otto run` instructions their
+flags. See {doc}`../cookbook/authoring/options-classes` for the full picture,
+and {doc}`../cookbook/authoring/writing-tests` for everything else a test can
+use. The validation itself, in Python:
 
 ```{doctest}
 >>> from typing import Annotated
 >>> import typer
 >>> from pydantic import Field, ValidationError
->>> from otto import options
->>> @options
+>>> import otto
+>>> @otto.options
 ... class DeviceOptions:
 ...     retries: Annotated[int, typer.Option()] = Field(default=3, ge=0)
 >>> DeviceOptions().retries

@@ -118,14 +118,10 @@ A test marked `@pytest.mark.ensure("installed")` converges the lab through the
 same `install` bodies before it runs. Under `otto test`, a body's `--variant`
 comes from `otto test`'s own flags, matched by field name
 ([Which flags reach an install body under `otto test`](../cookbook/authoring/options-classes.md#which-flags-reach-an-install-body-under-otto-test)).
-So the flag has to be registered for `test` too, which is what the example
-repo's init module does:
-
-```{literalinclude} ../examples/getting-started/libs/gs_example/actions.py
-:language: python
-:start-after: "# doc: begin register-variant"
-:end-before: "# doc: end register-variant"
-```
+So the flag has to be registered for `test` too, which is what the decorator
+on `BedVariant` in the code above does: `@options(verbs=["run", "test"])`.
+The module is one of the example repo's init modules, so the registration
+exists from startup.
 
 `BedVariant` is the small class that declares `variant`, and `BedInstall`
 inherits it, so `--variant` is one flag on `otto run install`. Registering

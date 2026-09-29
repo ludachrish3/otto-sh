@@ -62,7 +62,7 @@ import pytest
 
 from otto import Status
 
-from acme_options import DeviceTestOptions
+from acme_instructions import DeviceTestOptions
 
 
 @pytest.mark.timeout(30)

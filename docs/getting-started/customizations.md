@@ -198,8 +198,9 @@ A registration is only worth anything if the guest answers the command it
 brings. This script builds a collector for one host — which resolves that
 host's parser set exactly as the monitor does — polls it for a few ticks,
 and prints one line per series collected. `otto test --monitor`
-({doc}`../cli/monitor/during-tests`) is the same collector driven by
-the suite runner; the script drives it directly, with no suite.
+({doc}`../cli/monitor/during-tests`) is the same collector, driven by
+`otto test` for the length of a run; the script drives it directly, with no
+tests.
 
 ```{literalinclude} ../examples/getting-started/collect_metrics.py
 :language: python

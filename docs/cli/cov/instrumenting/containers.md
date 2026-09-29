@@ -83,11 +83,11 @@ already gone has nothing to resolve an image from, so nothing beyond the
 `logs/<host_id>/<product>/debug/container.log` whenever product logs are
 hauled — `otto host <id> get-product-logs`, and `Host.uninstall`'s own
 haul-then-remove sequence both do this. `otto test` never calls either
-one, so a suite that installs and tears down its own products, the way
-`tests/repo5/tests/test_cov_container.py`'s does, must haul the container's
+one, so a test module that installs and tears down its own products, the way
+`tests/repo5/tests/test_cov_container.py` does, must haul the container's
 logs itself before it removes the container — `docker logs` needs the
 container to still exist. `docker logs` captures only the container's PID
-1 — whatever a suite runs against it separately, with `docker exec`, never
+1 — whatever a test runs against it separately, with `docker exec`, never
 reaches `container.log`.
 
 ## Root-owned files
@@ -110,7 +110,7 @@ pre-create `<cov_dir>` writable for the container's user before `install`
 ## Compose is the other path
 
 A container can also be the thing *under test*, rather than the vehicle
-for a product — a service your suite talks to, running inside a container
+for a product — a service your tests talk to, running inside a container
 the lab brought up with `docker compose`. That case is
 `[docker.use_cases]`: the container becomes an ordinary lab host, and a
 `shell` product installs onto it exactly as it would onto any Unix host,

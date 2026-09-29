@@ -85,7 +85,7 @@ between — a *partial* lab, which is what a half-finished install leaves behind
 `otto run install --ensure` converges rather than installs blindly: it reads
 the lab's current state and does only the work that is missing, recovering a
 partial lab instead of installing on top of remnants. That is exactly what a
-test suite marked `@pytest.mark.ensure("installed")` runs before it starts.
+test marked `@pytest.mark.ensure("installed")` runs before its body.
 
 {doc}`../cli/run/defaults` is the full treatment: every flag, the walk
 order across repos, what `cleanup` does and does not take off the lab, and how

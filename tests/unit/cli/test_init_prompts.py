@@ -43,11 +43,11 @@ def test_all_flag_scaffolds_everything_without_prompts(tmp_path: Path) -> None:
         "tests/test_example.py",
         "tests/conftest.py",
         "pylib/widget_instructions/__init__.py",
-        "pylib/widget_options.py",
         ".vscode/settings.json",
         ".vscode/extensions.json",
     ):
         assert (tmp_path / artifact).exists(), artifact
+    assert sorted(p.name for p in (tmp_path / "pylib").iterdir()) == ["widget_instructions"]
 
 
 def test_area_flag_pulls_in_missing_settings_with_note(tmp_path: Path) -> None:
@@ -62,13 +62,13 @@ def test_area_flag_pulls_in_missing_settings_with_note(tmp_path: Path) -> None:
 def test_tests_pull_in_the_init_module_that_registers_their_options(tmp_path: Path) -> None:
     """``--tests`` alone also scaffolds the instructions module, with a note.
 
-    The example tests read ``RepoOptions`` through ``ctx.options``; only the
-    init module registers it, so a tests-only repo would fail at run time.
+    The example tests import ``RepoOptions`` from the init module, which
+    declares and registers it, so a tests-only repo would fail at run time.
     """
     result = _invoke(["--tests", "--name", "widget", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     init_module = tmp_path / "pylib" / "widget_instructions" / "__init__.py"
-    assert "register_options(" in init_module.read_text()
+    assert '@otto.options(verbs=["run", "test"])' in init_module.read_text()
     assert "instructions area is a prerequisite" in result.output
 
 
@@ -94,8 +94,39 @@ def test_tests_beside_an_existing_instructions_area_name_the_registration(tmp_pa
 
     assert result.exit_code == 0, result.output
     assert (tmp_path / "tests" / "test_example.py").is_file()
-    assert 'register_options(RepoOptions, verbs=["run", "test"])' in result.output
+    assert "import RepoOptions from widget_instructions" in result.output
+    assert '@otto.options(verbs=["run", "test"])' in result.output
     assert "prerequisite" not in result.output
+
+
+def test_tests_beside_an_init_module_of_another_name_import_from_it(tmp_path: Path) -> None:
+    """The example tests import ``RepoOptions`` from the repo's real init module.
+
+    ``init = ["foo"]`` already exists, so the instructions area is found and
+    not scaffolded: the tests must import from ``foo``, and the note must name
+    ``foo`` and what to add to it, never a module the repo does not have.
+    """
+    from tests._fixtures.sutrepo import make_sut_repo
+
+    make_sut_repo(
+        tmp_path,
+        name="widget",
+        tests=["tests"],
+        extra='libs = ["pylib"]\ninit = ["foo"]',
+        files={"pylib/foo/__init__.py": ""},
+    )
+
+    result = _invoke(["--tests", "--path", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    test_src = (tmp_path / "tests" / "test_example.py").read_text()
+    assert "from foo import RepoOptions" in test_src
+    assert "widget_instructions" not in test_src
+    assert "import RepoOptions from foo" in result.output
+    assert '@otto.options(verbs=["run", "test"])' in result.output
+    assert "message" in result.output
+    assert "widget_instructions" not in result.output
+    assert not (tmp_path / "pylib" / "widget_instructions").exists()
 
 
 def test_every_prerequisite_comes_after_the_area_that_needs_it() -> None:

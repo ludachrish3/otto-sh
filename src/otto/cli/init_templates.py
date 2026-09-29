@@ -419,33 +419,6 @@ otto's sanctioned way to leave a note inline — at the top level, inside the
   `otto --lab example_lab --list-hosts`
 """
 
-OPTIONS_TEMPLATE = '''\
-"""Repo-wide options, shared by the tests and the instructions.
-
-``@options`` (``from otto import options``) is pydantic's dataclass
-decorator. The instructions module (this repo's init module) registers
-``RepoOptions`` for ``otto run`` and ``otto test``, so every field here is a
-validated flag on both: a test reads it with ``ctx.options(RepoOptions)``, an
-instruction takes a ``RepoOptions`` parameter. See
-docs/cookbook/authoring/options-classes.md.
-"""
-
-from typing import Annotated
-
-import typer
-
-from otto import options
-
-
-@options
-class RepoOptions:
-    """Flags every `otto test` run and every `otto run` instruction takes."""
-
-    message: Annotated[
-        str, typer.Option(help="Message the sample tests and instruction log.")
-    ] = "hello from {name}"
-'''
-
 TEST_EXAMPLE_TEMPLATE = '''\
 """Example otto tests — run hostless so they pass out of the box."""
 
@@ -453,7 +426,7 @@ import logging
 
 import pytest
 
-from {options_module} import RepoOptions
+from {init_module} import RepoOptions
 
 logger = logging.getLogger(__name__)
 
@@ -464,7 +437,7 @@ class TestExample:
     @pytest.fixture(scope="class", autouse=True)
     @classmethod
     def banner(cls, ctx) -> str:
-        """Class-wide setup: runs once before the first test (the setup_class of old).
+        """Class-wide setup: runs once, before the class's first test.
 
         A fixture defined ON the class at class scope is a classmethod. Make it
         `async` and it runs on the run's one event loop, like every test — open
@@ -532,24 +505,41 @@ def repo_marker() -> str:
 '''
 
 INSTRUCTIONS_TEMPLATE = '''\
-"""{name} instructions — functions exposed as `otto run` subcommands."""
+"""{name} instructions: this repo's init module.
+
+settings.toml's `init` names this module, so otto imports it at startup for
+every command. That makes it the place to register things: options classes,
+instructions, backends. A test file or conftest may import from it, but may
+not register anything itself.
+"""
 
 import logging
 from typing import Annotated
 
 import typer
 
-from otto import register_options
+import otto
 from otto.cli.run import instruction
-
-from {options_module} import RepoOptions
 
 logger = logging.getLogger(__name__)
 
-# Every RepoOptions field becomes a flag on `otto test` and on every `otto run`
-# instruction. Registrations belong here, in an init module (settings.toml's
-# `init`), imported once at startup; a test file or conftest may not register.
-register_options("{options_module}:RepoOptions", verbs=["run", "test"])
+
+@otto.options(verbs=["run", "test"])
+class RepoOptions:
+    """Flags every `otto test` run and every `otto run` instruction takes.
+
+    `@otto.options` makes the class a pydantic dataclass, so every field is
+    validated, and `verbs=["run", "test"]` registers it for both verbs, so
+    every field is a flag on both. A test reads the values with
+    `ctx.options(RepoOptions)`, importing the class from this module; an
+    instruction takes a `RepoOptions` parameter. See
+    docs/cookbook/authoring/options-classes.md.
+    """
+
+    message: Annotated[
+        str, typer.Option(help="Message the sample tests and instruction log.")
+    ] = "hello from {name}"
+
 
 # `install`, `uninstall`, `cleanup`, `get-logs`, `install-tools` and `status`
 # already exist — otto registers them for every lab, over your registered
@@ -559,14 +549,13 @@ register_options("{options_module}:RepoOptions", verbs=["run", "test"])
 # or to give it a flag of its own — subclass ProjectActions and register it
 # from this module; the options class MUST inherit otto's for that name:
 #
-#     from otto import options
 #     from otto.project import (
 #         InstallOptions,
 #         ProjectActions,
 #         register_project_actions,
 #     )
 #
-#     @options
+#     @otto.options  # no verbs=: install's own class, not registered for a verb
 #     class _Install(InstallOptions):
 #         variant: Annotated[
 #             str, typer.Option(help="Firmware variant.")

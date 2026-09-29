@@ -70,7 +70,7 @@ acme 0.1.0
 ## `otto run` and `otto test` build and show their options
 
 `run` and `test` are the verbs that take *registered* options
-(`register_options`/`@options(verbs=[...])`, see
+(`@options(verbs=[...])` or `register_options`, see
 {doc}`../cookbook/authoring/options-classes`). Under `run` they sit alongside
 each command's own options: a standalone `@instruction`, and every one of
 otto's six project instructions (`install`, `uninstall`, `cleanup`,

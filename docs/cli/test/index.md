@@ -43,6 +43,32 @@ otto test --list-markers
   ([Global options](../index.md#global-options)):
   `otto --lab my_lab --log-level DEBUG test TestDevice`.
 
+## Coming from pytest
+
+`otto test` runs pytest, so what you know carries over:
+
+| In pytest | With `otto test` |
+| --- | --- |
+| node ID `tests/test_device.py::TestDevice::test_reboot` | a name without the file: `TestDevice::test_reboot`, `TestDevice` or `test_reboot` |
+| a parametrized ID, `test_up[eth0]` | its base name, `test_up`, which runs every variant |
+| `-m EXPR` | `-m EXPR`, pytest's own marker expression |
+| fixtures, `conftest.py`, markers, plugins | work as-is |
+
+{doc}`selection` has the details of names and `-m`. On top of pytest, the
+command line adds:
+
+- **the lab:** `otto --lab NAME test ...` picks the lab whose hosts the
+  tests reach ([Global options](../index.md#global-options));
+- **options:** the flags of every options class a repo registers for `test`
+  ([Options](#options));
+- **repeating:** `--iterations`, `--duration` and `--threshold`
+  ([Repeating a test](#repeating-a-test));
+- **monitoring:** `--monitor` samples the hosts for the whole run
+  ([Monitoring a run](#monitoring-a-run));
+- **a results layout:** each run gets its own directory, with its logs,
+  `junit.xml` and the per-module and per-test directories otto's fixtures
+  hand out ([Where a run's files go](#where-a-runs-files-go)).
+
 ## Running tests
 
 ```bash

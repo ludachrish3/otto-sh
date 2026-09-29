@@ -349,7 +349,7 @@ class OptionsOrigin:
 
 OPTIONS: "Registry[OptionsEntry]" = Registry(
     "options class",
-    register_hint="otto.register_options(Cls, verbs=[...]) in an init module",
+    register_hint="@otto.options(verbs=[...]) in an init module",
 )
 
 
@@ -566,8 +566,8 @@ def flatten_option_instances(instances: list[object], *, verb: str) -> dict[str,
         if verbs is None or verb not in verbs:
             where = "not registered" if verbs is None else f"registered for {', '.join(verbs)}"
             raise OptionsRegistrationError(
-                f"{cls.__qualname__} is {where}, not {verb}; register it with "
-                f"register_options({cls.__qualname__}, verbs=[{verb!r}, ...])"
+                f"{cls.__qualname__} is {where}, not {verb}; declare it with "
+                f"@otto.options(verbs=[{verb!r}, ...]) in an init module"
             )
         for f in dataclasses.fields(cast("DataclassInstance", instance)):
             value = getattr(instance, f.name)

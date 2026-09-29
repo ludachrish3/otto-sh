@@ -1,11 +1,13 @@
 """Reference ``@options`` classes (sample).
 
-An options class holds the flags a verb takes. Each class is registered, from
-an init module (a module named in your ``init`` setting), for the verbs whose
-flags it joins: here ``RepoOptions`` for both ``otto run`` and ``otto test``,
-and ``DeviceTestOptions`` for ``otto test`` only. A test reads its instance
-with ``ctx.options(DeviceTestOptions)``; an instruction declares a parameter
-annotated with a registered class and receives the instance.
+An options class holds the flags a verb takes. In a repo you declare each
+one in an init module (a module named in your ``init`` setting) with
+``@options(verbs=[...])``, naming the verbs whose flags it joins: here that
+would be ``RepoOptions`` for both ``otto run`` and ``otto test``, and
+``DeviceTestOptions`` for ``otto test`` only. The classes below use plain
+``@options``, so importing this module registers nothing. A test reads its
+instance with ``ctx.options(DeviceTestOptions)``; an instruction declares a
+parameter annotated with a registered class and receives the instance.
 ``DeployInstructionOptions`` is an instruction's own ``options=`` class: it
 inherits ``RepoOptions``, so each shared field stays one flag.
 
@@ -28,7 +30,8 @@ Copy this module as a starting point, or import these classes directly:
 ...     print("rejected")
 rejected
 
-Registering a class is one call in an init module. This example removes the
+``register_options`` registers a class declared without ``verbs=``, exactly
+as ``@options(verbs=[...])`` would have. This example removes the
 registration again afterwards; an init module never does:
 
 >>> from otto import register_options

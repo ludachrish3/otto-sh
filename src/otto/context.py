@@ -393,8 +393,8 @@ class OttoContext:
         verbs = verbs_for(cls)
         if verbs is None:
             raise OptionsNotAvailableError(
-                f"{cls.__qualname__} is not registered; call "
-                f"register_options({cls.__qualname__}, verbs=[...]) from an init module"
+                f"{cls.__qualname__} is not registered; declare it with "
+                "@otto.options(verbs=[...]) in an init module"
             )
         if self.verb is None:
             raise OptionsNotAvailableError(

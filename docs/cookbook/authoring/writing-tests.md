@@ -1,10 +1,29 @@
 # Writing tests
 
-otto tests are plain pytest: `Test`-prefixed classes and `test_`-prefixed
-functions in `test_*.py` files, collected by pytest's own rules. There is no
-base class to inherit and nothing to register. otto adds fixtures, markers
-and a command line. This page is how to write tests; for running them, see
+otto tests are pytest tests. Everything pytest documents about writing tests
+applies to them unchanged, so pytest's documentation is the reference for
+pytest itself. This page covers only what otto adds: its fixtures, the
+`ensure` marker, the `timeout` and `retry` markers, per-test monitoring,
+artifact directories and options. For running tests, see
 {doc}`../../cli/test/index`.
+
+## pytest's terms
+
+These pages use pytest's words for the parts of a test:
+
+| Term | In an otto repo | pytest docs |
+| --- | --- | --- |
+| test function | a `test_`-prefixed function or method; pytest runs each one as a test | {external+pytest:ref}`Test discovery <test discovery>` |
+| test class | a `Test`-prefixed class that groups test methods; other frameworks call this a suite | [Group tests in a class](https://docs.pytest.org/en/stable/getting-started.html#group-multiple-tests-in-a-class) |
+| test module | a `test_*.py` file | {external+pytest:ref}`Test discovery <test discovery>` |
+| test directory | a directory the repo's `tests` setting lists; pytest collects the test modules in it at any depth | {external+pytest:ref}`Test discovery <test discovery>` |
+| `conftest.py` | a file whose fixtures every test in its directory, and below, can use | {external+pytest:ref}`conftest.py <conftest.py>` |
+| fixture | setup and teardown a test requests by naming it as a parameter | {external+pytest:doc}`how-to/fixtures`, {external+pytest:doc}`reference/fixtures` |
+| marker | a `@pytest.mark.NAME` label on a test, class or module; `-m` selects by it | {external+pytest:doc}`how-to/mark` |
+| parametrize | `@pytest.mark.parametrize`, which runs one test once per value | {external+pytest:doc}`how-to/parametrize` |
+
+Tests written with `unittest.TestCase` run too, the way pytest runs them:
+{external+pytest:doc}`how-to/unittest`.
 
 ## An example repo
 
@@ -16,9 +35,8 @@ acme/
 ├── .otto/
 │   └── settings.toml         # tests = ["tests"], libs = ["pylib"], init = ["acme_instructions"]
 ├── pylib/
-│   ├── acme_options.py       # options classes: RepoOptions, DeviceTestOptions
 │   └── acme_instructions/
-│       └── __init__.py       # the init module: registers the options classes
+│       └── __init__.py       # the init module: options classes and instructions
 └── tests/
     ├── conftest.py           # fixtures shared by the tests below it
     └── test_device.py
@@ -26,16 +44,17 @@ acme/
 
 - `tests` lists the repo's test directories.
 - `libs` directories are put on `sys.path`, so a test imports
-  `from acme_options import DeviceTestOptions`.
-- `init` names the **init modules**, imported at startup for every command;
-  registrations go there.
+  `from acme_instructions import DeviceTestOptions`.
+- `init` names the **init modules**, which otto imports at startup for every
+  command. Anything you register with otto (an options class, an
+  instruction) is registered there.
 
 {doc}`../../configuration/settings` explains every setting, and
 {doc}`../../cli/init` scaffolds this shape. Commands on this page leave out
 `--lab`, which a real run passes before `test`:
 `otto --lab my_lab test TestDevice`.
 
-## A test file
+## A test module
 
 `tests/test_device.py`:
 
@@ -44,7 +63,7 @@ import logging
 
 import pytest
 
-from acme_options import DeviceTestOptions
+from acme_instructions import DeviceTestOptions
 
 logger = logging.getLogger(__name__)
 
@@ -76,52 +95,63 @@ class TestDevice:
 
 
 def test_version_string_format() -> None:
-    """A plain function is a test too."""
+    """A test function outside any class."""
     assert "2.1".count(".") == 1
 ```
 
 `otto test TestDevice` runs the class, `otto test test_interface_up` runs
 every test of that name in any class or module, and
 `otto test TestDevice --firmware 2.1` passes a flag.
-{doc}`../../cli/test/selection` lists the name forms, and
-[Markers](../../cli/test/index.md#markers) lists `timeout`, `retry` and the
-other markers otto adds, and where your own markers such as `integration`
-are declared.
-
-`DeviceTestOptions` is an options class in `pylib/acme_options.py` with a
-`firmware` field and a `bool` field, `check_interfaces`, which becomes the
-pair `--check-interfaces/--no-check-interfaces`. The init module registers it
-for the `test` **verb**, which is what puts its flags on `otto test`; a verb
-is one of the two subcommands that take registered flags, `otto run` and
-`otto test`. A test reads the values with `ctx.options(DeviceTestOptions)`.
-Declaring, validating, registering and sharing options classes is
-{doc}`options-classes`.
+{doc}`../../cli/test/selection` lists the name forms.
+[Markers](../../cli/test/index.md#markers) is the home for `timeout`,
+`retry` and the other markers otto runs with, and for where your own
+markers, such as `integration`, are declared.
 
 **Logging.** Put `logger = logging.getLogger(__name__)` at the top of the
 file. Everything that logs during a run (your tests, otto, any library
-either imports) reaches otto's console and log files; there is nothing to
-register. Known-noisy libraries are quieted by default; the floor is
-per-logger configurable in {ref}`[logging.levels] <logging-levels>`.
+either imports) reaches otto's console and log files. Known-noisy libraries
+are quieted by default; the floor is per-logger configurable in
+{ref}`[logging.levels] <logging-levels>`.
 
-## Where otto looks
+## Options
 
-pytest collects each of the repo's test directories the way it always does:
-every `test_*.py` file at any depth, each directory's `conftest.py`, and
-`norecursedirs` honored. Nested test directories need no extra
-configuration.
+An **options class** turns its fields into flags on `otto test`. Declare it
+in the init module, and name in the decorator each **verb** whose flags it
+joins: `test` for `otto test`, `run` for every `otto run` command.
 
-Test files and conftests are imported only inside `otto test`'s pytest
-session, when it collects and runs tests, so a test file or conftest
-registers **nothing**: an instruction, an options class or anything else it
-tries to register is refused. The rule and the error are in
-[Registering a class for a verb](options-classes.md#registering-a-class-for-a-verb).
-A test file may still *import* from an init module.
+```python
+# pylib/acme_instructions/__init__.py, the init module
+from typing import Annotated
+
+import typer
+
+import otto
+
+
+@otto.options(verbs=["test"])
+class DeviceTestOptions:
+    firmware: Annotated[str, typer.Option(help="Firmware version to validate.")] = "latest"
+    check_interfaces: Annotated[
+        bool, typer.Option(help="Also check every interface's link state.")
+    ] = True
+```
+
+`otto test` now takes `--firmware` and the pair
+`--check-interfaces/--no-check-interfaces`, and `otto test --help` lists
+them. A test imports the class from the init module and reads this run's
+values with `ctx.options(DeviceTestOptions)`, as the test module above does.
+
+**The one rule:** the class must be defined in an init module, or in a
+module an init module imports; a test module or `conftest.py` cannot register
+one (why:
+[Registering a class for a verb](options-classes.md#registering-a-class-for-a-verb)).
+Validating fields, the lazy `register_options` form, sharing fields and
+the rest are in {doc}`options-classes`.
 
 ## What every test gets
 
-What otto adds arrives the way pytest delivers everything, as fixtures, and
-nothing otto-specific lives on `self`. It applies to test classes and plain
-functions alike.
+otto's additions arrive as fixtures: a test, or another fixture, names one
+in its signature. They work the same in a test class and in a test function.
 
 | | free: runs for every test | on request: name it in the signature |
 | --- | --- | --- |
@@ -213,9 +243,11 @@ flags reach an install body is in
 
 ## Setup and teardown as fixtures
 
-One shape, pytest's own: code before `yield` is setup, code after is
-teardown, `scope` says how often it runs, `autouse` says whether every test
-gets it or only the tests that ask.
+Setup and teardown are pytest fixtures ({external+pytest:doc}`how-to/fixtures`):
+code before `yield` is setup, code after it is teardown, `scope` says how
+often it runs, and `autouse` says whether every test gets it or only the
+tests that name it. The example below uses otto's fixtures and a lab host
+inside its own:
 
 ```python
 import logging
@@ -261,52 +293,16 @@ is its output ({doc}`../../architecture/utilities/results`).
   on an `async def` also works, but it takes no `loop_scope`, so it can't
   follow a pinned loop ({doc}`../host-scopes`).
 - **A class-scoped fixture defined on the test class is a `@classmethod`**
-  (fixture decorator on top, `classmethod` beneath). pytest gives the
-  instance form a throwaway `self` whose attributes never reach the tests. A
-  conftest fixture is a plain function.
-- **`autouse` vs named.** `autouse=True` means "runs for every test whether
-  or not it mentions it"; that is `setup_class`/`setup_method`. Leave it off
-  for setup only some tests need; they request it by name. A fixture can be
-  both, as `dut` is: every test gets it, and the ones that want the host
-  name it.
-- **Values travel as return values.** `cls.x = …` in a class fixture does
-  reach the tests, but it is shared mutable state; `yield host` and
-  `def test(self, dut)` is the idiom.
-- **Depending on otto.** Any fixture may request `ctx`, `module_dir`,
-  `test_dir`, `expect` or `monitor`; pytest orders by dependency. A
-  class-scoped fixture can't request `test_dir`, `expect` or `monitor`,
-  which are per test.
-- **Ordering you may rely on:** pytest runs class-scoped fixtures before
-  function-scoped ones and, within a scope, autouse fixtures before requested
-  ones. The `ensure` converge is a function-scoped autouse fixture of otto's,
-  so it runs **after** your class-scoped fixtures and **before** your
-  function-scoped ones. A class-scoped fixture of yours therefore can't rely
-  on the marker's converge having run; converge there yourself, or let the
-  test do it. Beyond that, a fixture that needs another requests it.
-- **Where fixtures live:** class-local ones as methods on the class; shared
-  ones in `conftest.py`, or on a base class whose name does not start with
-  `Test`, which pytest doesn't collect and whose subclasses inherit its
-  fixtures.
-- **Overriding:** a subclass redefines a fixture by name; a single test opts
-  in with `@pytest.mark.usefixtures("name")`; `ensure` overrides at the
-  closest marker.
-- **Failure phases.** A fixture raising before `yield` → `ERROR` at setup,
-  the body never runs, that fixture's teardown does not run either (guard
-  partial setup with `try`/`finally`, as in plain pytest). After `yield` →
-  `ERROR` at teardown alongside the body's own verdict. `expect` failures →
-  `FAILED`.
-
-pytest still honours `setup_method`/`setup_class` on any class. They are
-synchronous and cannot request fixtures, so they are the second choice.
-
-## Coming from unittest
-
-If you have written `unittest`-style tests, the ideas map one to one; only
-the spelling changes.
-
-| you wrote | write instead |
-| --- | --- |
-| `class TestX(unittest.TestCase)` | `class TestX:`, no base class |
-| `setup_class(cls)` / `teardown_class(cls)` | a class-scoped, autouse, `@classmethod` yield fixture: before / after `yield` |
-| `setup_method(self)` / `teardown_method(self)` | a function-scoped autouse yield fixture (`self` is the test's instance) |
-| `self.assertEqual(a, b)` | `assert a == b` |
+  (fixture decorator on top, `classmethod` beneath); the instance-method
+  form is
+  {external+pytest:ref}`deprecated <class-scoped-fixture-as-instance-method>`.
+  A fixture in `conftest.py` is a plain function.
+- **Any fixture may request otto's.** `ctx`, `module_dir`, `test_dir`,
+  `expect` and `monitor` are fixtures like any other. A class-scoped fixture
+  can't request `test_dir`, `expect` or `monitor`, which are per test.
+- **The `ensure` converge runs between your class-scoped and your
+  function-scoped fixtures.** It is a function-scoped autouse fixture, and
+  pytest runs class-scoped fixtures first and, within a scope, autouse
+  fixtures before requested ones ({external+pytest:ref}`fixture order`). A
+  class-scoped fixture of yours therefore can't rely on the marker's
+  converge having run; converge there yourself, or let the test do it.
