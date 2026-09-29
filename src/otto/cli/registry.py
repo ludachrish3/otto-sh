@@ -165,7 +165,7 @@ def cli_command(
     ``all_hosts()`` itself. Read the exemption as "I drive the lifecycle
     myself", which is exactly what monitor does. ``async def`` is in turn
     necessary and not sufficient: a body that blocks the event loop is no more
-    interruptible than a sync one (see :func:`~otto.cli.run.instruction`).
+    interruptible than a sync one (see :func:`~otto.instructions.instruction`).
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:

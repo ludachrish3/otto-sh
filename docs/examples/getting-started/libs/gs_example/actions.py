@@ -18,7 +18,7 @@ from typing import Annotated
 import typer
 
 from otto import options
-from otto.cli.run import instruction
+from otto.instructions import instruction
 from otto.project import InstallOptions, ProjectActions, register_project_actions
 from otto.result import Result
 

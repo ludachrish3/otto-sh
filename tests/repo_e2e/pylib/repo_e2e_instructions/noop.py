@@ -1,6 +1,6 @@
 """No-op instruction for e2e discovery tests."""
 
-from otto.cli.run import instruction
+from otto.instructions import instruction
 from otto.result import CommandResult
 from otto.utils import Status
 

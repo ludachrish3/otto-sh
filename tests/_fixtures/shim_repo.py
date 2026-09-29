@@ -57,7 +57,7 @@ from typing import Annotated
 import typer
 
 import otto
-from otto.cli.run import instruction
+from otto.instructions import instruction
 from otto.host.os_profile import register_host_class
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult

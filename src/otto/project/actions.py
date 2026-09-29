@@ -36,12 +36,12 @@ import dataclasses
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from .. import layout
-from ..cli.run import instruction
 from ..instructions import (
     MARK_ATTR,
     PROJECT_INSTRUCTIONS,
     ProjectInstructionError,
     ProjectInstructionMark,
+    instruction,
     register_project_instruction_body,
 )
 from ..params import OptionsSource, shared_field_values

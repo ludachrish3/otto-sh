@@ -19,7 +19,6 @@
 otto.bootstrap:bootstrap
 otto.cli.registry:cli_command
 otto.cli.registry:register_cli_command
-otto.cli.run:instruction
 otto.config.lab:Lab
 otto.config.lab:load_lab
 otto.config.repo:Repo
@@ -117,6 +116,8 @@ otto.host:UnixHost
 otto.host:register_dev_tool_provider
 otto.host:register_product_provider
 otto.host:register_transfer_backend
+otto.instructions:instruction
+otto.instructions:run_instruction
 otto.inventory:JsonInventory
 otto.inventory:check_supplies
 otto.inventory:register_inventory_backend

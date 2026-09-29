@@ -1,6 +1,6 @@
 import logging
 
-from otto.cli.run import instruction
+from otto.instructions import instruction
 
 logger = logging.getLogger(__name__)
 

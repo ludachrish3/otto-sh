@@ -519,7 +519,7 @@ from typing import Annotated
 import typer
 
 import otto
-from otto.cli.run import instruction
+from otto.instructions import instruction
 
 logger = logging.getLogger(__name__)
 

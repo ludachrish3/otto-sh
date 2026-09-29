@@ -11,7 +11,6 @@ import dataclasses
 import inspect
 from typing import TYPE_CHECKING, Annotated, Any, cast, get_args, get_origin, get_type_hints
 
-import typer
 from typing_extensions import dataclass_transform
 
 from .errors import OttoError
@@ -23,27 +22,41 @@ if TYPE_CHECKING:
 
 
 def build_options(opts_cls: type, kwargs: dict[str, Any]) -> Any:
-    """Construct an Options instance; convert pydantic ``ValidationError`` to a clean exit-2 error.
+    """Construct an Options instance; convert pydantic ``ValidationError`` to a clean library error.
 
-    Uses ``typer.BadParameter``, not ``click.BadParameter``: Typer >= 0.26
-    vendors its own click fork and only its handler catches the vendored
-    exception — a real ``click.BadParameter`` would escape uncaught (exit 1, no
-    message), the same trap that bit the missing-``--lab`` gate.
+    Raises ``OptionsValidationError``; the CLI translates it to a usage error
+    at its boundary (``otto.cli.invoke.usage_error_from``).
 
     Plain stdlib dataclasses construct exactly as before — no pydantic is
     involved unless the class is a ``@pydantic.dataclasses.dataclass`` (e.g. via
     ``@otto.options``) and a field constraint (``Field(gt=0)``, a validator, ...)
     rejects the value.
+
+    A required field *kwargs* leaves out raises the same error, naming the
+    field, for a plain dataclass too (whose own complaint is a bare
+    ``TypeError``). The CLI marks such a field required, so only a library
+    caller reaches this.
     """
     import pydantic
 
+    if dataclasses.is_dataclass(opts_cls):
+        missing = [
+            f.name
+            for f in dataclasses.fields(opts_cls)
+            if f.init
+            and f.name not in kwargs
+            and f.default is dataclasses.MISSING
+            and f.default_factory is dataclasses.MISSING
+        ]
+        if missing:
+            raise OptionsValidationError("; ".join(f"{name}: Field required" for name in missing))
     try:
         return opts_cls(**kwargs)
     except pydantic.ValidationError as exc:
         problems = "; ".join(
             f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()
         )
-        raise typer.BadParameter(problems) from exc
+        raise OptionsValidationError(problems) from exc
 
 
 def _field_default(f: "dataclasses.Field[Any]") -> Any:
@@ -158,9 +171,13 @@ def _default_hidden(annotation: Any) -> Any:
     A bare type gains an ``Annotated[..., typer.Option(show_default=False)]``;
     an existing ``typer.Option`` is copied, never mutated, since the same
     ``OptionInfo`` object is shared by every class that inherits the field.
+
+    ``typer`` is imported function-local: this is its only use in the module,
+    so ``import otto.params`` never loads it.
     """
     import copy
 
+    import typer
     from typer.models import OptionInfo
 
     if get_origin(annotation) is not Annotated:
@@ -312,6 +329,10 @@ class OptionsRegistrationError(OttoError, ValueError):
 
 class OptionsCollisionError(OttoError):
     """Two options classes declare one flag name from unrelated classes."""
+
+
+class OptionsValidationError(OttoError, ValueError):
+    """An options class could not be built: the pydantic problems, joined with ``"; "``."""
 
 
 class OptionsNotAvailableError(OttoError, LookupError):
@@ -553,17 +574,23 @@ def merge_option_params(
     return params
 
 
-def flatten_option_instances(instances: list[object], *, verb: str) -> dict[str, Any]:
+def flatten_option_instances(
+    instances: list[object], *, verb: str, extras: list[type] | None = None
+) -> dict[str, Any]:
     """Return the flat keyword values a set of options instances stands for under *verb*.
 
-    Every instance must be of a class registered for *verb*. Two instances
-    that carry one shared-base field must agree on its value.
+    Every instance must be of a class registered for *verb*, or one of
+    *extras*. *extras* are classes admitted without being registered: an
+    instruction's own options class, or a project instruction's body classes.
+    Two instances that carry one shared-base field must agree on its value.
     """
+    admitted = list(extras or [])
     flat: dict[str, Any] = {}
     for instance in instances:
         cls = type(instance)
         verbs = verbs_for(cls)
-        if verbs is None or verb not in verbs:
+        is_extra = any(cls is extra for extra in admitted)
+        if not is_extra and (verbs is None or verb not in verbs):
             where = "not registered" if verbs is None else f"registered for {', '.join(verbs)}"
             raise OptionsRegistrationError(
                 f"{cls.__qualname__} is {where}, not {verb}; declare it with "

@@ -158,6 +158,23 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
         "otto.reservations.json_backend",
         "otto.reservations.null_backend",
     ],
+    # --- Library modules that must never load the CLI. ---
+    # otto.cli projects these libraries, not the other way around: importing
+    # any of them must never pull typer, or any otto.cli submodule, in.
+    # Forbidding the exact name "otto.cli" is enough -- importing a submodule
+    # always loads the parent package first, so it lands in sys.modules too.
+    "import otto.instructions": ["typer", "otto.cli"],
+    "import otto.project.commands": ["typer", "otto.cli"],
+    # otto.project.orchestrator and otto.project.actions legitimately load
+    # typer: their first-party Options classes (otto.project.options) build
+    # typer.Option(...) metadata at class-body time by design -- otto.params
+    # is the layer that carries typer, not the CLI. What they must never
+    # load is otto.cli itself.
+    "import otto.project.orchestrator": ["otto.cli"],
+    "import otto.project.actions": ["otto.cli"],
+    # typer is otto.params's only heavy import, and it's function-local (see
+    # _default_hidden) -- importing the module alone must never load it.
+    "import otto.params": ["typer"],
 }
 
 # The positive control, for a row whose forbidden list alone could pass by

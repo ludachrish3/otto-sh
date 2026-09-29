@@ -1,0 +1,45 @@
+id: no-cli-import-outside-cli
+language: python
+severity: error
+message: A library module imports otto.cli. The CLI projects the libraries; nothing below it may reach up. Move the logic into the library and let otto.cli call it.
+note: >
+  ZERO baseline as of the thin-CLI series item 1 (2026-09-28): instruction
+  registration left otto.cli, which retired the otto.project edge. The
+  ignores below are NOT all the same kind: the package's own CLI entry
+  points are permanent, and the completion-cache pair is RECORDED debt,
+  retired by thin-CLI item 7. src/otto/config/completion_stubs.py and
+  src/otto/reservations/factory.py were pruned from this list 2026-09-29
+  (thin-CLI item 1 review) because neither actually imports otto.cli -- an
+  ignore earns its place by naming a real import and, for debt, the item
+  that retires it; do not add one on the strength of "it might someday."
+files:
+- src/otto/**
+ignores:
+- src/otto/cli/**
+# The package's own CLI entry points: permanent.
+- src/otto/__init__.py
+- src/otto/_shim.py
+# Completion-cache placement debt, retired by thin-CLI item 7.
+- src/otto/config/completion_cache.py
+- src/otto/config/completion_tree.py
+rule:
+  any:
+  - pattern: from otto.cli import $$$X
+  - pattern: from otto.cli.$M import $$$X
+  - pattern: import otto.cli
+  - pattern: import otto.cli.$M
+  - pattern: from ..cli import $$$X
+  - pattern: from ..cli.$M import $$$X
+  - pattern: from .cli import $$$X
+  - pattern: from .cli.$M import $$$X
+  - pattern: from otto import cli
+  - pattern: from . import cli
+  - pattern: from .. import cli
+  - pattern: from ...cli import $$$X
+  - pattern: from ...cli.$M import $$$X
+  - pattern: from ... import cli
+  - pattern: from .. import cli as $A
+  - pattern: from . import cli as $A
+  - pattern: from ... import cli as $A
+  - pattern: import otto.cli as $A
+  - pattern: import otto.cli.$M as $A

@@ -417,23 +417,18 @@ class TestCollectCurrentCommands:
 
         monkeypatch.setattr(
             "otto.instructions.INSTRUCTIONS",
-            Registry("instruction", register_hint="@otto.cli.run.instruction()"),
+            Registry("instruction", register_hint="@otto.instructions.instruction()"),
         )
         assert cc.collect_current_commands() == []
 
     def test_collects_registered_instruction_with_options(self) -> None:
-        import typer
+        from otto.instructions import INSTRUCTIONS, InstructionEntry
 
-        from otto.cli.run import INSTRUCTIONS, InstructionEntry
+        async def _probe_instr(name: Annotated[str, typer.Option("--name")] = "x") -> None: ...
 
-        sub_app = typer.Typer()
-
-        def _probe_instr(name: Annotated[str, typer.Option("--name")] = "x") -> None: ...
-
-        sub_app.command("_cc_probe_instr")(_probe_instr)
         INSTRUCTIONS.register(
             "_cc_probe_instr",
-            InstructionEntry(name="_cc_probe_instr", make_app=lambda: sub_app, module=__name__),
+            InstructionEntry(name="_cc_probe_instr", module=__name__, handler=_probe_instr),
             origin=__name__,
         )
         try:
@@ -449,18 +444,15 @@ class TestCollectCurrentCommands:
         """A command whose options can't be serialized still completes by name."""
         from decimal import Decimal
 
-        import typer
+        from otto.instructions import INSTRUCTIONS, InstructionEntry
 
-        from otto.cli.run import INSTRUCTIONS, InstructionEntry
+        async def _probe_bad(
+            bad: Annotated[Decimal, typer.Option("--bad")] = Decimal(0),
+        ) -> None: ...
 
-        sub_app = typer.Typer()
-
-        def _probe_bad(bad: Annotated[Decimal, typer.Option("--bad")] = Decimal(0)) -> None: ...
-
-        sub_app.command("_cc_probe_bad")(_probe_bad)
         INSTRUCTIONS.register(
             "_cc_probe_bad",
-            InstructionEntry(name="_cc_probe_bad", make_app=lambda: sub_app, module=__name__),
+            InstructionEntry(name="_cc_probe_bad", module=__name__, handler=_probe_bad),
             origin=__name__,
         )
         try:

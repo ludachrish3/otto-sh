@@ -23,8 +23,8 @@ functions; the class is the shared engine behind them.
 | Registry | Kind | Register via | Built-ins |
 | --- | --- | --- | --- |
 | `CLI_COMMANDS` | top-level CLI command | {func}`otto.cli.registry.register_cli_command` / {func}`~otto.cli.registry.cli_command` | the fourteen first-party verbs (`run`, `test`, `host`, …) |
-| `INSTRUCTIONS` | `otto run` subcommand | {func}`~otto.cli.run.instruction` | — |
-| `PROJECT_INSTRUCTIONS` | project instruction (a `ProjectActions` method) | {func}`~otto.cli.run.instruction` on a `ProjectActions` method | `install`, `uninstall`, `status`, `cleanup`, `get-logs`, `install-tools` (when `otto.project.actions` is imported) |
+| `INSTRUCTIONS` | `otto run` subcommand | {func}`~otto.instructions.instruction` | — |
+| `PROJECT_INSTRUCTIONS` | project instruction (a `ProjectActions` method) | {func}`~otto.instructions.instruction` on a `ProjectActions` method | `install`, `uninstall`, `status`, `cleanup`, `get-logs`, `install-tools` (when `otto.project.actions` is imported) |
 | `PROJECT_ACTIONS` | a repo's `ProjectActions` subclass | `otto.project.actions.register_project_actions` | — |
 | `OPTIONS` | options class, with the verbs (`run`, `test`) whose flags it joins | {func}`otto.params.register_options` / `@options(verbs=[...])` | — |
 | `HOST_CLASSES` | host class | `otto.host.os_profile.register_host_class` | `unix`, `embedded`, `zephyr` |
@@ -274,11 +274,13 @@ its result from the cache ({doc}`completion-cache`, "The test-names cache").
   inventory: loud duplicates, did-you-mean lookups, attribution
 - {mod}`otto.cli.registry` — `CommandSpec`, the CLI command registry, and
   lazy dispatch
-- `otto.instructions` — the `INSTRUCTIONS` registry itself, deliberately
-  CLI-free (its `typer.Typer` field is a `TYPE_CHECKING`-only annotation) so
-  core readers — `Repo`'s instruction panel, the completion cache — see the
-  registered set without importing `otto.cli`
-- {mod}`otto.cli.run` — the `@instruction()` decorator
+- {mod}`otto.instructions` — the `@instruction` decorator, the `INSTRUCTIONS`
+  registry itself, and `run_instruction`, deliberately CLI-free
+  (`InstructionEntry` is plain data with no Typer field; the CLI builds the
+  command from it) so core readers — `Repo`'s instruction panel, the
+  completion cache — see the registered set without importing `otto.cli`
+- {mod}`otto.cli.run` — `build_instruction_app`: the Typer projection of an
+  entry, built when `otto run` resolves it
 - {mod}`otto.params` — the `OPTIONS` registry, `register_options` and
   `@options(verbs=[...])`
 - `otto.config.completion_cache` — the completion cache

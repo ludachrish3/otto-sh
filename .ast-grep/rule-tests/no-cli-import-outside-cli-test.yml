@@ -1,0 +1,43 @@
+id: no-cli-import-outside-cli
+valid:
+- |
+  from ..instructions import instruction
+- |
+  def build():
+      from .params import build_options
+invalid:
+- |
+  from ..cli.run import instruction
+- |
+  def leaf():
+      from ..cli.invoke import finish_dry_run
+- |
+  import otto.cli.main
+- |
+  from otto.cli import run
+- |
+  from .cli.run import instruction
+- |
+  import otto.cli
+- |
+  from otto import cli
+- |
+  from . import cli
+- |
+  from .. import cli
+- |
+  import otto.cli as ocli
+- |
+  import otto.cli.main as ocli_main
+- |
+  from ...cli import invoke
+- |
+  from ...cli.run import build_instruction_app
+- |
+  from ... import cli
+- |
+  from .. import cli as ocli
+- |
+  from . import cli as ocli
+- |
+  from ... import cli as ocli

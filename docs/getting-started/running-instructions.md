@@ -25,7 +25,7 @@ from typing import Annotated
 
 import typer
 
-from otto.cli.run import instruction
+from otto.instructions import instruction
 from otto.config import get_host
 
 logger = logging.getLogger(__name__)

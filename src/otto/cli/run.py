@@ -1,34 +1,142 @@
-"""``otto run`` subcommand: decorator and Typer app for user-defined run instructions."""
+"""``otto run`` subcommand: the Typer app for user-defined run instructions."""
 
 import inspect
-from collections.abc import Callable, Coroutine
-from typing import (
-    TYPE_CHECKING,
-    Annotated,
-    Any,
-    ParamSpec,
-    get_type_hints,
-)
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import typer
 from rich import print as rprint
 
-from ..instructions import (
-    FIRST_PARTY_INSTRUCTIONS,
-    INSTRUCTIONS,
-    MARK_ATTR,
-    PROJECT_INSTRUCTIONS,
-    InstructionEntry,
-    ProjectInstructionMark,
-)
-from ..registry import get_registering_repo
+from ..instructions import INSTRUCTIONS, InstructionEntry, ProjectInstruction
+
+# Re-export: the documented import moved to otto.instructions.
+from ..instructions import instruction as instruction  # noqa: PLC0414 — explicit re-export
 from .invoke import make_registry_group, prepare_command_target
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
     from rich.panel import Panel
 
-P = ParamSpec("P")
+
+def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
+    """Build the leaf that dispatches project instruction *project* through the orchestrator.
+
+    The flags are every body's options fields followed by those of every
+    class registered for ``run``, merged by declaring class. The leaf binds
+    the parsed values on the active context before the orchestrator runs, so
+    a body reads a verb-wide class through ``ctx.options(Cls)``, while each
+    body's own class is still built from the same flat values.
+
+    Marked ``DRY_RUN_SELF_FINISHING_ATTR``: this leaf, like every leaf
+    ``prepare_command_target`` builds, validates its own options under
+    ``--dry-run`` and finishes the dry run itself (see the body below) --
+    project instructions have their own dispatch path (this function, not
+    ``otto.cli.invoke._wrap_with_options``) and so need the marker stamped on
+    by hand. No hidden ``typer.Context`` parameter: the leaf reads the
+    current one the same way the wrapper does (see the body below), so its
+    public signature is exactly the merged options fields.
+    """
+    from ..params import merge_option_params, sensitive_field_names, verb_option_classes
+    from ..project.commands import body_origins
+    from .invoke import DRY_RUN_SELF_FINISHING_ATTR, SENSITIVE_FIELDS_ATTR
+
+    name = project.spec.name
+    own_origins = body_origins(project)
+    verb_origins = verb_option_classes("run")
+    params = merge_option_params(
+        own_origins + verb_origins,
+        what=f"project instruction {name!r}",
+    )
+    sensitive_names: set[str] = set()
+    for origin in own_origins + verb_origins:
+        sensitive_names |= sensitive_field_names(cast("type[DataclassInstance]", origin.cls))
+
+    async def _leaf(**kw: Any) -> Any:
+        # Function-scope: the orchestrator is heavy and the CLI must stay light.
+        from typer._click.globals import get_current_context
+
+        from ..context import get_context
+        from ..params import OptionsValidationError
+        from ..project import orchestrator
+        from .invoke import (
+            _leaf_declares_preview,
+            command_spec,
+            dry_run_requested,
+            finish_dry_run,
+            usage_error_from,
+        )
+
+        # ``silent=True``: a test -- or a library caller reaching the leaf
+        # directly, bypassing the CLI entirely -- pushes no click `Context` at
+        # all, and never having gone through the CLI seam is exactly the case
+        # a dry run cannot apply to, so `None` here IS "not a dry run". The
+        # cast: see the identical one in ``otto.cli.invoke``'s own wrapper --
+        # `typer.Context` is the alias this codebase types every ctx parameter
+        # with, but the vendored base class `get_current_context` actually
+        # returns IS what typer's own commands hand out under that alias at
+        # runtime.
+        click_ctx = cast("typer.Context | None", get_current_context(silent=True))
+        dry = click_ctx is not None and dry_run_requested(click_ctx)
+        ctx = get_context()
+        try:
+            ctx.bind_verb_options("run", kw)
+            # Validates every applicable body's own options class up front --
+            # the SAME per-repo walk the real path's `_run_bodies` performs --
+            # so a bad value in a body's own class fails identically whether
+            # or not `--dry-run` was requested, before any body runs. Under a
+            # real run the result is otherwise unused and the run's own walk
+            # announces the skips, so this one stays quiet; under a dry run it
+            # is the only walk, so it announces, and the branch below prints it.
+            own = orchestrator.project_instruction_body_options(name, ctx, kw, announce=dry)
+        except OptionsValidationError as e:
+            raise usage_error_from(e) from e
+        if click_ctx is not None and dry:
+            # Own classes first (one per distinct body, walk order, deduplicated
+            # by class) then the verb's OTHER registered classes -- same rule
+            # `otto.cli.invoke._wrap_with_options` follows for a standalone
+            # instruction. Built from the SAME flat `kw` `bind_verb_options`
+            # just used, never `ctx.params` (pre-conversion values).
+            own_types = {type(instance) for instance in own}
+            verb_instances = [
+                ctx.options(origin.cls) for origin in verb_origins if origin.cls not in own_types
+            ]
+            preview = command_spec(click_ctx).dry_run_preview or _leaf_declares_preview(click_ctx)
+            await finish_dry_run(click_ctx, own + verb_instances, preview=preview)
+        return await orchestrator.run_project_instruction(name, kw)
+
+    _leaf.__name__ = name.replace("-", "_")
+    _leaf.__qualname__ = _leaf.__name__
+    _leaf.__doc__ = project.spec.help
+    # Both, not just the signature: the completion cache serialises a command
+    # from `inspect.signature`, while typer reads the ANNOTATIONS to find each
+    # parameter's `typer.Option` metadata.
+    _leaf.__signature__ = inspect.Signature(params)  # ty: ignore[unresolved-attribute]
+    _leaf.__annotations__ = {p.name: p.annotation for p in params}
+    setattr(_leaf, DRY_RUN_SELF_FINISHING_ATTR, True)
+    setattr(_leaf, SENSITIVE_FIELDS_ATTR, frozenset(sensitive_names))
+    return _leaf
+
+
+def build_instruction_app(entry: InstructionEntry) -> typer.Typer:
+    """Build ``otto run <name>``'s Typer app from its registry entry, on resolution.
+
+    Built here and not at registration: the flags include every options
+    class registered for ``run``, which a later init module may still add,
+    and resolving those classes may import their modules -- a cost only
+    ``otto run`` should pay. A clash between the instruction's own fields
+    and the verb's is found here, before any body runs.
+    """
+    app = typer.Typer()
+    if entry.project is not None:
+        app.command(entry.name, help=entry.project.spec.help)(_project_leaf(entry.project))
+        return app
+    if entry.handler is None:  # unreachable: __post_init__ requires handler xor project
+        raise ValueError(f"instruction {entry.name!r} has neither handler nor project set")
+    target = prepare_command_target(
+        entry.handler, entry.options_cls, verb="run", repo=entry.registered_by
+    )
+    app.command(entry.name, help=entry.help)(target)
+    return app
 
 
 # `cls=` is set here (module scope, after INSTRUCTIONS exists) rather than via
@@ -37,7 +145,7 @@ P = ParamSpec("P")
 run_app = typer.Typer(
     name="run",
     no_args_is_help=True,
-    cls=make_registry_group(INSTRUCTIONS, app_of=lambda entry: entry.make_app()),
+    cls=make_registry_group(INSTRUCTIONS, app_of=build_instruction_app),
     context_settings={
         "help_option_names": ["-h", "--help"],
     },
@@ -122,252 +230,3 @@ def main(
     """
     if ctx.resilient_parsing:
         return
-
-
-# The handler's PARAMETERS are threaded through unchanged (``P``), so a decorated
-# instruction keeps its signature at every call site instead of decaying to
-# ``Any`` -- which is what ty's ``dynamic-function-decorator-return`` reports.
-# Its RETURN stays ``Any`` on purpose: the leaf-invoke bridge renders whatever a
-# handler hands back, and first-party and repo instructions between them already
-# return ``CommandResult``, ``Result``, ``None`` and bare payloads. The narrower
-# ``CommandResult`` this used to claim was never true and never checked, because
-# the outer ``Callable[..., Any]`` erased it before anything could look.
-_Handler = Callable[P, Coroutine[Any, Any, Any]]
-
-
-def _declares_self(func: Callable[..., Any]) -> bool:
-    """Whether *func* is written as a method: its first parameter is ``self``."""
-    params = list(inspect.signature(func).parameters)
-    return bool(params) and params[0] == "self"
-
-
-def instruction(
-    *args: Any,
-    options: "type[DataclassInstance] | None" = None,
-    walk: str | None = None,
-    continue_on_failure: bool | None = None,
-    require_dependencies: bool | None = None,
-    combine_results: "Callable[[dict[str, Any]], Any] | None" = None,
-    render: "Callable[[Any, Any], Any] | None" = None,
-    **kwargs: Any,
-) -> Callable[[_Handler[P]], _Handler[P]]:
-    """Register an async function as an ``otto run`` subcommand.
-
-    The handler must be ``async def`` — a plain ``def`` raises :exc:`TypeError`
-    at decoration, because only a coroutine reaches the lifecycle bridge that
-    sweeps the instruction's hosts and converts an interrupt into a clean
-    exit. ``async def`` is necessary, not sufficient: the interrupt policy is
-    driven by the event loop, so a body that blocks it (a bare
-    ``subprocess.run``, ``time.sleep``) is no more interruptible than a sync
-    one. Lab work belongs in ``await host.…``; local blocking work belongs in
-    ``asyncio.to_thread``.
-
-    This is the sugar's check, and THE ASYNC RULE IS THE ONLY ONE THAT IS
-    RE-APPLIED when ``otto run`` INVOKES a leaf (``CommandSpec.async_leaves``),
-    so a directly-registered ``InstructionEntry``, an ``@run_app.command()``,
-    or a sub-group added with ``add_typer`` cannot route around *that*. The
-    first-party name guard further down this function has no such twin: it runs
-    at decoration or not at all — see the comment beside it for what covers the
-    routes it never sees.
-
-    When *options* is a dataclass, the decorator expands its fields (including
-    inherited ones) into individual CLI flags.  The original function must
-    declare a parameter annotated with the options class; the decorator
-    replaces it with the expanded fields and, at call time, constructs the
-    populated dataclass instance before forwarding it to the function.
-
-    If the function declares a parameter annotated as ``OttoContext``, that
-    parameter is stripped from the CLI signature and injected at call time from
-    the active context (DI-friendly, additive — existing handlers are unaffected).
-
-    Every instruction also takes the flags of every options class registered
-    for ``run`` (:func:`otto.params.register_options`). A parameter annotated
-    with one of those classes is stripped from the CLI signature and injected
-    with the parsed instance, the same one ``ctx.options(Cls)`` returns. An
-    *options* class that inherits a registered base shares that base's flags
-    rather than repeating them. A field that clashes with a ``run`` flag is
-    reported when ``otto run`` resolves the command, before any body runs.
-
-    Usage without options (unchanged from before)::
-
-        @instruction()
-        async def deploy(debug: Annotated[bool, typer.Option()] = False): ...
-
-    Usage with an options dataclass::
-
-        @dataclass
-        class _Opts(RepoOptions):
-            debug: Annotated[bool, typer.Option()] = False
-
-
-        @instruction(options=_Opts)
-        async def deploy(opts: _Opts):
-            print(opts.debug)
-
-    Usage with OttoContext injection::
-
-        @instruction()
-        async def status(ctx: OttoContext) -> CommandResult:
-            host = ctx.get_host("router")
-            ...
-
-    The *same* dataclass may be inherited by a suite's inner ``Options``
-    class, giving both ``otto test`` and ``otto run`` subcommands a
-    uniform set of repo-wide flags.
-
-    ON A ``ProjectActions`` METHOD (first parameter ``self``) this registers
-    nothing: it stamps a :class:`~otto.instructions.ProjectInstructionMark`
-    on the function and hands it back. ``register_project_actions`` reads the
-    marks when the class is attributed to its repo, and
-    ``otto.project.commands`` publishes one merged command per name once every
-    repo has spoken. The five walk-shape keywords (``walk``,
-    ``continue_on_failure``, ``require_dependencies``, ``combine_results``,
-    ``render``) are legal only there; only the ones passed explicitly are
-    recorded, so a later declaration inherits the first one's values.
-    """
-
-    def decorator(func: _Handler[P]) -> _Handler[P]:
-        # Checked on `func` itself, with no ``__wrapped__`` unwrap: unlike the
-        # group-callback guard in cli/invoke.wrap_leaf_callbacks, which sees a
-        # callback typer has already update_wrapper'd, this runs before typer
-        # touches anything, so `func` IS the user's function. Stricter than the
-        # bridge's own contract (which accepts anything RETURNING a coroutine)
-        # and deliberately so: a sync instruction already died at runtime the
-        # moment it used ctx or options=, since both _inject_ctx and
-        # _wrap_with_options `await func(...)`. This makes a partial, late,
-        # confusing failure into a total, early, explained one.
-        if not inspect.iscoroutinefunction(func):
-            raise TypeError(
-                f"instruction {getattr(func, '__name__', repr(func))!r} must be "
-                "`async def`: the leaf-invoke bridge detects the COROUTINE a leaf "
-                "returns, so a plain `def` registers and runs but never enters the "
-                "command lifecycle — hosts it opens are not swept, and SIGINT/SIGTERM "
-                "are not turned into a clean exit. A body with nothing to await is "
-                "still correct as `async def`; a wrapper around an async function "
-                "should itself be `async def` and await it."
-            )
-
-        shape = {
-            k: v
-            for k, v in [
-                ("walk", walk),
-                ("continue_on_failure", continue_on_failure),
-                ("require_dependencies", require_dependencies),
-                ("combine_results", combine_results),
-                ("render", render),
-            ]
-            if v is not None
-        }
-        func_name = getattr(func, "__name__", repr(func))
-        explicit_name = args[0] if args and isinstance(args[0], str) else kwargs.get("name")
-        cmd_name = explicit_name or typer.main.get_command_name(func_name)
-        if _declares_self(func):
-            if options is not None and not any(
-                hint is options for hint in get_type_hints(func, include_extras=True).values()
-            ):
-                raise TypeError(
-                    f"instruction {func_name!r} declares options={options.__name__} "
-                    f"but has no parameter annotated as {options.__name__}"
-                )
-            # An explicit help= wins over the docstring, and the six use it:
-            # a project instruction's METHOD docstring describes what ONE
-            # repo's body does, while the published command walks every repo,
-            # so the summary a user reads in `--help` is not the summary the
-            # body's author is writing. The docstring is left untouched -- it
-            # is still what a reader of the class sees.
-            doc = inspect.getdoc(func)
-            summary = kwargs.get("help") or (doc.splitlines()[0] if doc else None)
-            setattr(
-                func,
-                MARK_ATTR,
-                ProjectInstructionMark(
-                    name=cmd_name,
-                    options_cls=options,
-                    shape=shape,
-                    help=summary,
-                ),
-            )
-            return func
-        if shape:
-            raise TypeError(
-                f"instruction {func_name!r}: {', '.join(shape)} apply only to a "
-                "ProjectActions method (a project instruction), not to a standalone instruction"
-            )
-
-        # No self-wrapping: the registered async handler runs under the command
-        # lifecycle via the leaf-invoke wrapper's coroutine bridge
-        # (cli/invoke._wrap_invoke) when `otto run <name>` dispatches it.
-        #
-        # Prepared here without the verb: this is what the decorator hands
-        # back, and preparing is where a missing options parameter is refused
-        # -- at decoration, not at the first `otto run`.
-        target = prepare_command_target(func, options)
-
-        # A repo may not claim a first-party name. Overriding lab behavior
-        # happens in ProjectActions -- which `otto run install` AND an
-        # ensure("installed") marker both route through -- so shadowing the
-        # instruction would move only the CLI half and let the two answer
-        # differently. Refused BEFORE the register call below: otherwise the
-        # repo's entry lands first and the collision surfaces (if at all) as
-        # the registry's generic "already registered", which says nothing
-        # about where the override belongs.
-        #
-        # Keyed on the registering-repo marker, never on the name alone:
-        # otto's own registration runs outside any repo's init (bootstrap
-        # phase 2) and must pass whatever order the imports happen in.
-        #
-        # THIS GUARD COVERS THE DECORATOR AND NOTHING ELSE. A repo that builds
-        # an InstructionEntry and calls INSTRUCTIONS.register() itself never
-        # reaches this line. What stops it there is bootstrap's ORDER —
-        # otto.project.commands publishes every project instruction AFTER
-        # the repo loop, so the registry refuses whichever of the two lands
-        # second — with its generic "already registered", which is exactly the
-        # message this guard exists to improve on. The publish's own
-        # republish-only-my-own rule is what keeps that refusal, rather than
-        # overwriting the repo's entry.
-        #
-        # The guard now covers every project instruction, not only the
-        # original six: PROJECT_INSTRUCTIONS is populated by
-        # otto.project.actions at import (bootstrap imports it before any
-        # repo init), and FIRST_PARTY_INSTRUCTIONS keeps the guard honest in
-        # a process that never imported it.
-        repo_name = get_registering_repo()
-        if repo_name is not None and (
-            cmd_name in FIRST_PARTY_INSTRUCTIONS or cmd_name in PROJECT_INSTRUCTIONS
-        ):
-            raise ValueError(
-                f"repo {repo_name!r} defines instruction {cmd_name!r}, which is a "
-                "project instruction. Override lab behavior by declaring the method on a "
-                "ProjectActions subclass instead (see docs/cli/run/defaults.md), "
-                "or rename the instruction."
-            )
-
-        def make_app() -> typer.Typer:
-            # Built when `otto run` resolves the command, not now: the flags
-            # include every class registered for `run`, and a later init
-            # module may still register one. Resolving those classes can
-            # import their modules, which only `otto run` should pay for.
-            app = typer.Typer()
-            app.command(*args, **kwargs)(
-                prepare_command_target(func, options, verb="run", repo=repo_name)
-            )
-            return app
-
-        func_module = getattr(func, "__module__", "<unknown>")
-        INSTRUCTIONS.register(
-            cmd_name,
-            InstructionEntry(
-                name=cmd_name,
-                make_app=make_app,
-                module=func_module,
-                # The SAME marker the first-party-name guard above reads, and
-                # the only place `registered_by` is ever filled in: one read of
-                # the contextvar, so the name that refuses a collision and the
-                # name that owns the entry cannot disagree.
-                registered_by=repo_name,
-            ),
-            origin=func_module,
-        )
-        return target
-
-    return decorator

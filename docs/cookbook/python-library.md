@@ -155,6 +155,10 @@ This is exactly what `open_context` does under the hood. Use this form when
 you need fine-grained control — for instance, when a framework drives the
 event loop and you cannot use `async with` at the top level.
 
+To dispatch a registered instruction by name instead of importing and calling
+it directly, see "Calling an instruction by name" in
+{doc}`authoring/writing-instructions`.
+
 ## Host lifetimes
 
 There are three patterns for managing individual host connections inside an

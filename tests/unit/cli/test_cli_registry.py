@@ -191,6 +191,30 @@ def test_prepare_command_target_is_idempotent_by_contract():
     assert prepare_command_target(prepared) is prepared
 
 
+def test_prepare_command_target_refuses_a_verb_it_cannot_bind():
+    """Only ``run`` and the verb-less shape have a call-time binding.
+
+    Another verb's flags would be added to the signature and then never bound,
+    so the command is refused where it is built -- an already-prepared
+    callable too, which the idempotency short-circuit would otherwise hand
+    back unchanged.
+    """
+    from otto.cli.invoke import prepare_command_target
+    from otto.context import OttoContext
+
+    async def cmd(who: str = "x") -> None: ...
+
+    with pytest.raises(ValueError, match="no call-time binding for verb 'test'"):
+        prepare_command_target(cmd, verb="test")
+
+    async def with_ctx(ctx: OttoContext, who: str = "x") -> None: ...
+
+    prepared = prepare_command_target(with_ctx)
+    assert prepared is not with_ctx  # ctx injection wrapped it, so it carries the sentinel
+    with pytest.raises(ValueError, match="no call-time binding for verb 'test'"):
+        prepare_command_target(prepared, verb="test")
+
+
 def test_collision_is_loud_and_names_both_origins():
     register_cli_command("clash", typer.Typer(name="clash"))
     with pytest.raises(ValueError, match="already registered") as ei:

@@ -85,9 +85,13 @@ class TestOptionsSource:
     def test_validation_failure_names_the_field(self) -> None:
         from pydantic import Field
 
+        from otto.params import OptionsValidationError
+
         @options
         class Strict:
             retries: Annotated[int, typer.Option(help="r")] = Field(default=3, ge=0)
 
-        with pytest.raises(typer.BadParameter, match="retries"):
+        # The library's own error, not typer.BadParameter: OptionsSource.build
+        # is a library entrypoint, and the CLI translates it at its boundary.
+        with pytest.raises(OptionsValidationError, match="retries"):
             OptionsSource.from_kwargs({"retries": -1}).build(Strict)

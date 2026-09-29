@@ -32,10 +32,10 @@ import typer
 from repo1_common.options import RepoOptions
 
 from otto import options
-from otto.cli.run import instruction
 from otto.config.fleet import get_host
 from otto.context import get_context
 from otto.host import LocalHost
+from otto.instructions import instruction
 from otto.result import CommandResult
 from otto.utils import Status
 

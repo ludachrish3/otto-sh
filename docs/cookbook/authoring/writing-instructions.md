@@ -15,7 +15,7 @@ from typing import Annotated
 
 import typer
 
-from otto.cli.run import instruction
+from otto.instructions import instruction
 from otto.config import all_hosts
 
 logger = logging.getLogger(__name__)
@@ -126,7 +126,7 @@ or the next `otto test --cov`) still needs:
 
 ```python
 from otto import OttoContext
-from otto.cli.run import instruction
+from otto.instructions import instruction
 
 
 @instruction()
@@ -168,7 +168,7 @@ from typing import Annotated
 import typer
 
 from otto import options
-from otto.cli.run import instruction
+from otto.instructions import instruction
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +232,7 @@ registered class, and otto passes this invocation's instance in:
 ```python
 import logging
 
-from otto.cli.run import instruction
+from otto.instructions import instruction
 
 from acme_instructions import RepoOptions  # registered for ["run", "test"]
 
@@ -278,7 +278,7 @@ field — that import is what attributes the class to its repo:
 # pylib/widget_instructions/__init__.py  (listed in .otto/settings.toml [init])
 from pathlib import Path
 
-from otto.cli.run import instruction
+from otto.instructions import instruction
 from otto.project import InstallOptions, ProjectActions, register_project_actions
 from otto.result import Result
 from otto import Status
@@ -420,7 +420,7 @@ from typing import Annotated
 import typer
 
 from otto import Status, options
-from otto.cli.run import instruction
+from otto.instructions import instruction
 from otto.project import InstallOptions, ProjectActions, register_project_actions
 from otto.result import Result
 
@@ -584,6 +584,33 @@ console/tftp transfer path; see {doc}`../../cli/host/embedded`.
 and `DockerContainerHost`.  `EmbeddedHost` has no permission model -- a FAT or
 LittleFS device has no permission bits to set -- so passing `mode` to one
 fails before any bytes move rather than being silently ignored.
+```
+
+### Calling an instruction by name
+
+An `@instruction` function is an ordinary async function: call it directly
+with its own signature. To dispatch by name instead, with the same options
+binding `otto run` applies, use {func}`~otto.instructions.run_instruction`.
+For a standalone instruction, the list holds its own options instance and
+any registered `run` class you want to set; for a project instruction, it
+holds its bodies' own options instances and any registered `run` class.
+Either way, an omitted registered class takes its defaults, and the return
+value is the handler's -- nothing is printed and no exit code is derived.
+
+```python
+import asyncio
+
+import otto
+from acme_instructions.deploy import _DeployOpts
+from otto.instructions import run_instruction
+
+
+async def main():
+    async with otto.open_context(lab="bench") as ctx:
+        await run_instruction(ctx, "deploy", [_DeployOpts(debug=True)])
+
+
+asyncio.run(main())
 ```
 
 ## Log modes

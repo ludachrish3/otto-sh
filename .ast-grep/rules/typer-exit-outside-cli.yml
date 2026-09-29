@@ -7,7 +7,9 @@ note: >
   The last one — otto/suite/register.py's suite runner — now returns a
   CommandResult that the leaf-invoke renderer (cli/invoke.render_leaf_value)
   turns into the process exit code, so no suppression remains anywhere.
-  Do not add new ones.
+  Do not add new ones. thin-CLI series item 1 (2026-09-28) added
+  typer.BadParameter to the rule alongside typer.Exit: a library module that
+  raises it has the same CLI-coupling problem as one that exits directly.
 files:
 - src/otto/**
 ignores:
@@ -15,4 +17,6 @@ ignores:
 # examples/ are demonstration CLIs — typer.Exit is the point there, not a leak.
 - src/otto/examples/**
 rule:
-  pattern: typer.Exit($$$ARGS)
+  any:
+  - pattern: typer.Exit($$$ARGS)
+  - pattern: typer.BadParameter($$$ARGS)

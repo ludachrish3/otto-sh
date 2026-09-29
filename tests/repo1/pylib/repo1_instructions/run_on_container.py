@@ -20,8 +20,8 @@ from typing import Annotated
 import typer
 
 from otto import options
-from otto.cli.run import instruction
 from otto.config.fleet import get_host
+from otto.instructions import instruction
 from otto.result import CommandResult
 
 logger = logging.getLogger(__name__)

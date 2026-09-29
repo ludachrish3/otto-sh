@@ -1305,6 +1305,7 @@ def collect_current_commands() -> list[dict[str, Any]]:
     options can't be fully serialized is cached with ``options: []`` so
     the name still completes even though the per-option flags don't.
     """
+    from ..cli.run import build_instruction_app
     from ..instructions import INSTRUCTIONS
 
     log = logging.getLogger(__name__)
@@ -1313,7 +1314,7 @@ def collect_current_commands() -> list[dict[str, Any]]:
         # Building an instruction's app resolves the `run` verb's options
         # classes, which a rebuild pays for so that their flags complete.
         try:
-            app = entry.make_app()
+            app = build_instruction_app(entry)
         except OttoError as e:
             # A command that cannot be built (its flags clash with the
             # verb's) still completes by name; `otto run <name>` is where

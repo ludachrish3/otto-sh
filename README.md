@@ -115,7 +115,7 @@ lab's hosts and can accept their own CLI options via Typer annotations:
 import logging
 
 from otto import all_hosts
-from otto.cli.run import instruction
+from otto.instructions import instruction
 
 logger = logging.getLogger("otto")
 

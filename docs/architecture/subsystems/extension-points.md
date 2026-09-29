@@ -14,7 +14,7 @@ inside `otto test`'s pytest session, so they may register nothing
 
 | You want to add | Register with | Guide |
 | --- | --- | --- |
-| an `otto run` subcommand | {func}`@instruction() <otto.cli.run.instruction>` | {doc}`../../cli/run/index` |
+| an `otto run` subcommand | {func}`@instruction() <otto.instructions.instruction>` | {doc}`../../cli/run/index` |
 | flags on `otto run` and `otto test` | {func}`otto.register_options <otto.params.register_options>` / `@options(verbs=[...])` | {doc}`../../cookbook/authoring/options-classes` |
 | a top-level `otto` command | {func}`otto.register_cli_command <otto.cli.registry.register_cli_command>` / {func}`@otto.cli_command <otto.cli.registry.cli_command>` | {doc}`../../cookbook/extending/extending-cli` |
 | a CLI verb on a host class | `@cli_exposed` on the method | {doc}`../../cookbook/extending/cli-exposed-verbs` |
@@ -101,8 +101,8 @@ Each seam's user-facing how-to lives in the guide:
 
 ## Where the code lives
 
-- {mod}`otto.cli.run` — the `@instruction()` decorator behind an `otto run`
-  subcommand
+- {mod}`otto.instructions` — the `@instruction` decorator behind an `otto run`
+  subcommand, and the `INSTRUCTIONS` registry it fills
 - {mod}`otto.params` — `register_options` and `@options(verbs=[...])`, the
   options registry behind `otto run`'s and `otto test`'s verb-wide flags
 - {mod}`otto.cli.registry` — `register_cli_command` / `cli_command` for a

@@ -37,11 +37,40 @@
 # config<->suite is gone, and with it the `config -> suite` hop of the fifth
 # loop below. Not re-measured either.
 #
-# THOSE PAIRS ARE NOT THE WHOLE FORMATION — they account for only TWELVE of the
-# sixteen. The other four join through longer loops that contain no mutual pair
-# of their own:
+# 2026-09-29 (thin-CLI series item 1) RETIRED THE project -> cli -> suite ->
+# project LOOP: the `@instruction` decorator now lives in otto.instructions, so
+# project/actions.py no longer imports otto.cli, and otto.suite's note below
+# was rewritten to say so (the loop's own entry, further down this header, is
+# marked retired too). This also surfaced two edges the ratchet had missed:
+# otto.cli already reached otto.project directly (run.py's `_project_leaf`,
+# function-scope, since project instructions started registering data) without
+# a declared dependency, and otto.instructions now reaches otto.context,
+# otto.params and otto.project (also function-scope, in bind_handler_kwargs and
+# run_instruction).
 #
-#   project  -> cli -> suite -> project          (documented on otto.suite below)
+# RE-MEASURED with forbid_circular_dependencies: TWENTY modules are in the
+# component today — bootstrap, check, cli, config, context, coverage, creds,
+# docker, host, instructions, inventory, labs, lifecycle, link, models,
+# monitor, project, reservations, suite, tunnel. The SEVENTEEN quoted above
+# (2026-08-28) is not a baseline to diff against here: it was never run
+# through the flag, only arithmetic on the 2026-08-17 snapshot, as that
+# paragraph itself says. The last figure the flag actually produced was
+# SIXTEEN (2026-08-23, on otto.project below). The only member THIS series
+# added is otto.instructions, through its new function-scope cycle with
+# otto.project: otto.project already imported otto.instructions at module
+# scope, for the `@instruction` decorator, and otto.instructions now imports
+# otto.project back, inside run_instruction. otto.check and otto.creds are
+# new to a flag-measured RUN, not new to the component: both were already
+# reachable from inside it before today (through otto.cli and otto.inventory
+# respectively) — this is simply the first time the flag ran since they
+# joined.
+#
+# THOSE PAIRS ARE NOT THE WHOLE FORMATION — they accounted for only TWELVE of
+# the sixteen (2026-08-17 snapshot). The other four joined through longer
+# loops that contain no mutual pair of their own:
+#
+#   project  -> cli -> suite -> project     RETIRED 2026-09-29, thin-CLI item 1
+#                                            -- see otto.suite below
 #   coverage -> config -> cli -> coverage
 #   monitor  -> host -> config -> cli -> monitor
 #   tunnel   -> host -> config -> cli -> tunnel
@@ -49,8 +78,10 @@
 #
 # Every one of those closed through otto.cli until the project->link/tunnel
 # edges landed (2026-08-17, `otto run cleanup` resetting impairments and
-# reaping tunnels — see otto.project below). The last line is the one that does
-# not, and it is why the both-cuts figure below moved.
+# reaping tunnels — see otto.project below). The last line is the one that
+# does not, and it is why the both-cuts figure below moved. Of these four,
+# only the first is gone as of 2026-09-29; the other three are unaffected by
+# that change and still stand.
 #
 # FOUR OF THOSE PAIRS HAVE OWNERS, and are the ones the DEBT/NOTE comments in
 # this file track: cli<->config, config<->context, context<->host and
@@ -117,7 +148,14 @@ path = "otto.cli"
 # otto.kgcov: cov.py's `kgcov export`/`kgcov check` leaves call
 # export_tree()/check_tree() to vendor or compare the otto_kgcov library.
 # Function-local, same import-budget reason as otto.inventory above.
-depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kgcov", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check"]
+# otto.project: run.py's `_project_leaf` reaches `project.commands.body_origins`
+# and `project.orchestrator` to dispatch a project instruction. This edge
+# points DOWN — the CLI projects the project layer, same as it does every
+# other library package — so it is not the loop otto.project's own note
+# retires; tach's ratchet just never carried it (the edge is function-scope,
+# added when project instructions started registering data instead of a
+# make_app factory, and this file was not updated alongside).
+depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kgcov", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project"]
 
 [[modules]]
 path = "otto.config"
@@ -252,7 +290,11 @@ path = "otto.filesystem"
 
 [[modules]]
 path = "otto.instructions"
-depends_on = ["otto.registry", "otto.errors"]
+# otto.context, otto.params and otto.project are all function-scope, inside
+# bind_handler_kwargs (context, params) and run_instruction (context, params,
+# project): the decorator and the registries stay cheap to import, and only
+# calling an instruction pulls the binding machinery and the orchestrator in.
+depends_on = ["otto.registry", "otto.errors", "otto.context", "otto.params", "otto.project"]
 
 [[modules]]
 path = "otto.host"
@@ -425,23 +467,9 @@ path = "otto.project"
 # otto.project` must stay cheap, and a module-scope import of either would join
 # the config<->context and host<->context cycles.
 #
-# otto.cli is ONE FILE's edge and points UP, deliberately: project/actions.py
-# imports `@instruction` to mark the six first-party `otto run` verbs. They
-# are ordinary instructions, so they declare through the ordinary decorator --
-# the alternative (a second, CLI-side registration path for otto's own verbs)
-# would be a private seam nobody else can use, to avoid an edge that costs
-# little. It is not free, and this comment used to say it was: otto.cli does
-# not import otto.project DIRECTLY (bootstrap reaches this module by name,
-# through importlib), but the loop still closes one hop further out — project
-# -> cli -> suite -> project, because otto.cli imports otto.suite and the
-# suite's ensure_* fixtures import this package. It is not a RUNTIME circular
-# import (nothing in otto.suite imports otto.cli, and the fixture import is
-# inside the fixture body), which is why it survives; the retirement is the
-# same one the config<->cli DEBT edge needs — a home for instruction
-# registration that is not otto.cli. See otto.suite below, which carries the
-# other half of this note. Every OTHER module in the package stays CLI-free,
-# which is what lets a fixture or a suite call the orchestrator without
-# dragging typer in.
+# otto.cli: no edge. The `@instruction` decorator lives in otto.instructions
+# since the thin-CLI series (item 1, 2026-09-28); the loop project -> cli ->
+# suite -> project that used to close through it is gone.
 #
 # otto.link and otto.tunnel are `cleanup`'s last two steps and `is_clean`'s
 # last two questions (2026-08-17): a netem impairment and a tunnel belong to
@@ -485,7 +513,6 @@ depends_on = [
     "otto.host",
     "otto.config",
     "otto.context",
-    "otto.cli",
     "otto.link",
     "otto.tunnel",
     "otto.errors",
@@ -531,14 +558,7 @@ path = "otto.suite"
 # call the same function, so the CLI and the suites cannot diverge on what
 # "installed" means.
 #
-# It does complete a LOOP in this file's graph — otto.project -> otto.cli ->
-# otto.suite -> otto.project — the one loop in the header's inventory that is
-# not a mutually-importing pair, and the reason the header counts loops
-# separately from pairs. It is not a runtime cycle:
-# only project/actions.py reaches otto.cli (for the `@instruction`
-# decorator), and nothing in otto.suite imports it. Retiring it means giving
-# instruction registration a home that is not otto.cli, which is the same fix
-# the config<->cli DEBT edge needs and belongs with it, not here.
+# No loop: otto.project no longer imports otto.cli (thin-CLI item 1).
 depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.project"]
 
 [[modules]]

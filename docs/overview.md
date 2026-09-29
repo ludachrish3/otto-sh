@@ -122,7 +122,7 @@ otto combines them, later sources overriding earlier ones one element (or one
 ### Instructions (`otto run`)
 
 An **instruction** is an async function decorated with
-{func}`@instruction() <otto.cli.run.instruction>` that becomes a subcommand of
+{func}`@instruction() <otto.instructions.instruction>` that becomes a subcommand of
 `otto run`.  Instructions have full access to the lab's hosts and can accept
 their own CLI options via Typer annotations:
 
@@ -132,7 +132,7 @@ from typing import Annotated
 
 import typer
 
-from otto.cli.run import instruction
+from otto.instructions import instruction
 from otto.config import all_hosts
 
 logger = logging.getLogger(__name__)

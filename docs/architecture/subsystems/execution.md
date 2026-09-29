@@ -1,9 +1,10 @@
 # Instructions and tests — the execution pipeline
 
 `otto run` and `otto test` both dispatch ordinary Python. An instruction
-({func}`@instruction() <otto.cli.run.instruction>`) is a *procedure*: one
+({func}`@instruction() <otto.instructions.instruction>`) is a *procedure*: one
 async function with full lab access, one body, one outcome, published as a
-registry entry and a synthesized Typer subcommand. A test is a *verdict*:
+registry entry and synthesized into a Typer subcommand when `otto run`
+resolves it. A test is a *verdict*:
 plain pytest classes and functions, run by stock pytest with otto's plugins
 layered on, not a bespoke test framework. `otto test` is a single command
 that takes test names, not a group with a subcommand per class.
@@ -52,11 +53,11 @@ populated instance is reconstructed at call time
   class: pytest's options are one flat namespace, and a flag that only one
   test file reads is rare, while one that some tests ignore is harmless.
 
-`@instruction()` stores an entry in the `INSTRUCTIONS` registry
-({doc}`registries`) and builds a Typer sub-app around the function, so tab
-completion of instruction names and `--list-instructions` come for free, as
-for every other registry. Tests are not registered anywhere: pytest finds
-them.
+`@instruction()` stores a data entry in the `INSTRUCTIONS` registry
+({doc}`registries`), so tab completion of instruction names and
+`--list-instructions` come for free, as for every other registry.
+`otto run` builds the Typer command from it when it resolves the
+name. Tests are not registered anywhere: pytest finds them.
 
 ## Handing off to pytest
 
@@ -205,7 +206,7 @@ on the invocation's event loop, and its returned {class}`~otto.result.Result`
 artifacts belong in `get_context().output_dir` ({doc}`../../cli/run/index`).
 `otto test`'s body hands off to pytest, as above.
 
-The split is intent. Instructions ({func}`~otto.cli.run.instruction`) are
+The split is intent. Instructions ({func}`~otto.instructions.instruction`) are
 *procedures* (deploy, flash, collect) with one body and an exit code from
 their returned {class}`~otto.result.Result`. Tests are *verdicts*: many
 independent tests, pytest semantics, stability statistics, per-test
@@ -308,8 +309,11 @@ do:
 
 ## Where the code lives
 
-- {mod}`otto.cli.run` — the `@instruction` decorator, the `INSTRUCTIONS`
-  registry, and context injection
+- {mod}`otto.instructions` — the `@instruction` decorator, the `INSTRUCTIONS`
+  registry, `run_instruction` and the handler-binding rule
+- {mod}`otto.cli.run` — `build_instruction_app`: the Typer projection of an
+  entry, built when `otto run` resolves it; context injection lives in
+  {mod}`otto.cli.invoke`
 - {mod}`otto.params` — `@options`, `register_options`, the `OPTIONS`
   registry and the per-verb merge
 - `otto.suite` — `run_tests`, name resolution (`otto.suite.selection`),

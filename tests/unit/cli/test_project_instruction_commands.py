@@ -1,7 +1,7 @@
 """Published project-instruction commands: the merge, the dispatch, the panel.
 
 ``otto run install`` and its five siblings are no longer hand-written wrappers.
-:func:`otto.project.commands.publish_project_instructions` builds ONE command
+:func:`otto.project.commands.publish_project_instructions` publishes ONE command
 per name in :data:`~otto.instructions.PROJECT_INSTRUCTIONS`, whose flags are the
 union of every registered body's options class, and whose body forwards to
 :func:`otto.project.orchestrator.run_project_instruction`. This file covers the
@@ -29,6 +29,7 @@ run under the leaf-invoke bridge the root dispatch installs. ``--help`` and
 """
 
 import io
+import logging
 import re
 from typing import Annotated
 
@@ -38,8 +39,15 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 from otto import options
-from otto.cli.run import instruction, run_app
-from otto.instructions import FIRST_PARTY_INSTRUCTIONS, INSTRUCTIONS, PROJECT_INSTRUCTIONS
+from otto.cli.run import build_instruction_app, instruction, run_app
+from otto.config.lab import Lab
+from otto.context import OttoContext
+from otto.instructions import (
+    FIRST_PARTY_INSTRUCTIONS,
+    INSTRUCTIONS,
+    PROJECT_INSTRUCTIONS,
+    run_instruction,
+)
 from otto.params import OptionsCollisionError
 from otto.project import (
     Cleanliness,
@@ -77,6 +85,9 @@ runner = CliRunner()
 dispatch = DispatchRunner()
 
 
+async def _noop() -> None: ...
+
+
 def _clear_first_party() -> None:
     """Drop whatever first-party entries this process already holds."""
     for name in FIRST_PARTY_INSTRUCTIONS:
@@ -108,7 +119,7 @@ def _render(renderable) -> str:
 
 def _leaf(name: str):
     """The published command's callback for *name* -- what ``otto run <name>`` runs."""
-    (command,) = INSTRUCTIONS.get(name).make_app().registered_commands
+    (command,) = build_instruction_app(INSTRUCTIONS.get(name)).registered_commands
     return command.callback
 
 
@@ -1274,7 +1285,7 @@ class TestMergedFlags:
 
         from otto.config.completion_cache import _serialize_options
 
-        cmd = typer.main.get_command(INSTRUCTIONS.get("install").make_app())
+        cmd = typer.main.get_command(build_instruction_app(INSTRUCTIONS.get("install")))
         leaf = cmd.commands["install"] if hasattr(cmd, "commands") else cmd
         serialised = _serialize_options(leaf.callback, command_name="install")
 
@@ -1319,8 +1330,8 @@ class TestMergedFlags:
             "deploy",
             InstructionEntry(
                 name="deploy",
-                make_app=typer.Typer,
                 module=Widget.__module__,
+                handler=_noop,
                 registered_by="widget",
             ),
             origin=Widget.__module__,
@@ -1356,7 +1367,7 @@ class TestMergedFlags:
         INSTRUCTIONS.register(
             "install",
             InstructionEntry(
-                name="install", make_app=typer.Typer, module="repo.init", registered_by="repo"
+                name="install", module="repo.init", handler=_noop, registered_by="repo"
             ),
             origin="repo.init",
         )
@@ -1372,7 +1383,7 @@ class TestDryRunOnAPublishedProjectInstruction:
     """``otto -n run install ...`` -- the real published leaf, not a standalone double.
 
     Critical 1 from the first review: a project instruction's leaf
-    (``otto.project.commands._command_for``) is built on its OWN dispatch
+    (``otto.cli.run._project_leaf``) is built on its OWN dispatch
     path, never through ``otto.cli.invoke._wrap_with_options`` -- so it never
     carried the seam's dry-run marker, and `-n` stopped the WHOLE invocation
     at the generic seam before the leaf's own ``bind_verb_options`` call ever
@@ -1432,3 +1443,205 @@ class TestDryRunOnAPublishedProjectInstruction:
         assert "options:" in dry.output
         assert "Guard2: minimum=3" in dry.output
         assert rec.calls == [], "the dry run reached the orchestrator's install()"
+
+
+# ── A bad value in a BODY's own options class ────────────────────────────────
+
+
+class TestProjectInstructionOwnOptionValidation:
+    """A bad value in a project instruction BODY's own options class -- not a
+    verb-registered one -- fails the same way with or without ``-n``.
+
+    Regression: ``bind_verb_options`` only validates the classes registered
+    for the ``run`` verb; a body's own options class is built later, walked
+    per repo by ``orchestrator._run_bodies``/``project_instruction_body_options``.
+    Before this fix the leaf called the body-options walk only under ``--dry-run``,
+    so a bad value in a body's own class raised the untranslated
+    ``OptionsValidationError`` straight through to ``main``'s generic
+    ``OttoError`` boundary on a real run (exit 1), while the identical value
+    under ``--dry-run`` (which already walked every body to print it) exited
+    2 -- the same flag, two exit codes. The leaf now calls that walk
+    unconditionally, before ``run_project_instruction``, so both paths fail
+    identically before any body runs.
+    """
+
+    def _register_guarded_install(self) -> type:
+        """Give ``install`` a repo-owned body whose own class rejects ``minimum < 1``."""
+
+        @options
+        class GuardedInstall(InstallOptions):
+            minimum: int = 1
+
+            def __post_init__(self) -> None:
+                if self.minimum < 1:
+                    raise ValueError("minimum must be >= 1")
+
+        with registering_repo("guarded"):
+
+            @register_project_actions
+            class Guarded(ProjectActions):
+                @instruction(options=GuardedInstall)
+                async def install(self, opts: GuardedInstall):
+                    return await super().install(opts)
+
+        return GuardedInstall
+
+    def _wire_one_repo(self, monkeypatch) -> None:
+        """Make ``guarded`` a walked repo: undeclared, so it is always kept (§6).
+
+        ``project_scope=None``: :meth:`~otto.context.OttoContext.scopes` reads
+        it off every repo ``get_ordered_repos()`` returns
+        (:func:`otto.config.scope.resolve_scopes`), not only the one under
+        test, and ``None`` is the documented undeclared shape
+        (:func:`otto.config.scope._lab_applies`) -- the whole-lab fallback,
+        never a narrowing.
+        """
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(
+            "otto.config.get_ordered_repos",
+            lambda: [
+                SimpleNamespace(
+                    name="guarded", dependencies=[], project_scope=None, sut_dir="/tmp/guarded"
+                )
+            ],
+        )
+
+    def test_a_bad_own_option_exits_2_on_a_real_run(self, monkeypatch, registered) -> None:
+        self._register_guarded_install()
+        self._wire_one_repo(monkeypatch)
+        publish_project_instructions()
+
+        result = dispatch.invoke(run_app, ["install", "--minimum", "0"], async_leaves=True)
+        assert result.exit_code == 2, result.output
+        assert "minimum must be >= 1" in result.stderr
+
+    def test_the_same_bad_own_option_exits_2_under_dry_run(self, monkeypatch, registered) -> None:
+        from tests.conftest import active_context
+
+        self._register_guarded_install()
+        self._wire_one_repo(monkeypatch)
+        publish_project_instructions()
+
+        with active_context(dry_run=True):
+            result = dispatch.invoke(run_app, ["install", "--minimum", "0"], async_leaves=True)
+        assert result.exit_code == 2, result.output
+        assert "minimum must be >= 1" in result.stderr
+
+
+# ── One dispatch, one announcement per skipped repo ──────────────────────────
+
+
+def _wire_widget_lab(monkeypatch, seen: list, names=("widget", "dormant")) -> None:
+    """A lab of *names* whose ``widget`` repo carries a recording ``install`` body.
+
+    The body appends the context it ran under to *seen* and touches no host.
+    Every repo is undeclared (``project_scope=None``, the whole-lab fallback),
+    so a switch is the only thing that drops one: a test passes
+    ``exclude_projects=("dormant",)`` to make the walk announce a skip.
+    Needs the ``registered`` fixture first; this republishes over it.
+    """
+    from types import SimpleNamespace
+
+    from otto.context import try_get_context
+
+    with registering_repo("widget"):
+
+        @register_project_actions
+        class Widget(ProjectActions):
+            @instruction(options=InstallOptions)
+            async def install(self, opts: InstallOptions) -> Result:
+                seen.append(try_get_context())
+                return Result(Status.Success)
+
+    publish_project_instructions()
+    repos = [
+        SimpleNamespace(name=n, dependencies=[], project_scope=None, sut_dir=f"/tmp/{n}")
+        for n in names
+    ]
+    monkeypatch.setattr("otto.config.get_ordered_repos", lambda: repos)
+    monkeypatch.setattr("otto.config.get_repos", lambda: repos)
+
+
+def _install_skips(caplog) -> list[str]:
+    """Every captured line announcing a repo skipped for ``install``."""
+    return [r.getMessage() for r in caplog.records if "skipping it for install" in r.getMessage()]
+
+
+class TestTheOptionsWalkAnnouncesNothing:
+    """The body-options walk before a real run validates; the run's own walk speaks.
+
+    Both dispatch routes walk the bodies twice -- once to validate every
+    applicable body's own options before any runs, once to run them -- and
+    the warnings belong to the walk that acts. Announcing from both printed
+    every skipped repo twice.
+    """
+
+    def test_the_cli_leaf_announces_a_skipped_repo_once(
+        self, monkeypatch, registered, caplog
+    ) -> None:
+        from tests.conftest import active_context
+
+        seen: list = []
+        _wire_widget_lab(monkeypatch, seen)
+        with (
+            caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"),
+            active_context(exclude_projects=("dormant",)),
+        ):
+            result = dispatch.invoke(run_app, ["install"], async_leaves=True)
+
+        assert result.exit_code == 0, result.output
+        assert len(seen) == 1, "the widget body did not run exactly once"
+        assert len(_install_skips(caplog)) == 1, _install_skips(caplog)
+
+    def test_a_dry_run_still_announces_a_skipped_repo(
+        self, monkeypatch, registered, caplog
+    ) -> None:
+        """Under ``--dry-run`` the options walk is the only walk, so it speaks."""
+        from tests.conftest import active_context
+
+        seen: list = []
+        _wire_widget_lab(monkeypatch, seen)
+        with (
+            caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"),
+            active_context(exclude_projects=("dormant",), dry_run=True),
+        ):
+            result = dispatch.invoke(run_app, ["install"], async_leaves=True)
+
+        assert result.exit_code == 0, result.output
+        assert seen == [], "the dry run ran a body"
+        assert len(_install_skips(caplog)) == 1, _install_skips(caplog)
+
+    @pytest.mark.asyncio
+    async def test_run_instruction_announces_a_skipped_repo_once(
+        self, monkeypatch, registered, caplog
+    ) -> None:
+        seen: list = []
+        _wire_widget_lab(monkeypatch, seen)
+        ctx = OttoContext(lab=Lab(name="test"), exclude_projects=("dormant",))
+        with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
+            result = await run_instruction(ctx, "install")
+
+        assert result.is_ok
+        assert len(seen) == 1, "the widget body did not run exactly once"
+        assert len(_install_skips(caplog)) == 1, _install_skips(caplog)
+
+
+@pytest.mark.asyncio
+async def test_run_instruction_runs_a_first_party_body_through_the_real_orchestrator(
+    monkeypatch, registered
+) -> None:
+    """No orchestrator double: the published walk reaches the repo's body.
+
+    The body runs under the context ``run_instruction`` installed, which is
+    the one the caller passed -- the same ambient context ``otto run install``
+    gives it.
+    """
+    seen: list = []
+    _wire_widget_lab(monkeypatch, seen, names=("widget",))
+    ctx = OttoContext(lab=Lab(name="test"))
+
+    result = await run_instruction(ctx, "install")
+
+    assert result.is_ok
+    assert seen == [ctx]

@@ -346,10 +346,11 @@ class OttoContext:
 
         Each registered class is constructed with
         ``OptionsSource.from_kwargs(kwargs).build(cls)``, which raises
-        ``typer.BadParameter`` (not a pydantic ``ValidationError``) on a bad
-        value, so a validation failure is reported as a usage error before any
-        command body runs. Calling this a second time replaces the earlier
-        binding outright — nothing is merged across calls.
+        ``otto.params.OptionsValidationError`` (not a pydantic
+        ``ValidationError``) on a bad value; the CLI translates that to a
+        usage error at its boundary (``otto.cli.invoke.usage_error_from``)
+        before any command body runs. Calling this a second time replaces the
+        earlier binding outright — nothing is merged across calls.
         """
         from .params import OptionsSource, verb_option_classes
 

@@ -349,6 +349,11 @@ _EXTERNAL_DOC_LINKS = {
     # groups — see cli/invoke.py's RegistryBackedGroup / cli/expose.py's
     # HostGroup) documented on typer's own API reference page.
     "TyperGroup": "https://typer.tiangolo.com/reference/typer/#typer.core.TyperGroup",
+    # typer >= 0.26 vendors click as ``typer._click`` and ships no intersphinx
+    # inventory for it; ``typer.BadParameter`` is the vendored copy of
+    # click's class, and click's own API page is where it is documented. It
+    # is the return type of ``otto.cli.invoke.usage_error_from``.
+    "typer._click.exceptions.BadParameter": "https://click.palletsprojects.com/en/stable/api/#click.BadParameter",
     # typing_extensions.Self backport (used pre-3.11): intersphinx's python
     # inventory does carry typing.Self, but as a py:data object, while the
     # annotation is referenced via the py:class role (a TypeVar-like special

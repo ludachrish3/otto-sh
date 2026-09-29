@@ -246,7 +246,12 @@ def _skip_message(scope: "ProjectScope", verb: str) -> str:
 
 
 def _applicable(
-    ctx: "OttoContext", repos: "Iterable[Repo]", verb: str, *, require_dependencies: bool
+    ctx: "OttoContext",
+    repos: "Iterable[Repo]",
+    verb: str,
+    *,
+    require_dependencies: bool,
+    announce: bool = True,
 ) -> "list[Repo]":
     """Return the repos this run applies to, announcing every one it drops (D3's skip).
 
@@ -334,6 +339,10 @@ def _applicable(
             which is to say, whether it builds onto the lab. True only for
             ``install`` and ``install-tools``; see above for why a teardown or
             a read-only walk must not refuse.
+        announce: Whether to log the skips and dependency notes. False only
+            for a walk that precedes the one that acts (the body-options
+            validation before a real run), so each line is said once per
+            dispatch; the refusal still raises either way.
 
     Returns:
         The repos to walk, in the order they arrived.
@@ -357,6 +366,8 @@ def _applicable(
         # ``Repo.name``, which is how ``ctx.scopes`` is keyed. Two spellings,
         # two lookups, each with the one its own mapping uses.
         dropped[normalize_name(repo.name)] = repo
+        if not announce:
+            continue
         if switched_off(repo.name, ctx):
             logger.warning(
                 _literal(
@@ -375,7 +386,13 @@ def _applicable(
             if provider is None:
                 continue
             _announce_dropped_provider(
-                ctx, repo, provider, dep, verb, require_dependencies=require_dependencies
+                ctx,
+                repo,
+                provider,
+                dep,
+                verb,
+                require_dependencies=require_dependencies,
+                announce=announce,
             )
     return keep
 
@@ -388,6 +405,7 @@ def _announce_dropped_provider(
     verb: str,
     *,
     require_dependencies: bool,
+    announce: bool = True,
 ) -> None:
     """Say what a kept *repo* losing *provider* means -- or refuse the run over it.
 
@@ -408,6 +426,8 @@ def _announce_dropped_provider(
             reader knows which operation decided to carry on.
         require_dependencies: Whether this walk requires its dependencies --
             whether it builds onto the lab; only a build-up refuses.
+        announce: Whether to log the survivable arms; the refusal raises
+            regardless.
 
     Raises:
         InactiveRequiredDependencyError: *require_dependencies*, and *dep* is
@@ -417,6 +437,8 @@ def _announce_dropped_provider(
 
     by_switch = switched_off(provider.name, ctx)
     if dep.required and by_switch:
+        if not announce:
+            return
         logger.warning(
             _literal(
                 f"repo {repo.name!r} requires {provider.name!r}, which was "
@@ -429,6 +451,8 @@ def _announce_dropped_provider(
         scope = ctx.scopes[provider.name]
         labs = ", ".join(scope.loaded_labs) or "(none)"
         if not require_dependencies:
+            if not announce:
+                return
             logger.warning(
                 _literal(
                     f"repo {repo.name!r} requires {provider.name!r}, which is not "
@@ -447,6 +471,8 @@ def _announce_dropped_provider(
             f"Load a lab {provider.name} applies to, or pass "
             f"--exclude-projects={dep.normalized} to declare it handled externally."
         )
+    if not announce:
+        return
     reason = (
         f"switched off via --exclude-projects {dep.normalized}"
         if by_switch
@@ -545,13 +571,13 @@ def _source(opts: Any, default_cls: type) -> OptionsSource:
 
 
 def _walk_order(
-    name: str, ctx: "OttoContext", repos: "Iterable[Repo]"
+    name: str, ctx: "OttoContext", repos: "Iterable[Repo]", *, announce: bool = True
 ) -> "list[tuple[Repo, ProjectActions, ProjectInstructionBody]]":
     """Return the ordered (repo, actions, body) triples a walk of *name* visits.
 
     THE ONE WALK: :func:`_run_bodies` (a real run) and
-    :func:`project_instruction_dry_run_options` (a dry run's per-repo options
-    build) both resolve their repos through this -- same order (copied before
+    :func:`project_instruction_body_options` (the per-repo options build) both
+    resolve their repos through this -- same order (copied before
     ``spec.walk == "reverse"`` reverses it, since ``repos`` may be bootstrap's
     own list an in-place ``.reverse()`` would leave every later caller walking
     backwards), same applicability filter (:func:`_applicable`, so a repo no
@@ -563,7 +589,8 @@ def _walk_order(
     ``require_dependencies`` is threaded straight to :func:`_applicable` and is
     the ONE thing that can make this raise rather than return: a walk that
     requires its dependencies refuses a kept repo whose required provider the
-    labs dropped.
+    labs dropped. *announce* is threaded there too: False keeps a walk that
+    precedes the acting one from logging each skip a second time.
     """
     entry = PROJECT_INSTRUCTIONS.get(name)
     spec = entry.spec
@@ -571,7 +598,10 @@ def _walk_order(
     if spec.walk == "reverse":
         ordered.reverse()
     triples: "list[tuple[Repo, ProjectActions, ProjectInstructionBody]]" = []
-    for repo in _applicable(ctx, ordered, name, require_dependencies=spec.require_dependencies):
+    kept = _applicable(
+        ctx, ordered, name, require_dependencies=spec.require_dependencies, announce=announce
+    )
+    for repo in kept:
         actions = actions_for(repo, ctx)
         body = entry.body_for(type(actions))
         # Unreachable: every registered actions class descends from
@@ -647,8 +677,8 @@ async def _walk(
     return _combine(name, await _run_bodies(name, ctx, repos, source))
 
 
-def project_instruction_dry_run_options(
-    name: str, ctx: "OttoContext", kwargs: "dict[str, Any]"
+def project_instruction_body_options(
+    name: str, ctx: "OttoContext", kwargs: "dict[str, Any]", *, announce: bool = True
 ) -> "list[Any]":
     """Build every applicable repo's own options instance for *name*, in walk order.
 
@@ -657,14 +687,22 @@ def project_instruction_dry_run_options(
     repo), so a bad value raises the identical exception a real run's first
     applicable repo would raise, before any device is touched. Two repos that
     never overrode a body's own class share ONE class and so contribute ONE
-    instance, matching ``otto.cli.invoke._bind_and_build_own``'s
+    instance, matching ``otto.instructions.bind_handler_kwargs``'s
     own-class-once rule for a standalone instruction.
 
-    Called from the ``otto run <name>`` leaf (:mod:`otto.project.commands`)
-    under ``--dry-run``, BEFORE :func:`run_project_instruction` -- the six
+    Called on EVERY dispatch of a project instruction, before
+    :func:`run_project_instruction` -- from the ``otto run <name>`` leaf
+    (``otto.cli.run._project_leaf``) and from
+    :func:`otto.instructions.run_instruction` -- so a bad value in a body's
+    own options fails the same way whether or not a dry run was requested.
+    Under ``--dry-run`` the leaf also prints what this returns. The six
     first-party entry points (``install``, ...) build their own base options
     class again on the real path, but that class is one of the bodies walked
     here too, so this already validates it.
+
+    *announce* is False when a real run's walk follows, so each skipped repo
+    and dependency note is logged once, by the walk that acts; a dry run's
+    walk is the only one and announces.
 
     A body with no options class contributes nothing. Raises whatever
     ``_applicable`` raises for a build-shaped walk with an unmet, required,
@@ -676,7 +714,7 @@ def project_instruction_dry_run_options(
     source = OptionsSource.from_kwargs(kwargs)
     seen: set[type] = set()
     instances: list[Any] = []
-    for _repo, _actions, body in _walk_order(name, ctx, get_ordered_repos()):
+    for _repo, _actions, body in _walk_order(name, ctx, get_ordered_repos(), announce=announce):
         if body.options_cls is None or body.options_cls in seen:
             continue
         seen.add(body.options_cls)

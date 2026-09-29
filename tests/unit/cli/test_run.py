@@ -351,7 +351,8 @@ class TestInstructionOptions:
     def test_instruction_pydantic_options_reject_bad_value(self):
         """An @options instruction surfaces a validation failure as a clean CLI
         error (exit 2 + field name), via the same build_options helper the suite
-        path uses — confirming the instruction wiring catches typer.BadParameter.
+        path uses — confirming the instruction wiring translates
+        OptionsValidationError to a usage error (otto.cli.invoke.usage_error_from).
         """
         import pydantic
 
@@ -514,9 +515,20 @@ class TestInstructionOptions:
 # ── OttoContext injection ────────────────────────────────────────────────────
 
 
+def _built_callback(name: str):
+    """Return the callback ``otto run <name>`` is built with, from its registry entry."""
+    from otto.cli.run import build_instruction_app
+
+    (command,) = build_instruction_app(INSTRUCTIONS.get(name)).registered_commands
+    return command.callback
+
+
 class TestInstructionCtxInjection:
     """The ``ctx: OttoContext`` parameter is stripped from the CLI signature and
     injected at call time from the active context.
+
+    The decorator hands the handler back unchanged, so these read the command
+    ``otto run`` builds from the registered entry.
     """
 
     def test_instruction_ctx_param_excluded_from_signature(self):
@@ -529,7 +541,8 @@ class TestInstructionCtxInjection:
 
         import inspect
 
-        assert "ctx" not in inspect.signature(probe).parameters
+        assert INSTRUCTIONS.get("probe_ctx").handler is probe
+        assert "ctx" not in inspect.signature(_built_callback("probe_ctx")).parameters
 
     def test_instruction_ctx_and_options_compose(self):
         """An @instruction with both options= and ctx: OttoContext registers without
@@ -548,7 +561,10 @@ class TestInstructionCtxInjection:
         async def _ctx_opts_handler(ctx: OttoContext, opts: _CtxOpts) -> CommandResult:
             return CommandResult(Status.Success, value="", command="test", retcode=0)
 
-        sig = inspect.signature(_ctx_opts_handler)
+        entry = INSTRUCTIONS.get("_unit_test_ctx_opts_compose")
+        assert entry.handler is _ctx_opts_handler
+        assert entry.options_cls is _CtxOpts
+        sig = inspect.signature(_built_callback("_unit_test_ctx_opts_compose"))
         assert "ctx" not in sig.parameters
         assert "level" in sig.parameters
 
@@ -601,10 +617,11 @@ class TestInstructionSeamGuard:
     def _lane() -> "typer.Typer":
         """A stand-in for `run_app`: same group class, same async-leaf lane."""
         from otto.cli.invoke import make_registry_group
+        from otto.cli.run import build_instruction_app
         from otto.instructions import INSTRUCTIONS as REGISTRY
 
         app = typer.Typer(
-            name="run", cls=make_registry_group(REGISTRY, app_of=lambda entry: entry.make_app())
+            name="run", cls=make_registry_group(REGISTRY, app_of=build_instruction_app)
         )
 
         @app.callback()
@@ -627,6 +644,37 @@ class TestInstructionSeamGuard:
         result = self._dispatch(app, ["_seam_static"])
         assert isinstance(result.exception, TypeError), result.exception
         assert "'_seam_static'" in str(result.exception)
+
+    def test_a_sync_bridging_decorator_over_an_async_leaf_is_refused(self):
+        """A user's own sync-bridging decorator must not slip past the guard.
+
+        ``functools.wraps`` on a plain ``def`` that calls (but never awaits)
+        an async function underneath makes a FULL ``__wrapped__`` unwrap land
+        on that inner async function and wave the leaf through -- exactly the
+        silent bypass the guard exists to catch: the coroutine is dropped,
+        hosts are never swept, and the command exits 0. The guard checks the
+        function typer will actually call (one ``__wrapped__`` level, unless
+        otto's own wrapping said otherwise), so it must see the sync bridge
+        itself, not chase through to what it wraps.
+        """
+        import functools
+
+        app = self._lane()
+        ran: list[str] = []
+
+        async def _seam_bridged_inner() -> None:
+            ran.append("yes")  # pragma: no cover — the guard must fire first
+
+        @functools.wraps(_seam_bridged_inner)
+        def _seam_bridge(**kwargs):  # pragma: no cover — never invoked
+            _seam_bridged_inner(**kwargs)  # never awaited: drops the coroutine
+
+        app.command("_seam_bridge")(_seam_bridge)
+
+        result = self._dispatch(app, ["_seam_bridge"])
+        assert isinstance(result.exception, TypeError), result.exception
+        assert "'_seam_bridge'" in str(result.exception)
+        assert ran == []
 
     def test_a_sync_leaf_in_an_added_sub_group_is_refused(self):
         """`add_typer` is the group form of the bypass above.
@@ -651,15 +699,12 @@ class TestInstructionSeamGuard:
     def test_a_sync_entry_registered_directly_is_refused(self):
         from otto.instructions import INSTRUCTIONS as REGISTRY
 
-        sub = typer.Typer()
-
-        @sub.command("_seam_registered")
         def _seam_registered():  # pragma: no cover — never invoked
             pass
 
         REGISTRY.register(
             "_seam_registered",
-            InstructionEntry(name="_seam_registered", make_app=lambda: sub, module=__name__),
+            InstructionEntry(name="_seam_registered", handler=_seam_registered, module=__name__),
             origin=__name__,
         )
         try:

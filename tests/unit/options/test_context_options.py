@@ -3,10 +3,9 @@
 import contextlib
 
 import pytest
-import typer
 
 from otto import options
-from otto.params import OptionsNotAvailableError, register_options
+from otto.params import OptionsNotAvailableError, OptionsValidationError, register_options
 
 
 @options
@@ -48,8 +47,10 @@ def test_binding_builds_every_class_for_the_verb(ctx):
     assert ctx.options(Strict).level == 1
 
 
-def test_validation_fails_as_a_usage_error_before_anything_runs(ctx):
-    with pytest.raises(typer.BadParameter, match="level"):
+def test_validation_fails_before_anything_runs(ctx):
+    # The library's own error: bind_verb_options is a library entrypoint, and
+    # the CLI translates it to a usage error at its boundary.
+    with pytest.raises(OptionsValidationError, match="level"):
         ctx.bind_verb_options("test", {"level": 0})
 
 

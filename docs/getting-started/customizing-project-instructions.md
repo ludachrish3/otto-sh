@@ -80,7 +80,7 @@ from typing import Annotated
 import typer
 
 from otto import Status, options
-from otto.cli.run import instruction
+from otto.instructions import instruction
 from otto.project import ProjectActions, register_project_actions
 from otto.result import Result
 

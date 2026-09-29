@@ -69,11 +69,14 @@ def _wide_console(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("COLUMNS", "300")
 
 
+async def _noop() -> None: ...
+
+
 def _install_entry(name: str, registered_by: "str | None") -> None:
     """Register *name* owned by *registered_by* (``None`` = first-party)."""
     INSTRUCTIONS.register(
         name,
-        InstructionEntry(name=name, make_app=typer.Typer, module="m", registered_by=registered_by),
+        InstructionEntry(name=name, handler=_noop, module="m", registered_by=registered_by),
         origin="m",
     )
 
@@ -232,7 +235,7 @@ class TestRegisteredBy:
         first-party treatment. Conservative on purpose: nothing new is ever
         refused by omission.
         """
-        entry = InstructionEntry(name="hand", make_app=typer.Typer, module="m")
+        entry = InstructionEntry(name="hand", handler=_noop, module="m")
         assert entry.registered_by is None
 
     def test_a_registration_here_does_not_leak(self) -> None:
@@ -307,7 +310,7 @@ class TestRefusal:
             "install",
             InstructionEntry(
                 name="install",
-                make_app=typer.Typer,
+                handler=_noop,
                 module="otto.project.actions",
                 registered_by=None,
             ),

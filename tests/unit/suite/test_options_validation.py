@@ -45,23 +45,37 @@ def test_build_options_valid_input_constructs_instance():
     assert build_options(_Opts, {"count": 3}).count == 3
 
 
-def test_build_options_invalid_input_raises_bad_parameter():
+def test_build_options_invalid_input_raises_options_validation_error():
     import pydantic
     import pytest
-    import typer
 
     from otto import options
-    from otto.params import build_options
+    from otto.params import OptionsValidationError, build_options
 
-    # typer.BadParameter (not click's) so Typer 0.26's vendored handler catches it.
     @options
     class _Opts:
         count: int = pydantic.Field(default=1, gt=0)
 
-    with pytest.raises(typer.BadParameter) as exc:
+    with pytest.raises(OptionsValidationError, match="count"):
         build_options(_Opts, {"count": -1})
-    # The pydantic message (field + reason) is surfaced, not a raw traceback.
-    assert "count" in str(exc.value)
+
+
+def test_build_options_raises_the_library_error():
+    import pytest
+
+    from otto import options
+    from otto.errors import OttoError
+    from otto.params import OptionsValidationError, build_options
+
+    @options
+    class _O:
+        n: int = 0
+
+    with pytest.raises(OptionsValidationError, match="n: Input should be a valid integer") as info:
+        build_options(_O, {"n": "x"})
+    assert isinstance(info.value, OttoError)
+    assert isinstance(info.value, ValueError)
+    assert "typer" not in type(info.value).__module__
 
 
 def test_build_options_plain_dataclass_unaffected():

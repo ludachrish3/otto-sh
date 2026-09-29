@@ -23,6 +23,7 @@ from typing_extensions import override
 from ..errors import OttoError
 from ..params import (
     OptionsOrigin,
+    OptionsValidationError,
     build_options,
     drop_unset_secrets,
     merge_option_params,
@@ -76,44 +77,72 @@ def _inject_ctx(func: Callable[..., Any], ctx_name: str) -> Callable[..., Any]:
     return wrapper
 
 
+def usage_error_from(exc: OptionsValidationError) -> typer.BadParameter:
+    """Translate a library options failure into click's exit-2 usage error.
+
+    The one place this translation happens.
+
+    ``typer.BadParameter``, not ``click.BadParameter``: typer >= 0.26 vendors
+    click, and only its own class is caught by its exception handling.
+    """
+    return typer.BadParameter(str(exc))
+
+
 def _bind_and_build_own(
     kw: "dict[str, Any]",
     *,
     opts_cls: "type[DataclassInstance] | None",
-    verb: str | None,
     own_field_names: "set[str]",
-    verb_field_names: "set[str]",
-    registered: "set[type]",
 ) -> Any:
-    """Split *kw*, bind the verb's options on the context, build the own class.
+    """Build a verb-less command's own options instance from *kw* alone.
 
-    The ONE place this split/bind/build happens — the leaf wrapper's real
-    dispatch and its own dry-run branch (``finish_dry_run``, called from the
-    SAME wrapper once this returns) both use it, so a bad value fails a dry
-    run exactly as it fails a real run (the same
-    ``typer.BadParameter`` from :func:`build_options`), and the own instance
-    handed back is the SAME OBJECT :meth:`~otto.context.OttoContext.options`
-    reads back afterward when the own class doubles as a registered verb
-    class (``opts_cls in registered``) — one construction, not two.
+    The verb-less binding: a command prepared without a verb (``@cli_command``
+    and ``resolve_spec_command``'s function loaders) has only its own class,
+    so there is nothing to bind on the context and no registered class to
+    inject. The ``run`` verb goes through
+    :func:`otto.instructions.bind_handler_kwargs` instead (see
+    :func:`_bind_run_leaf`). The leaf wrapper's real dispatch and its own
+    dry-run branch (``finish_dry_run``, called from the SAME wrapper once this
+    returns) both use the instance built here, so a bad value fails a dry run
+    exactly as it fails a real run: the same
+    :class:`~otto.params.OptionsValidationError` from :func:`build_options`,
+    which the caller translates to a usage error via :func:`usage_error_from`
+    at the CLI boundary.
 
-    *kw* may hold more keys than the two field sets need (a leaf's other
-    parameters, or extra keys a caller's dict happens to carry); anything
-    outside *own_field_names* / *verb_field_names* is ignored. Returns
-    ``None`` when *opts_cls* is ``None`` (a verb-only leaf with no own class).
+    *kw* may hold more keys than the own class needs (the command's other
+    parameters); anything outside *own_field_names* is ignored. An unset
+    secret field is dropped so its default applies. Returns ``None`` when
+    *opts_cls* is ``None``.
     """
-    from ..context import get_context
-
-    opts_kw = {k: v for k, v in kw.items() if k in own_field_names}
-    verb_kw = {k: v for k, v in kw.items() if k in verb_field_names}
-    if verb is not None:
-        get_context().bind_verb_options(verb, {**opts_kw, **verb_kw})
     if opts_cls is None:
         return None
-    return (
-        get_context().options(opts_cls)
-        if any(opts_cls is cls for cls in registered)
-        else build_options(opts_cls, drop_unset_secrets(opts_cls, opts_kw))
+    opts_kw = {k: v for k, v in kw.items() if k in own_field_names}
+    return build_options(opts_cls, drop_unset_secrets(opts_cls, opts_kw))
+
+
+def _bind_run_leaf(
+    func: Callable[..., Any], opts_cls: "type[DataclassInstance] | None", kw: "dict[str, Any]"
+) -> "dict[str, Any]":
+    """Bind an ``otto run`` leaf's parsed flags into *func*'s keyword arguments.
+
+    Through :func:`otto.instructions.bind_handler_kwargs`, the rule
+    :func:`otto.instructions.run_instruction` uses too, so ``otto run <name>``
+    and a library call cannot bind an instruction's arguments differently. A
+    bad value becomes a usage error.
+    """
+    from ..context import get_context
+    from ..instructions import InstructionEntry, bind_handler_kwargs
+
+    entry = InstructionEntry(
+        name=getattr(func, "__name__", repr(func)),
+        module=func.__module__,
+        handler=func,
+        options_cls=opts_cls,
     )
+    try:
+        return bind_handler_kwargs(get_context(), entry, kw)
+    except OptionsValidationError as e:
+        raise usage_error_from(e) from e
 
 
 def _wrap_with_options(
@@ -129,16 +158,19 @@ def _wrap_with_options(
     and at call time the populated instance is forwarded to *func* in the
     position of the parameter annotated with it.
 
-    With *verb*, the command also takes the flags of every options class
+    With *verb* (``"run"``, the only verb :func:`prepare_command_target`
+    admits), the command also takes the flags of every options class
     registered for that verb, merged with the own class by declaring class: a
     field the own class inherits from a registered base is one flag, and the
     same name introduced by two unrelated classes raises
     ``OptionsCollisionError`` here, when the command is built. At call time
-    the own and verb values together are bound on the active context
-    (``OttoContext.bind_verb_options``), so an inherited base field set
-    through the own class reaches the registered base too, and every
-    parameter annotated with a registered class receives ``ctx.options(cls)``.
-    *repo* owns the own class, and is who a collision message names for it.
+    the ``run`` verb delegates to
+    :func:`otto.instructions.bind_handler_kwargs` through
+    :func:`_bind_run_leaf`, which binds the parsed values on the active
+    context and injects ``ctx.options(cls)`` into every parameter annotated
+    with a registered class; a verb-less command builds its own class alone
+    through :func:`_bind_and_build_own`. *repo* owns the own class, and is
+    who a collision message names for it.
     """
     from ..context import get_context
 
@@ -195,7 +227,6 @@ def _wrap_with_options(
             own_origin + verb_origins, what=f"otto {verb} {func_name}", reserved=reserved
         )
         verb_params = [p for p in merged if p.name not in own_field_names]
-    verb_field_names = {p.name for p in verb_params}
 
     # Build new parameter list: replace the opts param with expanded fields,
     # drop the injected ones, and append the verb's fields. No hidden click
@@ -217,23 +248,22 @@ def _wrap_with_options(
 
     @functools.wraps(func)
     async def wrapper(**kw: Any) -> Any:
-        own_instance = _bind_and_build_own(
-            kw,
-            opts_cls=opts_cls,
-            verb=verb,
-            own_field_names=own_field_names,
-            verb_field_names=verb_field_names,
-            registered=registered,
-        )
-        for name in own_field_names | verb_field_names:
-            kw.pop(name, None)
         ctx = get_context() if verb is not None else None
-        if ctx is not None:
-            for name, cls in injected.items():
-                kw[name] = ctx.options(cls)
-        if opts_cls is not None and opts_param_name is not None:
-            kw[opts_param_name] = own_instance
-        # Validation is already DONE by this point (the two blocks above),
+        if verb == "run":
+            kw = _bind_run_leaf(func, opts_cls, kw)
+            own_instance = kw.get(opts_param_name) if opts_param_name else None
+        else:
+            try:
+                own_instance = _bind_and_build_own(
+                    kw, opts_cls=opts_cls, own_field_names=own_field_names
+                )
+            except OptionsValidationError as e:
+                raise usage_error_from(e) from e
+            for name in own_field_names:
+                kw.pop(name, None)
+            if opts_cls is not None and opts_param_name is not None:
+                kw[opts_param_name] = own_instance
+        # Validation is already DONE by this point (either branch above),
         # exactly as it is on a real run -- so a dry run's `finish_dry_run`
         # never has to re-validate anything, only report what was just built.
         # `click_ctx` is `None` for a call that never went through the CLI at
@@ -290,7 +320,10 @@ def prepare_command_target(
     registered for that verb, the parsed values are bound on the active
     context before *func* runs, and a parameter annotated with a registered
     class is injected with ``ctx.options(cls)`` (see ``_wrap_with_options``).
-    The verb's classes are resolved HERE, which may import their modules, so
+    *verb* is ``None`` or ``"run"``, the two shapes with a call-time binding:
+    any other raises :exc:`ValueError`, checked before the idempotency
+    short-circuit below so an already-prepared callable is refused too. The
+    verb's classes are resolved HERE, which may import their modules, so
     a caller passes *verb* only where the command is being built for that
     verb's own dispatch. *repo* is the repo that registered *func* (``None``
     for otto), named for *options_cls* when one of its fields collides.
@@ -302,7 +335,24 @@ def prepare_command_target(
     function loader and can't know one was pre-prepared. Without the sentinel
     that was safe only because ``_inject_ctx`` happens to strip the ctx
     annotation that triggers it.
+
+    A wrapped target also carries ``__otto_handler__`` pointing at *func*
+    itself (typer's own ``__dict__``-copying wrap carries it onto the click
+    callback too — see ``_require_async_leaf``), so the async-leaf guard can
+    always find the real registered handler beneath otto's own wrapping
+    without having to walk (and so trust) a ``__wrapped__`` chain a user's
+    decorator might also have contributed to.
+
+    Raises:
+        ValueError: *verb* is neither ``None`` nor ``"run"``.
     """
+    if verb not in (None, "run"):
+        # The call-time binding exists for exactly these two shapes: `run`
+        # binds through `bind_handler_kwargs`, and a verb-less command builds
+        # its own class alone. Another verb's flags would be expanded and
+        # then never bound.
+        func_name = getattr(func, "__name__", repr(func))
+        raise ValueError(f"command {func_name!r}: no call-time binding for verb {verb!r}")
     if getattr(func, "__otto_cli_prepared__", False):
         return func
     ctx_name = _ctx_param_name(func)
@@ -316,6 +366,7 @@ def prepare_command_target(
         target = _wrap_with_options(target, own_cls, verb=verb, repo=repo)
     if target is not func:
         target.__otto_cli_prepared__ = True  # ty: ignore[unresolved-attribute]
+        target.__otto_handler__ = func  # ty: ignore[unresolved-attribute]
     return target
 
 
@@ -1332,7 +1383,7 @@ SENSITIVE_FIELDS_ATTR = "__otto_sensitive_fields__"
 """Per-leaf set of option field names whose VALUE the ``would run:`` line must mask.
 
 A ``frozenset[str]``, stamped by ``_wrap_with_options`` (and by
-``otto.project.commands``) from ``otto.params.sensitive_field_names`` over every
+``otto.cli.run._project_leaf``) from ``otto.params.sensitive_field_names`` over every
 options class contributing flags to the command. Read by ``_param_words``
 so the generic argv echo -- which knows nothing about options classes, only
 raw click parameters -- can still print ``<hidden>`` for a
@@ -1344,8 +1395,8 @@ DRY_RUN_SELF_FINISHING_ATTR = "__otto_dry_run_self_finishing__"
 """Per-leaf marker that a leaf validates its own options and finishes its own dry run.
 
 Stamped ``True`` by ``_wrap_with_options`` on every leaf its ``options=``/verb
-machinery builds (:func:`prepare_command_target`), and by
-``otto.project.commands``'s project-instruction leaf. Read by
+machinery builds (:func:`prepare_command_target`), and by the
+project-instruction leaf ``otto.cli.run._project_leaf`` builds. Read by
 :func:`stop_at_dry_run_seam`, which returns immediately for such a leaf --
 no probe, no reference resolution, no print -- because the leaf's own body
 does all three itself, via :func:`finish_dry_run`, AFTER it has bound and
@@ -1748,7 +1799,7 @@ async def finish_dry_run(
     directly once it has bound and built *options* from the real,
     typer-converted kwargs — so a bad value has already raised the identical
     ``typer.BadParameter`` a real run gives, before this is ever reached), and
-    a project instruction's own leaf (``otto.project.commands``, likewise
+    a project instruction's own leaf (``otto.cli.run._project_leaf``, likewise
     awaited after its own build). ``stop_at_dry_run_seam`` — the third dry-run
     stop, reached before any leaf coroutine exists — does not call this at
     all; it runs its own probe step synchronously and calls
@@ -1990,13 +2041,37 @@ def _require_async_leaf(cmd: Any, spec: "CommandSpec") -> None:
     cache serves. Invocation happens on exactly one path, reaches every leaf
     however it was registered, and cannot fire on a read-only one.
 
-    One ``__wrapped__`` level, matching the group-callback guard: that is the
-    function typer will actually call.
+    Checks ``__otto_handler__`` before falling back to one ``__wrapped__``
+    level, and deliberately does NOT walk the whole ``__wrapped__`` chain --
+    that chain can include a user's own decorator, and a full unwrap cannot
+    tell "otto's own wrapping, safe to see through" from "a user's sync
+    bridging shim around an async leaf, the exact silent bypass this guard
+    exists to catch" (that shim's ``def w(**k): fn(**k)`` never awaits
+    ``fn(**k)``'s coroutine, so a full unwrap that reached the inner ``fn``
+    would call the leaf async, wave the guard through, and still drop the
+    coroutine on the floor). A data ``InstructionEntry`` now always passes
+    through ``build_instruction_app`` -> ``prepare_command_target(verb="run")``,
+    which wraps every handler -- sync or async -- in its own ``async def``
+    options-binding wrapper before typer wraps THAT again into the click
+    callback, so a plain one-level unwrap would land on that (already-async)
+    wrapper regardless of what the registered handler underneath it was.
+    ``prepare_command_target`` closes exactly that gap by stamping
+    ``__otto_handler__`` on its wrapped target -- a marker only OTTO'S OWN
+    wrapping ever sets, so trusting it (when present) skips straight to the
+    real handler without trusting anything a user's decorator wrote into the
+    chain. One ``__wrapped__`` level remains the fallback for everything
+    else (a directly-typer-registered leaf, an ``add_typer`` sub-group, or a
+    user's own decorator with no ``__otto_handler__`` to shadow it), matching
+    the group-callback guard below, which stays one level for the same
+    reason and never needs the marker (a group callback never passes through
+    ``_wrap_with_options``).
     """
     callback = getattr(cmd, "callback", None)
     if callback is None:
         return
-    if inspect.iscoroutinefunction(getattr(callback, "__wrapped__", callback)):
+    handler = getattr(callback, "__otto_handler__", None)
+    checked = handler if handler is not None else getattr(callback, "__wrapped__", callback)
+    if inspect.iscoroutinefunction(checked):
         return
     raise TypeError(
         f"{spec.name} command {getattr(cmd, 'name', '?')!r} is a plain `def`: only a "
@@ -2141,7 +2216,7 @@ def make_registry_group(
 
     Children (instruction sub-apps) convert lazily on first access.
     *app_of* returns an entry's Typer app: an instruction BUILDS its app then
-    (``InstructionEntry.make_app``), so building it is where a clash between
+    (``otto.cli.run.build_instruction_app``), so building it is where a clash between
     its flags and the ``run`` verb's is found, or a ``run`` options class that
     fails to import. ``get_command`` lets that ``OttoError`` propagate, so a
     reader that walks every child (the completion tree) can contain it and keep

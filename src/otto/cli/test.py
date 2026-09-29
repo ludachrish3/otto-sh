@@ -800,14 +800,19 @@ def _run(
         return
 
     from ..context import get_context
-    from ..params import verb_option_classes
-    from .invoke import dry_run_requested
+    from ..params import OptionsValidationError, verb_option_classes
+    from .invoke import dry_run_requested, usage_error_from
 
     run_options = _prepare_run_options(**run_kwargs, dry_run=dry_run_requested(ctx))
     otto_ctx = get_context()
-    # A bad value is a usage error (exit 2) here, before anything is collected.
-    otto_ctx.bind_verb_options("test", verb_kwargs)
-    instances = [otto_ctx.options(origin.cls) for origin in verb_option_classes("test")]
+    # A bad value is a usage error (exit 2) here, before anything is collected:
+    # bind_verb_options raises the library's OptionsValidationError, translated
+    # to typer's usage error at this CLI boundary.
+    try:
+        otto_ctx.bind_verb_options("test", verb_kwargs)
+        instances = [otto_ctx.options(origin.cls) for origin in verb_option_classes("test")]
+    except OptionsValidationError as e:
+        raise usage_error_from(e) from e
 
     if dry_run_requested(ctx):
         from .invoke import print_preview_dry_run

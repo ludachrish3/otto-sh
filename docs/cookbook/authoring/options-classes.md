@@ -257,7 +257,7 @@ from typing import Annotated
 
 import typer
 import otto
-from otto.cli.run import instruction
+from otto.instructions import instruction
 
 from acme_instructions import RepoOptions  # registered for ["run", "test"]
 

@@ -89,6 +89,7 @@ from otto.params import (
     OptionsCollisionError,
     OptionsNotAvailableError,
     OptionsRegistrationError,
+    OptionsValidationError,
 )
 from otto.project.orchestrator import InactiveRequiredDependencyError
 from otto.registry import RegistrationRefused
@@ -111,6 +112,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (ProjectInstructionError, Exception),
     (OptionsCollisionError, Exception),
     (OptionsRegistrationError, ValueError),
+    (OptionsValidationError, ValueError),
     (OptionsNotAvailableError, LookupError),
     (EmptySelectionError, ValueError),
     (BackendUnavailableError, RuntimeError),

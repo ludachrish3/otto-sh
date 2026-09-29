@@ -54,6 +54,9 @@ class Widget(Base):
     async def provision(self, opts): ...
 
 
+async def _noop() -> None: ...
+
+
 def _mark(name="provision", options_cls=InstallOptions, **shape):
     return ProjectInstructionMark(name=name, options_cls=options_cls, shape=shape, help="h")
 
@@ -141,9 +144,7 @@ class TestStandaloneConflict:
     def test_a_name_already_taken_by_a_standalone_instruction_is_refused(self) -> None:
         INSTRUCTIONS.register(
             "deploy",
-            InstructionEntry(
-                name="deploy", make_app=typer.Typer, module="repo_a.init", registered_by="a"
-            ),
+            InstructionEntry(name="deploy", handler=_noop, module="repo_a.init", registered_by="a"),
             origin="repo_a.init",
         )
         with pytest.raises(ProjectInstructionError, match=r"'b'.*'deploy'.*standalone.*'a'"):
@@ -155,7 +156,7 @@ class TestStandaloneConflict:
             "provision",
             InstructionEntry(
                 name="provision",
-                make_app=typer.Typer,
+                handler=_noop,
                 module="dummy.module",
                 registered_by="dummy",
             ),
@@ -166,3 +167,14 @@ class TestStandaloneConflict:
         )
         entry = PROJECT_INSTRUCTIONS.get("provision")
         assert [b.repo for b in entry.bodies] == [None, "widget"]
+
+
+def test_publish_registers_a_data_entry():
+    from otto.project import commands
+
+    _first_party()
+    commands.publish_project_instructions()
+    entry = INSTRUCTIONS.get("provision")
+    assert entry.project is PROJECT_INSTRUCTIONS.get("provision")
+    assert entry.handler is None
+    assert entry.registered_by is None

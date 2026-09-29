@@ -221,6 +221,7 @@ def test_registering_and_publishing_resolve_no_run_class():
     publishes instructions too. The unimportable target makes a resolution
     visible: decorating and publishing survive it, building the app does not.
     """
+    from otto.cli.run import build_instruction_app
     from otto.instructions import INSTRUCTIONS
 
     register_options("tests_unit_cli_absent_verb_options:Missing", verbs=["run"])
@@ -232,7 +233,7 @@ def test_registering_and_publishing_resolve_no_run_class():
 
     for name in ["later", "install"]:
         with pytest.raises(OptionsRegistrationError) as excinfo:
-            INSTRUCTIONS.get(name).make_app()
+            build_instruction_app(INSTRUCTIONS.get(name))
         assert isinstance(excinfo.value.__cause__, ModuleNotFoundError)
 
 
@@ -833,6 +834,19 @@ class TestDryRunBuildsAndShowsOptions:
         assert "hunter2" not in out
 
 
+def _built_callback(name: str):
+    """Return the callback ``otto run <name>`` is built with, from its registry entry.
+
+    The decorator hands the handler back unchanged; the wrapper these tests
+    read is the one ``build_instruction_app`` prepares.
+    """
+    from otto.cli.run import build_instruction_app
+    from otto.instructions import INSTRUCTIONS
+
+    (command,) = build_instruction_app(INSTRUCTIONS.get(name)).registered_commands
+    return command.callback
+
+
 class TestNoHiddenClickContextParameter:
     """Task 4b fix round 2, item 3: no ``__otto_click_ctx__`` on the public signature."""
 
@@ -847,11 +861,11 @@ class TestNoHiddenClickContextParameter:
         @instruction(options=P)
         async def posi(opts: P) -> None: ...
 
-        sig = inspect.signature(posi)
+        sig = inspect.signature(_built_callback("posi"))
         assert list(sig.parameters) == ["n"], sig
 
     def test_a_direct_call_bypassing_the_cli_still_works(self) -> None:
-        """``await posi(n=3)`` -- no click Context, no CLI dispatch -- just runs.
+        """The built wrapper called as ``(n=3)`` -- no click Context, no CLI dispatch -- runs.
 
         The old hidden ``__otto_click_ctx__`` keyword-only parameter made a
         direct call like this raise ``TypeError: missing 1 required keyword-only
@@ -871,5 +885,5 @@ class TestNoHiddenClickContextParameter:
         async def posi2(opts: P2) -> None:
             ran.append(opts.n)
 
-        asyncio.run(posi2(n=3))
+        asyncio.run(_built_callback("posi2")(n=3))
         assert ran == [3]
