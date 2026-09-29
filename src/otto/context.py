@@ -1,7 +1,7 @@
 """otto's per-invocation runtime composition root.
 
-Owns the active Lab, the per-invocation runtime flags, and the host lifecycle
-scope. Propagated via a ContextVar so the bare module accessors
+Owns the active Lab, the per-invocation runtime flags, and one host scope per
+event loop. Propagated via a ContextVar so the bare module accessors
 (otto.config.all_hosts/get_host) can stay zero-argument, while explicit
 passing (OttoContext methods, open_context) is first-class.
 """
@@ -11,20 +11,22 @@ import functools
 import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-from typing_extensions import Self
-
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from _typeshed import DataclassInstance
 
     from .config.lab import Lab
     from .config.scope import ProjectScope
     from .host import Results, UnixHost
+    from .host.host import BaseHost
     from .host.remote_host import RemoteHost
+    from .params import OptionsSource
 
 T = TypeVar("T")
 
@@ -35,8 +37,8 @@ LIBRARY_LAB_NAME = "<library>"
 gets for free.
 
 ``otto.suite.run._session_context`` installs ``OttoContext(lab=Lab(name=LIBRARY_LAB_NAME))``
-around a session when no context is already active (e.g. ``run_suite()``/
-``run_selection()`` called outside ``async with otto.open_context(...)``). That
+around a session when no context is already active (e.g. ``run_tests()``
+called outside ``async with otto.open_context(...)``). That
 Lab carries no hosts, so any ``get_host()`` call inside such a run fails loud —
 :meth:`OttoContext.get_host` checks this constant to append a hint pointing at
 ``open_context`` (see below) ONLY for that sentinel lab; a real, lab-backed
@@ -52,75 +54,118 @@ already-imported side keeps both directions acyclic.
 
 
 class HostScope:
-    """Owns hosts handed out during a command; closes any still-connected on exit.
+    """The hosts whose connections one event loop owns; closes them while that loop runs.
 
-    The deterministic backstop that replaces RemoteHost.__del__: a host created
-    and passed around without an explicit ``async with`` is still closed when
-    the scope exits. Registration is deduped by object identity; close() is
-    assumed idempotent so an early per-host close and the sweep never collide.
+    One per event loop, held by :meth:`OttoContext.scope_for`. A host
+    registers itself the first time it touches a connection on a loop (see
+    ``BaseHost._claim_loop``), so the scope holds exactly
+    what the loop can still close gracefully. The deterministic backstop that
+    replaces ``RemoteHost.__del__``: a host created and passed around without
+    an explicit ``async with`` is still closed when its loop's scope is swept.
+    Registration is deduped by object identity; ``close()`` is idempotent, so
+    an early per-host close and the sweep never collide.
     """
 
     def __init__(self) -> None:
-        self._hosts: "list[RemoteHost]" = []
+        self._hosts: "list[BaseHost]" = []
+        self._sweeping: "list[BaseHost]" = []
+        """The hosts the current sweep set out to close, in registration order."""
+        self._settled: dict[int, bool] = {}
+        """``id(host)`` -> whether its close succeeded, for each close that has finished."""
+        self._closed: list[str] = []
+        """The ids closed by the ranks the current sweep has finished, in close order."""
+        self._rank: "list[BaseHost]" = []
+        """The rank the current sweep is closing now."""
 
-    def register(self, host: "RemoteHost") -> None:
-        """Add *host* to the scope for deferred close on exit, deduplicating by identity."""
+    def register(self, host: "BaseHost") -> None:
+        """Add *host* to the scope for the sweep, deduplicating by identity."""
         if any(host is h for h in self._hosts):  # dedup by object identity
             return
         self._hosts.append(host)
 
-    def rebuild_connections(self) -> None:
-        """Drop per-loop connection state on every registered host.
+    def closed_ids(self) -> list[str]:
+        """Return the ids of the hosts the current sweep has closed so far, in close order."""
+        in_flight = [_host_id(h) for h in self._rank if self._settled.get(id(h)) is True]
+        return [*self._closed, *in_flight]
 
-        For hosts opened inside an inner pytest session (``otto test`` /
-        ``run_suite``): their transports are bound to pytest's now-closed
-        event loops, and no later loop can drive them — a cross-loop close
-        only raises into the sweep's failure logging. Rebuilding (the same
-        ``rebuild_connections`` pattern ``otto test --cov`` already uses to
-        refresh hosts after ``pytest.main()`` returns) abandons the dead
-        per-loop state so the post-run sweep closes only what the CURRENT
-        loop actually owns. Real remote cleanup for suite-opened hosts
-        belongs to the suite's own fixtures, on the loop that opened them.
-        Hosts without the hook (fakes, minimal BaseHosts) are left as-is.
+    def unclosed(self) -> "list[BaseHost]":
+        """Return the hosts the current sweep set out to close whose close has not finished."""
+        return [h for h in self._sweeping if id(h) not in self._settled]
+
+    async def sweep(self) -> list[str]:
+        """Close every registered host this loop still owns; return the ids of those that closed.
+
+        Dependency-ranked: a host that another registered host names as its
+        ``parent`` (a container's ``docker exec`` channel drains over its
+        parent's still-open transport) closes only after its dependents.
+        Within a rank closes run concurrently. A failed close is logged as a
+        warning naming the host, and never stops the remaining ranks.
+
+        The list is drained first, so a second sweep closes only what
+        registered since. Only hosts this loop still owns are closed: one
+        that has moved to another loop is that loop's to close, and one its
+        own code already closed (and has not used since) has nothing left to
+        close. A duck-typed host with no ownership record at all is closed.
+        Progress is recorded as each close finishes (:meth:`closed_ids`,
+        :meth:`unclosed`), for a caller that cuts the sweep short.
         """
-        for host in self._hosts:
-            rebuild = getattr(host, "rebuild_connections", None)
-            if rebuild is not None:
-                rebuild()
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *exc: object) -> None:
-        # Close on the Host *contract* (idempotent close()), not the
-        # RemoteHost-private ``_connected``: DockerContainerHost / LocalHost are
-        # BaseHosts without ``_connected``, so treat a missing attr as "needs
-        # closing" (close() no-ops when nothing is open).
-        # Drain the list first: the lifecycle wrapper enters/exits this scope
-        # once per asyncio.run, and a command may run several (suite pre/post
-        # phases), so a swept host must not be re-closed by the next cycle.
         hosts, self._hosts = self._hosts, []
-        remaining = [h for h in hosts if getattr(h, "_connected", True)]
-        # Dependency-ranked sweep (chaos spec): a host that another registered
-        # host names as its ``parent`` (DockerContainerHost documents
-        # close-before-parent — its docker exec channel drains over the
-        # parent's still-open transport) closes only after its dependents.
-        # Within a rank closes run concurrently; failures are logged per host
-        # — never silently swallowed — and never stop the remaining ranks.
+        loop = asyncio.get_running_loop()
+        remaining = [
+            h for h in hosts if getattr(h, "_owner_loop", _UNTRACKED) in (loop, _UNTRACKED)
+        ]
+        self._sweeping = list(remaining)
+        self._settled = {}
+        self._closed = []
         while remaining:
             parent_ids = {id(getattr(h, "parent", None)) for h in remaining}
             rank = [h for h in remaining if id(h) not in parent_ids]
             if not rank:
                 rank = remaining  # parent cycle (impossible by construction): close all, don't spin
-            results = await asyncio.gather(*(h.close() for h in rank), return_exceptions=True)
+            self._rank = rank
+            results = await asyncio.gather(
+                *(self._close_one(h) for h in rank), return_exceptions=True
+            )
             for host, result in zip(rank, results, strict=True):
-                if isinstance(result, BaseException):
-                    logger.warning(
-                        f"otto: closing host {getattr(host, 'id', host)!r} failed "
-                        f"during scope sweep: {result!r}"
-                    )
-            closed = {id(h) for h in rank}
-            remaining = [h for h in remaining if id(h) not in closed]
+                if isinstance(result, BaseException):  # a close that raised CancelledError itself
+                    self._settled[id(host)] = False
+                    _warn_failed(host, result)
+            self._closed += [_host_id(h) for h in rank if self._settled.get(id(h)) is True]
+            self._rank = []
+            done = {id(h) for h in rank}
+            remaining = [h for h in remaining if id(h) not in done]
+        return self.closed_ids()
+
+    async def _close_one(self, host: "BaseHost") -> None:
+        """Close *host* and record the outcome; a failed close is a warning.
+
+        A close cancelled before it finished records nothing, which is what
+        leaves the host in :meth:`unclosed`.
+        """
+        try:
+            await host.close()
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 — a failed close is a warning, whatever it raised
+            self._settled[id(host)] = False
+            _warn_failed(host, exc)
+        else:
+            self._settled[id(host)] = True
+
+
+_UNTRACKED = object()
+"""Stands in for ``_owner_loop`` on a duck-typed host that records no owning loop."""
+
+_CANCEL_GRACE = 0.25
+"""Seconds a timed-out sweep waits after each cancel for the closes to unwind."""
+
+
+def _host_id(host: "BaseHost") -> str:
+    return getattr(host, "id", repr(host))
+
+
+def _warn_failed(host: "BaseHost", exc: BaseException) -> None:
+    logger.warning(f"otto: closing host {_host_id(host)!r} failed during scope sweep: {exc!r}")
 
 
 _active: ContextVar["OttoContext | None"] = ContextVar("otto_context", default=None)
@@ -232,7 +277,7 @@ def _flags_hiding_every_match(
 
 @dataclass
 class OttoContext:
-    """The active per-invocation runtime: chosen lab, runtime flags, and host lifecycle scope."""
+    """The active per-invocation runtime: chosen lab, runtime flags, and per-loop host scopes."""
 
     lab: "Lab"
     dry_run: bool = False
@@ -243,11 +288,14 @@ class OttoContext:
 
     Read :attr:`cov`, not this. ``otto test`` is the one writer: it stamps its
     resolved ``--cov``/``--no-cov``/auto decision here for the length of the
-    run (:func:`otto.suite.run.run_suite` / :func:`~otto.suite.run.run_selection`).
+    run (:func:`otto.suite.run.run_tests`).
     Left ``None``, the first read of :attr:`cov` detects the answer and
     stores it here.
     """
-    scope: HostScope = field(default_factory=HostScope)
+    _loop_scopes: "dict[asyncio.AbstractEventLoop, HostScope]" = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+    """One :class:`HostScope` per event loop that has owned a host connection."""
 
     include_projects: tuple[str, ...] = ()
     """Repo names forced ACTIVE this invocation (``-I``), PEP-503-normalized ON READ.
@@ -274,6 +322,103 @@ class OttoContext:
     :func:`otto.config.scope.switched_off` for attribution.
     """
 
+    verb: "str | None" = field(default=None, init=False)
+    """The verb this invocation dispatched (``"run"`` or ``"test"``), once bound.
+
+    ``None`` until :meth:`bind_verb_options` runs — a library context that
+    never dispatches a verb keeps this ``None`` forever, and :meth:`options`
+    reports that plainly rather than guessing.
+    """
+
+    _verb_options: "dict[type, Any]" = field(default_factory=dict, init=False, repr=False)
+    """This invocation's built instance of each options class registered for :attr:`verb`."""
+
+    _verb_option_kwargs: "dict[str, Any]" = field(default_factory=dict, init=False, repr=False)
+    """The flat parsed kwargs :meth:`bind_verb_options` was last called with.
+
+    Kept so :meth:`verb_option_source` can replay them for a class that was
+    not itself part of the bound verb's build — e.g. a project instruction
+    body building its own options class that shares fields with a bound one.
+    """
+
+    def bind_verb_options(self, verb: str, kwargs: "dict[str, Any]") -> None:
+        """Build every options class registered for *verb* from the parsed *kwargs*.
+
+        Each registered class is constructed with
+        ``OptionsSource.from_kwargs(kwargs).build(cls)``, which raises
+        ``typer.BadParameter`` (not a pydantic ``ValidationError``) on a bad
+        value, so a validation failure is reported as a usage error before any
+        command body runs. Calling this a second time replaces the earlier
+        binding outright — nothing is merged across calls.
+        """
+        from .params import OptionsSource, verb_option_classes
+
+        source = OptionsSource.from_kwargs(kwargs)
+        built = {
+            origin.cls: source.build(cast("type[DataclassInstance]", origin.cls))
+            for origin in verb_option_classes(verb)
+        }
+        self.verb, self._verb_options, self._verb_option_kwargs = verb, built, dict(kwargs)
+
+    @contextmanager
+    def verb_binding_preserved(self) -> "Iterator[None]":
+        """Restore this context's verb binding, exactly as it was, when the block exits.
+
+        For a caller that binds a verb's options on a context it does not own
+        -- :func:`otto.suite.run.run_tests` binds ``test`` on the caller's
+        active context -- and must hand it back unchanged: the bound verb, its
+        built instances and its parsed flags all come back, whether the block
+        returns or raises. Nothing is merged; a binding made inside the block
+        is simply discarded.
+        """
+        saved = (self.verb, dict(self._verb_options), dict(self._verb_option_kwargs))
+        try:
+            yield
+        finally:
+            self.verb, self._verb_options, self._verb_option_kwargs = saved
+
+    def options(self, cls: "type[T]") -> "T":
+        """Return this invocation's instance of the registered options class *cls*.
+
+        Raises:
+            otto.params.OptionsNotAvailableError: *cls* is not registered at
+                all; no verb is bound in this context yet; *cls* is
+                registered for a verb other than the one bound here; or it
+                was registered for that verb after the verb was bound.
+        """
+        from .params import OptionsNotAvailableError, verbs_for
+
+        if cls in self._verb_options:
+            return cast("T", self._verb_options[cls])
+        verbs = verbs_for(cls)
+        if verbs is None:
+            raise OptionsNotAvailableError(
+                f"{cls.__qualname__} is not registered; call "
+                f"register_options({cls.__qualname__}, verbs=[...]) from an init module"
+            )
+        if self.verb is None:
+            raise OptionsNotAvailableError(
+                f"no verb's options are bound in this context, so {cls.__qualname__} has no value"
+            )
+        if self.verb in verbs:
+            raise OptionsNotAvailableError(
+                f"{cls.__qualname__} was registered after otto {self.verb} bound its options"
+            )
+        raise OptionsNotAvailableError(
+            f"{cls.__qualname__} is registered for {', '.join(verbs)}, not {self.verb}"
+        )
+
+    def verb_option_source(self) -> "OptionsSource":
+        """Return the parsed flags of the bound verb, for building a body's options class.
+
+        With nothing bound, returns ``OptionsSource.from_kwargs({})`` — every
+        class built from it takes its own defaults, rather than this raising
+        for a context that never dispatched a verb.
+        """
+        from .params import OptionsSource
+
+        return OptionsSource.from_kwargs(self._verb_option_kwargs)
+
     @property
     def cov(self) -> bool:
         """Whether this lab is in coverage mode — informational, never an action.
@@ -283,7 +428,7 @@ class OttoContext:
         some product on a ``[coverage].hosts`` host is an instrumented build
         AND a ``[coverage]`` table is configured. That is the same local
         artifact scan ``otto test`` runs, and no host is contacted. The answer
-        is cached for this context. A suite, a fixture or an instruction reads
+        is cached for this context. A test, a fixture or an instruction reads
         it to avoid destroying counters that a coverage run still needs, e.g.
         to leave ``.gcda`` files in place instead of uninstalling a product.
         Nothing cleans or collects coverage because of it.
@@ -341,13 +486,17 @@ class OttoContext:
         return any(product.instrumented() is True for host in hosts for product in host.products)
 
     def get_host(self, host_id: str, **overrides: Any) -> "UnixHost":
-        """Look up *host_id* in the active lab, apply any keyword overrides, and register it."""
+        """Look up *host_id* in the active lab and apply any keyword overrides.
+
+        Handing a host out registers nothing: the host joins the scope of
+        whichever event loop it first connects on (:meth:`scope_for`).
+        """
         from .config.fleet import _apply_option_overrides
 
         host = self.lab.hosts.get(host_id)
         if host is None:
-            # The sentinel LIBRARY_LAB_NAME lab is what run_suite()/run_selection()
-            # install for a library caller with no active context (see
+            # The sentinel LIBRARY_LAB_NAME lab is what run_tests() installs
+            # for a library caller with no active context (see
             # otto.suite.run._session_context) — it never carries hosts, so
             # get_host() always fails here. Point a caller who hits this at the
             # real fix (open_context) rather than leaving them staring at an
@@ -362,8 +511,128 @@ class OttoContext:
                 f"Available: {sorted(self.lab.hosts)}{breadcrumb}"
             )
         resolved = _apply_option_overrides(cast("Any", host), **overrides)
-        self.scope.register(resolved)
         return cast("UnixHost", resolved)
+
+    def scope_for(self, loop: asyncio.AbstractEventLoop) -> HostScope:
+        """Return the host scope of *loop*: the hosts whose connections that loop owns.
+
+        Entries for loops that have closed are pruned on the way, so a
+        long-lived context that sees many short loops (a script calling
+        ``asyncio.run`` repeatedly) keeps one entry per live loop. Pruning
+        only forgets the entry: a host still owned by that dead loop drops
+        its connection state on its next use or ``close()``.
+        """
+        for dead in [lp for lp in self._loop_scopes if lp.is_closed() and lp is not loop]:
+            del self._loop_scopes[dead]
+        return self._loop_scopes.setdefault(loop, HostScope())
+
+    async def sweep_loop(
+        self, loop: asyncio.AbstractEventLoop, *, label: str, deadline: float | None = None
+    ) -> list[str]:
+        """Close every host *loop* owns, while it still runs; log one debug line naming them.
+
+        Awaited on *loop* itself, before it closes: the command lifecycle
+        does so at the end of each command, ``open_context`` on exit, and
+        ``otto test`` at the end of each pytest-asyncio loop. *label* names
+        the loop in the debug line, for example ``closed 2 hosts at end of
+        TestRouter's loop: dut1, dut2``. Returns the ids of the hosts that
+        closed; a failed close is a warning, not a raise.
+
+        *deadline* bounds the sweep in seconds; the callers in otto pass the
+        teardown deadline (``OTTO_TEARDOWN_DEADLINE``), and ``None`` waits
+        for every close. When the deadline expires the sweep is cancelled,
+        and after a short grace cancelled again, however its closes' own
+        cleanup is going. A warning then gives the time taken and names the
+        hosts not closed, whose connection state is dropped unclosed so each
+        reconnects on its next use. The return value still lists the hosts
+        that did close.
+
+        Raises:
+            RuntimeError: *loop* is not the running loop. A host's close is
+                network work that only its owning loop can drive.
+        """
+        if loop is not asyncio.get_running_loop():
+            raise RuntimeError(
+                f"sweep_loop can only sweep the running loop, but {label} is not the "
+                "loop running here; await it on that loop, before the loop closes"
+            )
+        scope = self._loop_scopes.pop(loop, None)
+        if scope is None:
+            return []
+        started = loop.time()
+        task = loop.create_task(scope.sweep())
+        try:
+            await asyncio.wait({task}, timeout=deadline)
+            if not task.done():
+                await self._cut_short(task)
+        except BaseException:
+            task.cancel()  # our own caller gave up; the sweep must not outlive it
+            raise
+        if task.done() and not task.cancelled():
+            closed = task.result()
+        else:
+            closed = scope.closed_ids()
+            self._abandon_unclosed(scope, loop, label=label, elapsed=loop.time() - started)
+        if closed:
+            noun = "host" if len(closed) == 1 else "hosts"
+            logger.debug(f"closed {len(closed)} {noun} at end of {label}: {', '.join(closed)}")
+        return closed
+
+    @staticmethod
+    async def _cut_short(task: "asyncio.Task[list[str]]") -> None:
+        """Cancel a sweep that ran past its deadline, waiting only a bounded grace per cancel.
+
+        A cancelled close can keep running in its own cleanup, for example a
+        transport's close in a ``finally``; the second cancel interrupts that.
+        A task that still refuses is left to finish on its own, with its
+        outcome retrieved when it does, so nothing waits on it unboundedly.
+        """
+        for _ in range(2):
+            task.cancel()
+            await asyncio.wait({task}, timeout=_CANCEL_GRACE)
+            if task.done():
+                return
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())
+
+    @staticmethod
+    def _abandon_unclosed(
+        scope: HostScope, loop: asyncio.AbstractEventLoop, *, label: str, elapsed: float
+    ) -> None:
+        """Drop the connections of the hosts a cut-short sweep of *loop* left unclosed."""
+        stuck = [h for h in scope.unclosed() if getattr(h, "_owner_loop", None) in (None, loop)]
+        for host in stuck:
+            if hasattr(host, "_owner_loop"):  # a duck-typed host keeps no state to drop
+                host._drop_dead_connections()  # noqa: SLF001 — the context is the owner's other half
+                host._owner_loop = None  # noqa: SLF001 — the context is the owner's other half
+        ids = ", ".join(_host_id(h) for h in stuck) or "none"
+        logger.warning(
+            f"otto: closing hosts at end of {label} ran past its deadline; gave up after "
+            f"{elapsed:.1f}s and dropped the connections of: {ids}"
+        )
+
+    def abandon_closed_loops(self) -> list[str]:
+        """Drop the connections of hosts whose loop closed unswept (the backstop).
+
+        A loop that closed before anything swept it leaves connections no
+        loop can close gracefully. Their state is dropped, as a host's next
+        use would drop it anyway, and the hosts are unowned again. Hosts
+        that have since moved to another loop are left alone. Returns the ids
+        abandoned, logged at debug level.
+        """
+        abandoned: list[str] = []
+        for loop in [lp for lp in self._loop_scopes if lp.is_closed()]:
+            for host in self._loop_scopes.pop(loop)._hosts:  # noqa: SLF001 — HostScope is this module's own
+                if host._owner_loop is not loop:  # noqa: SLF001 — the context is the owner's other half
+                    continue
+                host._drop_dead_connections()  # noqa: SLF001 — the context is the owner's other half
+                host._owner_loop = None  # noqa: SLF001 — the context is the owner's other half
+                abandoned.append(host.id)
+        if abandoned:
+            noun = "host" if len(abandoned) == 1 else "hosts"
+            logger.debug(
+                f"abandoned {len(abandoned)} {noun} left on closed loops: {', '.join(abandoned)}"
+            )
+        return abandoned
 
     @functools.cached_property
     def scopes(self) -> "dict[str, ProjectScope]":
@@ -539,7 +808,8 @@ class OttoContext:
                 ``otto.config.fleet._apply_option_overrides``.
 
         Yields:
-            RemoteHost: Each selected host, registered into the lifecycle scope.
+            RemoteHost: Each selected host. Nothing registers until it connects
+            (see :meth:`scope_for`).
 
         Raises:
             otto.config.scope.EmptySelectionError: *pattern* is not ``None`` and
@@ -597,9 +867,7 @@ class OttoContext:
                 continue
             if not include_local and isinstance(host, LocalHost):
                 continue
-            resolved = _apply_option_overrides(cast("Any", host), **overrides)
-            self.scope.register(resolved)
-            yield resolved
+            yield _apply_option_overrides(cast("Any", host), **overrides)
 
     async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         self,
@@ -782,10 +1050,11 @@ class ProjectContextView:
     off a host they share. Through this view that mistake is unspellable.
 
     A FACADE OVER THE SAME CONTEXT, not a copy. Everything else —
-    :meth:`~OttoContext.get_host`, the runtime flags, the lifecycle scope,
-    links, options — is delegated live by ``__getattr__``, so an
+    :meth:`~OttoContext.get_host`, the runtime flags, the per-loop host
+    scopes, links, options — is delegated live by ``__getattr__``, so an
     ``output_dir`` set after the view was built still arrives, and a host
-    handed out here registers into the ONE :class:`HostScope` that closes it.
+    handed out here registers, once it connects, into the same per-loop
+    :class:`HostScope` that closes it.
 
     ``get_host`` is deliberately NOT narrowed (§6): explicit targeting beats
     scoping, and a repo naming a jump host it does not own must still reach it.
@@ -894,14 +1163,17 @@ async def open_context(
     """Build, install, and tear down an OttoContext for library / script use.
 
     Pass a Lab, or a lab name / list of names to load via load_lab. On exit the
-    host scope closes any still-connected hosts and the contextvar is reset.
+    running loop's host scope closes the hosts that connected on it
+    (:meth:`OttoContext.sweep_loop`) and the contextvar is reset.
     Does NOT run a reservation check — that is a CLI concern; a script that wants
     one calls otto.reservations.check_reservations explicitly.
     """
     from .bootstrap import bootstrap
 
     result = bootstrap()  # composition root — idempotent; registers user init components
-    from .config import load_lab
+    from .config import get_env, load_lab
+
+    deadline = get_env().teardown_deadline  # bounds the closing sweep on exit
     from .config.lab import Lab
 
     if isinstance(lab, Lab):
@@ -921,7 +1193,11 @@ async def open_context(
     ctx = OttoContext(lab=resolved_lab, dry_run=dry_run, log_command_output=log_command_output)
     token = set_context(ctx)
     try:
-        async with ctx.scope:
-            yield ctx
+        yield ctx
     finally:
-        reset_context(token)
+        try:
+            await ctx.sweep_loop(
+                asyncio.get_running_loop(), label="open_context", deadline=deadline
+            )
+        finally:
+            reset_context(token)

@@ -5,8 +5,9 @@ The storage layout these tests pin is::
     {"schema": N, "sections": {"<name>": {"fingerprint", "generated_at",
                                           "tainted", "payload"}, ...}}
 
-so a names-only reader can locate and validate its entry without the
-full-corpus walk the old fingerprint-keyed layout forced on every reader.
+Two sections, ``names`` and ``shim`` (derived from ``names``). No test file
+keys either: test names live in the per-file test tables, which validate
+themselves.
 """
 
 import json
@@ -47,18 +48,39 @@ def test_names_digest_ignores_nested_test_edits(repos):
     assert section_digest(names, discovered) == before
 
 
-def test_names_digest_moves_on_top_level_test_edit(repos):
-    """Top-level test files CAN register, so they must key the names section."""
-    from otto.config.cache_sections import section_by_name, section_digest
+def test_no_section_digest_moves_on_a_top_level_test_edit(repos):
+    """No test file can register anything, so none keys any section."""
+    from otto.config.cache_sections import SECTIONS, section_digests
 
     repo, discovered = repos
-    names = section_by_name("names")
-    before = section_digest(names, discovered)
+    before = section_digests(discovered, SECTIONS)
 
     top = repo / "tests" / "test_top0.py"
     top.write_text("def test_y():\n    pass\n# edited\n")
 
-    assert section_digest(names, discovered) != before
+    assert section_digests(discovered, SECTIONS) == before
+
+
+@pytest.mark.parametrize(
+    ("config", "body"),
+    [
+        ("pyproject.toml", "[tool.pytest.ini_options]\nmarkers = ['slow']\n"),
+        ("pytest.ini", "[pytest]\nmarkers =\n    slow\n"),
+    ],
+)
+def test_no_section_digest_moves_on_a_pytest_config_edit(repos, config, body):
+    """A pytest config decides which files are tests; no section reads one.
+
+    The per-file test tables watch the pytest configs themselves (their ``env``).
+    """
+    from otto.config.cache_sections import SECTIONS, section_digests
+
+    repo, discovered = repos
+    before = section_digests(discovered, SECTIONS)
+
+    (repo / config).write_text(body)
+
+    assert section_digests(discovered, SECTIONS) == before
 
 
 def test_names_digest_moves_on_settings_edit(repos):
@@ -101,7 +123,7 @@ def test_write_section_round_trips_and_leaves_others_cold(repos):
     payload = {"commands": [{"name": "x", "help": None, "lab_free": True}]}
     write_section(discovered, "names", payload)
     assert read_section(discovered, "names") == payload
-    assert read_section(discovered, "tests") is None
+    assert read_section(discovered, "shim") is None
 
 
 def test_unknown_section_names_raise_key_error(repos):
@@ -121,15 +143,13 @@ def test_unknown_section_names_raise_key_error(repos):
 def test_a_miss_then_write_hashes_each_section_key_set_at_most_once(repos, monkeypatch):
     """The spec's never-compute-the-fingerprint-twice, as an executable claim — two halves.
 
-    Seed a valid entry, invalidate the tests section by editing a nested
-    file, then run the exact slow-path cycle entry() runs, inside the
+    Seed a valid entry, invalidate the names section by editing the init
+    module, then run the exact slow-path cycle entry() runs, inside the
     ``corpus_snapshot()`` scope entry() opens around it.
 
     1. HASHING: the validity check computes each section's digest once, and
        write_cache stores those digests instead of hashing every key set
-       again. A path in more than one section's key set (the tests dir sits
-       in both ``names`` and ``tests``) is folded into each owning section's
-       digest, so the bound is once PER OWNING SECTION, not once overall.
+       again: once PER OWNING SECTION.
     2. STAT SYSCALLS: the scope collapses those hashes, and the shim's stored
        triples, onto ONE ``os.stat`` per key path for the whole cycle.
     """
@@ -140,9 +160,9 @@ def test_a_miss_then_write_hashes_each_section_key_set_at_most_once(repos, monke
     from otto.config.cache_sections import SECTIONS
 
     repo, discovered = repos
-    cc.write_cache(discovered, [], [], [])
-    nested = next(repo.rglob("sub*/test_*.py"))
-    nested.write_text("def test_x():\n    pass\n\ndef test_y():\n    pass\n")
+    cc.write_cache(discovered, [], [])
+    init = repo / "pylib" / "genrepo_instructions.py"
+    init.write_text(init.read_text() + "\n# edited\n")
 
     counts: Counter = Counter()
     real_hash_file = cc.hash_file
@@ -171,7 +191,7 @@ def test_a_miss_then_write_hashes_each_section_key_set_at_most_once(repos, monke
     with cs.corpus_snapshot():
         digests: dict[str, str] = {}
         assert cc.cache_rebuild_is_worthwhile(discovered, digests=digests) is True
-        cc.write_cache(discovered, [], [], [], digests=digests)
+        cc.write_cache(discovered, [], [], digests=digests)
 
     assert counts, "no hashing observed at all — the validity check never ran"
     budget: Counter = Counter()
@@ -183,28 +203,24 @@ def test_a_miss_then_write_hashes_each_section_key_set_at_most_once(repos, monke
     over = {str(p): (counts[p], budget[p]) for p in counts if counts[p] > budget[p]}
     assert not over, f"paths hashed more often than once per owning section (got, allowed): {over}"
 
-    assert any(n > 1 for n in budget.values()), "no path is shared by two key sets any more"
     restated = {str(p): stats[str(p)] for p in budget if stats[str(p)] != 1}
     assert not restated, f"key paths not stat'd exactly once inside the scope: {restated}"
 
 
-def test_shim_digest_moves_iff_a_child_digest_moves(repos):
+def test_shim_digest_moves_iff_the_names_digest_moves(repos):
     from otto.config.cache_sections import SECTIONS, section_digests
 
     repo, discovered = repos
     before = section_digests(discovered, SECTIONS)
     nested = next(repo.rglob("sub*/test_*.py"))
     nested.write_text("def test_x():\n    pass\n\ndef test_moved():\n    pass\n")
-    after_nested = section_digests(discovered, SECTIONS)
-    assert after_nested["names"] == before["names"]
-    assert after_nested["tests"] != before["tests"]
-    assert after_nested["shim"] != before["shim"]
-    top = next((repo / "tests").glob("test_*.py"))
-    top.write_text(top.read_text() + "\n# edit\n")
-    after_top = section_digests(discovered, SECTIONS)
-    assert after_top["names"] != after_nested["names"]
-    assert after_top["shim"] != after_nested["shim"]
-    assert section_digests(discovered, SECTIONS) == after_top  # stable when nothing moves
+    assert section_digests(discovered, SECTIONS) == before, "a test edit moves neither"
+    init = repo / "pylib" / "genrepo_instructions.py"
+    init.write_text(init.read_text() + "\n# edit\n")
+    after_init = section_digests(discovered, SECTIONS)
+    assert after_init["names"] != before["names"]
+    assert after_init["shim"] != before["shim"]
+    assert section_digests(discovered, SECTIONS) == after_init  # stable when nothing moves
 
 
 def test_a_derived_digest_alone_computes_its_children(repos):
@@ -216,14 +232,14 @@ def test_a_derived_digest_alone_computes_its_children(repos):
     assert alone["shim"] == section_digests(discovered, SECTIONS)["shim"]
 
 
-def test_a_third_registered_section_does_not_break_the_merged_view(repos, monkeypatch):
+def test_a_third_registered_section_does_not_break_read_cache(repos, monkeypatch):
     """Registering a Section must not turn every read_cache into a permanent miss.
 
-    read_cache/write_cache are the LEGACY merged-view pair over a FIXED
-    membership. If the reader validated every registered section while the
-    writer wrote only the merged two, appending a Section would make
-    cache_rebuild_is_worthwhile True forever — entry() would pay the full
-    O(corpus) collect and write on every invocation, with no test failing.
+    read_cache/write_cache are the LEGACY pair over a FIXED membership
+    (``names``, plus ``shim`` required). If the reader validated every
+    registered section while the writer wrote only those, appending a Section
+    would make cache_rebuild_is_worthwhile True forever — entry() would pay
+    the full collect and write on every invocation, with no test failing.
     """
     from otto.config import cache_sections as cs
     from otto.config import completion_cache as cc
@@ -240,20 +256,18 @@ def test_a_third_registered_section_does_not_break_the_merged_view(repos, monkey
     # requires (unlike `throwaway`, which registering alone must not affect
     # the verdict) — a call site that omits it here would be pinning the
     # wrong thing.
-    cc.write_cache(discovered, [], [], [], shim={})
+    cc.write_cache(discovered, [], [], shim={})
     assert cc.cache_rebuild_is_worthwhile(discovered) is False, (
         "a freshly written cache reads as a permanent miss once a 3rd section is registered"
     )
 
 
-def test_lab_file_edits_move_the_names_digest_only(tmp_path, monkeypatch):
+def test_lab_file_edits_move_the_names_digest(tmp_path, monkeypatch):
     """The declared widening of the names key set: lab files belong to it.
 
     Hosts/labs payloads are served from the names section, so a lab.json
-    edit must invalidate it exactly as it invalidated the monolithic
-    fingerprint — and it has no business invalidating the tests section.
-    The edit APPENDS (size change), so this cannot pass or fail on a
-    same-clock-tick mtime coincidence.
+    edit must invalidate it. The edit APPENDS (size change), so this cannot
+    pass or fail on a same-clock-tick mtime coincidence.
     """
     from types import SimpleNamespace
 
@@ -277,17 +291,13 @@ def test_lab_file_edits_move_the_names_digest_only(tmp_path, monkeypatch):
         inventory_settings={},
         creds_settings={},
     )
-    names, tests = section_by_name("names"), section_by_name("tests")
+    names = section_by_name("names")
     names_before = section_digest(names, [repo])
-    tests_before = section_digest(tests, [repo])
 
     lab_file.write_text(lab_file.read_text() + "\n")
 
     assert section_digest(names, [repo]) != names_before, (
         "a lab.json edit must invalidate the names section (hosts are served from it)"
-    )
-    assert section_digest(tests, [repo]) == tests_before, (
-        "a lab.json edit has no business invalidating the tests section"
     )
 
 
@@ -312,7 +322,7 @@ def test_write_cache_preserves_reserved_namespaces_and_drops_old_entries(repos):
         )
     )
 
-    cc.write_cache(discovered, [], [], [])
+    cc.write_cache(discovered, [], [])
 
     data = json.loads(cache_path.read_text())
     assert cc.COLLECTED_TESTS_KEY in data, "reserved namespace clobbered by the sections writer"
@@ -320,70 +330,23 @@ def test_write_cache_preserves_reserved_namespaces_and_drops_old_entries(repos):
     assert data["schema"] == cc.SCHEMA_VERSION
 
 
-def test_write_cache_split_matches_the_collectors(repos):
-    """write_cache's payload split and the sections' collectors cannot drift.
+def test_write_cache_keys_match_the_names_collector(repos):
+    """write_cache's keywords and the ``names`` collector cannot drift.
 
-    The registry's collect callables are the section-shaped rebuild path;
-    the legacy write_cache keywords are the entry() path. If a new key lands
-    in one and not the other, a consumer reading the section payload would
+    The registry's collect callable is the section-shaped rebuild path; the
+    legacy write_cache keywords are the entry() path. If a new key lands in
+    one and not the other, a consumer reading the section payload would
     silently lose it.
-    """
-    from otto.config import completion_cache as cc
-    from otto.config.cache_sections import MERGED_VIEW_SECTIONS, section_by_name
-
-    _, discovered = repos
-    cc.write_cache(discovered, [], [], [])
-    data = json.loads(cc._cache_path().read_text())
-    # write_cache must write EVERY section the merged view then validates, or
-    # its own output reads back as a permanent miss. The third-section guard
-    # pins the pair from the read side and leaves this direction open: adding
-    # a name to MERGED_VIEW_SECTIONS without a matching payload here is the
-    # way that guard's invariant breaks next.
-    assert set(data["sections"]) >= set(MERGED_VIEW_SECTIONS)
-    keys_by_section: dict[str, set] = {}
-    for name in ("names", "tests"):
-        stored_keys = set(data["sections"][name]["payload"])
-        collected_keys = set(section_by_name(name).collect(discovered))
-        assert stored_keys == collected_keys, name
-        keys_by_section[name] = stored_keys
-    # The merged view flattens payloads with dict.update, so a key claimed by
-    # two sections would resolve silently by SECTIONS order. Pin disjointness.
-    section_names = list(keys_by_section)
-    for i, a in enumerate(section_names):
-        for b in section_names[i + 1 :]:
-            overlap = keys_by_section[a] & keys_by_section[b]
-            assert not overlap, f"sections {a!r} and {b!r} both claim {sorted(overlap)}"
-
-
-def test_the_tests_collector_and_the_writer_agree_on_the_payload_itself(repos):
-    """Keys AND values, for the two spellings of "collect the tests payload".
-
-    ``entry()`` writes the section through ``write_cache``'s ``tests=`` /
-    ``markers=`` keywords off one ``scan_test_corpus`` pass; the section
-    registry rebuilds it through ``_collect_tests``.
-    ``test_write_cache_split_matches_the_collectors`` pins that their KEY sets
-    cannot drift, which a collector returning the right key with the wrong
-    contents still satisfies -- and ``markers``, the half added last, is
-    assembled from three sources on one path and one call on the other.
     """
     from otto.config import completion_cache as cc
     from otto.config.cache_sections import section_by_name
 
     _, discovered = repos
-    scan = cc.scan_test_corpus(discovered)
-    cc.write_cache(
-        discovered,
-        [],
-        [],
-        [],
-        tests=scan.names,
-        markers=cc.collect_marker_names(discovered, scan=scan),
-    )
-    stored = json.loads(cc._cache_path().read_text())["sections"]["tests"]["payload"]
-    assert stored == section_by_name("tests").collect(discovered)
-    # Both halves non-empty: `{} == {}` would pass while proving nothing.
-    assert stored["tests"], stored
-    assert stored["markers"], stored
+    cc.write_cache(discovered, [], [])
+    data = json.loads(cc._cache_path().read_text())
+    stored_keys = set(data["sections"]["names"]["payload"])
+    assert stored_keys == set(section_by_name("names").collect(discovered))
+    assert set(cc.read_cache(discovered) or {}) == stored_keys
 
 
 def test_names_payload_keys_are_all_checked_or_delegated(repos):
@@ -392,8 +355,7 @@ def test_names_payload_keys_are_all_checked_or_delegated(repos):
     ``_cached_names_payload`` shape-checks ``RAW_ITERATED_NAMES_KEYS`` because
     they reach a raw iterator deep in click's help/completion pipeline, and
     DELEGATES every other key to a completer that does its own isinstance
-    check with a live fallback (``tests``, the twelfth key overall, lives in
-    its own section and never reaches this reader at all). The day a new key
+    check with a live fallback. The day a new key
     lands in the names collector, this test fails until its author decides
     which bucket it belongs in — checked or delegated — rather than the
     contract staying prose nobody re-reads.
@@ -406,9 +368,7 @@ def test_names_payload_keys_are_all_checked_or_delegated(repos):
         set(section_by_name("names").collect(discovered))
         == set(RAW_ITERATED_NAMES_KEYS) | DELEGATED_NAMES_KEYS
     )
-    # Union alone lets a key sit in BOTH buckets and still satisfy the equality;
-    # `test_write_cache_split_matches_the_collectors` pins disjointness across
-    # sections, so pin it across buckets too.
+    # Union alone lets a key sit in BOTH buckets and still satisfy the equality.
     assert not set(RAW_ITERATED_NAMES_KEYS) & DELEGATED_NAMES_KEYS
 
 
@@ -423,11 +383,11 @@ def test_a_wholly_tainted_rewrite_of_an_identical_entry_is_skipped(repos):
     from otto.config import completion_cache as cc
 
     _, discovered = repos
-    cc.write_cache(discovered, [], [], [], tainted=True)
+    cc.write_cache(discovered, [], [], tainted=True)
     cache = cc._cache_path()
     first = cache.stat().st_mtime_ns
 
-    cc.write_cache(discovered, [], [], [], tainted=True)
+    cc.write_cache(discovered, [], [], tainted=True)
     assert cache.stat().st_mtime_ns == first, "an identical tainted entry was rewritten"
 
 
@@ -445,12 +405,12 @@ def test_a_tainted_write_still_replaces_an_untainted_entry(repos):
     from otto.config import completion_cache as cc
 
     _, discovered = repos
-    cc.write_cache(discovered, [], [], [])  # clean
+    cc.write_cache(discovered, [], [])  # clean
     cache = cc._cache_path()
     before = json.loads(cache.read_text())["sections"]
     assert before["names"]["tainted"] is False
 
-    cc.write_cache(discovered, [], [], [], tainted=True)
+    cc.write_cache(discovered, [], [], tainted=True)
     after = json.loads(cache.read_text())["sections"]
     assert after["names"]["fingerprint"] == before["names"]["fingerprint"], (
         "the digests must MATCH, or this proves nothing about the taint arm"

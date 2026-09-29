@@ -114,25 +114,6 @@ def two() -> None:
     """Second child."""
 '''
 
-_SUITE_FILE = '''
-"""A TOP-LEVEL test file, which is the only place a suite can register from.
-
-``Repo.iter_test_files`` reads the top level of each configured tests dir and
-``import_test_files`` executes what it returns at bootstrap, so a ``Test*``
-subclass here lands in the ``SUITES`` registry and therefore in the ``names``
-section's ``suites`` payload.
-"""
-
-from otto.suite import OttoSuite
-
-
-class TestGenrepoSuite(OttoSuite):
-    """The one registered suite, so ``otto test <TAB>`` has a name to print."""
-
-    async def test_noop(self) -> None:
-        pass
-'''
-
 _BROKEN_INIT = '''
 """Init module that registers one command and then fails to load."""
 
@@ -176,31 +157,6 @@ def plugin_repo(tmp_path):
     repo = generate_repo(tmp_path, files=20, dirs=3)
     (repo / "pylib" / "genrepo_instructions.py").write_text(_PLUGIN_INIT)
     (repo / "pylib" / "genrepo_lazy.py").write_text(_PLUGIN_LAZY)
-    return repo, _env(repo, tmp_path / "home")
-
-
-@pytest.fixture
-def suite_repo(tmp_path):
-    """``plugin_repo`` plus ONE registered suite, for the ``otto test <TAB>`` param.
-
-    A VARIANT rather than a suite added to ``plugin_repo`` itself: that fixture
-    is shared with byte-identical-output assertions
-    (``test_warm_help_is_byte_identical_to_cold_help``), with marker-based
-    bootstrap detectors, and with the three sibling params of the completion
-    test — and registering a suite imports ``otto.suite`` (hence pytest) inside
-    every one of their bootstraps. This param needs a non-empty
-    ``otto test <TAB>`` control and nothing else, so it gets its own tree.
-
-    Without it the control was ``'\\n'`` and the corrupted-vs-control assert
-    read ``'\\n' == '\\n'``: it could catch a name APPEARING and never a name
-    being LOST, which is the direction that matters — a degraded serve that
-    hands click an empty ``suites`` list exits 0, prints no traceback, and
-    silently drops every suite name.
-    """
-    repo = generate_repo(tmp_path, files=20, dirs=3)
-    (repo / "pylib" / "genrepo_instructions.py").write_text(_PLUGIN_INIT)
-    (repo / "pylib" / "genrepo_lazy.py").write_text(_PLUGIN_LAZY)
-    (repo / "tests" / "test_suite_probe.py").write_text(_SUITE_FILE)
     return repo, _env(repo, tmp_path / "home")
 
 
@@ -337,7 +293,7 @@ def test_a_broken_init_module_writes_a_tainted_cache(broken_repo):
 
     data = json.loads(_cache_file(Path(env["OTTO_HOME"])).read_text())
     assert data["sections"]["names"]["tainted"] is True
-    assert data["sections"]["tests"]["tainted"] is True
+    assert data["sections"]["shim"]["tainted"] is True
 
     second = _run(env, "--help")
     assert second.returncode == 0, second.stderr
@@ -382,10 +338,10 @@ def test_a_corrupt_names_payload_falls_back_to_the_full_load(plugin_repo, comman
     offer, so the shape is checked one level DEEP at the point the snapshot is
     installed.
 
-    ``commands`` ONLY: root help never touches ``suites`` or ``instructions``
-    (they belong to ``otto test`` / ``otto run``), so parametrizing this test
-    over them would add two cases that pass whatever the guard does. Their
-    home is the completion test below.
+    ``commands`` ONLY: root help never touches ``instructions`` (it belongs
+    to ``otto run``), so parametrizing this test over it would add a case
+    that passes whatever the guard does. Its home is the completion test
+    below.
     """
     _repo, env = plugin_repo
     _corrupt_names(env, "commands", commands)
@@ -435,26 +391,13 @@ def _complete(env: dict, comp_words: str, comp_cword: str) -> subprocess.Complet
             "plugin_repo",
             id="commands-list-of-non-dicts",
         ),
-        # `suites` and `instructions` reach `_attach_cached_stubs`, which
-        # iterates them RAW — a different consumer from `commands`, on a
-        # different argv, and one root help never exercises. `read_cache`
-        # rejected a non-list for both; nothing did between this task's first
-        # commit and this fix. Both compare against a control run of the
-        # SAME completion against the clean warm cache: "no crash" is not
-        # the property that matters here, "same answer as an uncorrupted
-        # cache" is. That comparison only HAS power while the control is
-        # non-empty, which is why `suites` runs against `suite_repo` — see
-        # that fixture for what the empty control failed to catch.
-        pytest.param(
-            "suites",
-            7,
-            "otto test ",
-            "2",
-            "TestGenrepoSuite",
-            True,
-            "suite_repo",
-            id="suites-not-a-list",
-        ),
+        # `instructions` reaches `_attach_cached_stubs`, which iterates it
+        # RAW — a different consumer from `commands`, on a different argv,
+        # and one root help never exercises. It compares against a control
+        # run of the SAME completion against the clean warm cache: "no crash"
+        # is not the property that matters here, "same answer as an
+        # uncorrupted cache" is. That comparison only HAS power while the
+        # control is non-empty — it lists `install`.
         pytest.param(
             "instructions",
             "nope",
@@ -482,7 +425,7 @@ def test_a_corrupt_names_payload_never_tracebacks_into_the_shell(
     Parametrized over EVERY key the fast path hands to a raw iterator, each
     on the argv that reaches it, against the repo named by *repo_fixture*.
     *expected* is the name the fallback bootstrap must then produce. For
-    ``suites`` and ``instructions``, *compare_to_control* proves the stronger
+    ``instructions``, *compare_to_control* proves the stronger
     property directly: the corrupted run's stdout is BYTE-IDENTICAL to a clean
     run of the exact same completion, i.e. the fallback bootstrap produced the
     SAME answer a warm-but-uncorrupted cache would have, not merely "rc 0 and
@@ -490,8 +433,7 @@ def test_a_corrupt_names_payload_never_tracebacks_into_the_shell(
 
     EVERY control must be non-empty or that comparison is decorative — it can
     only catch a name appearing, never a name being lost, and losing names is
-    the regression direction a degraded serve produces. ``suites`` therefore
-    runs against ``suite_repo``, whose control lists ``TestGenrepoSuite``.
+    the regression direction a degraded serve produces.
     """
     _repo, env = request.getfixturevalue(repo_fixture)
     control = None
@@ -594,3 +536,50 @@ def test_completion_serves_names_despite_a_stale_tests_section(plugin_repo):
     # The decorated leaf completes too — completion reads the same `commands`
     # payload as root help, so the origin-misattribution drop hit both.
     assert "dec-leaf" in result.stdout, f"decorated leaf missing: {result.stdout}"
+
+
+_TEST_VERB_INIT = """
+import otto
+
+
+@otto.options(verbs=["test"])
+class FirmwareOpts:
+    firmware: str = "latest"
+"""
+
+_TYPER_ENTRY = "import sys; sys.argv = ['otto']; from otto.cli.main import entry; entry()"
+
+
+def test_the_typer_fast_path_completes_the_test_verbs_flags(tmp_path):
+    """`otto test --fi<TAB>` on a warm cache offers the verb's flag without a bootstrap.
+
+    Driven through ``otto.cli.main.entry()`` itself, not the shim: this is the
+    Typer fast path the shim hands over to. The ``names`` section carries the
+    test verb's serialized options, as it carries every instruction's for
+    ``otto run``; without them the fast path built ``otto test`` with the run
+    flags alone.
+    """
+    repo = generate_repo(tmp_path, files=4, dirs=1)
+    marker = repo / "init-ran"
+    (repo / "pylib" / "genrepo_instructions.py").write_text(
+        _TEST_VERB_INIT + f"\nopen({str(marker)!r}, 'a').close()\n"
+    )
+    env = _env(repo, tmp_path / "home")
+    _run(env, "--help")  # seed
+    assert marker.is_file()
+    marker.unlink()
+
+    result = subprocess.run(
+        [sys.executable, "-c", _TYPER_ENTRY],
+        env={
+            **env,
+            "_OTTO_COMPLETE": "complete_bash",
+            "COMP_WORDS": "otto test --fi",
+            "COMP_CWORD": "2",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert not marker.exists(), "the TAB bootstrapped instead of reading the cache"
+    assert "--firmware" in result.stdout.split(), result.stdout + result.stderr

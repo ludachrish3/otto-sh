@@ -13,7 +13,6 @@ option entirely.
 import inspect
 import json
 import time
-from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Annotated
 from unittest import mock
@@ -23,7 +22,6 @@ import pytest
 import typer
 
 from otto.config import completion_cache as cc
-from otto.config.repo import PYTEST_CONFIG_NAMES, configured_python_files
 from otto.labs.json_repository import LAB_FILENAME
 from otto.labs.sources import CompiledLabSource
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
@@ -42,7 +40,6 @@ def _sections_file(
     *,
     generated_at: int | None = None,
     names_payload: dict | None = None,
-    tests_payload: dict | None = None,
 ) -> dict:
     """An on-disk v15 sections file with REAL digests for *repos*.
 
@@ -54,12 +51,7 @@ def _sections_file(
 
     at = int(time.time()) if generated_at is None else generated_at
     payloads = {
-        "names": (
-            {"instructions": [], "suites": [], "hosts": []}
-            if names_payload is None
-            else names_payload
-        ),
-        "tests": {"tests": []} if tests_payload is None else tests_payload,
+        "names": ({"instructions": [], "hosts": []} if names_payload is None else names_payload),
     }
     return {
         "schema": cc.SCHEMA_VERSION,
@@ -75,6 +67,13 @@ def _sections_file(
     }
 
 
+def _names_digest(repos: list) -> str:
+    """The ``names`` section's digest: what a lab-file or init edit must move."""
+    from otto.config.cache_sections import section_by_name, section_digest
+
+    return section_digest(section_by_name("names"), repos)
+
+
 def test_read_cache_returns_none_for_empty_repos(tmp_path: Path, monkeypatch) -> None:
     """Empty-repo digests poison the cache if allowed; read must skip them."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
@@ -86,7 +85,6 @@ def test_read_cache_returns_none_for_empty_repos(tmp_path: Path, monkeypatch) ->
         [],
         names_payload={
             "instructions": [{"name": "poisoned", "options": []}],
-            "suites": [],
             "hosts": [],
         },
     )
@@ -119,7 +117,7 @@ def test_cache_rebuild_is_worthwhile_is_false_for_an_ephemeral_fingerprint(
     (see ``test_completion_cache_inventory.test_an_uncacheable_inventory_writes_nothing_at_all``),
     and the clock text baked into that fingerprint means an entry keyed on
     "the fingerprint a moment ago" can never be read back as a hit either —
-    the very next ``compute_fingerprint`` call produces a different key.
+    the very next digest computation produces a different key.
     ``cache_rebuild_is_worthwhile`` must refuse the O(corpus) collect for this
     class BEFORE it ever asks ``read_cache``, because whatever it computed
     would be thrown away by ``write_cache`` regardless.
@@ -233,97 +231,6 @@ def test_read_cache_applies_the_short_ttl_to_a_custom_backend(tmp_path: Path, mo
     assert cc.read_cache([custom]) is not None, "a 1-minute-old entry must still serve"
 
 
-# ── Fingerprint coverage of the --tests sources ──────────────────────────────
-
-
-def _tests_repo(tmp_path: Path) -> MagicMock:
-    """A repo rooted at *tmp_path* whose only tests dir is ``<tmp>/tests``."""
-    repo = MagicMock()
-    repo.sut_dir = tmp_path
-    repo.init = []
-    repo.libs = []
-    repo.lab_sources = []
-    repo.tests = [tmp_path / "tests"]
-    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
-    return repo
-
-
-@pytest.mark.parametrize(
-    "relpath",
-    [
-        "tests/test_top.py",  # the one shape the pre-fix top-level glob caught
-        "tests/unit/test_nested.py",  # otto's layout: 405 test files, 0 at the top
-        "tests/unit/b_test.py",  # pytest's second default python_files pattern
-        "tests/unit/conftest.py",  # parametrization the collected set can see
-        "conftest.py",  # ABOVE the tests dir — pytest loads it, rootdir is the SUT
-    ],
-)
-def test_fingerprint_moves_when_a_test_source_appears(tmp_path: Path, relpath: str) -> None:
-    """A file the ``--tests`` completer can learn a name from must be hashed.
-
-    Otherwise the cached name-set outlives the files it was derived from: the
-    digest never moves, so the entry is served until its 24h TTL expires, and
-    the shell offers tests that no longer exist (or omits ones that do).
-    """
-    repo = _tests_repo(tmp_path)
-    before = cc.compute_fingerprint([repo])
-
-    path = tmp_path / relpath
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("def test_new(): pass\n")
-
-    assert cc.compute_fingerprint([repo]) != before, (
-        f"adding {relpath} left the digest unchanged — the cache cannot self-invalidate"
-    )
-
-
-def test_fingerprint_ignores_non_test_files(tmp_path: Path) -> None:
-    """The digest tracks test SOURCES, not the whole tree — an accepted trade.
-
-    Hashing everything under ``tests/`` would invalidate completion on any
-    fixture-data churn, which is the opposite failure: a full bootstrap behind
-    a TAB keystroke that had a perfectly good entry. The cost of the trade is
-    real — a helper module defining a base class that ``Test*`` inherits does
-    change what pytest collects, and no digest here moves for it.
-    """
-    repo = _tests_repo(tmp_path)
-    before = cc.compute_fingerprint([repo])
-
-    (tmp_path / "tests" / "unit").mkdir(parents=True)
-    (tmp_path / "tests" / "unit" / "helper.py").write_text("def test_ignored(): pass\n")
-    (tmp_path / "tests" / "fixture.json").write_text("{}")
-
-    assert cc.compute_fingerprint([repo]) == before
-
-
-def test_fingerprint_and_static_scan_read_the_same_patterns(tmp_path: Path) -> None:
-    """Lockstep: every file the scan parses for a name also moves the digest.
-
-    The two used to disagree (``glob("test_*.py")`` vs a recursive walk over
-    two patterns), which is exactly how a name-set outlives its source. This
-    asserts through ``compute_fingerprint`` itself, not through the helper
-    they share: pointing the digest back at a narrower glob while leaving the
-    helper in place is the cheapest possible regression, and asserting on the
-    helper would sail straight past it.
-    """
-    repo = _tests_repo(tmp_path)
-    (tmp_path / "tests" / "unit").mkdir(parents=True)
-
-    for i, pattern in enumerate(configured_python_files(tmp_path)):
-        before = cc.compute_fingerprint([repo])
-        path = tmp_path / "tests" / "unit" / pattern.replace("*", f"case{i}")
-        path.write_text(f"def test_case{i}(): pass\n")
-
-        # The scan takes a name from this file...
-        assert f"test_case{i}" in cc.collect_test_names([repo]), (
-            f"{pattern} yields no name — the digest assertion below would be vacuous"
-        )
-        # ...so writing it must move the digest.
-        assert cc.compute_fingerprint([repo]) != before, (
-            f"the scan reads {pattern} but the fingerprint does not stat it"
-        )
-
-
 # ── Fingerprint coverage of the [[lab.sources]] host data ────────────────────
 
 
@@ -367,7 +274,7 @@ def test_fingerprint_moves_when_a_source_lab_file_is_edited(
         )
     ]
 
-    before = cc.compute_fingerprint([repo])
+    before = _names_digest([repo])
     write_lab_json(
         lab_file,
         [
@@ -376,7 +283,7 @@ def test_fingerprint_moves_when_a_source_lab_file_is_edited(
         ],
     )
 
-    assert cc.compute_fingerprint([repo]) != before, (
+    assert _names_digest([repo]) != before, (
         f"editing the lab file of a {spelling} source left the digest unchanged — "
         "the cache cannot self-invalidate on host-data edits"
     )
@@ -403,16 +310,16 @@ def test_fingerprint_ignores_a_custom_source_with_no_files(tmp_path: Path) -> No
         CompiledLabSource(label="fp/cmdb#1", backend="cmdb", repo_dir=sut_dir, paths=[])
     ]
 
-    before = cc.compute_fingerprint([repo])
+    before = _names_digest([repo])
     (sut_dir / "anything.json").write_text("{}")
-    assert cc.compute_fingerprint([repo]) == before
+    assert _names_digest([repo]) == before
     assert cc._has_unfingerprinted_source([repo]) is True
 
 
 def test_write_cache_skips_empty_repos(tmp_path: Path, monkeypatch) -> None:
     """Writing for empty repos must be a no-op — no file, no poisoned entry."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
-    cc.write_cache([], instructions=[{"name": "x", "options": []}], suites=[], hosts=[])
+    cc.write_cache([], instructions=[{"name": "x", "options": []}], hosts=[])
     assert not cc._cache_path().exists()  # type: ignore[union-attr]
 
 
@@ -479,12 +386,12 @@ def test_clear_cache_returns_false_when_missing(tmp_path: Path, monkeypatch) -> 
 
 
 # ---------------------------------------------------------------------------
-# collect_current_commands — reads otto.cli.run.INSTRUCTIONS + otto.suite.register.SUITES
+# collect_current_commands — reads otto.instructions.INSTRUCTIONS
 # ---------------------------------------------------------------------------
 
 
 class TestCollectCurrentCommands:
-    """collect_current_commands() reads the live INSTRUCTIONS/SUITES registries."""
+    """collect_current_commands() reads the live INSTRUCTIONS registry."""
 
     def test_nothing_registered_yields_empty_instructions(self, monkeypatch) -> None:
         """A run where no init module registered anything reports [], never an error.
@@ -512,8 +419,7 @@ class TestCollectCurrentCommands:
             "otto.instructions.INSTRUCTIONS",
             Registry("instruction", register_hint="@otto.cli.run.instruction()"),
         )
-        instructions, _suites = cc.collect_current_commands()
-        assert instructions == []
+        assert cc.collect_current_commands() == []
 
     def test_collects_registered_instruction_with_options(self) -> None:
         import typer
@@ -527,11 +433,11 @@ class TestCollectCurrentCommands:
         sub_app.command("_cc_probe_instr")(_probe_instr)
         INSTRUCTIONS.register(
             "_cc_probe_instr",
-            InstructionEntry(name="_cc_probe_instr", sub_app=sub_app, module=__name__),
+            InstructionEntry(name="_cc_probe_instr", make_app=lambda: sub_app, module=__name__),
             origin=__name__,
         )
         try:
-            instructions, _suites = cc.collect_current_commands()
+            instructions = cc.collect_current_commands()
         finally:
             INSTRUCTIONS.unregister("_cc_probe_instr")
 
@@ -539,85 +445,30 @@ class TestCollectCurrentCommands:
         assert entry["options"]
         assert entry["options"][0]["kind"] == "str"
 
-    def test_collects_registered_suite_with_options(self) -> None:
-        import typer
-
-        from otto.suite.register import SUITES, SuiteEntry
-
-        sub_app = typer.Typer()
-
-        def _probe_suite(count: Annotated[int, typer.Option("--count")] = 1) -> None: ...
-
-        sub_app.command("_CcProbeSuite")(_probe_suite)
-        SUITES.register(
-            "_CcProbeSuite",
-            SuiteEntry(name="_CcProbeSuite", sub_app=sub_app, file=__file__, cls=object),
-            origin=__name__,
-        )
-        try:
-            _instructions, suites = cc.collect_current_commands()
-        finally:
-            SUITES.unregister("_CcProbeSuite")
-
-        entry = next(e for e in suites if e["name"] == "_CcProbeSuite")
-        assert entry["options"]
-        assert entry["options"][0]["kind"] == "int"
-
-    def test_auto_registered_suite_appears_with_serialized_options(self) -> None:
-        """A Test* OttoSuite subclass defined with NO decorator/manual registration
-        still surfaces in collect_current_commands() — pins that the completion
-        cache reads the live SUITES registry, which OttoSuite.__init_subclass__
-        populates automatically (register_suite() was deleted; see
-        tests/unit/suite/test_auto_registration.py for the isolation idiom)."""
-        import typer
-
-        from otto import options
-        from otto.suite import OttoSuite
-        from otto.suite.register import SUITES
-
-        @options
-        class _AutoRegProbeOpts:
-            retries: Annotated[int, typer.Option(help="n")] = 3
-
-        class TestAutoRegProbe(OttoSuite):
-            Options = _AutoRegProbeOpts
-
-            async def test_something(self) -> None: ...
-
-        try:
-            assert "TestAutoRegProbe" in SUITES  # sanity: __init_subclass__ registered it
-            _instructions, suites = cc.collect_current_commands()
-        finally:
-            SUITES.unregister("TestAutoRegProbe")
-
-        entry = next(e for e in suites if e["name"] == "TestAutoRegProbe")
-        assert entry["options"]
-        assert entry["options"][0]["kind"] == "int"
-
     def test_unserializable_options_cache_with_empty_options_list(self) -> None:
         """A command whose options can't be serialized still completes by name."""
         from decimal import Decimal
 
         import typer
 
-        from otto.suite.register import SUITES, SuiteEntry
+        from otto.cli.run import INSTRUCTIONS, InstructionEntry
 
         sub_app = typer.Typer()
 
         def _probe_bad(bad: Annotated[Decimal, typer.Option("--bad")] = Decimal(0)) -> None: ...
 
-        sub_app.command("_CcProbeBadSuite")(_probe_bad)
-        SUITES.register(
-            "_CcProbeBadSuite",
-            SuiteEntry(name="_CcProbeBadSuite", sub_app=sub_app, file=__file__, cls=object),
+        sub_app.command("_cc_probe_bad")(_probe_bad)
+        INSTRUCTIONS.register(
+            "_cc_probe_bad",
+            InstructionEntry(name="_cc_probe_bad", make_app=lambda: sub_app, module=__name__),
             origin=__name__,
         )
         try:
-            _instructions, suites = cc.collect_current_commands()
+            instructions = cc.collect_current_commands()
         finally:
-            SUITES.unregister("_CcProbeBadSuite")
+            INSTRUCTIONS.unregister("_cc_probe_bad")
 
-        entry = next(e for e in suites if e["name"] == "_CcProbeBadSuite")
+        entry = next(e for e in instructions if e["name"] == "_cc_probe_bad")
         assert entry["options"] == []
 
 
@@ -664,7 +515,6 @@ def test_write_read_cache_round_trips_backend_names(tmp_path: Path, monkeypatch)
     cc.write_cache(
         [fake_repo],
         instructions=[],
-        suites=[],
         hosts=[],
         term_backends=["ssh", "telnet"],
         transfer_backends=[{"name": "scp", "host_families": ["unix"]}],
@@ -905,7 +755,6 @@ def test_write_read_cache_round_trips_commands(tmp_path: Path, monkeypatch) -> N
     cc.write_cache(
         [fake_repo],
         instructions=[],
-        suites=[],
         hosts=[],
         commands=[{"name": "e2etool", "help": "Tool.", "lab_free": False}],
     )
@@ -929,7 +778,7 @@ def test_read_cache_defaults_commands_to_empty_list(tmp_path: Path, monkeypatch)
     # one `build_inventory` rejects, taking the cache write down with it.
     fake_repo.inventory_settings = {}
 
-    cc.write_cache([fake_repo], instructions=[], suites=[], hosts=[])
+    cc.write_cache([fake_repo], instructions=[], hosts=[])
     out = cc.read_cache([fake_repo])
     assert out is not None
     assert out["commands"] == []
@@ -953,7 +802,6 @@ def test_write_read_cache_round_trips_hosts_by_lab(tmp_path: Path, monkeypatch) 
     cc.write_cache(
         [fake_repo],
         instructions=[],
-        suites=[],
         hosts=["test1", "alt2"],
         hosts_by_lab={"unix": ["test1"], "unix_alt": ["alt2"]},
     )
@@ -977,7 +825,7 @@ def test_read_cache_defaults_hosts_by_lab_to_empty_dict(tmp_path: Path, monkeypa
     # one `build_inventory` rejects, taking the cache write down with it.
     fake_repo.inventory_settings = {}
 
-    cc.write_cache([fake_repo], instructions=[], suites=[], hosts=[])
+    cc.write_cache([fake_repo], instructions=[], hosts=[])
     out = cc.read_cache([fake_repo])
     assert out is not None
     assert out["hosts_by_lab"] == {}
@@ -996,7 +844,6 @@ def test_write_read_cache_round_trips_the_class_map_projects_and_links(tmp_path,
     cc.write_cache(
         [fake_repo],
         instructions=[],
-        suites=[],
         hosts=["z1"],
         host_classes_by_id={"z1": "zephyr"},
         projects=["b", "a"],
@@ -1020,7 +867,7 @@ def test_read_cache_rejects_a_malformed_class_map(tmp_path, monkeypatch):
     fake_repo.libs = []
     fake_repo.tests = []
     fake_repo.inventory_settings = {}
-    cc.write_cache([fake_repo], instructions=[], suites=[], hosts=[])
+    cc.write_cache([fake_repo], instructions=[], hosts=[])
     data = json.loads(cc._cache_path().read_text())
     data["sections"]["names"]["payload"]["host_classes_by_id"] = ["not", "a", "dict"]
     cc._cache_path().write_text(json.dumps(data))
@@ -1123,7 +970,7 @@ def test_collect_skips_non_list_elements_section(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# compute_fingerprint — init-module resolution branches + determinism
+# The names digest — init-module resolution branches + determinism
 # ---------------------------------------------------------------------------
 
 
@@ -1134,7 +981,7 @@ def _make_fingerprint_repo(
     libs: list[Path],
     labs: list[Path] | None = None,
 ) -> MagicMock:
-    """Build a fake Repo suitable for compute_fingerprint tests."""
+    """Build a fake Repo suitable for names-digest tests."""
     fake_repo = MagicMock()
     fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir(parents=True, exist_ok=True)
@@ -1161,7 +1008,7 @@ def test_fingerprint_resolves_single_py_module(tmp_path: Path) -> None:
         init=["mymod"],
         libs=[lib_dir],
     )
-    d1 = cc.compute_fingerprint([repo])
+    d1 = _names_digest([repo])
     assert isinstance(d1, str)
     assert len(d1) == 64  # sha256 hex
 
@@ -1183,8 +1030,8 @@ def test_fingerprint_unresolved_module_token(tmp_path: Path) -> None:
         libs=[lib_dir],
     )
 
-    d_resolved = cc.compute_fingerprint([repo_resolved])
-    d_unresolved = cc.compute_fingerprint([repo_unresolved])
+    d_resolved = _names_digest([repo_resolved])
+    d_unresolved = _names_digest([repo_unresolved])
 
     assert d_resolved != d_unresolved
 
@@ -1226,13 +1073,13 @@ def test_fingerprint_resolves_package_dir_module(tmp_path: Path) -> None:
         init=["mypkg"],
         libs=[lib_dir],
     )
-    digest = cc.compute_fingerprint([repo])
+    digest = _names_digest([repo])
     assert isinstance(digest, str)
     assert len(digest) == 64  # sha256 hex
 
 
 def test_fingerprint_is_deterministic(tmp_path: Path) -> None:
-    """Calling compute_fingerprint twice on the same repo set returns equal digests."""
+    """Digesting the same repo set twice returns equal digests."""
     lib_dir = tmp_path / "lib"
     lib_dir.mkdir()
     (lib_dir / "mymod.py").write_text("# init module")
@@ -1243,8 +1090,8 @@ def test_fingerprint_is_deterministic(tmp_path: Path) -> None:
         libs=[lib_dir],
     )
 
-    d1 = cc.compute_fingerprint([repo])
-    d2 = cc.compute_fingerprint([repo])
+    d1 = _names_digest([repo])
+    d2 = _names_digest([repo])
 
     assert d1 == d2
 
@@ -1279,279 +1126,6 @@ def test_collect_skips_invalid_host_dict(tmp_path: Path) -> None:
     repo = _make_fake_repo(tmp_path)
 
     assert cc.collect_docker_capable_host_ids([repo]) == []
-
-
-# ── pytest's python_files override ───────────────────────────────────────────
-
-
-def _write(sut_dir: Path, filename: str, body: str) -> None:
-    sut_dir.mkdir(parents=True, exist_ok=True)
-    (sut_dir / filename).write_text(body)
-
-
-#: (id, {filename: body}, expected patterns). Each case is ALSO checked against
-#: the real pytest in `test_python_files_matches_what_pytest_itself_collects`,
-#: so "expected" is not just my reading of the docs.
-_CONFIG_CASES: list[tuple[str, dict[str, str], list[str]]] = [
-    ("none", {}, ["test_*.py", "*_test.py"]),
-    ("pytest_ini", {"pytest.ini": "[pytest]\npython_files = check_*.py\n"}, ["check_*.py"]),
-    (
-        "dot_pytest_ini",
-        {".pytest.ini": "[pytest]\npython_files = check_*.py\n"},
-        ["check_*.py"],
-    ),
-    (
-        "pytest_toml",
-        {"pytest.toml": '[pytest]\npython_files = ["check_*.py"]\n'},
-        ["check_*.py"],
-    ),
-    (
-        "pyproject_ini_options",
-        {"pyproject.toml": '[tool.pytest.ini_options]\npython_files = ["check_*.py"]\n'},
-        ["check_*.py"],
-    ),
-    (
-        "pyproject_native_toml",
-        {"pyproject.toml": '[tool.pytest]\npython_files = ["check_*.py"]\n'},
-        ["check_*.py"],
-    ),
-    ("tox_ini", {"tox.ini": "[pytest]\npython_files = check_*.py\n"}, ["check_*.py"]),
-    (
-        "setup_cfg",
-        {"setup.cfg": "[tool:pytest]\npython_files = check_*.py\n"},
-        ["check_*.py"],
-    ),
-    # The regression this matrix exists for: pytest stops at the FIRST file
-    # that counts as its config and never falls through on a missing key, so a
-    # leftover pyproject table next to a pytest.ini is ignored entirely.
-    # Reading it instead blinds both readers to every real test.
-    (
-        "pytest_ini_wins_over_pyproject",
-        {
-            "pytest.ini": "[pytest]\ntestpaths = tests\n",
-            "pyproject.toml": '[tool.pytest.ini_options]\npython_files = ["check_*.py"]\n',
-        },
-        ["test_*.py", "*_test.py"],
-    ),
-    (
-        "empty_pytest_ini_still_counts",
-        {
-            "pytest.ini": "",
-            "tox.ini": "[pytest]\npython_files = check_*.py\n",
-        },
-        ["test_*.py", "*_test.py"],
-    ),
-    # A tox.ini with no [pytest] section is NOT pytest's config, so the search
-    # continues past it — the mirror image of the case above.
-    (
-        "tox_without_pytest_section_is_skipped",
-        {
-            "tox.ini": "[tox]\nenvlist = py310\n",
-            "setup.cfg": "[tool:pytest]\npython_files = check_*.py\n",
-        },
-        ["check_*.py"],
-    ),
-    # Quoted pattern with a space: pytest splits ini "args" with shlex.
-    (
-        "shlex_quoted_pattern",
-        {"pytest.ini": '[pytest]\npython_files = "my check*.py" other*.py\n'},
-        ["my check*.py", "other*.py"],
-    ),
-]
-
-
-@pytest.mark.parametrize(
-    ("files", "expected"),
-    [(files, expected) for _id, files, expected in _CONFIG_CASES],
-    ids=[case_id for case_id, _f, _e in _CONFIG_CASES],
-)
-def test_python_files_is_read_the_way_pytest_reads_it(
-    tmp_path: Path, files: dict[str, str], expected: list[str]
-) -> None:
-    for name, body in files.items():
-        _write(tmp_path, name, body)
-    assert configured_python_files(tmp_path) == expected
-
-
-@pytest.mark.parametrize(
-    ("files", "expected"),
-    [(files, expected) for _id, files, expected in _CONFIG_CASES],
-    ids=[case_id for case_id, _f, _e in _CONFIG_CASES],
-)
-def test_python_files_matches_what_pytest_itself_collects(
-    tmp_path: Path, files: dict[str, str], expected: list[str]
-) -> None:
-    """Differential: otto's answer must agree with the REAL pytest, per case.
-
-    The precedence rules here are subtle enough that a table of expectations
-    written from the docs is worth exactly nothing — the first version of this
-    reader fell through on a missing key, which no amount of re-reading the
-    docs revealed. So every case above is also run through a real pytest
-    collection, and the two must select the same files.
-    """
-    import subprocess
-    import sys
-
-    for name, body in files.items():
-        _write(tmp_path, name, body)
-    tests = tmp_path / "tests"
-    tests.mkdir()
-    (tests / "test_default.py").write_text("def test_default(): pass" + chr(10))
-    (tests / "check_alt.py").write_text("def test_alt(): pass" + chr(10))
-
-    proc = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "--collect-only",
-            "-q",
-            "--no-header",
-            "-p",
-            "no:cacheprovider",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    collected = {
-        line.split("::")[0].split("/")[-1] for line in proc.stdout.splitlines() if "::" in line
-    }
-    otto_selects = {
-        name
-        for name in ("test_default.py", "check_alt.py")
-        if any(fnmatchcase(name, pat) for pat in configured_python_files(tmp_path))
-    }
-    assert otto_selects == collected, proc.stdout
-
-
-def test_explicitly_empty_python_files_is_not_the_default(tmp_path: Path) -> None:
-    """`python_files = []` tells pytest to collect nothing; absent means defaults."""
-    _write(tmp_path, "pyproject.toml", "[tool.pytest.ini_options]\npython_files = []\n")
-    assert configured_python_files(tmp_path) == []
-
-
-def test_a_percent_in_python_files_does_not_explode(tmp_path: Path) -> None:
-    """pytest parses ini files with iniconfig, which does no interpolation.
-
-    configparser's default BasicInterpolation would raise
-    InterpolationSyntaxError straight out of the completion fast path — and
-    `cli/main.py` suppresses only OSError around the cache write, so it would
-    traceback on every command, not just on TAB.
-    """
-    _write(tmp_path, "pytest.ini", "[pytest]\npython_files = test_%d_*.py\n")
-    assert configured_python_files(tmp_path) == ["test_%d_*.py"]
-
-
-def test_overridden_python_files_reach_both_readers(tmp_path: Path) -> None:
-    """The whole point: the scan NAMES it and the digest STATS it.
-
-    Verified live against pytest before this landed — with
-    ``python_files = check_*.py test_*.py``, pytest collects
-    ``check_alt.py::test_alt`` while otto's completer offered nothing and its
-    digest never moved, so the stale name-set survived its full 24h TTL.
-    """
-    _write(tmp_path, "pytest.ini", "[pytest]\npython_files = check_*.py test_*.py\n")
-    repo = _tests_repo(tmp_path)
-    (tmp_path / "tests" / "unit").mkdir(parents=True)
-
-    before = cc.compute_fingerprint([repo])
-    (tmp_path / "tests" / "unit" / "check_alt.py").write_text("def test_alt(): pass\n")
-
-    assert "test_alt" in cc.collect_test_names([repo]), "the scan must honour python_files"
-    assert cc.compute_fingerprint([repo]) != before, "the digest must honour it too"
-
-
-def test_editing_the_pytest_config_itself_moves_the_digest(tmp_path: Path) -> None:
-    """`python_files` decides which files count, so it is a source in its own right.
-
-    Without this, adding ``python_files = check_*.py`` to a pyproject.toml
-    changes what the completer should offer while the digest sits still.
-    """
-    repo = _tests_repo(tmp_path)
-    before = cc.compute_fingerprint([repo])
-    _write(tmp_path, "pytest.ini", "[pytest]\npython_files = check_*.py test_*.py\n")
-    assert cc.compute_fingerprint([repo]) != before
-
-
-def test_the_walk_prunes_what_pytest_never_collects(tmp_path: Path) -> None:
-    """`.venv` / `.tox` / `build` under a tests dir are pytest's norecursedirs.
-
-    rglob descended into them: a venv tree measured 83 ms warm, on a path that
-    runs twice per TAB, for files pytest would never collect — and whose
-    mtimes would then invalidate completion for no reason.
-    """
-    repo = _tests_repo(tmp_path)
-    tests = tmp_path / "tests"
-    before = cc.compute_fingerprint([repo])
-
-    for skipped in (".venv/lib", ".tox/py310", "build", "node_modules", "sub.egg"):
-        d = tests / skipped
-        d.mkdir(parents=True)
-        (d / "test_vendored.py").write_text("def test_vendored(): pass\n")
-
-    assert cc.compute_fingerprint([repo]) == before, "pruned dirs must not move the digest"
-    assert "test_vendored" not in cc.collect_test_names([repo])
-
-
-def test_a_directory_named_like_a_test_file_is_not_a_test_source(tmp_path: Path) -> None:
-    """`rglob` matched directories too, and `hash_file` folded their mtime in,
-    so writing an unrelated file INSIDE one moved the digest."""
-    repo = _tests_repo(tmp_path)
-    (tmp_path / "tests" / "test_dirname.py").mkdir(parents=True)
-    before = cc.compute_fingerprint([repo])
-    (tmp_path / "tests" / "test_dirname.py" / "payload.txt").write_text("x")
-    assert cc.compute_fingerprint([repo]) == before
-
-
-@pytest.mark.parametrize("name", sorted(PYTEST_CONFIG_NAMES))
-def test_every_pytest_config_file_is_in_the_digest(tmp_path: Path, name: str) -> None:
-    """Each of the seven, not just the one the other tests happen to write.
-
-    `python_files` decides which files below even count, so every file pytest
-    might read it from is a fingerprint source. Dropping any one of them from
-    `pytest_config_paths` leaves a repo configured that way permanently stale.
-    """
-    repo = _tests_repo(tmp_path)
-    before = cc.compute_fingerprint([repo])
-    (tmp_path / name).write_text("# pytest config" + chr(10))
-    assert cc.compute_fingerprint([repo]) != before, f"{name} is not a digest source"
-
-
-@pytest.mark.parametrize(
-    ("dirname", "pruned"),
-    [
-        (".venv", True),
-        (".tox", True),
-        (".git", True),
-        ("sub.egg", True),
-        ("_darcs", True),
-        ("build", True),
-        ("CVS", True),
-        ("dist", True),
-        ("node_modules", True),
-        ("venv", True),
-        ("{arch}", True),
-        ("__pycache__", True),
-        # Near-misses that pytest DOES collect from — pruning these would
-        # blind both readers, which is the same failure in the other direction.
-        ("builds", False),
-        ("mybuild", False),
-        ("egg", False),
-        ("arch", False),
-        ("unit", False),
-    ],
-)
-def test_norecursedirs_table_matches_pytest(dirname: str, pruned: bool) -> None:
-    """The full default list, table-checked, including the near-misses.
-
-    pytest matches `norecursedirs` as fnmatch PATTERNS against the basename;
-    this reproduces `*.egg` and `.*` as suffix/prefix checks and the rest as
-    literals, so the table is the only thing that would catch a future edit
-    dropping one — or widening a literal into a prefix.
-    """
-    assert cc._is_norecurse_dir(dirname) is pruned
 
 
 # ── A host source that STALLS must not wedge the shell ───────────────────────
@@ -1765,7 +1339,7 @@ def test_write_read_cache_round_trips_docker_use_cases(tmp_path: Path, monkeypat
     repo.docker_settings.use_cases = (_use_case("soak"), _use_case("integration"))
 
     names = cc.collect_docker_use_case_names([repo])
-    cc.write_cache([repo], instructions=[], suites=[], hosts=[], docker_use_cases=names)
+    cc.write_cache([repo], instructions=[], hosts=[], docker_use_cases=names)
 
     out = cc.read_cache([repo])
     assert out is not None
@@ -1809,7 +1383,7 @@ def test_a_v13_entry_is_not_served_for_docker_use_cases(tmp_path: Path, monkeypa
         "hosts": [],
     }
     cache_file.write_text(  # type: ignore[union-attr]
-        json.dumps({cc.compute_fingerprint([repo]): entry})
+        json.dumps({_names_digest([repo]): entry})
     )
 
     assert cc.read_cache([repo]) is None, (
@@ -1823,7 +1397,7 @@ def test_a_non_list_docker_use_cases_entry_is_rejected(tmp_path: Path, monkeypat
     reader. Without it the completer would iterate a string one char at a time."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     repo = _cache_repo(tmp_path)
-    cc.write_cache([repo], instructions=[], suites=[], hosts=[], docker_use_cases=["integration"])
+    cc.write_cache([repo], instructions=[], hosts=[], docker_use_cases=["integration"])
 
     cache_file = cc._cache_path()
     data = json.loads(cache_file.read_text())  # type: ignore[union-attr]

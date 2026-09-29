@@ -94,7 +94,11 @@ Per valuable library, make it dual-platform:
 
 ## Phase 3 — suites, instructions, teardown
 
-- [ ] Rewrite each suite to `OttoSuite` + `@register_suite`; each instruction to
+- [ ] Superseded by #457: `OttoSuite`/`@register_suite` are deleted — otto
+      tests are plain pytest now. Rewrite each suite as plain pytest test
+      classes/functions (no otto base class), with any CLI options registered
+      per verb via `register_options(cls, verbs=[...])` (or
+      `@otto.options(verbs=[...])`); each instruction to
       an `@instruction` async function. (No legacy suite runner in otto.)
       Rewrite a suite only once all libraries it depends on are dual-platform.
 - [ ] New projects: otto from day one, no exceptions.

@@ -64,14 +64,14 @@ def test_every_golden_line_resolves():
 def test_extractor_finds_a_known_documented_path():
     """The docs walk must not silently go vacuous.
 
-    ``docs/cookbook/authoring/writing-suites.md`` teaches ``from otto.suite import
-    OttoSuite`` in a real fenced example; if the walk ever stopped finding
+    ``docs/cookbook/python-library.md`` teaches ``from otto.suite import
+    run_tests`` in a real fenced example; if the walk ever stopped finding
     anything (wrong root, wrong glob, a fence-parsing regression that eats
     every block), this is the canary.
     """
     lines, failures = mod.documented_deep_imports()
     assert not failures, failures
-    assert "otto.suite:OttoSuite" in lines
+    assert "otto.suite:run_tests" in lines
 
 
 def test_surface_has_a_floor():
@@ -90,7 +90,7 @@ def test_surface_has_a_floor():
 def test_shape_canary_finds_every_fence_shape(tmp_path):
     """Every code-block shape the docs actually use must be found — not just the common ones.
 
-    A synthetic tree teaches the SAME symbol (``otto.suite:OttoSuite``) in
+    A synthetic tree teaches the SAME symbol (``otto.suite:run_tests``) in
     seven different shapes: a plain ```` ```python ```` fence and a
     blank-line-then-4-space indent (already worked before this test existed),
     a ``~~~python`` tilde fence, a ```` ```python ```` fence indented inside a
@@ -115,17 +115,17 @@ def test_shape_canary_finds_every_fence_shape(tmp_path):
         "Plain fence:\n"
         "\n"
         "```python\n"
-        "from otto.suite import OttoSuite\n"
+        "from otto.suite import run_tests\n"
         "```\n"
         "\n"
         "Indented block:\n"
         "\n"
-        "    from otto.suite import OttoSuite\n"
+        "    from otto.suite import run_tests\n"
         "\n"
         "Tilde fence:\n"
         "\n"
         "~~~python\n"
-        "from otto.suite import OttoSuite\n"
+        "from otto.suite import run_tests\n"
         "~~~\n"
         "\n"
         "Fence indented inside a list item:\n"
@@ -133,20 +133,20 @@ def test_shape_canary_finds_every_fence_shape(tmp_path):
         "- bullet text:\n"
         "\n"
         "  ```python\n"
-        "  from otto.suite import OttoSuite\n"
+        "  from otto.suite import run_tests\n"
         "  ```\n"
         "\n"
         "MyST code-block directive:\n"
         "\n"
         "```{code-block} python\n"
-        "from otto.suite import OttoSuite\n"
+        "from otto.suite import run_tests\n"
         "```\n"
         "\n"
         "Nested in an equal-count container:\n"
         "\n"
         "```{note}\n"
         "```python\n"
-        "from otto.suite import OttoSuite\n"
+        "from otto.suite import run_tests\n"
         "```\n"
         "```\n"
         "\n"
@@ -154,14 +154,14 @@ def test_shape_canary_finds_every_fence_shape(tmp_path):
         "\n"
         "````{note}\n"
         "```python\n"
-        "from otto.suite import OttoSuite\n"
+        "from otto.suite import run_tests\n"
         "```\n"
         "````\n",
         encoding="utf-8",
     )
 
     candidates = mod._markdown_candidates(docs / "shapes.md")
-    hits = [c for c in candidates if "OttoSuite" in c[1]]
+    hits = [c for c in candidates if "run_tests" in c[1]]
     assert len(hits) == 7, f"expected 7 shapes to be found, got {len(hits)}: {hits}"
 
 
@@ -349,7 +349,7 @@ def test_red_an_empty_docs_root_finds_no_known_path(monkeypatch, tmp_path):
 
     assert not failures
     assert lines == []
-    assert "otto.suite:OttoSuite" not in lines
+    assert "otto.suite:run_tests" not in lines
 
 
 def _check_against(monkeypatch, tmp_path, golden_lines):

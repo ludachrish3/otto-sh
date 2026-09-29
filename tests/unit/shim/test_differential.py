@@ -8,6 +8,7 @@ import io
 import itertools
 import json
 import os
+import time
 import warnings
 
 import pytest
@@ -16,7 +17,7 @@ from otto import _shim_complete as sc
 from otto import bootstrap as bs
 from otto.config import completion_cache as cc
 from otto.config.completion_tree import build_shim_payload
-from otto.suite.register import SUITES
+from otto.config.repo import PYTEST_CONFIG_NAMES
 from tests._fixtures.shim_repo import make_shim_repo
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -24,7 +25,6 @@ pytestmark = pytest.mark.interpreter_agnostic
 EXPECTED_HANDOVER_REASONS = {
     "live",  # a completer that must run product code (a live source)
     "list fragment past its first separator",  # `--hosts dut1,` : live past the separator
-    "collected set cold",  # a tests site with no collected set in the cache
     "value given to flag",  # `--debug=x` : click aborts the whole parse of that command
     "stacked short flags",  # `-hx` : click stacks them, the shim does not model it
     "unknown option",  # only the hand-written lines; counted below
@@ -75,13 +75,11 @@ def _write_cache_like_entry(repos) -> None:
     does not call it, so write_cache recomputes — same entry), and ``tainted=`` is
     ``bool(result.errors)``, which the ``world`` fixture asserts empty, i.e. the default.
     """
-    instructions, suites = cc.collect_current_commands()
+    instructions = cc.collect_current_commands()
     backends = cc.collect_backend_names()
-    scan = cc.scan_test_corpus(repos)
     cc.write_cache(
         repos,
         instructions,
-        suites,
         cc.collect_host_ids(repos),
         docker_hosts=cc.collect_docker_capable_host_ids(repos),
         docker_use_cases=cc.collect_docker_use_case_names(repos),
@@ -90,8 +88,6 @@ def _write_cache_like_entry(repos) -> None:
         usernames=cc.collect_reservation_usernames(repos),
         commands=cc.collect_cli_commands(),
         labs=cc.collect_lab_names(repos),
-        tests=scan.names,
-        markers=cc.collect_marker_names(repos, scan=scan),
         hosts_by_lab=cc.collect_host_ids_by_lab(repos),
         host_drops=cc.collect_host_drops(repos),
         host_classes_by_id=cc.collect_host_classes_by_id(repos),
@@ -100,6 +96,60 @@ def _write_cache_like_entry(repos) -> None:
         logins_by_host=cc.collect_logins_by_host(repos),
         shim=build_shim_payload(repos),
     )
+
+
+def _seed_matching_tables(repos) -> None:
+    """A current per-file table, as a whole-tree collection of this SUT records it.
+
+    Both sides answer a test-name or ``-m`` TAB from it: the shim by its own
+    stat pass, Typer through ``completion_view``. ``test_gen`` stands for a
+    generated test, which no reading of the source could find. The registered
+    markers are what pytest registers here: the SUT's declared ``slow`` and
+    ``smoke``, and otto's own (``OTTO_MARKERS``), which its plugin registers
+    in every session. Built by hand rather than collected: this process's
+    marker registry is otto-sh's own, and importing the SUT's test files here
+    would warn about the SUT's markers.
+    """
+    from otto.config import collected_tests as ct
+    from otto.suite.markers import OTTO_MARKERS
+
+    [repo] = repos
+    tests = repo.sut_dir / "tests"
+
+    def stat(path):
+        st = path.stat()
+        return [st.st_mtime_ns, st.st_size]
+
+    def recorded(path, tests_, markers):
+        return ct.FileRecord(
+            stat=stat(path),
+            tests=[ct.RecordedTest(classes=c, name=n) for c, n in tests_],
+            markers=markers,
+        )
+
+    records = {
+        str(tests / "test_shim_suite.py"): recorded(
+            tests / "test_shim_suite.py",
+            [(["TestShim"], "test_one"), (["TestShim"], "test_two")],
+            ["slow", "smoke"],
+        ),
+        str(tests / "sub" / "test_nested.py"): recorded(
+            tests / "sub" / "test_nested.py",
+            [([], "test_deep"), ([], "test_gen")],
+            ["deep", "generated"],
+        ),
+    }
+    table = ct.updated_table(
+        repo,
+        None,
+        ct.classify(repo, None),
+        records,
+        registered_markers=sorted({"slow", "smoke", *OTTO_MARKERS}),
+        whole_tree=True,
+        dirs={str(tests): stat(tests), str(tests / "sub"): stat(tests / "sub")},
+    )
+    ct.write_tables([table])
+    assert ct.classify(repo, table).is_current
 
 
 @pytest.fixture
@@ -118,33 +168,25 @@ def world(tmp_path, monkeypatch):
     bs._reset()  # the bracket tests/unit/cli/test_default_instructions.py:198-202 uses
     try:
         with warnings.catch_warnings():
-            # The first SUITES read after bootstrap() IMPORTS the SUT's top-level test
-            # files (Repo.import_test_file) inside THIS pytest process, whose marker
-            # registry is otto-sh's own — so `pytest.mark.slow`/`.smoke`, registered in
-            # the SUT's pyproject exactly as a real repo registers them, warn here and
-            # this repo's `filterwarnings=["error"]` would turn a foreign repo's
-            # perfectly valid marker into a BootstrapError. Scoped to that one warning
-            # class around that one load; nothing else is muted.
-            #
-            # Migrated: bootstrap() used to import the test files itself. They now
-            # load on demand, so the load is triggered here, inside the filter,
-            # rather than later by the cache write's suite collection.
+            # Should anything import the SUT's test files inside THIS pytest process,
+            # whose marker registry is otto-sh's own, `pytest.mark.slow`/`.smoke`
+            # (registered in the SUT's pyproject exactly as a real repo registers
+            # them) would warn, and this repo's `filterwarnings=["error"]` would turn
+            # a foreign repo's valid marker into a BootstrapError. Scoped to that one
+            # warning class around the bootstrap; nothing else is muted. The cache
+            # write below never imports a test file: it reads no test file at all.
             warnings.filterwarnings("ignore", category=pytest.PytestUnknownMarkWarning)
             result = bs.bootstrap()
-            SUITES.names()
         assert not result.errors, result.errors
         repos = result.repos
         _write_cache_like_entry(repos)
-        cc._record_collected_tests(
-            repos,
-            ["test_one", "test_two", "TestShim::test_one", "test_deep", "test_gen"],
-            markers=["smoke", "slow", "deep", "generated"],
-        )
+        _seed_matching_tables(repos)
 
-        def _no_warm(_repos):
-            raise AssertionError("the collected set is warm; the warmer must not run")
+        def _no_child():
+            raise AssertionError("every table is warm; the collect child must not run")
 
-        monkeypatch.setattr(cc, "maybe_warm_collected_tests", _no_warm)
+        monkeypatch.setattr(cc, "run_collect_child", _no_child)
+        monkeypatch.setattr(cc, "spawn_collect_child", _no_child)
         bs.set_completion_names(None)
         import typer
         from typer._completion_classes import completion_init
@@ -291,8 +333,13 @@ HAND_WRITTEN = [
     ("otto --xdir --lab ", 3),
     ("otto --xdir --lab e", 3),
     ("otto --xdir --debug=x", 2),
-    ("otto test --tests test_one,", 3),
-    ("otto test --tests test_one,te", 3),
+    ("otto test ", 2),
+    ("otto test te", 2),
+    ("otto test test_one ", 3),
+    ("otto test --seed 5 te", 4),
+    ("otto test -m slow te", 4),
+    ("otto test --no-random Te", 3),
+    ("otto test --list-tests te", 3),
     ("otto -m ", 2),
     ("otto test -m ", 3),
     ("otto test -m", 2),
@@ -300,7 +347,6 @@ HAND_WRITTEN = [
     ("otto test -m 'not (s", 3),
     ('otto test -m "smoke and s', 3),
     ('otto test -m "smoke and "', 3),
-    ("otto test --tests=te", 2),
     ("otto test --markers=sl", 2),
     ("otto host dut1 exec -- -", 5),
     ("otto -- -", 2),
@@ -349,6 +395,7 @@ HAND_WRITTEN = [
     ("otto host dut1 --term ", 4),
     ("otto host dut1 --transfer ", 4),
     ("otto test TestShim --de", 3),
+    ("otto test --de", 2),
     ("otto  host   dut1  ", 4),
     ("otto ho", 1),
     ("otto --bogus ", 2),
@@ -430,12 +477,250 @@ def test_shim_equals_typer_over_the_hand_written_lines(world, monkeypatch):
     assert unknowns == HAND_WRITTEN_UNKNOWNS, reasons
 
 
-def test_a_cold_collected_set_hands_over_on_tests_sites_only(world, monkeypatch):
+def test_the_merged_test_flags_complete_from_the_shim(world, monkeypatch):
+    """``otto test --de<TAB>`` offers ``--depth``, a flag the repo registered for ``test``.
+
+    Pins that the differential is not vacuous for the verb-wide flags: both
+    sides answer, and the answer holds the registered flag, not just whatever
+    the two happen to agree on.
+    """
     _repo, cli = world
+    got, reason = _shim("otto test --de", 2, {})
+    assert got is not None, reason
+    assert "--depth" in got.split("\n")
+    assert got == _typer(cli, "otto test --de", 2, {}, monkeypatch)
+
+
+# ── a tests site answers from the per-file table (design 2026-09-27 §9.2) ──────
+
+TESTS_SITE_LINES = [
+    ("otto test ", 2),
+    ("otto test Te", 2),
+    ("otto test test_one ", 3),
+    ("otto test -m ", 3),
+    ('otto test -m "smoke and s', 3),
+]
+"""Test-name and ``-m`` sites: the two the table serves."""
+
+
+def _outcome(words: str, cword: int) -> "sc.Outcome":
+    environ = {k: v for k, v in os.environ.items() if k != "OTTO_LAB"}
+    environ.update(_OTTO_COMPLETE="complete_bash", COMP_WORDS=words, COMP_CWORD=str(cword))
+    return sc.answer_or_reason(environ)
+
+
+def _bump(path, seconds: int = 5) -> None:
+    """Move *path*'s mtime forward, as the seconds between two real edits would."""
+    st = path.stat()
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + seconds * 1_000_000_000))
+
+
+def _answers_like_typer(cli, monkeypatch) -> list["sc.Outcome"]:
+    outcomes = []
+    for words, cword in TESTS_SITE_LINES:
+        out = _outcome(words, cword)
+        assert out.items is not None, (words, out.reason)
+        assert "\n".join(out.items) == _typer(cli, words, cword, {}, monkeypatch), words
+        outcomes.append(out)
+    return outcomes
+
+
+def _check_marker():
+    return cc._cache_path().parent / sc.MARKER_FILENAMES["tests"]
+
+
+def _age_the_check(seconds: float) -> None:
+    """Date the last check (the check marker) *seconds* ago."""
+    then = time.time() - seconds
+    os.utime(_check_marker(), (then, then))
+
+
+def test_a_current_table_answers_every_tests_site_and_asks_for_no_check(world, monkeypatch):
+    """A table written inside the check window: answered, and no background check."""
+    _repo, cli = world
+    outcomes = _answers_like_typer(cli, monkeypatch)
+    assert not any(out.refresh for out in outcomes)
+    names = _outcome("otto test ", 2).items
+    assert {"TestShim", "TestShim::test_one", "test_deep", "test_gen"} <= set(names or [])
+
+
+def test_the_tab_answers_last_known_names_and_never_stats_the_test_tree(world, monkeypatch):
+    """Edited, added and deleted files do not change a TAB's answer; the check does.
+
+    The TAB reads the table and the ``env`` (the pytest configs, settings and
+    site-packages: a handful of stats, whatever the corpus size) and nothing
+    the table tracks, so a deleted file's names are offered until the
+    background check drops its record, and a new file's names are not
+    offered until a collection has seen them. Typer's completer (zsh, fish,
+    a handed-over bash TAB) answers the same, the same way.
+    """
+    repo, cli = world
+    monkeypatch.setattr(cc, "_collect_refresh_requested", False)
+    before = _outcome("otto test ", 2).items
+    suite = repo / "tests" / "test_shim_suite.py"
+    suite.write_text(suite.read_text() + "\n\ndef test_three():\n    pass\n")
+    (repo / "tests" / "sub" / "test_nested.py").unlink()
+    (repo / "tests" / "test_added.py").write_text("def test_added():\n    pass\n")
+
+    stats: list[str] = []
+    real = os.stat
+
+    def spy(path, *args, **kwargs):
+        stats.append(str(path))
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(sc.os, "stat", spy)
+    _check_marker().unlink()  # whatever the check window says
+    after = _outcome("otto test ", 2)
+    assert after.items == before
+    assert after.refresh is not None, "with no check recorded, the child checks"
+    assert "\n".join(after.items) == _typer(cli, "otto test ", 2, {}, monkeypatch)
+    assert cc._collect_refresh_requested, "and so does Typer's"
+    tests_dir = str(repo / "tests")
+    assert not [p for p in stats if p == tests_dir or p.startswith(tests_dir + os.sep)]
+
+
+def test_writing_the_table_starts_the_check_window(world):
+    """Whoever writes the table has just classified it (a run, a listing, the child),
+    so a TAB right after it starts no check."""
+    assert _check_marker().is_file()
+    assert _outcome("otto test ", 2).refresh is None
+
+
+@pytest.mark.parametrize("lapse", ["aged", "missing"])
+def test_a_lapsed_check_window_starts_one_check_and_restarts_the_window(world, monkeypatch, lapse):
+    """Past ``CHECK_WINDOW_SECONDS`` since the table was last checked (or with no
+    record of a check), the answer asks for the collect child; starting it touches
+    the check marker, so the TABs after it ask for nothing until the window lapses
+    again."""
+    started: list[list[str]] = []
+
+    class _Popen:
+        def __init__(self, argv, **_kwargs):
+            started.append(argv)
+
+    monkeypatch.setattr("subprocess.Popen", _Popen)
+    monkeypatch.setattr(sc, "_started", [])
+
+    _age_the_check(sc.CHECK_WINDOW_SECONDS - 30)
+    assert _outcome("otto test ", 2).refresh is None, "inside the window"
+
+    if lapse == "aged":
+        _age_the_check(sc.CHECK_WINDOW_SECONDS + 1)
+    else:
+        _check_marker().unlink()
+    due = _outcome("otto test ", 2)
+    assert due.items
+    assert due.refresh == str(cc._cache_path().parent)
+    assert sc.spawn_refresh(due.refresh, dict(os.environ)) is True
+    assert len(started) == 1
+    assert time.time() - _check_marker().stat().st_mtime < 5, "the window restarts"
+
+    for words, cword in TESTS_SITE_LINES:
+        assert _outcome(words, cword).refresh is None, words
+    assert len(started) == 1
+
+
+def _rewrite_table(mutate) -> None:
     data = json.loads(cc._cache_path().read_text())
-    data.pop(cc.COLLECTED_TESTS_KEY, None)
+    [key] = data[cc.COLLECTED_TESTS_KEY]
+    mutate(data[cc.COLLECTED_TESTS_KEY], key)
     cc._cache_path().write_text(json.dumps(data))
-    assert _shim("otto test --tests ", 3, {})[1] == "collected set cold"
-    assert _shim("otto test -m ", 3, {})[1] == "collected set cold"
+
+
+def _rewrite_env(field: str, value: str) -> None:
+    _rewrite_table(lambda ns, key: ns[key]["env"].__setitem__(field, value))
+
+
+def _rewrite_site_packages() -> None:
+    def move(ns, key):
+        sites = ns[key]["env"]["site_packages"]
+        assert sites, "the table records where pytest and otto are installed"
+        for site in sites:
+            sites[site] = [0, 0]
+
+    _rewrite_table(move)
+
+
+@pytest.mark.parametrize(
+    ("cold", "reason"),
+    [
+        (lambda repo: _rewrite_table(lambda ns, key: ns.pop(key)), "no test-names cache for "),
+        (
+            lambda repo: _rewrite_table(lambda ns, key: ns[key].__setitem__("generated_at", 0)),
+            "test-names cache expired",
+        ),
+        (lambda repo: _bump(repo / "pyproject.toml"), "test-names cache env moved: "),
+        (
+            lambda repo: (repo / "pytest.ini").write_text("[pytest]\n"),
+            "test-names cache env moved: ",
+        ),
+        (lambda repo: _rewrite_env("python", "0.0.0"), "test-names cache env moved: python"),
+        (
+            lambda repo: _rewrite_env("prefix", "/another/venv"),
+            "test-names cache env moved: prefix",
+        ),
+        (lambda repo: _rewrite_site_packages(), "test-names cache env moved: "),
+    ],
+    ids=[
+        "missing",
+        "past-its-ttl",
+        "config-edited",
+        "config-added",
+        "another-python",
+        "another-venv",
+        "site-packages-moved",
+    ],
+)
+def test_a_cold_table_hands_over_stale_on_tests_sites_only(world, monkeypatch, cold, reason):
+    """No table, one past its TTL, or one another interpreter, venv, installation or pytest
+    config wrote: the full path seeds."""
+    repo, cli = world
+    cold(repo)
+    for words, cword in TESTS_SITE_LINES:
+        out = _outcome(words, cword)
+        assert out.items is None, words
+        assert out.reason.startswith(reason), out.reason
+        assert out.stale is True
+        assert out.refresh is None
     got, _ = _shim("otto host ", 2, {})
-    assert got == _typer(cli, "otto host ", 2, {}, monkeypatch)
+    assert got == _typer(cli, "otto host ", 2, {}, monkeypatch), "a names site is untouched"
+
+
+def test_pytest_config_names_are_pytests_own():
+    """Pinned literally: pytest keeps the list in a local of ``locate_config``
+    (``_pytest.config.findpaths``), which no API exposes. Re-read it there when
+    pytest is upgraded; a name missing here is a config edit no table sees."""
+    from otto.config.repo import PYTEST_CONFIG_NAMES
+
+    assert PYTEST_CONFIG_NAMES == (
+        "pytest.toml",
+        ".pytest.toml",
+        "pytest.ini",
+        ".pytest.ini",
+        "pyproject.toml",
+        "tox.ini",
+        "setup.cfg",
+    )
+
+
+@pytest.mark.parametrize("name", PYTEST_CONFIG_NAMES)
+def test_every_pytest_config_name_sends_the_table_back_to_a_whole_tree(world, name):
+    """Adding (or, for one the SUT already has, editing) any of pytest's config
+    files makes ``classify`` want a whole-tree collection and the shim hand a
+    tests site over as stale: either may change what pytest collects."""
+    from otto.config import collected_tests as ct
+    from otto.config.repo import Repo
+
+    repo, _cli = world
+    path = repo / name
+    if path.exists():
+        _bump(path)
+    else:
+        path.write_text("")
+    live = Repo(sut_dir=repo)
+    assert ct.classify(live, ct.read_table(live)).whole_tree, name
+    out = _outcome("otto test ", 2)
+    assert out.items is None, name
+    assert out.reason == f"test-names cache env moved: {path}", out.reason
+    assert out.stale is True

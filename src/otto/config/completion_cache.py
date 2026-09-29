@@ -5,15 +5,18 @@ tree. The expensive step during that walk is not parsing CLI args — it's the
 user code that populates dynamic subcommands:
 
 - bootstrap imports every repo's ``init`` modules so ``@instruction()``
-  decorators can register into ``INSTRUCTIONS``;
-- the first read of the ``SUITES`` registry after bootstrap imports every
-  top-level ``test_*.py`` (:func:`otto.bootstrap.load_test_suites`) so
-  ``OttoSuite.__init_subclass__`` can auto-register ``Test*``-named classes.
+  decorators can register into ``INSTRUCTIONS``, and options classes register
+  for the ``run`` and ``test`` verbs.
 
-Both execute arbitrary user code. For completion all we actually need is the
-*names* those decorators would register and the *option schemas* the user can
-tab-complete against. This module captures both in a small JSON file and,
-when the cache is valid, lets the caller skip the user code entirely.
+That executes arbitrary user code. Test files are never imported for
+completion's cache: test names come only from pytest's collections, which
+write each repo's per-file table (:mod:`otto.config.collected_tests`) apart
+from any rebuild.
+
+For completion all we actually need is the *names* those decorators would
+register and the *option schemas* the user can tab-complete against. This
+module captures both in a small JSON file and, when the cache is valid, lets
+the caller skip the user code entirely.
 
 Only completion and the root help screen read this cache, and only they
 validate and rebuild it (:func:`otto.cli.main.entry`); an ordinary command
@@ -37,11 +40,10 @@ Cache schema
 One top-level ``"schema"`` stamp and one ``"sections"`` map — see
 :mod:`otto.config.cache_sections` for the registry defining the sections and
 their key sets. Each section carries its OWN stat-digest, the wall-clock time
-it was generated, and a taint flag, so a reader can validate exactly the
-section it needs without walking the corpus that keys the others::
+it was generated, and a taint flag::
 
     {
-        "schema": 20,
+        "schema": 23,
         "sections": {
             "names": {
                 "fingerprint": "<sha256 hex>",
@@ -49,7 +51,6 @@ section it needs without walking the corpus that keys the others::
                 "tainted": false,
                 "payload": {
                     "instructions": [{"name": "install", "options": [...]}, ...],
-                    "suites": [{"name": "TestDevice", "options": [...]}, ...],
                     "hosts": ["test1", "test2", ...],
                     "hosts_by_lab": {"unix": ["test1", "test2"], ...},
                     "host_drops": [{"repo": "sut", "where": "...", "reason": "..."}],
@@ -67,14 +68,7 @@ section it needs without walking the corpus that keys the others::
                     "labs": ["tech1", "tech2", ...]
                 }
             },
-            "tests": {
-                "fingerprint": "<sha256 hex>",
-                "generated_at": 1745000000,
-                "tainted": false,
-                "payload": {
-                    "tests": ["test_smoke", "TestDevice::test_reachable", ...]
-                }
-            }
+            "shim": {...}
         }
     }
 
@@ -93,54 +87,32 @@ parsed by every TAB forever.
 Collected test-name namespace
 -----------------------------
 
-Alongside the fingerprint entries, a single reserved key
-``"__collected_tests__"`` holds the *pytest-collected* ``--tests`` names
-(dynamically generated tests included), keyed by the same fingerprint::
+Alongside the sections, the reserved key ``"__collected_tests__"`` holds each
+repo's per-file test table, keyed by its ``sut_dir``
+(:mod:`otto.config.collected_tests` documents the shape). Only a pytest
+collection writes it — a run, a listing, or the collect child a test-name
+TAB starts — never the rebuild, which runs no collection. Keeping it in its
+own key means the two writers touch disjoint data and can't clobber. A table
+validates itself (one ``stat`` per path it tracks), so no section digest
+keys it.
 
-    {
-        "__collected_tests__": {
-            "<fingerprint>": {
-                "schema_version": 1,
-                "generated_at": 1745000000,
-                "names": ["test_x", "TestX::test_x", ...],
-            }
-        }
-    }
+Digests
+-------
 
-It is written only by a deliberate collection (a real ``otto test --list-tests``
-run, or the bounded subprocess the ``--tests`` completer spawns at tab time) —
-never by the slow-path writer, which must not run a collection pass. Keeping it
-in its own key means the two writers touch disjoint data and can't clobber.
+Each section's digest (:mod:`otto.config.cache_sections`) is a sha256 over
+``(path, mtime_ns, size)`` triples for every file in its key set
+(:func:`hash_file`): each SUT's ``settings.toml``, every ``.py`` file under
+any ``init`` module and every lab file named by a repo's json
+``[[lab.sources]]`` entries (directory entries contribute their
+``lab.json``; ``.json`` entries are the file themselves), plus the
+directories the lab-file enumeration entered. File contents are never read,
+so a digest is cheap to compute. No test file keys a section: a test file
+cannot register anything.
 
-Fingerprint
------------
-
-The ``sections`` map above is validated by PER-SECTION digests
-(:mod:`otto.config.cache_sections`), each built from the hashing rule
-described here over that section's own key subset. The full-corpus
-fingerprint below remains the key for the reserved namespaces (collected
-test names, tunnel ids).
-
-sha256 over ``(path, mtime_ns, size)`` triples for every file whose change
-would alter the registered name sets: each SUT's ``settings.toml``, every
-``.py`` file under any ``init`` module, every test file (pytest's default
-``python_files`` — or the repo's own override of it — plus ``conftest.py``)
-anywhere under a configured ``tests`` directory or on the path from one up to
-the SUT root, every lab file named by a repo's json ``[[lab.sources]]`` entries
-(directory entries contribute their ``lab.json``; ``.json`` entries are the file
-themselves), and every file pytest would read settings from (``python_files`` decides which
-files count, so it is a source in its own right). File contents are never
-read, so the fingerprint is cheap to compute even when SUTs are large.
-
-Hashing a whole ``pyproject.toml`` for one key means a version bump or a lint
-tweak also invalidates completion. That is the conservative direction and the
-opposite of the trade made for ``tests/`` — accepted here because the file is
-one stat, and being wrong about ``python_files`` blinds both readers.
-
-A stale fingerprint is always safe: the fast path is skipped, the slow path
+A stale digest is always safe: the fast path is skipped, the slow path
 runs as normal and rewrites the cache afterward.
 
-A *constant* fingerprint is the failure mode worth knowing about. A repo with a
+A *constant* digest is the failure mode worth knowing about. A repo with a
 ``[[lab.sources]]`` entry on a non-json backend, or which configures a
 ``[reservations]`` backend, keeps that inventory somewhere no stat can see —
 so edits to it never move the digest, even though the repo may still have a
@@ -160,13 +132,11 @@ import tempfile
 import time
 import types
 from dataclasses import dataclass, field
-from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
-from ..errors import is_containable
+from ..errors import OttoError, is_containable
 from . import corpus_snapshot
-from .repo import configured_python_files, pytest_config_paths
 
 if TYPE_CHECKING:
     import threading
@@ -243,44 +213,22 @@ CACHE_FILENAME = "completion_cache.json"
 #      HostSummary, never a password). A surviving v19 entry simply lacks the
 #      key; the bump exists so a reader pinned to the schema does not have to
 #      special-case its absence on an old entry.
-SCHEMA_VERSION = 20
+# v21: otto test is a leaf; names payload drops "suites". Test names complete
+#      as ``otto test``'s variadic ``NAMES`` from the ``tests`` section, and a
+#      rebuild never imports a test file.
+# v22: names payload gains "test_options", the test verb's serialised flags,
+#      so the Typer fast path offers them on ``otto test --<TAB>``.
+# v23: the ``tests`` section is gone, and with it the static name and marker
+#      floors: a test-name TAB answers from the per-file tables pytest's
+#      collections write (``__collected_tests__``). ``shim`` is derived from
+#      ``names`` alone, its payload drops ``tests_digest`` and ``keys`` becomes
+#      the one ``names`` key list, and it gains ``tables`` (the repos whose
+#      tables a tests site reads). A v22 shim would read a digest-keyed
+#      name blob no writer updates any more.
+SCHEMA_VERSION = 23
 
-# One home, two readers: `collect_test_names` decides which files to PARSE for
-# names, and `compute_fingerprint` decides which files to STAT for
-# invalidation. Those two sets must be the same set — a file the scan reads but
-# the digest ignores is a name the cache can serve forever after it stops being
-# true. Both now ask the REPO, because a project that overrides pytest's
-# `python_files` collects from filenames the defaults never match.
-#
-# `Repo.iter_test_files` is a THIRD reader and deliberately not one of these:
-# it EXECUTES what it returns, whenever the suites registry loads (the commands
-# that read suites, and a cache rebuild). Its narrowness is a contract rather
-# than an oversight — see its docstring for the reasoning and for the
-# `tests`-list escape hatch. Do not "fix" it to match these two.
-
-# Directories pytest's default `norecursedirs` skips, minus the two patterns
-# handled by prefix/suffix in `_is_norecurse_dir`.
-_NORECURSE_NAMES = frozenset(
-    {
-        # pytest's default `norecursedirs`, minus the two entries handled as
-        # patterns in `_is_norecurse_dir` (`*.egg` and `.*`).
-        "_darcs",
-        "build",
-        "CVS",
-        "dist",
-        "node_modules",
-        "venv",
-        "{arch}",
-        # NOT part of norecursedirs — pytest skips it with its own hardcoded
-        # check, one `scandir` per package dir that nothing would collect from.
-        "__pycache__",
-    }
-)
-
-# Fingerprint-only: conftest.py holds no collectable test of its own, so the
-# static scan never parses it, but `pytest_generate_tests` and parametrizing
-# fixtures live there and DO change the collected set stored under
-# COLLECTED_TESTS_KEY (which is keyed by this same digest).
+# A conftest holds no test of its own, but pytest loads it before collecting
+# anything under its directory, so the per-file tables watch every one.
 CONFTEST_FILENAME = "conftest.py"
 
 # Cache entries older than this (seconds) are treated as a miss. Forces the
@@ -296,59 +244,53 @@ CACHE_TTL_SECONDS = 24 * 60 * 60
 # inventory changes — so the TTL is the only staleness floor, and a day is far
 # too long for live inventory.
 #
-# Deliberately NOT a backend-supplied revision token: `compute_fingerprint`
-# runs on the completion fast path, and querying a possibly-networked backend
+# Deliberately NOT a backend-supplied revision token: the section digests
+# run on the completion fast path, and querying a possibly-networked backend
 # there is exactly the cost this cache exists to avoid — it would make every
 # TAB keystroke depend on the inventory service being reachable.
 UNFINGERPRINTED_CACHE_TTL_SECONDS = 5 * 60
 
 
-# --- Collected (pytest-accurate) test-name cache, for --tests completion -----
+# --- Collected (pytest-accurate) test names, for NAMES completion -----------
 #
-# The ``tests`` field above is an ``ast``-only *floor* — every statically
-# written ``def test_*`` / ``Test*`` method, discovered without importing a
-# thing. The *collected* set below comes from a real pytest collection, so it
-# also covers dynamically generated tests (``pytest_generate_tests`` /
-# fixture-driven parametrization) and matches the repo's actual pytest config.
-# It selects by *base* name — ``otto test --tests`` matches a bare name against
-# every parametrization — so per-parametrization ids are deliberately not part
-# of it.
-#
-# It lives under its own reserved top-level key (never a real fingerprint), so
-# writing it never disturbs the main fingerprint entries. That separation is
-# load-bearing: the cache rebuild rewrites every section whenever one is stale
-# and must NEVER run a collection pass, while this set is warmed only
-# by a deliberate collection (a real ``otto test`` run, or a bounded subprocess
-# spawned at tab time). The two writers touch disjoint keys and can't clobber.
+# The reserved ``__collected_tests__`` namespace holds each repo's per-file
+# table (``otto.config.collected_tests``), keyed by the repo's ``sut_dir``:
+# what pytest collected from every test file, validated by one stat per path.
+# Only a pytest collection writes it (a run, a listing, the collect child a
+# completer spawns); the cache rebuild never does, and never runs a collection.
+# Completion reads it directly: the console-script shim for a bash TAB, the
+# completers on the full path.
 COLLECTED_TESTS_KEY = "__collected_tests__"
-COLLECTED_SCHEMA_VERSION = 2  # 2: entries carry "markers" beside "names"
 
-# Env var that flips ``otto`` into the one-shot "collect and print test names"
-# subprocess the completer spawns to warm the collected cache. Handled as an
-# early exit in :func:`otto.cli.main.entry`, before the normal CLI runs.
+# Env var that flips ``otto`` into the collect child: the process a completer
+# spawns to seed or refresh the per-file test tables
+# (:func:`otto.config.collected_tests.collect_child_main`). Handled as an early
+# exit in :func:`otto.cli.main.entry`, before the normal CLI runs. The child
+# prints nothing: its parent, if it waits at all, reads the tables it wrote.
 DUMP_TESTS_ENV_VAR = "_OTTO_DUMP_TEST_NAMES"
 
-# Hard cap on the tab-time collection subprocess: a cold ``--tests`` TAB blocks
-# at most this long before falling back to the static floor. "Slow on the first
-# attempt is better than no completion" — but bounded, never a wedged shell.
+# Hard cap on the collect child: a cold ``otto test`` TAB blocks at most this
+# long (the child stops itself; the waiting parent allows a little more before
+# it kills it). "Slow on the first attempt is better than no completion" — but
+# bounded, never a wedged shell.
 COLLECT_TIMEOUT_SECONDS = 15
+_COLLECT_KILL_GRACE_SECONDS = 2
 
-# After a failed / timed-out tab-time collection, skip re-collecting at tab time
-# for this long. Keeps a repo that can't collect within the timeout from costing
-# a slow TAB on *every* keystroke — at most one per cooldown window.
+# After a failed / timed-out collect child, no TAB waits on or spawns another
+# for this long. Keeps a repo that can't collect within the timeout from
+# costing a slow TAB on *every* keystroke — at most one per cooldown window.
 COLLECT_COOLDOWN_SECONDS = 60
+COLLECT_COOLDOWN_FILENAME = ".completion_collect.failed"
+"""Stamped (mtime = when, content = why) by a collect child that failed or timed out."""
 
 COLLECT_LOCK_FILENAME = ".completion_collect.lock"
+# Who holds the lock: the token a waiting TAB hands its child, written into
+# the lock, so the TAB frees the lock after killing its child only when that
+# child took it (never another process's).
+COLLECT_OWNER_ENV_VAR = "_OTTO_COLLECT_OWNER"
 # A lock older than this is treated as orphaned (its holder died) and stolen,
 # so a crashed collector can't block warming forever.
 COLLECT_LOCK_STALE_SECONDS = COLLECT_TIMEOUT_SECONDS + 30
-
-# Frame the dumped payload so the parent can recover the names even if repo
-# discovery emits stray stdout before them.
-_DUMP_BEGIN = "__OTTO_TESTS_BEGIN__"
-_DUMP_END = "__OTTO_TESTS_END__"
-_DUMP_MARKERS_BEGIN = "__OTTO_MARKERS_BEGIN__"
-_DUMP_MARKERS_END = "__OTTO_MARKERS_END__"
 
 
 # Python type <-> serialized kind. Kept intentionally small: these are the
@@ -381,8 +323,8 @@ def _cache_path() -> Path | None:
     to get the slow path on every invocation, silently.
 
     It also DEDUPLICATES. The cache's content was always a pure function of the
-    workspace -- :func:`compute_fingerprint` hashes each repo's settings and
-    init modules and nothing else -- so the xdir was a storage location, never
+    workspace -- the section digests hash each repo's settings, init modules
+    and lab files and nothing else -- so the xdir was a storage location, never
     a semantic key, and invoking otto from N directories against the same repos
     used to maintain N byte-identical caches.
 
@@ -420,10 +362,11 @@ def clear_cache() -> bool:
 def resolved_init_paths(repo: "Repo") -> list[Path]:
     """Every ``.py`` file one of *repo*'s ``init`` names resolves to under ``libs``.
 
-    THE enumeration of the init trees: :func:`compute_fingerprint` and the
-    ``names`` section's key set (:mod:`otto.config.cache_sections`) both hash
-    exactly this list, so the two digests can never disagree about which
-    files make up a registered instruction's source. Resolution rule: a
+    THE enumeration of the init trees: the ``names`` section's key set
+    (:mod:`otto.config.cache_sections`) hashes exactly this list, and
+    :func:`unresolved_init_modules` shares its rule, so the digest can never
+    disagree with itself about which files make up a registered
+    instruction's source. Resolution rule: a
     package directory contributes its whole ``*.py`` tree, a plain
     ``<mod>.py`` contributes itself; a name may resolve under several
     ``libs`` entries and every match counts.
@@ -508,7 +451,7 @@ def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
       that field is populated *exclusively* by custom, typically networked
       backends — the same constant-digest problem, one field over.
     - any ``init`` name that does not resolve under ``libs``
-      (:func:`_has_unresolved_init_module`). ``compute_fingerprint`` hashes
+      (:func:`_has_unresolved_init_module`). Every section digest hashes
       that as the literal string ``"unresolved:<name>"``, which a plugin
       upgrade never moves — the same constant-digest problem the two bullets
       above have, from a source that is not a backend choice at all.
@@ -546,98 +489,28 @@ def _cache_ttl_seconds(repos: list["Repo"]) -> int:
     Shortened when any repo's completion data comes from a source the
     fingerprint cannot see — see :data:`UNFINGERPRINTED_CACHE_TTL_SECONDS`.
 
-    Applies to the main completion entry only. The collected-test-name cache
-    keeps the long TTL: its content tracks test files, and the fingerprint
-    hashes them — the same ``python_files`` the scan reads (the repo's own,
-    where it configures one), recursively, plus every ``conftest.py`` under
-    the tests dirs and on the path up to the SUT root, plus the pytest config
-    files that decide which of those patterns apply.
-
-    Not total, and the residue is named rather than papered over: pytest
-    FOLLOWS symlinked directories and both readers here do not, so a tests
-    tree assembled by symlink is neither offered nor hashed; and a repo that
-    narrows pytest's ``norecursedirs`` collects from directories these readers
-    prune.
+    Applies to the sections only. The per-file test tables keep the long
+    TTL (:data:`CACHE_TTL_SECONDS`): each validates itself by one ``stat`` per
+    path it tracks (:mod:`otto.config.collected_tests`).
     """
     if _has_unfingerprinted_source(repos):
         return UNFINGERPRINTED_CACHE_TTL_SECONDS
     return CACHE_TTL_SECONDS
 
 
-def _match_py_files(
-    test_dir: Path, patterns: "Sequence[str]", *, visited: "set[Path] | None" = None
-) -> set[Path]:
-    """FILES under *test_dir* whose name matches *patterns*, in ONE pruned walk.
+def ancestor_conftests(test_dir: Path, sut_dir: Path) -> list[Path]:
+    """Return the ``conftest.py`` paths ABOVE *test_dir*, up to and including *sut_dir*'s own.
 
-    Recursive, because a test tree is a tree: otto's own ``tests/`` has 405
-    test files and not one of them at the top level, so a non-recursive glob
-    contributes nothing at all for a repo laid out that way.
-
-    ``os.walk`` rather than ``rglob``, for three reasons that all matter on
-    the completion fast path (this runs twice per ``--tests`` TAB):
-
-    - It PRUNES the directories pytest's own ``norecursedirs`` skips. ``rglob``
-      descended into ``.venv`` / ``.tox`` / ``.git``; a venv living under a
-      tests dir measured 83 ms warm, for files pytest would never collect.
-    - One walk, not one per pattern. Every pattern ends in ``.py``, so a
-      single traversal plus a name match is set-identical to N ``rglob``s for
-      a fraction of the directory round-trips — which is what costs on a
-      network filesystem.
-    - It yields files and directories separately, so a DIRECTORY named
-      ``test_x.py`` is no longer matched and stat'd as though it were a file.
-
-    ``fnmatchcase`` rather than ``fnmatch``: the latter normalizes case
-    per-platform, which would silently widen the match on a case-insensitive
-    filesystem.
-
-    When *visited* is given, every unpruned ``os.walk`` root is added to it —
-    so a caller building a stat-only key set can see a new or renamed file
-    under a directory it already visited by that directory's own mtime,
-    without re-running this walk.
-
-    The walk itself goes through :func:`otto.config.corpus_snapshot.walk`, so
-    a rebuild that asks about the same tree from several places walks it once.
+    They count because pytest is run with the tests dirs as arguments and the
+    SUT as rootdir, so a conftest anywhere between them is loaded, and a
+    ``pytest_generate_tests`` there parametrizes what gets collected. Returned
+    whether or not they exist: a watcher that stats a missing one sees it
+    appear. A *test_dir* outside *sut_dir* has none.
     """
-    found: set[Path] = set()
-    for root, _dirs, files in corpus_snapshot.walk(test_dir, _is_norecurse_dir):
-        base = Path(root)
-        if visited is not None:
-            visited.add(base)
-        found.update(base / name for name in files if any(fnmatchcase(name, q) for q in patterns))
-    return found
-
-
-def _is_norecurse_dir(name: str) -> bool:
-    """Mirror of pytest's default ``norecursedirs``.
-
-    ``*.egg .* _darcs build CVS dist node_modules venv {arch}`` — pytest never
-    collects from these, so neither reader should walk them.
-    """
-    return name.startswith(".") or name.endswith(".egg") or name in _NORECURSE_NAMES
-
-
-def iter_test_sources(
-    test_dir: Path,
-    sut_dir: Path,
-    patterns: "Sequence[str]",
-    *,
-    visited: "set[Path] | None" = None,
-) -> set[Path]:
-    """Every path whose edit can change a ``--tests`` name under *test_dir*.
-
-    A set, because ``test_a_test.py`` matches both patterns. Paths that do not
-    exist are fine and wanted — :func:`hash_file` records them as ``missing:``,
-    so the digest moves when one appears. *visited*, when given, is passed
-    through to :func:`_match_py_files`.
-    """
-    found = _match_py_files(test_dir, [*patterns, CONFTEST_FILENAME], visited=visited)
-    # conftest.py ABOVE the tests dir counts too. `Repo.collect_tests` passes
-    # the tests dirs as pytest args with the SUT as rootdir, so a conftest
-    # anywhere between them is loaded, and a `pytest_generate_tests` there
-    # parametrizes what lands in the collected set.
+    found: list[Path] = []
     for ancestor in test_dir.parents:
         if ancestor == sut_dir or sut_dir in ancestor.parents:
-            found.add(ancestor / CONFTEST_FILENAME)
+            found.append(ancestor / CONFTEST_FILENAME)
         if ancestor == sut_dir:
             break
     return found
@@ -648,8 +521,8 @@ def hash_file(h: "hashlib._Hash", path: Path) -> None:
 
     A path that fails to stat folds in as ``missing:<path>`` — deliberately,
     so the digest moves when the file APPEARS. Contents are never read. The
-    shared primitive under :func:`compute_fingerprint` and
-    :func:`otto.config.cache_sections.section_digest`.
+    shared primitive under :func:`otto.config.cache_sections.section_digest`
+    and :func:`_tunnel_scope_digest`.
     """
     st = corpus_snapshot.stat(path)
     if st is None:
@@ -661,60 +534,13 @@ def hash_file(h: "hashlib._Hash", path: Path) -> None:
 def _hash_lab_files(h: "hashlib._Hash", repo: "Repo") -> None:
     """Fold every file a repo's compiled ``[[lab.sources]]`` entries read into *h*.
 
-    The lab-files half of :func:`compute_fingerprint`'s per-repo loop,
-    extracted so :func:`_tunnel_scope_digest` can reuse the exact same
-    hashing (not a re-derivation of it) without also walking the test corpus
-    compute_fingerprint's OTHER pieces cost. A non-file backend contributes no
-    lab files, so its digest never moves — see the fuller note where this was
-    inlined before extraction.
+    What :func:`_tunnel_scope_digest` hashes besides the settings. A non-file
+    backend contributes no lab files, so its digest never moves; it falls back
+    to a short TTL instead (:data:`UNFINGERPRINTED_CACHE_TTL_SECONDS`).
     """
     for src in repo.lab_sources:
         for lab_file in src.lab_files():
             hash_file(h, lab_file)
-
-
-def compute_fingerprint(repos: list["Repo"]) -> str:
-    """Stat-based sha256 of every file that contributes instruction/suite names."""
-    h = hashlib.sha256()
-    for repo in sorted(repos, key=lambda r: str(r.sut_dir)):
-        hash_file(h, repo.sut_dir / ".otto" / "settings.toml")
-
-        # Init-module files: every file an `init` name resolves to under the
-        # configured `libs` (package tree or plain .py). Names that resolve
-        # nowhere contribute a literal token instead, so "module missing" is
-        # a state of its own rather than an absence.
-        for py in resolved_init_paths(repo):
-            hash_file(h, py)
-        for init_mod in unresolved_init_modules(repo):
-            h.update(f"unresolved:{init_mod}\n".encode())
-
-        # The pytest config files themselves: `python_files` decides which
-        # files below even count, so an edit to it must move the digest as
-        # surely as an edit to a test. Missing ones hash as "missing:", which
-        # is what lets ADDING a pytest.ini invalidate the cache.
-        for cfg in pytest_config_paths(repo.sut_dir):
-            hash_file(h, cfg)
-
-        patterns = configured_python_files(repo.sut_dir)
-        for test_dir in repo.tests:
-            if test_dir.is_dir():
-                for t in sorted(iter_test_sources(test_dir, repo.sut_dir, patterns)):
-                    hash_file(h, t)
-
-        # Host-ID sources: the lab files every compiled [[lab.sources]] entry
-        # reads. Adding these to the fingerprint lets the cache self-invalidate
-        # on edits. A non-file backend has no such signal — it contributes no
-        # lab files, so its digest never moves — and it falls back to a short
-        # TTL instead (_cache_ttl_seconds / UNFINGERPRINTED_CACHE_TTL_SECONDS).
-        _hash_lab_files(h, repo)
-
-    # Outside the per-repo loop: a process has exactly ONE inventory (spec §8),
-    # resolved across every active repo plus the user file, so mixing it in
-    # per repo would hash the same answer N times and still miss the case
-    # where the resolution itself is what changed.
-    h.update(f"inventory:{_inventory_fingerprint(repos).text}\n".encode())
-
-    return h.hexdigest()
 
 
 def _tunnel_scope_digest(repos: list["Repo"]) -> str:
@@ -722,14 +548,12 @@ def _tunnel_scope_digest(repos: list["Repo"]) -> str:
 
     Tunnel ids are discovered by process/argv inspection against the live
     lab (spec 2026-09-25-dispatch-startup-cost-design.md §4.2) — they do not
-    depend on test sources at all, so keying them by :func:`compute_fingerprint`
-    (which hashes the whole corpus) made an ordinary ``otto tunnel
-    list``/``remove`` pay a corpus-proportional cost for no reason: nothing it
-    reads depends on a test file. This mixes in the same settings-file and
-    lab-file hashing compute_fingerprint uses (:func:`_hash_lab_files`, so the
-    two can never disagree about which lab files matter) plus the same
-    inventory term (:func:`_inventory_fingerprint`), and nothing else — no
-    init modules, no pytest config, no test sources.
+    depend on test sources at all, so they were moved off the whole-corpus
+    digest they were first keyed by: an ordinary ``otto tunnel
+    list``/``remove`` paid a corpus-proportional cost for no reason. This
+    mixes in the settings file, the lab files (:func:`_hash_lab_files`) and
+    the inventory term (:func:`_inventory_fingerprint`), and nothing else —
+    no init modules, no pytest config, no test sources.
     """
     h = hashlib.sha256()
     for repo in sorted(repos, key=lambda r: str(r.sut_dir)):
@@ -744,7 +568,7 @@ class _InventoryDigest:
     """The inventory's contribution to the fingerprint, and whether it may be STORED."""
 
     text: str
-    """What :func:`compute_fingerprint` mixes in."""
+    """What every digest mixes in."""
 
     cacheable: bool
     """``False`` when *text* is a one-shot value no later read can ever match."""
@@ -805,9 +629,8 @@ def _fingerprint_is_ephemeral(repos: list["Repo"]) -> bool:
     rewrites whole — an unbounded cache that never serves a hit, which is
     strictly worse than no cache at all.
 
-    Checked by EVERY writer keyed by :func:`compute_fingerprint` (the main
-    entry, the collected test names, the tunnel ids), not just the largest:
-    the payloads differ, the unbounded growth does not.
+    Checked by EVERY digest-keyed writer (the sections, the tunnel ids), not
+    just the largest: the payloads differ, the unbounded growth does not.
 
     Costs one extra inventory resolution per write. Writers run at most once
     per invocation (a rebuild, or a reserved-namespace record) and
@@ -822,8 +645,7 @@ def inventory_digest_text(repos: list["Repo"]) -> str:
     """Return the inventory's digest line — the public seam for the section registry.
 
     Every section digest ends with this text
-    (:mod:`otto.config.cache_sections`), for the same reason
-    :func:`compute_fingerprint` mixes it in: the process has exactly ONE
+    (:mod:`otto.config.cache_sections`): the process has exactly ONE
     inventory, resolved across every active repo plus the user file, and a
     change in that resolution must invalidate what was cached under it.
     """
@@ -923,20 +745,26 @@ def _serialize_options(
         # treating the whole command as un-cacheable.
         if ann is typer.Context:
             continue
-        if get_origin(ann) is not Annotated:
+        if get_origin(ann) is Annotated:
+            args = get_args(ann)
+            base = args[0]
+            # OptionInfo lives at module path typer.models.OptionInfo; match on
+            # attribute shape to avoid importing typer at module load.
+            meta = next(
+                (a for a in args[1:] if hasattr(a, "param_decls")),
+                None,
+            )
+        elif param.default is not inspect.Parameter.empty:
+            # A bare annotation with a default is what typer makes a plain
+            # `--name` option of: an options-class field written without
+            # `typer.Option(...)` (`firmware: str = "latest"`).
+            base, meta = ann, typer.Option()
+        else:
             log.debug(
                 f"completion-cache: skipping option {command_name}.{pname!r} — "
-                f"annotation {ann!r} is not Annotated[...]",
+                f"annotation {ann!r} is not Annotated[...] and has no default",
             )
             return None
-        args = get_args(ann)
-        base = args[0]
-        # OptionInfo lives at module path typer.models.OptionInfo; match on
-        # attribute shape to avoid importing typer at module load.
-        meta = next(
-            (a for a in args[1:] if hasattr(a, "param_decls")),
-            None,
-        )
         if meta is None:
             log.debug(
                 f"completion-cache: skipping option {command_name}.{pname!r} — "
@@ -945,6 +773,11 @@ def _serialize_options(
             return None
 
         kind = _type_to_kind(base)
+        if kind is None and getattr(meta, "click_type", None) is not None:
+            # An explicit click_type is how a type typer cannot convert (a
+            # pydantic SecretStr) becomes a flag at all: the command line
+            # hands it a string, so a string is what completion rebuilds.
+            kind = "str"
         if kind is None:
             log.debug(
                 f"completion-cache: skipping option {command_name}.{pname!r} — "
@@ -957,7 +790,14 @@ def _serialize_options(
                 "name": pname,
                 "flags": _extract_flags(meta),
                 "kind": kind,
-                "default": _json_safe_default(param.default),
+                # A flag whose help hides its default (``show_default=False``,
+                # which otto.params.options_params sets on every sensitive
+                # field) never has that default written to disk either.
+                "default": (
+                    None
+                    if getattr(meta, "show_default", True) is False
+                    else _json_safe_default(param.default)
+                ),
                 "help": getattr(meta, "help", None) or "",
             }
         )
@@ -1000,15 +840,13 @@ def read_sections(
     *names* is REQUIRED, and deliberately has no "all registered sections"
     default: reading every section is what makes a reader pay for corpora it
     does not consume, and an implicit default would silently re-enlist every
-    existing caller into each new :class:`~otto.config.cache_sections.Section`
-    — the exact trap :data:`~otto.config.cache_sections.MERGED_VIEW_SECTIONS`
-    exists to close on the write side. An unknown name raises ``KeyError``
+    existing caller into each new :class:`~otto.config.cache_sections.Section`.
+    An unknown name raises ``KeyError``
     rather than reading as a miss. ``None`` means at least one requested
     section cannot be served — file missing or corrupt, top-level schema
     mismatch, section absent, TAINTED, digest mismatch, or TTL expired — and
     the caller should fall back to loading. All-or-nothing across the
-    REQUESTED sections only: a names-only reader is unaffected by a stale
-    tests section, which is the point of the split.
+    REQUESTED sections only.
 
     One file, ONE open per read — the network-filesystem optimum, preserved
     deliberately across the section split.
@@ -1066,50 +904,40 @@ def read_cache(
     digests: dict[str, str] | None = None,
     require: "Collection[str]" = (),
 ) -> dict[str, Any] | None:
-    """Return the merged completion payload across every section, or ``None``.
+    """Return the ``names`` section's payload, checked key by key, or ``None``.
 
-    Valid iff EVERY merged-view section validates — present, untainted, its
-    digest matching, inside the TTL (:func:`read_sections` over
-    :data:`otto.config.cache_sections.MERGED_VIEW_SECTIONS`; the membership
-    is FIXED, so registering a new Section widens neither this view nor its
-    validation, and the read/write pair stays in lockstep). ``None`` also
-    covers: empty repos (would produce the empty-tree digests any shell
-    without ``OTTO_SUT_DIRS`` computes, poisoning the cache for other
-    shells), cache file missing or corrupt, and schema mismatch. In every
-    case the caller should fall back to the slow path.
+    Valid iff the ``names`` section validates — present, untainted, its digest
+    matching, inside the TTL (:func:`read_sections`). ``None`` also covers:
+    empty repos (would produce the empty-tree digests any shell without
+    ``OTTO_SUT_DIRS`` computes, poisoning the cache for other shells), cache
+    file missing or corrupt, and schema mismatch. In every case the caller
+    should fall back to the slow path.
 
     *require* names further sections that must ALSO validate — read in the
-    SAME :func:`read_sections` call (the single open stays single) but NOT
+    SAME :func:`read_sections` call (the single open stays single) but never
     merged into the returned view: they widen validation only, never the
     payload. :func:`cache_rebuild_is_worthwhile` passes ``require=("shim",)``
     so a lost or stale ``shim`` section makes a rebuild worthwhile even while
-    both merged-view siblings still validate on their own.
+    ``names`` still validates on its own.
 
-    On success returns one flat dict — the merged-view sections' payloads
-    merged — with ``instructions``, ``suites``, ``hosts``, ``hosts_by_lab``,
-    ``docker_hosts``, ``docker_use_cases``, ``term_backends``,
-    ``transfer_backends``, ``usernames``, ``commands``, ``labs``,
-    ``host_classes_by_id``, ``projects``, ``links``, ``logins_by_host``,
-    ``tests`` and ``markers`` keys:
-    exactly the view the completion fast path consumed when all of it lived
-    in one fingerprint-keyed entry. The first three are required; the rest
-    default to empty when a payload omits them.
+    On success returns one flat dict with ``instructions``, ``test_options``,
+    ``hosts``, ``hosts_by_lab``, ``docker_hosts``, ``docker_use_cases``,
+    ``term_backends``, ``transfer_backends``, ``usernames``, ``commands``,
+    ``labs``, ``host_classes_by_id``, ``projects``, ``links`` and
+    ``logins_by_host`` keys. ``instructions`` and ``hosts`` are required; the
+    rest default to empty when a payload omits them.
 
     *digests*, when given, collects the per-section digests computed here
     for reuse by a subsequent :func:`write_cache` — see
     :func:`read_sections`.
     """
-    from .cache_sections import MERGED_VIEW_SECTIONS
-
-    payloads = read_sections(repos, [*MERGED_VIEW_SECTIONS, *require], digests=digests)
+    payloads = read_sections(repos, ["names", *require], digests=digests)
     if payloads is None:
         return None
-    merged: dict[str, Any] = {}
-    for name in MERGED_VIEW_SECTIONS:
-        merged.update(payloads[name])
+    merged = payloads["names"]
 
     instructions = merged.get("instructions")
-    suites = merged.get("suites")
+    test_options = merged.get("test_options", [])
     hosts = merged.get("hosts")
     hosts_by_lab = merged.get("hosts_by_lab", {})
     docker_hosts = merged.get("docker_hosts", [])
@@ -1119,8 +947,6 @@ def read_cache(
     usernames = merged.get("usernames", [])
     commands = merged.get("commands", [])
     labs = merged.get("labs", [])
-    tests = merged.get("tests", [])
-    markers = merged.get("markers", [])
     host_drops = merged.get("host_drops", [])
     host_classes_by_id = merged.get("host_classes_by_id", {})
     projects = merged.get("projects", [])
@@ -1128,7 +954,7 @@ def read_cache(
     logins_by_host = merged.get("logins_by_host", {})
     if (
         not isinstance(instructions, list)
-        or not isinstance(suites, list)
+        or not isinstance(test_options, list)
         or not isinstance(hosts, list)
         or not isinstance(hosts_by_lab, dict)
         or not isinstance(docker_hosts, list)
@@ -1138,8 +964,6 @@ def read_cache(
         or not isinstance(usernames, list)
         or not isinstance(commands, list)
         or not isinstance(labs, list)
-        or not isinstance(tests, list)
-        or not isinstance(markers, list)
         or not isinstance(host_drops, list)
         or not isinstance(host_classes_by_id, dict)
         or not isinstance(projects, list)
@@ -1149,7 +973,7 @@ def read_cache(
         return None
     return {
         "instructions": instructions,
-        "suites": suites,
+        "test_options": test_options,
         "hosts": hosts,
         "hosts_by_lab": hosts_by_lab,
         "host_drops": host_drops,
@@ -1164,8 +988,6 @@ def read_cache(
         "projects": projects,
         "links": links,
         "logins_by_host": logins_by_host,
-        "tests": tests,
-        "markers": markers,
     }
 
 
@@ -1176,10 +998,11 @@ def cache_rebuild_is_worthwhile(
 
     False when write_cache would drop the result (empty repos, no cache
     path, ephemeral fingerprint) or when every on-disk section is already
-    valid — in every False case the caller should skip the O(corpus)
-    collect. ``not repos`` is checked FIRST: the ephemeral probe resolves
-    the process inventory, which may be a networked backend, and an
-    empty-repos caller must not pay that for an answer that is always
+    valid — in every False case the caller should skip the collect, which
+    runs the repos' init modules and enumerates their hosts. ``not repos`` is
+    checked FIRST: the ephemeral probe resolves the process inventory, which
+    may be a networked backend, and an empty-repos caller must not pay that
+    for an answer that is always
     False.
 
     *digests* is filled with the per-section digests the validity check
@@ -1191,7 +1014,7 @@ def cache_rebuild_is_worthwhile(
     deleted or hand-edited entry is rebuilt by the next TAB or root help that
     checks, instead of handing over forever — without a second open of the cache
     file, since the digest it needs is computed in the same
-    :func:`read_sections` call as the merged-view check above.
+    :func:`read_sections` call as the ``names`` check above.
     """
     return cache_is_writable(repos) and cache_is_stale(repos, digests=digests)
 
@@ -1199,10 +1022,10 @@ def cache_rebuild_is_worthwhile(
 def cache_is_writable(repos: list["Repo"]) -> bool:
     """Whether :func:`write_cache` would keep an entry for *repos* at all.
 
-    The cheap half of :func:`cache_rebuild_is_worthwhile`: no corpus I/O, so a
-    caller can ask it before paying for anything a rebuild needs — importing
-    the test files, say. False with no repos, no cache path, or an inventory
-    whose fingerprint is ephemeral; ``not repos`` first, for the reason
+    The cheap half of :func:`cache_rebuild_is_worthwhile`: no key-set stats,
+    so a caller can ask it before paying for anything a rebuild needs. False
+    with no repos, no cache path, or an inventory whose fingerprint is
+    ephemeral; ``not repos`` first, for the reason
     :func:`cache_rebuild_is_worthwhile` gives.
     """
     return bool(repos) and _cache_path() is not None and not _fingerprint_is_ephemeral(repos)
@@ -1211,7 +1034,7 @@ def cache_is_writable(repos: list["Repo"]) -> bool:
 def cache_is_stale(repos: list["Repo"], *, digests: dict[str, str] | None = None) -> bool:
     """Whether any on-disk section, ``shim`` included, fails to validate for *repos*.
 
-    The O(corpus) half of :func:`cache_rebuild_is_worthwhile`, for a caller that
+    The key-set half of :func:`cache_rebuild_is_worthwhile`, for a caller that
     has already established :func:`cache_is_writable`. *digests* is filled as
     :func:`cache_rebuild_is_worthwhile` documents.
     """
@@ -1223,9 +1046,9 @@ def cache_is_stale(repos: list["Repo"], *, digests: dict[str, str] | None = None
 def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by design
     repos: list["Repo"],
     instructions: list[dict[str, Any]],
-    suites: list[dict[str, Any]],
     hosts: list[str],
     *,
+    test_options: list[dict[str, Any]] | None = None,
     docker_hosts: list[str] | None = None,
     docker_use_cases: list[str] | None = None,
     term_backends: list[str] | None = None,
@@ -1233,8 +1056,6 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     usernames: list[str] | None = None,
     commands: list[dict[str, Any]] | None = None,
     labs: list[str] | None = None,
-    tests: list[str] | None = None,
-    markers: list[str] | None = None,
     hosts_by_lab: dict[str, list[str]] | None = None,
     host_drops: list[dict[str, str]] | None = None,
     host_classes_by_id: dict[str, str] | None = None,
@@ -1248,18 +1069,14 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     """Write every section from the slow path's collected name sets.
 
     The compatibility writer over :func:`write_sections`: one keyword per
-    cached name-set, split across the merged-view sections
-    (:data:`otto.config.cache_sections.MERGED_VIEW_SECTIONS`) — everything
-    here except ``tests`` and ``markers`` is ``names`` payload; those two
-    share the ``tests`` section (one ``ast`` pass produces both). A NEW
-    cached item should be a
-    ``Section`` registration written through
+    cached name-set, every one of them ``names`` payload. A NEW cached item
+    should be a ``Section`` registration written through
     :func:`otto.config.cache_sections.write_section`, not another keyword.
 
-    *shim* is the exception: it is a THIRD, already-registered section (not
-    a merged-view keyword), added here so ``entry()`` writes it in the same
-    atomic update as its siblings. ``entry()`` always passes it, so the
-    section is rewritten with its siblings; a caller that omits it leaves the
+    *shim* is the exception: it is the other registered section, added here
+    so ``entry()`` writes it in the same atomic update as ``names``.
+    ``entry()`` always passes it, so the section is rewritten with its
+    sibling; a caller that omits it leaves the
     stored entry with a stale digest, so every later invocation reads as a
     miss and re-collects — pass ``shim=`` or write it through
     :func:`otto.config.cache_sections.write_section`.
@@ -1287,7 +1104,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     payloads: dict[str, dict[str, Any]] = {
         "names": {
             "instructions": instructions,
-            "suites": suites,
+            "test_options": test_options or [],
             "hosts": hosts,
             "hosts_by_lab": hosts_by_lab or {},
             "host_drops": host_drops or [],
@@ -1303,7 +1120,6 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
             "links": links or [],
             "logins_by_host": logins_by_host or {},
         },
-        "tests": {"tests": tests or [], "markers": markers or []},
     }
     if shim is not None:
         payloads["shim"] = shim
@@ -1445,6 +1261,7 @@ def _atomic_write_json(cache_path: Path, obj: dict[str, Any]) -> None:
         suffix=".tmp",
     ) as tmp:
         tmp_name = tmp.name
+        _own_temporary_files.add(tmp_name)
         json.dump(obj, tmp)
     try:
         Path(tmp_name).replace(cache_path)
@@ -1452,6 +1269,20 @@ def _atomic_write_json(cache_path: Path, obj: dict[str, Any]) -> None:
         with contextlib.suppress(OSError):
             Path(tmp_name).unlink()
         raise
+    finally:
+        _own_temporary_files.discard(tmp_name)
+
+
+_own_temporary_files: set[str] = set()
+"""The temporary files this process's cache writes have open, until each is moved into place."""
+
+
+def discard_own_temporary_files() -> None:
+    """Remove this process's unfinished cache writes, before it exits without unwinding."""
+    for name in list(_own_temporary_files):
+        with contextlib.suppress(OSError):
+            Path(name).unlink()
+    _own_temporary_files.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -1459,42 +1290,66 @@ def _atomic_write_json(cache_path: Path, obj: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-# DEBT(no-tuple-return): two independent command lists.
-# ast-grep-ignore: no-tuple-return
-def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Read the currently-registered instructions and suites with options.
+def collect_current_commands() -> list[dict[str, Any]]:
+    """Read the currently-registered instructions with their options.
 
     Must be called after :func:`otto.bootstrap.bootstrap` has finished
-    populating ``otto.instructions.INSTRUCTIONS``. Reading
-    ``otto.suite.register.SUITES`` here loads the repos' test files on demand
-    (:func:`otto.bootstrap.load_test_suites`), so a rebuild is where their
-    import cost is paid and where a broken one is found. A source that never
+    populating ``otto.instructions.INSTRUCTIONS``. A source that never
     loaded simply has an empty registry (no init modules → no
-    ``@instruction()`` ran → no entries).
+    ``@instruction()`` ran → no entries). Test files are never read here:
+    ``otto test`` has no per-test subcommands, and its flags (the run flags
+    and the ``test`` verb's registered options) are served from the command
+    tree like any other leaf's.
 
     Each item is ``{"name": str, "options": list[dict]}``; a command whose
     options can't be fully serialized is cached with ``options: []`` so
     the name still completes even though the per-option flags don't.
     """
-
-    def _entries_to_dicts(entries: list[tuple[str, Any]]) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        for name, entry in entries:
-            callback = None
-            if entry.sub_app.registered_commands:
-                callback = entry.sub_app.registered_commands[0].callback
-            options = _serialize_options(callback, command_name=name) if callback else None
-            out.append({"name": name, "options": options if options is not None else []})
-        return out
-
     from ..instructions import INSTRUCTIONS
-    from ..suite.register import SUITES
 
-    instructions: list[dict[str, Any]] = _entries_to_dicts(INSTRUCTIONS.items())
+    log = logging.getLogger(__name__)
+    out: list[dict[str, Any]] = []
+    for name, entry in INSTRUCTIONS.items():
+        # Building an instruction's app resolves the `run` verb's options
+        # classes, which a rebuild pays for so that their flags complete.
+        try:
+            app = entry.make_app()
+        except OttoError as e:
+            # A command that cannot be built (its flags clash with the
+            # verb's) still completes by name; `otto run <name>` is where
+            # the clash is reported.
+            log.debug(f"completion-cache: {name!r} has no options, its command failed: {e}")
+            app = None
+        callback = None
+        if app is not None and app.registered_commands:
+            callback = app.registered_commands[0].callback
+        options = _serialize_options(callback, command_name=name) if callback else None
+        out.append({"name": name, "options": options if options is not None else []})
+    return out
 
-    suites: list[dict[str, Any]] = _entries_to_dicts(SUITES.items())
 
-    return instructions, suites
+def collect_test_verb_options() -> list[dict[str, Any]]:
+    """Serialise the ``test`` verb's registered options, the flags ``otto test`` gains.
+
+    The completion fast path builds ``otto test`` without the options
+    registry, so it reads these instead
+    (:func:`otto.cli.test.build_test_app`). A verb whose flags cannot be
+    built (a collision) or serialised caches ``[]``: ``otto test`` is where
+    the collision is reported.
+    """
+    from ..cli.test import test_verb_params
+
+    try:
+        params = test_verb_params()
+    except OttoError as e:
+        logging.getLogger(__name__).debug(f"completion-cache: no otto test options: {e}")
+        return []
+
+    def verb_flags() -> None:  # pragma: no cover — only its signature is read
+        """Carry the verb's parameters for :func:`_serialize_options`."""
+
+    verb_flags.__signature__ = inspect.Signature(params)  # ty: ignore[unresolved-attribute]
+    return _serialize_options(verb_flags, command_name="test") or []
 
 
 def collect_backend_names() -> dict[str, Any]:
@@ -2269,338 +2124,17 @@ def collect_project_names() -> list[str]:
     return [repo.name for repo in discover().repos]
 
 
-@dataclass(frozen=True)
-class CorpusScan:
-    """What one static pass over the test corpus yields: test names AND marker names."""
-
-    names: list[str]
-    markers: list[str]
-
-
-def _marker_name(node: Any) -> str | None:
-    """``pytest.mark.<name>`` / ``mark.<name>``, bare or called → ``<name>``; else ``None``."""
-    import ast
-
-    if isinstance(node, ast.Call):
-        node = node.func
-    if isinstance(node, ast.Attribute):
-        owner = node.value
-        owner_name = owner.attr if isinstance(owner, ast.Attribute) else getattr(owner, "id", None)
-        if owner_name == "mark":
-            return node.attr
-    return None
-
-
-def scan_test_corpus(repos: list["Repo"]) -> CorpusScan:
-    """Statically discover test names and marker names for completion — one ``ast`` pass.
-
-    Parses every file matching the repo's pytest ``python_files`` (its own, if
-    it configures one — see :func:`~otto.config.repo.configured_python_files`)
-    under each repo's test dirs with
-    :mod:`ast` — no import, no collection, no user code — and returns the base
-    names of top-level ``def test_*`` / ``async def test_*`` functions plus, for
-    each ``Test*`` class, its ``test_*`` methods (emitted both bare and as
-    ``ClassName::method`` to match ``--tests``'s disambiguation form).
-
-    This is deliberately static: real pytest collection (which ``--tests``
-    resolves against, and which ``otto test --list-tests`` runs) expands
-    parametrization and honors ``conftest`` / ``pytest_generate_tests``, none
-    of which are visible to a source scan. So a *parametrized-only* id or a
-    dynamically generated test will not appear here — those still need
-    ``--list-tests`` — but every statically-defined test name does, without
-    ever executing test code at tab time. ``python_files`` is read from the
-    repo's pytest config; ``python_classes`` / ``python_functions`` are still
-    assumed to be pytest's defaults.
-
-    Marker names come from every ``@pytest.mark.<name>`` decorator (bare or
-    called) on any function or class in the file, and from a module-level
-    ``pytestmark = <marker>`` or ``pytestmark = [<marker>, ...]``. The rule is
-    deliberately loose (``<anything>.mark.<name>``) so an aliased
-    ``from pytest import mark`` still counts; a marker otto cannot see
-    statically is added by the pytest-collected layer, as for test names.
-    """
-    import ast
-
-    names: set[str] = set()
-    markers: set[str] = set()
-    for repo in repos:
-        patterns = configured_python_files(repo.sut_dir)
-        for test_dir in repo.tests:
-            if not test_dir.exists():
-                continue
-            for path in sorted(_match_py_files(test_dir, patterns)):
-                try:
-                    tree = ast.parse(path.read_text(), filename=str(path))
-                except (OSError, SyntaxError):
-                    continue  # unreadable / unparseable file: skip, never crash
-                for node in tree.body:
-                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        if node.name.startswith("test"):
-                            names.add(node.name)
-                    elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
-                        for method in node.body:
-                            if isinstance(
-                                method, (ast.FunctionDef, ast.AsyncFunctionDef)
-                            ) and method.name.startswith("test"):
-                                names.add(method.name)
-                                names.add(f"{node.name}::{method.name}")
-                    if isinstance(node, ast.Assign) and any(
-                        isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets
-                    ):
-                        value = node.value
-                        values = value.elts if isinstance(value, (ast.List, ast.Tuple)) else [value]
-                        markers.update(m for m in (_marker_name(v) for v in values) if m)
-                for node in ast.walk(tree):
-                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                        markers.update(
-                            m for m in (_marker_name(d) for d in node.decorator_list) if m
-                        )
-    return CorpusScan(names=sorted(names), markers=sorted(markers))
-
-
-def collect_test_names(repos: list["Repo"]) -> list[str]:
-    """Return the static ``--tests`` name floor — :func:`scan_test_corpus`'s names."""
-    return scan_test_corpus(repos).names
-
-
-def collect_marker_names(repos: list["Repo"], *, scan: CorpusScan | None = None) -> list[str]:
-    """Return the static ``-m`` marker floor: declared, built-in and statically spelled names.
-
-    ``Repo.configured_markers()`` (the pyproject ``[tool.pytest.ini_options].markers``
-    names — real ``Repo`` instances only; stand-ins carry no pyproject), the
-    names ``otto.suite.markers.OTTO_MARKERS`` registers, and every marker the
-    scan saw. Pass *scan* to reuse a pass already paid for.
-    """
-    from ..suite.markers import OTTO_MARKERS
-    from .repo import Repo
-
-    names: set[str] = set(OTTO_MARKERS)
-    for repo in repos:
-        if isinstance(repo, Repo):
-            names.update(repo.configured_markers())
-    names.update((scan or scan_test_corpus(repos)).markers)
-    return sorted(names)
-
-
 # ---------------------------------------------------------------------------
-# Collected (pytest-accurate) test names — real collection, cached separately
+# The collect child: the process that seeds and refreshes the test tables
 # ---------------------------------------------------------------------------
 
 
-def _test_names_from_items(items: list[Any]) -> list[str]:
-    """Completion candidates from collected pytest items: base + ``Class::base``.
-
-    Collapses parametrizations to the base name (``test_x[a]`` → ``test_x``):
-    ``otto test --tests`` selects by base name (a bare name runs every
-    parametrization and per-parametrization ids are rejected), so this mirrors
-    :func:`collect_test_names`'s shape — only the *source* differs (real
-    collection vs. an ``ast`` scan). Duck-typed on ``.name`` / ``.cls_name`` so
-    it needn't import :class:`~otto.config.repo.CollectedTest`.
-    """
-    names: set[str] = set()
-    for item in items:
-        base = str(item.name).partition("[")[0]
-        names.add(base)
-        cls_name = getattr(item, "cls_name", None)
-        if cls_name:
-            names.add(f"{cls_name}::{base}")
-    return sorted(names)
-
-
-def _marker_names_from_items(items: list[Any]) -> list[str]:
-    """Sorted union of the marker names on collected items (duck-typed on ``.markers``)."""
-    return sorted({m for item in items for m in (getattr(item, "markers", None) or [])})
-
-
-def dump_collected_test_names(repos: list["Repo"]) -> None:
-    """Collect every repo's tests and print framed name and marker lists to stdout.
-
-    The child side of the tab-time warm: run by :func:`otto.cli.main.entry`
-    when :data:`DUMP_TESTS_ENV_VAR` is set. Collection runs here — in a
-    disposable, timeout-bounded subprocess — never inside the completer itself
-    (whose stdout is the shell's completion channel). ``Repo.collect_tests``
-    already redirects the inner pytest run's stdout/stderr, so only the framed
-    payload below reaches the parent.
-    """
-    import sys
-
-    items: list[Any] = []
-    for repo in repos:
-        items.extend(repo.collect_tests())
-    names = _test_names_from_items(items)
-    markers = _marker_names_from_items(items)
-    sys.stdout.write(
-        "\n".join(
-            [
-                _DUMP_BEGIN,
-                *names,
-                _DUMP_END,
-                _DUMP_MARKERS_BEGIN,
-                *markers,
-                _DUMP_MARKERS_END,
-            ]
-        )
-        + "\n"
-    )
-    sys.stdout.flush()
-
-
-def _parse_frame(stdout: str, begin: str, end: str) -> list[str] | None:
-    """Recover a framed line list bounded by *begin*/*end* markers, or ``None``."""
-    lines = stdout.splitlines()
-    try:
-        start = lines.index(begin)
-        stop = lines.index(end)
-    except ValueError:
-        return None
-    if stop < start:
-        return None
-    return [ln for ln in lines[start + 1 : stop] if ln.strip()]
-
-
-def _parse_dumped_names(stdout: str) -> list[str] | None:
-    """Recover the framed name list from the dump subprocess's stdout."""
-    return _parse_frame(stdout, _DUMP_BEGIN, _DUMP_END)
-
-
-def _parse_dumped_markers(stdout: str) -> list[str] | None:
-    """Recover the framed marker list from the dump subprocess's stdout."""
-    return _parse_frame(stdout, _DUMP_MARKERS_BEGIN, _DUMP_MARKERS_END)
-
-
-def _collected_cache_entry(repos: list["Repo"]) -> dict[str, Any] | None:
-    """Raw collected-cache entry (names + timestamp) for the current fingerprint."""
-    if not repos:
-        return None
-    cache_path = _cache_path()
-    if cache_path is None or not cache_path.is_file():
-        return None
-    try:
-        data = json.loads(cache_path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    namespace = data.get(COLLECTED_TESTS_KEY)
-    if not isinstance(namespace, dict):
-        return None
-    entry = namespace.get(compute_fingerprint(repos))
-    return entry if isinstance(entry, dict) else None
-
-
-def _fresh_collected_entry(repos: list["Repo"]) -> dict[str, Any] | None:
-    """Return the raw collected-cache entry, gated on schema, timestamp shape and TTL.
-
-    Factors the freshness checks shared by :func:`read_collected_tests` and
-    :func:`read_collected_markers` — both read the same entry, differing only
-    in which key of it they trust.
-    """
-    entry = _collected_cache_entry(repos)
-    if entry is None:
-        return None
-    if entry.get("schema_version") != COLLECTED_SCHEMA_VERSION:
-        return None
-    generated_at = entry.get("generated_at")
-    if not isinstance(generated_at, (int, float)):
-        return None
-    if time.time() - generated_at > CACHE_TTL_SECONDS:
-        return None
-    return entry
-
-
-def read_collected_tests(repos: list["Repo"]) -> list[str] | None:
-    """Return the fresh pytest-collected test names for ``--tests``, or ``None``.
-
-    ``None`` means the collected set is cold for the completer: caching
-    disabled, no entry for this fingerprint, wrong schema, TTL-expired, a
-    recorded *failed* attempt (``names`` is ``null``), or malformed data. The
-    completer then falls back to the static floor and may warm the cache via
-    :func:`maybe_warm_collected_tests`. Fingerprint keying means any test-file
-    edit invalidates this automatically, exactly like the main cache.
-    """
-    entry = _fresh_collected_entry(repos)
-    if entry is None:
-        return None
-    names = entry.get("names")
-    return names if isinstance(names, list) else None
-
-
-def read_collected_markers(repos: list["Repo"]) -> list[str] | None:
-    """Return the fresh pytest-collected marker names for ``-m``, or ``None``.
-
-    Same freshness contract as :func:`read_collected_tests` — the two live in
-    the same entry, written together by :func:`_record_collected_tests`.
-    """
-    entry = _fresh_collected_entry(repos)
-    if entry is None:
-        return None
-    markers = entry.get("markers")
-    return markers if isinstance(markers, list) else None
-
-
-def _record_collected_tests(
-    repos: list["Repo"], names: list[str] | None, *, markers: list[str] | None = None
-) -> None:
-    """Merge a collected-cache result for the current fingerprint.
-
-    ``names=None`` records a *failed* attempt; its timestamp drives the
-    tab-time retry cooldown. ``markers`` defaults to ``None`` alongside a
-    failed attempt; a successful collection passes both. Only the reserved
-    :data:`COLLECTED_TESTS_KEY` namespace is touched — every main fingerprint
-    entry is preserved — so this warmer and the slow-path writer never
-    clobber each other.
-
-    Skipped, like every fingerprint-keyed writer, when the digest is ephemeral
-    (:func:`_fingerprint_is_ephemeral`).
-    """
-    if not repos or _fingerprint_is_ephemeral(repos):
-        return
-    cache_path = _cache_path()
-    if cache_path is None:
-        return
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-
-    existing: dict[str, Any] = {}
-    if cache_path.is_file():
-        try:
-            loaded = json.loads(cache_path.read_text())
-            if isinstance(loaded, dict):
-                existing = loaded
-        except (OSError, json.JSONDecodeError):
-            pass
-
-    namespace = existing.get(COLLECTED_TESTS_KEY)
-    if not isinstance(namespace, dict):
-        namespace = {}
-    namespace[compute_fingerprint(repos)] = {
-        "schema_version": COLLECTED_SCHEMA_VERSION,
-        "generated_at": int(time.time()),
-        "names": names,  # None => a failed attempt (cooldown marker only)
-        "markers": markers,
-    }
-    existing[COLLECTED_TESTS_KEY] = namespace
-    _atomic_write_json(cache_path, existing)
-
-
-def record_collected_tests_from_items(repos: list["Repo"], items: list[Any]) -> None:
-    """Warm the collected cache from an already-run *unfiltered* collection.
-
-    The free "Option B" path: when a real ``otto test --list-tests`` runs with
-    no marker/suite narrowing, it has already collected the full test set, so
-    cache it here rather than paying a separate collection later. Callers must
-    only pass an *unfiltered* item list — a marker/suite-narrowed collection
-    would cache an incomplete set.
-    """
-    _record_collected_tests(
-        repos, _test_names_from_items(items), markers=_marker_names_from_items(items)
-    )
-
-
-def _acquire_collect_lock(lock: Path) -> bool:
-    """Try to take the tab-time collection lock (atomic ``O_EXCL`` create).
+def _acquire_collect_lock(lock: Path, *, owner: str = "") -> bool:
+    """Try to take the collect child's lock (atomic ``O_EXCL`` create), writing *owner* in it.
 
     Returns ``False`` when another process holds a fresh lock; steals and takes
     a lock older than :data:`COLLECT_LOCK_STALE_SECONDS` (its holder died).
+    With no *owner*, the lock holds this process's id.
     """
     now = time.time()
     try:
@@ -2621,31 +2155,120 @@ def _acquire_collect_lock(lock: Path) -> bool:
     except OSError:
         return False
     with contextlib.suppress(OSError):
-        os.write(fd, str(now).encode())
+        os.write(fd, (owner or str(os.getpid())).encode())
     os.close(fd)
     return True
 
 
+def _release_collect_lock_if_owned(lock: Path, owner: str) -> None:
+    """Free *lock* when *owner* holds it: a killed child could not free it itself."""
+    with contextlib.suppress(OSError):
+        if lock.read_text() == owner:
+            lock.unlink()
+
+
+def _collect_file(name: str) -> Path | None:
+    """*name* beside the cache file (the lock, the cooldown stamp); ``None`` with no cache."""
+    cache_path = _cache_path()
+    return None if cache_path is None else cache_path.parent / name
+
+
+def _younger_than(path: Path | None, seconds: float) -> bool:
+    """Whether *path* exists and was stamped less than *seconds* ago (one ``stat``)."""
+    if path is None:
+        return False
+    try:
+        return time.time() - path.stat().st_mtime <= seconds
+    except OSError:
+        return False
+
+
+def collect_cooldown_active() -> bool:
+    """Whether a collect child failed less than :data:`COLLECT_COOLDOWN_SECONDS` ago."""
+    return _younger_than(_collect_file(COLLECT_COOLDOWN_FILENAME), COLLECT_COOLDOWN_SECONDS)
+
+
+def stamp_collect_cooldown(reason: str) -> None:
+    """Record that a collect child failed now, and why; never raises."""
+    stamp = _collect_file(COLLECT_COOLDOWN_FILENAME)
+    if stamp is None:
+        return
+    with contextlib.suppress(OSError):
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(reason + "\n")
+
+
 @dataclass(frozen=True)
-class CollectedDump:
-    """What the collection subprocess reports: base test names and marker names."""
+class CollectChildState:
+    """The collect child's lock and cooldown, as ``otto cache info`` reports them.
 
-    names: list[str]
-    markers: list[str]
-
-
-def _run_collect_subprocess() -> CollectedDump | None:
-    """Spawn the bounded ``DUMP_TESTS_ENV_VAR`` subprocess and parse its dump.
-
-    Returns the collected names and markers, or ``None`` on timeout /
-    non-zero exit / spawn failure / a missing names frame. Runs the *venv*
-    ``otto`` binary (so ``entry`` runs, unlike ``python -m otto``) with the
-    completion env vars stripped, so the child dumps names instead of
-    recursing into another completion. A missing markers frame (an older
-    child binary) degrades to an empty marker list rather than a miss.
+    A detached child's failures are silent by design (no terminal to print
+    to), so these two files are the only trace it leaves.
     """
-    import subprocess
+
+    lock_age: float | None
+    """Seconds since the lock was taken; ``None`` when no child holds it."""
+    cooldown_age: float | None
+    """Seconds since a child last failed; ``None`` when none has."""
+    cooldown_reason: str = ""
+    """Why it failed, as the child stamped it."""
+
+    @property
+    def lock_is_stale(self) -> bool:
+        """Whether the lock outlived any child (the next one takes it over)."""
+        return self.lock_age is not None and self.lock_age > COLLECT_LOCK_STALE_SECONDS
+
+    @property
+    def cooling_down(self) -> bool:
+        """Whether no child starts yet, after a failure."""
+        return self.cooldown_age is not None and self.cooldown_age <= COLLECT_COOLDOWN_SECONDS
+
+
+def collect_child_state() -> CollectChildState:
+    """Read the collect child's lock and cooldown stamp (two ``stat`` calls, one read)."""
+    now = time.time()
+
+    def age(name: str) -> float | None:
+        path = _collect_file(name)
+        try:
+            return None if path is None else now - path.stat().st_mtime
+        except OSError:
+            return None
+
+    cooldown_age = age(COLLECT_COOLDOWN_FILENAME)
+    reason = ""
+    stamp = _collect_file(COLLECT_COOLDOWN_FILENAME)
+    if cooldown_age is not None and stamp is not None:
+        with contextlib.suppress(OSError):
+            reason = stamp.read_text().strip()
+    return CollectChildState(
+        lock_age=age(COLLECT_LOCK_FILENAME), cooldown_age=cooldown_age, cooldown_reason=reason
+    )
+
+
+@dataclass(frozen=True)
+class _ChildCommand:
+    """How to start the collect child."""
+
+    argv: list[str]
+    env: dict[str, str]
+    cwd: Path
+    owner: str
+    """The token the child writes into the lock it takes."""
+
+
+def _collect_child_command(home: Path) -> _ChildCommand | None:
+    """Return how to start the collect child, or ``None`` with no venv ``otto``.
+
+    The *venv* ``otto`` binary (so ``entry`` runs, unlike ``python -m otto``)
+    with the completion variables stripped, so the child collects instead of
+    answering another completion. It starts in *home*, the workspace home
+    (created here), never in the shell's cwd, whatever a repo holds: its
+    ``OTTO_*`` paths are made absolute against this process's cwd first.
+    """
     import sys
+
+    from .env import _PATH_LIST_SEP, HOME_ENV_VAR, SUT_DIRS_ENV_VAR, XDIR_ENV_VAR
 
     otto_bin = Path(sys.executable).parent / "otto"
     if not otto_bin.exists():
@@ -2653,72 +2276,149 @@ def _run_collect_subprocess() -> CollectedDump | None:
     env = dict(os.environ)
     for var in (COMPLETION_ENV_VAR, "COMP_WORDS", "COMP_CWORD"):
         env.pop(var, None)
+    for var in (SUT_DIRS_ENV_VAR, XDIR_ENV_VAR, HOME_ENV_VAR):
+        if env.get(var):
+            # os.path, not pathlib: the console-script shim (stdlib only, no
+            # pathlib) builds the same environment and must agree byte for byte.
+            paths = [os.path.abspath(p) for p in _PATH_LIST_SEP.split(env[var]) if p]  # noqa: PTH100
+            env[var] = os.pathsep.join(paths)
     env[DUMP_TESTS_ENV_VAR] = "1"
+    owner = f"{os.getpid()}-{time.monotonic_ns()}"
+    env[COLLECT_OWNER_ENV_VAR] = owner
+    with contextlib.suppress(OSError):  # a cwd that is not there fails the start
+        home.mkdir(parents=True, exist_ok=True)
+    return _ChildCommand(argv=[str(otto_bin)], env=env, cwd=home.absolute(), owner=owner)
+
+
+def run_collect_child() -> bool:
+    """Run the collect child and wait for it, at most the cap; ``True`` when it succeeded.
+
+    For a cold table: the one TAB that blocks. Skipped (``False``) during the
+    cooldown after a failure, while another collect child holds the lock, or
+    with no cache. A timeout, a spawn failure or a non-zero exit stamps the
+    cooldown. The child writes the tables and prints nothing; the caller
+    reads them afterwards. Never raises: completion must never traceback into
+    the shell.
+    """
+    import subprocess
+
+    lock = _collect_file(COLLECT_LOCK_FILENAME)
+    if lock is None or collect_cooldown_active():
+        return False
+    if _younger_than(lock, COLLECT_LOCK_STALE_SECONDS):
+        return False
+    command = _collect_child_command(lock.parent)
+    if command is None:
+        return False
     try:
         proc = subprocess.run(  # noqa: S603 — venv otto binary, fixed argv, no shell
-            [str(otto_bin)],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=COLLECT_TIMEOUT_SECONDS,
+            command.argv,
+            env=command.env,
+            cwd=command.cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=COLLECT_TIMEOUT_SECONDS + _COLLECT_KILL_GRACE_SECONDS,
             check=False,
         )
-    except (subprocess.SubprocessError, OSError):
-        return None
+    except subprocess.TimeoutExpired:
+        # The child was killed before it could stamp or unlock for itself.
+        stamp_collect_cooldown("timed out")
+        _release_collect_lock_if_owned(lock, command.owner)
+        return False
+    except (subprocess.SubprocessError, OSError) as exc:
+        stamp_collect_cooldown(f"{type(exc).__name__}: {exc}")
+        return False
     if proc.returncode != 0:
-        return None
-    names = _parse_dumped_names(proc.stdout)
-    if names is None:
-        return None
-    return CollectedDump(names=names, markers=_parse_dumped_markers(proc.stdout) or [])
+        stamp_collect_cooldown(f"exit {proc.returncode}")
+        return False
+    return True
 
 
-def maybe_warm_collected_tests(repos: list["Repo"]) -> list[str] | None:
-    """Best-effort: run one bounded collection to warm the collected cache.
+def spawn_collect_child() -> bool:
+    """Start the collect child detached, and do not wait for it; ``True`` when one started.
 
-    Returns the collected names on success (so the triggering completion is
-    already enriched), else ``None`` — when warming is skipped (caching
-    disabled, cooldown active after a recent failure, another process already
-    collecting) or the collection times out / fails. Never raises: completion
-    must degrade to the static floor, never traceback into the shell.
+    The check behind a TAB whose tables are due one: the child re-reads what
+    moved while the shell has its answer. It gets its own session
+    (``start_new_session``), ``/dev/null`` for every stream and no inherited
+    descriptors, so nothing it does reaches the shell. Skipped when a collect
+    child holds a fresh lock (one ``stat``: a burst of TABs starts one child)
+    and during the cooldown after a failure. Starting it touches the
+    ``tests`` marker, as the console-script shim's start does, so the TABs
+    of a burst ask for no other; a marker that cannot be touched starts no
+    child at all. Never raises.
     """
-    if not repos:
-        return None
-    cache_path = _cache_path()
-    if cache_path is None:
-        return None
-    try:
-        return _warm_collected_tests(repos, cache_path)
-    except Exception:  # noqa: BLE001 — completion must never raise into the shell
-        return None
+    from .collected_tests import mark_tables_checked
 
+    lock = _collect_file(COLLECT_LOCK_FILENAME)
+    if lock is None or _younger_than(lock, COLLECT_LOCK_STALE_SECONDS):
+        return False
+    if collect_cooldown_active():
+        return False
+    command = _collect_child_command(lock.parent)
+    if command is None:
+        return False
+    if not mark_tables_checked(lock.parent):
+        # With no record of this check, every TAB past the window would start one.
+        return False
+    import subprocess
 
-def _warm_collected_tests(repos: list["Repo"], cache_path: Path) -> list[str] | None:
-    """Cooldown-gated, lock-guarded body of :func:`maybe_warm_collected_tests`."""
-    entry = _collected_cache_entry(repos)
-    if entry is not None:
-        at = entry.get("generated_at")
-        # read_collected_tests already returned a *fresh success* upstream, so a
-        # recent timestamp here means a recent failure → cooldown, skip.
-        if isinstance(at, (int, float)) and time.time() - at <= COLLECT_COOLDOWN_SECONDS:
-            return None
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    lock = cache_path.parent / COLLECT_LOCK_FILENAME
-    if not _acquire_collect_lock(lock):
-        return None
     try:
-        dump = _run_collect_subprocess()
-    finally:
-        with contextlib.suppress(OSError):
-            lock.unlink()
-    with contextlib.suppress(OSError):
-        # dump=None stamps the cooldown (names=None, markers=None).
-        _record_collected_tests(
-            repos,
-            dump.names if dump else None,
-            markers=dump.markers if dump else None,
+        child = subprocess.Popen(  # noqa: S603 — venv otto binary, fixed argv, no shell
+            command.argv,
+            env=command.env,
+            cwd=command.cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
         )
-    return dump.names if dump else None
+    except (subprocess.SubprocessError, OSError):
+        return False
+    _detached_children[:] = [c for c in _detached_children if c.poll() is None]
+    _detached_children.append(child)
+    return True
+
+
+_detached_children: list[Any] = []
+"""Every detached collect child this process started, never waited on.
+
+Held so that dropping the handle while the child still runs, which is the
+point, is not reported as a leak: the child outlives this process.
+"""
+
+
+_collect_refresh_requested = False
+"""Set by a completer that answered from a table with moved files; see below."""
+
+
+def request_collect_refresh() -> None:
+    """Ask for a detached collect child once this completion's answer is written.
+
+    A completer returns its candidates to click, which prints them; the spawn
+    waits for that (:func:`spawn_requested_refresh`, called by
+    :func:`otto.cli.main.entry` after the command), so the child never delays
+    the answer.
+    """
+    global _collect_refresh_requested  # noqa: PLW0603 — one request per process, read once at exit
+    _collect_refresh_requested = True
+
+
+def discard_collect_refresh_request() -> None:
+    """Forget a request made before this completion began; only its own completers count."""
+    global _collect_refresh_requested  # noqa: PLW0603 — see request_collect_refresh
+    _collect_refresh_requested = False
+
+
+def spawn_requested_refresh() -> None:
+    """Start the detached collect child if a completer asked for one; clear the request."""
+    global _collect_refresh_requested  # noqa: PLW0603 — see request_collect_refresh
+    if not _collect_refresh_requested:
+        return
+    _collect_refresh_requested = False
+    with contextlib.suppress(Exception):
+        spawn_collect_child()
 
 
 # ---------------------------------------------------------------------------
@@ -2734,8 +2434,8 @@ def _warm_collected_tests(repos: list["Repo"], cache_path: Path) -> list[str] | 
 # than the main cache's config-derived data would be.
 DYNAMIC_TUNNELS_KEY = "__dynamic_tunnels__"
 DYNAMIC_TUNNELS_SCHEMA_VERSION = 2
-"""Bumped 1 → 2 when tunnel ids stopped keying by :func:`compute_fingerprint`
-in favor of :func:`_tunnel_scope_digest` (spec §4.2): the two digests are
+"""Bumped 1 → 2 when tunnel ids stopped keying by the whole-corpus digest in
+favor of :func:`_tunnel_scope_digest` (spec §4.2): the two digests are
 computed differently, so an old-schema entry's key would never match a
 new-schema lookup anyway, but the bump makes that explicit rather than
 relying on an accidental digest mismatch. Old entries are simply never
@@ -2746,9 +2446,9 @@ DYNAMIC_TUNNELS_TTL_SECONDS = 120  # tunnel state is volatile; short TTL (spec �
 def record_tunnel_ids(repos: list["Repo"], ids: list[str]) -> None:
     """Cache the freshly-discovered tunnel ids for ``remove <id>`` completion.
 
-    Keyed by :func:`_tunnel_scope_digest`, NOT :func:`compute_fingerprint`:
-    tunnel ids depend on the workspace's lab and inventory, never on test
-    sources, so this must not pay for (or invalidate on) a corpus walk.
+    Keyed by :func:`_tunnel_scope_digest`: tunnel ids depend on the
+    workspace's lab and inventory, never on test sources, so this must not
+    pay for (or invalidate on) a corpus walk.
     Skipped, like every ephemeral-inventory-guarded writer, when the digest is
     ephemeral (:func:`_fingerprint_is_ephemeral`).
     """

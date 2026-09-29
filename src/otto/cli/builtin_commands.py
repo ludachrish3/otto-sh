@@ -66,7 +66,7 @@ def register_builtin_commands() -> None:
         async_leaves=True,
     )
     register_cli_command(
-        "test", "otto.cli.test:suite_app", help="Run a registered OttoSuite test suite."
+        "test", "otto.cli.test:test_app", help="Run tests by name or marker expression."
     )
     register_cli_command(
         "docker",

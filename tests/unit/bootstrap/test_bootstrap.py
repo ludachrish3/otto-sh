@@ -8,7 +8,6 @@ import pytest
 
 from otto import bootstrap as bs
 from tests._fixtures.sutrepo import make_sut_repo
-from tests.unit.bootstrap.conftest import write_repo_with_test_body
 
 
 @pytest.fixture(autouse=True)
@@ -50,25 +49,20 @@ def test_idempotent_single_result(tmp_path, monkeypatch):
     assert len(first.repos) == 1
 
 
-def test_broken_test_file_is_contained_and_framed(tmp_path, monkeypatch):
-    """A broken test file is framed when SUITES is read, never by ``bootstrap()`` itself.
+def test_bootstrap_never_imports_a_test_file(tmp_path, monkeypatch):
+    """No otto code executes a test file outside a pytest session (spec §5.6).
 
-    Migrated: the seam used to be bootstrap's phase 2, on every command. Test
-    files now load through the suites loader, on the commands that read
-    suites, so the load is triggered here with a ``SUITES`` read.
+    The repo's test file raises a ``SyntaxError`` if it is ever imported, and
+    writes a sentinel before that; a completed bootstrap has neither.
     """
-    from otto.suite.register import SUITES
-
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo(tmp_path, broken_test=True))
-    result = bs.bootstrap()
-    assert result.errors == []  # bootstrap imports no test file
-    SUITES.names()
-    assert len(result.errors) == 1
-    msg = str(result.errors[0])
-    assert "failed to load" in msg
-    assert "test_broken.py" in msg
-    assert "repo" in msg
-    assert isinstance(result.errors[0].__cause__, SyntaxError)
+    sentinel = tmp_path / "imported"
+    body = f"import pathlib\npathlib.Path({str(sentinel)!r}).write_text('x')\ndef broken(:\n"
+    repo = make_sut_repo(
+        tmp_path / "repo", name="repo", tests=["tests"], files={"tests/test_broken.py": body}
+    )
+    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    assert bs.bootstrap().errors == []
+    assert not sentinel.exists()
 
 
 def test_discover_runs_no_user_code(tmp_path, monkeypatch):
@@ -146,35 +140,6 @@ DECLINING_MODULE_BODIES = [
 ]
 
 
-@pytest.mark.parametrize(("stem", "body"), DECLINING_MODULE_BODIES)
-def test_module_level_pytest_outcome_is_contained(tmp_path, monkeypatch, stem, body):
-    """A test module that DECLINES to load must not traceback out of a suite command.
-
-    ``pytest.importorskip`` is the mainstream idiom for an optional dependency.
-    Before this was contained, a single such file made every otto command dump a
-    raw traceback and exit 1. Migrated: the seam is now the suites loader, which
-    runs on the commands that read suites, so a ``SUITES`` read triggers it.
-    """
-    from otto.suite.register import SUITES
-
-    monkeypatch.setenv("OTTO_SUT_DIRS", write_repo_with_test_body(tmp_path, stem, body))
-    try:
-        result = bs.bootstrap()
-        SUITES.names()
-    except BaseException as exc:  # the escape IS the defect under test
-        # Deliberately NOT a bare call: an escaping `Skipped` reaches pytest's own
-        # outcome machinery and marks THIS TEST skipped rather than failed, so the
-        # regression would hide behind a green-looking summary. Convert it to an
-        # AssertionError (a plain Exception) so the guard can only ever fail loudly.
-        raise AssertionError(
-            f"the suites loader let {type(exc).__name__} escape the containment seam: {exc!r}"
-        ) from exc
-    assert len(result.errors) == 1
-    msg = str(result.errors[0])
-    assert "failed to load" in msg
-    assert f"test_{stem}.py" in msg
-
-
 # Exceptions a containment seam must NEVER swallow. `SyncPhaseInterrupt` is here
 # deliberately: it subclasses KeyboardInterrupt precisely so the signal contract
 # survives generic handling, and this pins that it still does.
@@ -195,16 +160,13 @@ def test_interrupt_and_exit_still_propagate(tmp_path, monkeypatch, stem, body, e
     """Widening the seam must not eat Ctrl-C, process exit, or otto's signal type.
 
     Containing these would be worse than the bug being fixed: a user pressing
-    Ctrl-C while suites load would see their interrupt turned into a framed
-    'failed to load' line and otto would carry on. Migrated: the test-file seam
-    is now the suites loader, so the load is triggered by a ``SUITES`` read.
+    Ctrl-C while init modules load would see their interrupt turned into a
+    framed 'failed to load' line and otto would carry on.
     """
-    from otto.suite.register import SUITES
-
-    monkeypatch.setenv("OTTO_SUT_DIRS", write_repo_with_test_body(tmp_path, stem, body))
-    bs.bootstrap()
+    repo = _write_repo_with_init_module(tmp_path, f"init{stem}", body)
+    monkeypatch.setenv("OTTO_SUT_DIRS", repo)
     with pytest.raises(expected):
-        SUITES.names()
+        bs.bootstrap()
 
 
 def test_cancelled_error_is_contained_not_propagated(tmp_path, monkeypatch):
@@ -216,17 +178,14 @@ def test_cancelled_error_is_contained_not_propagated(tmp_path, monkeypatch):
     the composition root, which neither ``otto.errors`` nor ``otto.bootstrap``
     pulls today (``tests/unit/import_budget`` measures that surface). A module
     body that raises it is just user code failing. This pins the decision so it
-    cannot be quietly reversed in either direction. Migrated: the test-file seam
-    is now the suites loader, so the load is triggered by a ``SUITES`` read.
+    cannot be quietly reversed in either direction.
     """
     import asyncio
 
-    from otto.suite.register import SUITES
-
     body = "import asyncio\nraise asyncio.CancelledError()\n"
-    monkeypatch.setenv("OTTO_SUT_DIRS", write_repo_with_test_body(tmp_path, "cancelled", body))
+    repo = _write_repo_with_init_module(tmp_path, "initcancelled", body)
+    monkeypatch.setenv("OTTO_SUT_DIRS", repo)
     result = bs.bootstrap()
-    SUITES.names()
     assert len(result.errors) == 1
     # Assert the TYPE, not `isinstance(..., BaseException)`: BootstrapError.__init__
     # always assigns a BaseException to __cause__, so the broad form passes for any
@@ -247,13 +206,13 @@ def _write_repo_with_init_module(tmp_path, stem: str, body: str) -> str:
 
 @pytest.mark.parametrize(("stem", "body"), DECLINING_MODULE_BODIES)
 def test_module_level_pytest_outcome_in_init_module_is_contained(tmp_path, monkeypatch, stem, body):
-    """The init-module seam needs its own guard — it is not the test-file seam.
+    """A module that DECLINES to load must not traceback out of bootstrap.
 
     ``settings.toml``'s ``init`` list names user modules that register hosts,
-    products and ``@instruction`` commands, and bootstrap imports them through a
-    SEPARATE ``try``. An earlier revision of this fix widened all three seams but
-    gated only the test-file one, so reverting this one to ``except Exception``
-    left the suite green.
+    products and ``@instruction`` commands. ``pytest.importorskip`` is the
+    mainstream idiom for an optional dependency, and all three bodies raise
+    ``BaseException`` subclasses that are not ``Exception``, so reverting the
+    seam to ``except Exception`` would let one such module brick every command.
     """
     repo = _write_repo_with_init_module(tmp_path, f"init{stem}", body)
     monkeypatch.setenv("OTTO_SUT_DIRS", repo)
@@ -291,40 +250,6 @@ def test_init_module_imports_run_under_the_registering_repo_marker(tmp_path, mon
     # And the marker is bootstrap-scoped: nothing after it inherits the name.
     from otto.registry import get_registering_repo
 
-    assert get_registering_repo() is None
-
-
-def test_test_file_imports_run_under_the_registering_repo_marker(tmp_path, monkeypatch):
-    """The test-file leg needs its own guard — it is not the init-module leg.
-
-    Init modules load inside ``bootstrap()``; test files load later, through
-    the suites loader, on the first ``SUITES`` read. The two sites set the
-    marker separately, so dropping it from the loader is a one-line refactor
-    the init-module guard cannot see. Observed from inside the test file, which
-    also registers a suite, so the load is proven to be the suites loader's.
-    """
-    from otto.registry import get_registering_repo
-    from otto.suite.register import SUITES
-
-    seen = tmp_path / "seen.txt"
-    body = f"""
-        import pathlib
-
-        from otto.registry import get_registering_repo
-        from otto.suite import OttoSuite
-
-        pathlib.Path({str(seen)!r}).write_text(repr(get_registering_repo()))
-
-        class TestMarkedSuite(OttoSuite):
-            def test_x(self):
-                pass
-    """
-    monkeypatch.setenv("OTTO_SUT_DIRS", write_repo_with_test_body(tmp_path, "markedtest", body))
-    result = bs.bootstrap()
-    assert not seen.exists(), "bootstrap() imported a test file"
-    assert "TestMarkedSuite" in SUITES
-    assert result.errors == []
-    assert seen.read_text() == "'markedtest'"
     assert get_registering_repo() is None
 
 

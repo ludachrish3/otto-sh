@@ -67,8 +67,8 @@ class TestCacheLandsInTheWorkspaceHome:
         """The deduplication the relocation buys, and could not be tested before.
 
         The cache's content was always a pure function of the workspace --
-        compute_fingerprint hashes each repo's settings and init modules and
-        nothing else -- but its LOCATION was the xdir, so invoking otto from N
+        the names digest hashes each repo's settings, init modules and lab
+        files and nothing else -- but its LOCATION was the xdir, so invoking otto from N
         directories against the same repos maintained N byte-identical caches.
         Keyed by the workspace instead, two xdirs share one cache.
 

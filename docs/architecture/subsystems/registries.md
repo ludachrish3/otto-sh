@@ -26,7 +26,7 @@ functions; the class is the shared engine behind them.
 | `INSTRUCTIONS` | `otto run` subcommand | {func}`~otto.cli.run.instruction` | — |
 | `PROJECT_INSTRUCTIONS` | project instruction (a `ProjectActions` method) | {func}`~otto.cli.run.instruction` on a `ProjectActions` method | `install`, `uninstall`, `status`, `cleanup`, `get-logs`, `install-tools` (when `otto.project.actions` is imported) |
 | `PROJECT_ACTIONS` | a repo's `ProjectActions` subclass | `otto.project.actions.register_project_actions` | — |
-| `SUITES` | `otto test` subcommand | {func}`~otto.suite.register.register_suite_class` (auto-called by {class}`~otto.suite.suite.OttoSuite`'s `__init_subclass__`) | — |
+| `OPTIONS` | options class, with the verbs (`run`, `test`) whose flags it joins | {func}`otto.params.register_options` / `@options(verbs=[...])` | — |
 | `HOST_CLASSES` | host class | `otto.host.os_profile.register_host_class` | `unix`, `embedded`, `zephyr` |
 | `OS_PROFILES` | `os_type` profile | `otto.host.os_profile.register_os_profile` | `unix`, `embedded`, `zephyr`, `busybox` |
 | `LOGIN_PROXIES` | login proxy | `otto.host.login_proxy.register_login_proxy` | `su` |
@@ -62,9 +62,7 @@ importing it. What each read costs:
 
 - **Listing and attribution are free.** `names()`, `in`, `len()`,
   `origin()` and `unregister()` never import a `Ref`'s target, so help and
-  completion can list every built-in without loading one. A registry with a
-  loader runs it first on every read, these included; see
-  [Lazy loaders](#lazy-loaders-and-what-test-files-may-register) below.
+  completion can list every built-in without loading one.
 - **`get(name)` resolves one entry.** Its first call imports the target,
   runs the registry's *validate* hook (if it has one) on the object, and
   caches the object in place of the `Ref`, so later reads are dictionary
@@ -138,29 +136,41 @@ missing from their tables, so an ast-grep rule,
 instead: a registration that runs at import must pass a `Ref`, unless its
 file defines the registry.
 
-## Lazy loaders, and what test files may register
+## The options registry
 
-A registry may name a *loader*: a `"module:function"` string it resolves and
-calls at the start of every read (`get`, `names`, `items`, `origin`,
-`unregister`, `in` and `len`). The function decides whether there is anything
-left to load, so every read after the first costs almost nothing. A read made
-from inside the loader does not call it again, and
-{func}`~otto.registry.suspend_loaders` reads without calling it; the test
-harness's registry snapshots use it so that saving a registry never loads a
-repo's test files as a side effect.
+`OPTIONS` ({mod}`otto.params`) holds the options classes registered for a
+verb. Its entry is an `OptionsEntry`: the class, or a `Ref` to it, together
+with the verbs it serves and the repo that registered it, so the verbs are
+known without importing the class. That is what lets `otto host` and every
+other command stay free of options modules registered by string.
 
-`SUITES` is the only registry with a loader. Its loader,
-{func}`otto.bootstrap.load_test_suites`, imports each repo's top-level test
-files on the first read after bootstrap, so only the commands that read suites
-pay for those imports or fail on them ({doc}`../lifecycle`).
+- **The key is the class's `module:qualname`,** so a class registers once:
+  registering it again, by object or by string, raises
+  `OptionsRegistrationError` saying to name every verb in one call. A
+  string that resolves to a re-export (a class whose own `module:qualname`
+  differs) is refused when it is resolved, since it would otherwise be a
+  second key for one class.
+- **Verbs are checked at registration** against `OPTION_VERBS`
+  (`["run", "test"]`): an unknown verb, an empty list or a repeated verb
+  raises there, not at dispatch.
+- **Reading a verb resolves only that verb's classes**
+  (`verb_option_classes`), in registration order: otto's own first, then
+  each repo's in dependency order. `merge_option_params` then merges their
+  fields by declaring class, the same rule project instructions use.
 
-A test file may therefore register suites and nothing else; why is on
-{doc}`../lifecycle`. The mechanism: while test files load
-({func}`~otto.registry.loading_test_files`), every registry except `SUITES`
-refuses an entry whose origin is outside the `otto` package, with
-{class}`~otto.registry.RegistrationRefused`. Bootstrap frames the refusal like
-any other load failure, naming the file and saying to register the entry from
-an init module instead.
+The architecture of the verbs themselves, and how the built instances reach
+tests and instructions, is on {doc}`execution`.
+
+## What test files may register
+
+Test files and conftests load only inside a pytest session: `otto test`'s
+collection and run, and the completion cache's bounded collection. A
+registration made there would exist for `otto test` and for no other command,
+so it is refused. While otto's sessions import test files
+({func}`~otto.registry.loading_test_files`), every registry refuses an entry
+whose origin is outside the `otto` package, with
+{class}`~otto.registry.RegistrationRefused`, whose message says to register
+from an init module instead.
 
 - **The check is on origin, not only on the phase.** A test file is often the
   first thing to import an otto module that registers its own entries when
@@ -170,12 +180,17 @@ an init module instead.
   public `register_*` wrapper must record the module that *called* it as the
   origin: an entry attributed to the wrapper's own `otto.*` module would pass
   the check.
+- **A `Ref` resolved during a session imports outside the phase.** The first
+  `get()` of an entry registered by reference can happen inside a pytest
+  session, for example when a test's first host command looks up a transfer
+  backend. Its target was named by an init module or by otto, so {meth}`Ref.resolve <otto.registry.Ref.resolve>` lifts the phase for
+  the import, and whatever that module registers when imported belongs to
+  the init module. The phase is back in force when the import returns.
 - **The two provider lists that are not registries** (product and dev-tool
   providers) apply the same check, keyed on the provider's module.
 - **A guard test** (`tests/unit/test_registry_loading.py`) finds every
-  `Registry` otto constructs and asserts that each one except `SUITES`
-  refuses, so a registry added later is covered without anyone remembering to
-  list it.
+  `Registry` otto constructs and asserts that each one refuses, so a registry
+  added later is covered without anyone remembering to list it.
 
 ## The CLI command registry
 
@@ -236,8 +251,8 @@ scaffolded demo repo at docs build time:
 :file: ../../_static/generated/termynal/complete-host-ids.html
 ```
 
-More showcases live elsewhere: suite names and `--tests`
-({doc}`../../cli/test/index`), instruction names ({doc}`../../cli/run/index`),
+More showcases live elsewhere: test names
+({doc}`../../cli/test/selection`), instruction names ({doc}`../../cli/run/index`),
 per-class host verbs ({doc}`../../cli/host/index`) plus registry-backed
 option values ({doc}`../../cli/host/connections`), and `--lab`
 ({doc}`../lifecycle`).
@@ -246,13 +261,12 @@ The consistent rule behind all of them: a keystroke answered from the cache
 **never runs user code**, and one that finds the cache missing or stale runs
 it once, to rebuild the cache. Registry names come from the completion cache
 ({doc}`completion-cache`); host ids and lab names are read from `lab.json` data;
-`--tests` names come from a static `ast` scan of the test sources. The one
-case that genuinely needs a live pytest collection — dynamically generated
-tests — is handled without breaking that rule: the collection runs in a
-disposable, timeout-bounded *subprocess* (warmed for free by any real `otto
-test --list-tests`, or by a one-time slow first TAB), and its result is cached
-under a reserved key so later completions are a plain read. The static scan
-stays as the always-available floor, so `--tests` completion is never empty.
+test names come from each repo's per-file table of what pytest last
+collected, which runs and listings keep up to date. Test names are the one
+case that genuinely needs a live pytest collection, and it is handled without
+breaking that rule: when a table must be seeded or refreshed, the collection
+runs in a disposable, timeout-bounded *subprocess*, and later completions read
+its result from the cache ({doc}`completion-cache`, "The test-names cache").
 
 ## Where the code lives
 
@@ -264,9 +278,9 @@ stays as the always-available floor, so `--tests` completion is never empty.
   CLI-free (its `typer.Typer` field is a `TYPE_CHECKING`-only annotation) so
   core readers — `Repo`'s instruction panel, the completion cache — see the
   registered set without importing `otto.cli`
-- {mod}`otto.cli.run` / {mod}`otto.suite.register` — the `@instruction()`
-  decorator and the `SUITES` registration
-  (`OttoSuite.__init_subclass__`)
+- {mod}`otto.cli.run` — the `@instruction()` decorator
+- {mod}`otto.params` — the `OPTIONS` registry, `register_options` and
+  `@options(verbs=[...])`
 - `otto.config.completion_cache` — the completion cache
   ({doc}`completion-cache`)
 - the host-side registries live beside the strategy they select:

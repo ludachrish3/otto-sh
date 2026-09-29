@@ -443,10 +443,10 @@ class MetricCollector:
         #     because the per-class tasks drive run() on their own loops
         #     (aiosqlite delivers on the calling loop, so the cross-loop split
         #     is deliberate).
-        #   - suite/suite.py's OttoSuite.start_monitor: SAME loop, but its
-        #     spawn happens inside _run(), itself a task — spawn_collection()
-        #     there would put the open back in cancellable task context,
-        #     exactly what this guard exists to prevent.
+        #   - suite/monitor_fixture.py's MonitorHandle.start: SAME loop, but
+        #     its spawn happens inside _run(), itself a task —
+        #     spawn_collection() there would put the open back in cancellable
+        #     task context, exactly what this guard exists to prevent.
         if self._db is None and self._pending_db is not None:
             raise RuntimeError(
                 "Collector.run() started before its DB was opened — spawn via "

@@ -13,6 +13,7 @@ from otto.models import MetricPoint
 from otto.monitor.collector import MetricCollector
 from otto.suite.plugin import OttoPlugin
 from otto.suite.run import ASYNCIO_LOOP_ARGS
+from tests.unit.suite._inner import INNER_ARGS
 
 pytest_plugins = ["pytester"]
 
@@ -143,25 +144,6 @@ def test_one():
     assert True
 """
 
-_INNER_ARGS = (
-    # A nested in-process session: pytest-playwright's session-wide call
-    # wrapper rejects re-entry, so `-p no:playwright` disables it. The inner
-    # session runs with otto test's own loop-scope args (ASYNCIO_LOOP_ARGS),
-    # not a stand-in, so it measures the real contract. Same overrides as
-    # test_options_plugin.py's inner runs.
-    "-p",
-    "no:cacheprovider",
-    "-p",
-    "no:playwright",
-    *ASYNCIO_LOOP_ARGS,
-    # The warning below is the ARTIFACT under test, so the inner session has to
-    # print it: pytest holds captured logs back unless a test fails.
-    "-o",
-    "log_cli=true",
-    "-o",
-    "log_cli_level=WARNING",
-)
-
 
 def _inner_run(pytester, plugin, hosts):
     """Run a one-test session under *plugin*, with ``all_hosts`` answering *hosts*.
@@ -188,7 +170,7 @@ def _inner_run(pytester, plugin, hosts):
 
     pytester.makepyfile(test_inner=_INNER_SUITE)
     with patch("otto.config.all_hosts", _all_hosts):
-        return pytester.runpytest_inprocess(*_INNER_ARGS, plugins=[plugin])
+        return pytester.runpytest_inprocess(*INNER_ARGS, plugins=[plugin])
 
 
 def test_monitor_hosts_matching_nothing_stops_the_run_with_one_line(pytester):
@@ -290,15 +272,14 @@ async def test_session_monitor_no_matching_hosts_skips(tmp_path):
 @pytest.mark.asyncio
 async def test_session_monitor_publishes_collector_and_exports_json(tmp_path):
     """When enabled with hosts, the fixture must:
-    - publish the collector on OttoSuite for per-test fixtures to find
+    - publish the collector on the plugin for per-test fixtures to find
     - export a format:1 monitor document (with a session) when monitor_output
       has a non-.db suffix
     - stamp that session's end on a clean teardown (a null end is the
       producer's deliberate crash marker; see test_export_producer.py)
-    - clear the class-level collector reference on teardown
+    - clear the plugin's collector slot on teardown
     """
     from otto.models import MonitorExport
-    from otto.suite.suite import OttoSuite
 
     out_path = tmp_path / "monitor.json"
     plugin = OttoPlugin(
@@ -321,10 +302,10 @@ async def test_session_monitor_publishes_collector_and_exports_json(tmp_path):
     ):
         gen = await _FixtureRunner.setup(plugin)
         # Teardown runs even when the assert fails, so a wrong collector never
-        # outlives this test on the OttoSuite class.
+        # outlives this test on the plugin.
         try:
-            # While the fixture body is suspended at yield the class attr is set.
-            assert OttoSuite._session_monitor_collector is real_collector
+            # While the fixture body is suspended at yield the slot is set.
+            assert plugin.session_monitor_collector is real_collector
         finally:
             await _FixtureRunner.teardown(gen)
 
@@ -336,7 +317,7 @@ async def test_session_monitor_publishes_collector_and_exports_json(tmp_path):
     assert export.format == 1
     assert len(export.sessions) == 1
     assert export.sessions[0].end is not None, "a clean teardown left the session's end unstamped"
-    assert OttoSuite._session_monitor_collector is None
+    assert plugin.session_monitor_collector is None
 
 
 @pytest.mark.asyncio
@@ -366,7 +347,6 @@ async def test_session_monitor_db_output_persists_real_lab_and_meta(tmp_path):
     """
     from otto.monitor.db import read_sessions
     from otto.monitor.export import build_db_export
-    from otto.suite.suite import OttoSuite
 
     out_path = tmp_path / "monitor.db"
     plugin = OttoPlugin(monitor=True, monitor_interval=3.0, monitor_output=out_path)
@@ -374,11 +354,11 @@ async def test_session_monitor_db_output_persists_real_lab_and_meta(tmp_path):
     with patch("otto.config.all_hosts", return_value=iter([_make_host("router1")])):
         gen = await _FixtureRunner.setup(plugin)
         try:
-            collector = OttoSuite._session_monitor_collector
+            collector = plugin.session_monitor_collector
             assert collector is not None
             await collector.init_db()  # session row INSERTed here
         finally:
-            # collector.close() closes the DB and the class attr is cleared,
+            # collector.close() closes the DB and the slot is cleared,
             # even when an assert above fails.
             await _FixtureRunner.teardown(gen)
 
@@ -399,16 +379,15 @@ async def test_session_monitor_db_output_persists_real_lab_and_meta(tmp_path):
     # producer's crash-tolerant fallback to paper over a null one.
     (raw_session,) = read_sessions(str(out_path))
     assert raw_session.end is not None, "a clean teardown left the session's end unstamped"
-    assert OttoSuite._session_monitor_collector is None
+    assert plugin.session_monitor_collector is None
 
 
 @pytest.mark.asyncio
 async def test_session_monitor_does_not_start_run_task(tmp_path):
     """Regression: the session fixture must not start ``collector.run()``.
 
-    OttoSuite tests use ``loop_scope='class'``; a task on the session loop
-    is starved while class loops drive tests, so metrics never collect.
-    The class-scoped fixture is responsible for the run task instead.
+    The class-scoped fixture is responsible for the run task; a second task
+    started here would collect every metric twice.
     """
     plugin = OttoPlugin(
         monitor=True,
@@ -466,23 +445,19 @@ class _ClassFixtureRunner:
 @pytest.mark.asyncio
 async def test_class_monitor_task_disabled_is_noop():
     """When ``--monitor`` is off the class fixture must not touch the collector."""
-    from otto.suite.suite import OttoSuite
-
-    OttoSuite._session_monitor_collector = None
     plugin = OttoPlugin(monitor=False)
+    collector = MagicMock()
+    plugin.session_monitor_collector = collector
     gen = await _ClassFixtureRunner.setup(plugin)
     await _ClassFixtureRunner.teardown(gen)
-    # No collector available, no harm.
-    assert OttoSuite._session_monitor_collector is None
+    collector.run.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_class_monitor_task_no_collector_is_noop():
     """If the session fixture didn't publish a collector, the class fixture is inert."""
-    from otto.suite.suite import OttoSuite
-
-    OttoSuite._session_monitor_collector = None
     plugin = OttoPlugin(monitor=True)
+    assert plugin.session_monitor_collector is None
     # Should not raise even though collector is None.
     gen = await _ClassFixtureRunner.setup(plugin)
     await _ClassFixtureRunner.teardown(gen)
@@ -493,8 +468,6 @@ async def test_class_monitor_task_starts_and_cancels_run():
     """Verify the class fixture creates the ``run()`` task on the active loop
     and cancels it cleanly on teardown."""
     import asyncio
-
-    from otto.suite.suite import OttoSuite
 
     started = asyncio.Event()
     cancelled = asyncio.Event()
@@ -509,32 +482,27 @@ async def test_class_monitor_task_starts_and_cancels_run():
 
     fake_collector = MagicMock()
     fake_collector.run = fake_run
-    OttoSuite._session_monitor_collector = fake_collector
+    plugin = OttoPlugin(monitor=True, monitor_interval=1.0)
+    plugin.session_monitor_collector = fake_collector
 
-    try:
-        plugin = OttoPlugin(monitor=True, monitor_interval=1.0)
-        gen = await _ClassFixtureRunner.setup(plugin)
-        # Yield once so the task gets a chance to start.
-        await asyncio.wait_for(started.wait(), timeout=1.0)
-        await _ClassFixtureRunner.teardown(gen)
-        assert cancelled.is_set()
-    finally:
-        OttoSuite._session_monitor_collector = None
+    gen = await _ClassFixtureRunner.setup(plugin)
+    # Yield once so the task gets a chance to start.
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+    await _ClassFixtureRunner.teardown(gen)
+    assert cancelled.is_set()
 
 
 @pytest.mark.asyncio
-async def test_class_monitor_task_runs_on_class_loop_collecting_metrics():
-    """End-to-end behavioural test for the original bug.
+async def test_class_monitor_task_collects_on_the_loop_the_tests_run_on():
+    """The run task must live on the loop the tests run on, or it never ticks.
 
-    With the broken design (run task on session loop, tests on class loop),
-    ``_collect_one`` never executes. Drive the class fixture on a loop that's
-    actively ticking (this test's own loop) and verify that the run coroutine
-    actually progresses and populates a fake collector's series during the
-    "test" body. This is the regression guard for the empty-metrics bug.
+    The original empty-metrics bug put the task on one loop and the tests on
+    another: a task only runs while its own loop does, so ``_collect_one``
+    never executed. Drive the class fixture on the loop that is running the
+    "test" body (this test's own loop) and verify that the run coroutine
+    progresses and populates a fake collector's series meanwhile.
     """
     import asyncio
-
-    from otto.suite.suite import OttoSuite
 
     fake_collector = MagicMock()
     series_appends = []
@@ -546,33 +514,32 @@ async def test_class_monitor_task_runs_on_class_loop_collecting_metrics():
             series_appends.append(1)
 
     fake_collector.run = fake_run
-    OttoSuite._session_monitor_collector = fake_collector
+    plugin = OttoPlugin(monitor=True, monitor_interval=0.01)
+    plugin.session_monitor_collector = fake_collector
 
-    try:
-        plugin = OttoPlugin(monitor=True, monitor_interval=0.01)
-        gen = await _ClassFixtureRunner.setup(plugin)
-        # "Test" body: yield control so the run task can tick repeatedly.
-        await asyncio.sleep(0.1)
-        await _ClassFixtureRunner.teardown(gen)
-    finally:
-        OttoSuite._session_monitor_collector = None
+    gen = await _ClassFixtureRunner.setup(plugin)
+    # "Test" body: yield control so the run task can tick repeatedly.
+    await asyncio.sleep(0.1)
+    await _ClassFixtureRunner.teardown(gen)
 
     # If the task didn't run, this list would be empty — exactly the bug.
     assert len(series_appends) > 0, (
-        "collector.run() never progressed — this is the original bug "
+        "collector.run() never progressed while the tests' loop ran "
         "(metrics empty in monitor.json)."
     )
 
 
-# ── End-to-end: monitor with class-scoped-loop tests writes metrics to JSON ─
+# ── End-to-end: monitor with unmarked tests writes metrics to JSON ──────────
 
 
 def test_e2e_monitor_collects_metrics_for_an_unmarked_suite(tmp_path):
     """Defect #1 (spec §3.4): `otto test --monitor` wrote an export with no metrics.
 
-    ``_otto_class_monitor_task`` drives ``collector.run()`` on the CLASS loop;
-    before ASYNCIO_LOOP_ARGS every test ran on its own FUNCTION loop, so the
-    task never ticked while a test executed. The previous version of this test
+    ``_otto_class_monitor_task`` must drive ``collector.run()`` on the loop
+    the tests run on: under ASYNCIO_LOOP_ARGS that is the session loop, for
+    the fixture and the tests alike. Before those args every test ran on its
+    own FUNCTION loop, away from the task's, so the task never ticked while a
+    test executed. The previous version of this test
     stayed green by marking the suite ``@pytest.mark.asyncio(loop_scope="class")``
     — which no real suite under ``otto test`` ever did. The suite below carries
     NO marker; the session runs with the same loop-scope args ``otto test``
@@ -589,11 +556,11 @@ def test_e2e_monitor_collects_metrics_for_an_unmarked_suite(tmp_path):
         textwrap.dedent("""
         import asyncio
 
-        class TestClassLoopSuite:
+        class TestUnmarkedSuite:
             async def test_a(self):
-                # Yield repeatedly so whichever loop is hosting the run task
-                # has many opportunities to tick. With the bug, the task is
-                # on the session loop (dormant) and ticks zero times here.
+                # Yield repeatedly so the run task has many opportunities to
+                # tick. With the bug, the task sits on a loop other than this
+                # test's, which is dormant meanwhile, and ticks zero times.
                 for _ in range(20):
                     await asyncio.sleep(0.01)
     """)
@@ -736,3 +703,50 @@ def test_teststatus_letter_is_always_blank() -> None:
             status = _status(when, outcome)
             assert status is not None
             assert status[1] == ""
+
+
+def test_class_scoped_plugin_fixtures_warn_nothing(tmp_path) -> None:
+    """pytest 9.1 deprecates a class-scoped fixture that is an instance method.
+
+    Runs a real inner session with that deprecation escalated to an error.
+    The test requests ``ctx``/``module_dir``/``test_dir`` so the session sets
+    up every wider-scoped fixture otto's plugins provide, including the
+    class-scoped ``OttoPlugin._otto_class_monitor_task`` (autouse). pytest's check
+    (``resolve_fixture_function``) only asks whether the bound ``__self__`` is
+    a type, so a class-scoped instance method on a plugin OBJECT fails it
+    exactly as one on a test class does. That is why the plugin fixtures are
+    staticmethods reaching their plugin through ``request.config.stash``.
+    """
+    from otto.config.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context
+    from otto.suite.layout import ArtifactLayout
+    from otto.suite.pytest_plugin import OttoFixturesPlugin
+
+    test_file = tmp_path / "test_nowarn.py"
+    test_file.write_text("""\
+class TestNoWarn:
+    async def test_a(self, ctx, module_dir, test_dir) -> None:
+        assert ctx is not None
+""")
+    token = set_context(OttoContext(lab=Lab(name="_test_stub"), output_dir=tmp_path))
+    try:
+        exit_code = pytest.main(
+            [
+                str(test_file),
+                "-o",
+                "asyncio_mode=auto",
+                *ASYNCIO_LOOP_ARGS,
+                "--no-cov",
+                "--override-ini",
+                "addopts=",
+                "-p",
+                "no:playwright",
+                "-W",
+                "error::pytest.PytestRemovedIn10Warning",
+            ],
+            plugins=[OttoPlugin(), OttoFixturesPlugin(layout=ArtifactLayout(root=tmp_path))],
+        )
+    finally:
+        sys.modules.pop(test_file.stem, None)
+        reset_context(token)
+    assert exit_code == pytest.ExitCode.OK

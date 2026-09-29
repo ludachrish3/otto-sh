@@ -40,6 +40,7 @@ from typer.testing import CliRunner
 from otto import options
 from otto.cli.run import instruction, run_app
 from otto.instructions import FIRST_PARTY_INSTRUCTIONS, INSTRUCTIONS, PROJECT_INSTRUCTIONS
+from otto.params import OptionsCollisionError
 from otto.project import (
     Cleanliness,
     CleanlinessItem,
@@ -58,7 +59,6 @@ from otto.project import (
     register_project_actions,
 )
 from otto.project.commands import (
-    OptionsCollisionError,
     merged_option_params,
     publish_project_instructions,
 )
@@ -108,7 +108,7 @@ def _render(renderable) -> str:
 
 def _leaf(name: str):
     """The published command's callback for *name* -- what ``otto run <name>`` runs."""
-    (command,) = INSTRUCTIONS.get(name).sub_app.registered_commands
+    (command,) = INSTRUCTIONS.get(name).make_app().registered_commands
     return command.callback
 
 
@@ -1274,7 +1274,7 @@ class TestMergedFlags:
 
         from otto.config.completion_cache import _serialize_options
 
-        cmd = typer.main.get_command(INSTRUCTIONS.get("install").sub_app)
+        cmd = typer.main.get_command(INSTRUCTIONS.get("install").make_app())
         leaf = cmd.commands["install"] if hasattr(cmd, "commands") else cmd
         serialised = _serialize_options(leaf.callback, command_name="install")
 
@@ -1319,7 +1319,7 @@ class TestMergedFlags:
             "deploy",
             InstructionEntry(
                 name="deploy",
-                sub_app=typer.Typer(),
+                make_app=typer.Typer,
                 module=Widget.__module__,
                 registered_by="widget",
             ),
@@ -1356,10 +1356,79 @@ class TestMergedFlags:
         INSTRUCTIONS.register(
             "install",
             InstructionEntry(
-                name="install", sub_app=typer.Typer(), module="repo.init", registered_by="repo"
+                name="install", make_app=typer.Typer, module="repo.init", registered_by="repo"
             ),
             origin="repo.init",
         )
 
         with pytest.raises(ValueError, match="already registered"):
             publish_project_instructions()
+
+
+# ── Task 4b fix round 1, item A.3: a dry run validates the REAL published leaf ──
+
+
+class TestDryRunOnAPublishedProjectInstruction:
+    """``otto -n run install ...`` -- the real published leaf, not a standalone double.
+
+    Critical 1 from the first review: a project instruction's leaf
+    (``otto.project.commands._command_for``) is built on its OWN dispatch
+    path, never through ``otto.cli.invoke._wrap_with_options`` -- so it never
+    carried the seam's dry-run marker, and `-n` stopped the WHOLE invocation
+    at the generic seam before the leaf's own ``bind_verb_options`` call ever
+    ran. A bad value for a verb-registered class (the shape of the reported
+    bug: ``otto -n run install --minimum 0``) exited 0 under `-n` and 2 for
+    real. This class drives the SHIPPED ``install`` command through
+    ``publish_project_instructions`` (the ``registered`` fixture), so it is
+    the leaf a real invocation resolves.
+    """
+
+    def test_a_bad_verb_option_fails_the_dry_run_exactly_like_a_real_run(self, registered) -> None:
+        from otto import options
+        from otto.params import register_options
+        from tests.conftest import active_context
+
+        @options
+        class Guard:
+            minimum: int = 1
+
+            def __post_init__(self) -> None:
+                if self.minimum < 1:
+                    raise ValueError("minimum must be >= 1")
+
+        register_options(Guard, verbs=["run"])
+
+        with active_context(dry_run=True):
+            dry = dispatch.invoke(run_app, ["install", "--minimum", "0"], async_leaves=True)
+        assert dry.exit_code == 2, dry.output
+        assert "minimum must be >= 1" in dry.stderr
+
+        # POSITIVE CONTROL, same command, same bad value: a real run fails
+        # the identical way -- proving the dry run's exit code isn't just
+        # "some" non-zero code, and the error rendering isn't just "some"
+        # substring match, but BYTE-IDENTICAL to what a real run prints.
+        real = dispatch.invoke(run_app, ["install", "--minimum", "0"], async_leaves=True)
+        assert real.exit_code == dry.exit_code
+        assert dry.stderr == real.stderr, "dry-run and real-run error rendering must be identical"
+
+    def test_a_good_verb_option_shows_under_options_and_runs_no_body(
+        self, monkeypatch, registered
+    ) -> None:
+        from otto import options
+        from otto.params import register_options
+        from tests.conftest import active_context
+
+        @options
+        class Guard2:
+            minimum: int = 1
+
+        register_options(Guard2, verbs=["run"])
+        rec = _Recorder()
+        monkeypatch.setattr(orchestrator, "install", rec)
+
+        with active_context(dry_run=True):
+            dry = dispatch.invoke(run_app, ["install", "--minimum", "3"], async_leaves=True)
+        assert dry.exit_code == 0, dry.output
+        assert "options:" in dry.output
+        assert "Guard2: minimum=3" in dry.output
+        assert rec.calls == [], "the dry run reached the orchestrator's install()"

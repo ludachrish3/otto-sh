@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from otto.examples.options import (
     DeployInstructionOptions,
-    DeviceSuiteOptions,
+    DeviceTestOptions,
     RepoOptions,
 )
 
@@ -32,15 +32,17 @@ def test_retries_constraint_rejects_negative():
         RepoOptions(retries=-1)
 
 
-def test_device_suite_options_inherits_and_adds_firmware():
-    opts = DeviceSuiteOptions()
-    # inherited repo-wide flags
-    assert opts.device_type == "router"
-    assert opts.lab_env == "staging"
-    assert opts.retries == 3
-    # local field
+def test_device_test_options_carries_only_its_own_field():
+    # Registered for ``test`` beside RepoOptions, so it repeats none of its flags.
+    opts = DeviceTestOptions()
     assert opts.firmware == "latest"
-    assert DeviceSuiteOptions(device_type="switch", firmware="2.1").firmware == "2.1"
+    assert DeviceTestOptions(firmware="2.1").firmware == "2.1"
+    assert not isinstance(opts, RepoOptions)
+
+
+def test_device_test_options_check_interfaces_is_an_on_by_default_bool():
+    assert DeviceTestOptions().check_interfaces is True
+    assert DeviceTestOptions(check_interfaces=False).check_interfaces is False
 
 
 def test_deploy_instruction_options_inherits_and_adds_debug():
@@ -54,11 +56,9 @@ def test_deploy_instruction_options_inherits_and_adds_debug():
     assert DeployInstructionOptions(debug=True).debug is True
 
 
-def test_subclasses_inherit_the_retries_constraint():
-    # The ge=0 constraint on the base survives inheritance into both subclasses:
-    # the failure must name ``retries`` and its bound, not any local field.
+def test_the_instruction_subclass_inherits_the_retries_constraint():
+    # The ge=0 constraint on the base survives inheritance: the failure must
+    # name ``retries`` and its bound, not the local field.
     ge_zero = r"(?m)^retries\n\s+Input should be greater than or equal to 0"
-    with pytest.raises(ValidationError, match=ge_zero):
-        DeviceSuiteOptions(retries=-1)
     with pytest.raises(ValidationError, match=ge_zero):
         DeployInstructionOptions(retries=-1)

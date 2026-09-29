@@ -25,6 +25,7 @@ def _mk_workspace(
     sidecar: bool = False,
     sidecar_age: float | None = None,
     env: bool = False,
+    session_dirs: bool = False,
 ) -> Path:
     ws = home / name
     ws.mkdir(parents=True)
@@ -41,4 +42,15 @@ def _mk_workspace(
     if env:
         (ws / "env" / "bin").mkdir(parents=True)
         (ws / "env" / "bin" / "python").write_text("")
+    if session_dirs:
+        pyc = ws / "pycache" / "home" / "me" / "repo" / "tests"
+        pyc.mkdir(parents=True)
+        (pyc / "test_a.cpython-310-pytest-9.1.1.pyc").write_bytes(b"x" * 100)
+        seed = ws / "pytest-cache" / "v"
+        seed.mkdir(parents=True)
+        (seed / "randomly_seed").write_text("1234")
     return ws
+
+
+SESSION_DIR_BYTES = 104
+"""What ``session_dirs=True`` puts in the two directories, in bytes."""

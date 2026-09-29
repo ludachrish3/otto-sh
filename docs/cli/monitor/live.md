@@ -76,8 +76,8 @@ The 1-second floor is enforced at every human-facing boundary that names an
 interval — `otto monitor --interval` above, `otto test --monitor-interval`
 (see [Monitoring during a test
 run](during-tests.md#monitoring-during-a-test-run)), and
-`OttoSuite.start_monitor()` (see [Monitoring from test
-suites](../../cookbook/extending/custom-parsers.md#monitoring-from-test-suites)) all
+a test's `monitor.start()` (see [Monitoring from a
+test](../../cookbook/test-recipes.md#monitoring-from-a-test)) all
 reject anything lower. `MetricCollector` itself has no floor.
 
 ## Persisting data — sessions

@@ -1,7 +1,7 @@
 """``--random / --no-random`` and ``--seed``: what the runner hands pytest, and the reproduce line.
 
 pytest-randomly is a runtime dependency and pytest auto-loads it, so a
-``run_suite`` with random order ON adds nothing for the plugin — the seed is
+``run_tests`` with random order ON adds nothing for the plugin — the seed is
 the only argument — and OFF unregisters it with ``-p no:randomly``. The
 runner passes ``--no-header``, which hides the plugin's own seed line, so
 otto's plugin logs the effective seed itself, phrased as the ``otto test``
@@ -14,18 +14,13 @@ import textwrap
 
 import pytest
 
-from otto.suite.run import RunOptions, run_suite
-
-
-class _LibSuite:
-    pass
+from otto.suite.run import RunOptions, run_tests
+from tests._fixtures.sut_repos import DOUBLE_TEST_NAME
 
 
 @pytest.fixture(autouse=True)
-def _no_repos(monkeypatch):
-    import otto.config
-
-    monkeypatch.setattr(otto.config, "get_repos", list)
+def _one_repo(one_repo_double):
+    """Every run here selects the double's one test; the session itself is stubbed."""
 
 
 @pytest.fixture
@@ -42,20 +37,27 @@ def captured_argv(monkeypatch):
 
 
 class TestRunnerArgv:
-    def test_default_is_random_with_no_seed_argument(self, tmp_path, captured_argv):
-        run_suite(_LibSuite, output_dir=tmp_path)
+    def test_default_is_random_on_a_seed_the_run_draws(self, tmp_path, captured_argv, caplog):
+        """The run draws one seed and passes it to every session, so ``--seed N`` reproduces it."""
+        with caplog.at_level(logging.INFO, logger="otto.suite.run"):
+            run_tests([DOUBLE_TEST_NAME], output_dir=tmp_path)
         (argv,) = captured_argv
         assert "no:randomly" not in argv
-        assert not any(a.startswith("--randomly-seed") for a in argv)
+        [seed_arg] = [a for a in argv if a.startswith("--randomly-seed=")]
+        seed = seed_arg.removeprefix("--randomly-seed=")
+        [line] = [r.getMessage() for r in caplog.records if "seed" in r.getMessage()]
+        assert f"reproduce with --seed {seed}" in line
 
     def test_no_random_unregisters_the_plugin(self, tmp_path, captured_argv):
-        run_suite(_LibSuite, output_dir=tmp_path, run_options=RunOptions(random_order=False))
+        run_tests(
+            [DOUBLE_TEST_NAME], output_dir=tmp_path, run_options=RunOptions(random_order=False)
+        )
         (argv,) = captured_argv
         assert argv[argv.index("no:randomly") - 1] == "-p"
         assert not any(a.startswith("--randomly-seed") for a in argv)
 
     def test_seed_is_forwarded(self, tmp_path, captured_argv):
-        run_suite(_LibSuite, output_dir=tmp_path, run_options=RunOptions(seed=1234))
+        run_tests([DOUBLE_TEST_NAME], output_dir=tmp_path, run_options=RunOptions(seed=1234))
         (argv,) = captured_argv
         assert "--randomly-seed=1234" in argv
         assert "no:randomly" not in argv

@@ -1,10 +1,10 @@
-"""Shared tmp-repo builder for ``otto test --tests`` / ``-m`` selection e2e tests.
+"""Shared tmp-repo builder for ``otto test NAMES`` / ``-m`` selection e2e tests.
 
 Mirrors the tmp-repo idiom in ``tests/e2e/test_repo_wide_conftest.py``: a
 throwaway SUT repo with ``.otto/settings.toml`` wired to otto's own JSON lab
 fixture data, so a mandatory ``--lab`` flag is satisfiable without a real
-host. Two ``OttoSuite`` classes share a marker, plus a plain pytest function
-— exercising suite-less selection across suites, repos, and non-class tests.
+host. Two test classes share a marker, plus a plain pytest function —
+exercising selection across classes, repos, and non-class tests.
 """
 
 from pathlib import Path
@@ -26,10 +26,9 @@ paths = ["{lab_data_dir}"]
 
 SUITE_SRC = """\
 import pytest
-from otto.suite import OttoSuite
 
 
-class TestAlpha(OttoSuite):
+class TestAlpha:
     @pytest.mark.shared
     async def test_alpha_one(self) -> None:
         assert True
@@ -38,7 +37,7 @@ class TestAlpha(OttoSuite):
         assert True
 
 
-class TestBeta(OttoSuite):
+class TestBeta:
     @pytest.mark.shared
     async def test_beta_one(self) -> None:
         assert True
@@ -48,10 +47,8 @@ def test_plain_function() -> None:
     assert True
 """
 
-# Suite-class-free fixtures for the multi-repo tests: OttoSuite subclasses
-# auto-register into the process-wide SUITES registry keyed by class name, so
-# reusing SUITE_SRC's TestAlpha/TestBeta across two repos in the same otto
-# process would collide. A plain function has no such global registration.
+# Class-free fixtures for the multi-repo tests: one plain function per repo,
+# so each repo's selection is exactly one test.
 PLAIN_SUITE_SRC = """\
 def test_plain_function() -> None:
     assert True
@@ -73,8 +70,7 @@ def make_selection_repo(
 ) -> Path:
     """Build a throwaway SUT repo with ``suite_src`` as its one test module.
 
-    Returns the repo root (``root / name``). Non-recursive suite discovery
-    means the test file must sit directly in the listed ``tests`` dir.
+    Returns the repo root (``root / name``).
 
     ``with_lab`` controls whether this repo contributes ``LAB_DATA_DIR`` to
     the aggregated lab search paths (see ``ensure_lab_context`` in

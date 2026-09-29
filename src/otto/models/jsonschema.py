@@ -293,7 +293,7 @@ def _dedupe_chart_map(doc: dict[str, Any]) -> None:
     The clean fix would promote ``chart_map`` to a real shared submodel type —
     but that changes its RUNTIME type from a plain ``dict`` to a pydantic model
     everywhere it's read or written (``otto/monitor/export.py``,
-    ``otto/monitor/db.py``, ``otto/cli/monitor.py``, ``otto/suite/suite.py`` and
+    ``otto/monitor/db.py``, ``otto/cli/monitor.py``, ``otto/suite/monitor_fixture.py`` and
     their tests), which is a lot of surface for a cosmetic TS naming fix. So
     this rewrites the OUTPUT schema only, post pydantic generation — same
     surgery ``_monitor_export_schema`` already does to fold in the fragment's

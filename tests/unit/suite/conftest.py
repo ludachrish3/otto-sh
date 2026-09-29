@@ -1,62 +1,75 @@
 """Shared fixtures for the ``tests/unit/suite`` package.
 
-Every OttoSuite subclass named ``Test*`` auto-registers into the process-wide
-:data:`otto.suite.register.SUITES` registry at class-definition time (via
-``OttoSuite.__init_subclass__``). Many tests in this package define such
-subclasses — directly, or by importing/running suite files through an
-*in-process* inner pytest session (``pytest.main([...])`` in
-``test_otto_suite.py``; ``pytester.runpytest_inprocess`` in
-``test_options_plugin.py``). Those inner sessions share the interpreter, so
-their registrations land in the *same* global ``SUITES`` as the outer run.
-
-``register_suite_class`` only treats a re-registration as a silent same-file
-overwrite when the source *path* matches exactly. Each inner run writes its
-suite to a fresh ``tmp_path``, so when the same outer test runs a second time
-in one process — e.g. the nightly ``tests_hostless`` matrix under
-``pytest --count=N --repeat-scope=session`` — the second registration comes
-from a different path and raises "already registered by a different file",
-interrupting inner collection. A single CI pass runs each test once and never
-trips this, which is why it only surfaced in the nightly repeat job.
-
-This directory-wide autouse fixture snapshots the registry before each test
-and restores it afterward, so every test leaves ``SUITES`` exactly as it found
-it and repeat runs stay independent. It supersedes the per-module copies that
-previously lived in ``test_auto_registration.py`` and ``test_options_plugin.py``.
-(``test_import_and_register.py`` keeps its own ``clean_registry`` fixture: it is
-requested explicitly by the ``repo1`` fixture and carries extra import-cache
-coupling beyond registry isolation.)
+The ``otto_plugins`` family builds the two plugins ``otto test`` hands its
+inner pytest session; the SUT-repo fixtures are shared with ``tests/unit/cli``.
 """
 
 import pytest
 
-from otto.registry import suspend_loaders
-from otto.suite.register import SUITES
+from tests._fixtures.sut_repos import (  # noqa: F401 — fixtures, shared with tests/unit/cli
+    _generated_modules_evicted,
+    one_repo_double,
+    sut_repo,
+    two_sut_repos,
+)
 
 
-@pytest.fixture(autouse=True)
-def _isolate_suites():
-    """Park registered suites before each test and restore them after.
+@pytest.fixture
+def otto_output_dir(tmp_path):
+    """Where ``otto_plugins`` installs the run's output_dir and its ``ArtifactLayout`` root."""
+    return tmp_path / "otto-out"
 
-    Snapshots every entry in the global ``SUITES`` registry, clears it so the
-    test starts from a predictable empty baseline, then on teardown removes any
-    entries the test added and re-registers the originals. This keeps the
-    registry byte-for-byte stable across tests and across repeat iterations of
-    the same test in one process.
 
-    Parking and restoring must never run the registry's loader, because
-    ``SUITES`` loads a SUT's test files on first read; both run under
-    :func:`otto.registry.suspend_loaders`.
+@pytest.fixture
+def otto_plugins(otto_output_dir):
+    """The two plugins ``otto test`` hands its inner session, under an installed context.
+
+    Built as ``otto.suite.run._run_pytest_session`` builds them for a run with
+    no stability, monitor or SUT-directory options. The context's
+    ``output_dir`` (and the plugin's ``ArtifactLayout``) live under
+    ``otto_output_dir``, and the context stays installed for the whole test,
+    so a test can inspect it after the inner session returns.
     """
-    with suspend_loaders():
-        parked = {name: (SUITES.get(name), SUITES.origin(name)) for name in SUITES.names()}
-        for name in list(SUITES.names()):
-            SUITES.unregister(name)
+    from otto.config.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context
+    from otto.suite.layout import ArtifactLayout
+    from otto.suite.plugin import OttoPlugin
+    from otto.suite.pytest_plugin import OttoFixturesPlugin
 
-    yield
+    token = set_context(OttoContext(lab=Lab(name="_test_stub"), output_dir=otto_output_dir))
+    try:
+        yield [OttoPlugin(), OttoFixturesPlugin(layout=ArtifactLayout(root=otto_output_dir))]
+    finally:
+        reset_context(token)
 
-    # Drop anything the test registered, then restore the original entries.
-    with suspend_loaders():
-        for name in list(SUITES.names()):
-            SUITES.unregister(name)
-        for name, (entry, origin) in parked.items():
-            SUITES.register(name, entry, overwrite=True, origin=origin)
+
+@pytest.fixture
+def otto_plugins_iterations_2(otto_plugins):
+    """``otto_plugins`` with ``OttoPlugin(iterations=2)`` swapped in for the plain plugin."""
+    from otto.suite.plugin import OttoPlugin
+
+    otto_plugins[0] = OttoPlugin(iterations=2)
+    return otto_plugins
+
+
+@pytest.fixture
+def otto_plugins_with_monitor(otto_plugins):
+    """``otto_plugins`` with a scripted session monitor collector in the plugin's slot.
+
+    Returns the plugins and a callable listing the events the collector has
+    recorded. The slot is set directly: ``_otto_session_monitor`` only fills it
+    under ``--monitor``, which would also start collecting from real hosts.
+    """
+    from tests._fixtures._fake_collector import FakeCollector
+
+    collector = FakeCollector()
+    otto_plugins[0].session_monitor_collector = collector
+    return otto_plugins, collector.get_events
+
+
+@pytest.fixture
+def _restore_ensure_installed(monkeypatch):
+    """Put ``otto.project.ensure_installed`` back after an inner test file replaces it."""
+    from otto import project
+
+    monkeypatch.setattr(project, "ensure_installed", project.ensure_installed)

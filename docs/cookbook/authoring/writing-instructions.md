@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 @instruction()
 async def deploy(
     debug: Annotated[
-        bool, typer.Option("--field/--debug", help="Use field or debug products.")
+        bool, typer.Option(help="Deploy debug products instead of field products.")
     ] = False,
 ):
     """Deploy the build to all hosts in the lab."""
@@ -97,7 +97,7 @@ For fan-out across the lab — running the same command or async
 operation on every host concurrently — use
 {func}`~otto.config.fleet.run_on_all_hosts` or
 {func}`~otto.config.fleet.do_for_all_hosts`.  These helpers
-apply anywhere you have an async context (instructions, suite fixtures,
+apply anywhere you have an async context (instructions, test fixtures,
 monitors, ad-hoc scripts) and are documented in full on the
 [async patterns page](../async-patterns.md).
 
@@ -148,59 +148,20 @@ Instructions can transfer files to and from hosts via
 [async patterns page](../async-patterns.md)
 for the lab-wide dispatch pattern.
 
-## Sharing repo-wide options across instructions and suites
+## Options
 
-When several instructions — and often several test suites too — need the
-same CLI flags (device type, lab environment, etc.), define a shared base
-**options class** (with `@options`) in any importable module — a `libs`
-path like `pylib/` is one common choice. See
-{doc}`options-classes` for the full treatment. The *same* class can be inherited by
+An instruction's flags come from three places: its inline parameters (above),
+its own options class, and the options classes registered for the `run` verb.
+Each is a pydantic-validated `@options` class; {doc}`options-classes` covers
+how to declare, validate and register one.
 
-- a suite's inner `Options` class (expanded during auto-registration), and
-- an instruction's `options=` class (expanded by
-  `@instruction(options=...)`).
+### An instruction's own options class
 
-Suite and instruction option classes are **independent but
-compatible** — they can be completely different, inherit from a common
-base (the recommended posture for repo-wide flags), or be literally the
-same class. Nothing in the machinery forces any of these.
-
-See also
-[Inheriting shared options](../suite-recipes.md#inheriting-shared-options)
-in the suite recipes.
-
-### 1. Define repo-wide options
+`@instruction(options=...)` expands an options class into flags on this one
+command, and hands your function a populated instance:
 
 ```python
-# pylib/my_instructions/options.py
-from typing import Annotated
-
-import typer
-
-from otto import options
-
-
-@options
-class RepoOptions:
-    device_type: Annotated[
-        str,
-        typer.Option(
-            help="Type of device under test (e.g. 'router', 'switch').",
-        ),
-    ] = "router"
-
-    lab_env: Annotated[
-        str,
-        typer.Option(
-            help="Lab environment to target (e.g. 'staging', 'production').",
-        ),
-    ] = "staging"
-```
-
-### 2. Inherit and extend in each instruction
-
-```python
-# pylib/my_instructions/deploy.py
+# pylib/acme_instructions/deploy.py
 import logging
 from typing import Annotated
 
@@ -209,83 +170,26 @@ import typer
 from otto import options
 from otto.cli.run import instruction
 
-from .options import RepoOptions
-
 logger = logging.getLogger(__name__)
 
 
 @options
-class _DeployOpts(RepoOptions):  # inherits --device-type, --lab-env
+class _DeployOpts:
     debug: Annotated[
         bool,
-        typer.Option(
-            "--field/--debug",
-            help="Use field or debug products.",
-        ),
+        typer.Option(help="Deploy debug products instead of field products."),
     ] = False
 
 
 @instruction(options=_DeployOpts)
 async def deploy(opts: _DeployOpts):
     """Deploy the build to all hosts in the lab."""
-    logger.info(
-        f"device_type={opts.device_type!r}  lab_env={opts.lab_env!r}  debug={opts.debug}",
-    )
+    logger.info(f"debug={opts.debug}")
 ```
 
-The ``opts`` parameter (you can name it anything) receives a fully
-populated ``_DeployOpts`` instance.  All fields — inherited and local —
-appear as flat CLI flags:
-
-```bash
-otto run deploy --help
-# Shows: --device-type, --lab-env, --field/--debug
-```
-
-### 2b. Inherit the same base in a suite
-
-A suite's inner ``Options`` class can inherit from the very same
-``RepoOptions`` class, so ``otto test`` subcommands expose the same
-repo-wide flags as ``otto run``:
-
-```python
-# tests/test_device.py
-import logging
-from typing import Annotated
-
-import typer
-
-from otto import options
-from my_instructions.options import RepoOptions
-from otto.suite import OttoSuite
-
-logger = logging.getLogger(__name__)
-
-
-@options
-class _Options(RepoOptions):  # inherits --device-type, --lab-env
-    firmware: Annotated[str, typer.Option()] = "latest"
-
-
-class TestDevice(OttoSuite):
-    Options = _Options
-
-    async def test_version(self, suite_options: _Options) -> None:
-        logger.info(
-            f"device_type={suite_options.device_type!r} "
-            f"lab_env={suite_options.lab_env!r} "
-            f"firmware={suite_options.firmware!r}"
-        )
-```
-
-Both `otto run deploy --help` and `otto test TestDevice --help` now
-surface the same `--device-type` and `--lab-env` flags, sourced from a
-single definition.
-
-### 3. Mix with inline parameters
-
-You can combine an ``options`` dataclass with regular inline parameters.
-The dataclass fields and inline parameters all become CLI options:
+The ``opts`` parameter (you can name it anything) receives a fully populated
+``_DeployOpts`` instance. You can combine it with inline parameters; the
+class's fields and the inline parameters all become CLI options:
 
 ```python
 @instruction(options=_DeployOpts)
@@ -300,6 +204,49 @@ async def deploy(
 
 The ``options=`` parameter is optional; an instruction may use inline
 parameters alone.
+
+### Using registered options in an instruction
+
+A class registered for `run` puts its flags on **every** `otto run` command,
+so repo-wide flags such as a device type or a lab environment are declared
+once, in an init module:
+
+```python
+# pylib/acme_instructions/__init__.py, listed in `init`
+from otto import register_options
+
+register_options("acme_options:RepoOptions", verbs=["run", "test"])
+```
+
+An instruction that wants the values declares a parameter annotated with the
+registered class, and otto passes this invocation's instance in:
+
+```python
+import logging
+
+from otto.cli.run import instruction
+
+from acme_options import RepoOptions  # registered for ["run", "test"]
+
+logger = logging.getLogger(__name__)
+
+
+@instruction()
+async def show_env(opts: RepoOptions) -> None:
+    logger.info(f"device_type={opts.device_type!r} lab_env={opts.lab_env!r}")
+```
+
+`otto run show-env --help` shows `--device-type` and `--lab-env`, and so
+does every other `otto run` command, whether or not it declares the parameter.
+Because `RepoOptions` is registered for `test` as well, `otto test` takes the
+same flags, and a test reads the same values with `ctx.options(RepoOptions)`
+({doc}`writing-tests`).
+
+An instruction's own options class may inherit a registered class. Each
+inherited field stays one flag, and the instruction adds its own; see
+[Sharing fields by inheritance](options-classes.md#sharing-fields-by-inheritance).
+A field an unrelated class of its own declares under the same name as a
+registered one is refused when the command is built.
 
 ## The override ladder
 
@@ -385,19 +332,17 @@ and **toolchain tools** belong to a host, not to a repo, and **impairments and
 tunnels** belong to the lab. All of them are performed once, by the layer
 above the repo walk.
 
-## Declaring lab state in suites
+## Declaring lab state in tests
 
-A suite that needs the lab in a known state marks it instead of scripting
+A test that needs the lab in a known state marks it instead of scripting
 the walk:
 
 ```python
 import pytest
 
-from otto.suite import OttoSuite
-
 
 @pytest.mark.ensure("installed")
-class TestWidget(OttoSuite):
+class TestWidget:
     async def test_service_answers(self) -> None:
         """Runs against a fully-installed lab, whatever state the last test left."""
 ```
@@ -405,18 +350,10 @@ class TestWidget(OttoSuite):
 The steps are `installed`, `uninstalled` and `clean` (and `none`); a marker
 on a test overrides the class's, and the path runs in the written order
 before the body. Each step runs the same converge as `otto run install
---ensure`. The marker's full semantics are in
-{doc}`writing-suites`; the bullets below are what each step does.
-
-**Where a body's options come from under `otto test`.** There are no
-project-instruction flags on `otto test`, so the fixture builds each repo's
-options class itself: a field takes the suite's value when the suite's
-`Options` class and the repo's options class inherit it from the **same
-declaring class**, every other field takes its default, and pydantic validates
-the instance — so a bad default fails the test naming the field rather than
-installing something odd. A suite field that merely has the same name as a
-repo field, such as `variant`, is not passed. A repo that wants a test to steer
-its install promotes the field into the base its suites already inherit.
+--ensure`. The marker's full semantics, including which flags reach an
+install body under `otto test`, are in
+[Declaring lab state](writing-tests.md#declaring-lab-state-the-ensure-marker);
+the bullets below are what each step does.
 
 - **Function-scoped**: the guarantee is per test *case*. When the state already
   holds, the cost is one probe of it — but not the same probe for all three.
@@ -556,7 +493,7 @@ migration is one of two moves:
 1. **It really is your repo's install.** Declare it as a method with
    `@instruction(options=...)` on your `ProjectActions` subclass, inheriting
    `InstallOptions`, and delete the standalone
-   instruction. Every surface — the command, scripts, suites, the `installed`
+   instruction. Every surface — the command, scripts, tests, the `installed`
    ensure step — picks the change up at once.
 2. **It is unrelated** (`install` meaning something else entirely). Rename it;
    `otto run install-firmware` collides with nothing.
@@ -565,7 +502,7 @@ migration is one of two moves:
 
 The `otto host` subcommands map directly to methods on the
 {class}`~otto.host.host.BaseHost` class. Everything `otto host` does from the CLI
-can also be done inside instructions and test suites:
+can also be done inside instructions and tests:
 
 ```{doctest}
 >>> from asyncio import run

@@ -2,14 +2,25 @@
 
 Spec: docs/superpowers/specs/2026-09-04-shim-completion-design.md, section 4. This
 module is imported by ``otto._shim`` BEFORE anything else in otto, on every TAB,
-so it imports ``hashlib``, ``json``, ``os``, ``re``, ``shlex``, ``time`` and
-``typing`` (already loaded by ``otto/__init__``, so free) and nothing else: not
+so it imports ``hashlib``, ``json``, ``os``, ``re``, ``shlex``, ``sys``, ``time``
+and ``typing`` (already loaded by ``otto/__init__``, so free) and nothing else: not
 ``dataclasses`` (which drags in ``inspect``, ``dis`` and ``ast``; measured +74 file
 syscalls per TAB on an NFS home) and not ``pathlib`` (``os.path`` by design;
-``.ruff.toml`` exempts this file from ``PTH``). ``tests/unit/test_shim.py`` pins the
-warm module set; the ``completion_repo_warm`` budget surface denies typer, click,
+``.ruff.toml`` exempts this file from ``PTH``). ``subprocess`` is imported only by
+:func:`spawn_refresh`, after the answer is written. ``tests/unit/test_shim.py`` pins
+the warm module set; the ``completion_repo_warm`` budget surface denies typer, click,
 rich and pydantic. Every function that mirrors product code names what it mirrors;
 change both or neither: ``tests/unit/shim/test_differential.py`` is the net.
+
+A test-name or ``-m`` TAB (a *tests site*) is answered from each repo's per-file
+table (``otto.config.collected_tests``), which pytest's collections write, with
+the names pytest last recorded, and without a ``stat`` of anything the table
+tracks: its file operations do not grow with the corpus. Once
+:data:`CHECK_WINDOW_SECONDS` have passed since the tables were last checked, the
+collect child is started behind the answer; it stats what they track and
+re-reads what moved (design 2026-09-27 §9.2, as Chris revised it on
+2026-09-28). A repo with no table, a table whose ``env`` moved or one past its
+TTL hands over: only a pytest collection can seed it.
 
 The parser mirrored here is Typer's vendored click (``typer._click``); each rule
 is cited by the function it lives in there.
@@ -23,17 +34,34 @@ import json
 import os
 import re
 import shlex
+import sys
 import time
 from typing import Any
 
 CACHE_FILENAME = "completion_cache.json"
-SCHEMA = 20
+SCHEMA = 23
 """Must equal ``otto.config.completion_cache.SCHEMA_VERSION`` (pinned by tests/unit/shim)."""
 WINDOW_SECONDS = 60
+"""How long the ``names`` marker vouches for the ``names`` key set."""
+CHECK_WINDOW_SECONDS = 10 * 60
+"""How long after the test tables were last checked a TAB starts the next check (Chris,
+2026-09-28). The ``tests`` marker records the check: the collect child's start, and every
+write of a table (each writer classified the whole table first)."""
 MARKER_FILENAMES = {"names": "completion_cache.names.ok", "tests": "completion_cache.tests.ok"}
-COLLECTED_KEY = "__collected_tests__"
-COLLECTED_SCHEMA = 2
-COLLECTED_TTL_SECONDS = 24 * 60 * 60
+TABLES_KEY = "__collected_tests__"
+TABLE_SCHEMA = 5
+"""``otto.config.collected_tests.RECORDS_SCHEMA_VERSION``."""
+TABLE_TTL_SECONDS = 24 * 60 * 60
+"""``otto.config.completion_cache.CACHE_TTL_SECONDS``, which a table's ``generated_at`` obeys."""
+SETTINGS_RELPATH = os.path.join(".otto", "settings.toml")
+"""``otto.config.repo.TOML_SETTINGS_PATH``: the ``settings`` stat of a table's ``env``."""
+COLLECT_LOCK_FILENAME = ".completion_collect.lock"
+COLLECT_LOCK_STALE_SECONDS = 15 + 30
+COLLECT_COOLDOWN_FILENAME = ".completion_collect.failed"
+COLLECT_COOLDOWN_SECONDS = 60
+DUMP_TESTS_ENV_VAR = "_OTTO_DUMP_TEST_NAMES"
+COLLECT_OWNER_ENV_VAR = "_OTTO_COLLECT_OWNER"
+_CHILD_PATH_VARS = ("OTTO_SUT_DIRS", "OTTO_XDIR", "OTTO_HOME")
 _NORMALIZE_RE = re.compile(r"[-_.]+")
 _PATH_LIST_SEP = re.compile(rf"[,{re.escape(os.pathsep)}]")
 _MARKER_KEYWORDS = frozenset({"and", "or", "not"})
@@ -44,8 +72,9 @@ class Handover(Exception):  # noqa: N818
     """The shim cannot answer this TAB; the reason is for `otto cache info` and tests.
 
     ``stale`` is True when the CACHE is what failed (missing, expired, or a key
-    path moved), so the full path should rebuild it; False when the cache is
-    fine and this TAB is simply one the shim does not model.
+    path moved; on a tests site, a repo's test table missing, expired or its
+    ``env`` moved), so the full path should rebuild or seed it; False when the
+    cache is fine and this TAB is simply one the shim does not model.
     """
 
     def __init__(self, reason: str, *, stale: bool = False) -> None:
@@ -367,20 +396,25 @@ def _note_value(res: Resolution, param: dict[str, Any], value: str) -> None:
 # --- the answer (spec sections 3.4 and 4.3, fragment rules) ----------------------
 
 
+class TestNames:
+    """What the test tables offer a tests site, and whether a check of them is due."""
+
+    __slots__ = ("check_due", "markers", "names")
+
+    def __init__(self, names: list[str], markers: list[str], check_due: bool) -> None:
+        self.names = names  # sorted, each once
+        self.markers = markers  # sorted, each once
+        self.check_due = check_due  # the collect child should stat what the tables track
+
+
 class Payloads:
-    """Payloads an answer reads: ``names`` always; ``tests`` and collected on a tests site."""
+    """Payloads an answer reads: ``names`` always; the test tables' answer on a tests site."""
 
-    __slots__ = ("collected", "names", "tests")
+    __slots__ = ("names", "tests")
 
-    def __init__(
-        self,
-        names: dict[str, Any],
-        tests: dict[str, Any] | None = None,
-        collected: dict[str, Any] | None = None,
-    ) -> None:
+    def __init__(self, names: dict[str, Any], tests: TestNames | None = None) -> None:
         self.names = names
         self.tests = tests
-        self.collected = collected
 
 
 def site_of(source: dict[str, Any]) -> str:
@@ -459,14 +493,10 @@ def _payload_values(
     return sorted(values) if source.get("sort") else values
 
 
-def _collected(payloads: Payloads, what: str) -> list[str]:
-    entry = payloads.collected
-    if not isinstance(entry, dict):
-        raise Handover("collected set cold")
-    values = entry.get(what)
-    if not isinstance(values, list):
-        raise Handover("collected set cold")
-    return [str(v) for v in values]
+def _tests(payloads: Payloads) -> TestNames:
+    if payloads.tests is None:
+        raise Handover("no tables read for a tests site")
+    return payloads.tests
 
 
 def _source_values(
@@ -491,13 +521,13 @@ def _source_values(
         low = frag.lower()
         return [v for v in source["values"] if v.lower().startswith(low)]
     if kind == "tests":
-        tests = payloads.tests or {}
-        names = {str(t) for t in tests.get("tests", [])} | set(_collected(payloads, "names"))
-        return complete_separated_list(sorted(names), frag, source.get("sep", ","))
+        names = _tests(payloads).names
+        sep = source.get("sep")
+        if sep:
+            return complete_separated_list(names, frag, sep)
+        return [n for n in names if n.startswith(frag)]
     if kind == "markers":
-        tests = payloads.tests or {}
-        names = {str(m) for m in tests.get("markers", [])} | set(_collected(payloads, "markers"))
-        return complete_marker_expression(sorted(names), frag)
+        return complete_marker_expression(_tests(payloads).markers, frag)
     if kind == "payload":
         sep = source.get("sep")
         if sep and source.get("live_past_sep") and sep in frag:
@@ -647,7 +677,8 @@ def _marker_fresh(marker: str, cache_mtime_ns: int, now: float) -> bool:
     return st.st_mtime_ns >= cache_mtime_ns and 0 <= now - st.st_mtime < WINDOW_SECONDS
 
 
-def _touch(marker: str) -> None:
+def _touch(marker: str) -> bool:
+    """Touch *marker*, creating it if need be; ``False`` when it cannot be written."""
     # No contextlib.suppress: that import would be paid on every TAB.
     try:
         os.utime(marker, None)
@@ -656,23 +687,31 @@ def _touch(marker: str) -> None:
             with open(marker, "a", encoding="utf-8"):
                 pass
         except OSError:
-            pass
+            return False
     except OSError:
-        pass
+        return False
+    return True
 
 
-def validate_keys(cache_path: Any, data: dict[str, Any], site: str, now: float) -> str:
-    """Validate the ``names`` key set, then ``tests`` on a tests site (spec 4.2 steps 2-3).
+def _check_names(payload: dict[str, Any], cache_dir: str, cache_mtime_ns: int, now: float) -> str:
+    """Check the ``names`` key set and the inventory, unless the marker window vouches for them."""
+    marker = os.path.join(cache_dir, MARKER_FILENAMES["names"])
+    if _marker_fresh(marker, cache_mtime_ns, now):
+        return "marker"
+    _stat_pass(payload["keys"])
+    _inventory_pass(payload.get("inventory"))
+    _touch(marker)
+    return "stat"
 
-    Returns ``"stat"`` if ANY checked key set needed a full stat pass (after
-    which its marker is touched), else ``"marker"``.
+
+def validate_keys(cache_path: Any, data: dict[str, Any], now: float) -> str:
+    """Validate the ``names`` key set (spec 4.2 steps 2-3).
+
+    Returns ``"stat"`` if it needed a full stat pass (after which its marker
+    is touched), else ``"marker"``.
     """
     payload = servable_shim(data, now)
-    tests = data["sections"].get("tests", {})
-    if site == "tests" and not isinstance(tests.get("payload"), dict):
-        raise Handover("no tests section", stale=True)
     cache_path = str(cache_path)
-    cache_dir = os.path.dirname(cache_path)
     # The caller READ the file before this stat, so a rewrite landing between the
     # two makes this mtime the NEW entry's while `data` is the old one, and a
     # marker written after it looks fresh: one TAB can be answered from data up to
@@ -680,36 +719,196 @@ def validate_keys(cache_path: Any, data: dict[str, Any], site: str, now: float) 
     # for nothing newer than WINDOW_SECONDS anyway -- and the next TAB re-stats,
     # so closing it would cost a second read for a staleness the design accepts.
     cache_mtime_ns = os.stat(cache_path).st_mtime_ns
-    how = "marker"
-    for key in ("names", "tests") if site == "tests" else ("names",):
-        marker = os.path.join(cache_dir, MARKER_FILENAMES[key])
-        if _marker_fresh(marker, cache_mtime_ns, now):
-            continue
-        _stat_pass(payload["keys"][key])
-        if key == "names":
-            _inventory_pass(payload.get("inventory"))
-        _touch(marker)
-        how = "stat"
-    return how
+    return _check_names(payload, os.path.dirname(cache_path), cache_mtime_ns, now)
 
 
-def collected_entry(data: dict[str, Any], digest: str, now: float) -> dict[str, Any] | None:
-    """Apply ``read_collected_tests``' freshness rules to the raw file: the entry, or ``None``."""
-    namespace = data.get(COLLECTED_KEY)
-    entry = namespace.get(digest) if isinstance(namespace, dict) else None
-    if not isinstance(entry, dict) or entry.get("schema_version") != COLLECTED_SCHEMA:
+# --- the test tables (design 2026-09-27 §9.2) -------------------------------------
+
+
+def _stat_pair(path: str) -> list[int] | None:
+    """Mirror ``otto.config.collected_tests._stat_pair``: ``[mtime_ns, size]``, or ``None``."""
+    try:
+        st = os.stat(path)
+    except OSError:
         return None
-    at = entry.get("generated_at")
-    if not isinstance(at, (int, float)) or now - at > COLLECTED_TTL_SECONDS:
+    return [st.st_mtime_ns, st.st_size]
+
+
+def selectable_names(classes: list[str], name: str) -> list[str]:
+    """Mirror ``otto.config.repo.selectable_names``, verbatim."""
+    base = name.partition("[")[0]
+    return [base, *classes, *([f"{classes[-1]}::{base}"] if classes else [])]
+
+
+def _python_version() -> str:
+    major, minor, micro = sys.version_info[:3]
+    return f"{major}.{minor}.{micro}"
+
+
+def _env_pass(sut_dir: str, env: dict[str, Any], stat: Any) -> None:
+    """Mirror ``classify``'s ``env`` comparison (``collected_tests.current_env``), by stat.
+
+    The interpreter's own fields are compared by value: the Python version,
+    and ``sys.prefix``, the venv (worktree venvs share one Python and one
+    ``OTTO_HOME``, and each keeps its own table). The pytest and otto versions
+    are not read here (that needs the installed distributions' metadata):
+    installing either moves the stat of the site-packages directory it lands
+    in, which is.
+    """
+    for field, now in (("python", _python_version()), ("prefix", sys.prefix)):
+        if env.get(field) != now:
+            raise Handover(f"test-names cache env moved: {field}", stale=True)
+    watched = [
+        *env["site_packages"].items(),
+        *env["configs"].items(),
+        (os.path.join(sut_dir, SETTINGS_RELPATH), env["settings"]),
+    ]
+    for path, before in watched:
+        if stat(path) != before:
+            raise Handover(f"test-names cache env moved: {path}", stale=True)
+
+
+def _tables(data: dict[str, Any], payload: dict[str, Any], now: float) -> list[Any]:
+    """Every repo's table, in the order the payload lists the repos; a cold one hands over."""
+    namespace = data.get(TABLES_KEY)
+    namespace = namespace if isinstance(namespace, dict) else {}
+    tables = []
+    for sut_dir in payload["tables"]:
+        table = namespace.get(sut_dir)
+        if not isinstance(table, dict) or table.get("schema_version") != TABLE_SCHEMA:
+            raise Handover(f"no test-names cache for {sut_dir}", stale=True)
+        at = table.get("generated_at")
+        if not isinstance(at, int) or now - at > TABLE_TTL_SECONDS:
+            raise Handover(f"test-names cache expired for {sut_dir}", stale=True)
+        tables.append((sut_dir, table))
+    return tables
+
+
+def _check_age(marker: str, now: float) -> float | None:
+    """Seconds since the tables were last checked, or ``None`` with no record of it.
+
+    A marker dated after *now* (the clock stepped back) is no record.
+    """
+    try:
+        age = now - os.stat(marker).st_mtime
+    except OSError:
         return None
-    return entry
+    return age if age >= 0 else None
+
+
+def table_view(cache_path: str, data: dict[str, Any], now: float) -> TestNames:
+    """Answer a tests site from the tables, statting nothing they track.
+
+    Mirrors ``collected_tests.completion_view`` for a warm table.
+    Every record offers what pytest last recorded in it, so a file edited,
+    added or deleted since shows up one check later: the O(corpus) stat pass
+    is the detached collect child's (``classify``), started when
+    :data:`CHECK_WINDOW_SECONDS` have passed since the tables were last
+    checked (:attr:`TestNames.check_due`). Every table's ``env`` is checked
+    here, a handful of ``stat`` calls whatever the corpus size, because a
+    table another interpreter, venv or pytest config wrote vouches for
+    nothing.
+    """
+    payload = data["sections"]["shim"]["payload"]
+    tables = _tables(data, payload, now)
+    names: set[str] = set()
+    markers: set[str] = set()
+    for sut_dir, table in tables:
+        _env_pass(sut_dir, table["env"], _stat_pair)
+        markers.update(table["registered_markers"])
+        for record in table["files"].values():
+            markers.update(record["markers"])
+            for classes, name in record["tests"]:
+                names.update(selectable_names(classes, name))
+    marker = os.path.join(os.path.dirname(cache_path), MARKER_FILENAMES["tests"])
+    age = _check_age(marker, now)
+    return TestNames(sorted(names), sorted(markers), age is None or age >= CHECK_WINDOW_SECONDS)
+
+
+# --- the check behind the answer (design 2026-09-27 §9.2, Chris 2026-09-28) ------
+
+
+def _younger_than(path: str, seconds: float, now: float) -> bool:
+    """Mirror ``otto.config.completion_cache._younger_than`` (one ``stat``)."""
+    try:
+        return now - os.stat(path).st_mtime <= seconds
+    except OSError:
+        return False
+
+
+def _child_environ(environ: dict[str, str]) -> dict[str, str]:
+    """Mirror ``otto.config.completion_cache._collect_child_command``'s environment."""
+    env = dict(environ)
+    for var in ("_OTTO_COMPLETE", "COMP_WORDS", "COMP_CWORD"):
+        env.pop(var, None)
+    for var in _CHILD_PATH_VARS:
+        if env.get(var):
+            paths = [os.path.abspath(p) for p in _PATH_LIST_SEP.split(env[var]) if p]
+            env[var] = os.pathsep.join(paths)
+    env[DUMP_TESTS_ENV_VAR] = "1"
+    env[COLLECT_OWNER_ENV_VAR] = f"{os.getpid()}-{time.monotonic_ns()}"
+    return env
+
+
+_started: list[Any] = []
+"""The detached children this process started, held so none is reported as a leak."""
+
+
+def spawn_refresh(cache_dir: str, environ: dict[str, str], now: float | None = None) -> bool:
+    """Start the collect child detached; ``True`` when one started. Never raises.
+
+    Mirrors ``otto.config.completion_cache.spawn_collect_child``: skipped
+    while a collect child holds a fresh lock (the lock's ``stat`` first, so a
+    burst of TABs starts one child) and during the cooldown after a failure.
+    The child is the venv's ``otto`` in the collect mode, in its own session,
+    with ``/dev/null`` for every stream and no inherited descriptors; it
+    stats what the tables track, re-reads what moved and rewrites the tables
+    for the next TAB. Starting it touches the ``tests`` marker, which starts
+    the next :data:`CHECK_WINDOW_SECONDS`, so the TABs of a burst start one;
+    a marker that cannot be touched starts no child at all.
+    Called after the answer is written, which is why ``subprocess`` is
+    imported here.
+    """
+    now = time.time() if now is None else now
+    lock = os.path.join(cache_dir, COLLECT_LOCK_FILENAME)
+    if _younger_than(lock, COLLECT_LOCK_STALE_SECONDS, now):
+        return False
+    cooldown = os.path.join(cache_dir, COLLECT_COOLDOWN_FILENAME)
+    if _younger_than(cooldown, COLLECT_COOLDOWN_SECONDS, now):
+        return False
+    otto_bin = os.path.join(os.path.dirname(sys.executable), "otto")
+    if not os.path.exists(otto_bin):
+        return False
+    if not _touch(os.path.join(cache_dir, MARKER_FILENAMES["tests"])):
+        # With no record of this check, every TAB of a burst would start one.
+        return False
+    import subprocess
+
+    try:
+        child = subprocess.Popen(  # noqa: S603 — venv otto binary, fixed argv, no shell
+            [otto_bin],
+            env=_child_environ(environ),
+            cwd=os.path.abspath(cache_dir),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return False
+    _started.append(child)
+    return True
 
 
 # --- entry ---------------------------------------------------------------------
 
 
-def _answer_items(environ: dict[str, str], now: float) -> list[str]:
-    """Compute the candidates for this TAB, or raise :class:`Handover`."""
+def _answer_items(environ: dict[str, str], now: float) -> tuple[list[str], str | None]:
+    """Compute the candidates for this TAB and the cache dir to refresh, or raise :class:`Handover`.
+
+    The second item is ``None`` unless a tests site found the tables' check due.
+    """
     if environ.get("_OTTO_COMPLETE") != "complete_bash":
         raise Handover("not bash")
     words = split_arg_string(environ.get("COMP_WORDS", ""))
@@ -726,33 +925,44 @@ def _answer_items(environ: dict[str, str], now: float) -> list[str]:
     names = data["sections"]["names"]["payload"]
     res = resolve(payload["tree"], args, names.get("host_classes_by_id", {}))
     site = _site_for(res, frag)
-    validate_keys(cache_path, data, site, now)
-    tests = data["sections"].get("tests", {}).get("payload") if site == "tests" else None
-    collected = collected_entry(data, payload["tests_digest"], now) if site == "tests" else None
-    return complete(payload["tree"], res, frag, environ, Payloads(names, tests, collected))
+    cache_mtime_ns = os.stat(cache_path).st_mtime_ns  # see validate_keys for the race
+    _check_names(payload, os.path.dirname(cache_path), cache_mtime_ns, now)
+    tests = table_view(cache_path, data, now) if site == "tests" else None
+    items = complete(payload["tree"], res, frag, environ, Payloads(names, tests))
+    refresh = os.path.dirname(cache_path) if tests is not None and tests.check_due else None
+    return items, refresh
 
 
 class Outcome:
     """What the shim decided for one TAB: the candidates, or ``None`` and the reason."""
 
-    __slots__ = ("items", "reason", "stale")
+    __slots__ = ("items", "reason", "refresh", "stale")
 
-    def __init__(self, items: list[str] | None, reason: str = "", stale: bool = False) -> None:
+    def __init__(
+        self,
+        items: list[str] | None,
+        reason: str = "",
+        stale: bool = False,
+        refresh: str | None = None,
+    ) -> None:
         self.items = items
         self.reason = reason  # empty when answered; for `otto cache info` and tests otherwise
         self.stale = stale  # True iff the CACHE (not just this TAB) needs a rebuild
+        # The cache dir whose collect child to start once the answer is written
+        # (spawn_refresh); None when nothing the answer read has moved.
+        self.refresh = refresh
 
 
 def answer_or_reason(environ: dict[str, str], now: float | None = None) -> Outcome:
     """Compute the candidates for this TAB, or ``None`` and why the shim hands over."""
     try:
-        items = _answer_items(environ, time.time() if now is None else now)
+        items, refresh = _answer_items(environ, time.time() if now is None else now)
     except Handover as e:
         return Outcome(None, e.reason, e.stale)
     except Exception as e:  # noqa: BLE001
         # a TAB never tracebacks; the full path decides
         return Outcome(None, f"error: {type(e).__name__}: {e}")
-    return Outcome(items)
+    return Outcome(items, refresh=refresh)
 
 
 def _site_for(res: Resolution, frag: str) -> str:
@@ -770,7 +980,7 @@ def inspect_shim(cache_path: Any, now: float | None = None) -> str:
                 data = json.load(fh)
         except FileNotFoundError:
             raise Handover("no cache file", stale=True) from None
-        how = validate_keys(cache_path, data, "names", now)
+        how = validate_keys(cache_path, data, now)
         if how == "stat":
             return "served (validated now)"
         marker = os.path.join(os.path.dirname(str(cache_path)), MARKER_FILENAMES["names"])
@@ -780,3 +990,40 @@ def inspect_shim(cache_path: Any, now: float | None = None) -> str:
     except Exception as e:  # noqa: BLE001
         return f"handing over — error: {type(e).__name__}: {e}"
     return f"served (validated {ago}s ago)"
+
+
+def inspect_tests(cache_path: Any, now: float | None = None) -> str:
+    """Describe, for ``otto cache info``, what the NEXT test-name TAB would do.
+
+    The same checks such a TAB runs (the ``names`` key set, then the test
+    tables' ``env``), so a passing stat pass of the ``names`` key set touches
+    the ``names`` marker as a TAB would; the ``tests`` marker is only read.
+    The answer is served, with when the tables were last checked and when
+    the next check is due, or handed over, and why. Whether a due check
+    starts at once is the collect child's lock and cooldown to say, reported
+    on their own line.
+    """
+    now = time.time() if now is None else now
+    try:
+        try:
+            with open(str(cache_path), encoding="utf-8") as fh:
+                data = json.load(fh)
+        except FileNotFoundError:
+            raise Handover("no cache file", stale=True) from None
+        validate_keys(cache_path, data, now)
+        found = table_view(str(cache_path), data, now)
+    except Handover as e:
+        return f"handing over — {e.reason}"
+    except Exception as e:  # noqa: BLE001
+        return f"handing over — error: {type(e).__name__}: {e}"
+    count = len(found.names)
+    noun = "name" if count == 1 else "names"
+    age = _check_age(os.path.join(os.path.dirname(str(cache_path)), MARKER_FILENAMES["tests"]), now)
+    if age is None:
+        when = "no check recorded, a check is due"
+    elif found.check_due:
+        when = f"last checked {int(age)}s ago, a check is due"
+    else:
+        left = int(CHECK_WINDOW_SECONDS - age)
+        when = f"checked {int(age)}s ago, the next check is due in {left}s"
+    return f"served ({count} {noun}; {when})"

@@ -6,8 +6,9 @@ table.
 
 `dirs` scales independently of `files` because a stat-only walk has no per-file
 audit signal — it is observable only per directory, via `os.scandir`. `top_level`
-is separate because only top-level test files can register (`iter_test_files` is
-non-recursive), which is the distinction the names cache section rests on.
+is separate because the tests directory's own files and its nested ones sit at
+different depths of the corpus walk, and the realistic shape gives only the
+top-level ones a class of tests.
 """
 
 import json
@@ -80,10 +81,8 @@ _TEST_BODY = "def test_x():\n    pass\n"
 _SUITE_BODY = """\
 import pytest
 
-from otto.suite import OttoSuite
 
-
-class TestTop{i}(OttoSuite):
+class TestTop{i}:
     async def test_x(self):
         pass
 """
@@ -132,8 +131,8 @@ def generate_repo(
     *files* nested test files spread across *dirs* subdirectories, plus
     *top_level* test files directly in the tests dir.
 
-    *realistic* shapes the repo like a real one: top-level suite files that
-    import pytest, an init module that registers an instruction and imports a
+    *realistic* shapes the repo like a real one: top-level test-class files
+    that import pytest, an init module that registers an instruction and imports a
     monitor parser, and a JSON lab source, so budget surfaces see what real
     repos cost. ``realistic=False`` behaves exactly as before: a bare init
     module and plain top-level test functions, no lab.
@@ -173,10 +172,12 @@ def generate_repo(
         body = _SUITE_BODY.format(i=i) if realistic else _TEST_BODY
         (tests_root / f"test_top{i}.py").write_text(body)
     for i in range(files):
-        # Nested files are walked and parsed but never executed: they stay
-        # plain even under `realistic=True`, so §3.3 (of
-        # `2026-09-25-dispatch-startup-cost-design.md`)'s per-file bound measures
-        # walking and parsing alone.
+        # Nested files stay plain even under `realistic=True`: the completion
+        # cache's static parse walks and parses them without executing them, so
+        # §3.3 (of `2026-09-25-dispatch-startup-cost-design.md`)'s per-file
+        # bound measures walking and parsing alone. A surface that resolves
+        # test names (`otto test <name>`) collects the whole tree and so does
+        # import them, each a one-line module with no imports of its own.
         subdir = tests_root / f"sub{i % dirs}"
         (subdir / f"test_{i}.py").write_text(_TEST_BODY)
     return repo
@@ -192,7 +193,8 @@ def argv_writing_test_file_bytecode(entry: str) -> list[str]:
     the mtime of a directory the completion cache keys on. Dropping the prefix
     for the whole child would also write bytecode into ``src/otto`` (the
     conftest's session guard fails on that), so the prefix is lifted only
-    around each test-file import. The caller must also leave
+    around each in-process ``pytest.main``: a pytest session is the only thing
+    that imports a test file. The caller must also leave
     ``PYTHONDONTWRITEBYTECODE`` out of the child env.
 
     ``sys.argv[0]`` is set to ``otto``, as the console script's would be:
@@ -205,14 +207,14 @@ def argv_writing_test_file_bytecode(entry: str) -> list[str]:
     prelude = (
         "import sys\n"
         "sys.argv[0] = 'otto'\n"
-        "from otto.config.repo import Repo\n"
-        "_import = Repo.import_test_file\n"
-        "def _import_writing_bytecode(self, test_file):\n"
+        "import pytest\n"
+        "_main = pytest.main\n"
+        "def _main_writing_bytecode(*args, **kwargs):\n"
         "    saved, sys.pycache_prefix = sys.pycache_prefix, None\n"
         "    try:\n"
-        "        _import(self, test_file)\n"
+        "        return _main(*args, **kwargs)\n"
         "    finally:\n"
         "        sys.pycache_prefix = saved\n"
-        "Repo.import_test_file = _import_writing_bytecode\n"
+        "pytest.main = _main_writing_bytecode\n"
     )
     return [sys.executable, "-c", prelude + entry]

@@ -4,6 +4,7 @@
 **Issue:** #457. Its two comments record the dispatch-startup interaction and the scoping probe that §6 relies on.
 **Builds on:** `2026-09-25-dispatch-startup-cost-design.md`, landed on local main as `4ae54ca7`. Its lazy suite loading is deleted here along with the registry it loads (§5.6).
 **Amends:** `2026-07-02-pytest-native-flexibility-design.md` §2.4, where selection runs default-construct suite options, and `2026-08-30-suite-pytest-native-design.md` §5 and §7, the fixtures `OttoSuite` delivers and `Options =` as the only way to declare options.
+**Amended by:** `2026-09-27-test-name-cache-design.md` (its §8–§13, owner-approved 2026-09-27/28), in four places here. §3: names are resolved inside the run's own pytest session, from per-file tables only pytest writes; `resolve_selection` and the static parse (`scan_test_corpus`) are gone. §4.3 and §5.4: the dry run is a `--collect-only` pass of the run's own sessions, so it imports the test files and conftests it collects (module-level code runs), expands parametrizations and evaluates `-m`; it still runs no test and opens no host. §4.6: `NAMES` and `-m` complete from those tables, with no `tests` section and no static floor; a cold table is seeded once by a bounded child process, and a warm one is refreshed in the background, one check late at most. The user-facing behavior is on `docs/cli/test/selection.md`, the mechanism on `docs/architecture/subsystems/completion-cache.md`.
 **Split out:** #469, respecting the repo's own pytest configuration and passing pytest flags through. Not in scope here.
 **Order:** starts after #455 (`2026-09-26-per-verb-import-cost-design.md`) lands, decided 2026-09-26 and recorded in that spec's §9. This work reuses #455's `Ref` type for lazy `"module:attr"` registration and is measured against #455's file-operation ceilings (§8).
 
@@ -34,6 +35,8 @@ Per-suite options aren't worth their cost. An option that only one suite reads i
 | Otto's own async fixtures run on the test's loop, and hosts fail fast when used from the wrong loop | §6.4, §6.5 |
 
 ## 3. The command line
+
+*Amended by the test-name cache design; see **Amended by** in the header.*
 
 ```
 otto test [NAMES...] [-m EXPR] [run flags] [verb-wide options]
@@ -111,6 +114,8 @@ A verb's flag set is built after every repo's init modules have run, the same po
 
 ### 4.3 Building and validation
 
+*Amended by the test-name cache design; see **Amended by** in the header.*
+
 At dispatch, otto builds every class registered for the dispatched verb from the parsed flags, through `OptionsSource.from_kwargs(...).build(cls)`. That is the path project instructions already use, so pydantic validation fails as a clean exit-2 command-line error before any test or instruction body runs. Classes registered only for other verbs are not built.
 
 The built instances are stored on the invocation's `OttoContext`, keyed by class.
@@ -140,6 +145,8 @@ The converge behind `@pytest.mark.ensure(...)` calls the same `otto.project` fun
 The consequence is explicit, not silent: an install body can only see flags registered for `test`. A flag that an install instruction reads must be registered for both verbs if people need to set it from `otto test`. Otherwise it takes its default. The docs for `ensure` say so.
 
 ### 4.6 Completion and the cache
+
+*Amended by the test-name cache design; see **Amended by** in the header.*
 
 - **Flags.** The merged flag list for each verb is plain data in the completion cache's `names` section. Its key set already covers init modules, so editing a test file never changes any cached flag. The shim and flag completion never import an options module.
 - **Names.** The `NAMES` positional completes from the `tests` section, the static parse, plus the pytest-collected set, as `--tests` does today. It is a variadic positional with no separator, so each word completes one name. The shim already models variadic positionals (`_consume_positional`), and its `tests` source learns to run without a separator.
@@ -195,11 +202,13 @@ The layout mirrors the pytest test ID:
 - **`module_dir`** replaces `suite_dir` and is module-scoped. It is the module's directory for every test in it. A class that wants its own shared space makes a subdirectory.
 - **`test_dir`** keeps its sanitized, parametrized names and its `iteration_N` level in stability runs.
 - **Both are created when requested,** like pytest's `tmp_path`, never eagerly.
-- **Multiple repos.** When more than one repo takes part in a run, a repo-name layer goes on top: `<run output dir>/<repo>/<module path>/...`. That matches how JUnit files are already named per repo. A single-repo run keeps the shorter layout.
+- **Multiple repos.** When more than one repo takes part in a run, a repo-name layer goes on top: `<run output dir>/<repo>/<module path>/...`. That matches how JUnit files are already named per repo. A single-repo run keeps the shorter layout. Every repo with a test directory takes part, since each one's session is where its names are looked up; which of them turn out to hold a selected test doesn't change the layout, so it never depends on the test-name cache.
 
 Within one repo the layout can't collide. Keying on the stem alone would: pytest refuses two test modules with the same basename only when their directories have no `__init__.py`, so `tests/router/test_basic.py` and `tests/switch/test_basic.py` in packages both collect, and would otherwise share one directory.
 
 ### 5.4 Listing, dry run and the library API
+
+*Amended by the test-name cache design; see **Amended by** in the header.*
 
 - **`--list-tests`** groups by repo, module and class, since it is now the only listing.
 - **The dry run** (`otto test -n NAMES`) lists what the names match from the static parse, without importing anything. As today, parametrizations are not expanded. A marker expression is shown but not evaluated, because evaluating it needs collection.
@@ -225,7 +234,7 @@ Otto has three readers of a repo's test directories. Only the suite registry's `
 
 With the registry gone, only those two readers remain, so nested test directories and conftests work everywhere, with pytest deciding what counts as a test.
 
-**Collection errors.** Name resolution collects the whole tree once. A file that fails to collect is logged as an error naming the file, and the remaining files still resolve. The run session then targets only the matched tests, so a broken, unrelated file doesn't stop the tests that were asked for. Plain pytest would abort the whole session. This behavior is kept and pinned by a test with a broken nested file.
+**Collection errors.** Names are resolved inside the run's own pytest session, not by a separate collection (`2026-09-27-test-name-cache-design.md`). That session runs with `--continue-on-collection-errors`: a file that fails to collect is logged as an error naming the file, and a broken, unrelated file doesn't stop the tests that were asked for, which still run. The run that reaches it exits 1, pytest's verdict for a session with a collection error (owner decision, test-name cache design §8.1); plain pytest without the flag would run nothing. The broken file's record keeps its error until the file is edited, so a later run that doesn't need that file doesn't collect it again and isn't failed by it. Pinned by a test with a broken nested file.
 
 ### 5.6 Test-file loading after the registry
 

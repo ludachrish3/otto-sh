@@ -26,24 +26,26 @@ def test_stat_triple_records_a_file_and_a_missing_path(tmp_path: Path):
     assert stat_triple(tmp_path / "nope") == [str(tmp_path / "nope"), None, None]
 
 
-def test_payload_keys_mirror_the_two_sections_key_sets(tmp_path, monkeypatch):
+def test_payload_keys_mirror_the_names_key_set(tmp_path, monkeypatch):
     _, repos = _repos(tmp_path, monkeypatch)
     payload = build_shim_payload(repos)
-    for name in ("names", "tests"):
-        expected = [stat_triple(p) for p in sorted(set(section_by_name(name).key_paths(repos)))]
-        assert payload["keys"][name] == expected
+    names = section_by_name("names")
+    assert names.key_paths is not None
+    assert payload["keys"] == [stat_triple(p) for p in sorted(set(names.key_paths(repos)))]
+    assert payload["tables"] == [str(repo.sut_dir) for repo in repos]
     assert payload["ttl_seconds"] == cc._cache_ttl_seconds(repos)
-    assert payload["tests_digest"] == cc.compute_fingerprint(repos)
+    assert "tests_digest" not in payload
     assert payload["inventory"] == {"kind": "none"}
     assert payload["tree"]["name"] == "otto"
     assert "host_classes" in payload["tree"]
 
 
-def test_shim_digest_is_derived_from_names_and_tests():
+def test_shim_digest_is_derived_from_names_alone():
+    """Two sections: test names live in the per-file table, which validates itself."""
     shim = section_by_name("shim")
-    assert shim.derived_from == ["names", "tests"]
+    assert shim.derived_from == ["names"]
     assert shim.key_paths is None
-    assert [s.name for s in SECTIONS] == ["names", "tests", "shim"]
+    assert [s.name for s in SECTIONS] == ["names", "shim"]
 
 
 def test_a_section_declares_exactly_one_key_source():
@@ -59,10 +61,10 @@ def test_a_section_declares_exactly_one_key_source():
 
 def test_write_cache_stores_the_shim_section_when_given(tmp_path, monkeypatch):
     _, repos = _repos(tmp_path, monkeypatch)
-    cc.write_cache(repos, [], [], [], shim=build_shim_payload(repos))
+    cc.write_cache(repos, [], [], shim=build_shim_payload(repos))
     data = json.loads(cc._cache_path().read_text())
-    assert data["schema"] == cc.SCHEMA_VERSION == 20
-    assert set(data["sections"]) == {"names", "tests", "shim"}
+    assert data["schema"] == cc.SCHEMA_VERSION == 23
+    assert set(data["sections"]) == {"names", "shim"}
     assert data["sections"]["shim"]["tainted"] is False
     assert cc.cache_rebuild_is_worthwhile(repos) is False
 
@@ -79,7 +81,7 @@ def test_the_section_collects_exactly_what_the_writer_stores(tmp_path, monkeypat
 
 def test_a_missing_shim_section_makes_a_rebuild_worthwhile(tmp_path, monkeypatch):
     _, repos = _repos(tmp_path, monkeypatch)
-    cc.write_cache(repos, [], [], [], shim=build_shim_payload(repos))
+    cc.write_cache(repos, [], [], shim=build_shim_payload(repos))
     assert cc.cache_rebuild_is_worthwhile(repos) is False
     path = cc._cache_path()
     data = json.loads(path.read_text())
@@ -97,28 +99,28 @@ def test_require_widens_validation_never_the_merged_view(tmp_path, monkeypatch):
 
     1. With a real `shim` entry on disk, `require=(SHIM_SECTION,)` still
        returns a view carrying none of `shim`'s own keys (`ttl_seconds`,
-       `tree`, `keys`, `inventory`, `tests_digest`) — only merged-view keys.
+       `tree`, `keys`, `tables`, `inventory`) — only `names` keys.
        On its own this is guaranteed by `read_cache`'s fixed-key return
        regardless of how the merge loop is written, so it cannot fail on its
        own — property 2 is the one that actually pins the loop.
     2. A required section whose payload happens to share a key name with the
        merged view (a `throwaway` section publishing `instructions`, exactly
-       like a `names`/`tests` payload would) must NOT be able to clobber the
+       like the `names` payload does) must NOT be able to clobber the
        real value: `require` only widens which sections must VALIDATE, never
        which payloads get merged. `for payload in payloads.values(): ...`
        would merge `throwaway` last (dict insertion order) and let its
-       injected value win; `for name in MERGED_VIEW_SECTIONS: ...` never
-       looks at `throwaway`'s payload at all.
+       injected value win; reading `payloads["names"]` alone never looks at
+       `throwaway`'s payload at all.
     """
     from otto.config import cache_sections as cs
     from otto.config.completion_tree import SHIM_SECTION
 
     _, repos = _repos(tmp_path, monkeypatch)
-    cc.write_cache(repos, [{"name": "real", "options": []}], [], [], shim=build_shim_payload(repos))
+    cc.write_cache(repos, [{"name": "real", "options": []}], [], shim=build_shim_payload(repos))
 
     merged = cc.read_cache(repos, require=(SHIM_SECTION,))
     assert merged is not None
-    assert not {"ttl_seconds", "tree", "keys", "inventory", "tests_digest"} & set(merged)
+    assert not {"ttl_seconds", "tree", "keys", "tables", "inventory"} & set(merged)
     assert merged["instructions"] == [{"name": "real", "options": []}]
 
     throwaway = cs.Section(

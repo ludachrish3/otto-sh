@@ -1,29 +1,18 @@
-"""Minimal env-gated fixture suite for CLI e2e tests.
+"""Minimal env-gated fixture tests for CLI e2e tests.
 
-This suite registers with otto so that e2e tests can verify discovery
-(``--list-suites``) and invocation (exit-code contract) without touching
-any real host.
+e2e tests use this class to verify discovery (``otto test --list-tests``) and
+invocation (the exit-code contract) without touching any real host.
 """
 
 import os
-from typing import Annotated
 
-import typer
-
-from otto import options
-from otto.suite import OttoSuite
+from repo_e2e_instructions.options import E2EFixtureOptions
 
 
-@options
-class E2EFixtureOptions:
-    label: Annotated[str, typer.Option(help="Label for the e2e fixture run.")] = "e2e"
+class TestE2EFixture:
+    """Deterministic hostless fixture tests for CLI e2e tests."""
 
-
-class TestE2EFixture(OttoSuite):
-    """Deterministic hostless fixture suite for CLI e2e tests."""
-
-    Options = E2EFixtureOptions
-
-    async def test_gated(self, suite_options: E2EFixtureOptions) -> None:
+    async def test_gated(self, ctx) -> None:
         """Passes normally; fails only when OTTO_E2E_FAIL=1 (exit-code contract)."""
-        assert os.environ.get("OTTO_E2E_FAIL") != "1"
+        label = ctx.options(E2EFixtureOptions).label
+        assert os.environ.get("OTTO_E2E_FAIL") != "1", f"OTTO_E2E_FAIL=1 (label={label!r})"

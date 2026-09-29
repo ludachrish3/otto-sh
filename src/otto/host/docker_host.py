@@ -203,7 +203,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     "configure an SSH-based parent."
                 )
             return _DockerSshSession(
-                conn_provider=self.parent._connections.ssh,  # noqa: SLF001 — intra-package access to parent host's _connections
+                # Through the parent's claiming accessor: the channel rides the
+                # parent's SSH connection, so the parent must own this loop too.
+                conn_provider=self.parent._live_connections().ssh,  # noqa: SLF001 — intra-package access to parent host's connection manager
                 container_id_getter=lambda: self.container_id,
                 user_getter=self._user_for_an_imminent_open,
                 on_open=self._record_run_channel_open if record else None,
@@ -254,6 +256,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         called this method anyway, and ``login`` had no dry-run arm at all
         (both fixed 2026-08-15).
         """
+        # Claimed before the lock: ``_ensure_lock`` is per-loop state that a
+        # stale owner's rebuild replaces.
+        self._claim_loop()
         if self.container_id:
             return
 
@@ -487,7 +492,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         user it opened as) leaves :meth:`_effective_user` to apply the
         declared default exactly as before.
         """
-        return self._session_mgr.ambient_user
+        return self._live_session_mgr().ambient_user
 
     def mount_for(self, container_path: "str | Path") -> "Mount | None":
         """Return the mount covering *container_path*, or ``None`` if it is not shared.
@@ -621,7 +626,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         failed after its transport came up — or one whose ``close`` raised
         partway — would keep refusing calls against a shell that is gone.
         """
-        return self._run_user_bound and self._session_mgr.has_live_default_session
+        mgr = self._live_session_mgr()  # claims first: a stale manager's liveness is a dead loop's
+        return self._run_user_bound and mgr.has_live_default_session
 
     async def _docker_exec(
         self, cmd: str, *, interactive: bool = False, user: "str | None" = None
@@ -815,7 +821,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         await self._ensure_running()
         self._pending_run_user = user
         try:
-            return await self._session_mgr.run_cmd(
+            return await self._live_session_mgr().run_cmd(
                 cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
             )
         finally:
@@ -845,7 +851,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         if is_dry_run():
             return self._dry_run_session(name)
         await self._ensure_running()
-        return await self._session_mgr.open_session(name)
+        return await self._live_session_mgr().open_session(name)
 
     @override
     async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
@@ -862,13 +868,13 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             self._log_command(f"[DRY RUN] send({text!r})", effective)
             return
         await self._ensure_running()
-        await self._session_mgr.send(text, log=effective)
+        await self._live_session_mgr().send(text, log=effective)
 
     @override
     async def _expect_one(self, pattern: "str | re.Pattern[str]", timeout: float) -> str:
         """Wait for a pattern in the container's session output stream."""
         await self._ensure_running()
-        return await self._session_mgr.expect(pattern, timeout)
+        return await self._live_session_mgr().expect(pattern, timeout)
 
     ####################
     #  Interactive shell
@@ -909,7 +915,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             )
         await self._ensure_running()
 
-        conn = await self.parent._connections.ssh()  # noqa: SLF001 — intra-package access to parent host's _connections
+        conn = await self.parent._live_connections().ssh()  # noqa: SLF001 — intra-package access to parent host's connection manager
         effective = self._effective_user(user)
         u = f" -u {shlex.quote(effective)}" if effective is not None else ""
         # /bin/sh is universal in Linux containers; users can override by
@@ -1259,14 +1265,15 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     def rebuild_connections(self) -> None:
         """Drop any persistent session so the next call reopens it.
 
-        Mirrors :meth:`~otto.host.unix_host.UnixHost.rebuild_connections` for the
-        ``all_hosts() → host.rebuild_connections()`` pattern that ``otto
-        test --cov`` uses to refresh hosts after pytest installs a new
-        event loop. The container host doesn't own any raw transport
-        (the parent does), but its ``_session_mgr`` may hold a
-        ``ShellSession`` whose ``asyncssh`` process is bound to the old
-        loop. Replacing the manager forces lazy re-opens against the
-        parent's freshly-rebuilt SSH connection.
+        Mirrors :meth:`~otto.host.unix_host.UnixHost.rebuild_connections`:
+        how the host leaves an event loop that has closed (``_claim_loop``
+        calls it when the loop that owned the session is gone). The container
+        host doesn't own any raw transport (the parent does), but its
+        ``_session_mgr`` may hold a ``ShellSession`` whose ``asyncssh``
+        process is bound to the old loop. Replacing the manager forces lazy
+        re-opens against the parent's SSH connection, which the parent
+        claims (and rebuilds, if stale) on the same loop. ``_ensure_lock``
+        is replaced too, for the same reason.
 
         The run channel's user binding goes with the channel — a fresh
         manager opens a fresh ``docker exec``, so the next ``run()`` is free
@@ -1274,13 +1281,16 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """
         self._session_mgr = self._build_session_mgr()
         self._forget_run_channel_binding()
+        # A lock binds to the loop that first contends it; a rebuild is how
+        # a host moves to a fresh loop, so it starts a fresh lock.
+        self._ensure_lock = asyncio.Lock()
 
     ####################
     #  Cleanup
     ####################
 
     @override
-    async def close(self) -> None:
+    async def _close(self) -> None:
         """Tear down the persistent session.
 
         The parent's underlying connection is owned by the parent and is not

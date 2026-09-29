@@ -43,12 +43,13 @@ class TestBootstrapContainment:
     def test_broken_repo_degrades_help_with_framed_warning(self, tmp_path: Path) -> None:
         r = run_otto(["--help"], xdir=tmp_path, sut_dirs=f"{REPO_E2E},{REPO_BROKEN}")
         assert r.returncode == 0  # help still renders
-        assert "failed to load test_syntax_error.py" in r.stderr
+        # A test file is never imported to build help (or the cache it seeds):
+        # test names come from a static parse, and nothing registers from one.
+        assert "failed to load test_syntax_error.py" not in r.stderr
         assert "run" in r.stdout  # first-party intact
 
-    # A broken TEST file fails only the commands that read suites (the 2026-09-25
-    # reversal of the "fail every command" ruling): test files load on demand,
-    # so every other command neither pays for them nor is blocked by them.
+    # A broken TEST file is only ever met by a pytest collection, which `otto
+    # test` runs; every other command neither pays for it nor is blocked by it.
 
     def test_broken_test_file_does_not_block_unrelated_dispatch(self, tmp_path: Path) -> None:
         # `-R` + a lab the fixture declares, so the run completes without a
@@ -78,28 +79,24 @@ class TestBootstrapContainment:
         )
         assert r.returncode == 0, r.stdout + r.stderr
 
-    def test_broken_test_file_fails_otto_test_loud(self, tmp_path: Path) -> None:
+    def test_broken_test_file_is_a_collection_error_the_run_survives(self, tmp_path: Path) -> None:
+        """Name resolution logs the file that failed to collect; the named tests still run."""
         r = run_otto(
-            ["test", "--tests", "anything"], xdir=tmp_path, sut_dirs=f"{REPO_E2E},{REPO_BROKEN}"
+            ["test", "TestE2EFixture"],
+            xdir=tmp_path,
+            sut_dirs=f"{REPO_E2E},{REPO_BROKEN}",
+            lab="unix",
+            extra_argv_prefix=["-R"],
         )
-        assert r.returncode == 1
         out = r.stdout + r.stderr
-        assert out.count("failed to load test_syntax_error.py") == 1
-        assert "Cannot run commands while a repo fails to load" in out
+        assert r.returncode == 0, out
+        assert "test_syntax_error.py" in out
+        assert "Cannot run commands while a repo fails to load" not in out
 
-    # Click reads SUITES (listing or resolving a suite name) BEFORE the `test`
-    # group callback runs, so the lazy load happens there; a finding must still
-    # print, once, before click's help screen or "No such command" box.
-
-    def test_broken_test_file_warns_once_on_an_unknown_suite(self, tmp_path: Path) -> None:
-        r = run_otto(["test", "TestNope"], xdir=tmp_path, sut_dirs=f"{REPO_E2E},{REPO_BROKEN}")
-        assert r.returncode == 2, r.stdout + r.stderr
-        assert r.stderr.count("failed to load test_syntax_error.py") == 1, r.stderr
-
-    def test_broken_test_file_warns_once_on_otto_test_help(self, tmp_path: Path) -> None:
+    def test_broken_test_file_does_not_block_otto_test_help(self, tmp_path: Path) -> None:
         r = run_otto(["test", "--help"], xdir=tmp_path, sut_dirs=f"{REPO_E2E},{REPO_BROKEN}")
         assert r.returncode == 0, r.stdout + r.stderr
-        assert r.stderr.count("failed to load test_syntax_error.py") == 1, r.stderr
+        assert "failed to load test_syntax_error.py" not in r.stderr, r.stderr
 
 
 class TestDiscoveryContainment:

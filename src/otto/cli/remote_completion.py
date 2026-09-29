@@ -303,15 +303,14 @@ def _live_listing(host: "Any", directory: str) -> "list[ListingEntry] | None":
 
     The coroutine runs under :func:`otto.lifecycle.run_command`, never a bare
     ``asyncio.run`` (house rule: ``tests/unit/test_no_bare_asyncio_run.py``).
-    Besides the interrupt policy, that buys the completer a second closer: the
-    active :class:`~otto.context.OttoContext`'s host scope is entered for the
-    duration and swept at loop exit, so the host :func:`_load_host` constructed
-    is closed even if the explicit ``host.close()`` below fails. The explicit
-    close stays — it is the only closer for a ``--term``-override *copy*, which
-    :meth:`~otto.context.OttoContext.get_host` never registered — and double
-    closing is safe: ``HostScope`` documents ``close()`` as idempotent, the
-    sweep skips hosts whose ``_connected`` is already ``False``, and
-    ``HostConnections.close`` clears each cached slot take-then-clear.
+    Besides the interrupt policy, that buys the completer a second closer: a
+    host registers with the command loop's host scope when it connects, and
+    the active :class:`~otto.context.OttoContext` sweeps that scope at loop
+    exit, so the host :func:`_load_host` constructed (or its ``--term``-override
+    copy) is closed even if the explicit ``host.close()`` below fails. The
+    explicit close stays as the prompt, first closer, and double closing is
+    safe: ``close()`` is idempotent, and ``HostConnections.close`` clears each
+    cached slot take-then-clear.
 
     ``teardown_deadline`` is pinned to :data:`LIST_DEADLINE_SECONDS` rather
     than otto's 10s command default: a TAB that already gave up on the listing

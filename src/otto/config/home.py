@@ -39,6 +39,20 @@ costs legibility only."""
 SNAPSHOT_CACHE_DIRNAME = "inventory-cache"
 """Directory holding the inventory snapshot cache (host-inventory spec §9.5)."""
 
+PYCACHE_DIRNAME = "pycache"
+"""Workspace directory where every pytest session otto starts writes its bytecode.
+
+Used as ``sys.pycache_prefix`` for the session, unless the user set a prefix
+(``PYTHONPYCACHEPREFIX``). Bytecode written beside a test file would add a
+``__pycache__`` entry to its directory, moving the stat the
+test-names cache keys on."""
+
+PYTEST_CACHE_DIRNAME = "pytest-cache"
+"""Workspace directory holding pytest's cache (``-o cache_dir=``) for otto's runs.
+
+pytest otherwise writes ``.pytest_cache/`` into its rootdir, which can be a
+test directory."""
+
 
 def otto_home() -> Path:
     """Return otto's user-level home: ``$OTTO_HOME`` if set, else ``~/.otto``.

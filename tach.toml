@@ -32,6 +32,11 @@
 # the snapshot, not a fresh `tach check --forbid-circular` run; re-measure
 # before quoting the "cut both cli edges" numbers below, which were.
 #
+# 2026-09-28 (#457) REMOVED ONE PAIR: otto.config no longer imports otto.suite
+# (the collect child's refresh is otto.suite.run's, handed in by otto.cli), so
+# config<->suite is gone, and with it the `config -> suite` hop of the fifth
+# loop below. Not re-measured either.
+#
 # THOSE PAIRS ARE NOT THE WHOLE FORMATION — they account for only TWELVE of the
 # sixteen. The other four join through longer loops that contain no mutual pair
 # of their own:
@@ -156,12 +161,13 @@ depends_on = [
     # import-light builtin_hosts and the term/transfer registries.
     "otto.host",
     "otto.logger",
-    # completion_cache reads SUITES; acceptable direction once INSTRUCTIONS
-    # joins it in core — revisit with Tier 1.5.
-    "otto.suite",
     "otto.link",
     "otto.reservations",
     "otto.bootstrap",
+    # repo.py's collection pass marks itself as loading test files, so a test
+    # file or conftest that registers anything is refused there too. A leaf
+    # (it depends only on otto.errors), so no cycle can form.
+    "otto.registry",
 ]
 
 [[modules]]
@@ -182,7 +188,16 @@ path = "otto.context"
 # modules and this file sits on the budgeted surfaces; tach counts it either
 # way. otto.inventory already sits inside the same strongly connected
 # component (see otto.config's note above), so this adds no new cycle.
-depends_on = ["otto.config", "otto.host", "otto.bootstrap", "otto.inventory"]
+depends_on = [
+    "otto.config",
+    "otto.host",
+    "otto.bootstrap",
+    "otto.inventory",
+    # ctx.options resolves the per-verb options registry at call time, and
+    # OptionsNotAvailableError now lives there too (otto.params already roots
+    # its own OptionsRegistrationError/OptionsCollisionError at OttoError).
+    "otto.params",
+]
 
 [[modules]]
 path = "otto.coverage"
@@ -524,11 +539,7 @@ path = "otto.suite"
 # decorator), and nothing in otto.suite imports it. Retiring it means giving
 # instruction registration a home that is not otto.cli, which is the same fix
 # the config<->cli DEBT edge needs and belongs with it, not here.
-# otto.bootstrap: `find_suite`'s unknown-name error names the test files that
-# failed to load (a library caller gets no CLI warning line). Read-only and
-# function-scope, and only when bootstrap already ran; otto.bootstrap never
-# imports otto.suite (SUITES names its loader by string), so no pair forms.
-depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.utils", "otto.project", "otto.bootstrap"]
+depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.project"]
 
 [[modules]]
 path = "otto.testing"

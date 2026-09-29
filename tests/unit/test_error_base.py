@@ -69,6 +69,7 @@ from otto.host.errors import (
     UnsupportedOnUserlandError,
 )
 from otto.host.login_proxy import LoginProxyError
+from otto.host.loop_owner import HostLoopError
 from otto.host.recursive_transfer import ListingError
 from otto.host.transfer.nc import NcPortSharedError
 from otto.host.transport import HopTransportTornDownError
@@ -84,7 +85,11 @@ from otto.link.manage import (
 from otto.monitor.archive_edit import ArchiveLockedError
 from otto.monitor.db import UnsupportedDBError
 from otto.monitor.event_ops import EventValidationError
-from otto.project.commands import OptionsCollisionError
+from otto.params import (
+    OptionsCollisionError,
+    OptionsNotAvailableError,
+    OptionsRegistrationError,
+)
 from otto.project.orchestrator import InactiveRequiredDependencyError
 from otto.registry import RegistrationRefused
 from otto.reservations.check import MissingReservationError, ReservationBackendError
@@ -105,6 +110,8 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (InactiveRequiredDependencyError, Exception),
     (ProjectInstructionError, Exception),
     (OptionsCollisionError, Exception),
+    (OptionsRegistrationError, ValueError),
+    (OptionsNotAvailableError, LookupError),
     (EmptySelectionError, ValueError),
     (BackendUnavailableError, RuntimeError),
     (EnvExistsError, RuntimeError),
@@ -137,6 +144,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (UnsupportedOnUserlandError, RuntimeError),
     (RawLandingError, RuntimeError),
     (HopTransportTornDownError, RuntimeError),
+    (HostLoopError, RuntimeError),
     (AppShellActiveError, RuntimeError),
     (AppShellTimeoutError, TimeoutError),
     (WaitTimeoutError, TimeoutError),
@@ -430,16 +438,26 @@ def test_the_taxonomy_counts_in_errors_py_match_the_measured_split():
     covered = sum(1 for _, root in CASES if root in (ValueError, RuntimeError))
     rootless = len(DELIBERATELY_ROOTLESS)
     os_rooted = sum(1 for _, root in CASES if isinstance(root, type) and issubclass(root, OSError))
+    lookup_rooted = sum(
+        1 for _, root in CASES if isinstance(root, type) and issubclass(root, LookupError)
+    )
 
-    assert covered + rootless + os_rooted == named, (
-        "the three buckets no longer partition CASES, so the docstring's split "
+    assert covered + rootless + os_rooted + lookup_rooted == named, (
+        "the four buckets no longer partition CASES, so the docstring's split "
         "cannot be expressed — reclassify before updating prose"
     )
 
-    split = re.search(r"(\d+) \+ (\d+) \+ (\d+) = (\d+)", doc)
-    assert split, "errors.py no longer states its split as 'a + b + c = total'"
-    assert tuple(int(g) for g in split.groups()) == (covered, rootless, os_rooted, named), (
-        f"errors.py says {split.group(0)}; measured {covered} + {rootless} + {os_rooted} = {named}"
+    split = re.search(r"(\d+) \+ (\d+) \+ (\d+) \+ (\d+) = (\d+)", doc)
+    assert split, "errors.py no longer states its split as 'a + b + c + d = total'"
+    assert tuple(int(g) for g in split.groups()) == (
+        covered,
+        rootless,
+        os_rooted,
+        lookup_rooted,
+        named,
+    ), (
+        f"errors.py says {split.group(0)}; measured "
+        f"{covered} + {rootless} + {os_rooted} + {lookup_rooted} = {named}"
     )
     assert f"otto's {named} NAMED failures" in doc, (
         f"errors.py's 'NAMED failures' count is not {named}"

@@ -48,6 +48,13 @@ def _repo(
     )
 
 
+def _digest(repos) -> str:
+    """The ``names`` section's digest: every section ends with the inventory's line."""
+    from otto.config.cache_sections import section_by_name, section_digest
+
+    return section_digest(section_by_name("names"), repos)
+
+
 def _with_inventory(repo, inventory_settings: dict):
     """The SAME repo — same files, same mtimes — carrying a different ``[inventory]``.
 
@@ -82,23 +89,21 @@ def test_a_declared_inventory_changes_the_digest(tmp_path, monkeypatch):
 
     ONE repo, two ``[inventory]`` tables — same settings file, same lab file,
     same paths, same mtimes — differing only in whether an inventory is
-    declared. Without the inventory term in ``compute_fingerprint`` these two
+    declared. Without the inventory term in the section digests these two
     digests are equal, and a repo that switched its inventory on would be
     served the pre-inventory cache entry.
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     table = _json_inventory(tmp_path, _RECORD)
     without = _repo(tmp_path, {})
-    assert cc.compute_fingerprint([without]) != cc.compute_fingerprint(
-        [_with_inventory(without, table)]
-    )
+    assert _digest([without]) != _digest([_with_inventory(without, table)])
 
 
 def test_without_an_inventory_the_digest_is_stable(tmp_path, monkeypatch):
     """``none`` is a constant: no inventory must not mean no caching."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     repo = _repo(tmp_path, {})
-    assert cc.compute_fingerprint([repo]) == cc.compute_fingerprint([repo])
+    assert _digest([repo]) == _digest([repo])
 
 
 def test_editing_the_inventory_file_moves_the_digest(tmp_path, monkeypatch):
@@ -112,11 +117,11 @@ def test_editing_the_inventory_file_moves_the_digest(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     table = _json_inventory(tmp_path, _RECORD)
     repo = _repo(tmp_path, table)
-    before = cc.compute_fingerprint([repo])
+    before = _digest([repo])
     (tmp_path / "sut" / "inventory.json").write_text(
         json.dumps({"dut-1": {"ip": "10.0.0.1"}, "dut-2": {"ip": "10.0.0.2"}})
     )
-    assert cc.compute_fingerprint([repo]) != before
+    assert _digest([repo]) != before
 
 
 def test_a_broken_declaration_hashes_its_error_and_the_fix_moves_the_digest(tmp_path, monkeypatch):
@@ -141,9 +146,9 @@ def test_a_broken_declaration_hashes_its_error_and_the_fix_moves_the_digest(tmp_
         broken, {"backend": "json", "path": "inventory.json", "supplies": ["ip"]}
     )
     undeclared = _with_inventory(broken, {})
-    assert cc.compute_fingerprint([broken]) == cc.compute_fingerprint([broken])
-    assert cc.compute_fingerprint([broken]) != cc.compute_fingerprint([fixed])
-    assert cc.compute_fingerprint([broken]) != cc.compute_fingerprint([undeclared])
+    assert _digest([broken]) == _digest([broken])
+    assert _digest([broken]) != _digest([fixed])
+    assert _digest([broken]) != _digest([undeclared])
 
 
 class _Uncacheable:
@@ -189,7 +194,7 @@ def test_an_uncacheable_backend_never_matches_its_own_entry(tmp_path, monkeypatc
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     with _registered("uncacheable-test", _Uncacheable) as table:
         repo = _repo(tmp_path, table)
-        assert cc.compute_fingerprint([repo]) != cc.compute_fingerprint([repo])
+        assert _digest([repo]) != _digest([repo])
 
 
 def test_an_uncacheable_inventory_writes_nothing_at_all(tmp_path, monkeypatch):
@@ -198,8 +203,8 @@ def test_an_uncacheable_inventory_writes_nothing_at_all(tmp_path, monkeypatch):
     A digest that never matches is correct on the read side and catastrophic
     on the write side — every writer merges into the existing file and none
     prunes, so each otto invocation would append one dead entry, forever, to
-    a file every TAB parses whole. All three fingerprint-keyed writers are
-    checked, not just the largest: the payloads differ, the growth does not.
+    a file every TAB parses whole. Both digest-keyed writers are checked,
+    not just the largest: the payloads differ, the growth does not.
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     with _registered("uncacheable-write-test", _Uncacheable) as table:
@@ -208,8 +213,7 @@ def test_an_uncacheable_inventory_writes_nothing_at_all(tmp_path, monkeypatch):
         assert cache_path is not None
 
         for _ in range(2):
-            cc.write_cache([repo], [], [], ["dut"])
-            cc._record_collected_tests([repo], ["test_x"])
+            cc.write_cache([repo], [], ["dut"])
             cc.record_tunnel_ids([repo], ["tun-abc123def456-22"])
 
         entries = json.loads(cache_path.read_text()) if cache_path.is_file() else {}
@@ -219,26 +223,26 @@ def test_an_uncacheable_inventory_writes_nothing_at_all(tmp_path, monkeypatch):
     # writers are not simply broken. Without this a `return` at the top of
     # write_cache would pass the assertion above.
     cacheable = _repo(tmp_path, _json_inventory(tmp_path, _RECORD))
-    cc.write_cache([cacheable], [], [], ["dut"])
+    cc.write_cache([cacheable], [], ["dut"])
     assert cc.read_cache([cacheable]) is not None
 
 
 def test_a_backend_whose_freshness_probe_raises_does_not_crash_the_command(tmp_path, monkeypatch):
-    """§11's networked backend can raise anything; `compute_fingerprint` may not.
+    """§11's networked backend can raise anything; the digest may not.
 
     ``construct_inventory`` wraps only ``TypeError``/``ValueError`` from a
     third-party CONSTRUCTOR, so a probe raising ``RuntimeError`` reaches
-    ``compute_fingerprint`` — which runs inside ``write_cache``, past
+    the section digest — which runs inside ``write_cache``, past
     ``otto.cli.main``'s ``suppress(OSError)``, and would traceback an
     otherwise-successful command after its real work was already done.
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     with _registered("exploding-test", _Exploding) as table:
         repo = _repo(tmp_path, table)
-        digest = cc.compute_fingerprint([repo])
+        digest = _digest([repo])
         assert isinstance(digest, str)
         assert len(digest) == 64  # sha256 hex — a real digest, not a swallowed None
-        cc.write_cache([repo], [], [], ["dut"])  # must not raise
+        cc.write_cache([repo], [], ["dut"])  # must not raise
 
 
 def test_an_erroring_probe_writes_nothing_either(tmp_path, monkeypatch):
@@ -261,8 +265,7 @@ def test_an_erroring_probe_writes_nothing_either(tmp_path, monkeypatch):
         assert cache_path is not None
 
         for _ in range(2):
-            cc.write_cache([repo], [], [], ["dut"])
-            cc._record_collected_tests([repo], ["test_x"])
+            cc.write_cache([repo], [], ["dut"])
             cc.record_tunnel_ids([repo], ["tun-abc123def456-22"])
 
         entries = json.loads(cache_path.read_text()) if cache_path.is_file() else {}
@@ -272,7 +275,7 @@ def test_an_erroring_probe_writes_nothing_either(tmp_path, monkeypatch):
     # not simply broken. Without it a bare `return` in write_cache would
     # satisfy the assertion above.
     working = _repo(tmp_path, _json_inventory(tmp_path, _RECORD))
-    cc.write_cache([working], [], [], ["dut"])
+    cc.write_cache([working], [], ["dut"])
     assert cc.read_cache([working]) is not None
 
 

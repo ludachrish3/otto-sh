@@ -28,7 +28,7 @@ cases per slice, so a change that collapses coverage into hand-overs fails
 loud rather than passing quietly. And a counted histogram of
 the hand-over reasons: each must fall in a named class (a `live` completer, a
 `tunnel add --hosts` fragment past its first comma, a value attached to a flag
-that takes none, a cold collected set, stacked short flags), and the two
+that takes none, stacked short flags), and the two
 "unknown option"/"unknown command" classes are counted EXACTLY against the
 hand-written lines that produce them. That last one is load-bearing: a generated
 shape that Typer never reaches hands over on both sides and looks like coverage
@@ -39,23 +39,29 @@ mirrors, so a change to one side is a deliberate change to both.
 
 ## The entry
 
-`shim` is one of the completion cache's three sections, written in the same
-rebuild as `names` and `tests`. What the sections are, how they stay fresh,
-and who rebuilds them is on {doc}`completion-cache`. The shim reads these
-fields of its payload (built by
-`otto.config.completion_tree.build_shim_payload`):
+`shim` is one of the completion cache's two sections, written in the same
+rebuild as `names`. What the sections are, how they stay fresh, and who
+rebuilds them is on {doc}`completion-cache`. The shim reads these fields of
+its payload (built by `otto.config.completion_tree.build_shim_payload`):
 
-- `keys` — the `names` and `tests` key sets as `[path, mtime_ns, size]`
-  triples (`stat_triple`), directories included, so the shim sees a new or
-  removed file by its directory's mtime without running any glob;
+- `keys` — the `names` key set as `[path, mtime_ns, size]` triples
+  (`stat_triple`), directories included, so the shim sees a new or removed
+  file by its directory's mtime without running any glob;
 - `inventory` — the inventory's freshness as a stat check can verify it:
   `none`, `stat` with the triples of the files a file-derived backend read,
   or `opaque`, which always hands over (`inventory_block`);
 - `ttl_seconds` — the TTL the writer applied;
-- `tests_digest` — the fingerprint the pytest-collected test names are
-  stored under, so a warm `--tests`/`-m` set can be found once the stat
-  passes succeed;
+- `tables` — the SUT directories whose tables in the test-names cache a
+  test-name or `-m` TAB reads, in order;
 - `tree` — described next.
+
+At a test-name or `-m` site the shim answers from those repos' tables in
+the test-names cache (the cache file's `__collected_tests__` namespace),
+with the names and markers pytest last recorded. It checks each table's
+`env` and age, but stats nothing the table tracks; the check of the test
+files runs in a background process, at most once per check window. How the
+tables are written, checked and refreshed is on {doc}`completion-cache`
+("The test-names cache").
 
 When a check fails because the cache itself is stale, the hand-over carries
 `stale=True` and the TAB that finds it rebuilds the cache
@@ -70,7 +76,9 @@ shape, not "has subcommands" — it records whether the underlying class is a
 click parses interspersed options and positionals. A `Param` carries its
 flags, whether it takes a value, `multiple`, `nargs`, its list-segment
 separator, and a `Source` describing how to answer it (`static`, `payload`,
-`tests`, `markers`, `echo`, `none`, or `live`). Host verbs get their own
+`tests`, `markers`, `echo`, `none`, or `live`). `otto test`'s `NAMES` is a
+variadic positional with a `tests` source and no separator, so each word
+completes one test name. Host verbs get their own
 layer: the root node carries a `host_classes` map from each host class name
 to that class's verb nodes, since a verb shared across classes can have a
 different signature per class; the resolver picks the right map once it
@@ -109,16 +117,22 @@ always right.
 
 ## The window
 
-A successful validation pass leaves a marker file beside the cache
-(`otto.config.cache_maintenance.MARKER_FILENAMES`); a marker fresher than the
+A successful validation pass of the `names` key set leaves a marker file
+beside the cache (`otto.config.cache_maintenance.MARKER_FILENAMES`); a
+marker fresher than the
 cache, not dated after the current time, and under `SHIM_WINDOW_SECONDS` (60)
 old lets the next TAB skip the stat pass entirely. A marker dated in the
 future — the clock stepped back — is not trusted: it would pass the
 fresher-than-the-cache check against every rewrite, and its window would last
 the size of the step plus the minute. Because the marker must be at least as
-new as the cache's own mtime, rewriting the cache invalidates every marker
-beside it automatically — nothing has to remember to delete them. The marker
+new as the cache's own mtime, rewriting the cache invalidates it
+automatically — nothing has to remember to delete it. The marker
 lifecycle under the cache commands is on {doc}`../../cli/cache/index`.
+
+The second marker, `tests`, is not a window over a stat pass: it records when
+the test-names cache was last checked, and a test-name TAB starts the next check
+once it is `CHECK_WINDOW_SECONDS` (ten minutes) old ({doc}`completion-cache`,
+"The collect child").
 
 **Known inequalities**, beyond the window itself:
 
@@ -144,9 +158,9 @@ lifecycle under the cache commands is on {doc}`../../cli/cache/index`.
 - `otto.config.completion_tree` — the tree serialiser (`serialize_tree`,
   `build_shim_payload`, `inventory_block`); slow (write) path only.
 - `otto.config.cache_sections` — the `shim` section's registration, its
-  digest composed from `names` and `tests` ({doc}`completion-cache`).
-- `otto.config.cache_maintenance` — the marker filenames and window
-  constant, and the `clear`/`prune` walk that removes them.
+  digest composed from `names` ({doc}`completion-cache`).
+- `otto.config.cache_maintenance` — the marker filenames and the `names`
+  window constant, and the `clear`/`prune` walk that removes them.
 - `tests/unit/shim/test_differential.py` — the equality proof.
 - `scripts/import_budget.py` — `completion_repo_warm` gates the file
   operations of a warm TAB the shim answers, and `completion_repo_handover`

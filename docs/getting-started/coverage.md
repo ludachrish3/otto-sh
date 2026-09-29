@@ -141,8 +141,8 @@ The verdict is read locally, off the artifact otto is about to stage: a build
 compiled with `--coverage` carries its own `.gcda` path strings, and otto
 looks for those. That has a consequence worth knowing before it bites you — a
 missing or unreadable artifact is not "no", it is "cannot tell", and an
-unknown counts as not instrumented. **A product whose artifact the test suite
-builds during the run must be built before `otto test`,** or declare
+unknown counts as not instrumented. **A product whose artifact your tests
+build during the run must be built before `otto test`,** or declare
 `instrumented = true` and skip the scan.
 
 Three modes, because auto is not always what you want:
@@ -187,7 +187,7 @@ destination, the pre-run counter cleanup, the inline report.
 
 `otto test` writes its run into a fresh per-invocation directory under
 `--xdir` — the directory you ran it from, unless you said otherwise — named
-`test/<timestamp>_<suite>/`, and prints the path when the run ends. Counters
+`test/<timestamp>/`, and prints the path when the run ends. Counters
 are fetched into that directory, one directory per host per product, mirroring
 the `logs/` layout. {ref}`The run tree <run-tree>` is the shape, and it is the
 same tree the logs pipeline writes into.
@@ -245,7 +245,7 @@ otto test --cov TestKmodDemo
 ```
 
 Coverage from a module's exit routine only reaches the report if the
-module is uninstalled before the post-run fetch — a suite's teardown does
+module is uninstalled before the post-run fetch — a test class's teardown does
 this by unloading the product, and the exit dump lands before `otto test
 --cov`'s own post-run fetch runs (not `otto cov get`, a separate,
 later command). {doc}`../cli/cov/instrumenting/kernel-modules` has the

@@ -296,7 +296,7 @@ GCC (here Zephyr SDK 0.16.8 = gcc 12.2). otto's decode/collect side is
 format-agnostic — the coupling lives in the product's coverage runtime, not otto.
 
 - **Next:** systemd unit (mirror `zephyr-qemu-*.service`) + repo3
-  `[coverage.embedded]` config + repo3 `OttoSuite` + `otto test --cov` +
+  `[coverage.embedded]` config + a repo3 test class + `otto test --cov` +
   cross-instance merge. Post-commit cleanup: reconcile the duplicated `embgcov`
   copies; capture the base build recipe into `tests/firmware/zephyr`; user-facing
   doc on fetching/applying the gcc-12 patch.
@@ -337,10 +337,11 @@ separate instance from the ARM serial-telnet `zephyr37_llext` and does not affec
    every read awaited a future on the dead loop and hung — and the stale single-client QEMU
    socket blocked any reconnect (cross-loop `close()` is a no-op for the socket). Large
    `cov_dump` output was a red herring (`otto host run cov_dump` on a sole fresh connection
-   always worked). Fix: `OttoSuite._otto_release_connections`, a class-scoped autouse
-   fixture (`loop_scope='class'`) that, **under `--cov`**, closes host connections at class
+   always worked). Fix at the time: a class-scoped autouse fixture on the suite base
+   class (`loop_scope='class'`) that, **under `--cov`**, closed host connections at class
    teardown *in the creating loop*, so the collector connects fresh (the loaded LLEXT stays
-   resident — only the TCP session drops).
+   resident — only the TCP session drops). Since superseded: otto's pytest plugin now
+   closes every host an event loop owns when that loop ends, `--cov` or not.
 2. **Cross-gcov `lcov` path (`lcov: not found`).** `toolchain_from_gcov` left `lcov` at the
    default `usr/bin/lcov` **relative to the cross sysroot** — which doesn't exist. `lcov` is
    a host-side Perl orchestrator (it shells to `--gcov-tool <gcov>`), not part of a cross

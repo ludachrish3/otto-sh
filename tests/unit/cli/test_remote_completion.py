@@ -718,14 +718,20 @@ def test_live_listing_runs_under_the_lifecycle_not_a_bare_asyncio_run(monkeypatc
 
 
 def test_live_listing_lets_the_host_scope_sweep_the_connection():
-    """``run_command`` enters the active context's host scope, so a host it
-    registered is swept at loop exit as well as closed explicitly (belt and
-    suspenders). A bare ``asyncio.run`` would close it once, never sweeping."""
+    """``run_command`` sweeps the command loop's host scope, so a host that
+    connected on that loop is swept at loop exit as well as closed explicitly
+    (belt and suspenders). A bare ``asyncio.run`` would close it once, never sweeping."""
     from otto.context import OttoContext, reset_context, set_context
 
-    host = _ExecHost(CommandResult(Status.Success, value="", command="ls"))
     ctx = OttoContext(lab=SimpleNamespace(name="t", hosts={}))  # type: ignore[arg-type]
-    ctx.scope.register(host)  # type: ignore[arg-type]
+
+    class _ClaimingHost(_ExecHost):
+        async def exec(self, cmd, timeout=None, log=None):
+            # What a real host's loop claim does on its first connection.
+            ctx.scope_for(asyncio.get_running_loop()).register(self)  # type: ignore[arg-type]
+            return await super().exec(cmd, timeout=timeout, log=log)
+
+    host = _ClaimingHost(CommandResult(Status.Success, value="", command="ls"))
     token = set_context(ctx)
     try:
         assert rc._live_listing(host, "/var") == []

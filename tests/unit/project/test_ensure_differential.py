@@ -1,14 +1,12 @@
-"""THE SPLIT-BRAIN GUARD: `otto run install --ensure --lab-env x` and an
-`ensure("installed")` marker under a suite with `--lab-env x` must hand every
-repo the SAME options instance. The two paths are different code (flat kwargs
-vs. an instance matched by declaring class); this is the one test that can
-turn red if either drifts -- and it does turn red both if the fixture path is
-switched to defaults (verified when written: swap
-`from_instance(SuiteOpts(lab_env="x"))` for `from_instance(None)` and watch it
-fail on `lab_env`) and if it is switched to bare name matching instead of
-declaring-class matching (verified when written: `SuiteOpts` declares its OWN
-`variant`, distinct from `WidgetInstall`'s default -- a name-only match would
-copy the suite's `variant` across and the loop below fails on `variant`).
+"""THE SPLIT-BRAIN GUARD: `otto run install --ensure --lab-env prod` and an
+`ensure("installed")` marker under `otto test --lab-env prod` must hand every
+repo the SAME options instance. The CLI path hands the orchestrator its parsed
+flags; the marker's converge hands it the `test` verb's parsed flags, as bound
+on the context (`ctx.verb_option_source()`). This is the one test that can
+turn red if either drifts -- and it does turn red if the marker path is
+switched to defaults (verified when written: swap the bound context's
+`verb_option_source()` for `OptionsSource.from_kwargs({})` and watch it fail on
+`lab_env`).
 """
 
 import dataclasses
@@ -20,8 +18,9 @@ import typer
 
 from otto import options
 from otto.cli.run import instruction
+from otto.config.lab import Lab
 from otto.context import OttoContext
-from otto.params import OptionsSource
+from otto.params import register_options
 from otto.project import (
     InstallOptions,
     InstallState,
@@ -48,11 +47,9 @@ class WidgetInstall(RepoBase, InstallOptions):
 
 @options
 class SuiteOpts(RepoBase):
+    """What `otto test` registers: the shared `lab_env` flag plus a test-only one."""
+
     firmware: Annotated[str, typer.Option(help="fw")] = "latest"
-    # OWN field, not shared with WidgetInstall by declaring class -- a
-    # name-only match would wrongly copy this across; see the module
-    # docstring's second proven red.
-    variant: Annotated[str, typer.Option(help="suite's own variant")] = "suite-only"
 
 
 class _FakeCtx:
@@ -141,20 +138,27 @@ def widget_lab(monkeypatch, one_repo_lab):
 
 
 @pytest.mark.asyncio
-async def test_cli_and_fixture_build_the_same_options(widget_lab) -> None:
+async def test_cli_and_marker_build_the_same_options(widget_lab) -> None:
+    from otto.suite import pytest_plugin
+
     await orchestrator.run_project_instruction(
-        "install", {"ensure": True, "recover_partial": True, "lab_env": "x", "variant": "field"}
+        "install", {"ensure": True, "recover_partial": True, "lab_env": "prod", "variant": "field"}
     )
-    await orchestrator.ensure_installed(OptionsSource.from_instance(SuiteOpts(lab_env="x")))
+    # What `otto test --lab-env prod` binds before any test runs; the marker's
+    # converge reads the source back off the context.
+    register_options(SuiteOpts, verbs=["test"])
+    test_ctx = OttoContext(lab=Lab(name="test"))
+    test_ctx.bind_verb_options("test", {"lab_env": "prod"})
+    await pytest_plugin._converge("installed", test_ctx.verb_option_source())
     assert len(widget_lab) == 2
-    cli_opts, fixture_opts = widget_lab
+    cli_opts, marker_opts = widget_lab
     assert type(cli_opts) is WidgetInstall
-    assert type(fixture_opts) is WidgetInstall
+    assert type(marker_opts) is WidgetInstall
     # `ensure`/`recover_partial` are orchestration-ROUTING flags, not per-repo
     # content: `_install`'s own docstring says they "reach ensure_installed
     # unchanged" on the CLI path (kwargs flow straight through, `ensure` among
-    # them), while the fixture path's source is a suite's own options instance
-    # that never carries them at all -- so the two legitimately disagree there
+    # them), while the marker path's source is the `test` verb's flags, which
+    # never carry them at all -- so the two legitimately disagree there
     # regardless of split-brain. The guard this test exists for is that every
     # OTHER field -- what a repo's body actually reads -- lands identically,
     # `lab_env` (declared by both paths' shared base) included. Nothing else
@@ -164,5 +168,5 @@ async def test_cli_and_fixture_build_the_same_options(widget_lab) -> None:
         f.name for f in dataclasses.fields(WidgetInstall) if f.name not in routing_only
     ]
     for field in content_fields:
-        assert getattr(cli_opts, field) == getattr(fixture_opts, field), field
-    assert cli_opts.lab_env == "x"
+        assert getattr(cli_opts, field) == getattr(marker_opts, field), field
+    assert cli_opts.lab_env == "prod"

@@ -17,7 +17,7 @@ optional — with no `[coverage.tiers]` table otto assumes one implicit tier
 named `system` of the `e2e` kind, the kind a lab run collects into
 ({doc}`tiers`).
 
-Retrieval then runs the suite normally, fetches each instrumented product's
+Retrieval then runs the tests normally, fetches each instrumented product's
 `.gcda` files from its own `cov_dir`, and — on a best-effort basis — produces
 a `capture.json` per host per product: one product's merged, source-resolved
 coverage on one host, stamped with the `base_commit` (the SUT's commit at
@@ -30,7 +30,7 @@ stamp mismatch during merge — gcov reporting that the fetched `.gcda` came
 from a different build than the local `.gcno` notes files — are logged and
 swallowed.  What survives is the fetched `.gcda` themselves, in the run's own
 local `cov/` tree: recovery re-processes those, because a successful fetch
-zeroes the host's copies behind it.  They land under `cov/` in the suite's
+zeroes the host's copies behind it.  They land under `cov/` in the run's
 output directory, keyed by host and then product —
 {ref}`the run tree <run-tree>` is the shape.
 
@@ -53,7 +53,7 @@ imply coverage, so pairing any of them with `--no-cov` is a usage error.
 
 Code running under otto can ask whether the lab is in coverage mode by reading
 `ctx.cov` on the active {class}`~otto.context.OttoContext`. This works in a
-suite, a fixture, an instruction or a library script. It is information only,
+test, a fixture, an instruction or a library script. It is information only,
 and reading it never cleans or fetches anything. The usual reason to read it is
 to avoid destroying counters that a coverage run still needs, for example by
 leaving a product's `.gcda` files in place instead of uninstalling the product.
@@ -74,8 +74,28 @@ coverage flag. If detection cannot finish, `ctx.cov` is `False` and one warning
 is logged, just as an auto `otto test` behaves. A broken `[coverage].hosts`
 selector is one example.
 
-See the [`ctx` fixture](../../cookbook/authoring/writing-suites.md#what-every-suite-gets)
-for a suite example and {ref}`instruction-coverage` for an instruction.
+In a test, read it from the
+[`ctx` fixture](../../cookbook/authoring/writing-tests.md#what-every-test-gets).
+The usual case is a teardown that would otherwise erase the counters before
+the post-run fetch:
+
+```python
+import pytest_asyncio
+
+
+class TestProduct:
+    @pytest_asyncio.fixture(autouse=True, scope="class")
+    @classmethod
+    async def deployed(cls, ctx):
+        await install_product()
+        yield
+        if ctx.cov:
+            await remove_binary_only()  # leave the .gcda files for the fetch
+        else:
+            await uninstall_product()
+```
+
+{ref}`instruction-coverage` shows the same for an instruction.
 
 The refusal is **one line plus a table** of every product it examined and what
 it concluded.  An excerpt, at a narrow terminal:
@@ -109,7 +129,7 @@ Three verdicts:
   `Product.instrumented()`, or set `instrumented = true` on the
   `[[products]]` entry.
 
-A product whose artifact the suite itself builds at run time is therefore
+A product whose artifact the tests themselves build at run time is therefore
 `unknown` at decision time, which is before the build: build it first, or
 declare it instrumented.
 
@@ -140,7 +160,7 @@ a custom pipeline), see the *Collecting coverage from Python* section of
 | `--cov-clean / --no-cov-clean` | Delete stale `.gcda` under each instrumented product's `cov_dir` before the run (on by default; `.gcda` counters are additive) |
 | `--cov-report, -r` | Also render the HTML report inline after the run (implies `--cov`) |
 | `--cov-report-dir PATH` | Explicit destination for the inline HTML report (implies `--cov-report`) |
-| `--cov-tickets-json PATH` | Also write the per-ticket coverage summary to PATH after the run (implies `--cov-report`). Needs `[coverage.tickets]` configured, checked before the suite starts — see {ref}`coverage-tickets-json` |
+| `--cov-tickets-json PATH` | Also write the per-ticket coverage summary to PATH after the run (implies `--cov-report`). Needs `[coverage.tickets]` configured, checked before any test runs — see {ref}`coverage-tickets-json` |
 
 See {doc}`../test/index` for the rest of `otto test`'s options, and
 {doc}`index` for the collection workflow these flags plug into.

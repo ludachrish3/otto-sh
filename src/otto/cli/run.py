@@ -37,7 +37,7 @@ P = ParamSpec("P")
 run_app = typer.Typer(
     name="run",
     no_args_is_help=True,
-    cls=make_registry_group(INSTRUCTIONS),
+    cls=make_registry_group(INSTRUCTIONS, app_of=lambda entry: entry.make_app()),
     context_settings={
         "help_option_names": ["-h", "--help"],
     },
@@ -171,8 +171,7 @@ def instruction(
     routes it never sees.
 
     When *options* is a dataclass, the decorator expands its fields (including
-    inherited ones) into individual CLI flags — exactly like ``OttoSuite``'s
-    auto-registration does for suite options.  The original function must
+    inherited ones) into individual CLI flags.  The original function must
     declare a parameter annotated with the options class; the decorator
     replaces it with the expanded fields and, at call time, constructs the
     populated dataclass instance before forwarding it to the function.
@@ -180,6 +179,14 @@ def instruction(
     If the function declares a parameter annotated as ``OttoContext``, that
     parameter is stripped from the CLI signature and injected at call time from
     the active context (DI-friendly, additive — existing handlers are unaffected).
+
+    Every instruction also takes the flags of every options class registered
+    for ``run`` (:func:`otto.params.register_options`). A parameter annotated
+    with one of those classes is stripped from the CLI signature and injected
+    with the parsed instance, the same one ``ctx.options(Cls)`` returns. An
+    *options* class that inherits a registered base shares that base's flags
+    rather than repeating them. A field that clashes with a ``run`` flag is
+    reported when ``otto run`` resolves the command, before any body runs.
 
     Usage without options (unchanged from before)::
 
@@ -290,9 +297,11 @@ def instruction(
         # No self-wrapping: the registered async handler runs under the command
         # lifecycle via the leaf-invoke wrapper's coroutine bridge
         # (cli/invoke._wrap_invoke) when `otto run <name>` dispatches it.
+        #
+        # Prepared here without the verb: this is what the decorator hands
+        # back, and preparing is where a missing options parameter is refused
+        # -- at decoration, not at the first `otto run`.
         target = prepare_command_target(func, options)
-        app = typer.Typer()
-        new_instruction = app.command(*args, **kwargs)(target)
 
         # A repo may not claim a first-party name. Overriding lab behavior
         # happens in ProjectActions -- which `otto run install` AND an
@@ -333,12 +342,23 @@ def instruction(
                 "or rename the instruction."
             )
 
+        def make_app() -> typer.Typer:
+            # Built when `otto run` resolves the command, not now: the flags
+            # include every class registered for `run`, and a later init
+            # module may still register one. Resolving those classes can
+            # import their modules, which only `otto run` should pay for.
+            app = typer.Typer()
+            app.command(*args, **kwargs)(
+                prepare_command_target(func, options, verb="run", repo=repo_name)
+            )
+            return app
+
         func_module = getattr(func, "__module__", "<unknown>")
         INSTRUCTIONS.register(
             cmd_name,
             InstructionEntry(
                 name=cmd_name,
-                sub_app=app,
+                make_app=make_app,
                 module=func_module,
                 # The SAME marker the first-party-name guard above reads, and
                 # the only place `registered_by` is ever filled in: one read of
@@ -348,6 +368,6 @@ def instruction(
             ),
             origin=func_module,
         )
-        return new_instruction
+        return target
 
     return decorator

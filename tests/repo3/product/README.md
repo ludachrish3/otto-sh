@@ -58,7 +58,7 @@ and `gcc/gcov-io.h` for that release.
 ## Build
 
 `build.sh` is the one command that builds this extension, and the
-`TestEmbeddedCoverage` suite runs it automatically before loading — so the
+`TestEmbeddedCoverage` class runs it automatically before loading — so the
 loaded `.llext` always matches the current source (the embedded analogue of
 repo1 recompiling its binary each run). To build by hand into the configured
 `[coverage.embedded].build_dir`:

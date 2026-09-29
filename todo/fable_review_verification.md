@@ -73,7 +73,7 @@ refactor wave itself. Ranked list at the bottom.
   consistently — schema, docs, CLI, completion.
 - **Remnant:** `self.suiteDir` / `self.testDir` (`src/otto/suite/suite.py:182,318`)
   — the lone camelCase island in the public suite API, actively taught in
-  `docs/guide/test.md:201` and `docs/cookbook/suite-recipes.md:160`. It slipped
+  `docs/guide/test.md:201` and `docs/cookbook/test-recipes.md:160`. It slipped
   the lint net because ruff N815 flags class-scope declarations, not
   instance-attribute assignments. Also camelCase artifact dir names
   `setupClass`/`teardownClass` (suite.py:212,221). No documented exemption —

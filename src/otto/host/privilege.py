@@ -323,14 +323,14 @@ class PosixPrivilege(UserlandHost):
             self._switch_creds(),
             user,
             password,
-            self._session_mgr.current_user,  # ty: ignore[unresolved-attribute]
+            self._live_session_mgr().current_user,  # ty: ignore[unresolved-attribute]
             getattr(self, "name", ""),
             self._history_prefix(),
             # getattr, not self.term: see _su_password's note above -- this
             # mixin also backs term-less hosts (LocalHost, DockerContainerHost).
             protocol=getattr(self, "term", None),
         )
-        self._session_mgr._set_current_user(applied[-1].login or "root")  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
+        self._live_session_mgr()._set_current_user(applied[-1].login or "root")  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
 
     @asynccontextmanager
     async def as_user(
@@ -356,7 +356,7 @@ class PosixPrivilege(UserlandHost):
         """
         if is_dry_run():
             self._refuse_elevation("as_user", user)
-        prev = self._session_mgr.current_user  # ty: ignore[unresolved-attribute]
+        prev = self._live_session_mgr().current_user  # ty: ignore[unresolved-attribute]
         applied = await perform_switch(
             _HostProxyIO(self),
             self._switch_creds(),
@@ -367,7 +367,7 @@ class PosixPrivilege(UserlandHost):
             self._history_prefix(),
             protocol=getattr(self, "term", None),
         )
-        self._session_mgr._set_current_user(applied[-1].login or "root")  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
+        self._live_session_mgr()._set_current_user(applied[-1].login or "root")  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
         try:
             yield self
         finally:
@@ -402,4 +402,4 @@ class PosixPrivilege(UserlandHost):
             await run_undo(
                 _HostProxyIO(self), hop, via, getattr(self, "name", ""), self._history_prefix()
             )
-        self._session_mgr._set_current_user(prev)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user to restore prior user  # ty: ignore[unresolved-attribute]
+        self._live_session_mgr()._set_current_user(prev)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user to restore prior user  # ty: ignore[unresolved-attribute]

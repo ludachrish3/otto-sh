@@ -19,33 +19,26 @@ from tests._fixtures.chaos import ChaosPoints, Surface, sweep_cancellation
 
 
 class _FakeHost:
-    """Minimal stand-in for a RemoteHost: has _connected and an idempotent close()."""
+    """Minimal stand-in for a host: an id and an idempotent close()."""
 
-    def __init__(self, host_id: str, connected: bool = True):
+    def __init__(self, host_id: str):
         self.id = host_id
-        self._is_connected = connected
         self.close_calls = 0
-
-    @property
-    def _connected(self) -> bool:
-        return self._is_connected
 
     async def close(self) -> None:
         self.close_calls += 1
-        self._is_connected = False
 
 
 @pytest.mark.asyncio
-async def test_hostscope_closes_only_connected_hosts():
+async def test_hostscope_sweep_closes_every_registered_host_and_names_them():
+    """Registration already means the host connected on this loop, so the sweep
+    closes each one (close() on an idle host is a cheap no-op) and returns their ids."""
     scope = HostScope()
-    live = _FakeHost("a", connected=True)
-    idle = _FakeHost("b", connected=False)
-    scope.register(live)
-    scope.register(idle)
-    async with scope:
-        pass
-    assert live.close_calls == 1
-    assert idle.close_calls == 0
+    a, b = _FakeHost("a"), _FakeHost("b")
+    scope.register(a)
+    scope.register(b)
+    assert await scope.sweep() == ["a", "b"]
+    assert (a.close_calls, b.close_calls) == (1, 1)
 
 
 @pytest.mark.asyncio
@@ -54,8 +47,7 @@ async def test_hostscope_register_is_deduped():
     h = _FakeHost("a")
     scope.register(h)
     scope.register(h)
-    async with scope:
-        pass
+    assert await scope.sweep() == ["a"]
     assert h.close_calls == 1
 
 
@@ -70,31 +62,26 @@ async def test_hostscope_isolates_errors():
     scope = HostScope()
     scope.register(boom)
     scope.register(ok)
-    async with scope:
-        pass
+    assert await scope.sweep() == ["ok"]
     assert ok.close_calls == 1
 
 
 @pytest.mark.asyncio
-async def test_hostscope_closes_hosts_without_connected_attr():
-    """A host lacking the RemoteHost-private ``_connected`` (e.g. a
-    DockerContainerHost / LocalHost, which are BaseHosts) must still be closed by
-    the scope rather than crash with AttributeError."""
-
-    class _NoConnFlag:
-        def __init__(self) -> None:
-            self.close_calls = 0
-
-        async def close(self) -> None:
-            self.close_calls += 1
-
-    h = _NoConnFlag()
-    assert not hasattr(h, "_connected")
-    scope = HostScope()
-    scope.register(h)
-    async with scope:
-        pass
-    assert h.close_calls == 1
+async def test_hostscope_sweep_skips_a_host_another_loop_now_owns():
+    """A host closed on this loop and since claimed by another is that loop's to close."""
+    other = asyncio.new_event_loop()
+    try:
+        moved = _FakeHost("moved")
+        moved._owner_loop = other
+        mine = _FakeHost("mine")
+        mine._owner_loop = asyncio.get_running_loop()
+        scope = HostScope()
+        scope.register(moved)
+        scope.register(mine)
+        assert await scope.sweep() == ["mine"]
+        assert moved.close_calls == 0
+    finally:
+        other.close()
 
 
 from otto.config.lab import Lab
@@ -171,12 +158,14 @@ def test_context_get_host_and_all_hosts_resolve_from_lab():
     assert not any("test3" in i for i in ids)
 
 
-def test_context_all_hosts_registers_into_scope():
+@pytest.mark.asyncio
+async def test_context_all_hosts_registers_nothing_until_a_host_connects():
+    """A host joins the scope of the loop it first connects on, not the one that listed it."""
     lab = _lab_with("test1")
     ctx = OttoContext(lab=lab)
     hosts = list(ctx.all_hosts())
     assert hosts
-    assert all(h in ctx.scope._hosts for h in hosts)
+    assert ctx.scope_for(asyncio.get_running_loop())._hosts == []
 
 
 def test_set_and_reset_context_round_trips():
@@ -250,8 +239,8 @@ def test_for_repo_is_a_facade_over_the_same_context_not_a_copy(tmp_path):
 
     A view that COPIED the context would pass every scoping test in
     ``tests/unit/config/test_fleet_scoping.py`` and still be wrong twice over:
-    hosts handed out by the view would register into a second
-    :class:`~otto.context.HostScope` that nothing closes, and a flag set on the
+    hosts handed out by the view would register into a second set of per-loop
+    :class:`~otto.context.HostScope` objects that nothing sweeps, and a flag set on the
     context after the view was built (``output_dir``, which the CLI stamps
     per-run) would never reach the repo acting under it.
     """
@@ -260,7 +249,11 @@ def test_for_repo_is_a_facade_over_the_same_context_not_a_copy(tmp_path):
     view = ctx.for_repo("acme")
 
     assert view.lab is ctx.lab
-    assert view.scope is ctx.scope  # ONE lifecycle scope, or hosts leak
+    loop = asyncio.new_event_loop()
+    try:
+        assert view.scope_for(loop) is ctx.scope_for(loop)  # ONE scope per loop, or hosts leak
+    finally:
+        loop.close()
     assert view.dry_run is True
     first_id = next(iter(lab.hosts))
     assert view.get_host(first_id) is lab.hosts[first_id]  # explicit targeting delegates
@@ -339,12 +332,12 @@ async def test_base_host_async_cm_delegates_to_close():
     from otto.host.host import BaseHost
 
     class _MinimalHost(BaseHost):
-        """Minimal BaseHost concrete subclass: tracks close() calls."""
+        """Minimal BaseHost concrete subclass: counts the ``_close`` that ``close()`` wraps."""
 
         def __init__(self) -> None:
             self.close_calls = 0
 
-        async def close(self) -> None:
+        async def _close(self) -> None:
             self.close_calls += 1
 
     h = _MinimalHost()
@@ -363,7 +356,7 @@ async def test_open_context_sets_and_tears_down():
     assert try_get_context() is None
     async with otto.open_context(lab=lab) as ctx:
         assert try_get_context() is ctx
-        list(ctx.all_hosts())  # registers into ctx.scope
+        list(ctx.all_hosts())  # hands hosts out; nothing connects, so nothing registers
     assert try_get_context() is None  # contextvar reset on exit
 
 
@@ -461,29 +454,15 @@ def test_otto_context_output_dir_defaults_none_and_is_settable():
 
 
 @pytest.mark.asyncio
-async def test_hostscope_exit_drains_registered_hosts():
-    """Scope exit sweeps AND forgets: a second enter/exit cycle (run_command
-    is invoked multiple times per command in suite/run.py) must not re-close
-    hosts swept by the first."""
-
-    class _NoConnFlag:
-        """Host without _connected attr; close() is unconditionally called if not drained."""
-
-        def __init__(self) -> None:
-            self.close_calls = 0
-
-        async def close(self) -> None:
-            self.close_calls += 1
-
+async def test_hostscope_sweep_drains_registered_hosts():
+    """A sweep closes AND forgets: a second sweep of the same scope (a loop
+    swept twice) must not re-close hosts the first one closed."""
     scope = HostScope()
-    h = _NoConnFlag()
-    assert not hasattr(h, "_connected")
+    h = _FakeHost("a")
     scope.register(h)
-    async with scope:
-        pass
+    assert await scope.sweep() == ["a"]
     assert h.close_calls == 1
-    async with scope:
-        pass
+    assert await scope.sweep() == []
     assert h.close_calls == 1
 
 
@@ -539,8 +518,7 @@ async def test_hostscope_closes_children_before_their_parent():
     scope = HostScope()
     scope.register(child)
     scope.register(parent)
-    async with scope:
-        pass
+    assert await scope.sweep() == ["child", "parent"]
     assert order == ["child", "parent"]
 
 
@@ -554,8 +532,7 @@ async def test_hostscope_ranks_a_three_level_parent_chain():
     scope.register(top)
     scope.register(mid)
     scope.register(leaf)
-    async with scope:
-        pass
+    assert await scope.sweep() == ["leaf", "mid", "top"]
     assert order == ["leaf", "mid", "top"]
 
 
@@ -570,8 +547,8 @@ async def test_hostscope_child_close_failure_still_closes_the_parent(caplog):
     scope.register(child)
     scope.register(parent)
     with caplog.at_level(logging.WARNING, logger="otto.context"):
-        async with scope:
-            pass
+        closed = await scope.sweep()
+    assert closed == ["parent"]
     assert order == ["child", "parent"]
     assert any("'child'" in r.message for r in caplog.records)
 
@@ -594,8 +571,7 @@ async def test_hostscope_sweep_chain():
         scope = HostScope()
         for name in names:
             scope.register(_PointHost(name, points))
-        async with scope:
-            pass
+        await scope.sweep()
 
     def oracle(points, outcome, exc_type, k) -> None:
         # Both variants: an injected failure inside ONE host's close is
@@ -613,27 +589,6 @@ async def test_hostscope_sweep_chain():
     assert report.skipped["command-failure"] == len(names)
     for name in ("cancellation", "connection-dropped", "connection-reset", "timeout"):
         assert report.injected[name] == len(names), name
-
-
-def test_hostscope_rebuild_connections_hits_every_host_with_the_hook():
-    scope = HostScope()
-    calls: "list[str]" = []
-
-    class _WithHook:
-        def __init__(self, name: str) -> None:
-            self.id = name
-
-        def rebuild_connections(self) -> None:
-            calls.append(self.id)
-
-    class _WithoutHook:
-        id = "plain"
-
-    scope.register(_WithHook("a"))
-    scope.register(_WithoutHook())
-    scope.register(_WithHook("b"))
-    scope.rebuild_connections()
-    assert calls == ["a", "b"]
 
 
 # ── ctx.cov: coverage awareness, detected lazily when nothing decided it ─────

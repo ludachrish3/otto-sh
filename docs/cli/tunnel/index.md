@@ -18,7 +18,7 @@ Every capability is a plain callable first — `otto tunnel` is a thin CLI
 wrapper over `otto.tunnel.add_tunnel` / `remove_tunnel` /
 `remove_all_tunnels` / `discover_tunnels` / `check_tunnel`. See the
 {doc}`API reference <../../api/tunnel>` to call them directly from an
-instruction, a suite, or your own script.
+instruction, a test, or your own script.
 
 ```{note}
 Every tunnel is **bidirectional** — a new flow can originate from either

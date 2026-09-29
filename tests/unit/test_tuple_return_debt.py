@@ -46,7 +46,6 @@ PERMANENT: dict[tuple[str, str], str] = {
 }
 
 DEBT: dict[tuple[str, str], str] = {
-    ("config/completion_cache.py", "collect_current_commands"): "two command lists",
     ("coverage/attribution.py", "attribute_tickets"): "three unrelated maps",
     ("host/binary_loader.py", "check_loaded"): "(ok, detail) — a Result in disguise",
     ("host/connections.py", "credentials"): "(user, password) pair",

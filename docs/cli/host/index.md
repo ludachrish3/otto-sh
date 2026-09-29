@@ -199,7 +199,7 @@ Custom verbs on third-party host classes may return plain values instead of a
 
 Every verb here is a method on {class}`~otto.host.host.BaseHost` first (see
 {doc}`../../api/host/index`) — calling
-them from an instruction or a suite is {doc}`../../cookbook/authoring/writing-instructions`.
+them from an instruction or a test is {doc}`../../cookbook/authoring/writing-instructions`.
 Hosts are also otto's most extensible area: register new connection or transfer
 backends ({doc}`../../cookbook/extending/extending-backends`) and bring up embedded
 targets otto doesn't ship support for

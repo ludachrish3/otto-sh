@@ -63,16 +63,16 @@ COMMANDS = [
 
 # Tab-completion showcases: snippet name -> the COMP_WORDS line completed.
 # Every candidate list is served by otto's real completion machinery — the
-# registries (suites, instructions, term backends), the class-scoped host
-# verb menu, and the host-id sources.
+# registries (instructions, term backends), the test names the completion
+# cache parses from the repo's test files, the class-scoped host verb menu,
+# and the host-id sources.
 COMPLETIONS = {
     "host-ids": "otto host ",
     "host-verbs": "otto host example-device ",
     "term-backends": "otto host example-device --term ",
     "instructions": "otto run ",
-    "suites": "otto test ",
     "lab-names": "otto --lab ",
-    "test-names": "otto test --tests ",
+    "test-names": "otto test ",
 }
 
 _PLACEHOLDER_LINE = "(placeholder — build once with Chromium/CLI available for real output)"

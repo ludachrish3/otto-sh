@@ -1,27 +1,30 @@
-"""Pytest plugin objects for otto suites.
+"""The pytest plugin that hands otto's fixtures to every test.
 
-Imported only when running a suite — kept out of register.py so importing the
-registry never pulls in pytest.
+Imported only when a pytest session runs (:mod:`otto.suite.run`), so importing
+``otto.suite`` never pulls in pytest.
 """
 
+import contextvars
 import logging
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-import pytest_asyncio
 
 from ..errors import EnsureStateError
 from .expect import ExpectCollector
+from .layout import ArtifactLayout
+from .loops import runner_for
 from .markers import ENSURE_VERBS, OTTO_MARKERS, ensure_path, ensure_path_problem
-from .suite import _sanitize_node_name
 
 if TYPE_CHECKING:
     # Typing only: the converge functions are resolved inside `_converge`
     # (see there), so nothing here needs otto.project at module scope — and
     # `Result` is only ever read, never constructed.
+    from ..params import OptionsSource
     from ..result import Result
+    from .monitor_fixture import MonitorHandle
 
 _logger = logging.getLogger(__name__)
 
@@ -38,7 +41,7 @@ tells ``test_dir`` a run is not repeating, so a plain run keeps the flat
 """
 
 otto_test_dir_base_key: pytest.StashKey[Path] = pytest.StashKey()
-"""The un-suffixed ``<suite_dir>/<node name>`` the ``test_dir`` fixture resolved.
+"""The un-suffixed directory the ``test_dir`` fixture resolved from the layout.
 
 Parked so the repeat loop can re-point ``test_dir`` at the next iteration
 without a second copy of the sanitize-and-join rule. Present only once a test
@@ -46,14 +49,23 @@ has actually REQUESTED ``test_dir`` — that is what keeps the loop from creatin
 directories for a test that never asked for one.
 """
 
-otto_options_plugin_key: pytest.StashKey["OttoOptionsPlugin"] = pytest.StashKey()
-"""Where ``pytest_configure`` parks the plugin instance for its static fixtures.
+otto_layout_key: pytest.StashKey[ArtifactLayout] = pytest.StashKey()
+"""The run's :class:`~otto.suite.layout.ArtifactLayout`, parked by ``pytest_configure``.
+
+Built once per pytest session (see :mod:`otto.suite.run`) and handed to
+``OttoFixturesPlugin`` at construction; the ``module_dir``/``test_dir``
+fixtures read it from here rather than from the plugin instance so they stay
+plain ``staticmethod``/instance fixtures with no other coupling to it.
+"""
+
+otto_fixtures_plugin_key: pytest.StashKey["OttoFixturesPlugin"] = pytest.StashKey()
+"""Where ``pytest_configure`` parks the plugin instance, for code holding only a ``Config``.
 
 pytest 9.1 deprecates a class-scoped fixture that is a bound instance method —
 of a plugin object as much as of a test class (the check is only "is
-``__self__`` a type") — and pytest 10 makes it an error. The class-scoped
-fixtures here are therefore staticmethods; the one that needs plugin state
-(``suite_options``) finds it through ``request.config``.
+``__self__`` a type") — and pytest 10 makes it an error. A wider-scoped fixture
+here is therefore a staticmethod, and one that needs plugin state finds the
+plugin through ``request.config`` under this key.
 """
 
 
@@ -65,7 +77,8 @@ def iteration_dir(base: Path, iteration: int | None) -> Path:
     repeat loop logs, so a reader pairs a directory with a log line by eye.
 
     Args:
-        base: The test's un-suffixed ``<suite_dir>/<node name>`` directory.
+        base: The test's un-suffixed directory, from
+            :meth:`~otto.suite.layout.ArtifactLayout.test_dir`.
         iteration: The 1-based iteration number, or ``None`` outside stability mode.
 
     Returns:
@@ -86,68 +99,42 @@ def _raise_unless_converged(result: "Result", step: str) -> None:
         raise EnsureStateError(f"ensure {step} failed: {result.msg}")
 
 
-async def _converge(step: str, suite_options: Any | None) -> None:
+async def _converge(step: str, source: "OptionsSource") -> None:
     """Run one ``ensure`` step through the same ``otto.project`` function.
 
     This is the function ``otto run <name> --ensure`` calls, so a marker and
-    the command cannot diverge -- and the suite's options are the source each
-    repo's body is built from, by declaring class: a suite that inherits the
-    base its repo's install options inherit steers that install; anything
-    else takes defaults. The function is looked up on the package at call
-    time (not imported at module scope): ``otto.project`` is the seam every
-    other caller uses, and resolving late is what lets a test double stand in
-    for it.
+    the command cannot diverge. *source* is the dispatched verb's parsed
+    flags (:meth:`otto.context.OttoContext.verb_option_source`), which each
+    repo's install body builds its own options class from by field name, as
+    ``otto run`` does: a flag registered only for ``run`` takes its default
+    here. The function is looked up on the package at call time (not
+    imported at module scope): ``otto.project`` is the seam every other
+    caller uses, and resolving late is what lets a test double stand in for
+    it.
     """
     from .. import project
-    from ..params import OptionsSource
 
     converge = getattr(project, ENSURE_VERBS[step])
-    _raise_unless_converged(await converge(OptionsSource.from_instance(suite_options)), step)
+    _raise_unless_converged(await converge(source), step)
 
 
-class OttoOptionsPlugin:
-    """Pytest plugin that provides the suite Options instance as a fixture.
+class OttoFixturesPlugin:
+    """Pytest plugin that gives every test, class or plain function, otto's fixtures.
 
-    Tests request the ``suite_options`` fixture as a parameter::
+    It provides the ``ctx``, ``module_dir``, ``test_dir``, ``expect`` and
+    ``monitor`` fixtures, plus the ``ensure`` hook (the autouse converge that
+    honors ``@pytest.mark.ensure``) and the ``expect`` hook (the call-phase
+    wrapper that fails a test whose soft checks recorded failures)::
 
-        async def test_something(self, suite_options) -> None:
-            assert suite_options.device_type == "router"
+        async def test_something(ctx, test_dir, expect) -> None:
+            opts = ctx.options(DeviceOptions)
+            expect(opts.device_type == "router")
     """
 
-    __name__ = "otto-options"
+    __name__ = "otto-fixtures"
 
-    def __init__(self, options: Any | None) -> None:
-        self.options = options
-
-    @pytest.fixture(scope="class")
-    @staticmethod
-    def suite_options(request: pytest.FixtureRequest) -> Any:
-        """Return the suite's Options instance.
-
-        Single-suite runs (``otto test <SuiteName> --flags``) pass the
-        CLI-built instance in — returned as-is. Selection runs
-        (``otto test --tests ...`` / ``-m ...``) span suites, so each suite's
-        ``Options`` is default-constructed once per class; required fields
-        make the suite's tests fail with a pointer at the single-suite form.
-        A ``staticmethod`` reading its plugin from ``otto_options_plugin_key``.
-        """
-        plugin = request.config.stash[otto_options_plugin_key]
-        if plugin.options is not None:
-            return plugin.options
-        cls = getattr(request, "cls", None)
-        if cls is None:
-            return None
-        opts_cls = cls.Options
-        if opts_cls is None:
-            return None
-        try:
-            return opts_cls()
-        except Exception as exc:  # noqa: BLE001 — opts_cls() may raise pydantic ValidationError, TypeError, or any other construction error; all are reported as a missing-options hint
-            pytest.fail(
-                f"suite {cls.__name__!r} has required options — "
-                f"run `otto test {cls.__name__} ...` to pass them ({exc})",
-                pytrace=False,
-            )
+    def __init__(self, *, layout: ArtifactLayout) -> None:
+        self._layout = layout
 
     @pytest.fixture(scope="session")
     def ctx(self) -> Any:
@@ -162,37 +149,38 @@ class OttoOptionsPlugin:
 
     # ── artifact directories (spec §5.3) ─────────────────────────────────────
 
-    @pytest.fixture(scope="class")
+    @pytest.fixture(scope="module")
     @staticmethod
-    def suite_dir(request: pytest.FixtureRequest) -> Path:
-        """Return this suite's artifact directory: ``<run output dir>/<ClassName>``.
+    def module_dir(request: pytest.FixtureRequest) -> Path:
+        """Return this module's artifact directory, shared by every test in it. Created on request.
 
-        A plain test function (no class) gets its module's stem instead;
-        pytest resolves a class-scoped fixture outside a class per function,
-        and the ``mkdir`` is idempotent. Created when requested — like
-        ``tmp_path`` — so a test that never names it leaves nothing behind.
+        ``<run output dir>/<module's path relative to its repo's test root,
+        suffix dropped>`` — see
+        :meth:`~otto.suite.layout.ArtifactLayout.module_dir` for the exact
+        rule (it disambiguates two same-named modules living in different
+        packaged test directories). A plain test function and every class in
+        the same file share this one directory; a class that wants its own
+        shared space makes a subdirectory of it.
 
-        A ``staticmethod`` because pytest 9 deprecates every class-scoped
-        fixture whose function is bound to an *instance* — a plugin object's
-        included (``resolve_fixture_function`` only checks ``__self__`` is a
-        type). Nothing here reads plugin state, so the binding is free to go.
+        Module-scoped: pytest resolves a class-scoped fixture outside a class
+        per function anyway, and the module is the layout's own unit. A
+        ``staticmethod`` because it holds no plugin state (the layout comes off
+        ``request.config``), not out of necessity — the pytest-9
+        class-scoped-instance-method deprecation that
+        ``otto_fixtures_plugin_key``'s docstring explains doesn't reach a
+        module-scoped fixture at all.
         """
-        from ..context import get_context
-
-        output_dir = get_context().output_dir
-        if output_dir is None:
-            raise RuntimeError("output_dir is not set; create_output_dir must run before suite")
-        cls = getattr(request, "cls", None)
-        name = cls.__name__ if cls is not None else Path(str(request.module.__file__)).stem
-        path = output_dir / name
+        path = request.config.stash[otto_layout_key].module_dir(request.path)
         path.mkdir(parents=True, exist_ok=True)
         return path
 
     @pytest.fixture
-    def test_dir(self, request: pytest.FixtureRequest, suite_dir: Path) -> Path:
-        """This test's artifact directory: ``suite_dir/<sanitized node name>``.
+    def test_dir(self, request: pytest.FixtureRequest) -> Path:
+        """This test's artifact directory; one ``iteration_N`` level more in stability runs.
 
-        Parametrized tests keep unique names (``test_foo[a]`` → ``test_foo_a_``).
+        ``module_dir/<Class>/.../<sanitized test name>`` — see
+        :meth:`~otto.suite.layout.ArtifactLayout.test_dir`. Parametrized tests
+        keep unique names (``test_foo[a]`` → ``test_foo_a_``).
 
         In stability mode (``--iterations`` / ``--duration``) one more level
         follows — ``.../iteration_1``, ``iteration_2``, … — so each repeat of
@@ -200,7 +188,7 @@ class OttoOptionsPlugin:
         the previous one's. The fixture resolves once, at setup; the repeat
         loop re-points it per iteration from the base path stashed here.
         """
-        base = suite_dir / _sanitize_node_name(request.node.name)
+        base = request.config.stash[otto_layout_key].test_dir(request.node)
         request.node.stash[otto_test_dir_base_key] = base
         path = iteration_dir(base, request.node.stash.get(otto_iteration_key, None))
         path.mkdir(parents=True, exist_ok=True)
@@ -220,6 +208,32 @@ class OttoOptionsPlugin:
         collector = ExpectCollector(logger=_logger)
         request.node.stash[otto_expect_key] = collector
         return collector
+
+    # ── monitor ──────────────────────────────────────────────────────────────
+
+    @pytest.fixture
+    def monitor(self, request: pytest.FixtureRequest) -> "Iterator[MonitorHandle]":
+        """Start a per-test metrics monitor on demand; stopped for you at teardown.
+
+        ``runner_for(request)`` is resolved here, before the ``yield`` — as a
+        same-setup-time dependency, not only at teardown — so pytest tears it
+        down LIFO *after* this fixture's own finalizer runs. Deferring the
+        lookup to teardown (as this used to) raced a ``loop_scope="function"``
+        test's own runner: pytest-asyncio's ``_function_scoped_runner`` is
+        function-scoped too, and without this fixture depending on it at
+        setup, nothing pins their teardown order — the runner fixture could
+        finalize (closing its loop) before ``monitor``'s finalizer asks for
+        it, raising at teardown and leaving ``stop()`` never called (the
+        archive's ``end`` stays unstamped).
+        """
+        from .monitor_fixture import MonitorHandle
+        from .plugin import otto_plugin_key
+
+        runner = runner_for(request)
+        handle = MonitorHandle(plugin=request.config.stash.get(otto_plugin_key, None))
+        yield handle
+        if handle.started:
+            runner.run(handle.stop(), context=contextvars.copy_context())
 
     @pytest.hookimpl(wrapper=True)
     def pytest_pyfunc_call(self, pyfuncitem: pytest.Function) -> Generator[None, object, object]:
@@ -245,14 +259,18 @@ class OttoOptionsPlugin:
     # ── the ensure marker ────────────────────────────────────────────────────
 
     def pytest_configure(self, config: pytest.Config) -> None:
-        """Register the built-in markers and park this plugin for its static fixtures.
+        """Register the built-in markers and park this plugin and its layout.
 
         ``--strict-markers`` runs accept ``ensure``/``retry`` because of the
-        first; ``suite_options`` finds its plugin because of the second.
+        first; code holding only the ``Config`` finds this plugin, and
+        ``module_dir``/``test_dir`` find the run's
+        :class:`~otto.suite.layout.ArtifactLayout`, because of the second and
+        third.
         """
         for line in OTTO_MARKERS.values():
             config.addinivalue_line("markers", line)
-        config.stash[otto_options_plugin_key] = self
+        config.stash[otto_fixtures_plugin_key] = self
+        config.stash[otto_layout_key] = self._layout
 
     def pytest_collection_modifyitems(self, items: list[pytest.Item]) -> None:
         """One duty once collection is complete.
@@ -277,35 +295,34 @@ class OttoOptionsPlugin:
                     f"{item.nodeid}: @pytest.mark.ensure{marker.args!r}: {problem}"
                 )
 
-    @pytest_asyncio.fixture(autouse=True)
-    async def _otto_ensure(self, request: pytest.FixtureRequest) -> None:
-        """Converge the lab along the closest ``ensure`` marker's path before the body.
+    @pytest.fixture(autouse=True)
+    def _otto_ensure(self, request: pytest.FixtureRequest) -> None:
+        """Converge the lab along the closest ``ensure`` marker's path, on the test's own loop.
+
+        Sync on purpose. A converge opens host connections, and a connection
+        belongs to the loop that opened it, so each step must run on the loop
+        the test body runs on. An async fixture would run on a loop chosen by
+        its own loop scope instead, which is the session loop under
+        ``otto test`` even for a test pinned to its class's, module's or own
+        loop. So this fixture looks up the runner of the test's own loop
+        (:func:`~otto.suite.loops.runner_for`) and drives each step on it.
 
         Function-scoped: the guarantee is per test CASE, and when the state
-        already holds the cost is one status sweep. No ``loop_scope``: under
-        ``otto test``'s ``ASYNCIO_LOOP_ARGS`` an unpinned function fixture runs
-        on the loop the requesting test runs on, which matters because a
-        converge opens host connections and a connection is bound to the loop
-        that opened it. ``get_closest_marker`` is what makes the closest node
-        win outright (test, then class, then module); nothing merges.
+        already holds the cost is one status sweep. ``get_closest_marker`` is
+        what makes the closest node win outright (test, then class, then
+        module); nothing merges.
 
-        ``suite_options`` may be simply absent (``pytest.FixtureLookupError``
-        — a non-suite, ``ensure``-marked test has no such fixture in scope),
-        which this catches and treats as "no instance source" (defaults).
-        It is deliberately NOT caught if ``suite_options`` itself raises
-        ``pytest.fail`` — the ``OttoOptionsPlugin.suite_options`` fixture does
-        that when the suite's ``Options`` class has required fields under a
-        selection run that never supplied them. Converging from defaults in
-        that case would silently install the wrong thing, so a required-
-        options suite fails an ``ensure``-marked test at setup instead, with
-        the existing "run `otto test <Suite> ...`" hint.
+        The converge builds each install body's options from the ``test``
+        verb's parsed flags, as bound on the run's context
+        (:meth:`~otto.context.OttoContext.verb_option_source`); with nothing
+        bound, every body takes its defaults.
         """
+        from ..context import get_context
+
         marker = request.node.get_closest_marker("ensure")
         if marker is None:
             return
-        try:
-            suite_options = request.getfixturevalue("suite_options")
-        except pytest.FixtureLookupError:
-            suite_options = None
+        source = get_context().verb_option_source()
+        runner = runner_for(request)
         for step in ensure_path(marker.args):
-            await _converge(step, suite_options)
+            runner.run(_converge(step, source), context=contextvars.copy_context())

@@ -214,10 +214,10 @@ class TestLabFreeSubcommands:
 class TestLabFreeFlags:
     """Subcommand --help and --list-* discovery flags must work without --lab.
 
-    These flags inspect otto itself (registered suites / instructions) and
+    These flags inspect otto itself (collected tests / instructions) and
     touch no host resources, so forcing --lab would be a pointless barrier.
 
-    Boundary: actual command execution (``otto test <Suite>``) and
+    Boundary: actual command execution (``otto test NAME``) and
     ``otto --list-hosts`` still require --lab because they operate on real
     lab state.
     """
@@ -235,15 +235,6 @@ class TestLabFreeFlags:
     def test_run_help_exits_zero_without_lab(self):
         """``otto run --help`` must succeed with no --lab."""
         result = runner.invoke(app, ["run", "--help"], env={"OTTO_LAB": ""})
-        assert result.exit_code == 0, result.output
-
-    def test_test_list_suites_exits_zero_without_lab(self, tmp_path):
-        """``otto test --list-suites`` must succeed with no --lab."""
-        result = runner.invoke(
-            app,
-            ["test", "--list-suites"],
-            env={"OTTO_LAB": "", "OTTO_XDIR": str(tmp_path)},
-        )
         assert result.exit_code == 0, result.output
 
     def test_test_list_tests_exits_zero_without_lab(self, tmp_path):
@@ -275,26 +266,14 @@ class TestLabFreeFlags:
 
     # ── Boundary: these still require --lab ───────────────────────────────────
 
-    def test_actual_suite_run_still_requires_lab(self):
-        """``otto test <Suite>`` (no --help/--list-*) must still exit 2 without --lab.
+    def test_an_actual_test_run_still_requires_lab(self):
+        """``otto test NAME`` (no --help/--list-*) must still exit 2 without --lab.
 
-        With lazy loading (Task 7), the ``--lab`` requirement is enforced by the
-        leaf-invoke preamble rather than the root callback, so this must exercise a
-        *real* registered suite leaf (an unknown name would error at parse time with
-        "No such command", never reaching the preamble). A registered suite reaches
-        the preamble, which enforces ``--lab`` and exits 2.
+        The ``--lab`` requirement is enforced by the leaf-invoke preamble rather
+        than the root callback; a name is only resolved after it, so any name
+        reaches the preamble, which enforces ``--lab`` and exits 2.
         """
-        from otto.suite import OttoSuite
-        from otto.suite.register import register_suite_class
-
-        class _LabReqSuite(OttoSuite):
-            pass
-
-        register_suite_class(_LabReqSuite)
-
-        # suite_app resolves _LabReqSuite lazily from the SUITES registry —
-        # no explicit attach step needed.
-        result = runner.invoke(app, ["test", "_LabReqSuite"], env={"OTTO_LAB": ""})
+        result = runner.invoke(app, ["test", "test_anything"], env={"OTTO_LAB": ""})
         assert result.exit_code == 2, result.output
         assert "--lab" in result.stderr or "--lab" in result.output
 
@@ -999,9 +978,9 @@ class TestEntryBoundaryRendersTheCoverageRefusal:
 
     It is honest about being a wiring check. It reddens when the call or its
     import is removed or renamed, which is the regression it exists for
-    (`otto test <Suite> --cov` refusing with a bare line and no table, because
-    a named suite runs through the suite registry and reaches no leaf
-    handler); it cannot redden for a rendering bug, and does not claim to.
+    (`otto test NAMES --cov` refusing with a bare line and no table, because
+    the refusal is raised from inside `run_tests`, which no leaf handler
+    catches); it cannot redden for a rendering bug, and does not claim to.
     """
 
     _HELPER = "render_instrumentation_refusal"

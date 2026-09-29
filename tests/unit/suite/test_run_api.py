@@ -1,15 +1,15 @@
 """Unit tests for the ``otto.suite.run`` library API.
 
-Exercises the extracted suite-run engine as a plain library call — no Typer
-context, no ``ctx.meta``. Covers the public surface (``RunOptions``,
-``SuiteRunResult``, ``run_suite``, ``find_suite``, ``resolve_output_dir``) plus
-the internal exit-code mapping (``_final_exit_code``) that folds a stability
-threshold violation into the invocation's exit code.
+Exercises the test-run engine as a plain library call — no Typer context, no
+``ctx.meta``. Covers the public surface (``RunOptions``, ``SuiteRunResult``,
+``run_tests``, ``resolve_output_dir``) plus the internal exit-code mapping
+(``_final_exit_code``) that folds a stability threshold violation into the
+invocation's exit code.
 """
 
+import asyncio
 import dataclasses
 from pathlib import Path
-from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -19,27 +19,38 @@ from otto.suite.run import (
     RunOptions,
     SuiteRunResult,
     _final_exit_code,
-    find_suite,
     resolve_output_dir,
-    run_selection,
-    run_suite,
+    run_tests,
 )
 from tests._fixtures.gitrepo import TmpGitRepo
+from tests._fixtures.sut_repos import DOUBLE_TEST_NAME as _ALPHA
+from tests._fixtures.sut_repos import collected, pytest_main_returning
+from tests._fixtures.sut_repos import repo_double as _stub_repo
+
+
+def _use_repo(monkeypatch, repo: MagicMock) -> MagicMock:
+    """Make *repo* the lab's only repo."""
+    import otto.config
+
+    monkeypatch.setattr(otto.config, "get_repos", lambda: [repo])
+    return repo
 
 
 def test_suite_package_reexports_selection_api():
-    """otto.suite is the documented library facade — run_selection and both
+    """otto.suite is the documented library facade — run_tests and both
     selection exceptions must be reachable from it directly, not only from the
     internal otto.suite.run / otto.suite.selection submodules."""
+    import otto
     import otto.suite
     from otto.suite.run import NoTestsMatchedError as _NoTestsMatchedError
-    from otto.suite.run import run_selection as _run_selection
+    from otto.suite.run import run_tests as _run_tests
     from otto.suite.selection import UnknownSelectionError as _UnknownSelectionError
 
-    assert otto.suite.run_selection is _run_selection
+    assert otto.suite.run_tests is _run_tests
+    assert otto.run_tests is _run_tests
     assert otto.suite.NoTestsMatchedError is _NoTestsMatchedError
     assert otto.suite.UnknownSelectionError is _UnknownSelectionError
-    assert "run_selection" in otto.suite.__all__
+    assert "run_tests" in otto.suite.__all__
     assert "NoTestsMatchedError" in otto.suite.__all__
     assert "UnknownSelectionError" in otto.suite.__all__
 
@@ -87,30 +98,6 @@ def test_final_exit_code_pytest_rc_wins_over_stability():
     assert _final_exit_code(rc=1, unstable=True) == 1
 
 
-def test_find_suite_unknown_lists_registered():
-    with pytest.raises(LookupError, match="registered"):
-        find_suite("TestNoSuchSuite")
-
-
-def test_find_suite_returns_registered_class():
-    from otto.suite import OttoSuite
-    from otto.suite.register import SUITES, register_suite_class
-    from otto.suite.run import find_suite as _find
-
-    class _FindMeSuite(OttoSuite):
-        pass
-
-    # Explicit cleanup (matching the seeding convention in
-    # tests/unit/cli/test_listing.py) on top of this directory's autouse
-    # _isolate_suites fixture, so the global SUITES registry never leaks even
-    # if this test runs outside that conftest.
-    register_suite_class(_FindMeSuite)
-    try:
-        assert _find("_FindMeSuite") is _FindMeSuite
-    finally:
-        SUITES.unregister("_FindMeSuite")
-
-
 def test_resolve_output_dir_explicit_wins(tmp_path):
     assert resolve_output_dir(tmp_path) == tmp_path
 
@@ -132,113 +119,82 @@ def test_resolve_output_dir_uses_context_output_dir(tmp_path):
         reset_context(token)
 
 
-def test_run_suite_returns_result(tmp_path, monkeypatch):
-    """The library entrypoint runs a suite and returns a populated result."""
-    import otto.config
-
-    monkeypatch.setattr(otto.config, "get_repos", list)
-    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
-
-    class _LibSuite:
-        pass
-
-    result = run_suite(_LibSuite, output_dir=tmp_path)
-    assert isinstance(result, SuiteRunResult)
-    assert result.exit_code == 0
-    assert result.passed
-    assert result.output_dir == tmp_path
-    assert result.junit_paths == [tmp_path / "junit.xml"]
-    assert result.stability_unstable is False
-
-
-# ── run_suite: pytest.main argument wiring ───────────────────────────────────
-#
-# Ported from the old CLI-wrapper tests (tests/unit/cli/test_test.py's
-# TestRunSuiteInternals / TestRunSuiteReport) when the suite-run engine moved
-# out of otto.cli.test: they now exercise the library run_suite directly.
+# ── run_tests: pytest.main argument wiring ───────────────────────────────────
 
 
 def _capture_pytest_main(monkeypatch, rc=None):
     """Patch pytest.main to record its args list and return *rc* (default OK)."""
     captured: dict = {}
 
-    def fake_main(args, **_kw):
+    def fake_main(args, plugins=(), **_kw):
         captured["args"] = args
+        collected(plugins)
         return rc if rc is not None else pytest.ExitCode.OK
 
     monkeypatch.setattr("pytest.main", fake_main)
     return captured
 
 
-def test_run_suite_passes_suite_file_and_keyword(tmp_path, monkeypatch):
-    """run_suite derives the suite's file (inspect.getfile) and keys pytest by class name."""
-    import inspect
+def test_run_tests_targets_the_test_directories_and_passes_no_keyword(tmp_path, monkeypatch):
+    """The session's targets are the repo's test directories; the names ride on the plugin.
 
-    import otto.config
-
-    monkeypatch.setattr(otto.config, "get_repos", list)
+    Never a file or node id argument (it would bypass a conftest's
+    ``collect_ignore``), and never ``-k`` (substring semantics).
+    """
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
     captured = _capture_pytest_main(monkeypatch)
+    plugin_kwargs = _capture_otto_plugin(monkeypatch)
 
-    class _KwSuite:
-        pass
-
-    run_suite(_KwSuite, output_dir=tmp_path)
+    run_tests([_ALPHA], output_dir=tmp_path)
     args = captured["args"]
-    assert inspect.getfile(_KwSuite) in args
-    assert "-k" in args
-    assert args[args.index("-k") + 1] == "_KwSuite"
+    assert [a for a in args if a.startswith(str(tmp_path))] == [str(tmp_path / "tests")]
+    assert "-k" not in args
+    assert plugin_kwargs["names"] == [_ALPHA]
 
 
-def test_run_suite_auto_junit_path_under_output_dir(tmp_path, monkeypatch):
-    import otto.config
-
-    monkeypatch.setattr(otto.config, "get_repos", list)
+def test_run_tests_auto_junit_path_under_output_dir(tmp_path, monkeypatch):
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
     captured = _capture_pytest_main(monkeypatch)
 
-    class _JunitSuite:
-        pass
-
-    run_suite(_JunitSuite, output_dir=tmp_path)
+    run_tests([_ALPHA], output_dir=tmp_path)
     junit_arg = next((a for a in captured["args"] if "--junitxml" in a), None)
     assert junit_arg is not None
     assert str(tmp_path) in junit_arg
 
 
-def test_run_suite_passes_markers(tmp_path, monkeypatch):
-    import otto.config
-
-    monkeypatch.setattr(otto.config, "get_repos", list)
+def test_run_tests_passes_markers(tmp_path, monkeypatch):
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
     captured = _capture_pytest_main(monkeypatch)
 
-    class _MarkerSuite:
-        pass
-
-    run_suite(_MarkerSuite, run_options=RunOptions(markers="not integration"), output_dir=tmp_path)
+    run_tests([_ALPHA], run_options=RunOptions(markers="not integration"), output_dir=tmp_path)
     args = captured["args"]
     assert "-m" in args
     assert args[args.index("-m") + 1] == "not integration"
 
 
-def test_run_suite_monitor_flags_reach_plugin(tmp_path, monkeypatch):
-    """--monitor settings flow to OttoPlugin; the output path defaults to monitor.json."""
-    import otto.config
-
-    monkeypatch.setattr(otto.config, "get_repos", list)
-    _capture_pytest_main(monkeypatch)
+def _capture_otto_plugin(monkeypatch) -> dict:
+    """Make ``OttoPlugin`` record its constructor kwargs (the plugin itself is unchanged)."""
+    from otto.suite.plugin import OttoPlugin
 
     captured: dict = {}
 
-    class _CapturingPlugin:
+    class _CapturingPlugin(OttoPlugin):
         def __init__(self, **kwargs):
             captured.update(kwargs)
+            super().__init__(**kwargs)
 
     monkeypatch.setattr("otto.suite.plugin.OttoPlugin", _CapturingPlugin)
+    return captured
 
-    class _MonSuite:
-        pass
 
-    run_suite(
-        _MonSuite,
+def test_run_tests_monitor_flags_reach_plugin(tmp_path, monkeypatch):
+    """--monitor settings flow to OttoPlugin; the output path defaults to monitor.json."""
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    _capture_pytest_main(monkeypatch)
+    captured = _capture_otto_plugin(monkeypatch)
+
+    run_tests(
+        [_ALPHA],
         run_options=RunOptions(monitor=True, monitor_interval=2.0, monitor_hosts="router"),
         output_dir=tmp_path,
     )
@@ -248,29 +204,14 @@ def test_run_suite_monitor_flags_reach_plugin(tmp_path, monkeypatch):
     assert captured["monitor_output"] == tmp_path / "monitor.json"
 
 
-def test_run_suite_monitor_output_override(tmp_path, monkeypatch):
-    import otto.config
-
-    monkeypatch.setattr(otto.config, "get_repos", list)
+def test_run_tests_monitor_output_override(tmp_path, monkeypatch):
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
     _capture_pytest_main(monkeypatch)
-
-    captured: dict = {}
-
-    class _CapturingPlugin:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr("otto.suite.plugin.OttoPlugin", _CapturingPlugin)
+    captured = _capture_otto_plugin(monkeypatch)
 
     out = tmp_path / "somewhere.db"
-
-    class _MonSuite2:
-        pass
-
-    run_suite(
-        _MonSuite2,
-        run_options=RunOptions(monitor=True, monitor_output=out),
-        output_dir=tmp_path,
+    run_tests(
+        [_ALPHA], run_options=RunOptions(monitor=True, monitor_output=out), output_dir=tmp_path
     )
     assert captured["monitor_output"] == out
 
@@ -279,23 +220,26 @@ def test_run_suite_monitor_output_override(tmp_path, monkeypatch):
     ("rc", "expected"),
     [
         (pytest.ExitCode.TESTS_FAILED, 1),
-        (pytest.ExitCode.NO_TESTS_COLLECTED, 5),  # a named suite collecting nothing is a failure
         (pytest.ExitCode.INTERNAL_ERROR, 3),
     ],
 )
-def test_run_suite_exit_code_maps_pytest_rc(tmp_path, monkeypatch, rc, expected):
-    """The library result carries the pytest rc; the runner (not the library) raises Exit."""
-    import otto.config
-
-    monkeypatch.setattr(otto.config, "get_repos", list)
+def test_run_tests_exit_code_maps_pytest_rc(tmp_path, monkeypatch, rc, expected):
+    """The library result carries the pytest rc; the CLI adapter (not the library) exits."""
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
     _capture_pytest_main(monkeypatch, rc=rc)
 
-    class _RcSuite:
-        pass
-
-    result = run_suite(_RcSuite, output_dir=tmp_path)
+    result = run_tests([_ALPHA], output_dir=tmp_path)
     assert result.exit_code == expected
     assert not result.passed
+
+
+def test_run_tests_a_session_with_nothing_to_run_is_no_match(tmp_path, monkeypatch):
+    """pytest's "no tests collected" (5) from every repo is no match, not an exit code."""
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    _capture_pytest_main(monkeypatch, rc=pytest.ExitCode.NO_TESTS_COLLECTED)
+
+    with pytest.raises(NoTestsMatchedError):
+        run_tests([_ALPHA], output_dir=tmp_path)
 
 
 # ── resolve_coverage: the tri-state --cov/--no-cov decision ──────────────────
@@ -396,23 +340,19 @@ def test_resolve_coverage_returns_a_copy_keeping_every_other_field(monkeypatch):
     assert (resolved.markers, resolved.cov_report, resolved.project_name) == ("smoke", True, "P")
 
 
-def test_run_suite_forced_cov_with_nothing_instrumented_raises(tmp_path, monkeypatch):
+def test_run_tests_forced_cov_with_nothing_instrumented_raises(tmp_path, monkeypatch):
     """``--cov`` against a lab with no instrumented product refuses before the
-    suite runs — the typed error reaches the caller (the CLI frames it)."""
-    import otto.config
+    tests run — the typed error reaches the caller (the CLI frames it)."""
     from otto.coverage.errors import CoverageNotInstrumentedError
 
-    monkeypatch.setattr(otto.config, "get_repos", list)
-    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
     pre_clean = AsyncMock()
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", pre_clean)
     _stub_instrumented_lab(monkeypatch, instrumented=False)
 
-    class _NotInstrumentedSuite:
-        pass
-
     with pytest.raises(CoverageNotInstrumentedError):
-        run_suite(_NotInstrumentedSuite, run_options=RunOptions(cov=True), output_dir=tmp_path)
+        run_tests([_ALPHA], run_options=RunOptions(cov=True), output_dir=tmp_path)
     # Refused before any host was touched.
     pre_clean.assert_not_awaited()
 
@@ -437,14 +377,13 @@ def test_resolve_coverage_forced_on_refuses_a_missing_coverage_table(monkeypatch
         resolve_coverage(RunOptions(cov=True), [], command="otto test --cov")
 
 
-def test_run_suite_forced_cov_without_coverage_table_refuses_before_the_run(tmp_path, monkeypatch):
+def test_run_tests_forced_cov_without_coverage_table_refuses_before_the_run(tmp_path, monkeypatch):
     """The refusal reaches the caller before any host is touched."""
-    import otto.config
     from otto.config.coverage_settings import CoverageConfigError
     from otto.coverage.instrumentation import InstrumentationReport, InstrumentationRow
 
-    monkeypatch.setattr(otto.config, "get_repos", list)
-    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
     pre_clean = AsyncMock()
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", pre_clean)
     monkeypatch.setattr(
@@ -453,11 +392,8 @@ def test_run_suite_forced_cov_without_coverage_table_refuses_before_the_run(tmp_
     )
     monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda repos: {})
 
-    class _NoCovTableSuite:
-        pass
-
     with pytest.raises(CoverageConfigError, match=r"\[coverage\] table"):
-        run_suite(_NoCovTableSuite, run_options=RunOptions(cov=True), output_dir=tmp_path)
+        run_tests([_ALPHA], run_options=RunOptions(cov=True), output_dir=tmp_path)
     pre_clean.assert_not_awaited()
 
 
@@ -585,22 +521,14 @@ def test_resolve_coverage_forced_on_propagates_an_empty_hosts_selection(monkeypa
         resolve_coverage(RunOptions(cov=True), [], command="otto test --cov")
 
 
-# ── run_suite: --cov-report wiring ───────────────────────────────────────────
+# ── run_tests: --cov-report wiring ───────────────────────────────────────────
 
 
-def _run_suite_report(tmp_path, monkeypatch, *, run_options, log_dir):
-    """Drive run_suite with a stubbed repo and mocked coverage tail; return the report mock."""
-    import otto.config
-
-    repo = MagicMock()
-    repo.tests = [log_dir]
-    repo.sut_dir = log_dir
-    repo.name = "repo"
+def _run_tests_report(tmp_path, monkeypatch, *, run_options, log_dir):
+    """Drive run_tests with a stubbed repo and mocked coverage tail; return the report mock."""
     # No [coverage] section → legacy gcda-only report path (what these pin).
-    repo.settings = {}
-
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [repo])
-    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    _use_repo(monkeypatch, _stub_repo(tmp_path, sut_dir=log_dir, tests=[log_dir]))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
@@ -611,17 +539,14 @@ def _run_suite_report(tmp_path, monkeypatch, *, run_options, log_dir):
     mock_run_report = AsyncMock(return_value=mock_store)
     monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_run_report)
 
-    class _RepSuite:
-        pass
-
-    run_suite(_RepSuite, run_options=run_options, output_dir=log_dir)
+    run_tests([_ALPHA], run_options=run_options, output_dir=log_dir)
     return mock_run_report
 
 
-def test_run_suite_no_cov_report_means_no_call(tmp_path, monkeypatch):
+def test_run_tests_no_cov_report_means_no_call(tmp_path, monkeypatch):
     log_dir = tmp_path / "log"
     log_dir.mkdir()
-    mock = _run_suite_report(
+    mock = _run_tests_report(
         tmp_path,
         monkeypatch,
         run_options=RunOptions(cov=True, cov_clean=False, cov_report=False),
@@ -630,10 +555,10 @@ def test_run_suite_no_cov_report_means_no_call(tmp_path, monkeypatch):
     mock.assert_not_called()
 
 
-def test_run_suite_default_report_dir_under_output_dir(tmp_path, monkeypatch):
+def test_run_tests_default_report_dir_under_output_dir(tmp_path, monkeypatch):
     log_dir = tmp_path / "log"
     log_dir.mkdir()
-    mock = _run_suite_report(
+    mock = _run_tests_report(
         tmp_path,
         monkeypatch,
         run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
@@ -646,12 +571,12 @@ def test_run_suite_default_report_dir_under_output_dir(tmp_path, monkeypatch):
     assert (log_dir / "cov_report").is_dir()
 
 
-def test_run_suite_explicit_report_dir_and_project_name(tmp_path, monkeypatch):
+def test_run_tests_explicit_report_dir_and_project_name(tmp_path, monkeypatch):
     log_dir = tmp_path / "log"
     log_dir.mkdir()
     report_dir = tmp_path / "my_report"
     report_dir.mkdir()
-    mock = _run_suite_report(
+    mock = _run_tests_report(
         tmp_path,
         monkeypatch,
         run_options=RunOptions(
@@ -669,8 +594,8 @@ def test_run_suite_explicit_report_dir_and_project_name(tmp_path, monkeypatch):
     assert mock.call_args.kwargs["project_name"] == "My App"
 
 
-def test_run_suite_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeypatch, caplog):
-    """A library run_suite(cov_report=True) into a pre-populated report dir warns and skips.
+def test_run_tests_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeypatch, caplog):
+    """A library run_tests(cov_report=True) into a pre-populated report dir warns and skips.
 
     Regression: _post_run_coverage's report-dir emptiness check used the CLI's
     typer-raising _prepare_empty_dir OUTSIDE the swallow, so a library run into a
@@ -678,32 +603,22 @@ def test_run_suite_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeyp
     It now calls the neutral prepare_empty_dir INSIDE the swallow: a collision
     warns and skips the report, matching never-fail-a-successful-run.
     """
-    import otto.config
-
     log_dir = tmp_path / "log"
     log_dir.mkdir()
     report_dir = log_dir / "cov_report"
     report_dir.mkdir()
     (report_dir / "stale.html").write_text("stale from a previous run")
 
-    repo = MagicMock()
-    repo.tests = [log_dir]
-    repo.sut_dir = log_dir
-    repo.name = "repo"
-    repo.settings = {}
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [repo])
-    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    _use_repo(monkeypatch, _stub_repo(tmp_path, sut_dir=log_dir, tests=[log_dir]))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
     mock_report = AsyncMock()
     monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_report)
 
-    class _ReuseSuite:
-        pass
-
     with caplog.at_level("WARNING"):
-        result = run_suite(
-            _ReuseSuite,
+        result = run_tests(
+            [_ALPHA],
             run_options=RunOptions(cov=False, cov_clean=False, cov_report=True),
             output_dir=log_dir,
         )
@@ -717,12 +632,12 @@ def test_run_suite_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeyp
     assert (report_dir / "stale.html").exists()
 
 
-def test_run_suite_cov_dir_override_used_as_report_source(tmp_path, monkeypatch):
+def test_run_tests_cov_dir_override_used_as_report_source(tmp_path, monkeypatch):
     log_dir = tmp_path / "log"
     log_dir.mkdir()
     cov_dir = tmp_path / "custom_cov"
     cov_dir.mkdir()
-    mock = _run_suite_report(
+    mock = _run_tests_report(
         tmp_path,
         monkeypatch,
         run_options=RunOptions(cov=True, cov_clean=False, cov_report=True, cov_dir=cov_dir),
@@ -733,7 +648,7 @@ def test_run_suite_cov_dir_override_used_as_report_source(tmp_path, monkeypatch)
     assert args[0] == [cov_dir]
 
 
-# ── run_suite / _post_run_coverage: [coverage.tickets] wiring ───────────────
+# ── run_tests / _post_run_coverage: [coverage.tickets] wiring ───────────────
 #
 # Task 7 wired ticket_spec only into `otto cov report`'s path
 # (cov._resolve_cov_settings); `otto test --cov-report` went through
@@ -748,28 +663,23 @@ def test_run_suite_cov_dir_override_used_as_report_source(tmp_path, monkeypatch)
 # --cov-tickets-json write.
 
 
-def test_run_suite_ticket_spec_threaded_from_settings(tmp_path, monkeypatch):
+def test_run_tests_ticket_spec_threaded_from_settings(tmp_path, monkeypatch):
     """[coverage.tickets] on the repo's settings must reach
     run_coverage_report's ticket_spec kwarg via the otto-test path, exactly
     as it already does via otto cov report's _resolve_cov_settings."""
-    import otto.config
-
     log_dir = tmp_path / "log"
     log_dir.mkdir()
 
-    repo = MagicMock()
-    repo.tests = [log_dir]
-    repo.sut_dir = log_dir
-    repo.name = "repo"
-    repo.settings = {
+    settings = {
         "coverage": {
             "tiers": {"system": {"kind": "e2e", "precedence": 1}},
             "tickets": {"pattern": r"[A-Z]{2,10}-[0-9]+"},
         }
     }
-
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [repo])
-    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    _use_repo(
+        monkeypatch, _stub_repo(tmp_path, sut_dir=log_dir, tests=[log_dir], settings=settings)
+    )
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
@@ -780,11 +690,8 @@ def test_run_suite_ticket_spec_threaded_from_settings(tmp_path, monkeypatch):
     mock_run_report = AsyncMock(return_value=mock_store)
     monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_run_report)
 
-    class _TicketSuite:
-        pass
-
-    run_suite(
-        _TicketSuite,
+    run_tests(
+        [_ALPHA],
         run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
         output_dir=log_dir,
     )
@@ -795,13 +702,13 @@ def test_run_suite_ticket_spec_threaded_from_settings(tmp_path, monkeypatch):
     assert ticket_spec.extract("fix PROJ-7") == ["PROJ-7"]
 
 
-def test_run_suite_no_coverage_section_leaves_ticket_spec_none(tmp_path, monkeypatch):
+def test_run_tests_no_coverage_section_leaves_ticket_spec_none(tmp_path, monkeypatch):
     """A repo with no [coverage] section resolves ticket_spec=None (the
     feature-absent default) rather than raising — mirrors the legacy
     gcda-only report path staying unchanged."""
     log_dir = tmp_path / "log"
     log_dir.mkdir()
-    mock = _run_suite_report(
+    mock = _run_tests_report(
         tmp_path,
         monkeypatch,
         run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
@@ -867,7 +774,7 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
     assert payload["tickets"][0]["lines"]["owned"] >= 1
 
 
-# ── run_suite / _post_run_coverage: overrides wiring ─────────────────────────
+# ── run_tests / _post_run_coverage: overrides wiring ─────────────────────────
 #
 # Task 7 wired the override file into `otto cov report`'s path
 # (cov._resolve_cov_settings) and into `otto test --cov-report`'s
@@ -880,12 +787,10 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
 # placed inside _post_run_coverage's existing try/except swallow.
 
 
-def test_run_suite_overrides_threaded_from_settings(tmp_path, monkeypatch):
+def test_run_tests_overrides_threaded_from_settings(tmp_path, monkeypatch):
     """A well-formed override file on the repo's settings must reach
     run_coverage_report's overrides kwarg via the otto-test path, exactly
     as it already does via otto cov report's _resolve_cov_settings."""
-    import otto.config
-
     log_dir = tmp_path / "log"
     log_dir.mkdir()
     sut = TmpGitRepo(tmp_path / "sut")
@@ -899,11 +804,7 @@ def test_run_suite_overrides_threaded_from_settings(tmp_path, monkeypatch):
         f'[[bench]]\ncommit = "{sha}"\nreason = "manual pass"\n'
     )
 
-    repo = MagicMock()
-    repo.tests = [log_dir]
-    repo.sut_dir = repo_root
-    repo.name = "repo"
-    repo.settings = {
+    settings = {
         "coverage": {
             "tiers": {
                 "system": {"kind": "e2e", "precedence": 1},
@@ -912,9 +813,10 @@ def test_run_suite_overrides_threaded_from_settings(tmp_path, monkeypatch):
             "tickets": {"pattern": "#(?P<n>[0-9]+)"},
         }
     }
-
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [repo])
-    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    _use_repo(
+        monkeypatch, _stub_repo(tmp_path, sut_dir=repo_root, tests=[log_dir], settings=settings)
+    )
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
@@ -925,11 +827,8 @@ def test_run_suite_overrides_threaded_from_settings(tmp_path, monkeypatch):
     mock_run_report = AsyncMock(return_value=mock_store)
     monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_run_report)
 
-    class _OverridesSuite:
-        pass
-
-    run_suite(
-        _OverridesSuite,
+    run_tests(
+        [_ALPHA],
         run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
         output_dir=log_dir,
     )
@@ -940,17 +839,15 @@ def test_run_suite_overrides_threaded_from_settings(tmp_path, monkeypatch):
     assert [e.key for e in overrides.asserted] == [f"commit:{sha}"]
 
 
-def test_run_suite_malformed_overrides_file_warns_and_run_still_succeeds(
+def test_run_tests_malformed_overrides_file_warns_and_run_still_succeeds(
     tmp_path, monkeypatch, caplog
 ):
     """A malformed override file must not fail an otherwise-successful test
     run: load_override_config sits inside _post_run_coverage's existing
     try/except swallow (moved there specifically for this reason), so a bad
     file warns and the run still passes — the same never-fail-a-successful-
-    run contract test_run_suite_cov_report_into_reused_dir_warns_not_raises
+    run contract test_run_tests_cov_report_into_reused_dir_warns_not_raises
     pins for the report-dir collision case."""
-    import otto.config
-
     log_dir = tmp_path / "log"
     log_dir.mkdir()
     repo_root = tmp_path / "sut"
@@ -959,31 +856,25 @@ def test_run_suite_malformed_overrides_file_warns_and_run_still_succeeds(
     overrides_dir.mkdir()
     (overrides_dir / "coverage-overrides.toml").write_text("not valid toml {{{")
 
-    repo = MagicMock()
-    repo.tests = [log_dir]
-    repo.sut_dir = repo_root
-    repo.name = "repo"
-    repo.settings = {
+    settings = {
         "coverage": {
             "tiers": {"bench": {"kind": "manual", "precedence": 1}},
             "tickets": {"pattern": "#(?P<n>[0-9]+)"},
         }
     }
-
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [repo])
-    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    _use_repo(
+        monkeypatch, _stub_repo(tmp_path, sut_dir=repo_root, tests=[log_dir], settings=settings)
+    )
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
     mock_run_report = AsyncMock()
     monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_run_report)
 
-    class _BadOverridesSuite:
-        pass
-
     with caplog.at_level("WARNING"):
-        result = run_suite(
-            _BadOverridesSuite,
+        result = run_tests(
+            [_ALPHA],
             run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
             output_dir=log_dir,
         )
@@ -994,78 +885,12 @@ def test_run_suite_malformed_overrides_file_warns_and_run_still_succeeds(
     assert any("not valid TOML" in r.getMessage() for r in caplog.records)
 
 
-# ── run_suite: cov_dir empty/overwrite guard ─────────────────────────────────
+def test_run_tests_raises_value_error_when_nothing_matches(monkeypatch):
+    """A name selection that matches nothing raises ValueError, not typer.Exit.
 
-
-def test_run_suite_nonempty_cov_dir_without_overwrite_raises(tmp_path, monkeypatch):
-    """A non-empty ``cov_dir`` without ``overwrite_cov_dir`` raises before any
-    host I/O — the same guard the CLI's ``--cov-dir``/``--overwrite-cov-dir``
-    pair already enforces, now also applied to a library caller that hands
-    ``RunOptions.cov_dir`` straight to ``run_suite``."""
-    import otto.config
-
-    log_dir = tmp_path / "log"
-    log_dir.mkdir()
-    cov_dir = tmp_path / "cov_dir"
-    cov_dir.mkdir()
-    (cov_dir / "stale.txt").write_text("stale")
-
-    monkeypatch.setattr(otto.config, "get_repos", list)
-    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
-    clean_mock = AsyncMock()
-    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", clean_mock)
-    _stub_instrumented_lab(monkeypatch)
-
-    class _CovDirSuite:
-        pass
-
-    with pytest.raises(ValueError, match="cov_dir"):
-        run_suite(
-            _CovDirSuite,
-            run_options=RunOptions(cov=True, cov_dir=cov_dir),
-            output_dir=log_dir,
-        )
-    # Failed before the pre-run remote clean ever ran, and the stale contents
-    # were never touched.
-    clean_mock.assert_not_awaited()
-    assert (cov_dir / "stale.txt").exists()
-
-
-def test_run_suite_overwrite_cov_dir_true_clears_and_proceeds(tmp_path, monkeypatch):
-    """``overwrite_cov_dir=True`` clears a non-empty ``cov_dir`` and the run proceeds."""
-    import otto.config
-
-    log_dir = tmp_path / "log"
-    log_dir.mkdir()
-    cov_dir = tmp_path / "cov_dir"
-    cov_dir.mkdir()
-    (cov_dir / "stale.txt").write_text("stale")
-
-    monkeypatch.setattr(otto.config, "get_repos", list)
-    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
-    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
-    _stub_instrumented_lab(monkeypatch)
-    monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
-
-    class _CovDirSuite2:
-        pass
-
-    result = run_suite(
-        _CovDirSuite2,
-        run_options=RunOptions(cov=True, cov_dir=cov_dir, cov_clean=False, overwrite_cov_dir=True),
-        output_dir=log_dir,
-    )
-    assert result.passed
-    assert not (cov_dir / "stale.txt").exists()
-
-
-def test_run_selection_raises_value_error_when_nothing_matches(monkeypatch):
-    """A --tests selection that matches nothing raises ValueError, not typer.Exit.
-
-    No repos means no test universe to search — resolve_selection() returns an
-    empty per-repo mapping rather than a did-you-mean UnknownSelectionError
-    (there is nothing to suggest), so run_selection() reaches its own "nothing
-    to run" check and raises a plain ValueError, matching the library's
+    No repos means no test universe to search: there is nothing to suggest,
+    so run_tests() raises its "nothing to run" error (a ValueError) rather
+    than a did-you-mean UnknownSelectionError, matching the library's
     no-typer contract.
     """
     import otto.config
@@ -1073,10 +898,10 @@ def test_run_selection_raises_value_error_when_nothing_matches(monkeypatch):
     monkeypatch.setattr(otto.config, "get_repos", list)
 
     with pytest.raises(ValueError, match="No tests matched"):
-        run_selection(run_options=RunOptions(tests="test_nonexistent_zzz"))
+        run_tests(["test_nonexistent_zzz"])
 
 
-def test_run_selection_no_match_raises_no_tests_matched_error(monkeypatch):
+def test_run_tests_no_match_raises_no_tests_matched_error(monkeypatch):
     """The no-match case raises the specific NoTestsMatchedError, not a bare ValueError.
 
     The dedicated subclass lets the CLI adapter catch *only* the no-match case,
@@ -1088,14 +913,14 @@ def test_run_selection_no_match_raises_no_tests_matched_error(monkeypatch):
     monkeypatch.setattr(otto.config, "get_repos", list)
 
     with pytest.raises(NoTestsMatchedError, match="No tests matched"):
-        run_selection(run_options=RunOptions(tests="test_nonexistent_zzz"))
+        run_tests(["test_nonexistent_zzz"])
 
 
-def test_run_selection_empty_options_raises(monkeypatch):
-    """Default RunOptions (no tests AND no markers) must refuse, not run every test.
+def test_run_tests_empty_options_raises(monkeypatch):
+    """No names AND no markers must refuse, not run every test.
 
-    The CLI callback guards this (it only calls through when --tests/-m is set);
-    the library must guard it too so a bare run_selection() can never silently
+    The CLI guards this (it refuses at parse time without a name or -m);
+    the library must guard it too so a bare run_tests() can never silently
     match every test in every repo.
     """
     import otto.config
@@ -1103,394 +928,229 @@ def test_run_selection_empty_options_raises(monkeypatch):
     # Guard fires before get_repos, but stub it so a regression can't run pytest.
     monkeypatch.setattr(otto.config, "get_repos", list)
 
-    with pytest.raises(ValueError, match="run_selection requires run_options"):
-        run_selection(run_options=RunOptions())
+    with pytest.raises(ValueError, match=r"at least one test name or run_options\.markers"):
+        run_tests()
 
 
-def test_run_selection_marker_alone_raises_when_no_repo_matches(monkeypatch):
+def test_run_tests_marker_alone_raises_when_no_repo_matches(monkeypatch):
     """The -m-alone path funnels through the same "nothing matched" ValueError."""
     import otto.config
 
     monkeypatch.setattr(otto.config, "get_repos", list)
 
     with pytest.raises(ValueError, match="No tests matched"):
-        run_selection(run_options=RunOptions(markers="not-a-real-marker"))
+        run_tests(run_options=RunOptions(markers="not-a-real-marker"))
 
 
-def test_run_selection_typo_raises_unknown_selection_error(tmp_path, monkeypatch):
+def test_run_tests_typo_raises_unknown_selection_error(sut_repo, tmp_path):
     """A typo against a real test universe raises the library's own exception.
 
     UnknownSelectionError (never typer.BadParameter — the library speaks
-    library exceptions) propagates from resolve_selection through
-    run_selection, carrying the did-you-mean message and the param_hint the
-    CLI adapter needs to reconstruct an identical typer.BadParameter.
+    library exceptions) propagates from run_tests, carrying the did-you-mean
+    message and the param_hint the CLI adapter needs to reconstruct an
+    identical typer.BadParameter.
     """
-    import otto.config
-    from otto.config.repo import CollectedTest
     from otto.suite.selection import UnknownSelectionError
 
-    class _FakeRepo:
-        name = "fixture-repo"
-        sut_dir = tmp_path
-        tests: ClassVar[list] = []
-        # A real Repo always has settings; the coverage decision reads them.
-        settings: ClassVar[dict] = {}
-
-        def collect_tests(self, markers=None, suite=None, tests=None):
-            return [
-                CollectedTest(
-                    nodeid="tests/t.py::test_alpha",
-                    name="test_alpha",
-                    path=tmp_path / "tests" / "t.py",
-                    cls_name=None,
-                )
-            ]
-
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [_FakeRepo()])
+    sut_repo(files={"tests/test_t.py": "def test_alpha():\n    pass\n"})
 
     with pytest.raises(UnknownSelectionError, match="did you mean: test_alpha") as excinfo:
-        run_selection(run_options=RunOptions(tests="test_alpah"))
-    assert excinfo.value.param_hint == "--tests"
+        run_tests(["test_alpah"], output_dir=tmp_path / "out")
+    assert excinfo.value.param_hint == "NAMES"
 
 
-def test_run_selection_returns_result_single_repo(tmp_path, monkeypatch):
-    """A single matching repo runs one pytest session and returns its junit path."""
-    import otto.config
-    from otto.config.repo import CollectedTest
+def test_run_tests_returns_result_single_repo(tmp_path, monkeypatch):
+    """A single repo runs one pytest session and returns its junit path."""
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
 
-    class _FakeRepo:
-        name = "fixture-repo"
-        sut_dir = tmp_path
-        tests: ClassVar[list] = []
-        # A real Repo always has settings; the coverage decision reads them.
-        settings: ClassVar[dict] = {}
-
-        def collect_tests(self, markers=None, suite=None, tests=None):
-            return [
-                CollectedTest(
-                    nodeid="tests/t.py::test_alpha",
-                    name="test_alpha",
-                    path=tmp_path / "tests" / "t.py",
-                    cls_name=None,
-                )
-            ]
-
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [_FakeRepo()])
-    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
-
-    result = run_selection(
-        run_options=RunOptions(tests="test_alpha"),
-        output_dir=tmp_path,
-    )
+    result = run_tests([_ALPHA], output_dir=tmp_path)
     assert isinstance(result, SuiteRunResult)
     assert result.exit_code == 0
     assert result.junit_paths == [tmp_path / "junit.xml"]
 
 
-def test_run_selection_multi_repo_junit_fan_out(tmp_path, monkeypatch):
-    """Two matching repos fan the default junit name out to junit_<repo>.xml each."""
+def _captured_layouts(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Stub ``pytest.main`` to return OK; record each running session's fixtures-plugin layout.
+
+    ``plugins`` is a keyword pytest.main receives from ``_run_pytest_session`` --
+    one ``OttoFixturesPlugin`` per session -- so its ``_layout`` is exactly what
+    that session's ``module_dir``/``test_dir`` fixtures will resolve against:
+    ``.root`` for where artifacts land, ``.test_roots`` for the directories a
+    module's path is mirrored from. A ``--collect-only`` session runs no
+    test and is left out. The stub's sessions record no file: several cold
+    repos asked for a name would each be collected first, and find none.
+    Returns the list the stub appends to, in call order.
+    """
+    from otto.suite.pytest_plugin import OttoFixturesPlugin
+
+    layouts: list = []
+
+    def _fake_main(args: list[str], plugins: tuple = (), **kwargs: object) -> object:
+        del kwargs
+        collected(plugins)
+        if "--collect-only" not in args:
+            layouts.extend(p._layout for p in plugins if isinstance(p, OttoFixturesPlugin))
+        return pytest.ExitCode.OK
+
+    monkeypatch.setattr("pytest.main", _fake_main)
+    return layouts
+
+
+def test_run_tests_multi_repo_junit_fan_out(tmp_path, monkeypatch):
+    """Two searched repos fan the default junit name out to junit_<repo>.xml each, and each
+    session's ArtifactLayout root gets the repo layer (spec §5.3) and mirrors module paths
+    from THAT repo's own test roots, never the other repo's."""
     import otto.config
-    from otto.config.repo import CollectedTest
 
-    def _make_repo(name: str) -> object:
-        class _FakeRepo:
-            def collect_tests(self, markers=None, suite=None, tests=None):
-                return [
-                    CollectedTest(
-                        nodeid="tests/t.py::test_alpha",
-                        name="test_alpha",
-                        path=tmp_path / "tests" / "t.py",
-                        cls_name=None,
-                    )
-                ]
-
-        repo = _FakeRepo()
-        repo.name = name
-        repo.sut_dir = tmp_path
-        repo.tests = []
-        # A real Repo always has settings; the coverage decision reads them.
-        repo.settings = {}
-        return repo
-
-    repos = [_make_repo("repoA"), _make_repo("repoB")]
+    repos = [
+        _stub_repo(
+            tmp_path,
+            name=name,
+            sut_dir=tmp_path / name,
+            tests=[tmp_path / name / "tests", tmp_path / name / "more_tests"],
+        )
+        for name in ("repoA", "repoB")
+    ]
     monkeypatch.setattr(otto.config, "get_repos", lambda: repos)
-    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    layouts = _captured_layouts(monkeypatch)
 
-    result = run_selection(
-        run_options=RunOptions(tests="test_alpha"),
-        output_dir=tmp_path,
-    )
+    # A marker run: each repo's one session, with no collection before it.
+    result = run_tests(run_options=RunOptions(markers="smoke"), output_dir=tmp_path)
     assert result.exit_code == 0
     assert result.junit_paths == [
         tmp_path / "junit_repoA.xml",
         tmp_path / "junit_repoB.xml",
     ]
+    assert [layout.root for layout in layouts] == [tmp_path / "repoA", tmp_path / "repoB"]
+    assert [layout.test_roots for layout in layouts] == [
+        [tmp_path / "repoA" / "tests", tmp_path / "repoA" / "more_tests"],
+        [tmp_path / "repoB" / "tests", tmp_path / "repoB" / "more_tests"],
+    ]
 
 
-# ── run_suite: context installation for library callers ─────────────────────
+def test_run_tests_single_repo_layout_keeps_the_plain_output_dir(tmp_path, monkeypatch):
+    """A run searching only ONE repo keeps the shorter layout: no repo layer."""
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    layouts = _captured_layouts(monkeypatch)
+
+    result = run_tests([_ALPHA], output_dir=tmp_path)
+    assert result.exit_code == 0
+    assert [layout.root for layout in layouts] == [tmp_path]
+
+
+def test_run_tests_a_repo_with_no_test_directory_is_not_searched(tmp_path, monkeypatch):
+    """Only a repo with a test directory on disk counts toward the repo layer, or gets a session."""
+    import otto.config
+
+    searched = _stub_repo(
+        tmp_path, name="repoA", sut_dir=tmp_path / "repoA", tests=[tmp_path / "repoA" / "tests"]
+    )
+    bare = _stub_repo(tmp_path, name="repoB", sut_dir=tmp_path / "repoB", tests=[])
+    bare.tests = [tmp_path / "repoB" / "tests"]
+    monkeypatch.setattr(otto.config, "get_repos", lambda: [searched, bare])
+    layouts = _captured_layouts(monkeypatch)
+
+    result = run_tests([_ALPHA], output_dir=tmp_path)
+    assert result.junit_paths == [tmp_path / "junit.xml"]
+    assert [layout.root for layout in layouts] == [tmp_path]
+
+
+# ── run_tests: context installation for library callers ─────────────────────
 #
-# Otto's own fixtures (suite_dir / test_dir / the ctx fixture) call
-# get_context(); only the CLI preamble ever installed an OttoContext, so the
-# documented library path (bootstrap() → find_suite → run_suite) failed for
-# EVERY real OttoSuite with "RuntimeError: No active OttoContext". These tests
-# run a real minimal OttoSuite through the library entrypoint, in-process.
+# Otto's own ctx fixture calls get_context() (module_dir/test_dir read their
+# ArtifactLayout from the session's plugins instead); only the CLI preamble
+# ever installs an OttoContext, so run_tests installs one for a library caller
+# that has none. The first three tests run a REAL inner session over a
+# generated repo, through run_tests itself.
+
+_PROBE = """\
+def test_marker(test_dir):
+    # test_dir comes from the session's ArtifactLayout
+    (test_dir / "marker.txt").write_text("ok")
+"""
 
 
-@pytest.fixture
-def _inner_session_env(monkeypatch):
-    """Neutralize outer-test interference for the REAL inner pytest sessions below.
-
-    ``PYTEST_ADDOPTS`` reaches the inner ``pytest.main`` even though
-    ``_run_pytest_session`` overrides ini ``addopts`` (env addopts are
-    prepended to argv, not read from the ini). ``-p no:playwright``: the
-    outer session's pytest-playwright wraps every ``pytest_runtest_call``;
-    letting the inner session load it again nests its soft-assertion scope
-    and errors (same reason test_otto_suite._run_inner_pytest disables it).
-    Nothing here touches pytest-asyncio's loop scopes: the inner session
-    runs with ``otto test``'s own ``ASYNCIO_LOOP_ARGS``, and that is what
-    the loop tests below measure.
-    """
-    monkeypatch.setenv("PYTEST_ADDOPTS", "-p no:playwright")
-
-
-def _probe_suite_src(cls_name: str) -> str:
-    """Source for a minimal real OttoSuite that exercises the context-backed dirs."""
-    return (
-        '"""Minimal real OttoSuite probe for the library run path."""\n\n'
-        "from otto.suite import OttoSuite\n\n\n"
-        f"class {cls_name}(OttoSuite):\n"
-        f'    """Library-run probe: writes a marker into its per-test dir."""\n\n'
-        "    def test_marker(self, test_dir):\n"
-        "        # test_dir comes from get_context().output_dir\n"
-        '        (test_dir / "marker.txt").write_text("ok")\n'
-    )
-
-
-def _register_probe_suite(tmp_path: Path, tag: str, src: str | None = None) -> type:
-    """Write, import, and auto-register a real Test* OttoSuite; return the class.
-
-    *src* is a source template with a ``{cls_name}`` placeholder (default:
-    :func:`_probe_suite_src`). Mirrors ``Repo.import_test_file``'s
-    spec_from_file_location shape (see tests/unit/suite/test_register.py) so
-    ``inspect.getfile`` resolves. The ``Test*`` name auto-registers via
-    ``OttoSuite.__init_subclass__``; callers must clean up with
-    :func:`_cleanup_probe_suite` in a ``finally``.
-    """
-    import importlib.util
-    import sys
-
-    cls_name = f"TestCtxProbe{tag}"
-    suite_file = tmp_path / f"test_ctx_probe_{tag.lower()}.py"
-    suite_file.write_text(
-        _probe_suite_src(cls_name) if src is None else src.format(cls_name=cls_name)
-    )
-    mod_name = f"_otto_ctx_probe_{tag.lower()}"
-    spec = importlib.util.spec_from_file_location(mod_name, suite_file)
-    assert spec is not None
-    assert spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[mod_name] = mod
-    spec.loader.exec_module(mod)
-    return getattr(mod, cls_name)
-
-
-def _cleanup_probe_suite(tag: str) -> None:
-    """Unregister the probe suite and drop its modules (incl. pytest's re-import)."""
-    import sys
-
-    from otto.suite.register import SUITES
-
-    cls_name = f"TestCtxProbe{tag}"
-    if cls_name in SUITES:
-        SUITES.unregister(cls_name)
-    sys.modules.pop(f"_otto_ctx_probe_{tag.lower()}", None)
-    sys.modules.pop(f"test_ctx_probe_{tag.lower()}", None)
-
-
-@pytest.mark.usefixtures("_inner_session_env")
-def test_run_suite_installs_minimal_context_when_none_active(tmp_path, monkeypatch):
+def test_run_tests_installs_minimal_context_when_none_active(sut_repo, tmp_path):
     """The documented library path works with NO active context (the CLI-preamble gap).
 
-    run_suite must install a minimal lab-less OttoContext for the session so
-    OttoSuite's own get_context()-backed fixtures work, and restore the prior
+    run_tests must install a minimal lab-less OttoContext for the session so
+    otto's own get_context()-backed fixtures work, and restore the prior
     (no-context) state afterwards.
     """
-    import otto.config
     from otto.context import _active, try_get_context
 
-    monkeypatch.setattr(otto.config, "get_repos", list)
+    sut_repo(files={"tests/test_ctx_probe_a.py": _PROBE})
     out = tmp_path / "out"
     out.mkdir()
-
-    suite_cls = _register_probe_suite(tmp_path, "A")
     token = _active.set(None)  # hermetic: guarantee the no-context precondition
     try:
         assert try_get_context() is None
-        result = run_suite(suite_cls, output_dir=out)
+        result = run_tests(["test_marker"], output_dir=out)
         assert result.passed, f"exit_code={result.exit_code}"
         assert (out / "junit.xml").exists()
-        # The suite's per-test dir was created under output_dir via the
-        # temporary context (suite_dir = get_context().output_dir / <Suite>).
-        markers = list(out.rglob("marker.txt"))
-        assert markers, f"no per-test marker under {out}"
-        # The temporary context never leaks out of run_suite.
+        # The per-test dir was created under output_dir via the run's
+        # ArtifactLayout (module_dir = <output_dir>/<module stem>).
+        assert (out / "test_ctx_probe_a" / "test_marker" / "marker.txt").exists()
+        # The temporary context never leaks out of run_tests.
         assert try_get_context() is None
     finally:
         _active.reset(token)
-        _cleanup_probe_suite("A")
 
 
-@pytest.mark.usefixtures("_inner_session_env")
-def test_run_suite_sets_and_restores_output_dir_on_active_context(tmp_path, monkeypatch):
+def test_run_tests_sets_and_restores_output_dir_on_active_context(sut_repo, tmp_path):
     """An active context with output_dir=None gets log_dir for the session, then restored."""
-    import otto.config
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
 
-    monkeypatch.setattr(otto.config, "get_repos", list)
+    sut_repo(files={"tests/test_ctx_probe_b.py": _PROBE})
     out = tmp_path / "out"
     out.mkdir()
-
-    suite_cls = _register_probe_suite(tmp_path, "B")
     ctx = OttoContext(lab=Lab(name="test"))
     assert ctx.output_dir is None
     token = set_context(ctx)
     try:
-        result = run_suite(suite_cls, output_dir=out)
+        result = run_tests(["test_marker"], output_dir=out)
         assert result.passed, f"exit_code={result.exit_code}"
         assert list(out.rglob("marker.txt")), f"no per-test marker under {out}"
         # The session-scoped assignment is rolled back afterwards.
         assert ctx.output_dir is None
     finally:
         reset_context(token)
-        _cleanup_probe_suite("B")
 
 
-@pytest.mark.usefixtures("_inner_session_env")
-def test_run_suite_leaves_active_context_output_dir_untouched(tmp_path, monkeypatch):
-    """A context that already has an output_dir is never mutated by run_suite."""
-    import otto.config
+def test_run_tests_leaves_active_context_output_dir_untouched(sut_repo, tmp_path):
+    """A context that already has an output_dir is never mutated by run_tests."""
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
 
-    monkeypatch.setattr(otto.config, "get_repos", list)
+    sut_repo(files={"tests/test_ctx_probe_c.py": _PROBE})
     ctx_dir = tmp_path / "ctx_dir"
     ctx_dir.mkdir()
     out = tmp_path / "out"
     out.mkdir()
-
-    suite_cls = _register_probe_suite(tmp_path, "C")
     ctx = OttoContext(lab=Lab(name="test"), output_dir=ctx_dir)
     token = set_context(ctx)
     try:
-        result = run_suite(suite_cls, output_dir=out)
+        result = run_tests(["test_marker"], output_dir=out)
         assert result.passed, f"exit_code={result.exit_code}"
-        # junit honors the explicit output_dir; the context is untouched, so
-        # the suite's own dirs still follow the context's output_dir (exactly
-        # the CLI-equivalent behavior, where the two are the same dir).
+        # junit and the artifact layout honor the explicit output_dir; the
+        # context's own output_dir is left exactly as the caller set it.
         assert (out / "junit.xml").exists()
         assert ctx.output_dir == ctx_dir
     finally:
         reset_context(token)
-        _cleanup_probe_suite("C")
 
 
-# ── _session_context hardening: restore on exception ─────────────────────────
-#
-# _run_pytest_session raising mid-session must not leak the temporary state
-# _session_context installs — the finally in each branch must still run.
-
-
-def test_run_suite_restores_no_context_state_on_exception(tmp_path, monkeypatch):
-    """No-active-context branch: an exception mid-session still resets the
-    contextvar, leaving no active OttoContext behind."""
-    import otto.config
-    from otto.context import _active, try_get_context
-
-    monkeypatch.setattr(otto.config, "get_repos", list)
-
-    def _raise(*_a, **_k):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr("otto.suite.run._run_pytest_session", _raise)
-
-    class _ExcNoCtxSuite:
-        pass
-
-    token = _active.set(None)  # hermetic: guarantee the no-context precondition
-    try:
-        assert try_get_context() is None
-        with pytest.raises(RuntimeError, match="boom"):
-            run_suite(_ExcNoCtxSuite, output_dir=tmp_path)
-        assert try_get_context() is None
-    finally:
-        _active.reset(token)
-
-
-def test_run_suite_restores_prior_output_dir_on_exception(tmp_path, monkeypatch):
-    """Active-context-with-no-output_dir branch: an exception mid-session still
-    rolls back the session-scoped output_dir assignment to its prior value."""
-    import otto.config
-    from otto.config.lab import Lab
-    from otto.context import OttoContext, reset_context, set_context
-
-    monkeypatch.setattr(otto.config, "get_repos", list)
-
-    def _raise(*_a, **_k):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr("otto.suite.run._run_pytest_session", _raise)
-
-    class _ExcOutDirSuite:
-        pass
-
-    ctx = OttoContext(lab=Lab(name="test"))
-    assert ctx.output_dir is None
-    token = set_context(ctx)
-    try:
-        with pytest.raises(RuntimeError, match="boom"):
-            run_suite(_ExcOutDirSuite, output_dir=tmp_path)
-        assert ctx.output_dir is None
-    finally:
-        reset_context(token)
-
-
-# ── run_selection: context installation for library callers ─────────────────
-#
-# The context-installation tests above only ever drove run_suite; run_selection
-# shares the exact same _session_context call but had no direct coverage.
-
-
-def test_run_selection_installs_and_restores_minimal_context(tmp_path, monkeypatch):
-    """run_selection installs the same minimal lab-less context run_suite does
-    for a no-context library caller, and restores the prior (no-context) state
-    afterwards."""
-    import otto.config
-    from otto.config.repo import CollectedTest
+def test_run_tests_installs_and_restores_minimal_context(tmp_path, monkeypatch):
+    """The installed context is the LIBRARY_LAB_NAME sentinel lab, pointed at the output dir."""
     from otto.context import LIBRARY_LAB_NAME, _active, try_get_context
 
-    class _FakeRepo:
-        name = "fixture-repo"
-        sut_dir = tmp_path
-        tests: ClassVar[list] = []
-        # A real Repo always has settings; the coverage decision reads them.
-        settings: ClassVar[dict] = {}
-
-        def collect_tests(self, markers=None, suite=None, tests=None):
-            return [
-                CollectedTest(
-                    nodeid="tests/t.py::test_alpha",
-                    name="test_alpha",
-                    path=tmp_path / "tests" / "t.py",
-                    cls_name=None,
-                )
-            ]
-
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [_FakeRepo()])
-
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
     captured: dict = {}
 
-    def fake_main(_args, **_kw):
+    def fake_main(_args, plugins=(), **_kw):
+        collected(plugins)
         ctx = try_get_context()
         captured["lab_name"] = ctx.lab.name if ctx is not None else None
         captured["output_dir"] = ctx.output_dir if ctx is not None else None
@@ -1501,7 +1161,7 @@ def test_run_selection_installs_and_restores_minimal_context(tmp_path, monkeypat
     token = _active.set(None)  # hermetic: guarantee the no-context precondition
     try:
         assert try_get_context() is None
-        result = run_selection(run_options=RunOptions(tests="test_alpha"), output_dir=tmp_path)
+        result = run_tests([_ALPHA], output_dir=tmp_path)
         assert result.passed, f"exit_code={result.exit_code}"
         # A context WAS installed for the duration of the session...
         assert captured["lab_name"] == LIBRARY_LAB_NAME
@@ -1512,106 +1172,213 @@ def test_run_selection_installs_and_restores_minimal_context(tmp_path, monkeypat
         _active.reset(token)
 
 
-# ── run_selection: cov_dir empty/overwrite guard (carried from Task 3) ──────
+@pytest.mark.parametrize("session_raises", [False, True], ids=["returns", "raises"])
+def test_run_tests_restores_the_callers_verb_binding(tmp_path, monkeypatch, session_raises):
+    """``run_tests`` binds ``test`` on the caller's active context for the run only.
+
+    An enclosing ``otto run`` bound ``run``; after ``run_tests`` returns -- or
+    raises out of its session -- the context still answers for ``run``: the
+    same verb, the same built instances, the same parsed flags.
+    """
+    from otto import options
+    from otto.config.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context
+    from otto.params import register_options
+
+    @options
+    class RunOpts:
+        lab_env: str = "staging"
+
+    @options
+    class FirmwareOpts:
+        fw: str = "latest"
+
+    register_options(RunOpts, verbs=["run"])
+    register_options(FirmwareOpts, verbs=["test"])
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    seen: list = []
+
+    def fake_main(_args, plugins=(), **_kwargs):
+        from otto.context import get_context
+
+        collected(plugins)
+        seen.append(get_context().options(FirmwareOpts))
+        if session_raises:
+            raise RuntimeError("session blew up")
+        return pytest.ExitCode.OK
+
+    monkeypatch.setattr("pytest.main", fake_main)
+
+    ctx = OttoContext(lab=Lab(name="test"))
+    ctx.bind_verb_options("run", {"lab_env": "prod"})
+    before = ctx.options(RunOpts)
+    token = set_context(ctx)
+    try:
+        if session_raises:
+            with pytest.raises(RuntimeError, match="session blew up"):
+                run_tests(["test_alpha"], options=[FirmwareOpts(fw="2.1")], output_dir=tmp_path)
+        else:
+            run_tests(["test_alpha"], options=[FirmwareOpts(fw="2.1")], output_dir=tmp_path)
+    finally:
+        reset_context(token)
+    # The run itself saw the test verb's options...
+    assert [o.fw for o in seen] == ["2.1"]
+    # ...and the caller gets its own binding back, untouched.
+    assert ctx.verb == "run"
+    assert ctx.options(RunOpts) is before
+    assert ctx.verb_option_source().build(RunOpts).lab_env == "prod"
 
 
-def test_run_selection_nonempty_cov_dir_without_overwrite_raises(tmp_path, monkeypatch):
-    """The cov_dir empty/overwrite guard run_suite enforces (Task 3) applies
-    identically on the run_selection path — a library caller handing
-    RunOptions.cov_dir straight to run_selection gets the same guard, before
-    any host I/O."""
-    import otto.config
-    from otto.config.repo import CollectedTest
+# ── _session_context hardening: restore on exception ─────────────────────────
+#
+# _run_pytest_session raising mid-session must not leak the temporary state
+# _session_context installs — the finally in each branch must still run.
 
+
+def _raising_session(monkeypatch) -> None:
+    def _raise(*_a, **_k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("otto.suite.run._run_pytest_session", _raise)
+
+
+def test_run_tests_restores_no_context_state_on_exception(tmp_path, monkeypatch):
+    """No-active-context branch: an exception mid-session still resets the
+    contextvar, leaving no active OttoContext behind."""
+    from otto.context import _active, try_get_context
+
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    _raising_session(monkeypatch)
+    token = _active.set(None)  # hermetic: guarantee the no-context precondition
+    try:
+        assert try_get_context() is None
+        with pytest.raises(RuntimeError, match="boom"):
+            run_tests([_ALPHA], output_dir=tmp_path)
+        assert try_get_context() is None
+    finally:
+        _active.reset(token)
+
+
+def test_run_tests_restores_prior_output_dir_on_exception(tmp_path, monkeypatch):
+    """Active-context-with-no-output_dir branch: an exception mid-session still
+    rolls back the session-scoped output_dir assignment to its prior value."""
+    from otto.config.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context
+
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    _raising_session(monkeypatch)
+    ctx = OttoContext(lab=Lab(name="test"))
+    assert ctx.output_dir is None
+    token = set_context(ctx)
+    try:
+        with pytest.raises(RuntimeError, match="boom"):
+            run_tests([_ALPHA], output_dir=tmp_path)
+        assert ctx.output_dir is None
+    finally:
+        reset_context(token)
+
+
+# ── run_tests: cov_dir empty/overwrite guard ─────────────────────────────────
+
+
+def test_run_tests_nonempty_cov_dir_without_overwrite_raises(tmp_path, monkeypatch):
+    """A non-empty ``cov_dir`` without ``overwrite_cov_dir`` raises before any
+    host I/O — the same guard the CLI's ``--cov-dir``/``--overwrite-cov-dir``
+    pair already enforces, applied to a library caller that hands
+    ``RunOptions.cov_dir`` straight to ``run_tests``."""
     log_dir = tmp_path / "log"
     log_dir.mkdir()
     cov_dir = tmp_path / "cov_dir"
     cov_dir.mkdir()
     (cov_dir / "stale.txt").write_text("stale")
 
-    class _FakeRepo:
-        name = "fixture-repo"
-        sut_dir = tmp_path
-        tests: ClassVar[list] = []
-        # A real Repo always has settings; the coverage decision reads them.
-        settings: ClassVar[dict] = {}
-
-        def collect_tests(self, markers=None, suite=None, tests=None):
-            return [
-                CollectedTest(
-                    nodeid="tests/t.py::test_alpha",
-                    name="test_alpha",
-                    path=tmp_path / "tests" / "t.py",
-                    cls_name=None,
-                )
-            ]
-
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [_FakeRepo()])
-    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
     clean_mock = AsyncMock()
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", clean_mock)
     _stub_instrumented_lab(monkeypatch)
 
     with pytest.raises(ValueError, match="cov_dir"):
-        run_selection(
-            run_options=RunOptions(tests="test_alpha", cov=True, cov_dir=cov_dir),
-            output_dir=log_dir,
-        )
+        run_tests([_ALPHA], run_options=RunOptions(cov=True, cov_dir=cov_dir), output_dir=log_dir)
     # Failed before the pre-run remote clean ever ran, and the stale contents
     # were never touched.
     clean_mock.assert_not_awaited()
     assert (cov_dir / "stale.txt").exists()
 
 
-def test_run_suite_rebuilds_scope_hosts_registered_by_the_inner_session(tmp_path, monkeypatch):
-    """Hosts a suite registers during the in-process pytest session were
-    opened on pytest's own (now-closed) loops — run_suite must drop that
-    per-loop state (rebuild_connections) BEFORE the post-run sweep closes
-    them on a fresh loop (Plan 1 carry-over: cross-loop closes can only fail)."""
-    import otto.config
+def test_run_tests_overwrite_cov_dir_true_clears_and_proceeds(tmp_path, monkeypatch):
+    """``overwrite_cov_dir=True`` clears a non-empty ``cov_dir`` and the run proceeds."""
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    cov_dir = tmp_path / "cov_dir"
+    cov_dir.mkdir()
+    (cov_dir / "stale.txt").write_text("stale")
+
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
+    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    _stub_instrumented_lab(monkeypatch)
+    monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
+
+    result = run_tests(
+        [_ALPHA],
+        run_options=RunOptions(cov=True, cov_dir=cov_dir, cov_clean=False, overwrite_cov_dir=True),
+        output_dir=log_dir,
+    )
+    assert result.passed
+    assert not (cov_dir / "stale.txt").exists()
+
+
+def test_run_tests_abandons_hosts_left_on_the_inner_sessions_closed_loops(tmp_path, monkeypatch):
+    """A host that connected on one of pytest's loops, which then closed unswept,
+    holds state no loop can drive. After the session run_tests drops it
+    (``abandon_closed_loops``) and never attempts a cross-loop close."""
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context, try_get_context
 
-    monkeypatch.setattr(otto.config, "get_repos", list)
-
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
     events: "list[str]" = []
 
     class _SuiteHost:
         id = "bed1"
 
-        def rebuild_connections(self) -> None:
-            events.append("rebuild")
+        def __init__(self) -> None:
+            self._owner_loop: "asyncio.AbstractEventLoop | None" = None
+
+        def _drop_dead_connections(self) -> None:
+            events.append("drop")
 
         async def close(self) -> None:
             events.append("close")
 
-    def fake_pytest_main(args, **_kw):
-        # Simulate a suite calling ctx.get_host(...) mid-session.
+    host = _SuiteHost()
+
+    def fake_pytest_main(args, plugins=(), **_kw):
+        collected(plugins)
+        # A test connects the host on pytest's loop, which closes with nobody sweeping it.
         active = try_get_context()
         assert active is not None
-        active.scope.register(_SuiteHost())
+        loop = asyncio.new_event_loop()
+        host._owner_loop = loop
+        active.scope_for(loop).register(host)
+        loop.close()
         return pytest.ExitCode.OK
 
     monkeypatch.setattr("pytest.main", fake_pytest_main)
 
     token = set_context(OttoContext(lab=Lab(name="test")))
     try:
-
-        class _Suite:
-            pass
-
-        run_suite(_Suite, output_dir=tmp_path)
+        run_tests([_ALPHA], output_dir=tmp_path)
     finally:
         reset_context(token)
 
-    assert events == ["rebuild", "close"], (
-        "dead per-loop state must be dropped BEFORE the post-run sweep closes the host"
-    )
+    assert events == ["drop"], "a host on a closed loop is abandoned, never closed cross-loop"
+    assert host._owner_loop is None
 
 
-# ── One event loop per suite (spec §3) ───────────────────────────────────────
+# ── One session-wide event loop (spec §6.6) ──────────────────────────────────
 #
-# These run REAL inner sessions through run_suite, i.e. through
+# These run REAL inner sessions through run_tests, i.e. through
 # _run_pytest_session's base_args — the only thing that proves the loop-scope
 # defaults `otto test` sets are the ones in effect. Each probe writes the id of
 # the running loop, tagged, into a file the outer test reads back.
@@ -1623,8 +1390,6 @@ import pathlib
 
 import pytest
 import pytest_asyncio
-
-from otto.suite import OttoSuite
 
 LOOPS = pathlib.Path({loops!r})
 
@@ -1638,7 +1403,7 @@ _ONE_LOOP_SUITE = (
     _LOOP_PROBE_HEADER
     + """
 
-class {cls_name}(OttoSuite):
+class TestLoopProbe:
     @pytest_asyncio.fixture(scope="class", autouse=True)
     @classmethod
     async def suite_loop(cls):
@@ -1663,7 +1428,7 @@ _ESCAPE_HATCH_SUITE = (
     + """
 
 @pytest.mark.asyncio(loop_scope="function")
-class {cls_name}(OttoSuite):
+class TestLoopProbe:
     @pytest_asyncio.fixture(scope="class", autouse=True)
     @classmethod
     async def suite_loop(cls):
@@ -1688,7 +1453,7 @@ async def pinned_session():
     yield "ok"
 
 
-class {cls_name}(OttoSuite):
+class TestLoopProbe:
     async def test_uses_it(self, pinned_session) -> None:
         assert pinned_session == "ok"
 """
@@ -1700,11 +1465,13 @@ _UNPINNED_SESSION_SUITE = (
 
 @pytest_asyncio.fixture(scope="session")
 async def unpinned_session():
+    _record("session-fixture")
     yield "ok"
 
 
-class {cls_name}(OttoSuite):
+class TestLoopProbe:
     async def test_uses_it(self, unpinned_session) -> None:
+        _record("test")
         assert unpinned_session == "ok"
 """
 )
@@ -1719,30 +1486,22 @@ def _loop_ids(loops_file: Path) -> dict[str, set[int]]:
     return out
 
 
-def _run_loop_probe(tmp_path: Path, monkeypatch, tag: str, src: str):
-    """Register *src* as TestCtxProbe<tag>, run through run_suite, return (result, loops, out)."""
-    import otto.config
-
-    monkeypatch.setattr(otto.config, "get_repos", list)
+def _run_loop_probe(sut_repo, tmp_path: Path, src: str):
+    """Run *src* (as tests/test_loop_probe.py) through run_tests; return (result, loops, out)."""
     out = tmp_path / "out"
     out.mkdir()
     loops = tmp_path / "loops.txt"
-    suite_cls = _register_probe_suite(tmp_path, tag, src.replace("{loops!r}", repr(str(loops))))
-    try:
-        result = run_suite(suite_cls, output_dir=out)
-    finally:
-        _cleanup_probe_suite(tag)
-    return result, loops, out
+    sut_repo(files={"tests/test_loop_probe.py": src.format(loops=str(loops))})
+    return run_tests(["TestLoopProbe"], output_dir=out), loops, out
 
 
-@pytest.mark.usefixtures("_inner_session_env")
-def test_run_suite_shares_one_loop_across_class_fixture_tests_and_function_fixture(
-    tmp_path, monkeypatch
+def test_run_tests_shares_one_loop_across_class_fixture_tests_and_function_fixture(
+    sut_repo, tmp_path
 ):
-    """Spec §3.2: class fixture (setup AND teardown), both tests and an unpinned
-    function fixture report ONE loop id. Red if either ASYNCIO_LOOP_ARGS entry
-    is dropped from _run_pytest_session's base args."""
-    result, loops, _ = _run_loop_probe(tmp_path, monkeypatch, "OneLoop", _ONE_LOOP_SUITE)
+    """Spec §6.6: class fixture (setup AND teardown), both tests and an unpinned
+    function fixture report ONE loop id, the session's. Red if either
+    ASYNCIO_LOOP_ARGS entry is dropped from _run_pytest_session's base args."""
+    result, loops, _ = _run_loop_probe(sut_repo, tmp_path, _ONE_LOOP_SUITE)
     assert result.passed, f"exit_code={result.exit_code}"
     ids = _loop_ids(loops)
     expected_tags = {"class-setup", "class-teardown", "function-fixture", "test_one", "test_two"}
@@ -1750,20 +1509,19 @@ def test_run_suite_shares_one_loop_across_class_fixture_tests_and_function_fixtu
     assert len(set().union(*ids.values())) == 1, f"more than one loop: {ids}"
 
 
-@pytest.mark.usefixtures("_inner_session_env")
-def test_run_suite_escape_hatch_gives_each_test_its_own_loop(tmp_path, monkeypatch):
+def test_run_tests_escape_hatch_gives_each_test_its_own_loop(sut_repo, tmp_path):
     """Spec §3.4: `@pytest.mark.asyncio(loop_scope="function")` on the class opts out.
 
     Comparing id(test_one's loop) to id(test_two's loop) directly is unsound:
     their loops don't overlap in time, and CPython can hand the second one the
     first one's now-freed address, so the test could go red on correct
-    behaviour. The suite's own autouse class fixture is unpinned, so under
-    ASYNCIO_LOOP_ARGS it still runs on the CLASS loop, opened once and alive
-    for the whole class — a live anchor whose id neither test's (closed
-    before the next opens) function loop can ever recycle. Each test's loop
-    must differ from that live class loop.
+    behaviour. The class's own autouse class fixture is unpinned, so under
+    ASYNCIO_LOOP_ARGS it still runs on the SESSION loop, alive for the whole
+    run — a live anchor whose id neither test's (closed before the next
+    opens) function loop can ever recycle. Each test's loop must differ from
+    that live session loop.
     """
-    result, loops, _ = _run_loop_probe(tmp_path, monkeypatch, "Escape", _ESCAPE_HATCH_SUITE)
+    result, loops, _ = _run_loop_probe(sut_repo, tmp_path, _ESCAPE_HATCH_SUITE)
     assert result.passed, f"exit_code={result.exit_code}"
     ids = _loop_ids(loops)
     class_loop = ids["class-setup"]
@@ -1771,23 +1529,26 @@ def test_run_suite_escape_hatch_gives_each_test_its_own_loop(tmp_path, monkeypat
     assert ids["test_two"].isdisjoint(class_loop), f"expected distinct loops: {ids}"
 
 
-@pytest.mark.usefixtures("_inner_session_env")
-def test_run_suite_pinned_session_fixture_is_usable_from_a_class_test(tmp_path, monkeypatch):
-    """Spec §3.3: a session-scoped async fixture that pins loop_scope="session" works."""
-    result, _, _ = _run_loop_probe(tmp_path, monkeypatch, "Pinned", _PINNED_SESSION_SUITE)
+def test_run_tests_pinned_session_fixture_is_usable_from_a_class_test(sut_repo, tmp_path):
+    """A session-scoped async fixture that pins loop_scope="session" still works."""
+    result, _, _ = _run_loop_probe(sut_repo, tmp_path, _PINNED_SESSION_SUITE)
     assert result.passed, f"exit_code={result.exit_code}"
 
 
-@pytest.mark.usefixtures("_inner_session_env")
-def test_run_suite_unpinned_session_fixture_fails_with_scope_mismatch(tmp_path, monkeypatch):
-    """Spec §3.3 / Appendix A.4: the unpinned form errors at setup naming pytest-asyncio's
-    class runner — documented, not hidden. The junit report carries the message."""
-    result, _, out = _run_loop_probe(tmp_path, monkeypatch, "Unpinned", _UNPINNED_SESSION_SUITE)
-    assert not result.passed
-    assert "_class_scoped_runner" in (out / "junit.xml").read_text()
+def test_run_tests_unpinned_session_fixture_is_usable_from_a_class_test(sut_repo, tmp_path):
+    """Spec §6.6: a session-scoped async fixture needs no loop_scope: it runs on the session loop.
+
+    Under the old class-loop default this errored at setup with a ScopeMismatch
+    on pytest-asyncio's ``_class_scoped_runner``."""
+    result, loops, out = _run_loop_probe(sut_repo, tmp_path, _UNPINNED_SESSION_SUITE)
+    assert result.passed, f"exit_code={result.exit_code}"
+    assert "ScopeMismatch" not in (out / "junit.xml").read_text()
+    ids = _loop_ids(loops)
+    assert set(ids) == {"session-fixture", "test"}, ids
+    assert ids["session-fixture"] == ids["test"], f"fixture and test on different loops: {ids}"
 
 
-# ── ctx.cov: the resolved coverage decision is visible to the suite ─────────
+# ── ctx.cov: the resolved coverage decision is visible to the tests ─────────
 #
 # A test or fixture reads `ctx.cov` (or `get_context().cov`) to change
 # behavior under coverage — e.g. keep .gcda files on a remote for the
@@ -1801,7 +1562,8 @@ def _record_ctx_cov_during_session(monkeypatch, *, decision: bool) -> list[bool]
 
     seen: list[bool] = []
 
-    def fake_main(*_a, **_k):
+    def fake_main(_args, plugins=(), **_k):
+        collected(plugins)
         seen.append(get_context().cov)
         return pytest.ExitCode.OK
 
@@ -1816,67 +1578,31 @@ def _record_ctx_cov_during_session(monkeypatch, *, decision: bool) -> list[bool]
 
 
 @pytest.mark.parametrize("decision", [True, False])
-def test_run_suite_exposes_resolved_cov_on_context(tmp_path, monkeypatch, decision):
+def test_run_tests_exposes_resolved_cov_on_context(tmp_path, monkeypatch, decision):
     """Auto mode (cov=None) resolved to *decision* is what the session reads."""
-    import otto.config
     from otto.context import try_get_context
 
-    monkeypatch.setattr(otto.config, "get_repos", list)
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
     seen = _record_ctx_cov_during_session(monkeypatch, decision=decision)
 
-    class _CovCtxSuite:
-        pass
-
-    run_suite(_CovCtxSuite, output_dir=tmp_path)
+    run_tests([_ALPHA], output_dir=tmp_path)
     assert seen == [decision]
     assert try_get_context() is None  # hermetic default: the library context is gone
 
 
-def test_run_suite_restores_prior_cov_on_an_active_context(tmp_path, monkeypatch):
+def test_run_tests_restores_prior_cov_on_an_active_context(tmp_path, monkeypatch):
     """A caller's own context gets its cov back after the run."""
-    import otto.config
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
 
-    monkeypatch.setattr(otto.config, "get_repos", list)
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
     seen = _record_ctx_cov_during_session(monkeypatch, decision=True)
-
-    class _CovRestoreSuite:
-        pass
 
     ctx = OttoContext(lab=Lab(name="test"), output_dir=tmp_path)
     token = set_context(ctx)
     try:
-        run_suite(_CovRestoreSuite, output_dir=tmp_path)
+        run_tests([_ALPHA], output_dir=tmp_path)
     finally:
         reset_context(token)
     assert seen == [True]
     assert ctx.cov_decision is None  # back to undecided: detection applies again
-
-
-def test_run_selection_exposes_resolved_cov_on_context(tmp_path, monkeypatch):
-    """The suite-less selection path sets ctx.cov exactly as run_suite does."""
-    import otto.config
-    from otto.config.repo import CollectedTest
-
-    class _FakeRepo:
-        name = "fixture-repo"
-        sut_dir = tmp_path
-        tests: ClassVar[list] = []
-        settings: ClassVar[dict] = {}
-
-        def collect_tests(self, markers=None, suite=None, tests=None):
-            return [
-                CollectedTest(
-                    nodeid="tests/t.py::test_alpha",
-                    name="test_alpha",
-                    path=tmp_path / "tests" / "t.py",
-                    cls_name=None,
-                )
-            ]
-
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [_FakeRepo()])
-    seen = _record_ctx_cov_during_session(monkeypatch, decision=True)
-
-    run_selection(run_options=RunOptions(tests="test_alpha"), output_dir=tmp_path)
-    assert seen == [True]

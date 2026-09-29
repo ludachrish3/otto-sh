@@ -376,13 +376,17 @@ class _OttoGroup(TyperGroup):
             loader = spec.loader
             cached_names = get_completion_names()
             if cached_names is not None and isinstance(loader, str):
-                # Completion fast path: attach cached suite/instruction stubs
-                # to the freshly imported sub-app before conversion.
+                # Completion fast path: the registries are not populated, so
+                # `run` gains its cached instruction stubs and `test` its
+                # cached verb flags before conversion.
                 mod_name, _, attr = loader.partition(":")
-                sub_app = getattr(importlib.import_module(mod_name), attr)
                 if spec.name == "test":
-                    _attach_cached_stubs(sub_app, cached_names.get("suites", []))
-                elif spec.name == "run":
+                    from .test import build_test_app
+
+                    sub_app = build_test_app(cached_names.get("test_options", []))
+                else:
+                    sub_app = getattr(importlib.import_module(mod_name), attr)
+                if spec.name == "run":
                     _attach_cached_stubs(sub_app, cached_names.get("instructions", []))
                 spec = dataclasses.replace(spec, loader=sub_app)
             from .invoke import wrap_leaf_callbacks
@@ -739,7 +743,7 @@ def _attach_cached_stubs(
     parent: typer.Typer,
     commands: list[dict[str, Any]],
 ) -> None:
-    """Rebuild per-suite / per-instruction stubs under ``parent`` from the cache.
+    """Rebuild per-instruction stubs under ``parent`` from the cache.
 
     Imports are local so the cache module isn't pulled in during tests or
     non-completion invocations that don't exercise this path.
@@ -758,13 +762,10 @@ def _emit_bootstrap_findings(result: "BootstrapResult") -> None:
     """Startup render site for contained bootstrap findings: errors, then warnings.
 
     Errors gate dispatch later (``fail_loud_on_bootstrap_errors``); warnings
-    never do — both surface here as ``warning:`` stderr lines. Errors go through
-    :func:`~otto.cli.invoke.render_bootstrap_findings`, which marks each one
-    printed, so a later render site (after a lazy suite load) never repeats it.
+    never do — both surface here as ``warning:`` stderr lines.
     """
-    from .invoke import render_bootstrap_findings
-
-    render_bootstrap_findings(result)
+    for err in result.errors:
+        typer.echo(f"warning: {err}", err=True)
     for warn in result.warnings:
         typer.echo(f"warning: {warn.message}", err=True)
 
@@ -795,12 +796,13 @@ def _cache_is_writable(repos: list["Repo"]) -> bool:
     return cache_is_writable(repos)
 
 
-RAW_ITERATED_NAMES_KEYS: tuple[str, ...] = ("commands", "suites", "instructions")
+RAW_ITERATED_NAMES_KEYS: tuple[str, ...] = ("commands", "instructions", "test_options")
 """The ``names`` payload keys that reach a RAW iterator and so must be shape-checked.
 
 ``_OttoGroup.list_commands`` / ``_OttoGroup._cached_stub`` iterate
 ``commands`` directly; ``_attach_cached_stubs`` does the same for
-``suites`` and ``instructions`` — all three deep inside click's
+``instructions``, and ``otto.cli.test.build_test_app`` for ``test_options`` —
+all deep inside click's
 help/completion pipeline, well outside any containment ``entry()`` can offer.
 ``_cached_names_payload`` loops over this constant to shape-check them; it
 is the only place it is spelled.
@@ -840,9 +842,8 @@ broad ``except`` and hands over — their Typer-side completers
 (``_project_completer`` and the link-id completer) stay live, spec §5 lists
 no change to them. ``logins_by_host`` is read by
 ``otto.cli.completers.host_user_completer``, which scopes a host verb's
-``--user`` menu to the typed host's logins. A further
-key, ``tests``, lives in its own cache section that ``_cached_names_payload``
-never loads.
+``--user`` menu to the typed host's logins. Test names are in no section:
+they live in the per-file test tables (``otto.config.collected_tests``).
 
 ``tests/unit/config/test_cache_sections.py`` pins that
 :data:`RAW_ITERATED_NAMES_KEYS` and this constant together equal the ``names``
@@ -868,15 +869,15 @@ def _cached_names_payload(repos: "list[Repo]") -> "dict[str, Any] | None":
 
     :data:`RAW_ITERATED_NAMES_KEYS` ARE CHECKED HERE, and
     :data:`DELEGATED_NAMES_KEYS` are DELEGATED — the split is not arbitrary.
-    :func:`~otto.config.completion_cache.read_cache` type-checks all twelve
-    keys and remains a live reader today —
+    :func:`~otto.config.completion_cache.read_cache` type-checks every
+    key and remains a live reader today —
     :func:`~otto.config.completion_cache.cache_is_stale` calls it
-    for the merged-view validity check — but a single-section read has no such
-    pass, so each key needs an owner here. The three in
+    for the validity check — but a single-section read has no such
+    pass, so each key needs an owner here. The two in
     :data:`RAW_ITERATED_NAMES_KEYS` reach a RAW iterator deep inside click's
     help/completion pipeline — :meth:`_OttoGroup.list_commands` /
     :meth:`_OttoGroup._cached_stub` for ``commands``, :func:`_attach_cached_stubs`
-    for ``suites`` and ``instructions`` — well outside any containment
+    for ``instructions`` — well outside any containment
     ``entry()`` can offer, so a malformed one is a traceback in the user's
     shell mid-TAB rather than a fallback. Every key in
     :data:`DELEGATED_NAMES_KEYS` reaches its reader inside a containment that
@@ -884,8 +885,7 @@ def _cached_names_payload(repos: "list[Repo]") -> "dict[str, Any] | None":
     ``otto cache info``'s own reader for ``host_drops``, the shim's broad
     ``except``-and-hand-over for ``projects`` and ``links`` (see that
     constant's own note) — so re-checking them here would be a second
-    spelling of a rule that already has one. (``tests``, the twelfth key, lives in its own cache
-    section this reader never loads.)
+    spelling of a rule that already has one.
 
     Checked one level DEEP, not just ``isinstance(list)``: ``["plug", "x"]``
     is a list, and every one of the three consumers immediately calls
@@ -939,21 +939,20 @@ def entry(cache_stale: bool = False) -> None:
     before argv parsing so registered third-party commands exist when the root
     group is consulted. Contained user-code failures print one framed warning
     line each; real command dispatch fails loud in the invoke preamble. Repo
-    test files are not part of that bootstrap: they load on the first read of
-    the suites registry (a cache rebuild is one), and a failure found then is
-    printed once, after the rebuild.
+    test files are not part of that bootstrap, and a cache rebuild never
+    reads them: test names come only from pytest's collections, which write
+    the per-file test tables.
 
     Root help is served from the ``names`` section alone
-    (:data:`ROOT_HELP_ARGV`), so it never validates — and therefore never
-    walks — the test corpus: the screen is a list of command names and their
-    one-line helps, which init trees and top-level test files determine. On
+    (:data:`ROOT_HELP_ARGV`): the screen is a list of command names and their
+    one-line helps, which the init trees determine. On
     any miss it falls through to the same full bootstrap every other
     invocation runs, so a cold cache still lists third-party commands.
 
     Root help and completion are also the ONLY paths that check the cache's
     validity and rebuild it on a miss. Every other invocation bootstraps and
     dispatches without touching the completion cache at all — no read, no
-    validity check, no write: that check is O(test corpus) in stats, and a
+    validity check, no write: that check stats every key path, and a
     command that never consults the cache has no business paying for it.
 
     *cache_stale* is set by the bash shim when it handed this TAB over
@@ -966,33 +965,47 @@ def entry(cache_stale: bool = False) -> None:
     from .. import bootstrap as bs
     from ..config.completion_cache import (
         DUMP_TESTS_ENV_VAR,
-        dump_collected_test_names,
+        discard_collect_refresh_request,
         is_completion_mode,
+        spawn_requested_refresh,
     )
 
     if os.environ.get(DUMP_TESTS_ENV_VAR):
-        # One-shot "collect and print test names" subprocess, spawned by the
-        # --tests completer to warm its collected cache (collection never runs
-        # inside the completer itself). Any failure exits non-zero with no
-        # payload, so the parent treats it as a miss and keeps the static floor.
+        # The collect child, spawned by a test-name completer: it seeds or
+        # refreshes the per-file test tables and prints nothing (collection
+        # never runs inside the completer, whose stdout is the shell's). It
+        # bootstraps as `otto test` does (libs on the path, init modules
+        # imported), so it collects what a run would, but only once it holds
+        # the collect lock and its deadline is armed. Any failure exits
+        # non-zero with the cooldown stamped, so the next TABs neither wait
+        # nor spawn again for a while; the waiting parent answers what the
+        # tables hold.
         code = 1
-        with contextlib.suppress(Exception):
-            dump_collected_test_names(bs.discover().repos)
-            code = 0
+        try:
+            from ..config.collected_tests import collect_child_main
+            from ..suite.run import _refresh_tables
+
+            code = collect_child_main(lambda: bs.bootstrap().repos, _refresh_tables)
+        except Exception as exc:  # noqa: BLE001 — the child reports by exit code and cooldown only
+            with contextlib.suppress(Exception):
+                from ..config.completion_cache import stamp_collect_cooldown
+
+                stamp_collect_cooldown(f"{type(exc).__name__}: {exc}")
         raise SystemExit(code)
 
     completion = is_completion_mode()
+    if completion:
+        discard_collect_refresh_request()
     reads_cache = completion or sys.argv[1:] in ROOT_HELP_ARGV
     if completion and not cache_stale:
         # Completion must never traceback into the shell: any discovery
         # failure just leaves the cache unset and falls through to the
         # slow path below.
         #
-        # The `names` section ALONE, not the merged view: every completion
-        # source except `--tests` is served from it, and validating the
-        # `tests` section here would make every TAB walk the whole corpus to
-        # answer `otto ho<TAB>`. `otto.cli.test._tests_completer` reads the
-        # section it needs, when it needs it.
+        # The `names` section: every completion source except `otto test`'s
+        # NAMES and `-m` is served from it. Those two read each repo's test
+        # table (`otto.config.collected_tests.completion_view`), when they
+        # need it, so `otto ho<TAB>` never looks at the test tree.
         #
         # Through `_cached_names_payload`, exactly as root help does: the
         # `suppress` above covers the READ, and nothing else — the payload it
@@ -1030,34 +1043,22 @@ def entry(cache_stale: bool = False) -> None:
             raise SystemExit(1) from e
         _emit_bootstrap_findings(result)
 
-        # Only the paths that READ the cache refresh it. Validating it is
-        # O(test corpus) in stats, and an ordinary command would pay that on
-        # every invocation for a cache it never consults: a round trip per
-        # file on a network filesystem. Completion and root help are the
-        # readers; a stale bash TAB reaches here with cache_stale set.
+        # Only the paths that READ the cache refresh it. Validating it stats
+        # every key path, and an ordinary command would pay that on every
+        # invocation for a cache it never consults: a round trip per file on
+        # a network filesystem. Completion and root help are the readers; a
+        # stale bash TAB reaches here with cache_stale set.
         #
-        # Writability first: it costs no corpus I/O, and when no entry could
+        # Writability first: it costs no key-set stats, and when no entry could
         # be stored (no home, an inventory with no stable fingerprint) every
-        # root help and TAB lands here, so loading the suites for a rebuild
-        # that cannot happen would import every test file on each of them.
+        # root help and TAB lands here, so the validity check is skipped too.
         if reads_cache and _cache_is_writable(result.repos):
             from ..config.completion_cache import cache_is_stale
             from ..config.corpus_snapshot import corpus_snapshot
 
-            # The validity check and the rebuild ask about the same corpus from
-            # four places; the scope makes that one walk and one stat per path.
+            # The validity check and the shim's stat triples ask about the same
+            # key paths; the scope makes that one stat per path.
             with corpus_snapshot():
-                # Load the suites FIRST, before anything in the scope stats the
-                # tree. The rebuild reads SUITES anyway, and importing a test
-                # file can create `__pycache__` beside it: a new entry in a
-                # directory the cache keys on, so that directory's mtime moves.
-                # Loaded after a memoized stat, the move would make the entry
-                # written stale on arrival, and the next root help or TAB would
-                # rebuild again. Inside the scope rather than before it: the one
-                # answer the load memoizes is the `test_*.py` glob of each tests
-                # dir, which an import cannot change, and the check reuses it.
-                bs.load_test_suites()
-
                 # Filled by the validity check, consumed by write_cache: each
                 # section's key set is hashed at most once per invocation, and
                 # the scope makes each path's stat one syscall.
@@ -1076,27 +1077,21 @@ def entry(cache_stale: bool = False) -> None:
                         collect_lab_names,
                         collect_links,
                         collect_logins_by_host,
-                        collect_marker_names,
                         collect_project_names,
                         collect_reservation_usernames,
-                        scan_test_corpus,
+                        collect_test_verb_options,
                         write_cache,
                     )
                     from ..config.completion_tree import build_shim_payload
 
-                    instructions, suites = collect_current_commands()
+                    instructions = collect_current_commands()
                     backends = collect_backend_names()
                     with contextlib.suppress(OSError):
-                        # Inside the suppression, where the call it replaced sat as a
-                        # write_cache keyword: it walks the corpus and reads pytest config,
-                        # both of which guard OSError themselves today — but the containment
-                        # is what this site promises, not what its callees happen to do.
-                        scan = scan_test_corpus(result.repos)
                         write_cache(
                             result.repos,
                             instructions,
-                            suites,
                             collect_host_ids(result.repos),
+                            test_options=collect_test_verb_options(),
                             docker_hosts=collect_docker_capable_host_ids(result.repos),
                             docker_use_cases=collect_docker_use_case_names(result.repos),
                             term_backends=backends["term_backends"],
@@ -1104,8 +1099,6 @@ def entry(cache_stale: bool = False) -> None:
                             usernames=collect_reservation_usernames(result.repos),
                             commands=collect_cli_commands(),
                             labs=collect_lab_names(result.repos),
-                            tests=scan.names,
-                            markers=collect_marker_names(result.repos, scan=scan),
                             hosts_by_lab=collect_host_ids_by_lab(result.repos),
                             host_drops=collect_host_drops(result.repos),
                             host_classes_by_id=collect_host_classes_by_id(result.repos),
@@ -1131,23 +1124,14 @@ def entry(cache_stale: bool = False) -> None:
                             # WORKSPACE the collect ran against, and `errors` carries
                             # discovery failures too: a repo whose `settings.toml`
                             # will not parse is absent from `result.repos` entirely,
-                            # so its corpus is missing from the `tests` floor exactly
-                            # as its instructions are missing from `names`.
+                            # so its instructions are missing from `names` and its
+                            # test table from the shim's `tables`.
                             tainted=bool(result.errors),
                         )
-            # Test files load on demand (the suites load above), so a broken one
-            # surfaced only after the startup emitter ran: print it here, once.
-            from .invoke import render_bootstrap_findings
-
-            render_bootstrap_findings(result)
 
     from ..context import reset_cli_context
     from ..errors import OttoError
-    from .invoke import (
-        print_error,
-        render_instrumentation_refusal,
-        render_pending_bootstrap_findings,
-    )
+    from .invoke import print_error, render_instrumentation_refusal
 
     try:
         app()
@@ -1177,22 +1161,15 @@ def entry(cache_stale: bool = False) -> None:
         # A coverage refusal carries its per-product verdicts as structure as
         # well as text; on a console those render as the rounded table and the
         # error line keeps only the headline. Here rather than in a leaf
-        # because `otto test <Suite> --cov` raises from inside the suite
-        # registry's runner and reaches no leaf handler at all — this frame is
-        # the one place both `otto test` paths pass through. Anything else
-        # comes back as its own full message, unchanged.
+        # because `otto test --cov` raises it from inside `run_tests`, which
+        # the leaf deliberately does not catch — this frame is the one place
+        # every coverage-running verb passes through. Anything else comes back
+        # as its own full message, unchanged.
         print_error(f"error: {render_instrumentation_refusal(e)}")
         raise SystemExit(1) from e
     finally:
-        # Reset FIRST. The late render below writes to stderr, and an OSError
-        # from that write (a broken pipe, say) would otherwise propagate out of
-        # this `finally` in place of the command's own SystemExit/exception —
-        # and skip the reset that follows it, leaving the composition root's
-        # context stuck for whatever runs next in this process.
         reset_cli_context()
-        # Catch-all for a suites read no render site covered (a leaf resolving
-        # a suite by name, say): the lazy load's findings still print, once.
-        # The render's own failure must not replace what `entry()` was already
-        # exiting with, so it is contained rather than left to propagate.
-        with contextlib.suppress(OSError):
-            render_pending_bootstrap_findings()
+        if completion:
+            # After the answer is printed: a completer that answered from a
+            # table with moved files asked for the refresh behind it.
+            spawn_requested_refresh()

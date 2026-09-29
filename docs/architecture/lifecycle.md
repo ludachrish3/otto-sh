@@ -25,11 +25,11 @@ digraph lifecycle {
     completion [label="completion / root help fast path\ncache hit → zero user code", style=dashed];
     discovery [label="bootstrap phase 1: discovery\nOTTO_* env + settings.toml\n(no user code runs)"];
     registration [label="bootstrap phase 2: registration\ninit modules\n(per-file failures contained)"];
-    suites [label="first read of SUITES\n(otto test, a cache rebuild)\nloads test files on demand", style=dashed];
+    pytest_session [label="pytest session\n(otto test, completion's bounded collection)\nthe only place test files load", style=dashed];
     dispatch [label="dispatch\nresolve only the target command;\nevery other command stays a help stub"];
     preamble [label="invoke preamble\nload + merge labs → OttoContext →\noutput dir + log sinks → reservation gate\n(lab_free commands skip lab and gate)"];
     body [label="command body\n(command-specific — pages below)"];
-    teardown [label="teardown\nHostScope closes remaining hosts;\nexit code derived from the Result"];
+    teardown [label="teardown\neach loop's HostScope closes its hosts;\nexit code derived from the Result"];
 
     shim -> entry [label=" every argv but a bare --version"];
     entry -> completion [label=" completion request"];
@@ -37,7 +37,7 @@ digraph lifecycle {
     discovery -> registration;
     registration -> dispatch;
     dispatch -> preamble;
-    dispatch -> suites [style=dashed];
+    dispatch -> pytest_session [style=dashed];
     preamble -> body;
     body -> teardown;
 }
@@ -87,41 +87,35 @@ Lab loading is deliberately **not** part of bootstrap. `otto --help`,
 `--list-*` flags, and shell completion never open `lab.json`, and a missing
 or malformed lab file only matters once a command that needs the lab runs.
 
-### Test files load on demand
+### Test files load only inside pytest
 
-Test files are not part of bootstrap. They exist to register suites, and only
-a few paths read suites: `otto test` (running, listing and its help screen)
-and a rebuild of the completion cache ({doc}`subsystems/completion-cache`).
-The suites registry imports them on its first read after bootstrap: its
-loader, {func}`~otto.bootstrap.load_test_suites`, imports each repo's test
-files once, with the same per-file containment as phase 2
-({doc}`subsystems/registries`). The result is that `otto host … exec` never
-imports pytest, and a broken test file cannot block a command that has
-nothing to do with suites.
+Test files are not part of bootstrap, and no otto code imports one outside a
+pytest session: `otto test`'s collection and run, and the bounded background
+collection that seeds and refreshes test-name completion
+({doc}`subsystems/completion-cache`).
+`--list-tests`, `--list-markers` and `otto -n test` take the run's own
+collection path with `--collect-only`. The result is that `otto host … exec` never imports pytest, and a
+broken test file cannot block a command that has nothing to do with tests.
 
-A broken test file still fails loudly where it matters. Running suites
-through `otto test` prints a framed `warning:` line naming the file and the
-cause, then a summary, and exits 1. Listing suites, `otto test --help` and a
-cache rebuild print the same `warning:` line, once, and carry on. Every other
-command does not import the file at all. Init modules stay in phase 2, and a
-broken one still gates every dispatch as described above, because init
-modules are where extensions register and every command depends on them.
+A broken test file still fails loudly where it matters, and only there. When
+`otto test`'s session reaches a file that fails to collect, it logs an error
+naming it and still runs the tests that were asked for; the run exits 1, as
+pytest does ({doc}`../cli/test/selection`). Init modules stay in phase 2, and a broken
+one still gates every dispatch as described above, because init modules are
+where extensions register and every command depends on them.
 
-A test file may register suites and nothing else. An instruction, a backend
-or a CLI command registered from a test file would exist for `otto test` and
-be missing everywhere else, so while test files load, any registration other
-than a suite is refused with a framed error that says to register it from an
-init module instead. How the refusal works, including why otto's own modules
-may still register when a test file imports them, is in
+A test file may register nothing. An instruction, an options class, a
+backend or a CLI command registered from a test file would exist for
+`otto test` and be missing everywhere else, so while test files load, any
+registration from outside the `otto` package is refused with
+{class}`~otto.registry.RegistrationRefused`, whose message says to register
+it from an init module instead. How the refusal works, including why otto's
+own modules may still register when a test file imports them, is in
 {doc}`subsystems/registries`.
 
-Test files are imported only from the top level of each directory a repo
-lists under `tests`, never recursively, and the reason is blast radius rather
-than speed: a test file that fails to import fails every `otto test` run, so
-one broken file under an unlisted subdirectory would stop every suite from
-running. Listing the directories keeps that surface one the repo chose.
-`otto test` still hands the same directories to pytest, which recurses as
-usual.
+pytest collects each directory a repo lists under `tests` the way it always
+does, recursing into subdirectories and loading their conftests; otto adds no
+rule of its own about depth.
 
 ## The preamble, and who opts out
 
@@ -172,9 +166,10 @@ body runs, so a command author who does nothing at all gets a correct dry run
 and cannot get it wrong. The alternative, where every author has to keep dry
 runs in mind while writing run-parse-branch logic, produces a feature that is
 subtly broken in a different way in each command, and a consistently broken
-complex feature is worse than a reliable simple one. For `otto test -n` the
-suite imports and binds and no step runs: steps not running *is* the feature,
-not a missing preview.
+complex feature is worse than a reliable simple one. For `otto -n test` the
+options build and validate, pytest collects what the names select
+(`--collect-only`, the run's own collection), and no test runs: tests not
+running *is* the feature, not a missing preview.
 
 **The stop applies to `lab_free` commands too, with no carve-out.**
 `lab_free` means "this command drives its own lifecycle", not "this command
@@ -252,10 +247,10 @@ phase and a watchdog thread that force-exits `128 + signum` if the phase
 does not finish inside the deadline. The watchdog is **armed by the first
 signal, not by phase entry** — its pre-arm read blocks with no timeout — so
 this is not a wall-clock cap on the phase. An uninterrupted `otto test` runs
-as long as its suite takes; the deadline only bounds how long an
+as long as its tests take; the deadline only bounds how long an
 *interrupted* one may keep unwinding. It has exactly one caller — the
 in-process pytest session behind `otto test` (`otto/suite/run.py`), where
-stage one is pytest's own fixture unwind, which releases the suite's host
+stage one is pytest's own fixture unwind, which releases the tests' host
 connections. That *composes* the primitive rather than escaping it: the exit
 contract is identical, only the graceful path belongs to pytest instead of
 to the scope.
@@ -266,7 +261,7 @@ handlers with `add_signal_handler`, and asyncio restores
 displaced — so an installing nested command would hand the enclosing phase's
 signals to asyncio's defaults on its way out and delete both of its stages.
 Since a pytest session inside `otto test` reaches `run_command()` from any
-suite that touches a host, that is the ordinary case, not a corner. So a
+test that touches a host, that is the ordinary case, not a corner. So a
 command that finds a phase in force leaves the dispositions alone and lets
 the phase's own handler deliver the interrupt: a `KeyboardInterrupt` raised
 into a live nested command unwinds its loop — which cancels the body exactly
@@ -276,7 +271,7 @@ The deadline runs from the arming signal and cannot be pushed out. Foreign
 signals ride the same wakeup fd while a phase owns it, so the watchdog counts
 them as deliveries it must ignore (a resized terminal must not force-exit a
 command) without letting them re-time the bound — otherwise anything periodic,
-that recurs — a held-down terminal resize, the suite re-arming SIGALRM once
+that recurs — a held-down terminal resize, a test run re-arming SIGALRM once
 per retried attempt — would postpone an interrupted phase's only guarantee of
 termination for as long as it kept arriving.
 
@@ -294,12 +289,13 @@ returns. Local blocking work belongs in {func}`asyncio.to_thread`.
 
 {class}`~otto.context.OttoContext` is a plain dataclass holding exactly what
 one invocation needs: the active `lab`, the `dry_run` and
-`log_command_output` flags, the invocation's `output_dir`, and a
-{class}`~otto.context.HostScope`. Its methods are the canonical host
-accessors:
+`log_command_output` flags, the invocation's `output_dir`, the options bound
+for the dispatched verb (read with {meth}`~otto.context.OttoContext.options`),
+and one {class}`~otto.context.HostScope` per event loop. Its methods are the
+canonical host accessors:
 
-- {meth}`~otto.context.OttoContext.get_host` — look up one host by id, apply
-  per-call option overrides, register it with the scope.
+- {meth}`~otto.context.OttoContext.get_host` — look up one host by id and
+  apply per-call option overrides.
 - {meth}`~otto.context.OttoContext.all_hosts` — iterate the fleet. The
   built-in `local` host and Docker container hosts are excluded unless opted
   in (`include_local=True` / `include_containers=True`): deploy, monitor, and
@@ -327,9 +323,20 @@ injected.
 Hosts hold real resources — SSH connections, telnet consoles, docker exec
 channels. otto deliberately has **no** `__del__`-based cleanup: garbage
 collection is non-deterministic, and relying on it caused resource churn.
-Instead every host handed out by a context is registered (deduplicated by
-identity) with the context's {class}`~otto.context.HostScope`, and the scope
-closes anything still connected when the invocation ends.
+Instead a host registers, deduplicated by identity, with the
+{class}`~otto.context.HostScope` of the event loop that first connects it
+({meth}`~otto.context.OttoContext.scope_for`), because a connection belongs
+to the loop that opened it and only that loop can close it gracefully. Each
+loop's scope closes what it owns while the loop still runs
+({meth}`~otto.context.OttoContext.sweep_loop`): a command's loop at command
+end, and under `otto test` each pytest-asyncio loop just before pytest-asyncio
+closes it, logging `closed 2 hosts at end of TestRouter's loop: dut1, dut2`
+at debug level. A host used from a different loop that is still running
+fails fast with {class}`~otto.host.loop_owner.HostLoopError` instead of
+hanging; one whose owning loop has already closed drops its dead connection
+and reconnects. After `otto test`'s pytest session returns, anything a loop
+left unswept is abandoned as a backstop
+({meth}`~otto.context.OttoContext.abandon_closed_loops`).
 
 That yields three equally valid usage modes, mirroring file descriptors:
 
@@ -338,7 +345,7 @@ That yields three equally valid usage modes, mirroring file descriptors:
 async with ctx.get_host("router1") as h:
     await h.run("uptime")
 
-# 2. no ceremony — the scope closes it at command end
+# 2. no ceremony — the loop's scope closes it at command end
 h = ctx.get_host("router1")
 await h.run("uptime")
 

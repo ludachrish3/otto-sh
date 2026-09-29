@@ -8,9 +8,10 @@ path; only the real CLI does, and only over the real multi-hop transport:
 
 * the ``pytest.main()`` test-phase loop followed by the *separate*
   ``asyncio.run(collect_coverage)`` collection loop — the cross-event-loop seam
-  that ``OttoSuite._otto_release_connections`` closes (a stale telnet session
-  reused across that boundary hangs, and the single-client QEMU socket blocks
-  the collector's reconnect);
+  that each pytest loop's end-of-loop host sweep closes
+  (``otto.suite.loops.sweep_runner_loop``; a stale telnet session reused
+  across that boundary hangs, and the single-client QEMU socket blocks the
+  collector's reconnect);
 * the cross-gcov report: a host ``lcov`` driving the SDK ``arm-zephyr-eabi-gcov``;
 * the hop host (``test4``) being in the ``embedded`` lab for hop resolution
   *without* being mistaken for a Unix coverage target in the meta (it is

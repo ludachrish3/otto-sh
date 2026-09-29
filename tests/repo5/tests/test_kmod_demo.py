@@ -1,4 +1,4 @@
-"""OttoSuite driving otto_kmod_demo on the unix bed through the kmod products.
+"""Tests driving otto_kmod_demo on the unix bed through the kmod products.
 
 Both hosts run the common mix; test1 adds the drop-oldest policy, a parse
 error and a range error, and a mid-suite dump; test2 adds the stop-marker
@@ -25,10 +25,8 @@ import shlex
 import pytest
 import pytest_asyncio
 
-from otto import options
 from otto.config.fleet import all_hosts, do_for_all_hosts
 from otto.host.unix_host import UnixHost
-from otto.suite import OttoSuite
 
 CTL = "/sys/kernel/debug/otto_kmod_demo/ctl"
 DUMP = "/sys/kernel/debug/otto_kgcov/otto_kmod_demo/dump"
@@ -63,11 +61,6 @@ TEST1_ONLY = [*TEST1_FILL, *TEST1_ERRORS, TEST1_EXIT_ENQUEUE]
 TEST2_FILL = ["policy fifo", "enqueue -1", "enqueue 9", "drain", "drain", "limit 2"]
 TEST2_EXIT_ENQUEUE = "enqueue 3"  # leaves the queue non-empty for the exit-time drain
 TEST2_ONLY = [*TEST2_FILL, TEST2_EXIT_ENQUEUE]
-
-
-@options
-class _Options:
-    pass
 
 
 async def _ctl(host: UnixHost, command: str) -> str:
@@ -110,9 +103,7 @@ async def _uninstall(host: UnixHost) -> None:
         raise RuntimeError(f"{host.id}: unloading otto_kgcov failed: {removed.msg}")
 
 
-class TestKmodDemo(OttoSuite):
-    Options = _Options
-
+class TestKmodDemo:
     @pytest_asyncio.fixture(autouse=True, scope="class")
     @classmethod
     async def _modules(cls):

@@ -99,8 +99,8 @@ session or host *holds*, keeping them unit-testable without live hardware.
 
 Where an established tool has trained users, otto follows: exit codes are
 ssh-like (`255` = never ran, otherwise the shell's retcode); test semantics
-are pytest's, not a reinvention; suites and instructions share option
-classes; JSON/TOML field names are `snake_case`, matching the Python they
+are pytest's, not a reinvention; tests and instructions share option
+classes registered per verb; JSON/TOML field names are `snake_case`, matching the Python they
 become. ({doc}`utilities/results`, {doc}`subsystems/execution`)
 
 ## Documentation is part of the change

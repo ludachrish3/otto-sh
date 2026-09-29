@@ -5,7 +5,7 @@
 **otto** — Our Trusty Testing Orchestrator — is a framework for deploying
 products to remote hosts for testing and validation.  It provides a CLI and
 a Python API for running commands on remote systems, transferring files,
-executing test suites, and monitoring host metrics in real time.
+executing tests, and monitoring host metrics in real time.
 
 ## Who is otto for?
 
@@ -35,7 +35,7 @@ CLI users
 
 API builders
 : Import otto's Python packages to build higher-level automation on top of
-  hosts, suites, and the monitor.  See the {doc}`api/index` for the full
+  hosts, tests, and the monitor.  See the {doc}`api/index` for the full
   class and function reference.
 
 ## Key concepts
@@ -89,7 +89,7 @@ Set the `hop` field in a host's JSON definition or use `--hop` on the CLI.
 
 A **Lab** is a JSON file that describes a set of hosts and their topology.
 Otto loads labs at startup (via `--lab` or the `OTTO_LAB` environment
-variable) and makes every host available to instructions, test suites, and
+variable) and makes every host available to instructions, tests, and
 the monitor.  Multiple labs can be merged by combining their names with `+`
 (`--lab lab_a+lab_b`).
 
@@ -97,7 +97,7 @@ the monitor.  Multiple labs can be merged by combining their names with `+`
 
 Otto discovers your project through a `.otto/settings.toml` file at the
 repository root.  This file tells otto where to find your Python libraries,
-test suites, run instructions, and lab data:
+tests, run instructions, and lab data:
 
 ```toml
 name = "my_project"
@@ -141,7 +141,7 @@ logger = logging.getLogger(__name__)
 @instruction()
 async def deploy(
     debug: Annotated[
-        bool, typer.Option("--field/--debug", help="Use field or debug products.")
+        bool, typer.Option(help="Deploy debug products instead of field products.")
     ] = False,
 ):
     for host in all_hosts():
@@ -153,34 +153,25 @@ async def deploy(
 otto -l my_lab run deploy --debug
 ```
 
-### Test suites (`otto test`)
+### Tests (`otto test`)
 
-A **suite** is a class that extends {class}`~otto.suite.suite.OttoSuite`
-with a `Test`-prefixed name, which registers it automatically.
-Each suite becomes a subcommand of `otto test`.  Suites can define an `Options` class whose fields appear as CLI flags:
+otto tests are plain pytest: `Test`-prefixed classes and `test_`-prefixed
+functions in your repo's test directories, with no base class to inherit.
+`otto test` runs them by name or marker expression. Its flags include those
+of every options class a repo registers for the `test` verb, and a test reads
+their values with `ctx.options(...)`:
 
 ```python
 import logging
-from typing import Annotated
 
-import typer
-
-from otto import options
-from otto.suite import OttoSuite
+from my_project.options import DeviceOptions  # registered for "test" in an init module
 
 logger = logging.getLogger(__name__)
 
 
-@options
-class _Options:
-    firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
-
-
-class TestDevice(OttoSuite):
-    Options = _Options
-
-    async def test_device_reachable(self, suite_options: _Options) -> None:
-        logger.info(f"firmware={suite_options.firmware}")
+class TestDevice:
+    async def test_device_reachable(self, ctx) -> None:
+        logger.info(f"firmware={ctx.options(DeviceOptions).firmware}")
         assert True
 ```
 
@@ -189,15 +180,15 @@ otto -l my_lab test TestDevice --firmware 2.1
 otto test --iterations 10 --threshold 95 TestDevice
 ```
 
-Suites support pytest markers (`timeout`, `retry`, `parametrize`,
-`integration`), non-fatal assertions via the `expect` fixture, per-test artifact
-directories, and built-in monitoring.
+Tests get pytest markers (`timeout`, `retry`, `parametrize`, `integration`),
+non-fatal assertions via the `expect` fixture, per-test artifact directories,
+and built-in monitoring; see {doc}`cookbook/authoring/writing-tests`.
 
-Both suites and instructions accept an options class. For flags that
-are repo-wide (device type, lab environment, etc.), define a single
-`RepoOptions` class in a module listed in your `init` setting — a `libs` path
-like `pylib/` is one common choice — and inherit it from both sides —
-see [Sharing repo-wide options](cookbook/authoring/options-classes.md#sharing-repo-wide-options).
+Options classes are shared by registering them per verb. For flags that are
+repo-wide (device type, lab environment, etc.), define one `RepoOptions`
+class and register it for both `otto run` and `otto test` from a module
+listed in your `init` setting; every instruction and every test run then
+takes the same flags. See {doc}`cookbook/authoring/options-classes`.
 
 ### Monitor (`otto monitor`)
 
@@ -211,9 +202,8 @@ otto monitor --live --db metrics.db                # persist as a session for la
 otto monitor metrics.db                            # review a captured session
 ```
 
-Monitoring can also be started from within a test suite using
-`await self.start_monitor(hosts=...)` and
-`await self.stop_monitor()`.
+A test can also start a monitor of its own through the `monitor` fixture:
+`await monitor.start(hosts=...)`, stopped for it when the test ends.
 
 ## Quick-start example
 
@@ -230,7 +220,7 @@ Monitoring can also be started from within a test suite using
    otto -l my_lab run deploy --debug
    ```
 
-3. **Run a test suite:**
+3. **Run tests:**
 
    ```bash
    otto -l my_lab test TestDevice --firmware 2.1
@@ -249,7 +239,7 @@ Monitoring can also be started from within a test suite using
 - {ref}`team-setup-checklist` — One-time team setup (host source, reservations, libs)
 - {doc}`cli/index` — Every `otto` command, one page per verb
 - {doc}`configuration/index` — The project and lab files every command reads
-- {doc}`cookbook/authoring/options-classes` — Shared options classes for instructions and suites
+- {doc}`cookbook/authoring/options-classes` — Options classes shared by instructions and tests
 - {doc}`cookbook/extending/extending-cli` — Registering your own top-level `otto` commands
 - {doc}`cookbook/index` — Using otto from Python: authoring, extending, and short recipes
 - {doc}`cookbook/python-library` — Using otto as a Python library

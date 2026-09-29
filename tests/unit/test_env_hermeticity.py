@@ -3,13 +3,12 @@
 A developer shell with ``OTTO_SUT_DIRS`` exported (say, pointing at another
 checkout's ``tests/repo1``) leaks into every test that exercises a CLI path
 whose callback calls ``bootstrap()`` without monkeypatching the env: the
-ambient repo's suites get registered into the process-wide ``SUITES``
-registry under foreign file paths, which later collide with the real
-``tests/repo1`` imports in ``test_repo.py``'s bootstrap test (three
-``BootstrapError: test suite ... is already registered`` failures, worker-
-order dependent under xdist). ``tests/conftest.py`` therefore strips all
-``OTTO_*`` variables (minus explicit harness toggles) at import time; these
-tests pin that guard.
+ambient repo's init modules load into the process-wide registries under
+foreign file paths, where they once collided with the real ``tests/repo1``
+imports in ``test_repo.py``'s bootstrap test (``already registered``
+failures, worker-order dependent under xdist). ``tests/conftest.py``
+therefore strips all ``OTTO_*`` variables (minus explicit harness toggles) at
+import time; these tests pin that guard.
 """
 
 import os

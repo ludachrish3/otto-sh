@@ -45,6 +45,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
@@ -56,6 +57,9 @@ from otto.host.toolchain import Toolchain
 from otto.logger.mode import LogMode
 from otto.result import CommandResult, Result
 from otto.utils import Status
+
+if TYPE_CHECKING:
+    from otto.context import OttoContext
 
 # Deliberately NOT importing the authority's ``_fd_watermark`` fixture the way
 # the chaos lanes do: pytest registers a fixture under its function's own name,
@@ -247,7 +251,7 @@ class RecordingHost(BaseHost):
         self.event_log.append(f"as_user:{user}")
         yield self
 
-    async def close(self) -> None:
+    async def _close(self) -> None:
         self.closed = True
 
 
@@ -288,3 +292,24 @@ async def landed() -> MockSession:
     await feed
     s.written.clear()
     return s
+
+
+@pytest.fixture
+def ctx_with_local_lab() -> Iterator["OttoContext"]:
+    """An ACTIVE ``OttoContext`` whose lab holds one :class:`LocalHost`, id ``local``.
+
+    Installed for the test's length, so a host that claims a loop registers
+    with this context's per-loop scope.
+    """
+    from otto.config.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context
+    from otto.host.local_host import LocalHost
+
+    lab = Lab(name="t")
+    lab.add_host(LocalHost())
+    ctx = OttoContext(lab=lab)
+    token = set_context(ctx)
+    try:
+        yield ctx
+    finally:
+        reset_context(token)

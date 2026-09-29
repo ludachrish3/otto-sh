@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Build the repo3 LLEXT coverage extension (cov_ext.stripped.llext) into the
-# given build dir. This is the single command the TestEmbeddedCoverage suite
+# given build dir. This is the single command the TestEmbeddedCoverage class
 # runs to keep the product up to date before loading it — the embedded analogue
 # of repo1's `make -C product clean all`.
 #

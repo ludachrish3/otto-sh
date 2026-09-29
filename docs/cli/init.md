@@ -23,7 +23,7 @@ it never creates an output directory.
 | `--all` | `False` | Scaffold every missing area without prompting |
 | `--schemas` | `False` | Scaffold (or refresh, if present) the schemas area: `.otto/schemas` + editor wiring + generated snippets |
 | `--lab` | `False` | Scaffold the lab area (`lab_data/lab.json` + `inventory.json` + `creds.json` + README) |
-| `--tests` | `False` | Scaffold the tests area (example suite + conftest) |
+| `--tests` | `False` | Scaffold the tests area (example tests + conftest), plus the instructions area when it is missing |
 | `--instructions` | `False` | Scaffold the instructions area (`pylib/<name>_instructions/`) |
 | `--kgcov` | `False` | Scaffold (or refresh) the kgcov area: vendor the `otto_kgcov` library at `--kgcov-dir` (default `third_party/otto_kgcov`), append a commented `[[dev_tools]]` entry of kind `kgcov`, and write a consumer starter beside it. Never scaffolded by `--all` or the prompts |
 | `--kgcov-dir DIR` | `third_party/otto_kgcov` | Where `--kgcov` vendors the library (repo-relative) |
@@ -36,7 +36,10 @@ missing area (prompting for `--name`/`--version` only when
 `.otto/settings.toml` itself is missing). `--all` scaffolds every missing
 area with no prompts. Passing one or more of `--lab`/`--tests`/
 `--instructions` scaffolds exactly those areas, plus `settings` automatically
-whenever it's missing — every other area depends on it. `--kgcov` is
+whenever it's missing — every other area depends on it. `--tests` also
+scaffolds the instructions area when it is missing, and says so: the example
+tests read the scaffold's `RepoOptions`, and the instructions module is the
+init module that registers it for `otto test`. `--kgcov` is
 **opt-in**: it is never scaffolded by `--all` and never offered by the
 interactive prompt, only by its own flag.
 
@@ -54,8 +57,8 @@ Every run also prints a "Next steps" list of the commands to run next —
 `otto --install-completion` **and** `source ~/.bash_completions/otto.sh`
 (the first writes the completion script, the second activates it in the shell
 you are in — neither does the other's job), `otto --lab example_lab
---list-hosts`, `otto test --list-suites`, `otto --lab example_lab test
-TestExample`, `otto --lab example_lab test --tests test_example_function`,
+--list-hosts`, `otto test --list-tests`, `otto --lab example_lab test
+TestExample`, `otto --lab example_lab test test_example_function`,
 and `otto --lab example_lab run smoke`.
 
 ## What it scaffolds: lab files
@@ -132,6 +135,6 @@ module and how otto loads/removes it around a run.
 
 For a full first-repo walkthrough, see {doc}`../getting-started/index`, then
 {doc}`../getting-started/running-instructions` and
-{doc}`../getting-started/running-test-suites`; for the
+{doc}`../getting-started/running-tests`; for the
 one-time team decisions around it, the
 {ref}`team-setup-checklist <team-setup-checklist>`.

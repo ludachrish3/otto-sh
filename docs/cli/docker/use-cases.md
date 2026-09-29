@@ -3,7 +3,7 @@
 A **use-case** is a named, cross-repo deployment: "bring up `integration`" is
 one command whatever combination of projects is currently active. `otto docker
 up`, `down` and `build` all speak use-cases, and so does the library API that
-instructions and suites import.
+instructions and tests import.
 
 The unit a repo declares is not the whole use-case — it is a **fragment** of
 one. Every active repo contributes the fragments it declares under the name,
@@ -480,7 +480,7 @@ and this answers what *would happen*.
   a composes-only declaration keeps its container ids literally unchanged by
   naming its use-case after the repo.
 
-## From instructions and suites
+## From instructions and tests
 
 The CLI is a thin wrapper. The same deployment from Python:
 
@@ -493,7 +493,7 @@ async with deployed("integration", own=True) as stack:
 ```
 
 {func}`~otto.docker.deployment.deployed` is the recommended scope — see
-{doc}`../../cookbook/suite-recipes` for the sharing contract and
+{doc}`../../cookbook/test-recipes` for the sharing contract and
 {mod}`otto.docker.deployment` for `deploy`, `teardown` and
 {class}`~otto.docker.deployment.UseCaseStack`.
 

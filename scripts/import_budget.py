@@ -145,8 +145,9 @@ class Surface:
     Every measurement is otherwise COLD by construction: ``surface_env``
     mints a fresh ``OTTO_HOME`` per call so repeated measurements of one
     surface stay independent. That is right for the fallback path and wrong
-    for the cached one — a cold ``--help`` MUST walk the corpus (miss → full
-    bootstrap → collect → write), because cache-or-load never degrades help.
+    for the cached one — a cold ``--help`` MUST take the full load (miss →
+    full bootstrap → collect → write), because cache-or-load never degrades
+    help.
     A warm surface therefore runs the child TWICE against the same generated
     repo and the same home: a discarded seed run, then the measured one.
 
@@ -173,6 +174,9 @@ class Surface:
     that ignores the cache would do so for the wrong reason: there is nothing
     to open, not that dispatch declines to open it. Seeding with root
     ``otto --help`` instead puts a real cache beside the measured run.
+    ``otto test`` is the exception among the verbs: it reads and writes the
+    collected-tests tables (never a section), so ``test_repo`` names its own
+    argv here, and its seed leaves exactly the table a repeated run finds.
     """
 
     env_extra: tuple[tuple[str, str], ...] = ()
@@ -267,6 +271,7 @@ def _verb_surface(
     ssh_lab: bool = False,
     expect_loaded: str | None = None,
     target_ratio: float | None = None,
+    seed_argv: list[str] | None = None,
 ) -> Surface:
     """Build a surface measuring one real command, the way a user runs it day to day.
 
@@ -275,6 +280,8 @@ def _verb_surface(
     with root help, which writes the cache an ordinary command then finds
     beside it, as ``dispatch_repo_warm`` explains), with ``OTTO_LAB`` naming
     the JSON lab the repo declares so no command needs a real host.
+    *seed_argv* replaces root help for a verb whose own warm state is
+    something else (``test_repo``).
     """
     return Surface(
         key,
@@ -283,7 +290,7 @@ def _verb_surface(
         sut_dirs_count=5,
         real_entry=True,
         warm=True,
-        seed_argv=["otto", "--help"],
+        seed_argv=seed_argv or ["otto", "--help"],
         env_extra=(("OTTO_LAB", "unix"),),
         tracked=tracked,
         expect_exit=expect_exit,
@@ -356,14 +363,14 @@ SURFACES: list[Surface] = [
     # so it is the fallback path: cache miss → full bootstrap → collect →
     # write, which is what cache-or-load promises and must keep costing what
     # a complete answer costs. It is therefore also the surface that PROVES
-    # THE HARNESS still finds a real repo (its `workspace` count covers every
-    # generated file), which is why it stays in the table unchanged.
+    # THE HARNESS still finds a real repo (its `workspace` count clears a
+    # repo-less run of the same command by every `names` key path), which is
+    # why it stays in the table unchanged.
     #
     # `help_repo_warm` is the same surface measured on its SECOND run against
     # one home, i.e. the cached path: root help resolves the command list
     # from the `names` section and never walks the corpus. The scaling test
-    # keys on this one — a cold help legitimately scales, because a full load
-    # legitimately reads everything.
+    # keys on this one.
     Surface("help_repo", ["otto", "--help"], sut_files=50, sut_dirs_count=5, real_entry=True),
     Surface(
         "help_repo_warm",
@@ -473,8 +480,17 @@ SURFACES: list[Surface] = [
     # reset before every run so each measurement transfers into a directory
     # that has never held the file.
     #
-    # Loads the suites: the one verb that must import pytest.
-    _verb_surface("test_repo", ["otto", "test", "TestTop0"], target_ratio=9.46),
+    # The one verb that must import pytest. Its warm state is a repeated
+    # run: the seed is the same `otto test TestTop0`, which writes the repo's
+    # collected-tests table, so the measured run's session imports only the
+    # file that holds the name. Seeded with root help instead, it would
+    # measure the first run in a fresh home: a collection of the whole tree.
+    _verb_surface(
+        "test_repo",
+        ["otto", "test", "TestTop0"],
+        target_ratio=9.46,
+        seed_argv=["otto", "test", "TestTop0"],
+    ),
     # The built-in `local` host stands in for the ~30 host subverbs that run a
     # shell command: every one is a `@cli_exposed` method on the same class.
     _verb_surface("host_local_exec", ["otto", "host", "local", "exec", "true"], target_ratio=4.4),

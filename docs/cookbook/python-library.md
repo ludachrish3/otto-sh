@@ -2,7 +2,7 @@
 
 otto is not limited to the `otto` CLI. You can use it directly in your own
 async Python scripts — for example, one-off automation, CI tooling, or
-integration scripts that operate on lab hosts without needing test suites or
+integration scripts that operate on lab hosts without needing tests or
 instructions. otto ships inline type annotations under [PEP 561](https://peps.python.org/pep-0561/)
 (a `py.typed` marker in the installed package), so a consumer's type checker
 sees otto's real signatures rather than treating `import otto` as untyped.
@@ -22,9 +22,9 @@ module — is {func}`otto.bootstrap.bootstrap`, and it is idempotent (repeated
 calls return the same cached result). `open_context()` calls it for you
 before loading the lab, so any `@instruction`, `@cli_command()`, or
 `register_*_backend()` call in your project's `init` modules has already run
-by the time the `async with` block starts. Test files, where `Test*`-named
-`OttoSuite` subclasses live, are imported later, on the first lookup of a
-suite (see below):
+by the time the `async with` block starts. Test files are not imported
+here; only a pytest session, such as the one {func}`~otto.suite.run.run_tests`
+starts (see below), imports them:
 
 ```python
 async with otto.open_context(lab="mylab") as ctx:
@@ -128,10 +128,13 @@ async with otto.open_context(lab="mylab") as ctx:
 1. Build an `OttoContext` with the chosen lab and runtime flags.
 2. Install it as the active context with `set_context()`, which returns a reset
    token.
-3. Enter `ctx.scope` as an async context manager; on exit it closes any
-   still-connected hosts, then `reset_context(token)` restores the prior state.
+3. Do the work. Each host that connects joins the host scope of the event loop
+   it connects on. On the way out, `ctx.sweep_loop(...)` closes the hosts the
+   running loop owns, then `reset_context(token)` restores the prior state.
 
 ```python
+import asyncio
+
 from otto.context import OttoContext, reset_context, set_context
 from otto.config import load_lab
 
@@ -139,11 +142,13 @@ lab = load_lab("mylab", search_paths=[...])
 ctx = OttoContext(lab=lab, dry_run=False)
 token = set_context(ctx)
 try:
-    async with ctx.scope:
-        # your work here
-        ...
+    # your work here
+    ...
 finally:
-    reset_context(token)
+    try:
+        await ctx.sweep_loop(asyncio.get_running_loop(), label="my script")
+    finally:
+        reset_context(token)
 ```
 
 This is exactly what `open_context` does under the hood. Use this form when
@@ -170,7 +175,7 @@ async with otto.open_context(lab="mylab") as ctx:
 async with otto.open_context(lab="mylab") as ctx:
     host = ctx.get_host("router1")
     await configure(host)  # pass it wherever you like
-# scope.close() sweeps host when the block exits
+# the scope sweep closes host when the block exits
 ```
 
 **(c) Explicit `await host.close()`:**
@@ -186,10 +191,16 @@ async with otto.open_context(lab="mylab") as ctx:
 
 ## FD-model caveat
 
-A host you construct **directly** (e.g. `UnixHost(...)`) outside any context
-has no scope backstop — it is yours to close, exactly like an explicitly-opened
-file descriptor. Use `async with`, `await h.close()`, or register it manually
-with `ctx.scope.register(h)` inside an active context.
+A host joins a scope when it first connects, on whatever event loop it connects
+on, and only while a context is active. A host you construct **directly**
+(e.g. `UnixHost(...)`) and use outside any context has no scope backstop — it
+is yours to close, exactly like an explicitly-opened file descriptor. Use
+`async with` or `await h.close()`.
+
+A host's connection belongs to the event loop that opened it. Using the host
+from a different event loop while that one is still running raises
+{class}`~otto.host.loop_owner.HostLoopError`; close the host on its own loop
+first. Once the loop that opened it has closed, the next use simply reconnects.
 
 Reservation checks are a CLI concern — `open_context` does not gate on them.
 If your script needs to verify reservations before running, call
@@ -230,45 +241,28 @@ network, so this runs as-is:
 The trailing `reset_context` restores the prior active context — always pair it
 with `set_context` (or use `otto.open_context`, which does both for you).
 
-## Running suites from Python
+## Running tests from Python
 
-`otto test` is a thin CLI wrapper: {func}`~otto.suite.run.run_suite` runs one
-`OttoSuite` subclass through `pytest.main()` and returns a
+`otto test` is a thin CLI wrapper around {func}`~otto.suite.run.run_tests`,
+which runs tests through `pytest.main()` and returns a
 {class}`~otto.suite.run.SuiteRunResult` instead of exiting the process.
-`run_suite` and `RunOptions` are exported at the top level (`otto.run_suite`,
-`otto.RunOptions`); the rest of the suite-run API —
-{func}`~otto.suite.run.run_selection`, {func}`~otto.suite.run.find_suite`, and the
-exceptions below — stays one level down, at `otto.suite` / `otto.suite.run` /
-`otto.suite.selection`.
-
-A suite class only exists once the `test_*.py` file that defines it has been
-imported. The suite registry does that itself: its first read after
-bootstrap imports every repo's top-level test files. So
-{func}`~otto.suite.run.find_suite` finds suites defined in test files as long
-as `bootstrap()` has run — `open_context()` runs it for you; a script that skips
-`open_context()` should call `bootstrap()` itself first. The lookup loads
-test files but never bootstraps, so calling `find_suite` before
-`bootstrap()`/`open_context()` raises `LookupError` even for a suite that
-would otherwise be found. When a name is unknown and a test file failed to
-load, the `LookupError` names the files that failed, since the suite may be
-in one of them.
+`run_tests` and `RunOptions` are exported at the top level (`otto.run_tests`,
+`otto.RunOptions`); the exceptions below stay one level down, at
+`otto.suite` / `otto.suite.run` / `otto.suite.selection`.
 
 ```python
 import otto
 from otto.bootstrap import bootstrap
-from otto.suite import find_suite
+
+from acme_options import DeviceTestOptions  # registered for "test"
 
 bootstrap()  # or: async with otto.open_context(lab="mylab") as ctx: ...
 
-# Dynamic lookup by class name -- e.g. the suite came from a config file or
-# CLI argument. Raises LookupError (listing every registered suite) on a
-# typo. Skip this and pass the class directly if you imported it normally.
-suite_cls = find_suite("TestDevice")
-
-run_options = otto.RunOptions(markers="not integration", cov=True)
-options = suite_cls.Options(firmware="2.1")
-
-result = otto.run_suite(suite_cls, options=options, run_options=run_options)
+result = otto.run_tests(
+    ["TestDevice", "test_login"],
+    run_options=otto.RunOptions(markers="not integration", cov=True),
+    options=[DeviceTestOptions(firmware="2.1")],
+)
 
 if not result.passed:
     raise SystemExit(result.exit_code)
@@ -278,9 +272,27 @@ for junit in result.junit_paths:
     print(junit)
 ```
 
+- **Names** take the same forms as on the command line: a test
+  (`test_login`), a class (`TestDevice`, every test in it), or a class path
+  (`TestB::test_plain`); see {doc}`../cli/test/selection`. `run_tests` runs
+  one pytest session per repo with a match, on the matched tests only, and
+  folds the results into one `SuiteRunResult`. Tests run in collection order
+  when `random_order=False`.
+- **A name or a marker expression is required.** Called with neither names
+  nor `run_options.markers`, `run_tests` raises `ValueError`.
+- **`options=`** takes instances of options classes registered for the `test`
+  verb ({doc}`authoring/options-classes`); tests read them with
+  `ctx.options(Cls)`. A registered class you don't pass is built from its
+  defaults, as the command line would, and a required field raises. An
+  instance of a class that isn't registered for `test` raises
+  {class}`~otto.params.OptionsRegistrationError`.
+- **Registrations happen in `bootstrap()`.** It imports each repo's init
+  modules, which is where options classes are registered, so call it (or
+  `open_context()`, which calls it for you) before `run_tests`.
+
 ### `output_dir` precedence
 
-`run_suite`/`run_selection` write `junit.xml` (and, in stability mode,
+`run_tests` writes `junit.xml` (and, in stability mode,
 `stability_report.txt`) under an output directory resolved in this order:
 
 1. The `output_dir=` keyword argument, if given.
@@ -295,41 +307,21 @@ artifacts next to whatever its caller's CWD happens to be.
 
 ### Context handling
 
-Suite internals (the per-test artifact directories, the `ctx` fixture) read
-the active {class}`~otto.context.OttoContext`. When no context is active —
-the plain `bootstrap()` → `run_suite()` script above — `run_suite` and
-`run_selection` install a minimal lab-less context for the duration of the
-session and restore the prior state afterwards. That minimal context carries
-no hosts, so a suite that calls `ctx.get_host(...)` under it fails loud with
-the normal unknown-host error; suites that need lab hosts should run under
+otto's fixtures (the `ctx` fixture, and the options tests read through it)
+use the active {class}`~otto.context.OttoContext`. When no context is
+active (the plain `bootstrap()` → `run_tests()` script above), `run_tests`
+installs a minimal lab-less context for the duration of the session and
+restores the prior state afterwards. That minimal context carries no hosts,
+so a test that calls `ctx.get_host(...)` under it fails loud with the normal
+unknown-host error; tests that need lab hosts should run under
 `open_context()` with the `asyncio.to_thread` pattern shown below. If a
 context is already active, it is used as-is (its `output_dir` is only filled
 in, temporarily, when it has none).
 
-### Suite-less selections
-
-{func}`~otto.suite.run.run_selection` mirrors `otto test --tests`/`-m`
-without a suite name: set `tests=`/`markers=` on `RunOptions` and it runs one
-pytest session per repo with a match, folding the results into a single
-`SuiteRunResult`.
-
-```python
-from otto.suite.run import run_selection
-
-result = run_selection(
-    run_options=otto.RunOptions(tests="test_login,TestB::test_plain"),
-)
-```
-
-`run_selection` requires at least one of `tests=`/`markers=` on `RunOptions`;
-called with both empty (a bare `RunOptions()`) it raises `ValueError`. The
-`otto test` callback likewise takes the suite-less path only once
-`--tests`/`-m` is given.
-
 ### `cov_dir` overwrite guard
 
-When `RunOptions.cov` is set together with an explicit `cov_dir`, both
-`run_suite` and `run_selection` validate it up front, the same way the CLI's
+When `RunOptions.cov` is set together with an explicit `cov_dir`,
+`run_tests` validates it up front, the same way the CLI's
 `--cov-dir`/`--overwrite-cov-dir` pair does: a non-empty target raises
 `ValueError` naming the flag (via `otto.coverage.config.prepare_empty_dir`)
 unless `overwrite_cov_dir=True` is also set, in which case its contents are
@@ -340,33 +332,41 @@ into `<output_dir>/cov`, which is always fresh.
 
 ### Sync API, async callers
 
-`run_suite`/`run_selection` are synchronous, even though the suites and
-instructions they drive are `async def` — both call `asyncio.run()`
-internally (for the pre-run coverage cleanup and post-run coverage
-collection), and `asyncio.run()` raises if a loop is already running. Calling
-either directly from `async def main()` will fail; hand it to a thread
-instead:
+`run_tests` is synchronous, even though the tests it drives are
+`async def`: it calls `asyncio.run()` internally (for the pre-run coverage
+cleanup and post-run coverage collection), and `asyncio.run()` raises if a
+loop is already running. Calling it directly from `async def main()` will
+fail; hand it to a thread instead:
 
 ```python
 import asyncio
 
-result = await asyncio.to_thread(otto.run_suite, suite_cls, run_options=run_options)
+result = await asyncio.to_thread(otto.run_tests, ["TestDevice"])
 ```
 
 ### Exceptions
 
-- {func}`~otto.suite.run.find_suite` raises `LookupError` for an unregistered
-  class name; the message lists every currently-registered suite.
-- {func}`~otto.suite.run.run_selection` raises
+- {func}`~otto.suite.run.run_tests` raises
   {class}`~otto.suite.run.NoTestsMatchedError` (a `ValueError`) when the
   selection matches nothing at all — no repos, or no repo with a matching
   test/marker.
-- `run_selection` raises
+- `run_tests` raises
   {class}`~otto.suite.selection.UnknownSelectionError` (also a `ValueError`,
-  carrying did-you-mean suggestions) when a `tests=` name is a genuine typo
+  carrying did-you-mean suggestions) when a name is a genuine typo
   against a non-empty test universe. Catch it *before* `NoTestsMatchedError`
   if you handle both — both subclass `ValueError`, and the narrower one needs
   to win.
+
+```python
+from otto.suite import NoTestsMatchedError, UnknownSelectionError, run_tests
+
+try:
+    result = run_tests(["test_login"])
+except UnknownSelectionError as e:  # a typo: the message carries did-you-mean
+    raise SystemExit(f"otto: {e}")
+except NoTestsMatchedError:  # nothing to run at all
+    raise SystemExit("otto: no tests matched")
+```
 
 ## Collecting coverage from Python
 
@@ -463,9 +463,9 @@ OttoError` clause catches all of them when you don't need to distinguish —
 except `SyncPhaseInterrupt`, which is a plain `KeyboardInterrupt`.
 
 `except OttoError` catches otto's *named* failures, not every exception otto
-raises: a rejected argument is usually a plain `ValueError`, and `run_command`,
-`run_suite` and `run_selection` can raise `SystemExit`, which `except
-Exception` does not catch either. See {mod}`otto.errors` for which clause
+raises: a rejected argument is usually a plain `ValueError`, and `run_command`
+and `run_tests` can raise `SystemExit`, which `except Exception` does not
+catch either. See {mod}`otto.errors` for which clause
 reaches which exceptions.
 
 ### `clean_after_fetch`

@@ -19,7 +19,6 @@ retired ``expose._render_result`` unit tests).
 """
 
 from pathlib import Path
-from unittest import mock
 
 import pytest
 import typer
@@ -170,28 +169,16 @@ def test_none_message_policy_opts_into_a_completion_line():
     assert "done" in r.output
 
 
-def test_suite_runner_exit_code_rides_the_renderer_silently():
-    """`otto test <Suite>`'s rc reaches the process without a printed line.
+def test_otto_test_exit_code_reaches_the_process_silently(otto_test_cli, monkeypatch):
+    """`otto test NAME`'s rc reaches the process without a printed line.
 
-    The suite runner returns a CommandResult instead of raising typer.Exit
-    (the last suppressed ast-grep violation). Two halves of that contract:
-    pytest's own rc survives verbatim — NOT flattened to 1, which a bare
-    ``Result`` would do — and nothing is printed, because pytest already
-    reported everything the user needs. The no-typer.Exit half is the
-    ``typer-exit-outside-cli`` rule's job, not this test's.
+    Two halves of that contract: pytest's own rc survives verbatim — NOT
+    flattened to 1 — and nothing is printed, because pytest already reported
+    everything the user needs.
     """
-    from otto.suite import OttoSuite
-    from otto.suite.register import SUITES, register_suite_class
     from otto.suite.run import SuiteRunResult
 
-    class _SuiteRcFive(OttoSuite):
-        pass
-
-    register_suite_class(_SuiteRcFive)
-    app = typer.Typer(name="test")
-    app.add_typer(SUITES.get("_SuiteRcFive").sub_app)
-
-    def fake_run_suite(suite, **kw):
+    def fake_run_tests(names, **kw):
         return SuiteRunResult(
             exit_code=5,
             junit_paths=[],
@@ -200,8 +187,8 @@ def test_suite_runner_exit_code_rides_the_renderer_silently():
             output_dir=Path(),
         )
 
-    with mock.patch("otto.suite.run.run_suite", fake_run_suite):
-        r = DispatchRunner().invoke(app, ["_SuiteRcFive"], spec_name="test")
+    monkeypatch.setattr("otto.suite.run.run_tests", fake_run_tests)
+    r = otto_test_cli(["test", "test_x"])
 
     assert r.exit_code == 5, r.output
     assert r.output == ""

@@ -1,4 +1,4 @@
-"""Registry loaders, the suite-loading phase, and the refusal of non-suite registrations."""
+"""The test-file loading phase, and the refusal of registrations made in it."""
 
 import sys
 import types
@@ -8,73 +8,10 @@ import pytest
 from otto import registry as reg
 
 
-def _install_loader(monkeypatch, fn):
-    mod = types.ModuleType("_loader_mod")
-    mod.load = fn
-    monkeypatch.setitem(sys.modules, "_loader_mod", mod)
-    return "_loader_mod:load"
-
-
-_READS = {
-    "items": lambda r: r.items(),
-    "names": lambda r: r.names(),
-    "get": lambda r: r.get("seed"),
-    "origin": lambda r: r.origin("seed"),
-    "unregister": lambda r: r.unregister("seed"),
-    "__contains__": lambda r: "seed" in r,
-    "__len__": len,
-}
-
-
-@pytest.mark.parametrize("read", list(_READS), ids=list(_READS))
-def test_every_read_calls_the_loader_once_and_it_is_never_reentered(monkeypatch, read):
-    """Each of the seven reads runs the loader, through the real ``loader=`` kwarg.
-
-    The loader itself reads the registry, as ``register_suite_class`` does;
-    that inner read must not recurse into the loader.
-    """
-    calls = []
-    loader = _install_loader(monkeypatch, lambda: (calls.append("load"), r.names()))
-    r: reg.Registry[int] = reg.Registry("thing", register_hint="x", loader=loader)
-    with reg.suspend_loaders():
-        r.register("seed", 0)
-    _READS[read](r)
-    assert calls == ["load"]
-
-
-def test_suspend_loaders_reads_without_loading(monkeypatch):
-    calls = []
-    loader = _install_loader(monkeypatch, lambda: calls.append(1))
-    r: reg.Registry[int] = reg.Registry("thing", register_hint="x", loader=loader)
-    with reg.suspend_loaders():
-        r.names()
-        r.items()
-    assert calls == []
-    r.names()
-    assert calls == [1], "loading did not resume after suspend_loaders() exited"
-
-
-def test_loading_resumes_after_suspend_loaders_exits_by_exception(monkeypatch):
-    calls = []
-    loader = _install_loader(monkeypatch, lambda: calls.append(1))
-    r: reg.Registry[int] = reg.Registry("thing", register_hint="x", loader=loader)
-
-    def _read_then_raise() -> None:
-        with reg.suspend_loaders():
-            r.names()
-            raise RuntimeError("boom")
-
-    with pytest.raises(RuntimeError):
-        _read_then_raise()
-    assert calls == []
-    r.names()
-    assert calls == [1], "an exception left the loaders suspended"
-
-
 def test_user_registration_during_test_load_is_refused():
     r: reg.Registry[int] = reg.Registry("widget", register_hint="x")
     with reg.loading_test_files(), pytest.raises(reg.RegistrationRefused, match="init module"):
-        r.register("w", 1, origin="_otto_suite_test_widgets")
+        r.register("w", 1, origin="test_widgets")
     assert "w" not in r
 
 
@@ -85,11 +22,41 @@ def test_otto_module_registration_during_test_load_is_allowed():
     assert "w" in r
 
 
-def test_an_opted_in_registry_accepts_test_file_registrations():
-    r: reg.Registry[int] = reg.Registry("suite", register_hint="x", accepts_test_files=True)
+def test_the_refusal_names_test_files_and_conftests_and_points_at_an_init_module():
+    r: reg.Registry[int] = reg.Registry("widget", register_hint="x")
+    with reg.loading_test_files(), pytest.raises(reg.RegistrationRefused) as err:
+        r.register("w", 1, origin="test_widgets")
+    text = str(err.value)
+    assert "'test_widgets'" in text
+    assert "init module listed in .otto/settings.toml" in text
+    assert "test file or conftest" in text
+    assert "suites" not in text
+
+
+def test_a_ref_resolved_while_test_files_load_may_register_on_import(tmp_path, monkeypatch):
+    """A registered ``Ref``'s module is the init module's code, wherever it first resolves.
+
+    Only an init module (or otto) can have registered the ``Ref``: the same
+    registration from a test file is refused. So when the first ``get`` lands
+    inside a pytest session, what the target's module registers at import is
+    not refused, and the phase marker is in force again once the import is
+    done.
+    """
+    home: reg.Registry[int] = reg.Registry("widget", register_hint="x")
+    other: reg.Registry[int] = reg.Registry("gadget", register_hint="x")
+    monkeypatch.setitem(sys.modules, "_refhome", types.SimpleNamespace(OTHER=other))
+    (tmp_path / "late_widget_mod.py").write_text(
+        "import _refhome\n_refhome.OTHER.register('companion', 2)\nWIDGET = 1\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "late_widget_mod", raising=False)
+    home.register("w", reg.Ref("late_widget_mod:WIDGET"), origin="repo_init")
     with reg.loading_test_files():
-        r.register("TestX", 1, origin="_otto_suite_test_x")
-    assert "TestX" in r
+        assert home.get("w") == 1
+        assert reg.is_loading_test_files()
+        with pytest.raises(reg.RegistrationRefused):
+            other.register("late", 3, origin="test_widgets")
+    assert other.origin("companion") == "late_widget_mod"
 
 
 def _import_every_module_that_builds_a_registry() -> list[str]:
@@ -147,29 +114,21 @@ def _otto_registries() -> "list[reg.Registry]":
     return [r for r in live if _is_otto_module(r.defined_in)]
 
 
-def test_every_otto_registry_but_suites_refuses_during_test_load():
-    """Enumeration guard: a registry added later refuses by default, or this test names it.
+def test_every_otto_registry_refuses_during_test_load():
+    """Enumeration guard: every registry otto builds, including one added later, refuses.
 
     Scoped to registries an ``otto`` module constructed: a test-built registry is
-    not the product's seam. Probed under ``suspend_loaders()`` so the check never
-    runs the suites loader, which would import a SUT's test files.
+    not the product's seam.
     """
-    from otto.suite.register import SUITES
+    from otto.params import OPTIONS
 
     assert _import_every_module_that_builds_a_registry(), "the source scan found no registries"
     registries = _otto_registries()
-    assert SUITES in registries, "the scope filter lost the suites registry"
+    assert OPTIONS in registries, "the scope filter lost the options registry"
     for r in registries:
-        with reg.suspend_loaders():
-            if r is SUITES:
-                with reg.loading_test_files():
-                    r.register("__refusal_probe__", object(), origin="_otto_suite_probe")
-                assert "__refusal_probe__" in r, "SUITES must accept a test file's suite"
-                r.unregister("__refusal_probe__")
-                continue
-            with reg.loading_test_files(), pytest.raises(reg.RegistrationRefused):
-                r.register("__refusal_probe__", object(), origin="_otto_suite_probe")
-            assert "__refusal_probe__" not in r, r
+        with reg.loading_test_files(), pytest.raises(reg.RegistrationRefused):
+            r.register("__refusal_probe__", object(), origin="test_probe")
+        assert "__refusal_probe__" not in r, r
 
 
 def test_a_test_built_registry_is_outside_the_guard_scope():
@@ -205,7 +164,7 @@ def test_providers_refuse_during_test_load(path, func):
     def provider(host):
         return []
 
-    provider.__module__ = "_otto_suite_test_providers"
+    provider.__module__ = "test_providers"
     module = importlib.import_module(path)
     providers = module._PRODUCT_PROVIDERS if "product" in path else module._DEV_TOOL_PROVIDERS
     before = list(providers)
@@ -228,10 +187,10 @@ def test_kind_wrappers_attribute_the_caller(path, func):
     module = importlib.import_module(path)
     code = compile(
         f"from {path} import {func}\n{func}('__probe_kind__', lambda entry, host: None)\n",
-        "_otto_suite_kind_probe",
+        "test_kind_probe",
         "exec",
     )
     with reg.loading_test_files(), pytest.raises(reg.RegistrationRefused):
-        exec(code, {"__name__": "_otto_suite_kind_probe"})  # noqa: S102
+        exec(code, {"__name__": "test_kind_probe"})  # noqa: S102
     registry = module.PRODUCT_KINDS if "product" in path else module.DEV_TOOL_KINDS
     assert "__probe_kind__" not in registry

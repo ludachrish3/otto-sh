@@ -53,26 +53,30 @@ def test_repo_settings_init_sut_dir_variable(default_mock_repo):
     assert mock_repo.init == ["repo1_instructions", "custom_hosts", "repo1_monitor_uptime"]
 
 
-def test_bootstrap_registers_repo1_instructions_and_suites(monkeypatch):
+def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
     """``bootstrap()`` is the granular replacement for the deleted
     ``Repo.apply_settings()`` / ``apply_repo_settings()``: per repo it adds libs
-    to ``sys.path``, imports init modules, and imports test files — which
-    together register repo1's instructions/suites into the shared
-    ``INSTRUCTIONS``/``SUITES`` registries (module-level, process-wide).
+    to ``sys.path`` and imports init modules — which register repo1's
+    instructions and its verb-wide options classes into the shared
+    ``INSTRUCTIONS``/``OPTIONS`` registries (module-level, process-wide).
 
     Isolation: Python's import cache couples this test to any earlier test in
     the same worker that imported repo1's modules — the cached modules make
-    bootstrap's imports no-ops, the decorators never re-run, and the delta
+    bootstrap's imports no-ops, the registrations never re-run, and the delta
     assertions see "sets are equal" (deterministically reproducible by running
     this test twice in one process). So: park any repo1-originated registry
     entries, evict the cached modules, and restore both afterwards.
     """
     from otto import bootstrap as bs
     from otto.cli.run import INSTRUCTIONS
-    from otto.suite.register import SUITES
+    from otto.params import OPTIONS
 
     repo1 = tests_root / "repo1"
     pylib = str(repo1 / "pylib")
+    repo1_options = [
+        "repo1_common.options:DeviceTestOptions",
+        "repo1_common.options:RepoOptions",
+    ]
 
     # Remove any prior entries so the precondition holds even if another
     # test (or a previous run in the same worker) already appended it.
@@ -81,44 +85,21 @@ def test_bootstrap_registers_repo1_instructions_and_suites(monkeypatch):
 
     assert pylib not in sys.path
 
-    def _park(registry, origin_prefix: str) -> dict:
+    def _park(registry) -> dict:
+        # Raw entries, so parking never resolves a lazy ``Ref``.
         parked = {}
-        for name in list(registry.names()):
-            origin = registry.origin(name)
-            if origin.startswith(origin_prefix):
-                parked[name] = (registry.get(name), origin)
+        for name, entry, origin in registry._raw_items():
+            if origin.startswith("repo1_instructions"):
+                parked[name] = (entry, origin)
                 registry.unregister(name)
         return parked
 
-    def _park_repo1_suites() -> dict:
-        # Two origin flavors both mean "repo1's suite world" (mirrors
-        # test_import_and_register.py's clean_registry): suites re-registered
-        # by an in-process `pytest.main([suite_file])` run (run_suite's
-        # mechanism) carry pytest's own module name as origin (e.g.
-        # "test_device") but keep repo1's file, while a bootstrap() of ANY
-        # repo carries the `_otto_suite_*` auto-scan origin but may carry a
-        # foreign file (another checkout's repo1 — an entry a repo1-file-only
-        # park would miss, colliding with this test's own imports as
-        # "already registered"). Park on either signal.
-        parked = {}
-        for name in list(SUITES.names()):
-            entry = SUITES.get(name)
-            origin = SUITES.origin(name)
-            if origin.startswith("_otto_suite_") or Path(entry.file).is_relative_to(repo1):
-                parked[name] = (entry, origin)
-                SUITES.unregister(name)
-        return parked
-
-    parked_instructions = _park(INSTRUCTIONS, "repo1_instructions")
-    parked_suites = _park_repo1_suites()
+    registries = [INSTRUCTIONS, OPTIONS]
+    parked = {registry: _park(registry) for registry in registries}
     evicted = {
-        m: sys.modules.pop(m)
-        for m in list(sys.modules)
-        if m.startswith(("repo1_instructions", "_otto_suite_"))
+        m: sys.modules.pop(m) for m in list(sys.modules) if m.startswith("repo1_instructions")
     }
-
-    before_instructions = set(INSTRUCTIONS.names())
-    before_suites = set(SUITES.names())
+    before = {registry: set(registry.names()) for registry in registries}
 
     monkeypatch.setenv("OTTO_SUT_DIRS", str(repo1))
     bs._reset()
@@ -127,24 +108,23 @@ def test_bootstrap_registers_repo1_instructions_and_suites(monkeypatch):
         assert result.errors == []
 
         assert pylib in sys.path
-        assert set(INSTRUCTIONS.names()) > before_instructions
-        assert set(SUITES.names()) > before_suites
+        assert set(INSTRUCTIONS.names()) > before[INSTRUCTIONS]
+        assert sorted(set(OPTIONS.names()) - before[OPTIONS]) == repo1_options
+        assert [OPTIONS.origin(name) for name in repo1_options] == ["repo1_instructions"] * 2
     finally:
         bs._reset()
         # Restore the exact pre-test world: sys.path, this test's
         # registrations out, the parked entries and cached modules back in.
         while pylib in sys.path:
             sys.path.remove(pylib)
-        for name in set(INSTRUCTIONS.names()) - before_instructions:
-            INSTRUCTIONS.unregister(name)
-        for name in set(SUITES.names()) - before_suites:
-            SUITES.unregister(name)
-        for mod in [m for m in sys.modules if m.startswith(("repo1_instructions", "_otto_suite_"))]:
+        for registry in registries:
+            for name in set(registry.names()) - before[registry]:
+                registry.unregister(name)
+            for name, (entry, origin) in parked[registry].items():
+                registry._restore_raw(name, entry, origin)
+        for mod in [m for m in sys.modules if m.startswith("repo1_instructions")]:
             sys.modules.pop(mod, None)
         sys.modules.update(evicted)
-        for registry, parked in ((INSTRUCTIONS, parked_instructions), (SUITES, parked_suites)):
-            for name, (obj, origin) in parked.items():
-                registry.register(name, obj, overwrite=True, origin=origin)
 
 
 def test_logging_levels_parse_and_default_empty(tmp_path):
@@ -368,66 +348,6 @@ class TestOsProfilesParsing:
         )
         with pytest.raises(ValueError, match="unknown default field"):
             Repo(sut_dir=sut)
-
-
-class TestCollectTestsHardening:
-    def _make_repo(self, tmp_path, test_body="def test_ok():\n    assert True\n"):
-        from otto.config.repo import Repo
-
-        sut = make_sut_repo(tmp_path / "sut", tests=["tests"], files={"tests/test_a.py": test_body})
-        return Repo(sut_dir=sut)
-
-    def test_collects_with_fileno_dependent_conftest_and_pytest_asyncio(self, tmp_path):
-        import pytest_asyncio  # noqa: F401 — reproduce the parent-import precondition (bug A)
-
-        repo = self._make_repo(tmp_path)
-        # A conftest that needs a real stdout fd (reproduces bug B under StringIO).
-        (repo.sut_dir / "tests" / "conftest.py").write_text(
-            "import faulthandler, signal, sys\n"
-            "def pytest_configure(config):\n"
-            "    faulthandler.register(signal.SIGUSR1, file=sys.stderr)\n"
-        )
-        items = repo.collect_tests()
-        assert len(items) == 1
-        assert items[0].name == "test_ok"
-
-    def test_collection_failure_is_logged_not_silent(self, tmp_path, caplog):
-        import logging
-
-        repo = self._make_repo(tmp_path)
-        # A conftest that raises at collection time -> pytest INTERNAL/usage error.
-        (repo.sut_dir / "tests" / "conftest.py").write_text("raise RuntimeError('boom')\n")
-        with caplog.at_level(logging.ERROR):
-            repo.collect_tests()
-        assert any("collection failed" in r.message.lower() for r in caplog.records)
-
-    def test_markers_and_tests_selectors_narrow_results(self, tmp_path):
-        body = (
-            "import pytest\n"
-            "def test_keep():\n    assert True\n"
-            "@pytest.mark.slow\ndef test_slow():\n    assert True\n"
-        )
-        repo = self._make_repo(tmp_path, test_body=body)
-        (repo.sut_dir / "tests" / "conftest.py").write_text(
-            "def pytest_configure(config):\n    config.addinivalue_line('markers','slow: x')\n"
-        )
-        all_names = {t.name for t in repo.collect_tests()}
-        slow_names = {t.name for t in repo.collect_tests(markers="slow")}
-        kw_names = {t.name for t in repo.collect_tests(tests="test_keep")}
-        assert {"test_keep", "test_slow"} <= all_names
-        assert slow_names == {"test_slow"}
-        assert kw_names == {"test_keep"}
-
-    def test_unknown_suite_logs_warning(self, tmp_path, caplog):
-        import logging
-
-        repo = self._make_repo(tmp_path)
-        with caplog.at_level(logging.WARNING):
-            repo.collect_tests(suite="no_such_suite")
-        assert any(
-            "no_such_suite" in r.message and "not found in the registry" in r.message
-            for r in caplog.records
-        )
 
 
 class TestOsProfilesIntegration:

@@ -4,7 +4,7 @@ import time
 import pytest
 
 from otto.config.home import workspace_key
-from tests._fixtures.cache_workspace import OLD, YOUNG, _mk_workspace
+from tests._fixtures.cache_workspace import OLD, SESSION_DIR_BYTES, YOUNG, _mk_workspace
 
 
 def test_matcher_accepts_a_real_workspace_key(tmp_path):
@@ -305,3 +305,124 @@ def test_prune_untouched_env_only_dir_lands_in_neither_bucket(tmp_path):
     assert ws not in report.retained_young
     assert ws not in report.retained_nonempty
     assert ws not in report.dirs_removed
+
+
+# ── the bytecode and pytest's cache otto's pytest sessions keep in a workspace ──
+
+
+def test_session_dir_names_match_the_home_constants():
+    from otto.config.cache_maintenance import SESSION_DIR_NAMES
+    from otto.config.home import PYCACHE_DIRNAME, PYTEST_CACHE_DIRNAME
+
+    assert SESSION_DIR_NAMES == [PYCACHE_DIRNAME, PYTEST_CACHE_DIRNAME]
+
+
+def test_clear_workspace_empties_the_session_dirs_and_nothing_else(tmp_path):
+    from otto.config.cache_maintenance import clear_workspace
+
+    ws = _mk_workspace(tmp_path, "abababab-cur", cache_age=YOUNG, env=True, session_dirs=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("mine")
+    (ws / "pycache" / "home" / "link").symlink_to(outside)
+
+    report = clear_workspace(ws)
+
+    assert not (ws / "pycache").exists()
+    assert not (ws / "pytest-cache").exists()
+    assert (outside / "keep.txt").read_text() == "mine", "a symlink in the tree is never followed"
+    assert (ws / "env" / "bin" / "python").exists()
+    assert ws / "pycache" in report.files_removed
+    assert ws / "pytest-cache" in report.files_removed
+    assert report.bytes_freed >= SESSION_DIR_BYTES
+
+
+def test_a_symlinked_session_dir_is_left_alone(tmp_path):
+    from otto.config.cache_maintenance import clear_workspace, prune
+
+    ws = _mk_workspace(tmp_path, "abababab-cur", cache_age=OLD)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "x.pyc").write_text("")
+    (ws / "pycache").symlink_to(elsewhere)
+
+    clear_workspace(ws)
+    prune(tmp_path, age_blind=True)
+
+    assert (elsewhere / "x.pyc").is_file()
+    assert (ws / "pycache").is_symlink()
+
+
+def test_prune_age_blind_takes_the_session_dirs_and_the_workspace(tmp_path):
+    from otto.config.cache_maintenance import prune
+
+    ws = _mk_workspace(tmp_path, "aaaaaaaa-all", cache_age=YOUNG, session_dirs=True)
+
+    report = prune(tmp_path, age_blind=True)
+
+    assert not ws.exists()
+    assert ws in report.dirs_removed
+    assert ws / "pycache" in report.files_removed
+
+
+def test_prune_keeps_the_session_dirs_of_a_workspace_with_a_young_cache(tmp_path):
+    from otto.config.cache_maintenance import prune
+
+    ws = _mk_workspace(
+        tmp_path, "aaaaaaaa-mix", cache_age=YOUNG, sidecar=True, sidecar_age=OLD, session_dirs=True
+    )
+
+    prune(tmp_path)
+
+    assert (ws / "pycache").is_dir()
+    assert (ws / "pytest-cache").is_dir()
+    assert not (ws / "remote_completion_cache.json").exists()
+
+
+def test_prune_takes_the_session_dirs_with_the_last_old_cache(tmp_path):
+    from otto.config.cache_maintenance import prune
+
+    ws = _mk_workspace(tmp_path, "aaaaaaaa-old", cache_age=OLD, session_dirs=True)
+
+    report = prune(tmp_path)
+
+    assert not ws.exists()
+    assert ws in report.dirs_removed
+
+
+def test_prune_takes_session_dirs_left_with_no_cache_file(tmp_path):
+    from otto.config.cache_maintenance import prune
+
+    ws = _mk_workspace(tmp_path, "aaaaaaaa-bare", cache_age=None, session_dirs=True)
+
+    report = prune(tmp_path)
+
+    assert not ws.exists()
+    assert ws in report.dirs_removed
+
+
+def test_prune_dry_run_reports_the_session_dirs_and_removes_nothing(tmp_path):
+    from otto.config.cache_maintenance import prune
+
+    ws = _mk_workspace(tmp_path, "aaaaaaaa-dry", cache_age=OLD, session_dirs=True)
+
+    report = prune(tmp_path, dry_run=True)
+
+    assert ws / "pycache" in report.files_removed
+    assert ws / "pytest-cache" in report.files_removed
+    assert ws in report.dirs_removed
+    assert report.bytes_freed >= SESSION_DIR_BYTES
+    assert (ws / "pycache").is_dir()
+    assert (ws / "pytest-cache" / "v" / "randomly_seed").is_file()
+
+
+def test_iter_workspaces_counts_the_session_dirs_as_cache(tmp_path):
+    from otto.config.cache_maintenance import iter_workspaces
+
+    ws = _mk_workspace(tmp_path, "aaaaaaaa-info", cache_age=YOUNG, session_dirs=True)
+
+    [info] = iter_workspaces(tmp_path)
+
+    assert info.path == ws
+    assert info.extra_entries == 0
+    assert info.cache_bytes == len("{}") + SESSION_DIR_BYTES

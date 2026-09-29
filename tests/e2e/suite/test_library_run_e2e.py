@@ -1,11 +1,12 @@
-"""End-to-end test for the ``bootstrap()``/``run_suite()`` library path.
+"""End-to-end test for the ``bootstrap()``/``run_tests()`` library path.
 
 Drives a plain Python script — no ``otto`` CLI involved at all — that mirrors
-the "Running suites from Python" walkthrough in
-``docs/cookbook/python-library.md``: ``bootstrap()``, ``find_suite()``,
-``run_suite()``. This is the flow that caught the extraction's only shipped
-bug (``run_suite`` assuming a CLI-installed context was already active); this
-test regresses it directly, with the CLI layer entirely out of the picture.
+the library walkthrough in ``docs/cookbook/python-library.md``:
+``bootstrap()``, then ``run_tests()`` by name with an instance of a class
+registered for ``test``. This is the flow
+that caught the extraction's only shipped bug (the library run assuming a
+CLI-installed context was already active); this test regresses it directly,
+with the CLI layer entirely out of the picture.
 """
 
 import json
@@ -20,9 +21,9 @@ from tests.e2e._otto_subprocess import PROJECT_ROOT, REPO_E2E, otto_subprocess_e
 pytestmark = pytest.mark.hostless
 
 # Script run via `sys.executable <path>` (not `otto`): bootstrap the
-# composition root, look the suite up by name (as a config-driven caller
-# would), run it, and report back everything the parent test needs as one
-# JSON line on stdout.
+# composition root, run the fixture class by name (as a config-driven caller
+# would), and report back everything the parent test needs as one JSON line
+# on stdout.
 _SCRIPT = """
 import json
 import os
@@ -30,13 +31,19 @@ from pathlib import Path
 
 from otto.bootstrap import bootstrap
 from otto.context import try_get_context
-from otto.suite import find_suite, run_suite
+from otto.suite import run_tests
 
 output_dir = Path(os.environ["OTTO_TEST_OUTPUT_DIR"])
 
 bootstrap()
-cls = find_suite("TestE2EFixture")
-r = run_suite(cls, options=cls.Options(), output_dir=output_dir)
+# Importable once bootstrap() has put the repo's libs on sys.path.
+from repo_e2e_instructions.options import E2EFixtureOptions
+
+r = run_tests(
+    ["TestE2EFixture"],
+    options=[E2EFixtureOptions(label="library")],
+    output_dir=output_dir,
+)
 
 print(json.dumps({
     "passed": r.passed,
@@ -58,11 +65,11 @@ def _run_library_script(
 
     Takes the exact env :func:`tests.e2e._otto_subprocess.run_otto` would build
     (``OTTO_SUT_DIRS``, subprocess-coverage wiring, the ``-p no:tach`` scar —
-    the script's ``run_suite`` drives ``pytest.main`` in-process, which is the
+    the script's ``run_tests`` drives ``pytest.main`` in-process, which is the
     #193 shape) but drives ``sys.executable`` against a script file, since this
     is a library-only flow with no CLI entry point involved.
     """
-    script_path = tmp_path / "run_suite_script.py"
+    script_path = tmp_path / "run_tests_script.py"
     script_path.write_text(_SCRIPT)
 
     env = otto_subprocess_env(
@@ -81,8 +88,8 @@ def _run_library_script(
     )
 
 
-def test_library_run_suite_pass(tmp_path: Path) -> None:
-    """``bootstrap()`` -> ``find_suite()`` -> ``run_suite()`` on a passing suite.
+def test_library_run_tests_pass(tmp_path: Path) -> None:
+    """``bootstrap()`` -> ``run_tests()`` on a passing class.
 
     The driving script exits 0; the printed :class:`SuiteRunResult` reports
     ``passed``, a real JUnit file was written, and the library-installed
@@ -101,10 +108,10 @@ def test_library_run_suite_pass(tmp_path: Path) -> None:
     assert payload["context_none_after"] is True
 
 
-def test_library_run_suite_fail(tmp_path: Path) -> None:
-    """``OTTO_E2E_FAIL=1`` fails the suite — but the driving SCRIPT still exits 0.
+def test_library_run_tests_fail(tmp_path: Path) -> None:
+    """``OTTO_E2E_FAIL=1`` fails the test — but the driving SCRIPT still exits 0.
 
-    ``run_suite`` never raises for a red suite; it reports the failure in the
+    ``run_tests`` never raises for a red test; it reports the failure in the
     returned :class:`SuiteRunResult`. Only the plain Python script's own logic
     (absent here) would turn that into a nonzero process exit — mirroring how
     a real caller decides whether/how to propagate ``r.exit_code``.

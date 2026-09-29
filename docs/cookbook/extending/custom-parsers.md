@@ -2,7 +2,7 @@
 
 Teaching `otto monitor` to collect values it has no built-in metric for:
 per-host and project-level parsers, their health reporting, custom SNMP
-descriptors, and driving the collector from a suite. For running the
+descriptors, and using custom parsers from a test. For running the
 monitor, see {doc}`../../cli/monitor/index`.
 
 ## Custom parsers
@@ -185,33 +185,27 @@ from [Per-interface and per-filesystem OIDs](../../cli/monitor/metrics.md#per-in
 (`rx if0`, `fs1 used`, …): register a new `SnmpMetric` for that exact OID
 with a more meaningful `label` (e.g. `rx wan0`) and it replaces the default.
 
-## Monitoring from test suites
+## Custom parsers from a test
 
-You can also start the monitor programmatically from within a single test:
+A test starts a monitor of its own through the `monitor` fixture, and hands
+it custom parsers the same way the collector takes them: `parsers=` for the
+parsers every host uses, or `targets=` for per-host
+{class}`~otto.monitor.collector.MonitorTarget` objects when hosts need
+different ones. `parsers=` replaces the default set, so list the defaults too
+to keep them:
 
 ```python
-class TestPerformance(OttoSuite):
-    async def test_load(self, suite_options: _Options) -> None:
-        await self.start_monitor(hosts=[host1, host2])
-        await self.add_monitor_event("Load started", color="#2ca02c")
+from otto.monitor.parsers import DEFAULT_PARSERS
 
-        # ... run workload ...
 
-        await self.add_monitor_event("Load complete", color="#d62728")
-        await self.stop_monitor()
+async def test_load(monitor) -> None:
+    await monitor.start(hosts=[gpu_host], parsers=[*DEFAULT_PARSERS.values(), NvidiaGpuParser()])
+    await monitor.event("Load started", color="#2ca02c")
+    # ... run workload ...
+    await monitor.event("Load complete", color="#d62728")
 ```
 
-`add_monitor_event` validates the same way every other marking surface does
-(see [Marking events](../../cli/monitor/dashboard.md#marking-events)): `label`
-can't be blank, `color` must be a `#rrggbb` hex string (not a CSS color name),
-and `dash` must be one of the six styles the event editor offers — a
-violation raises a validation error immediately, before the collector is
-ever touched.
-
-When both per-suite and `--monitor`-driven session collectors are active,
-the per-suite collector takes precedence for that test.  Events — the
-automatic per-test start/pass/fail marks and any `add_monitor_event` call
-— appear live on the dashboard timeline the moment they're recorded, making
-it easy to correlate metric changes with test actions; see [Marking
-events](../../cli/monitor/dashboard.md#marking-events) for what the dashboard does with a mark once it's
-there.
+The recipe, with events, the automatic stop and reading the results back, is
+[Monitoring from a test](../test-recipes.md#monitoring-from-a-test).
+`monitor.event` validates the same way every other marking surface does (see
+[Marking events](../../cli/monitor/dashboard.md#marking-events)).

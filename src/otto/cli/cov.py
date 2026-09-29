@@ -1011,10 +1011,6 @@ async def _do_clean() -> None:
             "remote counters this command can zero)"
         )
 
-    for host in fetch_hosts:
-        rebuild = getattr(host, "rebuild_connections", None)
-        if rebuild is not None:
-            rebuild()
     # staging_root is unused by clean_remote() (no files are downloaded); the
     # scoped pattern keeps clean_remote()'s own host re-derivation off embedded
     # boards on a mixed lab (see _unix_only_pattern).

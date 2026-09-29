@@ -12,7 +12,7 @@ from otto.models import MIN_INTERVAL_SECONDS, validate_interval
 from otto.monitor.collector import MetricCollector, MonitorTarget
 from otto.monitor.parsers import MetricDataPoint, MetricParser, ParseContext
 from otto.result import CommandResult, Results
-from otto.suite.suite import OttoSuite
+from otto.suite.monitor_fixture import MonitorHandle
 from otto.utils import Status, wait_for_async
 
 
@@ -31,10 +31,10 @@ class TestValidator:
 
 class TestLibraryBoundary:
     @pytest.mark.asyncio
-    async def test_start_monitor_rejects_a_sub_second_interval(self) -> None:
-        suite = OttoSuite()
+    async def test_monitor_start_rejects_a_sub_second_interval(self) -> None:
+        handle = MonitorHandle(plugin=None)
         with pytest.raises(ValueError, match="interval"):
-            await suite.start_monitor(hosts=[], interval=0.1)
+            await handle.start(hosts=[], interval=0.1)
 
 
 class _StubParser(MetricParser):

@@ -67,7 +67,7 @@ class CommandSpec:
     ``add_typer`` — are all covered by the one seam every executed leaf
     passes through.
 
-    NOT set for ``test``: every ``otto test <Suite>`` leaf is sync, because
+    NOT set for ``test``: the ``otto test`` leaf is sync, because
     ``pytest.main`` is."""
 
     origin: str = ""

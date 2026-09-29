@@ -1,4 +1,4 @@
-"""OttoSuite for the sample C coverage product.
+"""Tests for the sample C coverage product.
 
 Compiles the product with ``--coverage``, deploys to remote hosts,
 runs operations that exercise different code paths, and cleans up
@@ -22,14 +22,12 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto import options
 from otto.config.fleet import (
     all_hosts,
     do_for_all_hosts,
 )
 from otto.host import LocalHost
 from otto.host.unix_host import UnixHost
-from otto.suite import OttoSuite
 from otto.utils import Status
 
 logger = logging.getLogger(__name__)
@@ -47,11 +45,6 @@ tree's ``cov/<host>/<product>/`` segment and each capture's ``product`` by."""
 # at lab-load time. Coverage runs target compile-and-run hosts only —
 # placeholders fail exec until ``otto docker up`` populates them.
 _REAL_HOSTS = re.compile(r"^[^.]+$")
-
-
-@options
-class _Options:
-    pass
 
 
 async def _compile_product() -> None:
@@ -135,22 +128,20 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
     return result.value.strip()
 
 
-class TestCoverageProduct(OttoSuite):
+class TestCoverageProduct:
     """Exercise the sample C product across multiple hosts for coverage testing.
 
     Different hosts exercise different code paths so that merged
     coverage is greater than any individual host's coverage.
     """
 
-    Options = _Options
-
     @pytest_asyncio.fixture(autouse=True, scope="class")
     @classmethod
     async def _deploy_product(cls, ctx):
         """Compile and deploy the product to all remote hosts; uninstall on teardown.
 
-        A classmethod on the suite's own loop (no ``loop_scope`` pin: under
-        ``otto test`` the class loop is the default and every test shares it).
+        A classmethod on the run's session loop (no ``loop_scope`` pin: under
+        ``otto test`` the session loop is the default and every test shares it).
         """
         await _compile_product()
 

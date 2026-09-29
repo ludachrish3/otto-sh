@@ -14,7 +14,7 @@
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-311.pyc": 1,
         "otto:cli": 33,
-        "otto:config": 37,
+        "otto:config": 33,
         "otto:context": 2,
         "otto:context.cpython-311.pyc": 1,
         "otto:declared": 2,
@@ -63,14 +63,14 @@
         "workspace": 12
       },
       "by_process": {
-        "python": 2155
+        "python": 2151
       },
-      "file_ops": 2155,
+      "file_ops": 2151,
       "workspace": 12
     },
     "completion_repo_handover": {
       "by_bucket": {
-        "fd": 108,
+        "fd": 106,
         "other": 195,
         "otto:*": 28,
         "otto:__init__": 2,
@@ -136,13 +136,13 @@
         "site:typing_extensions": 3,
         "site:typing_inspection": 17,
         "stdlib": 708,
-        "workspace": 63
+        "workspace": 40
       },
       "by_process": {
-        "python": 2432
+        "python": 2407
       },
-      "file_ops": 2432,
-      "workspace": 63
+      "file_ops": 2407,
+      "workspace": 40
     },
     "completion_repo_warm": {
       "by_bucket": {
@@ -164,13 +164,13 @@
         "site:sphinxcontrib": 12,
         "site:sphinxcontrib_jsmath-1": 4,
         "stdlib": 192,
-        "workspace": 19
+        "workspace": 9
       },
       "by_process": {
-        "python": 389
+        "python": 379
       },
-      "file_ops": 389,
-      "workspace": 19
+      "file_ops": 379,
+      "workspace": 9
     },
     "cov": {
       "by_bucket": {
@@ -215,7 +215,7 @@
     "dispatch_local_warm": {
       "by_bucket": {
         "fd": 119,
-        "other": 273,
+        "other": 282,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -285,11 +285,11 @@
         "workspace": 37
       },
       "by_process": {
-        "bash": 38,
+        "bash": 47,
         "python": 2554,
         "stty": 30
       },
-      "file_ops": 2622,
+      "file_ops": 2631,
       "workspace": 37
     },
     "dispatch_repo_warm": {
@@ -454,9 +454,9 @@
     },
     "help_repo": {
       "by_bucket": {
-        "fd": 172,
-        "other": 347,
-        "otto:*": 29,
+        "fd": 134,
+        "other": 324,
+        "otto:*": 28,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-311-aarch64-linux-gnu.so": 1,
@@ -495,32 +495,25 @@
         "otto:reservations": 33,
         "otto:result": 2,
         "otto:result.cpython-311.pyc": 1,
-        "otto:suite": 29,
         "otto:tunnel": 33,
         "otto:utils": 2,
         "otto:utils.cpython-311.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-311.pyc": 1,
-        "site:*": 50,
-        "site:_pytest": 289,
+        "site:*": 43,
         "site:_virtualenv": 7,
         "site:annotated_doc": 13,
         "site:annotated_types": 6,
         "site:attr": 57,
         "site:df204bca18f2fa0f34a2__mypyc": 2,
         "site:dotenv": 21,
-        "site:iniconfig": 17,
         "site:markdown_it": 289,
         "site:mdurl": 29,
         "site:otto_sh": 5,
-        "site:pluggy": 37,
-        "site:py": 3,
         "site:pydantic": 201,
         "site:pydantic_core": 16,
         "site:pydantic_settings": 105,
-        "site:pygments": 114,
-        "site:pytest": 6,
-        "site:pytest_asyncio": 14,
+        "site:pygments": 76,
         "site:rich": 275,
         "site:shellingham": 13,
         "site:sphinxcontrib": 12,
@@ -529,18 +522,18 @@
         "site:typer": 119,
         "site:typing_extensions": 3,
         "site:typing_inspection": 17,
-        "stdlib": 758,
-        "workspace": 225
+        "stdlib": 731,
+        "workspace": 52
       },
       "by_process": {
-        "python": 3995
+        "python": 3293
       },
-      "file_ops": 3995,
-      "workspace": 225
+      "file_ops": 3293,
+      "workspace": 52
     },
     "help_repo_warm": {
       "by_bucket": {
-        "fd": 126,
+        "fd": 124,
         "other": 235,
         "otto:*": 23,
         "otto:__init__": 2,
@@ -603,13 +596,13 @@
         "site:typing_extensions": 3,
         "site:typing_inspection": 17,
         "stdlib": 726,
-        "workspace": 30
+        "workspace": 17
       },
       "by_process": {
-        "python": 2876
+        "python": 2861
       },
-      "file_ops": 2876,
-      "workspace": 30
+      "file_ops": 2861,
+      "workspace": 17
     },
     "host": {
       "by_bucket": {
@@ -889,7 +882,7 @@
     "host_ssh_exec": {
       "by_bucket": {
         "fd": 175,
-        "other": 1296,
+        "other": 1332,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -962,20 +955,20 @@
         "workspace": 59
       },
       "by_process": {
-        "collect2": 190,
+        "collect2": 216,
         "gcc": 186,
-        "ld": 634,
+        "ld": 640,
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 3362
+        "python": 3366
       },
-      "file_ops": 4396,
+      "file_ops": 4432,
       "workspace": 59
     },
     "host_ssh_login": {
       "by_bucket": {
         "fd": 175,
-        "other": 1296,
+        "other": 1332,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -1048,14 +1041,14 @@
         "workspace": 59
       },
       "by_process": {
-        "collect2": 190,
+        "collect2": 216,
         "gcc": 186,
-        "ld": 634,
+        "ld": 640,
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 3362
+        "python": 3366
       },
-      "file_ops": 4396,
+      "file_ops": 4432,
       "workspace": 59
     },
     "import_otto": {
@@ -1221,7 +1214,7 @@
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-311.pyc": 1,
         "otto:cli": 33,
-        "otto:config": 37,
+        "otto:config": 33,
         "otto:declared": 2,
         "otto:declared.cpython-311.pyc": 1,
         "otto:errors": 2,
@@ -1265,9 +1258,9 @@
         "stdlib": 703
       },
       "by_process": {
-        "python": 2060
+        "python": 2056
       },
-      "file_ops": 2060,
+      "file_ops": 2056,
       "workspace": 0
     },
     "schema": {
@@ -1312,9 +1305,9 @@
     },
     "test": {
       "by_bucket": {
-        "fd": 61,
+        "fd": 59,
         "other": 227,
-        "otto:*": 14,
+        "otto:*": 12,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-311-aarch64-linux-gnu.so": 1,
@@ -1331,9 +1324,6 @@
         "otto:params.cpython-311.pyc": 1,
         "otto:registry": 2,
         "otto:registry.cpython-311.pyc": 1,
-        "otto:result": 2,
-        "otto:result.cpython-311.pyc": 1,
-        "otto:suite": 21,
         "otto:utils": 2,
         "otto:utils.cpython-311.pyc": 1,
         "otto:version": 2,
@@ -1351,15 +1341,15 @@
         "stdlib": 496
       },
       "by_process": {
-        "python": 1221
+        "python": 1193
       },
-      "file_ops": 1221,
+      "file_ops": 1193,
       "workspace": 0
     },
     "test_repo": {
       "by_bucket": {
         "fd": 222,
-        "other": 378,
+        "other": 375,
         "otto:*": 32,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -1371,7 +1361,7 @@
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-311.pyc": 1,
         "otto:cli": 37,
-        "otto:config": 61,
+        "otto:config": 65,
         "otto:console": 2,
         "otto:console.cpython-311.pyc": 1,
         "otto:context": 2,
@@ -1383,7 +1373,7 @@
         "otto:env": 13,
         "otto:errors": 2,
         "otto:errors.cpython-311.pyc": 1,
-        "otto:host": 215,
+        "otto:host": 219,
         "otto:instructions": 2,
         "otto:instructions.cpython-311.pyc": 1,
         "otto:inventory": 33,
@@ -1409,7 +1399,7 @@
         "otto:utils.cpython-311.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-311.pyc": 1,
-        "site:*": 85,
+        "site:*": 88,
         "site:_hypothesis_globals": 5,
         "site:_hypothesis_pytestplugin": 5,
         "site:_pytest": 345,
@@ -1463,7 +1453,7 @@
         "site:myst_parser": 4,
         "site:nox": 4,
         "site:nox_uv": 4,
-        "site:otto_sh": 9,
+        "site:otto_sh": 10,
         "site:packaging": 4,
         "site:platformdirs": 4,
         "site:playwright": 249,
@@ -1482,7 +1472,7 @@
         "site:pyinstrument": 4,
         "site:pynetbox": 4,
         "site:pysnmp": 4,
-        "site:pytest": 10,
+        "site:pytest": 11,
         "site:pytest_asyncio": 19,
         "site:pytest_base_url": 22,
         "site:pytest_cov": 22,
@@ -1537,14 +1527,14 @@
         "site:wcmatch": 4,
         "site:wcwidth": 4,
         "site:xdist": 41,
-        "stdlib": 942,
-        "workspace": 173
+        "stdlib": 944,
+        "workspace": 228
       },
       "by_process": {
-        "python": 5543
+        "python": 5610
       },
-      "file_ops": 5543,
-      "workspace": 173
+      "file_ops": 5610,
+      "workspace": 228
     },
     "version_repo": {
       "by_bucket": {

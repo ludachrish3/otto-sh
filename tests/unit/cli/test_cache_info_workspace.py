@@ -78,7 +78,6 @@ def _seed_cache() -> None:
     cc.write_cache(
         repos,
         instructions=[],
-        suites=[],
         hosts=cc.collect_host_ids(repos),
         host_drops=cc.collect_host_drops(repos),
     )
@@ -197,10 +196,120 @@ def test_info_reports_the_shim_standing(tmp_path, monkeypatch):
     from otto.config.completion_tree import build_shim_payload
 
     repos = bs.discover().repos
-    cc.write_cache(repos, [], [], [], shim=build_shim_payload(repos))
+    cc.write_cache(repos, [], [], shim=build_shim_payload(repos))
     out = runner.invoke(cache_app, ["info"]).output
     assert "  shim: served (validated now)" in out
     out = runner.invoke(cache_app, ["info"]).output
     assert re.search(r"  shim: served \(validated \d+s ago\)", out), out
     monkeypatch.setattr(sc, "inspect_shim", lambda path: "handing over — opaque inventory")
     assert "  shim: handing over — opaque inventory" in runner.invoke(cache_app, ["info"]).output
+
+
+def _tests_workspace(tmp_path, monkeypatch):
+    """A repo with one test file, its names/shim entry written as a rebuild writes it."""
+    from otto import bootstrap as bs
+    from otto.config.completion_tree import build_shim_payload
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("OTTO_HOME", str(home))
+    repo = make_sut_repo(
+        tmp_path / "tsut",
+        name="tsut",
+        tests=["tests"],
+        files={"tests/test_a.py": "def test_a():\n    pass\n"},
+    )
+    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    bs.invalidate()
+    repos = bs.discover().repos
+    cc.write_cache(repos, [], [], shim=build_shim_payload(repos))
+    return repo, repos
+
+
+def _write_table(repo_obj) -> None:
+    """The table a whole-tree collection of the repo writes: ``test_a`` in ``tests/test_a.py``."""
+    from otto.config import collected_tests as ct
+
+    tests = repo_obj.sut_dir / "tests"
+    st = (tests / "test_a.py").stat()
+    record = ct.FileRecord(
+        stat=[st.st_mtime_ns, st.st_size], tests=[ct.RecordedTest(classes=[], name="test_a")]
+    )
+    dst = tests.stat()
+    table = ct.updated_table(
+        repo_obj,
+        None,
+        ct.classify(repo_obj, None),
+        {str(tests / "test_a.py"): record},
+        registered_markers=["slow"],
+        whole_tree=True,
+        dirs={str(tests): [dst.st_mtime_ns, dst.st_size]},
+    )
+    ct.write_tables([table])
+
+
+def test_info_reports_what_the_next_test_name_tab_does(tmp_path, monkeypatch):
+    """The same checks a test-name TAB runs: seed, or answer and say when the check is due."""
+    import os
+    import time
+
+    from otto import _shim_complete as sc
+    from otto.cli.cache import cache_app
+
+    repo, [repo_obj] = _tests_workspace(tmp_path, monkeypatch)
+    out = runner.invoke(cache_app, ["info"]).output
+    assert f"  test names: handing over — no test-names cache for {repo_obj.sut_dir}" in out
+
+    _write_table(repo_obj)
+    out = runner.invoke(cache_app, ["info"]).output
+    assert re.search(
+        r"  test names: served \(1 name; checked \d+s ago, the next check is due in \d+s\)", out
+    ), out
+
+    marker = cc._cache_path().parent / sc.MARKER_FILENAMES["tests"]
+    then = time.time() - sc.CHECK_WINDOW_SECONDS - 100
+    os.utime(marker, (then, then))
+    (repo / "tests" / "test_a.py").write_text("def test_b():\n    pass\n")
+    out = runner.invoke(cache_app, ["info"]).output
+    assert re.search(
+        r"  test names: served \(1 name; last checked \d+s ago, a check is due\)", out
+    ), out
+
+    marker.unlink()
+    out = runner.invoke(cache_app, ["info"]).output
+    assert "  test names: served (1 name; no check recorded, a check is due)" in out
+
+
+def test_info_reports_the_collect_child(tmp_path, monkeypatch):
+    """Its lock and its cooldown: a detached child's failures are silent by design."""
+    import os
+    import time
+
+    from otto.cli.cache import cache_app
+
+    _tests_workspace(tmp_path, monkeypatch)
+    home = cc._cache_path().parent
+    assert "  collect child: idle" in runner.invoke(cache_app, ["info"]).output
+
+    lock = home / cc.COLLECT_LOCK_FILENAME
+    lock.write_text("1234")
+    out = runner.invoke(cache_app, ["info"]).output
+    assert re.search(r"  collect child: running \(it took the lock \d+s ago\)", out), out
+
+    old = time.time() - cc.COLLECT_LOCK_STALE_SECONDS - 60
+    os.utime(lock, (old, old))
+    out = runner.invoke(cache_app, ["info"]).output
+    assert re.search(
+        r"  collect child: none running; its lock is \d+m old, left by one that died, "
+        r"and the next one takes it over",
+        out,
+    ), out
+    lock.unlink()
+
+    cc.stamp_collect_cooldown("timed out")
+    out = runner.invoke(cache_app, ["info"]).output
+    assert re.search(
+        r"  collect child: cooling down — the last one failed \d+s ago \(timed out\); "
+        r"none starts for another \d+s",
+        out,
+    ), out

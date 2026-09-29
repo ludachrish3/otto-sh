@@ -226,7 +226,7 @@ everything that routine executed before the dump call — `coverage = "module"`
 dumps there, and `coverage = "kernel"` keeps a module's counters after unload
 (`gcov_persist=1`, the kernel default) — so either way that coverage reaches a
 run's report only when the module is unloaded before the post-run fetch, which
-is what a suite's teardown does. The kernel wrote the counter files as root, so
+is what a test's teardown fixture does. The kernel wrote the counter files as root, so
 every delete a `kmod` product's coverage hooks issue runs under sudo. See
 {doc}`../cli/cov/instrumenting/kernel-modules` for the runtime, the worked
 example, and how a report reads back what it captured.

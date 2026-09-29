@@ -40,13 +40,8 @@ def _default_for(kind: str, cached_default: Any) -> Any:
     return cached_default
 
 
-def _build_callback(options: list[dict[str, Any]]) -> Any:
-    """Build a no-op callback whose ``__signature__`` mirrors the cached options.
-
-    Typer walks the signature for completion; it never calls the function.
-    The returned callback intentionally raises if invoked — hitting it would
-    mean the fast-path stub leaked into a non-completion code path.
-    """
+def stub_params(options: list[dict[str, Any]]) -> list[inspect.Parameter]:
+    """Rebuild keyword-only ``typer.Option`` parameters from cached option dicts."""
     params: list[inspect.Parameter] = []
     for opt in options:
         kind = opt["kind"]
@@ -69,6 +64,17 @@ def _build_callback(options: list[dict[str, Any]]) -> Any:
                 annotation=annotation,
             )
         )
+    return params
+
+
+def _build_callback(options: list[dict[str, Any]]) -> Any:
+    """Build a no-op callback whose ``__signature__`` mirrors the cached options.
+
+    Typer walks the signature for completion; it never calls the function.
+    The returned callback intentionally raises if invoked — hitting it would
+    mean the fast-path stub leaked into a non-completion code path.
+    """
+    params = stub_params(options)
 
     def _stub(**_kw: Any) -> None:  # pragma: no cover — never invoked
         raise RuntimeError(
@@ -88,9 +94,9 @@ def build_stub_command(
 ) -> typer.Typer:
     """Return a single-command ``typer.Typer`` named ``name``, ready to attach.
 
-    Mirrors the shape ``OttoSuite`` auto-registration / ``@instruction``
-    produce on the slow path: a sub-Typer with exactly one registered
-    command whose callback carries the option signature.
+    Mirrors the shape ``@instruction`` produces on the slow path: a sub-Typer
+    with exactly one registered command whose callback carries the option
+    signature.
     """
     sub = typer.Typer()
     callback = _build_callback(options)

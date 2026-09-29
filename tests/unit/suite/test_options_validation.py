@@ -76,7 +76,7 @@ def test_build_options_plain_dataclass_unaffected():
     assert build_options(_Plain, {"name": "y"}).name == "y"
 
 
-# ── End-to-end through the suite CLI path ─────────────────────────────────────
+# ── End-to-end through `otto test`'s test-verb options ───────────────────────
 
 from typing import Annotated
 
@@ -86,21 +86,13 @@ import typer
 from typer.testing import CliRunner
 
 from otto import options
-from otto.cli.test import suite_app
 from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
-from otto.suite import OttoSuite
-from otto.suite.register import register_suite_class
+from otto.params import register_options
 
 
 def _ok_result():
-    """A zero-exit SuiteRunResult stub for faked ``run_suite`` calls.
-
-    The suite runner now consumes the library ``run_suite`` (which returns a
-    ``SuiteRunResult``) and converts its ``exit_code`` into a ``CommandResult``
-    for the leaf-invoke renderer, so a fake must return a result carrying
-    ``exit_code == 0``.
-    """
+    """A zero-exit ``SuiteRunResult`` stub for a faked ``run_tests``."""
     from pathlib import Path
 
     from otto.suite.run import SuiteRunResult
@@ -114,18 +106,20 @@ def _ok_result():
     )
 
 
-# suite_app resolves suite subcommands lazily from the SUITES registry (via
-# its RegistryBackedGroup), so a freshly registered class is already
-# dispatchable through suite_app without any explicit attach step.
+def _test_app():
+    """``otto test``'s app, read at call time so it carries the registered verb flags."""
+    from otto.cli import test as cli_test
+
+    return cli_test.test_app
 
 
 @pytest.fixture(autouse=True)
 def _stub_cli_bootstrap(monkeypatch):
     """Patch management.create_output_dir and install a stub context.
 
-    Tests in this module invoke ``suite_app`` directly (not via the main
+    Tests in this module invoke ``otto test``'s app directly (not via the main
     callback), so ``init_cli_logging``/``create_output_dir`` have never run
-    and there is no active OttoContext. Patch both so the callback doesn't
+    and there is no active OttoContext. Patch both so the command doesn't
     raise.
     """
     monkeypatch.setattr("otto.logger.management.create_output_dir", lambda *a, **k: None)
@@ -135,84 +129,69 @@ def _stub_cli_bootstrap(monkeypatch):
     reset_context(token)
 
 
-def test_suite_pydantic_options_reject_bad_value(monkeypatch):
-    class _ValSuite(OttoSuite):
-        @options
-        class Options:
-            count: Annotated[int, typer.Option(help="positive count")] = pydantic.Field(
-                default=1, gt=0
-            )
-
-    register_suite_class(_ValSuite)
-
-    # run_suite is never reached — validation fails first at construction.
-    monkeypatch.setattr("otto.suite.run.run_suite", lambda *a, **k: None)
-    result = CliRunner().invoke(suite_app, ["_ValSuite", "--count", "-5"])
-    assert result.exit_code == 2, result.output
-    assert "count" in result.stderr
-
-
-def test_suite_pydantic_options_accept_good_value(monkeypatch):
+def _capture_options(monkeypatch) -> dict:
+    """Fake ``run_tests``; return the dict its ``options`` instances land in."""
     seen: dict = {}
 
-    class _OkSuite(OttoSuite):
-        @options
-        class Options:
-            count: Annotated[int, typer.Option(help="positive count")] = pydantic.Field(
-                default=1, gt=0
-            )
+    def fake(names, **kw):
+        seen["options"] = kw["options"]
+        return _ok_result()
 
-    register_suite_class(_OkSuite)
+    monkeypatch.setattr("otto.suite.run.run_tests", fake)
+    return seen
 
-    # Library run_suite signature: run_suite(suite, *, options, run_options, output_dir).
-    monkeypatch.setattr(
-        "otto.suite.run.run_suite",
-        lambda suite, **kw: seen.update(count=kw["options"].count) or _ok_result(),
-    )
-    result = CliRunner().invoke(suite_app, ["_OkSuite", "--count", "5"])
+
+def test_verb_pydantic_options_reject_bad_value(monkeypatch):
+    @options
+    class _ValOpts:
+        count: Annotated[int, typer.Option(help="positive count")] = pydantic.Field(default=1, gt=0)
+
+    register_options(_ValOpts, verbs=["test"])
+    seen = _capture_options(monkeypatch)
+    result = CliRunner().invoke(_test_app(), ["test_x", "--count", "-5"])
+    assert result.exit_code == 2, result.output
+    assert "count" in result.stderr
+    assert seen == {}, "run_tests was reached although validation failed"
+
+
+def test_verb_pydantic_options_accept_good_value(monkeypatch):
+    @options
+    class _OkOpts:
+        count: Annotated[int, typer.Option(help="positive count")] = pydantic.Field(default=1, gt=0)
+
+    register_options(_OkOpts, verbs=["test"])
+    seen = _capture_options(monkeypatch)
+    result = CliRunner().invoke(_test_app(), ["test_x", "--count", "5"])
     assert result.exit_code == 0, result.output
-    assert seen["count"] == 5
+    assert seen["options"][0].count == 5
 
 
-def test_suite_field_default_used_when_flag_omitted(monkeypatch):
+def test_verb_field_default_used_when_flag_omitted(monkeypatch):
     """A Field(default=N, constraint) option uses N when omitted — options_params
     must unwrap the FieldInfo, not pass it through as the Typer default.
     """
-    seen: dict = {}
 
-    class _DefSuite(OttoSuite):
-        @options
-        class Options:
-            count: Annotated[int, typer.Option()] = pydantic.Field(default=7, ge=0)
+    @options
+    class _DefOpts:
+        count: Annotated[int, typer.Option()] = pydantic.Field(default=7, ge=0)
 
-    register_suite_class(_DefSuite)
-
-    monkeypatch.setattr(
-        "otto.suite.run.run_suite",
-        lambda suite, **kw: seen.update(count=kw["options"].count) or _ok_result(),
-    )
-    result = CliRunner().invoke(suite_app, ["_DefSuite"])  # no --count
+    register_options(_DefOpts, verbs=["test"])
+    seen = _capture_options(monkeypatch)
+    result = CliRunner().invoke(_test_app(), ["test_x"])  # no --count
     assert result.exit_code == 0, result.output
-    assert seen["count"] == 7
+    assert seen["options"][0].count == 7
 
 
-def test_suite_plain_dataclass_options_still_work(monkeypatch):
-    """Back-compat: a plain @dataclass Options (no validation) still runs."""
+def test_verb_plain_dataclass_options_still_work(monkeypatch):
+    """A plain @dataclass options class (no validation) still runs."""
     from dataclasses import dataclass
 
-    seen: dict = {}
+    @dataclass
+    class _PlainOpts:
+        label: Annotated[str, typer.Option()] = "x"
 
-    class _PlainSuite(OttoSuite):
-        @dataclass
-        class Options:
-            label: Annotated[str, typer.Option()] = "x"
-
-    register_suite_class(_PlainSuite)
-
-    monkeypatch.setattr(
-        "otto.suite.run.run_suite",
-        lambda suite, **kw: seen.update(label=kw["options"].label) or _ok_result(),
-    )
-    result = CliRunner().invoke(suite_app, ["_PlainSuite", "--label", "y"])
+    register_options(_PlainOpts, verbs=["test"])
+    seen = _capture_options(monkeypatch)
+    result = CliRunner().invoke(_test_app(), ["test_x", "--label", "y"])
     assert result.exit_code == 0, result.output
-    assert seen["label"] == "y"
+    assert seen["options"][0].label == "y"

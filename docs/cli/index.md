@@ -54,7 +54,7 @@ command, not the subcommand.  For example:
 
 The same rule applies to `--dry-run`, `--xdir`, `--log-level`, and every
 other option listed above.  Subcommand-specific options (like `--firmware`
-for a suite, or `--interval` for `monitor`) go **after** the subcommand.
+for `otto test`, or `--interval` for `monitor`) go **after** the subcommand.
 ```
 
 ## Selecting a lab
@@ -101,15 +101,15 @@ no flag.
 | `OTTO_HOME` | *(no flag)* | otto's user-level home; defaults to `~/.otto`.  Holds one workspace home per `OTTO_SUT_DIRS` set — see [The workspace home](#the-workspace-home) |
 | `OTTO_TEARDOWN_DEADLINE` | *(no flag)* | Seconds an interrupted command's graceful cleanup may run before it is abandoned; defaults to `10` — see {doc}`../architecture/lifecycle` |
 | `OTTO_SSH_DEBUG` | *(no flag)* | asyncssh's own debug level, `1`..`3`; `2` prints the offered and chosen key-exchange, host-key, cipher and MAC lists under `--log-level DEBUG` (a valid value also lifts otto's own `asyncssh` logger floor to `DEBUG`) — see [Legacy SSH servers](../configuration/settings.md#legacy-ssh-servers) |
-| `PYDANTIC_DISABLE_PLUGINS` | *(no flag)* | pydantic's own switch, which the `otto` command sets to `__all__` when you have not set it. Looking for pydantic plugins opens a file in every installed package on the first model build, a network round trip each when the venv is on NFS, and otto uses no pydantic plugins. It covers everything in the process, including the tests `otto test` runs in-process, and every process otto starts inherits it (a host command on `local`, a subprocess of a suite). To use pydantic plugins, set it to the empty string (`PYDANTIC_DISABLE_PLUGINS=`); any value you set is kept. Importing otto as a library leaves it alone |
+| `PYDANTIC_DISABLE_PLUGINS` | *(no flag)* | pydantic's own switch, which the `otto` command sets to `__all__` when you have not set it. Looking for pydantic plugins opens a file in every installed package on the first model build, a network round trip each when the venv is on NFS, and otto uses no pydantic plugins. It covers everything in the process, including the tests `otto test` runs in-process, and every process otto starts inherits it (a host command on `local`, a subprocess of a test). To use pydantic plugins, set it to the empty string (`PYDANTIC_DISABLE_PLUGINS=`); any value you set is kept. Importing otto as a library leaves it alone |
 
 ## Shell completion
 
 After `otto --install-completion`, tab completion covers the dynamic,
-otto-specific values a static shell script couldn't know: suite and
+otto-specific values a static shell script couldn't know: test and
 instruction names, host ids and their per-class verbs, transfer/term
-backends, reservation usernames, and — multi-value lists included — `--lab`
-names (`+`-combined) and `--tests` names (comma-separated).  It is served
+backends, reservation usernames, and `--lab` names, `+`-combined lists
+included.  It is served
 from a cache in [the workspace home](#the-workspace-home), so a keystroke
 answered from the cache never runs your init modules or test code. A TAB that
 finds the cache missing or out of date runs them once, to rebuild it, and the
@@ -123,17 +123,19 @@ full path instead.
 The candidates are the same either way: the fast path is only faster, never
 a different or a shorter list.
 
-`--tests` completes by base name and layers a static source scan (the instant
-floor) with a pytest-collected set that also includes dynamically-generated
-tests; that set warms itself from any real `otto test --list-tests` run, or
-from a one-time bounded collection on the first `--tests` TAB (see
-{doc}`test/index`).  [`otto cache clear`](cache/index.md) drops the cache if
-it ever goes stale.
+`otto test`'s test names complete one per word, by base name, from what
+pytest collected, dynamically generated tests included. The first test-name
+TAB in a workspace waits once for a bounded collection; after that a TAB
+answers at once from what pytest last collected, and changes to your test
+files are picked up by a background check at most every ten minutes, or at
+once by any `otto test` run or listing (see
+[Tab-completing names](test/selection.md#tab-completing-names)).
+[`otto cache clear`](cache/index.md) drops the cache if it ever goes stale.
 
-After a successful check the script leaves a marker beside the cache and
-trusts it for sixty seconds, so a burst of TABs costs one check; an edit
-inside that minute can be missed by at most that minute.  On NFS the client's
-attribute cache can delay a change by a few seconds more.  A couple of other
+For every other value, after a successful check the script leaves a marker
+beside the cache and trusts it for sixty seconds, so a burst of TABs costs
+one check; an edit inside that minute can be missed by at most that minute.
+On NFS the client's attribute cache can delay a change by a few seconds more.  A couple of other
 small, known gaps between the shim's answer and the framework's are listed
 next to the window on
 {doc}`the architecture page <../architecture/subsystems/completion>`.
@@ -141,12 +143,14 @@ next to the window on
 What hands over: any shell but bash, tunnel ids, remote paths, a `tunnel add
 --hosts` list past its first comma, a value written onto a flag that takes
 none (`otto --debug=x <TAB>`), an inventory backend that cannot report
-which files it read, a cold pytest-collected set, and any entry
+which files it read, a test name or marker for a repo whose test-names cache must
+first be collected whole (the first time, for instance), and any entry
 [`otto cache info`](cache/index.md#info) reports as `handing over`.
 
 `-m`/`--markers` completes marker names inside an expression (`smoke and not
-(sl<TAB>`), from the same two layers `--tests` uses: declared, built-in and
-statically spelled names, then the pytest-collected set.
+(sl<TAB>`), from the same collection test names use: every marker pytest
+registered (declared in a config file, by a conftest or a plugin) or saw
+applied to a test, plus otto's own.
 
 Host verbs complete per host: `otto host <id> <TAB>` offers the verbs of that
 host's class (from its `os_type`), warm or cold.
@@ -212,9 +216,9 @@ written there, and the path is printed at the end of the run
 ```
 
 - `<command>` is the top-level subcommand (`run`, `test`, `host`, ...)
-  and `<subcommand>` is the leaf — the instruction name, suite name, or
-  host verb.  Commands with no distinct leaf (`monitor`) omit the
-  suffix: `monitor/<timestamp>/`.
+  and `<subcommand>` is the leaf — the instruction name or host verb.
+  Commands with no distinct leaf (`test`, `monitor`) omit the suffix:
+  `test/<timestamp>/`.
 - `<timestamp>` is UTC with millisecond precision
   (`YYYYMMDD_HHMMSS_mmm`), so directories sort chronologically.
 - Hyphens in command names become underscores (`write-file` →
@@ -244,7 +248,7 @@ and they share one shape below `<kind>/<host_id>/`:
   cov/<host_id>/<product>/             .gcda as fetched, board.info,
                                        board.resolved.info, capture.json
   cov_report/                          the rendered HTML report
-  <Suite>/<test_node>/                 one directory per test
+  <module>/[<Class>/]<test>/           one directory per test (otto test)
 ```
 
 - `<host_id>` is the host's otto id; `<product>` is the product's `name`.
@@ -262,8 +266,8 @@ and they share one shape below `<kind>/<host_id>/`:
   means nothing was retrieved.
 
 `cov_report/` and the per-test directories are the run dir's other tenants:
-the report renderer writes the first, and the second follow pytest's test
-naming — see {doc}`test/index`.
+the report renderer writes the first, and the second mirror each test's
+pytest ID — see [Where a run's files go](test/index.md#where-a-runs-files-go).
 
 `<run>` is the per-invocation output directory above, unless a caller passes
 an explicit destination (`dest=` on the log verbs, `--cov-dir` for coverage
@@ -289,6 +293,8 @@ you run them:
   <hash8>-<slug>/                   # the workspace home
     completion_cache.json
     remote_completion_cache.json
+    pycache/                        # bytecode of what otto's pytest sessions import
+    pytest-cache/                   # pytest's cache for otto test runs
   tls/                              # a convention, not derived state — see below
 ```
 
@@ -296,6 +302,18 @@ you run them:
 resolved paths, so two different workspaces never share a directory, even
 when their directories share basenames. `<slug>` is those basenames joined
 with `-` and normalized, cut to 40 characters.
+
+`pycache/` and `pytest-cache/` exist so that otto's pytest sessions write
+nothing into your repo: every pytest session otto starts (a run, a listing, a
+dry run, or the background collection behind a TAB) writes the bytecode of
+what it imports under `pycache/` (unless you set `PYTHONPYCACHEPREFIX`, which
+otto uses instead), and a run keeps pytest's cache in `pytest-cache/` rather
+than a `.pytest_cache/` in pytest's rootdir. That covers the sessions, not
+all of `otto test`: your repo's init modules, which otto imports when it
+starts, compile into a `__pycache__` beside themselves as any Python module
+does, unless you set `PYTHONPYCACHEPREFIX`; and a run's output directory is
+under `--xdir`, which is the current directory unless you choose another
+([Output directories](#output-directories)).
 
 Everything under a workspace home is derived, so the whole directory is
 disposable — delete it and otto rebuilds what it needs on the next run.
@@ -350,7 +368,7 @@ verdicts instead: see {doc}`check-verdicts`.
 | [`otto host`](host/index.md) | Run commands and transfer files on lab hosts |
 | [`otto cache`](cache/index.md) | Inspect, clear, and prune otto's per-workspace caches |
 | [`otto run`](run/index.md) | Run a registered instruction on the lab |
-| [`otto test`](test/index.md) | Run a registered `OttoSuite` test suite |
+| [`otto test`](test/index.md) | Run your repos' pytest tests by name or marker |
 | [`otto docker`](docker/index.md) | Build images and deploy use-case stacks on docker-capable lab hosts |
 | [`otto link`](link/index.md) | Inspect and impair the lab's **static** links — the edges that already exist |
 | [`otto tunnel`](tunnel/index.md) | Create, list and remove host-resident tunnels — paths that do not exist until you build them |

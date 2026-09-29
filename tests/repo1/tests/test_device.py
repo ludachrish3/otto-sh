@@ -1,66 +1,47 @@
-"""Example OttoSuite demonstrating Test*-prefixed auto-registration, inherited
-options, suite-specific options, timeout, retry, parametrize, and stability testing.
+"""Example tests demonstrating repo-wide options, test-only options, timeout,
+retry, parametrize, and stability testing.
+
+``repo1_instructions`` registers ``RepoOptions`` for ``otto run`` and
+``otto test`` and ``DeviceTestOptions`` for ``otto test``; the tests read both
+through ``ctx.options(...)``.
 
 Run with::
 
-    otto test TestDevice --help
+    otto test --help
     otto test TestDevice --device-type switch --firmware 2.1
-    otto test TestDevice --filter test_device_reachable
+    otto test TestDevice::test_device_reachable
     otto test --iterations 10 --threshold 90 TestDevice
 """
 
 import logging
-from typing import Annotated
 
 import pytest
-import typer
-from repo1_common.options import RepoOptions
-
-from otto import options
-from otto.suite import OttoSuite
+from repo1_common.options import DeviceTestOptions, RepoOptions
 
 logger = logging.getLogger(__name__)
 
 
-@options
-class _Options(RepoOptions):
-    firmware: Annotated[
-        str,
-        typer.Option(
-            help="Firmware version to validate against.",
-        ),
-    ] = "latest"
-
-    check_interfaces: Annotated[
-        bool,
-        typer.Option(
-            help="When True, verify all expected interfaces are up.",
-        ),
-    ] = True
-
-
-class TestDevice(OttoSuite):
+class TestDevice:
     """Validate device configuration and connectivity."""
 
-    Options = _Options
-
-    async def test_device_reachable(self, suite_options: _Options) -> None:
+    async def test_device_reachable(self, ctx) -> None:
         """Verify the device responds to basic connectivity checks."""
+        repo = ctx.options(RepoOptions)
         logger.info(
             f"[bold]Checking reachability[/bold] — "
-            f"device_type={suite_options.device_type!r}  "
-            f"lab_env={suite_options.lab_env!r}",
+            f"device_type={repo.device_type!r}  "
+            f"lab_env={repo.lab_env!r}",
             extra={"markup": True},
         )
         # Placeholder: replace with real host connectivity check
         assert True
 
     @pytest.mark.timeout(30)
-    async def test_firmware_version(self, suite_options: _Options) -> None:
+    async def test_firmware_version(self, ctx) -> None:
         """Verify the running firmware matches the expected version."""
-        logger.info(
-            f"Checking firmware={suite_options.firmware!r} on {suite_options.device_type!r}",
-        )
+        firmware = ctx.options(DeviceTestOptions).firmware
+        device_type = ctx.options(RepoOptions).device_type
+        logger.info(f"Checking firmware={firmware!r} on {device_type!r}")
         # Placeholder: replace with real firmware query
         assert True
 
@@ -81,9 +62,9 @@ class TestDevice(OttoSuite):
         assert True
 
     @pytest.mark.integration
-    async def test_interface_state(self, suite_options: _Options) -> None:
+    async def test_interface_state(self, ctx) -> None:
         """Verify all expected interfaces are operationally up (requires live device)."""
-        if not suite_options.check_interfaces:
+        if not ctx.options(DeviceTestOptions).check_interfaces:
             pytest.skip("Interface check disabled via --no-check-interfaces")
         logger.info("Checking interface state (integration)")
         # Placeholder: replace with real SNMP/SSH interface query

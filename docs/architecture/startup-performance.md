@@ -93,6 +93,25 @@ the source. The prefix therefore has to be a genuinely persistent location:
 point it at tmpfs, or at a fresh container layer rebuilt on every start, and
 you've bought a full recompile on every single run instead of avoiding one.
 
+Every pytest session otto starts already does this: an `otto test` run, a
+listing, a dry run, and the background collection behind a test-name TAB.
+While a session runs, otto points `sys.pycache_prefix` at the workspace
+home's `pycache/` directory, `$OTTO_HOME/<workspace key>/pycache/`
+(`~/.otto/<hash8>-<slug>/pycache/` by default; see
+[The workspace home](../cli/index.md#the-workspace-home)), so your test
+files, and anything else first imported during the session, are compiled
+there rather than into a `__pycache__` beside them. The prefix is set for
+the session only and removed when it ends. If you export
+`PYTHONPYCACHEPREFIX` yourself, otto uses your prefix instead. The reason is
+correctness, not speed: a `__pycache__` appearing in a test directory moves
+the directory's stat, and the test-name cache reads that stat as "a file
+here was added or removed". The first run after upgrading compiles into the
+new location once, and so does the first run after
+[`otto cache clear`](../cli/cache/index.md#clear), which removes the
+directory. Only the sessions are covered: your repos' init modules, which
+otto imports when it starts, before any session, compile into a
+`__pycache__` beside themselves unless you export `PYTHONPYCACHEPREFIX`.
+
 ## Keep `sys.path` short
 
 Only **top-level** imports consult `sys.path` at all — a submodule resolves
@@ -120,7 +139,7 @@ round trips substantially in exchange for the same thing: **staleness**.
 `actimeo=N` caches file and directory attributes for `N` seconds; `nocto`
 (no close-to-open) skips the revalidation NFS normally forces at `open()`.
 State the tradeoff plainly to whoever administers the mount: if a peer edits
-a file otto reads — a shared `lab.json`, a settings file, a suite someone
+a file otto reads — a shared `lab.json`, a settings file, a test file someone
 just pushed — otto may not see that edit until the attribute cache expires.
 That's usually a fair trade for otto's own read-mostly startup path; it is
 not something to reach for on a mount several people are actively editing at
@@ -376,10 +395,16 @@ to touch. Root help and most TABs validate only the cache's `names` section,
 which is keyed on the files that can register something — including the
 `lab.json` the `actimeo`/`nocto` section above warns can go stale — and not
 on the test corpus. So a warm `otto --help` costs roughly **O(key set)**, not
-O(corpus). A `--tests` TAB is the honest counterpoint: it validates against
-the *whole* corpus walk, because nothing smaller can answer "what tests exist
-right now" truthfully. The key sets, the digests and when the cache is
-rebuilt are described on {doc}`subsystems/completion-cache`.
+O(corpus). A test-name TAB in bash costs the same whatever the corpus size:
+it answers from the names pytest last collected and stats only a handful of
+paths that decide collection for a whole repo (its pytest configs, its
+settings file, the installed packages' directory). Checking every test file
+costs a stat per file, so otto does it where that cost is paid anyway or
+off the keystroke: in `otto test`'s own runs, which import test files
+regardless, and in a background process a TAB starts at most every ten
+minutes. The price is that a TAB can offer names up to one check out of
+date; a run never does. The key sets, the digests, the test-names cache and
+when each is rebuilt are described on {doc}`subsystems/completion-cache`.
 
 A cached payload isn't always worth writing, and otto skips it rather than
 paying for it anyway in two cases: no repos were discovered to register
@@ -398,17 +423,18 @@ four syscalls per test file: 239, 2,239 and 8,239 at 0, 500 and 2,000 nested
 test files, which is about 8 s per command at a 1 ms round trip. The test
 files brought in pytest, about 125 of that command's 851 modules. Now an
 ordinary command does no completion-cache I/O whatever the corpus size, and
-loads test files only if it reads suites. On the import budget's generated
+loads no test file: only `otto test`'s pytest session imports them. On the import budget's generated
 repo (50 test files, CPython 3.10) the ordinary-dispatch surface went from 584
 to 466 non-stdlib modules, from 118 to 20 stat calls inside the workspace, and
 from 3,256 to 2,641 stat calls in total.
 
 The rebuild itself got cheaper at the same time, which matters because a TAB
-that finds the cache stale now pays for it. A rebuild used to stat each
-nested test file about four times and list each directory five times; it now
-walks the corpus once, so between the budget's 50-file and 200-file repos the
-150 added files and 15 added directories cost 165 extra stats inside the
-workspace instead of 720.
+that finds the cache stale pays for it. A rebuild used to stat each nested
+test file about four times and list each directory five times. It then
+walked the corpus once, for a static scan of the test names. Now it does not
+read the corpus at all: test names come only from pytest's collections, so
+between the budget's 50-file and 200-file repos a cold rebuild's workspace
+file operations hold within five.
 
 ## When `$HOME` is on NFS
 
@@ -483,6 +509,14 @@ site:
   with a short-lived `.completion_collect.lock`, a plain `O_EXCL` file
   create with staleness-steal — still no lock daemon, just atomic file
   creation instead of a read.
+- **Two otto installations sharing one repo re-collect its tests.** Each
+  repo's table in the test-names cache records the Python, virtualenv and installed packages
+  that wrote it, and a table another installation wrote vouches for
+  nothing. So two installations (two virtualenvs, or two machines whose
+  local virtualenvs differ) that run against the same repos with the same
+  `$OTTO_HOME` replace each other's tables, and each one's next run or TAB
+  after the other's collects the whole test tree again. Give each
+  installation its own `OTTO_HOME` to avoid it.
 - **A stale read of the cache file costs a rebuild, never a wrong
   screen.** Under `nocto` or a high `actimeo`, a client can hold attributes
   past the point another machine wrote a newer cache. That just makes the

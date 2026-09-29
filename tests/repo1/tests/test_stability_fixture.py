@@ -1,7 +1,7 @@
-"""OttoSuite that exercises class-scoped async fixture survival across
+"""Tests that exercise class-scoped async fixture survival across
 stability iterations using real SSH connections.
 
-This suite catches the bug where stability iterations tear down and
+These tests catch the bug where stability iterations tear down and
 rebuild class-scoped fixtures, causing SSH connections (which cache
 event loop references internally) to fail with "Future attached to a
 different loop" on subsequent iterations.
@@ -23,32 +23,24 @@ import pytest
 import pytest_asyncio
 from repo1_common.options import RepoOptions
 
-from otto import options
 from otto.config import all_hosts
 from otto.host.unix_host import UnixHost
-from otto.suite import OttoSuite
 from otto.utils import Status
 
 logger = logging.getLogger(__name__)
 
 
-@options
-class _Options(RepoOptions):
-    pass
-
-
-class TestStabilityFixture(OttoSuite):
+class TestStabilityFixture:
     """Verify SSH connections survive across stability iterations."""
 
     _host: ClassVar[UnixHost]
-    Options = _Options
 
     @pytest_asyncio.fixture(autouse=True, scope="class")
     @classmethod
     async def _establish_connection(cls):
         """Open an SSH connection to the first host and keep it for all iterations.
 
-        A classmethod on the suite's own loop (no ``loop_scope`` pin) — the
+        A classmethod on the run's session loop (no ``loop_scope`` pin) — the
         connection it opens is bound to the loop every iteration runs on.
         """
         hosts = list(all_hosts())
@@ -63,10 +55,10 @@ class TestStabilityFixture(OttoSuite):
         yield
 
     @pytest.mark.integration
-    async def test_connection_alive(self, suite_options: _Options) -> None:
+    async def test_connection_alive(self, ctx) -> None:
         """The SSH connection from class setup must still work on each iteration."""
 
-        logger.info(f"{suite_options=}")
+        logger.info(f"{ctx.options(RepoOptions)=}")
 
         result = await self._host.exec("echo iteration_ok", timeout=10)
         assert result.status == Status.Success, (

@@ -14,6 +14,7 @@ Typer's own classes and every context comes from the command's own
 ``context_class``.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -21,6 +22,7 @@ from typer._click.types import File
 from typer._types import TyperChoice
 from typer.core import TyperGroup, TyperOption
 
+from ..errors import OttoError
 from .cache_sections import SHIM_SECTION as SHIM_SECTION  # noqa: PLC0414 — explicit re-export
 from .corpus_snapshot import stat as _snapshot_stat
 
@@ -30,6 +32,8 @@ if TYPE_CHECKING:
     from typer._click.core import Command, Context, Parameter
 
     from .repo import Repo
+
+_log = logging.getLogger(__name__)
 
 HOST_SCOPED_BY = "host_id"
 
@@ -162,7 +166,22 @@ def _node(
     commands: dict[str, Any] = {}
     if isinstance(cmd, TyperGroup):  # the test typer._click's _resolve_context descends by
         for sub_name in cmd.list_commands(ctx):
-            sub = _child(cmd, ctx, sub_name)
+            try:
+                sub = _child(cmd, ctx, sub_name)
+            except OttoError as e:
+                # A child that cannot be built (an instruction whose flags
+                # clash with the `run` verb's, a `run` options class that does
+                # not import) completes by name only, as the completion cache's
+                # command list does. Its own dispatch reports why; the rest of
+                # the CLI must keep completing.
+                _log.debug(f"completion-tree: {where}/{sub_name} completes by name only: {e}")
+                commands[sub_name] = {
+                    "name": sub_name,
+                    "params": [],
+                    "commands": {},
+                    "group": False,
+                }
+                continue
             if sub is None or getattr(sub, "hidden", False):
                 continue
             sub_ctx = _context(sub, sub_name, ctx)
@@ -255,26 +274,29 @@ def inventory_block(repos: "list[Repo]") -> dict[str, Any]:
 
 
 def build_shim_payload(repos: "list[Repo]", app: Any | None = None) -> dict[str, Any]:
-    """Everything the shim needs to validate and answer, from the bootstrapped app (spec §3)."""
+    """Everything the shim needs to validate and answer, from the bootstrapped app (spec §3).
+
+    ``keys`` are the ``names`` section's key paths as stat triples; ``tables``
+    are the repos whose per-file test tables a test-name TAB reads (their
+    ``sut_dir``, the key each table is stored under), in order. The tables
+    themselves are not read here: only a pytest collection writes them.
+    """
     import typer
 
     from .cache_sections import section_by_name
-    from .completion_cache import _cache_ttl_seconds, compute_fingerprint
+    from .completion_cache import _cache_ttl_seconds
 
     if app is None:
         from ..cli.main import app as root_app
 
         app = root_app
     tree = serialize_tree(typer.main.get_command(app)).tree
-    keys: dict[str, list[Any]] = {}
-    for name in ("names", "tests"):
-        section = section_by_name(name)
-        assert section.key_paths is not None  # noqa: S101 — narrows: neither loop member is derived
-        keys[name] = [stat_triple(p) for p in sorted(set(section.key_paths(repos)))]
+    names = section_by_name("names")
+    assert names.key_paths is not None  # noqa: S101 — narrows: `names` is keyed by paths
     return {
         "ttl_seconds": _cache_ttl_seconds(repos),
-        "keys": keys,
+        "keys": [stat_triple(p) for p in sorted(set(names.key_paths(repos)))],
+        "tables": [str(repo.sut_dir) for repo in repos],
         "inventory": inventory_block(repos),
-        "tests_digest": compute_fingerprint(repos),
         "tree": tree,
     }

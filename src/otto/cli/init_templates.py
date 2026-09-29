@@ -420,12 +420,14 @@ otto's sanctioned way to leave a note inline — at the top level, inside the
 """
 
 OPTIONS_TEMPLATE = '''\
-"""Repo-wide options shared by every suite and instruction.
+"""Repo-wide options, shared by the tests and the instructions.
 
 ``@options`` (``from otto import options``) is pydantic's dataclass
-decorator: fields declared here become validated CLI flags on every
-``otto test`` suite and every ``otto run`` instruction whose options class
-inherits ``RepoOptions``. See docs/cookbook/authoring/options-classes.md.
+decorator. The instructions module (this repo's init module) registers
+``RepoOptions`` for ``otto run`` and ``otto test``, so every field here is a
+validated flag on both: a test reads it with ``ctx.options(RepoOptions)``, an
+instruction takes a ``RepoOptions`` parameter. See
+docs/cookbook/authoring/options-classes.md.
 """
 
 from typing import Annotated
@@ -437,69 +439,57 @@ from otto import options
 
 @options
 class RepoOptions:
-    """Inherit me from a suite's inner Options or an @instruction options class."""
+    """Flags every `otto test` run and every `otto run` instruction takes."""
 
     message: Annotated[
-        str, typer.Option(help="Message the sample suite and instruction log.")
+        str, typer.Option(help="Message the sample tests and instruction log.")
     ] = "hello from {name}"
 '''
 
 TEST_EXAMPLE_TEMPLATE = '''\
-"""Example otto test suite — runs hostless so it passes out of the box."""
+"""Example otto tests — run hostless so they pass out of the box."""
 
 import logging
-from typing import Annotated
 
 import pytest
-import typer
-
-from otto import options
-from otto.suite import OttoSuite
 
 from {options_module} import RepoOptions
 
 logger = logging.getLogger(__name__)
 
 
-@options
-class _Options(RepoOptions):
-    """This suite's options: the repo-wide flags plus its own ``--greeting``."""
-
-    greeting: Annotated[str, typer.Option(help="Greeting the example test logs.")] = "hello"
-
-
-class TestExample(OttoSuite):
-    """A minimal suite: `otto test TestExample` (auto-registered by its Test* name)."""
-
-    Options = _Options
+class TestExample:
+    """A minimal test class: `otto test TestExample` runs every test in it."""
 
     @pytest.fixture(scope="class", autouse=True)
     @classmethod
-    def banner(cls, suite_options: _Options) -> str:
-        """Suite-wide setup: runs once before the first test (the setup_class of old).
+    def banner(cls, ctx) -> str:
+        """Class-wide setup: runs once before the first test (the setup_class of old).
 
         A fixture defined ON the class at class scope is a classmethod. Make it
-        `async` and it runs on the suite's event loop — open host sessions here,
-        `yield` them, and close them after the yield.
+        `async` and it runs on the run's one event loop, like every test — open
+        host sessions here, `yield` them, and close them after the yield.
+        `ctx.options(RepoOptions)` is this run's `--message`.
         """
-        text = f"{{suite_options.message}} ({{suite_options.greeting}})"
-        logger.info("suite starting: %s", text)
+        text = ctx.options(RepoOptions).message
+        logger.info("tests starting: %s", text)
         return text
 
     async def test_logs_message(self, banner: str, repo_marker: str) -> None:
         logger.info(banner)
         assert repo_marker == "from-conftest"
 
-    async def test_expect_and_artifacts(self, expect, test_dir) -> None:
+    async def test_expect_and_artifacts(self, ctx, expect, test_dir) -> None:
         """`expect` records a failure without stopping the test; `test_dir` is this
         test's own artifact directory under the run's output dir."""
         expect(len("otto") == 4, "four letters")
-        (test_dir / "note.txt").write_text("artifacts go here")
-        assert (test_dir / "note.txt").exists()
+        note = test_dir / "message.txt"
+        note.write_text(ctx.options(RepoOptions).message)
+        assert note.exists()
 
 
 def test_example_function() -> None:
-    """Plain pytest functions run too: `otto test --tests test_example_function`."""
+    """Plain pytest functions run too: `otto test test_example_function`."""
     assert True
 '''
 
@@ -511,13 +501,14 @@ import pytest
 
 @pytest.fixture
 def repo_marker() -> str:
-    """Trivial example fixture the scaffolded suite consumes."""
+    """Trivial example fixture the scaffolded tests consume."""
     return "from-conftest"
 
 
-# Fixtures can hand tests live lab hosts. Class scope = opened once per suite,
-# on the suite's event loop, shared by every test in it, closed after the last
-# (a conftest fixture is a plain function — no @classmethod needed). Uncomment
+# Fixtures can hand tests live lab hosts. Class scope = opened once per test
+# class, shared by every test in it, closed after the last (a conftest fixture is a
+# plain function — no @classmethod needed). Every test and async fixture runs
+# on one session-wide event loop, so no fixture needs a loop_scope. Uncomment
 # once your lab_data/ is real:
 # import pytest_asyncio
 #
@@ -529,8 +520,15 @@ def repo_marker() -> str:
 #     yield host
 #     await host.close()
 #
-# A module- or session-scoped async fixture must pin its loop scope to match,
-# e.g. @pytest_asyncio.fixture(scope="session", loop_scope="session").
+# A test class pinned to a loop of its own, @pytest.mark.asyncio(loop_scope="class"),
+# can't use a host the session loop already owns.
+# get_host() returns one shared instance per host, so a host any unpinned test
+# has used stays on the session loop until the run ends; with random test order
+# that depends on order. Pin a class only around hosts nothing unpinned uses.
+# An async fixture its tests use should carry the same pin, e.g.
+# @pytest_asyncio.fixture(scope="class", loop_scope="class"); an unpinned one
+# runs on the session loop. A module- or session-scoped fixture pinned to
+# loop_scope="class" fails at setup with pytest-asyncio's ScopeMismatch.
 '''
 
 INSTRUCTIONS_TEMPLATE = '''\
@@ -541,12 +539,17 @@ from typing import Annotated
 
 import typer
 
-from otto import options
+from otto import register_options
 from otto.cli.run import instruction
 
 from {options_module} import RepoOptions
 
 logger = logging.getLogger(__name__)
+
+# Every RepoOptions field becomes a flag on `otto test` and on every `otto run`
+# instruction. Registrations belong here, in an init module (settings.toml's
+# `init`), imported once at startup; a test file or conftest may not register.
+register_options("{options_module}:RepoOptions", verbs=["run", "test"])
 
 # `install`, `uninstall`, `cleanup`, `get-logs`, `install-tools` and `status`
 # already exist — otto registers them for every lab, over your registered
@@ -556,6 +559,7 @@ logger = logging.getLogger(__name__)
 # or to give it a flag of its own — subclass ProjectActions and register it
 # from this module; the options class MUST inherit otto's for that name:
 #
+#     from otto import options
 #     from otto.project import (
 #         InstallOptions,
 #         ProjectActions,
@@ -575,22 +579,22 @@ logger = logging.getLogger(__name__)
 #             ...                       # your work, opts.variant in hand
 #             return await super().install(opts)
 #
-# One override point, so `otto run install --variant`, a script, a suite, and
+# One override point, so `otto run install --variant`, a script, a test, and
 # an ensure("installed") marker all pick it up.
 # See docs/cli/run/defaults.md.
 
 
-@options
-class _Options(RepoOptions):
-    """This instruction's options: the repo-wide flags plus its own ``--loud``."""
+@instruction()
+async def smoke(
+    opts: RepoOptions,
+    loud: Annotated[bool, typer.Option(help="Uppercase the message.")] = False,
+) -> None:
+    """Log the repo-wide message — replace with your first real instruction.
 
-    loud: Annotated[bool, typer.Option(help="Uppercase the message.")] = False
-
-
-@instruction(options=_Options)
-async def smoke(opts: _Options) -> None:
-    """Log the repo-wide message — replace with your first real instruction."""
-    logger.info(opts.message.upper() if opts.loud else opts.message)
+    `opts` is injected: RepoOptions is registered for `run`, so `--message`
+    is already a flag here. `--loud` is this instruction's own.
+    """
+    logger.info(opts.message.upper() if loud else opts.message)
 '''
 
 VSCODE_SETTINGS_TEMPLATE = r"""{

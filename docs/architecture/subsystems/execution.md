@@ -1,127 +1,191 @@
-# Instructions and suites — the execution pipeline
+# Instructions and tests — the execution pipeline
 
-`otto run` and `otto test` both dispatch ordinary Python through the same
-shape: a registry entry and a synthesized Typer subcommand. An instruction
-({func}`@instruction() <otto.cli.run.instruction>`) is a *procedure* — one
-async function with full lab access, one body, one outcome. A suite
-({class}`~otto.suite.suite.OttoSuite`) is a *verdict* — many independent
-async test methods, run by the runner underneath: stock pytest with an otto
-plugin layered on, not a bespoke test framework.
+`otto run` and `otto test` both dispatch ordinary Python. An instruction
+({func}`@instruction() <otto.cli.run.instruction>`) is a *procedure*: one
+async function with full lab access, one body, one outcome, published as a
+registry entry and a synthesized Typer subcommand. A test is a *verdict*:
+plain pytest classes and functions, run by stock pytest with otto's plugins
+layered on, not a bespoke test framework. `otto test` is a single command
+that takes test names, not a group with a subcommand per class.
 
 ```{graphviz}
 digraph testpipeline {
     rankdir=TB;
     node [shape=box];
 
-    import [label="first read of SUITES after bootstrap\nimports test files (on demand)"];
-    reg [label="OttoSuite.__init_subclass__\nTest*-named subclass →\nregister_suite_class → SUITES registry\n+ synthesized Typer subcommand"];
-    suite [label="otto test <Suite> [flags]\nbuild Options instance → run_suite\none pytest session, the suite's file"];
-    select [label="otto test --tests a,b / -m EXPR\nsuite-less selection run:\nresolve names → one pytest\nsession per matching repo"];
+    cli [label="otto test NAMES [-m EXPR] [flags]\nbuild every class registered for test\n→ bind on OttoContext"];
+    resolve [label="before any session, across every repo: the files\nthe test-names cache says hold a name,\nplus changed files (a name placed nowhere:\nthose files first, else a did-you-mean)"];
+    session [label="one pytest session per repo over its test dirs:\nOttoPlugin prunes to those files, matches\nthe names, records what it collected"];
     pytest_ [label="pytest\ncollection · fixtures · parametrize · markers"];
-    plugin [label="OttoPlugin\nper-test artifact dirs · stability\nmodes · retry · monitor events ·\ncoverage fetch after the session"];
+    plugin [label="OttoPlugin · OttoFixturesPlugin\nfixtures · artifact dirs · stability ·\nretry · monitor events · per-loop host\nsweep · coverage fetch after the session"];
 
-    import -> reg;
-    reg -> suite;
-    reg -> select [style=dashed, label=" names feed\nresolution"];
-    suite -> pytest_;
-    select -> pytest_;
-    pytest_ -> plugin;
+    cli -> resolve -> session -> pytest_ -> plugin;
 }
 ```
 
-## Registration synthesizes the CLI
+## Options are registered per verb
 
-Both paths transform a plain signature into CLI flags with the **same
-options-to-parameters machinery**: a parameter annotated with an options
-dataclass has its fields — including inherited ones, which is how
-repo-wide `RepoOptions` bases work ({doc}`../../cookbook/authoring/options-classes`) —
-expanded into individual flags, and the populated instance is reconstructed
-at call time. One options hierarchy serves both instructions and suites.
+Both verbs build their flags with the **same options-to-parameters
+machinery**: each field of an options class becomes a flag, and the
+populated instance is reconstructed at call time
+({doc}`../../cookbook/authoring/options-classes`).
 
-For an **instruction**, `@instruction()` stores an entry in the
-`INSTRUCTIONS` registry ({doc}`registries`) and builds a Typer sub-app around
-the function. Besides options expansion, a parameter annotated `OttoContext`
-is stripped from the CLI signature and injected from the active context at
-call time — the DI-friendly way for an instruction to reach hosts without
-global lookups ({doc}`../lifecycle`).
+- **Verb-wide options** are classes registered with
+  {func}`~otto.params.register_options` (or `@options(verbs=[...])`) from an
+  init module, for `run`, `test` or both. They live in the `OPTIONS` registry
+  ({doc}`registries`). A verb's flag set is the union of its registered
+  classes, merged by declaring class: a field two classes inherit from one
+  base is one flag, and one name from two unrelated classes is an
+  `OptionsCollisionError` naming both. At dispatch, every class registered
+  for the dispatched verb is built from the parsed flags and bound on the
+  invocation's `OttoContext`, so a validation failure is an exit-2 error
+  before any body runs. Classes registered only for the other verb are not
+  built.
+- **An instruction's own options** (`@instruction(options=...)`) are merged
+  with the verb's, the own class first. A parameter annotated with a
+  registered class is injected with `ctx.options(Cls)`; a parameter annotated
+  `OttoContext` is stripped from the CLI signature and injected from the
+  active context, the DI-friendly way for an instruction to reach hosts
+  without global lookups ({doc}`../lifecycle`).
+- **Tests** read their options with `ctx.options(Cls)` through the
+  session-scoped `ctx` fixture. There is no per-test or per-class options
+  class: pytest's options are one flat namespace, and a flag that only one
+  test file reads is rare, while one that some tests ignore is harmless.
 
-For a **suite**, a class extends {class}`~otto.suite.suite.OttoSuite` with a
-`Test`-prefixed name (matching pytest's own `python_classes = Test*`
-collection rule), which triggers `__init_subclass__` to call
-{func}`~otto.suite.register.register_suite_class`. Registration does three
-things at import time — for repo test files, when the suites registry first
-loads them, which only the commands that read suites do
-({doc}`../lifecycle`):
-
-1. Reads the suite's `Options` class — any dataclass works; an `@options`
-   pydantic dataclass adds validation — and synthesizes a Typer subcommand
-   whose flags mirror its fields, via the options-to-parameters machinery
-   above.
-2. Registers the suite in the `SUITES` registry under its class name.
-3. Makes re-registration idempotent *per source file*: pytest re-importing
-   the same file is expected and harmless, while a second suite of the same
-   name from a *different* file is a loud collision.
-
-Because both live in a registry, tab completion of instruction and suite
-names, and `--list-instructions` / `--list-suites`, come for free — like
-every other registry ({doc}`registries`). See it captured live in
-{doc}`../../cli/run/index` and {doc}`../../cli/test/index`.
+`@instruction()` stores an entry in the `INSTRUCTIONS` registry
+({doc}`registries`) and builds a Typer sub-app around the function, so tab
+completion of instruction names and `--list-instructions` come for free, as
+for every other registry. Tests are not registered anywhere: pytest finds
+them.
 
 ## Handing off to pytest
 
-A suite's synthesized subcommand builds the options instance and calls
-`run_suite` ({func}`otto.suite.run.run_suite`), which invokes `pytest.main()`
-scoped to the suite's source file, with otto's plugin installed. Conftest
-loading is cut at the *owning repo's root* (`--confcutdir`), so the user
-repo's full conftest hierarchy applies while otto's own never leaks in.
-pytest keeps what it is good at — collection, fixtures, `parametrize`,
-markers, reporting — and the plugin ({class}`~otto.suite.plugin.OttoPlugin`)
-layers on otto's concerns:
+{func}`~otto.suite.run.run_tests` backs both `otto test` and the library call.
+It runs one `pytest.main()` per repo, over the repo's test directories, and
+that one session both finds the names and runs what they select, in
+collection order. There is no separate collection pass: pytest collects
+once. {class}`~otto.suite.plugin.OttoPlugin` does the selecting inside the
+session:
 
-- **Artifacts** — each test gets its own directory under the invocation's
-  output dir ({doc}`../utilities/logging`), requested by a test as the
-  `test_dir` fixture (`suite_dir` for the suite-wide one).
-- **Stability modes** — `--iterations` / `--duration` re-run tests via the
-  runtest protocol and aggregate per-test pass rates, reporting `Unstable`
-  rather than failing on the first flake. Setup and teardown run once around
-  the repeated call phase, so no fixture re-fires per iteration; the protocol
-  hook re-points `test_dir` at an `iteration_N` subdirectory itself, giving
-  each repeat its own artifacts.
-- **Retry** — `@pytest.mark.retry(n)` re-runs a failing test in place.
-- **Monitoring and coverage** — test start/end events are stamped onto the
-  monitor timeline, and coverage runs fetch embedded counters after the
-  session ({doc}`monitoring`, {doc}`coverage/index`).
+- **Pruning.** `pytest_ignore_collect` skips every file that is not a
+  *candidate* and every directory holding none, so pytest imports only the
+  candidates. The candidates come from the test-names cache
+  (`otto.config.collected_tests`): the files whose last pytest collection
+  held one of the names, plus every file that changed since, which one
+  `stat` per file, directory and dependency detects. A directory whose stat
+  moved (a file was added, removed or renamed in it) is taken whole: every
+  file and subdirectory in it that pytest would collect, which is how a new
+  file is found without otto listing a directory or matching `python_files`
+  itself. The session's arguments stay the test directories, never file
+  paths, so a conftest's `collect_ignore` still applies. Only pytest ever
+  writes the cache: a repo with no cache is collected whole by the run's
+  own session, which then seeds it.
+- **Matching.** Every collected item is matched against the names
+  ({func}`~otto.suite.selection.matches_name`) as pytest reports it, and the
+  ones no name selects are deselected before `-m` or `-k` apply, so a name
+  the marker expression excludes is still a known name that selects nothing.
+- **Recording.** What each file held (its tests, markers, or the error that
+  stopped it) is written back to the cache after the session, so the next
+  run and tab completion start from what pytest actually collected. So are
+  its *dependencies*: the other Python files its tests come from or could
+  come from, read without a file operation from each item's function and
+  class hierarchy and from every class, function and module in the module's
+  namespace (a base class that has no test yet, whatever a star-import
+  brought in, a config module whose flag decides whether a test exists). The
+  walk sorts each value by `type()` alone, so it never reads an attribute of
+  a user object (a lazy proxy stays unevaluated) and a value that raises is
+  skipped. A recorded source path with no file is not kept; a sourceless
+  library is tracked through its `.pyc`. A change to a dependency marks
+  every file that uses it changed, so a test a base class gains, or that a
+  star-imported module gains, is collected everywhere it lands. Which
+  dependencies are tracked is on {doc}`completion-cache` ("Dependencies",
+  under "The test-names cache").
 
-## Selection runs
+Which files hold the names is decided before any session starts, across
+every repo, from the caches alone. A name no trusted record holds can only
+be in a file the cache can't vouch for (changed, new, in a directory that
+gained an entry, or anywhere in a repo whose cache is cold). With one repo
+holding such files, its own session collects them and must match the name
+(a missing one stops it with a usage error before any test) and runs before
+every other repo's; with several, each is collected first by a
+`--collect-only` session. Either way, a collection that can't finish ends
+the run before any test, with its exit code and the reason logged. A name
+still placed nowhere is an
+{class}`~otto.suite.selection.UnknownSelectionError` with did-you-mean
+suggestions (and the files that did not collect), and no test runs in any
+repo. A test generated from a data file or a plain imported value, which no
+Python file's stat follows, is not seen until its own file is next collected
+(the cases, and what to do about them, are in
+{doc}`../../cli/test/selection`, "What the cache can't follow").
+The remote coverage pre-clean waits for the first session that is about to
+run a test, so a run that ends in an unknown name never touches a host. Every session of a run uses one random seed, logged once. A file that fails to collect is
+logged and, under `--continue-on-collection-errors`, doesn't stop the tests
+that were asked for; the run exits 1, as pytest does. Conftest loading is cut
+at the *owning repo's root* (`--confcutdir`), so the user repo's full
+conftest hierarchy applies while otto's own never leaks in.
 
-`--tests NAME[,NAME…]` and `-m`/`--markers` also work *without* naming a
-suite: the selection path resolves test names to exact pytest nodeids
-(unknown names fail with a did-you-mean), then runs **one pytest session per
-matching repo** — a repo with no match is skipped rather than reported as
-"collected 0 items". `--tests`/`-m` live on the parent `otto test` command,
-while a suite name dispatches a distinct synthesized subcommand, so
-combining the two is a loud usage error rather than a silent intersection.
+Every session runs on one session-wide event loop by default
+(`asyncio_default_test_loop_scope` and `asyncio_default_fixture_loop_scope`
+are both `session`), the way every other otto command runs on one loop. A
+test may pin a narrower loop; {doc}`../../cookbook/host-scopes` has the rules.
 
-This is the deliberate second door into the same pipeline: plain pytest
-functions (no `OttoSuite` at all) are first-class here, which is what the
-`otto init` scaffold demonstrates
-([getting started](../../getting-started/running-test-suites.md)).
+pytest keeps what it is good at (collection, fixtures, `parametrize`,
+markers, reporting) and two plugins layer on otto's concerns:
 
-`--tests` tab-completion is fed by two layers. The always-available **floor**
-is a static `ast` scan of `def test_*` / `Test*` methods — instant, never
-runs your test code. On top of it sits a **pytest-collected** set that also
-includes *dynamically generated* tests (`pytest_generate_tests`, conftest
-fixtures) that a source scan can't see. That set is warmed by any real
-collection: an `otto test --list-tests` run fills it for free, and otherwise
-the first `--tests` TAB spawns a single bounded collection in the background
-(a one-time slower TAB — capped, and it falls back to the floor if it can't
-finish in time) and caches the result, so every later TAB is fast and
-complete. A test-file edit invalidates the cache via the same fingerprint
-the rest of the cache uses, so the collected set never goes stale silently.
-The completer itself still **never runs user code** — the collection happens
-in a disposable subprocess, never in the process answering the keystroke.
-The behavior this feeds — base-name matching, `TestClass::test_name`
-disambiguation — is documented in {doc}`../../cli/test/index`.
+- **Fixtures**
+  ({class}`~otto.suite.pytest_plugin.OttoFixturesPlugin`): `ctx`,
+  `module_dir`, `test_dir`, `expect` and `monitor`, plus the `ensure`
+  marker's converge. `module_dir` and `test_dir` mirror the pytest test ID
+  under the run's output directory ({class}`~otto.suite.layout.ArtifactLayout`),
+  with a repo layer on top when more than one repo takes part.
+- **Stability modes** ({class}`~otto.suite.plugin.OttoPlugin`):
+  `--iterations` / `--duration` re-run tests via the runtest protocol and
+  aggregate per-test pass rates, reporting `Unstable` rather than failing on
+  the first flake. Setup and teardown run once around the repeated call
+  phase, so no fixture re-fires per iteration; the protocol hook re-points
+  `test_dir` at an `iteration_N` subdirectory itself, giving each repeat its
+  own artifacts.
+- **Retry**: `@pytest.mark.retry(n)` re-runs a failing test in place.
+- **Per-loop host cleanup**: `OttoPlugin` names each pytest-asyncio runner's
+  loop and, just before the runner closes it, closes the hosts that loop owns
+  ({mod}`otto.suite.loops`). A host registers with the scope of the loop
+  that first uses it, and fails fast with a
+  {class}`~otto.host.loop_owner.HostLoopError` from any other loop that is
+  still running.
+- **Monitoring and coverage**: every test, class or plain function, gets a
+  start banner, and under `--monitor` its start and end are stamped on the
+  timeline; coverage runs fetch counters after the session
+  ({doc}`monitoring`, {doc}`coverage/index`).
+
+otto's own per-test async work, the `ensure` converge and the monitor events,
+runs on the test's own loop through {func}`~otto.suite.loops.runner_for`,
+whatever that loop's scope, so the hosts a converge opens belong to the loop
+the test body uses.
+
+Test files are imported only inside these pytest sessions. While one loads
+test files, the registries refuse any registration from outside the `otto`
+package ({class}`~otto.registry.RegistrationRefused`), because a test file
+that registered an extension would register it for `otto test` alone.
+
+## Test names and completion
+
+A name is a test, a class, or a `Class::test` path, matched against each
+collected test's classes and base name
+({func}`~otto.suite.selection.matches_name`); unknown names fail with a
+did-you-mean. `--list-tests` prints the collected selection grouped by repo,
+module and class, and a dry run prints the same tree: both take the run's own
+sessions with `--collect-only`, so they import the files a run would and run
+nothing.
+
+Test-name and `-m` completion read the same test-names cache a run
+uses, so they offer what pytest collected, inherited and generated tests
+included; nothing but pytest ever reads a test file for it. The process
+answering a keystroke never runs user code: a cold cache is seeded, and a
+warm one refreshed, by a disposable, time-bounded child process. What a user
+sees is on {doc}`../../cli/test/selection` ("Tab-completing names"), and how
+the per-file tables, the check window and the child work is on
+{doc}`completion-cache` ("The test-names cache"). The path from `otto init` to a
+first run is in [getting started](../../getting-started/running-tests.md).
 
 ## Non-fatal assertions
 
@@ -132,21 +196,20 @@ fail the test at the end of its body, in the call phase
 tests are expensive to reach: when a board takes minutes to provision, "check
 everything, then fail with the full list" beats fail-fast.
 
-## Suites vs instructions
+## Tests vs instructions
 
 Both ride the standard invoke preamble unmodified ({doc}`../lifecycle`);
 what differs is the body. An instruction's body is just the user's coroutine
 on the invocation's event loop, and its returned {class}`~otto.result.Result`
 (if any) becomes the process exit code ({doc}`../utilities/results`);
 artifacts belong in `get_context().output_dir` ({doc}`../../cli/run/index`).
-A suite's body hands off to pytest, as above.
+`otto test`'s body hands off to pytest, as above.
 
-Both are registered callables with option classes; the split is intent.
-Instructions ({func}`~otto.cli.run.instruction`) are *procedures* — deploy,
-flash, collect — with one body and an exit code from their returned
-{class}`~otto.result.Result`. Suites are *verdicts*: many independent test
-methods, pytest semantics, stability statistics, per-test artifacts. Shared
-repo-wide options classes keep the two consistent
+The split is intent. Instructions ({func}`~otto.cli.run.instruction`) are
+*procedures* (deploy, flash, collect) with one body and an exit code from
+their returned {class}`~otto.result.Result`. Tests are *verdicts*: many
+independent tests, pytest semantics, stability statistics, per-test
+artifacts. Options classes registered for both verbs keep the two consistent
 ({doc}`../../cookbook/authoring/options-classes`).
 
 ## Project instructions
@@ -184,10 +247,12 @@ do:
   same flag from different classes is a bootstrap error for the whole
   invocation: a flag whose meaning depends on which repo reads it is not
   something to resolve silently, and a flag set the user cannot see is not
-  something to degrade around. Flags merge by declaring class, and the same
-  rule decides which suite fields reach a repo's options under `otto test`,
-  so an unrelated suite field that merely spells `variant` never leaks into
-  an install. Options modules are leaves — `typer` and `otto.options` — so a
+  something to degrade around. Flags merge by declaring class. Under
+  `otto test`, an `ensure` converge builds each body's options from the
+  `test` verb's parsed flags, by field name, exactly as `otto run install`
+  builds them from its own; the collision rule is what makes the name
+  unambiguous, and a body field with no `test` flag takes its default.
+  Options modules are leaves — `typer` and `otto.options` — so a
   shared base placed in a required repo or a library package can never
   create an import cycle.
 - **Never let one repo act for another.** No default `ProjectActions` body
@@ -245,7 +310,12 @@ do:
 
 - {mod}`otto.cli.run` — the `@instruction` decorator, the `INSTRUCTIONS`
   registry, and context injection
-- `otto.suite` — `OttoSuite`, suite registration, `run_suite`,
-  `OttoPlugin`, and `ExpectCollector`
+- {mod}`otto.params` — `@options`, `register_options`, the `OPTIONS`
+  registry and the per-verb merge
+- `otto.suite` — `run_tests`, name resolution (`otto.suite.selection`),
+  `OttoPlugin`, `OttoFixturesPlugin`, the artifact layout, the per-loop
+  sweep (`otto.suite.loops`), the `monitor` fixture's `MonitorHandle`, and
+  `ExpectCollector`
+- {mod}`otto.cli.test` — the `otto test` command
 - {mod}`otto.result` — the `Result` family that becomes an instruction's
   exit code

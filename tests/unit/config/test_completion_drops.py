@@ -185,7 +185,7 @@ def test_host_drops_ride_the_names_payload(tmp_path, monkeypatch):
     repo = _repo(tmp_path, {}, hosts=[])
     recorded = [{"repo": "sut", "where": "somewhere", "reason": "some reason"}]
 
-    cc.write_cache([repo], instructions=[], suites=[], hosts=["dut"], host_drops=recorded)
+    cc.write_cache([repo], instructions=[], hosts=["dut"], host_drops=recorded)
 
     assert cc.read_cache([repo])["host_drops"] == recorded
 
@@ -194,7 +194,7 @@ def test_a_names_payload_missing_host_drops_still_reads_as_an_empty_list(tmp_pat
     """Older payload shape without the key: empty, not a miss and not a crash."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     repo = _repo(tmp_path, {}, hosts=[])
-    cc.write_cache([repo], instructions=[], suites=[], hosts=["dut"])
+    cc.write_cache([repo], instructions=[], hosts=["dut"])
     path = cc._cache_path()
     assert path is not None
     data = json.loads(path.read_text())
@@ -210,7 +210,7 @@ def test_a_names_payload_missing_host_drops_still_reads_as_an_empty_list(tmp_pat
 def test_inspect_reports_fresh_with_the_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     repo = _repo(tmp_path, {}, hosts=[])
-    cc.write_cache([repo], instructions=[], suites=[], hosts=["dut"])
+    cc.write_cache([repo], instructions=[], hosts=["dut"])
 
     status = cc.inspect_section([repo], "names")
 
@@ -224,7 +224,7 @@ def test_inspect_reports_fresh_with_the_payload(tmp_path, monkeypatch):
 def test_inspect_reports_stale_after_a_key_file_moves_and_keeps_the_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     repo = _repo(tmp_path, {}, hosts=[])
-    cc.write_cache([repo], instructions=[], suites=[], hosts=["dut"])
+    cc.write_cache([repo], instructions=[], hosts=["dut"])
     lab_file = repo.sut_dir / "lab" / "lab.json"
     later = lab_file.stat().st_mtime + 10
     os.utime(lab_file, (later, later))
@@ -241,10 +241,10 @@ def test_inspect_reports_expired_tainted_outdated_unreadable_and_missing(tmp_pat
     repo = _repo(tmp_path, {}, hosts=[])
     assert cc.inspect_section([repo], "names").state == "missing"
 
-    cc.write_cache([repo], instructions=[], suites=[], hosts=["dut"], tainted=True)
+    cc.write_cache([repo], instructions=[], hosts=["dut"], tainted=True)
     assert cc.inspect_section([repo], "names").state == "tainted"
 
-    cc.write_cache([repo], instructions=[], suites=[], hosts=["dut"])
+    cc.write_cache([repo], instructions=[], hosts=["dut"])
     path = cc._cache_path()
     assert path is not None
     data = json.loads(path.read_text())

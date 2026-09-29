@@ -305,7 +305,7 @@ whether a declared entry still contributes a mark (see
   does.
 - **Loud-fails without `[coverage.tickets]` configured, or with a
   configuration that attributed nothing** — exit `1` with a clear cause.
-  `otto test --cov-tickets-json` fails this same way *before the suite
+  `otto test --cov-tickets-json` fails this same way *before any test
   runs* when `[coverage.tickets]` isn't configured at all; a git walk that
   ran but matched nothing is only knowable after the run, so that case is
   a warning on the otherwise-successful test run instead, like every

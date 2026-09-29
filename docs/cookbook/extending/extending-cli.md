@@ -1,6 +1,6 @@
 # Extending the otto CLI
 
-Beyond instructions (`otto run ...`) and suites (`otto test ...`), otto lets a
+Beyond instructions (`otto run ...`) and tests (`otto test ...`), otto lets a
 project register entirely new **top-level commands** — a single leaf command
 or a whole command group — that show up in `otto --help` and tab completion
 next to the built-ins (`run`, `test`, `monitor`, `host`, ...). First-party and
@@ -151,8 +151,9 @@ field (or a package pulled in transitively from one). {func}`otto.bootstrap.boot
 is otto's composition root: it discovers your repos, then imports each
 repo's `init` modules, and runs before argv parsing for every real invocation
 (see {func}`otto.cli.main.entry`). Test files are not a place to register a
-command: they load only for the commands that read suites, and a
-`register_cli_command()` made from one is refused with a framed error. Bootstrap is idempotent —
+command: they load only inside `otto test`'s pytest session, and a
+`register_cli_command()` made from one is refused with
+{class}`~otto.registry.RegistrationRefused`. Bootstrap is idempotent —
 repeated calls return the same cached result.
 
 Bootstrap **contains** failures per module: if one `init` file raises on

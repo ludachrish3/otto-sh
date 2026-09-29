@@ -28,6 +28,11 @@ from otto.config.repo import Repo
 from otto.result import CommandResult, Results
 from otto.utils import Status
 from tests._fixtures.labdata import write_lab_json
+from tests._fixtures.sut_repos import (  # noqa: F401 — fixtures, shared with tests/unit/suite
+    _generated_modules_evicted,
+    sut_repo,
+    two_sut_repos,
+)
 from tests._fixtures.sutrepo import make_sut_repo
 
 
@@ -264,3 +269,83 @@ def real_main_mocks(tmp_path):
     bs._reset()
     root_logger.handlers[:] = list(original_root_handlers)
     root_logger.setLevel(original_root_level)
+
+
+@pytest.fixture
+def run_cli():
+    """Invoke ``otto run ...`` through the production dispatch seam, lab-free.
+
+    Takes the whole argv as a user types it after ``otto`` (``["run", ...]``)
+    and drives ``run_app`` through :class:`~tests._fixtures.dispatch.DispatchRunner`
+    with the ``run`` lane's async-leaf rule. A bare context is installed for
+    the invocation, standing in for the one the lab slice installs on the
+    real path, so a leaf can inject ``OttoContext`` and bind verb options.
+
+    *dry_run* installs that same context with ``dry_run=True`` — the run
+    lane's ``lab_free`` spec never seeds ``ctx.meta['_otto_root_options']``,
+    so :func:`~otto.cli.invoke.dry_run_requested` falls back to reading it
+    straight off this context, exactly as it would off a library caller's.
+    """
+    from otto.cli.run import run_app
+    from otto.config.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context
+    from tests._fixtures.dispatch import DispatchRunner
+
+    runner = DispatchRunner()
+
+    def _invoke(args: list[str], *, dry_run: bool = False):
+        verb, *rest = args
+        assert verb == "run", f"run_cli drives `otto run` only, not {verb!r}"
+        token = set_context(OttoContext(lab=Lab(name="run-cli"), dry_run=dry_run))
+        try:
+            return runner.invoke(run_app, rest, async_leaves=True)
+        finally:
+            reset_context(token)
+
+    return _invoke
+
+
+@pytest.fixture
+def otto_test_cli(tmp_path):
+    """Invoke ``otto test ...`` through the production dispatch seam, lab-free.
+
+    Takes the argv as a user types it after ``otto`` (``["test", ...]``, or
+    ``["-n", "test", ...]`` for a dry run) and drives ``otto.cli.test``'s
+    ``test_app`` through :class:`~tests._fixtures.dispatch.DispatchRunner`,
+    under a bare ``otto`` root group as on the real CLI.
+    The app is read off the module at call time, so it carries whatever the
+    test registered for the ``test`` verb.
+
+    *lab* names the bare context installed for the invocation, standing in
+    for the one the lab slice installs on the real path (its ``output_dir``
+    is a fresh directory under ``tmp_path``). ``lab=None`` installs no
+    context at all: the command must not need one. A leading ``-n`` installs
+    the context with ``dry_run=True``, which
+    :func:`~otto.cli.invoke.dry_run_requested` reads when no root options
+    were parsed.
+    """
+    from otto.cli import test as cli_test
+    from otto.config.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context
+    from tests._fixtures.dispatch import DispatchRunner
+
+    runner = DispatchRunner()
+
+    def _invoke(args: list[str], *, lab: "str | None" = "unix"):
+        args = list(args)
+        dry_run = bool(args) and args[0] in ("-n", "--dry-run")
+        if dry_run:
+            args.pop(0)
+        assert args[:1] == ["test"], f"otto_test_cli drives `otto test` only, not {args!r}"
+        token = None
+        if lab is not None:
+            out = tmp_path / "otto-out"
+            out.mkdir(exist_ok=True)
+            token = set_context(OttoContext(lab=Lab(name=lab), output_dir=out, dry_run=dry_run))
+        try:
+            return runner.invoke(cli_test.test_app, args, spec_name="test", under_root=True)
+        finally:
+            if token is not None:
+                reset_context(token)
+
+    return _invoke

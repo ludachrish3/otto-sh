@@ -135,15 +135,16 @@ def build_session_metric_db(
 
     **The shared construction for every ``--db``-backed session-monitor call
     site — never hand-roll ``MetricDB(..., lab_json="{}", meta_json="{}")``.**
-    Used by :meth:`otto.suite.suite.OttoSuite.start_monitor`,
+    Used by :meth:`otto.suite.monitor_fixture.MonitorHandle.start`,
     :class:`otto.suite.plugin.OttoPlugin`'s ``--monitor --monitor-output
     *.db`` session fixture, and ``otto.cli.monitor``'s ``--live --db`` path —
     closing a long-standing triplication: all three call sites used to build
-    their own ``MetricDB``. One of them (``OttoSuite.start_monitor``) had
-    drifted and kept persisting ``lab_json="{}"``/``meta_json="{}"`` — the
-    degraded-archive shape this producer phase spent three fix waves
-    eliminating elsewhere (no chart specs, no units, null interval, no lab
-    topology on replay); the CLI's copy was already correct, just duplicated.
+    their own ``MetricDB``. One of them (the per-test monitor start, now
+    ``MonitorHandle.start``) had drifted and kept persisting
+    ``lab_json="{}"``/``meta_json="{}"`` — the degraded-archive shape this
+    producer phase spent three fix waves eliminating elsewhere (no chart
+    specs, no units, null interval, no lab topology on replay); the CLI's
+    copy was already correct, just duplicated.
 
     Args:
         path: Filesystem path for the SQLite archive.

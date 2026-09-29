@@ -80,15 +80,14 @@ def test_walkers_report_visited_directories(tmp_path):
     """
     repo = _repo(tmp_path)
     names = set(section_by_name("names").key_paths([repo]))
-    tests = set(section_by_name("tests").key_paths([repo]))
     assert {
         repo.sut_dir / "lab",  # bare directory entry
         repo.sut_dir / "solo",  # `.json` entry's parent
         repo.sut_dir / "extra",  # glob's non-glob root
         repo.sut_dir / "extra" / "nested",  # a glob match's parent
-        repo.sut_dir / "tests",
     } <= names
-    assert {repo.sut_dir / "tests", repo.sut_dir / "tests" / "sub"} <= tests
+    # No test file keys `names`, so no tests directory does either.
+    assert repo.sut_dir / "tests" not in names
 
 
 def test_a_new_lab_file_in_a_globbed_directory_moves_the_names_digest(tmp_path):
@@ -115,21 +114,12 @@ def test_a_new_lab_file_in_a_globbed_directory_moves_the_names_digest(tmp_path):
     assert changed == [repo.sut_dir / "extra"]
 
 
-def test_a_new_nested_test_file_moves_the_tests_digest_only(tmp_path):
-    """A NESTED test file is outside `Repo.iter_test_files` (top-level only),
-    so it can never enter the `names` key set — as file or as directory — and
-    `names` has nothing to move. It DOES enter the `tests` key set: the full
-    corpus walk re-discovers the file itself on the next call, so the new
-    file's OWN path becomes a new member of the hashed key set — a
-    structural change to WHICH paths are hashed, not a comparison of any one
-    path's mtime — through the ordinary, pre-existing file-rediscovery path,
-    not specifically through the new directory-visiting sink this task adds.
-    Not wall-clock-bound: no assertion here depends on an existing path's
-    mtime moving, so no backdating is needed.
+def test_a_new_nested_test_file_moves_no_digest(tmp_path):
+    """No test file keys the `names` section — nested or not, as file or as
+    directory — so a new one moves nothing: test names live in the per-file
+    tables, which see it through its directory's stat.
     """
     repo = _repo(tmp_path)
     names_before = section_digest(section_by_name("names"), [repo])
-    tests_before = section_digest(section_by_name("tests"), [repo])
     (repo.sut_dir / "tests" / "sub" / "test_new.py").write_text("def test_c():\n    pass\n")
-    assert section_digest(section_by_name("tests"), [repo]) != tests_before
     assert section_digest(section_by_name("names"), [repo]) == names_before

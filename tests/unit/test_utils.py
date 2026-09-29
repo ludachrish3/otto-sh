@@ -109,7 +109,7 @@ class TestCompleteSeparatedList:
         assert complete_separated_list(["tech1", "tech2"], "tech1+tech", sep="+") == ["tech1+tech2"]
 
     def test_default_separator_is_still_the_comma(self):
-        """The regression this refactor invites: `--tests` must not acquire a new separator.
+        """The regression this refactor invites: `--hosts` must not acquire a new separator.
 
         Both assertions flip if the default separator ever changes to `+`.
         """

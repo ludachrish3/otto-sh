@@ -8,48 +8,51 @@ before any broad ``except ValueError`` / ``except RuntimeError`` clause in
 the same ``try`` — the first lexical match wins.
 
 DEFINES, not raises, and the difference is not small: otto also raises plain
-stdlib exceptions at 387 sites — an argument otto validates and rejects is
+stdlib exceptions at hundreds of sites — an argument otto validates and rejects is
 usually a bare ``ValueError``, not a named class. ``except OttoError``
-therefore means "one of otto's 64 NAMED failures", not "anything otto
+therefore means "one of otto's 67 NAMED failures", not "anything otto
 raised".
 
 There is no one clause that catches everything, and it is worth being exact
 rather than offering a comforting near-miss:
 
-* ``except Exception`` catches all but six raises. Five are ``SystemExit``,
-  and three of THOSE are in public library API —
-  :func:`otto.lifecycle.run_command`, :func:`otto.suite.run.run_suite` and
-  ``run_selection``. A caller who wraps those and expects a broad guard to
-  hold gets a process exit instead. The sixth is
+* ``except Exception`` catches all but five raises. Four are ``SystemExit``,
+  and two of THOSE are in public library API —
+  :func:`otto.lifecycle.run_command` and :func:`otto.suite.run.run_tests`.
+  A caller who wraps those and expects a broad guard to hold gets a process
+  exit instead. The fifth is
   :class:`~otto.lifecycle.SyncPhaseInterrupt`, a ``KeyboardInterrupt`` on
   purpose (see below).
-* ``except (ValueError, RuntimeError)`` covers 337 of the 387 raise sites,
-  and 43 of the 64 named classes. Of the other 21, fourteen are rooted at
+* ``except (ValueError, RuntimeError)`` covers most of those raise sites,
+  and 45 of the 67 named classes. Of the other 22, fourteen are rooted at
   plain ``Exception`` (the bootstrap, project-activation,
   project-instruction, lab-context, lab-repository, inventory, creds and
-  reservation errors) and seven sit under
+  reservation errors), seven sit under
   ``OSError`` (``AppShellTimeoutError``, ``ConsoleError``, ``LoginProxyError``,
   ``NcPortSharedError``, ``RetryAttemptTimeoutError``, ``SessionSetupError``,
-  ``WaitTimeoutError``) — 43 + 14 + 7 = 64, so the split accounts for every
-  named class.
+  ``WaitTimeoutError``), and one sits under ``LookupError``
+  (``OptionsNotAvailableError``, for ``ctx.options(Cls)`` asked of a class
+  with no bound value) — 45 + 14 + 7 + 1 = 67, so the split accounts for
+  every named class.
 
-Those counts are measured, not maintained by arithmetic: a *raise site* is a
-``raise`` of a name that is a BUILTIN exception type (so ``typer.Exit`` and
-otto's own classes are excluded from the 387), and it is *covered* when that
-builtin is rooted at ``ValueError`` or ``RuntimeError`` — which is why the 42
-``NotImplementedError`` raises count as covered. Re-measure by walking the
-AST of ``src/otto``; do not adjust these by hand. The 2026-08-07 error-taxonomy
-wave is why the site count FELL: 37 bare ``RuntimeError`` raises in link,
-tunnel, docker and transfer became named classes, which moves them out of the
-387 and into the named-class total. That total is stated once, above, and
-gated; it is not repeated here, because the second copy is the one that goes
-stale.
+The class counts are measured, not maintained by arithmetic, and gated
+(``tests/unit/test_error_base.py``). A *raise site* is a ``raise`` of a name
+that is a BUILTIN exception type (so ``typer.Exit`` and otto's own classes
+are not raise sites), and it is *covered* when that builtin is rooted at
+``ValueError`` or ``RuntimeError``, which is why the ``NotImplementedError``
+raises count as covered. How many raise sites there are is not stated
+here: the number moves with every change, and nothing gates it. Turning a
+bare raise into a named class moves it out of the raise sites and into the
+named-class total, as the 2026-08-07 error-taxonomy wave did for the bare
+``RuntimeError`` raises in link, tunnel, docker and transfer. That total is stated
+once, above, and gated; it is not repeated here, because the second copy is
+the one that goes stale.
 
 So: catch by NAME what you intend to handle, use ``except OttoError`` when
 "was this otto's own failure?" is the question, and treat ``except
 Exception`` as the broad guard while knowing what passes through it. Which
-stdlib root each named class carries — and which eleven deliberately have
-none — is declared, and gated, in ``tests/unit/test_error_base.py``.
+stdlib root each named class carries — and which deliberately have none —
+is declared, and gated, in ``tests/unit/test_error_base.py``.
 
 The one deliberate exception is
 :class:`~otto.lifecycle.SyncPhaseInterrupt`: it is a ``KeyboardInterrupt``,

@@ -3,7 +3,7 @@
 Runs the real ``otto`` binary via the shared subprocess harness
 (:mod:`tests.e2e._otto_subprocess`) against a freshly scaffolded repo — no
 mocking, no hand-authored fixture repo. This is the durable proof that the
-scaffolded settings.toml / lab.json / test suite / instructions module are
+scaffolded settings.toml / lab.json / tests / instructions module are
 all mutually consistent with what otto's bootstrap actually expects, closing
 out narrative-only "it works" claims from earlier tasks.
 """
@@ -33,8 +33,8 @@ def test_init_then_full_verification_flow(tmp_path: Path) -> None:
     # Every subsequent command needs OTTO_SUT_DIRS pointing at the scaffolded
     # repo (init itself needed none) and --lab (otto test / otto run are NOT
     # lab_free — see otto.cli.invoke.ensure_lab_context — even though the
-    # scaffolded suite/instruction never touch a real host).
-    r = run_otto(["test", "--list-suites"], xdir=xdir, sut_dirs=repo, lab="example_lab")
+    # scaffolded tests/instruction never touch a real host).
+    r = run_otto(["test", "--list-tests"], xdir=xdir, sut_dirs=repo, lab="example_lab")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "TestExample" in r.stdout, r.stdout + r.stderr
 
@@ -42,7 +42,7 @@ def test_init_then_full_verification_flow(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stdout + r.stderr
     assert "example-device" in r.stdout, r.stdout + r.stderr
 
-    # Hostless suite exercised via the repo-root conftest.py fixture
+    # Hostless tests exercised via the repo-root conftest.py fixture
     # (repo_marker) — proves the scaffolded conftest is discovered, not just
     # present on disk.
     r = run_otto(["test", "TestExample"], xdir=xdir, sut_dirs=repo, lab="example_lab")
@@ -51,9 +51,7 @@ def test_init_then_full_verification_flow(tmp_path: Path) -> None:
     # blocks from otto's OWN fixtures (pytest 10 turns them into errors).
     assert "PytestRemovedIn10Warning" not in (r.stdout + r.stderr), r.stdout + r.stderr
 
-    r = run_otto(
-        ["test", "--tests", "test_example_function"], xdir=xdir, sut_dirs=repo, lab="example_lab"
-    )
+    r = run_otto(["test", "test_example_function"], xdir=xdir, sut_dirs=repo, lab="example_lab")
     assert r.returncode == 0, r.stdout + r.stderr
 
     # Closes the gap left by Task B2: the scaffolded pylib/<name>_instructions
@@ -64,15 +62,22 @@ def test_init_then_full_verification_flow(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stdout + r.stderr
     assert "hello from widget" in (r.stdout + r.stderr)
 
-    # The repo-wide RepoOptions flag rides BOTH surfaces (the whole point of
-    # the scaffolded plumbing): an unknown flag would exit 2 at parse time.
+    # The repo-wide RepoOptions flag rides BOTH verbs (the init module
+    # registers it for run and test): an unknown flag would exit 2 at parse
+    # time, and the test writes the value it read via ctx.options into its
+    # test_dir, so the flag demonstrably reached the test.
     r = run_otto(
-        ["test", "TestExample", "--message", "hi-from-e2e", "--greeting", "yo"],
+        ["test", "TestExample", "--message", "hi-from-e2e"],
         xdir=xdir,
         sut_dirs=repo,
         lab="example_lab",
     )
     assert r.returncode == 0, r.stdout + r.stderr
+    notes = sorted(
+        (xdir / "test").glob("*/test_example/TestExample/test_expect_and_artifacts/message.txt")
+    )
+    assert notes, sorted(p.relative_to(xdir) for p in (xdir / "test").rglob("*.txt"))
+    assert notes[-1].read_text() == "hi-from-e2e"
 
     r = run_otto(
         ["run", "smoke", "--message", "hi-from-e2e"], xdir=xdir, sut_dirs=repo, lab="example_lab"
@@ -93,3 +98,47 @@ def test_init_then_full_verification_flow(tmp_path: Path) -> None:
     # in the runtime loader, proven by --list-hosts above; sanity-check disk).
     assert (repo / ".otto" / "schemas" / "lab.schema.json").is_file()
     assert (repo / ".vscode" / "settings.json").is_file()
+
+
+@pytest.mark.parametrize("area", ["--tests", "--instructions"])
+def test_a_single_area_scaffold_runs(tmp_path: Path, area: str) -> None:
+    """Every ``otto init`` flag alone leaves a repo whose sample runs.
+
+    The example tests read ``RepoOptions`` through ``ctx.options``, which only
+    the instructions (init) module registers, so ``--tests`` scaffolds that
+    module too. A run needs a lab, which neither area writes, so ``--lab`` is
+    scaffolded afterwards as a separate step — it adds no code.
+    """
+    repo = tmp_path / "widget"
+    repo.mkdir()
+    xdir = tmp_path / "xdir"
+    xdir.mkdir()
+
+    r = run_otto(["init", area, "--name", "widget", "--path", str(repo)], xdir=xdir)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (repo / "pylib" / "widget_instructions" / "__init__.py").is_file()
+    r = run_otto(["init", "--lab", "--path", str(repo)], xdir=xdir)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    if area == "--tests":
+        r = run_otto(
+            ["test", "TestExample", "--message", "tests-alone"],
+            xdir=xdir,
+            sut_dirs=repo,
+            lab="example_lab",
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        [note] = (xdir / "test").glob(
+            "*/test_example/TestExample/test_expect_and_artifacts/message.txt"
+        )
+        assert note.read_text() == "tests-alone"
+    else:
+        assert not (repo / "tests" / "test_example.py").exists()
+        r = run_otto(
+            ["run", "smoke", "--message", "instructions-alone"],
+            xdir=xdir,
+            sut_dirs=repo,
+            lab="example_lab",
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "instructions-alone" in (r.stdout + r.stderr)

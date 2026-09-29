@@ -1,10 +1,11 @@
-"""The one blessed asyncio entry for otto commands: scope entry, interrupts, teardown.
+"""The one blessed asyncio entry for otto commands: host sweep, interrupts, teardown.
 
 Every command-path ``asyncio.run`` in otto goes through :func:`run_command` —
 a unit guard (tests/unit/test_no_bare_asyncio_run.py) enforces this. It
-enters the active ``OttoContext``'s host scope, so hosts opened during the
-command are swept when the command's loop exits (sync command paths used to
-skip this entirely), and owns the two-stage SIGINT/SIGTERM interrupt policy
+sweeps the command loop's host scope in the active ``OttoContext``, so hosts
+that connected during the command are closed before the command's loop exits
+(sync command paths used to skip this entirely), and owns the two-stage
+SIGINT/SIGTERM interrupt policy
 (chaos spec: docs/superpowers/specs/2026-07-30-chaos-hardening-design.md).
 
 Unit tests drive the state machine by calling ``_CommandRun._on_signal``
@@ -808,8 +809,10 @@ class _CommandRun:
                     # dispositions stay — exactly today's behavior.
                     break
         ctx = try_get_context()
-        if ctx is not None:
-            await ctx.scope.__aenter__()
+        # Names the loop in the sweep's debug line. Not registered in
+        # ``otto.host.loop_owner.LOOP_LABELS``: that import is kept off every
+        # command's path (the import budget), and only a HostLoopError reads it.
+        label = f"the {getattr(coro, '__qualname__', 'command')} command's loop"
         self._body = asyncio.ensure_future(coro)
         result: Any = None
         body_error: "BaseException | None" = None
@@ -859,7 +862,9 @@ class _CommandRun:
                 body_error = exc
             if ctx is not None and not self.forced:
                 with contextlib.suppress(_ForcedAbandon):
-                    await self._race_force(ctx.scope.__aexit__(None, None, None))
+                    await self._race_force(
+                        ctx.sweep_loop(loop, label=label, deadline=self.teardown_deadline)
+                    )
         finally:
             if self._deadline_handle is not None:
                 self._deadline_handle.cancel()
@@ -890,8 +895,9 @@ def run_command(
 ) -> R:
     """Run *coro* as a command body under otto's lifecycle policy.
 
-    Enters the active ``OttoContext``'s host scope (when one is installed) so
-    hosts opened during the command are swept at loop exit. On interruption
+    Sweeps the command loop's host scope in the active ``OttoContext`` (when
+    one is installed), so hosts that connected on that loop are closed before
+    it exits. On interruption
     raises ``SystemExit(128 + signum)`` — 130 for SIGINT, 143 for SIGTERM —
     after the graceful sweep, or after abandoning it on a second signal /
     teardown-deadline expiry (then the registered force-exit hooks run, after

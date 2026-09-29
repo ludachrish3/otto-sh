@@ -1,7 +1,7 @@
 # Cookbook
 
 How to drive otto from Python: using it as a library in your own scripts,
-authoring instructions and suites, extending otto with your own commands,
+authoring instructions and tests, extending otto with your own commands,
 host classes and backends, and short task-shaped recipes with code you can adapt.
 Full signatures: {doc}`../api/index`.
 
@@ -17,7 +17,7 @@ python-library
 :maxdepth: 1
 
 authoring/writing-instructions
-authoring/writing-suites
+authoring/writing-tests
 authoring/options-classes
 ```
 
@@ -45,7 +45,7 @@ extending/custom-parsers
 async-patterns
 sessions
 host-scopes
-suite-recipes
+test-recipes
 connection-options
 dry-run-contract
 network-api

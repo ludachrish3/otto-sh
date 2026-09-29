@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ..config.cache_maintenance import MaintenanceReport
-    from ..config.completion_cache import InventoryDescription, SectionStatus
+    from ..config.completion_cache import CollectChildState, InventoryDescription, SectionStatus
 
 cache_app = typer.Typer(
     name="cache",
@@ -234,6 +234,30 @@ def _section_state_text(status: "SectionStatus", inventory: "InventoryDescriptio
     return text
 
 
+def _collect_child_text(state: "CollectChildState") -> str:
+    """Word the `collect child` line: whether one runs, and whether one may start."""
+    if state.lock_age is None:
+        text = "idle"
+    elif state.lock_is_stale:
+        text = (
+            f"none running; its lock is {_fmt_age(state.lock_age)} old, left by one that died, "
+            "and the next one takes it over"
+        )
+    else:
+        text = f"running (it took the lock {_fmt_age(state.lock_age)} ago)"
+    if state.cooling_down and state.cooldown_age is not None:
+        from ..config.completion_cache import COLLECT_COOLDOWN_SECONDS
+
+        left = max(COLLECT_COOLDOWN_SECONDS - state.cooldown_age, 0)
+        cooling = (
+            f"cooling down — the last one failed {_fmt_age(state.cooldown_age)} ago "
+            f"({state.cooldown_reason or 'no reason recorded'}); "
+            f"none starts for another {_fmt_age(left)}"
+        )
+        text = cooling if text == "idle" else f"{text}; {cooling}"
+    return text
+
+
 def _print_this_workspace() -> None:
     """Explain what completion offers for the CURRENT workspace, and what it left out.
 
@@ -248,14 +272,25 @@ def _print_this_workspace() -> None:
     The ``shim`` line is the SAME validator the console script runs on a TAB,
     so it says whether the next TAB is answered without loading otto and, if
     not, the exact reason (a stale key file, an opaque inventory, an expired
-    or tainted entry). It touches the marker like a TAB does.
+    or tainted entry). It touches the marker like a TAB does. The ``test
+    names`` line runs the checks a test-name TAB adds (each repo's test
+    table and its ``env``, a few ``stat`` calls whatever the corpus size):
+    served, with when the tables were last checked and when the next check
+    is due, or handed over to a seed, and why. The ``collect child`` line is
+    that check's lock and cooldown: a detached child fails silently, and
+    this is where its failure shows.
 
     Nothing to say without a workspace (no ``OTTO_SUT_DIRS``, no repo): the
     home-wide listing above already covered the rest.
     """
-    from .._shim_complete import inspect_shim
+    from .._shim_complete import inspect_shim, inspect_tests
     from ..bootstrap import discover
-    from ..config.completion_cache import _cache_path, describe_inventory, inspect_section
+    from ..config.completion_cache import (
+        _cache_path,
+        collect_child_state,
+        describe_inventory,
+        inspect_section,
+    )
     from ..config.home import workspace_key
 
     repos = discover().repos
@@ -270,6 +305,11 @@ def _print_this_workspace() -> None:
         inspect_shim(cache_path) if cache_path is not None else "handing over — no cache path"
     )
     typer.echo(f"  shim: {shim_text}")
+    tests_text = (
+        inspect_tests(cache_path) if cache_path is not None else "handing over — no cache path"
+    )
+    typer.echo(f"  test names: {tests_text}")
+    typer.echo(f"  collect child: {_collect_child_text(collect_child_state())}")
     typer.echo(f"  inventory: {inventory.text}")
     for repo in repos:
         for source in repo.lab_sources:

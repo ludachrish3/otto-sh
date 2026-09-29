@@ -77,14 +77,14 @@ def test_write_and_read_round_trip_and_no_password_is_written(tmp_path, monkeypa
     fake_repo.tests = []
     fake_repo.inventory_settings = {}
     entries = {"u1": [{"login": "u", "protocols": [], "proxy": False}]}
-    cc.write_cache([fake_repo], instructions=[], suites=[], hosts=["u1"], logins_by_host=entries)
+    cc.write_cache([fake_repo], instructions=[], hosts=["u1"], logins_by_host=entries)
     out = cc.read_cache([fake_repo])
     assert out is not None
     assert out["logins_by_host"] == entries
     raw = cc._cache_path().read_text()
     assert "hunter2" not in raw
     assert "toor" not in raw
-    assert json.loads(raw)["schema"] == cc.SCHEMA_VERSION == 20
+    assert json.loads(raw)["schema"] == cc.SCHEMA_VERSION == 23
 
 
 def test_read_cache_rejects_a_malformed_login_map(tmp_path, monkeypatch):
@@ -97,7 +97,7 @@ def test_read_cache_rejects_a_malformed_login_map(tmp_path, monkeypatch):
     fake_repo.libs = []
     fake_repo.tests = []
     fake_repo.inventory_settings = {}
-    cc.write_cache([fake_repo], instructions=[], suites=[], hosts=[])
+    cc.write_cache([fake_repo], instructions=[], hosts=[])
     data = json.loads(cc._cache_path().read_text())
     data["sections"]["names"]["payload"]["logins_by_host"] = ["not", "a", "dict"]
     cc._cache_path().write_text(json.dumps(data))

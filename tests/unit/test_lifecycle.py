@@ -82,7 +82,7 @@ def test_run_command_sweeps_scope_registered_hosts(ctx):
     host = _FakeHost()
 
     async def body() -> None:
-        ctx.scope.register(host)
+        ctx.scope_for(asyncio.get_running_loop()).register(host)
 
     run_command(body(), _controller=_controller())
     assert host.close_calls == 1
@@ -92,7 +92,7 @@ def test_run_command_sweeps_scope_even_when_body_raises(ctx):
     host = _FakeHost()
 
     async def body() -> None:
-        ctx.scope.register(host)
+        ctx.scope_for(asyncio.get_running_loop()).register(host)
         raise ValueError("boom")
 
     with pytest.raises(ValueError, match="boom"):
@@ -105,7 +105,7 @@ def test_sequential_run_commands_do_not_reclose_swept_hosts(ctx):
     host = _FakeHost()
 
     async def opens() -> None:
-        ctx.scope.register(host)
+        ctx.scope_for(asyncio.get_running_loop()).register(host)
 
     async def empty() -> None:
         pass
@@ -192,7 +192,7 @@ def test_first_signal_cancels_body_sweeps_and_exits_128_plus_signum(
     ctrl = _controller()
 
     async def body() -> None:
-        ctx.scope.register(host)
+        ctx.scope_for(asyncio.get_running_loop()).register(host)
         asyncio.get_running_loop().call_soon(ctrl._on_signal, signum)
         await asyncio.Event().wait()  # cancelled by the handler
 
@@ -216,7 +216,7 @@ def test_second_signal_during_teardown_abandons_sweep_and_runs_hooks(ctx):
         ctrl._on_signal(signal.SIGINT)
 
     async def body() -> None:
-        ctx.scope.register(host)
+        ctx.scope_for(asyncio.get_running_loop()).register(host)
         background.append(asyncio.ensure_future(second_signal_when_sweep_starts()))
         asyncio.get_running_loop().call_soon(ctrl._on_signal, signal.SIGINT)
         await asyncio.Event().wait()
@@ -278,7 +278,7 @@ def test_signal_during_teardown_of_successful_body_still_exits_130(ctx):
         host.release.set()
 
     async def body() -> None:
-        ctx.scope.register(host)
+        ctx.scope_for(asyncio.get_running_loop()).register(host)
         background.append(asyncio.ensure_future(release_after_signal()))
 
     with pytest.raises(SystemExit) as exc_info:
@@ -304,7 +304,7 @@ def test_forced_while_body_swallows_cancellation_skips_sweep(ctx):
     ctrl = _controller()
 
     async def body() -> None:
-        ctx.scope.register(host)
+        ctx.scope_for(asyncio.get_running_loop()).register(host)
         asyncio.get_running_loop().call_soon(ctrl._on_signal, signal.SIGINT)
         asyncio.get_running_loop().call_soon(ctrl._on_signal, signal.SIGINT)
         survived_once = False
@@ -348,7 +348,7 @@ def test_body_error_takes_precedence_over_interrupt_exit(ctx):
         host.release.set()
 
     async def body() -> None:
-        ctx.scope.register(host)
+        ctx.scope_for(asyncio.get_running_loop()).register(host)
         background.append(asyncio.ensure_future(release_after_signal()))
         raise ValueError("body boom")
 
@@ -477,7 +477,7 @@ async def test_external_cancellation_still_sweeps_scope():
         async def close(self) -> None:
             closed.append("h1")
 
-    ctx.scope.register(_Host())
+    ctx.scope_for(asyncio.get_running_loop()).register(_Host())
     token = set_context(ctx)
     try:
         started = asyncio.Event()
@@ -521,7 +521,7 @@ async def test_external_cancellation_sweep_is_bounded_by_the_deadline():
         async def close(self) -> None:
             await asyncio.Event().wait()  # never resolves on its own
 
-    ctx.scope.register(_HangingHost())
+    ctx.scope_for(asyncio.get_running_loop()).register(_HangingHost())
     token = set_context(ctx)
     try:
         started = asyncio.Event()
@@ -597,7 +597,7 @@ async def test_external_cancellation_body_translating_cancel_still_sweeps():
         async def close(self) -> None:
             closed.append("h1")
 
-    ctx.scope.register(_Host())
+    ctx.scope_for(asyncio.get_running_loop()).register(_Host())
     token = set_context(ctx)
     try:
         started = asyncio.Event()

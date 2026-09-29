@@ -59,6 +59,61 @@ def test_area_flag_pulls_in_missing_settings_with_note(tmp_path: Path) -> None:
     assert "repo marker" in result.output
 
 
+def test_tests_pull_in_the_init_module_that_registers_their_options(tmp_path: Path) -> None:
+    """``--tests`` alone also scaffolds the instructions module, with a note.
+
+    The example tests read ``RepoOptions`` through ``ctx.options``; only the
+    init module registers it, so a tests-only repo would fail at run time.
+    """
+    result = _invoke(["--tests", "--name", "widget", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    init_module = tmp_path / "pylib" / "widget_instructions" / "__init__.py"
+    assert "register_options(" in init_module.read_text()
+    assert "instructions area is a prerequisite" in result.output
+
+
+def test_the_tests_area_interactively_scaffolds_instructions_without_asking(
+    tmp_path: Path,
+) -> None:
+    # name, version, then y/n per area: settings=y, schemas=n, lab=n, tests=y — and
+    # no prompt for instructions: the tests need it, so it is not offered.
+    result = _invoke(["--path", str(tmp_path)], input="widget\n0.1.0\ny\nn\nn\ny\n")
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "tests" / "test_example.py").is_file()
+    assert (tmp_path / "pylib" / "widget_instructions" / "__init__.py").is_file()
+    assert "Scaffold the instructions area?" not in result.output
+
+
+def test_tests_beside_an_existing_instructions_area_name_the_registration(tmp_path: Path) -> None:
+    """The instructions area is there already: otto does not read it, and says what it needs."""
+    _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
+    for scaffolded in (tmp_path / "tests").iterdir():
+        scaffolded.unlink()
+
+    result = _invoke(["--tests", "--name", "widget", "--path", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "tests" / "test_example.py").is_file()
+    assert 'register_options(RepoOptions, verbs=["run", "test"])' in result.output
+    assert "prerequisite" not in result.output
+
+
+def test_every_prerequisite_comes_after_the_area_that_needs_it() -> None:
+    """The scaffold loop learns an area's prerequisites as it passes it, in ``AREAS`` order."""
+    from otto.cli.init import AREA_PREREQUISITES, AREAS
+
+    order = [area.name for area in AREAS]
+    for area, needs in AREA_PREREQUISITES.items():
+        for need in needs:
+            assert order.index(need) > order.index(area), (area, need)
+
+
+def test_all_scaffolds_instructions_without_the_prerequisite_note(tmp_path: Path) -> None:
+    result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "prerequisite" not in result.output
+
+
 def test_existing_area_is_never_rewritten(tmp_path: Path) -> None:
     _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
     settings = tmp_path / ".otto" / "settings.toml"
@@ -90,13 +145,13 @@ def test_epilogue_prints_next_steps(tmp_path: Path) -> None:
     # Installing the completion script does not activate it in the current
     # shell; the banner has to say so (see test_init_banner.py).
     assert "source ~/.bash_completions/otto.sh" in result.output
-    assert "otto test --list-suites" in result.output
+    assert "otto test --list-tests" in result.output
     # These three need a lab to run; the printed lines must name it (like
     # step 4's `otto --lab example_lab --list-hosts`) or they fail as
     # printed with "Missing option '--lab'".
     output = result.output.replace("\n", "")
     assert "otto --lab example_lab test TestExample" in output
-    assert "otto --lab example_lab test --tests test_example_function" in output
+    assert "otto --lab example_lab test test_example_function" in output
     assert "otto --lab example_lab run smoke" in output
 
 

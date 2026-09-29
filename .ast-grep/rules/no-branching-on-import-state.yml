@@ -27,17 +27,7 @@ note: >
   modules` and `import sys as s` spell `sys.modules` another way. Review owns
   all of these.
 
-  One site is allowed, by shape: `mod_name in sys.modules` inside a function
-  named `import_test_file` (otto.config.repo.Repo.import_test_file). That is
-  the suite-file loader's idempotency check, not an import-cost probe: a
-  user's test file must load exactly once, because loading it registers its
-  suites. Its record has to be the module table: evicting an
-  `_otto_suite_*` module from `sys.modules` is how a caller asks for a fresh
-  load (the suite tests do it, with the suite registry rolled back), and a
-  private record of loaded files would not see the eviction and would skip a
-  load that must happen.
-
-  A second site is allowed, by shape: `sys.modules.get("asyncssh")` inside a
+  One site is allowed, by shape: `sys.modules.get("asyncssh")` inside a
   function named `_is_unreachable_host_error`
   (otto.cli.expose._is_unreachable_host_error). It is the error leg every
   host verb shares, deciding whether an exception is one of asyncssh's so
@@ -85,20 +75,11 @@ rule:
             kind: delete_statement
             stopBy: end
   - not:
-      any:
-      - all:
-        - pattern: mod_name in sys.modules
-        - inside:
-            kind: function_definition
-            stopBy: end
-            has:
-              field: name
-              regex: '^import_test_file$'
-      - all:
-        - pattern: sys.modules.get("asyncssh")
-        - inside:
-            kind: function_definition
-            stopBy: end
-            has:
-              field: name
-              regex: '^_is_unreachable_host_error$'
+      all:
+      - pattern: sys.modules.get("asyncssh")
+      - inside:
+          kind: function_definition
+          stopBy: end
+          has:
+            field: name
+            regex: '^_is_unreachable_host_error$'

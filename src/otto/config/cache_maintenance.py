@@ -3,7 +3,9 @@
 ``otto_home()`` shards by :func:`otto.config.home.workspace_key`, and every
 key directory holds up to two REBUILDABLE cache files
 (:data:`otto.config.completion_cache.CACHE_FILENAME`,
-:data:`otto.config.remote_completion_cache.REMOTE_CACHE_FILENAME`) and
+:data:`otto.config.remote_completion_cache.REMOTE_CACHE_FILENAME`), the two
+REBUILDABLE directories otto's pytest sessions write
+(:data:`SESSION_DIR_NAMES`: their bytecode and pytest's cache), and
 possibly an ``env/`` directory that is a REAL virtualenv from ``otto env
 create``. That venv must survive any maintenance pass by construction, not by
 a case that happens to notice it -- so this module never removes a directory
@@ -11,7 +13,10 @@ except with :func:`os.rmdir <pathlib.Path.rmdir>` (via ``Path.rmdir``), which
 *refuses* to touch a non-empty directory. ``shutil.rmtree`` never appears
 here; if that ever changes, an env-bearing workspace could vanish trunk and
 venv together, and the boundary test in this module's test suite catches
-exactly that mutation.
+exactly that mutation. The two session directories are emptied bottom-up by
+:func:`_remove_tree` -- ``unlink`` for what is not a directory, ``rmdir`` for
+what is, never following a symlink -- starting from their fixed names only,
+so ``env/`` is never reached.
 
 The second half of the safety argument is the matcher: :data:`_KEY_RE` is the
 one place that decides whether a directory under ``home`` is a workspace this
@@ -41,6 +46,7 @@ and the one caller that must resolve the *live* home --
 ``otto cache`` (the CLI layer, ``otto.cli.cache``) -- stays the only place that does.
 """
 
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -73,12 +79,32 @@ check that would catch this list drifting from its four source constants.
 suite is the pin instead -- it runs every time, `-O` or not.
 """
 
-MARKER_FILENAMES = {"names": "completion_cache.names.ok", "tests": "completion_cache.tests.ok"}
-"""Per key set, the marker beside the cache whose fresh mtime lets the shim skip its stat pass.
+SESSION_DIR_NAMES = ["pycache", "pytest-cache"]
+"""The directories otto's pytest sessions write in a workspace: bytecode, and pytest's cache.
 
-Pinned equal to `otto._shim_complete.MARKER_FILENAMES` by tests/unit/shim."""
+Literals for the same reason as :data:`CACHE_FILE_NAMES`; pinned equal to
+:data:`otto.config.home.PYCACHE_DIRNAME` and
+:data:`otto.config.home.PYTEST_CACHE_DIRNAME` by
+`test_session_dir_names_match_the_home_constants`. They go with the
+workspace's cache: `clear` removes them, and `prune` removes them from a
+workspace it leaves no young cache file in."""
+
+MARKER_FILENAMES = {"names": "completion_cache.names.ok", "tests": "completion_cache.tests.ok"}
+"""The two markers beside the cache, each an mtime and nothing else.
+
+``names``: a fresh one lets the shim skip its stat pass of the ``names`` key
+set. ``tests``: when the test tables were last checked; a test-name TAB starts
+the collect child once it is older than the shim's check window
+(``otto._shim_complete.CHECK_WINDOW_SECONDS``). Pinned equal to
+`otto._shim_complete.MARKER_FILENAMES` by tests/unit/shim."""
 SHIM_WINDOW_SECONDS = 60
-"""How long a marker is trusted (Chris, 2026-09-04: one minute). Mirrored in otto._shim_complete."""
+"""How long the ``names`` marker is trusted (Chris, 2026-09-04: one minute). Mirrored in
+otto._shim_complete."""
+
+CHECK_WINDOW_SECONDS = 10 * 60
+"""How long a check of the test tables holds: a test-name TAB starts the collect child
+once the ``tests`` marker is older (Chris, 2026-09-28: ten minutes). Mirrored in
+otto._shim_complete."""
 
 _ENV_DIRNAME = "env"
 
@@ -99,7 +125,7 @@ class WorkspaceInfo:
     """The `workspace_key` directory name (``path.name``)."""
 
     cache_bytes: int
-    """Total size of the cache files present, in bytes."""
+    """Total size of the cache files and session directories present, in bytes."""
 
     newest_cache_mtime: "float | None"
     """The newer of the two cache files' mtimes, or None if neither exists."""
@@ -118,7 +144,7 @@ class WorkspaceInfo:
     """Whether an `env/` virtualenv directory is present."""
 
     extra_entries: int
-    """Count of entries in the workspace that are neither a cache file nor `env/`."""
+    """Count of entries that are neither a cache file, a session directory nor `env/`."""
 
 
 @dataclass
@@ -185,15 +211,77 @@ def _candidates(home: Path) -> "list[Path]":
     ]
 
 
-def clear_workspace(workspace: Path) -> MaintenanceReport:
-    """Unconditionally remove both cache files in *workspace* -- one directory only.
+def _tree_bytes(path: Path) -> "int | None":
+    """Total size of the files under directory *path*, or ``None`` when it is not a real one.
 
-    No age check, and no `rmdir`: this is the engine behind clearing the
-    CURRENT workspace's cache (`otto cache clear`), which must keep
-    existing regardless of what else lives in it. A file this process can't
-    actually remove (permissions, or a directory sitting where a cache
-    file's name is expected) is left exactly as it was and never appears in
-    `files_removed` -- the report only ever claims what really happened.
+    A symlink named like a session directory is not one: it is never
+    followed, measured or removed.
+    """
+    if path.is_symlink() or not path.is_dir():
+        return None
+    return sum(
+        _size(Path(dirpath) / name)
+        for dirpath, _dirnames, filenames in os.walk(path)
+        for name in filenames
+    )
+
+
+def _size(path: Path) -> int:
+    """*path*'s own size (a symlink's, not its target's); 0 when it cannot be read."""
+    try:
+        return path.lstat().st_size
+    except OSError:
+        return 0
+
+
+def _remove_tree(path: Path) -> "int | None":
+    """Empty and remove session directory *path* bottom-up; return the bytes freed.
+
+    Everything that is not a directory (a symlink to one included) is
+    unlinked, and every directory removed with ``rmdir`` once emptied, so no
+    link is ever followed out of *path*. Returns ``None``, leaving whatever
+    could not be removed, when *path* is not a real directory or is still
+    there at the end.
+    """
+    if path.is_symlink() or not path.is_dir():
+        return None
+    freed = 0
+    for dirpath, dirnames, filenames in os.walk(path, topdown=False):
+        here = Path(dirpath)
+        freed += sum(_remove_entry(here / name) or 0 for name in filenames)
+        for name in dirnames:
+            _remove_entry(here / name)
+    return None if _remove_entry(path) is None else freed
+
+
+def _remove_entry(entry: Path) -> "int | None":
+    """Remove *entry* without following it: ``rmdir`` a real directory, else ``unlink``.
+
+    Returns the bytes a removed non-directory held, ``0`` for a directory,
+    and ``None`` when the removal failed.
+    """
+    try:
+        if entry.is_dir() and not entry.is_symlink():
+            entry.rmdir()
+            return 0
+        size = entry.lstat().st_size
+        entry.unlink()
+    except OSError:
+        return None
+    return size
+
+
+def clear_workspace(workspace: Path) -> MaintenanceReport:
+    """Unconditionally remove the cache files and session directories in *workspace*.
+
+    One directory only. No age check, and the workspace itself stays: this is
+    the engine behind clearing the CURRENT workspace's cache (`otto cache
+    clear`), which must keep existing regardless of what else lives in it.
+    A file this process can't actually remove (permissions, or a directory
+    sitting where a cache file's name is expected) is left exactly as it was
+    and never appears in `files_removed`, and neither does a session
+    directory that is still there afterwards -- the report only ever claims
+    what really happened.
     """
     report = MaintenanceReport()
     for name in CACHE_FILE_NAMES:
@@ -208,6 +296,11 @@ def clear_workspace(workspace: Path) -> MaintenanceReport:
             continue
         report.files_removed.append(f)
         report.bytes_freed += st.st_size
+    for name in SESSION_DIR_NAMES:
+        freed = _remove_tree(workspace / name)
+        if freed is not None:
+            report.files_removed.append(workspace / name)
+            report.bytes_freed += freed
     return report
 
 
@@ -248,11 +341,14 @@ def iter_workspaces(home: Path) -> "list[WorkspaceInfo]":
                     newest_mtime = st.st_mtime
                 if oldest_mtime is None or st.st_mtime < oldest_mtime:
                     oldest_mtime = st.st_mtime
+            cache_bytes += sum(
+                size for name in SESSION_DIR_NAMES if (size := _tree_bytes(ws / name)) is not None
+            )
             has_env = (ws / _ENV_DIRNAME).is_dir()
             extra_entries = sum(
                 1
                 for entry in ws.iterdir()
-                if entry.name not in CACHE_FILE_NAMES and entry.name != _ENV_DIRNAME
+                if entry.name not in [*CACHE_FILE_NAMES, *SESSION_DIR_NAMES, _ENV_DIRNAME]
             )
         except OSError:
             continue
@@ -279,6 +375,13 @@ def prune(
     age_blind: bool = False,
 ) -> MaintenanceReport:
     """Remove cache files older than *max_age_days* across every workspace under *home*.
+
+    A workspace's session directories (:data:`SESSION_DIR_NAMES`) go with
+    its cache: they are removed wherever the pass keeps no young cache file,
+    a workspace holding them and no cache file at all included. Such a
+    workspace loses its ``pycache/`` on every prune, by intent: with no cache
+    file there is nothing to tell a workspace in use from an abandoned one,
+    and bytecode is recompiled on the next import.
 
     ``age_blind=True`` drops the age check entirely -- every cache file goes
     regardless of mtime -- which is the engine behind
@@ -333,6 +436,21 @@ def prune(
             report.files_removed.append(f)
             report.bytes_freed += st.st_size
             removed_names_here.add(name)
+        if not young_here:
+            # The session directories go with the workspace's cache: with no
+            # cache file at all, on every prune (see the docstring).
+            for name in SESSION_DIR_NAMES:
+                d = ws / name
+                size = _tree_bytes(d)
+                if size is None:
+                    continue
+                touched = True
+                freed = size if dry_run else _remove_tree(d)
+                if freed is None:
+                    continue
+                report.files_removed.append(d)
+                report.bytes_freed += freed
+                removed_names_here.add(name)
         if not touched:
             continue  # nothing here for this pass to act on either way
         if dry_run:

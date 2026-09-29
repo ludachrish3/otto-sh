@@ -21,15 +21,6 @@ valid:
   saved_modules = sys.modules.copy()
   sys.modules.clear()
   sys.modules.update(saved_modules)
-# The suite-file loader's idempotency check, the one allowed site.
-- |
-  import sys
-
-
-  def import_test_file(self, test_file):
-      mod_name = f"_otto_suite_{test_file.stem}"
-      if mod_name in sys.modules:
-          return
 # The host-verb error leg recognising asyncssh's errors, the other allowed site.
 - |
   import sys
@@ -65,7 +56,6 @@ invalid:
   import sys
 
   unix_host = sys.modules["otto.host.unix_host"]
-# The allowed shape, outside the loader it is allowed in.
 - |
   import sys
 

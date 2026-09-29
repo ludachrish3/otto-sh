@@ -41,7 +41,7 @@ otto --version
 ## Recommended: manage otto as a project dependency
 
 Otto is not just a CLI you run — it **imports your code**. The `pylib/` instruction
-modules and test suites listed in `.otto/settings.toml` load into otto's own Python
+modules and the tests listed in `.otto/settings.toml` load into otto's own Python
 process, so any Python package your instructions or tests import (`pyserial`,
 `protobuf`, `requests`, …) must be installed into the same environment as otto itself.
 A per-project environment, declared in one committed file, is the setup that survives

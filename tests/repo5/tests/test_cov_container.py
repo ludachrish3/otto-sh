@@ -1,4 +1,4 @@
-"""OttoSuite driving the two container-image products on the daemon host.
+"""Tests driving the two container-image products on the daemon host.
 
 Installs both through their verbs (tarball first: it loads the image the
 reference form runs), exercises the product inside each container with
@@ -27,20 +27,13 @@ import shlex
 import pytest
 import pytest_asyncio
 
-from otto import options
 from otto.config.fleet import all_hosts, do_for_all_hosts
 from otto.host.unix_host import UnixHost
-from otto.suite import OttoSuite
 
 logger = logging.getLogger(__name__)
 
 _HOST = re.compile(r"test3")
 PRODUCTS = ("cov_container", "cov_container_ref")
-
-
-@options
-class _Options:
-    pass
 
 
 async def _exec_in(host: UnixHost, container: str, *args: str) -> str:
@@ -92,9 +85,7 @@ async def _uninstall(host: UnixHost) -> None:
             raise RuntimeError(f"{host.id}: uninstalling {name} failed: {result.msg}")
 
 
-class TestCovContainer(OttoSuite):
-    Options = _Options
-
+class TestCovContainer:
     @pytest_asyncio.fixture(autouse=True, scope="class")
     @classmethod
     async def _containers(cls):

@@ -1,4 +1,4 @@
-"""A stale bash TAB rebuilds the cache, so the next TAB is served by the shim again."""
+"""A stale bash TAB repairs what it read, so the next TAB is served by the shim again."""
 
 import os
 import subprocess
@@ -11,8 +11,14 @@ _OTTO = Path(sys.executable).with_name("otto")
 
 
 def _env(repo: Path, home: Path) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
-    env.update(OTTO_SUT_DIRS=str(repo), OTTO_HOME=str(home), PYTHONDONTWRITEBYTECODE="1")
+    # Bytecode writing stays ON, as in a real shell, whatever the parent's
+    # environment says: the repair must hold without anyone switching it off.
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("OTTO_") and k != "PYTHONDONTWRITEBYTECODE"
+    }
+    env.update(OTTO_SUT_DIRS=str(repo), OTTO_HOME=str(home))
     return env
 
 
@@ -32,18 +38,29 @@ def _tab(env: dict[str, str], words: str, cword: int) -> subprocess.CompletedPro
     )
 
 
-def _tests_site_reason(env: dict[str, str]) -> str:
+def _tests_site_outcome(env: dict[str, str]):
     from otto import _shim_complete as sc
 
     environ = {
         **env,
         "_OTTO_COMPLETE": "complete_bash",
-        "COMP_WORDS": "otto test --tests ",
-        "COMP_CWORD": "3",
+        "COMP_WORDS": "otto test ",
+        "COMP_CWORD": "2",
     }
-    for marker in Path(env["OTTO_HOME"]).rglob("completion_cache.*.ok"):
-        marker.unlink()  # force the stat pass; the 60 s marker window would otherwise vouch
-    return sc.answer_or_reason(environ).reason
+    for marker in Path(env["OTTO_HOME"]).rglob(sc.MARKER_FILENAMES["names"]):
+        marker.unlink()  # force the names stat pass; the 60 s marker window would otherwise vouch
+    return sc.answer_or_reason(environ)
+
+
+def _table_is_current(repo: Path, home: Path) -> bool:
+    """What the collect child's check would find: nothing the table tracks has moved."""
+    from otto.config import collected_tests as ct
+    from otto.config.repo import Repo
+
+    [cache] = home.rglob("completion_cache.json")
+    live = Repo(sut_dir=repo)
+    table = ct.read_tables([live], home=cache.parent).get(str(repo))
+    return table is not None and ct.classify(live, table).is_current
 
 
 def _arm_bootstrap_sentinel(repo: Path) -> Path:
@@ -64,38 +81,32 @@ def _arm_bootstrap_sentinel(repo: Path) -> Path:
     return marker
 
 
-def test_a_stale_tests_tab_rebuilds_the_cache(tmp_path):
+def test_a_stale_tests_tab_seeds_the_table(tmp_path):
+    """A workspace with no test table hands a test-name TAB over as stale;
+    that TAB seeds the table, and the next one is the shim's to answer.
+
+    No pytest config of its own, as a fresh workspace has: the collect child
+    (`run_collect_child`) must not write `.pytest_cache/` or `__pycache__/`
+    into the tracked tests dir, or the table it writes has moved on arrival
+    (#456).
+    """
     repo = generate_repo(tmp_path, files=12, dirs=3)
-    # Without a pytest config file at the SUT root, pytest's own rootdir
-    # search (walked by the `--tests` completer's real collection warm --
-    # see `maybe_warm_collected_tests`) lands INSIDE `repo/tests` -- the only
-    # ini-like file otherwise found is none at all. Its `.pytest_cache` write
-    # there retouches the very directory this test tracks for staleness --
-    # not a race (the warm runs synchronously, inside this same TAB, right
-    # after `write_cache`), but a deterministic extra invalidation: left
-    # alone, the FIRST `--tests` TAB after an edit would rebuild and then
-    # immediately re-dirty itself, costing a second full-path TAB before the
-    # shim serves again. Pinning `cache_dir` outside the repo is what a real
-    # workspace's own pytest config already does implicitly by giving pytest
-    # a rootdir to settle on; the underlying `Repo.collect_tests` behavior is
-    # tracked as a separate follow-up, not this task's product change.
-    (repo / "pytest.ini").write_text(f"[pytest]\ncache_dir = {tmp_path / 'pytest_cache_out'}\n")
-    marker = _arm_bootstrap_sentinel(repo)
     env = _env(repo, tmp_path / "home")
     seeded = subprocess.run([str(_OTTO), "--help"], env=env, capture_output=True, check=False)
     assert seeded.returncode == 0, seeded.stderr
-    assert marker.exists(), "the seeding --help call never bootstrapped"
-    marker.unlink()
 
-    nested = next(repo.rglob("sub*/test_*.py"))
-    nested.write_text("def test_x():\n    pass\n\ndef test_new():\n    pass\n")
-    assert _tests_site_reason(env).startswith("stale: "), "the edit was not seen as stale"
+    cold = _tests_site_outcome(env)
+    assert cold.items is None, f"no table yet, yet: {cold}"
+    assert cold.stale, f"no table yet, yet: {cold}"
 
-    tab = _tab(env, "otto test --tests ", 3)
+    tab = _tab(env, "otto test ", 2)
     assert tab.returncode == 0, tab.stderr
+    assert "test_x" in tab.stdout.split()
 
-    assert marker.exists(), "the stale TAB never bootstrapped"
-    assert not _tests_site_reason(env).startswith("stale"), "the stale TAB did not rebuild"
+    warm = _tests_site_outcome(env)
+    assert warm.items is not None, f"the stale TAB did not seed the table: {warm.reason}"
+    assert warm.refresh is None, "the seed started the check window"
+    assert _table_is_current(repo, tmp_path / "home"), "the table the TAB wrote moved on arrival"
 
 
 def test_a_non_stale_handover_does_not_bootstrap(tmp_path):
@@ -127,44 +138,33 @@ def test_a_non_stale_handover_does_not_bootstrap(tmp_path):
     assert not marker.exists(), "a non-stale handover must not bootstrap"
 
 
-def test_a_stale_tab_that_writes_bytecode_stays_repaired(tmp_path):
-    """The repairing TAB's own suites load must not re-stale the entry it writes.
+def test_a_seeding_tab_that_writes_bytecode_stays_current(tmp_path):
+    """A seeding TAB with bytecode on must not move the table it writes.
 
-    ``_env`` pins ``PYTHONDONTWRITEBYTECODE``; a real shell does not. With
-    bytecode on (see ``argv_writing_test_file_bytecode``), the rebuild's
-    suites load creates ``tests/__pycache__``, moving the mtime of the tests
-    dir the ``tests`` key set stats. The rebuild must import before it
-    snapshots the tree, or the entry it stores is stale on arrival and the
-    next ``--tests`` TAB rebuilds again.
+    With bytecode on, as in a real shell (see
+    ``argv_writing_test_file_bytecode``), importing a test file would create
+    ``tests/__pycache__``, moving the mtime of a tests dir the table stats.
+    The collect child writes no bytecode, so the table it stores is current
+    on arrival and the next test-name TAB asks for no refresh.
     """
-    import shutil
-
     from tests._fixtures.generated_repo import argv_writing_test_file_bytecode
 
     repo = generate_repo(tmp_path, files=12, dirs=3)
-    # Same reason as test_a_stale_tests_tab_rebuilds_the_cache: keep pytest's
-    # own cache write out of the tracked tree.
-    (repo / "pytest.ini").write_text(f"[pytest]\ncache_dir = {tmp_path / 'pytest_cache_out'}\n")
-    env = {k: v for k, v in _env(repo, tmp_path / "home").items() if k != "PYTHONDONTWRITEBYTECODE"}
+    env = _env(repo, tmp_path / "home")
     argv = argv_writing_test_file_bytecode("from otto._shim import main; main()")
     seeded = subprocess.run([*argv, "--help"], env=env, capture_output=True, check=False)
     assert seeded.returncode == 0, seeded.stderr
 
-    nested = next(repo.rglob("sub*/test_*.py"))
-    nested.write_text("def test_x():\n    pass\n\ndef test_new():\n    pass\n")
-    for pycache in (repo / "tests").rglob("__pycache__"):
-        shutil.rmtree(pycache)
-    assert _tests_site_reason(env).startswith("stale: "), "the edit was not seen as stale"
-
     tab_env = {
         **env,
         "_OTTO_COMPLETE": "complete_bash",
-        "COMP_WORDS": "otto test --tests ",
-        "COMP_CWORD": "3",
+        "COMP_WORDS": "otto test ",
+        "COMP_CWORD": "2",
     }
     tab = subprocess.run(argv, env=tab_env, capture_output=True, text=True, check=False)
     assert tab.returncode == 0, tab.stderr
-    assert (repo / "tests" / "__pycache__").is_dir(), "the repairing TAB wrote no bytecode"
+    assert not list((repo / "tests").rglob("__pycache__")), "the seeding TAB wrote bytecode"
 
-    reason = _tests_site_reason(env)
-    assert not reason.startswith("stale"), f"the repaired entry was stale on arrival: {reason}"
+    outcome = _tests_site_outcome(env)
+    assert outcome.items is not None, f"the seeded table was not served: {outcome.reason}"
+    assert _table_is_current(repo, tmp_path / "home"), "the seeded table moved on arrival"

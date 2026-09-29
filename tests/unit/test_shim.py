@@ -430,19 +430,20 @@ def _shim_imports(filename: str) -> tuple:
     return module_level, deferred
 
 
-def test_the_resolver_imports_exactly_the_seven_cheap_stdlib_modules():
+def test_the_resolver_imports_exactly_the_eight_cheap_stdlib_modules():
     """`otto/_shim_complete.py` imports these and nothing else, deferred or not.
 
     Every name here is either already loaded by the time the shim runs or costs
     a handful of syscalls. The two the list exists to exclude are `dataclasses`
     (which drags in `inspect`, `dis`, `ast`) and `pathlib`; `os.path` does the
     resolver's path work instead, which is why this file carries a per-file
-    `PTH` exemption in .ruff.toml.
+    `PTH` exemption in .ruff.toml. `subprocess` is the one deferred import: only
+    the refresh behind a test-name TAB starts a process, after the answer.
     """
     module_level, deferred = _shim_imports("_shim_complete.py")
 
-    assert module_level == {"hashlib", "json", "os", "re", "shlex", "time", "typing"}
-    assert deferred == set()  # nothing hidden inside a function either
+    assert module_level == {"hashlib", "json", "os", "re", "shlex", "sys", "time", "typing"}
+    assert deferred == {"subprocess"}
 
 
 def test_the_shim_entry_imports_only_stdlib_at_module_level():

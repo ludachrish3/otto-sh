@@ -142,7 +142,7 @@ class TestStandaloneConflict:
         INSTRUCTIONS.register(
             "deploy",
             InstructionEntry(
-                name="deploy", sub_app=typer.Typer(), module="repo_a.init", registered_by="a"
+                name="deploy", make_app=typer.Typer, module="repo_a.init", registered_by="a"
             ),
             origin="repo_a.init",
         )
@@ -155,7 +155,7 @@ class TestStandaloneConflict:
             "provision",
             InstructionEntry(
                 name="provision",
-                sub_app=typer.Typer(),
+                make_app=typer.Typer,
                 module="dummy.module",
                 registered_by="dummy",
             ),

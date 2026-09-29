@@ -22,7 +22,7 @@ through the same code:
 | ------- | ---------- |
 | An instruction | `otto run install` |
 | A script | `await otto.project.install()` |
-| A suite body | the same call, inside a test |
+| A test body | the same call, inside a test |
 | A test marker | `@pytest.mark.ensure("installed")` on the class or test |
 
 ```{important}
@@ -390,9 +390,10 @@ instructions it delegates to: the `status` probe it starts with, and the
 same field name on two of its OWN instructions' options classes — legal, since
 they are separate commands — will see the value it passed for `install`
 delivered to that `uninstall` or `status` body as well. Give a field the same
-name on two of your own instructions only when it means the same thing. A
-converge driven from a suite's options does not have this property: that path
-matches by declaring class, not by name.
+name on two of your own instructions only when it means the same thing. An
+`ensure` marker under `otto test` keys by name the same way, from `otto test`'s
+own flags; see [Which flags reach an install body under `otto
+test`](../../cookbook/authoring/options-classes.md#which-flags-reach-an-install-body-under-otto-test).
 
 **Where a shared base lives.** In a repo the sharing repos **require**, or in a
 library package — never in an optional repo. Bootstrap imports every configured

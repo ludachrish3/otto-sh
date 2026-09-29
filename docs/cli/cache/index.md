@@ -2,7 +2,9 @@
 
 `otto cache` inspects, clears, and prunes the per-workspace caches otto keeps
 under [the workspace home](../index.md#the-workspace-home) — the completion
-cache and its remote-path sidecar, the only two files it ever removes.
+cache and its remote-path sidecar (with the shim's two marker files), and the
+two directories otto's pytest sessions write: `pycache/` (their bytecode) and
+`pytest-cache/` (pytest's cache). Nothing else is ever removed.
 Everything it removes is rebuildable: deleting it changes nothing about what
 otto does next, only how much it has to redo. What the completion cache holds,
 when otto trusts it, and which invocations rebuild it is explained on
@@ -22,9 +24,9 @@ otto cache prune [--age DAYS] [--dry-run]
 
 | Subcommand | Description |
 | ---------- | ----------- |
-| `info` | List every workspace under the home, oldest cache first: key, cache size, cache age, whether an `env/` virtualenv lives there, and any other entries |
-| `clear` | Remove **this** workspace's cache files (the one `OTTO_SUT_DIRS` resolves to); never removes the directory itself. `--all` clears every workspace's cache files regardless of age |
-| `prune` | Remove cache files older than `--age` days (default 60) across every workspace; `--dry-run` reports what would be removed without touching anything |
+| `info` | List every workspace under the home, oldest cache first: key, cache size (the two session directories included), cache age, whether an `env/` virtualenv lives there, and any other entries |
+| `clear` | Remove **this** workspace's cache files and session directories (the workspace `OTTO_SUT_DIRS` resolves to); never removes the workspace directory itself. `--all` clears every workspace regardless of age |
+| `prune` | Remove cache files older than `--age` days (default 60) across every workspace, and the session directories of each workspace left with no younger cache file; `--dry-run` reports what would be removed without touching anything |
 
 `otto cache` is **lab-free** — it needs no `--lab` — and every verb acts
 purely on the filesystem under `OTTO_HOME`.
@@ -37,13 +39,17 @@ must be a directory directly under the home whose name looks like a real
 the `inventory-cache/` directory can never match that shape, so they are never
 reached, and a symlinked entry is skipped rather than followed, so a candidate
 can never be used to reach files elsewhere on disk. Inside a matched
-workspace, the only files ever unlinked are the two named above — nothing
-else there is touched, named or not — and a workspace *directory* is only ever
-removed with `rmdir`, which refuses to touch a non-empty directory; there is
-no recursive delete anywhere in this command group. So an `env/` virtualenv
-(from `otto env create`) survives every `clear` and `prune`: emptying a
-workspace of its two cache files still leaves `env/` behind, so `rmdir` fails
-and the directory — venv included — stays exactly where it was.
+workspace, the only entries ever removed are the ones named above — nothing
+else there is touched, named or not. The two session directories are emptied
+from the bottom up: each file is unlinked, each directory removed with
+`rmdir` once it is empty, and a symlink is unlinked, never followed (a
+session directory that is itself a symlink is left alone). A workspace
+*directory* is only ever removed with `rmdir`, which refuses to touch a
+non-empty directory; there is no recursive delete of anything else. So an
+`env/` virtualenv (from `otto env create`) survives every `clear` and
+`prune`: emptying a workspace of its caches still leaves `env/` behind, so
+`rmdir` fails and the directory — venv included — stays exactly where it
+was.
 
 ## info
 
@@ -61,6 +67,8 @@ home: ~/.otto (default)
 this workspace: e5f6a7b8-repo3
   completion names: fresh — TAB is served from it (written 3h ago)
   shim: served (validated 12s ago)
+  test names: served (42 names; checked 95s ago, the next check is due in 505s)
+  collect child: idle
   inventory: json:/home/me/.otto/inventory.json
   lab files (repo3/local): /home/me/repo3/lab/lab.json, /home/me/repo3/hosts.json
   hosts offered: 3 — dut1 dut2 local
@@ -95,10 +103,24 @@ fixed.
 console script from the cache alone when the entry's recorded files and
 directories still stat the same (or were checked within the last minute);
 `handing over — <reason>` names why the next TAB will run the full path instead
-(which still answers correctly, just slower). The two `.ok` marker files beside
-the cache are the minute's memory; `clear` and `prune` remove them with the
-cache. See [the CLI page's completion section](../index.md#shell-completion)
-for how the shim fits into completion overall.
+(which still answers correctly, just slower). See
+[the CLI page's completion section](../index.md#shell-completion) for how the
+shim fits into completion overall.
+
+`test names` is what the next test-name TAB would do: answer from the
+test-names cache, with how many names it offers, when the test files were
+last checked and when the next check is due; or hand over, and why (for
+instance, no cache yet for a repo, which the TAB then collects).
+`collect child` is the background process that collects the test files:
+`idle`, `running`, or `cooling down` after it failed, with the reason it
+recorded. A background collection has no terminal to print to, so this line
+is where its failure shows. How the test-names cache is checked and
+refreshed is on
+[Tab-completing names](../test/selection.md#tab-completing-names).
+
+The two `.ok` marker files beside the cache record the last check of each
+kind (the one-minute window of the `shim` line, and the last check of the
+test files); `clear` and `prune` remove them with the cache.
 
 `inventory` is the host inventory as completion resolved it — once per process,
 the way commands do, so a broken `[inventory]` table shows as `BROKEN` and
@@ -120,12 +142,15 @@ Without a workspace (no `OTTO_SUT_DIRS`) the listing above is all there is.
 $ otto cache clear
 removed ~/.otto/13739bf0-repo1/completion_cache.json
 removed ~/.otto/13739bf0-repo1/remote_completion_cache.json
+removed ~/.otto/13739bf0-repo1/pycache
+removed ~/.otto/13739bf0-repo1/pytest-cache
 ```
 
 Bare, `clear` acts on exactly one workspace — the one the current
 `OTTO_SUT_DIRS` resolves to — and unlinks both `completion_cache.json` and its
-remote-path sidecar `remote_completion_cache.json` if present. It never
-removes the workspace directory itself.
+remote-path sidecar `remote_completion_cache.json` if present, then removes
+the `pycache/` and `pytest-cache/` directories. It never removes the workspace
+directory itself. The next `otto test` compiles its test files again.
 
 ```console
 $ otto cache clear --all
@@ -156,7 +181,10 @@ would remove ~/.otto/a1b2c3d4-repo1-repo2/remote_completion_cache.json
 (default **60**, `DEFAULT_MAX_AGE_DAYS`) across every workspace under the
 home, then `rmdir`s any workspace directory that removal left empty. Age is
 decided per file, not per workspace, so a workspace with one stale cache file
-and one fresh one still loses only the stale one. The kept count above splits
+and one fresh one still loses only the stale one. The session directories
+(`pycache/`, `pytest-cache/`) have no age of their own: they go with the
+workspace's cache, removed wherever no cache file younger than `--age` is
+left. The kept count above splits
 its reason — **young** (under the age cutoff) versus **non-empty** (an `env/`
 virtualenv, or a file `prune` could not remove) — the same two causes `clear
 --all` reports. `--dry-run` runs the exact

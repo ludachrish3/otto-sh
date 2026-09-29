@@ -4,8 +4,8 @@ Public names are exported lazily (PEP 562): a bare ``import otto`` pulls almost
 nothing, and each name below resolves its source module on first attribute
 access. This keeps programmatic/library use cheap — the CLI/Typer and lab graph
 load only when the relevant API is actually used. ``from otto import options``
-then ``@options`` on an Options class still works (re-export of
-``pydantic.dataclasses.dataclass``).
+then ``@options`` on an Options class still works (a thin wrapper around
+``pydantic.dataclasses.dataclass``; see ``otto.params.options``).
 
 The console script does not defeat this either: ``[project.scripts]`` points at
 ``otto._shim:main`` (not at ``otto:app``), which answers ``otto --version`` off
@@ -25,17 +25,16 @@ if not any(isinstance(h, _logging.NullHandler) for h in _otto_logger.handlers):
     _otto_logger.addHandler(_logging.NullHandler())
 
 if TYPE_CHECKING:
-    from pydantic.dataclasses import dataclass as options
-
     from otto.cli import app
     from otto.cli.registry import cli_command, register_cli_command
     from otto.host.app_shell import AppShell, Parsed
     from otto.host.login_proxy import Cred, register_login_proxy
     from otto.host.session_setup import SetupContext, register_session_setup
+    from otto.params import options, register_options
     from otto.project.actions import ProjectActions, register_project_actions
     from otto.project.state import InstallState
     from otto.result import CommandResult, Result, Results, ShellResult
-    from otto.suite.run import RunOptions, run_suite
+    from otto.suite.run import RunOptions, run_tests
     from otto.utils import Status
 
     from .config import all_hosts, get_host, get_lab, load_lab, run_on_all_hosts
@@ -66,16 +65,18 @@ __all__ = [
     "options",
     "register_cli_command",
     "register_login_proxy",
+    "register_options",
     "register_project_actions",
     "register_session_setup",
     "run_on_all_hosts",
-    "run_suite",
+    "run_tests",
     "try_get_context",
 ]
 
 # name -> (source module, attribute) resolved on first access by __getattr__.
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
-    "options": ("pydantic.dataclasses", "dataclass"),
+    "options": ("otto.params", "options"),
+    "register_options": ("otto.params", "register_options"),
     "app": ("otto.cli", "app"),
     "all_hosts": ("otto.config", "all_hosts"),
     "get_host": ("otto.config", "get_host"),
@@ -101,7 +102,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "register_project_actions": ("otto.project.actions", "register_project_actions"),
     "InstallState": ("otto.project.state", "InstallState"),
     "ShellResult": ("otto.result", "ShellResult"),
-    "run_suite": ("otto.suite.run", "run_suite"),
+    "run_tests": ("otto.suite.run", "run_tests"),
     "RunOptions": ("otto.suite.run", "RunOptions"),
     "Status": ("otto.utils", "Status"),
 }

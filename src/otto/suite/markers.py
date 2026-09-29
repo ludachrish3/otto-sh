@@ -2,7 +2,7 @@
 
 ``ensure`` declares the lab state a test needs (spec 2026-08-30, §4); ``retry``
 is implemented by :mod:`otto.suite._retry`. Registered with pytest by
-``OttoOptionsPlugin.pytest_configure`` (so ``--strict-markers`` accepts them)
+``OttoFixturesPlugin.pytest_configure`` (so ``--strict-markers`` accepts them)
 and rendered by ``otto test --list-markers`` from this same table — a marker
 added here is discoverable everywhere at once.
 """

@@ -368,8 +368,19 @@ class RemoteHost(BaseHost):
 
         In-package readers -- the protocol survey opens throwaway transports
         through a copy's manager -- use this; nothing outside the host package
-        should need it.
+        should need it. Reading it claims the running loop, as every
+        connection-touching step does (see ``_live_connections``).
         """
+        return self._live_connections()
+
+    def _live_connections(self) -> "ConnectionManager":
+        """Return the connection manager, after claiming the running loop.
+
+        See :meth:`~otto.host.host.BaseHost._claim_loop`: a manager bound to a
+        closed loop is rebuilt first, and one owned by another live loop
+        raises :class:`~otto.host.loop_owner.HostLoopError`.
+        """
+        self._claim_loop()
         return self._connections
 
     @property
@@ -387,7 +398,7 @@ class RemoteHost(BaseHost):
         return result.status.is_ok
 
     @override
-    async def close(self) -> None:
+    async def _close(self) -> None:
         # Sessions first, transports second — and the transports MUST close
         # even when a session refuses to (chaos spec: teardown chain
         # robustness, docs/superpowers/specs/2026-07-30-chaos-hardening-design.md).
@@ -408,7 +419,7 @@ class RemoteHost(BaseHost):
 
     @override
     def _ambient_user(self) -> str | None:
-        return self._session_mgr.ambient_user
+        return self._live_session_mgr().ambient_user
 
     @override
     async def _run_one(
@@ -467,7 +478,7 @@ class RemoteHost(BaseHost):
             ) from None
         if is_dry_run():
             return self._dry_run_result(cmd, log)
-        return await self._session_mgr.run_cmd(
+        return await self._live_session_mgr().run_cmd(
             cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
         )
 
@@ -505,7 +516,7 @@ class RemoteHost(BaseHost):
         """
         if is_dry_run():
             return self._dry_run_session(name)
-        return await self._session_mgr.open_session(name)
+        return await self._live_session_mgr().open_session(name)
 
     @override
     async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
@@ -521,7 +532,7 @@ class RemoteHost(BaseHost):
             # `text` is already a live `str` and `repr` only copies it.
             self._log_command(f"[DRY RUN] send({text!r})", effective)
             return
-        await self._session_mgr.send(text, log=effective)
+        await self._live_session_mgr().send(text, log=effective)
 
     @override
     async def _expect_one(
@@ -530,7 +541,7 @@ class RemoteHost(BaseHost):
         timeout: float,
     ) -> str:
         """Wait for a pattern in the host's session output stream."""
-        return await self._session_mgr.expect(pattern, timeout)
+        return await self._live_session_mgr().expect(pattern, timeout)
 
     ####################
     #  Dest dir resolution

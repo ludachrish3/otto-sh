@@ -976,7 +976,6 @@ class TestHostIdCompleter:
         """
         fake_cache = {
             "instructions": [],
-            "suites": [],
             "hosts": ["router1", "router2", "switch7"],
         }
         with (

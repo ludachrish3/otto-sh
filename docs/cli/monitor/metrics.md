@@ -169,7 +169,7 @@ data path from {class}`~otto.monitor.events.MonitorEvent` markers: log
 events are per-host, high-volume, columnar table data, while
 `MonitorEvent`s are the global, low-volume annotations that mark moments
 on the chart timeline (see
-[Monitoring from test suites](../../cookbook/extending/custom-parsers.md#monitoring-from-test-suites)).
+[Monitoring from a test](../../cookbook/test-recipes.md#monitoring-from-a-test)).
 
 ### Timestamps
 

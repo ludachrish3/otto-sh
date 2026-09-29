@@ -1,22 +1,19 @@
-"""
-Unit tests for the refactored ``otto test`` subcommand.
+"""Unit tests for the ``otto test`` command's run flags.
 
 Tests verify:
-  - ``otto test --help`` shows available subcommands and parent-level runner
-    options (markers / iterations / duration / threshold / results)
-  - ``otto test <Suite> --help`` shows suite-specific options only
-  - The callback sets the logger's log directory for the invoked suite
-  - Type enforcement: Typer rejects invalid values before pytest runs
-  - Defaults are applied when suite options are omitted
-  - Parent-callback options (``--iterations`` etc.) thread through ``ctx.meta``
-    into the run options the suite runner hands to ``otto.suite.run.run_suite``
+  - ``otto test --help`` lists the run flags and the ``test`` verb's options
+  - the run directory is ``test/<timestamp>/``
+  - type enforcement: Typer rejects invalid values before pytest runs
+  - the run flags thread into the ``RunOptions`` handed to
+    :func:`otto.suite.run.run_tests`, with their implications and refusals
 
-The suite-run engine itself (``run_suite`` / ``run_selection`` calling
-``pytest.main``) is exercised as a library in ``tests/unit/suite/test_run_api.py``;
-this module covers only the CLI surface (callback, adapters, option wiring).
+The run engine itself (``run_tests`` calling ``pytest.main``) is exercised as
+a library in ``tests/unit/suite/test_run_api.py``; the command's names, listing
+and dry run in ``tests/unit/cli/test_test_command.py``.
 """
 
-from dataclasses import dataclass
+import dataclasses
+from pathlib import Path
 from typing import Annotated
 from unittest.mock import MagicMock, patch
 
@@ -24,25 +21,15 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from otto.cli.test import suite_app
-from otto.context import get_context
-from otto.suite import OttoSuite
-from otto.suite.register import SUITES, register_suite_class
+from otto import options
+from otto.params import register_options
 from tests._fixtures.gitrepo import TmpGitRepo
 
 runner = CliRunner()
 
 
 def _lib_ok_result():
-    """A zero-exit SuiteRunResult for faked ``otto.suite.run.run_suite`` calls.
-
-    The suite runner (``otto.suite.register``) now consumes the library
-    ``run_suite`` (returning a ``SuiteRunResult``) and converts its
-    ``exit_code`` into a ``CommandResult`` for the leaf-invoke renderer, so a
-    fake must hand back a result carrying ``exit_code == 0``.
-    """
-    from pathlib import Path
-
+    """A zero-exit ``SuiteRunResult`` for a faked ``otto.suite.run.run_tests``."""
     from otto.suite.run import SuiteRunResult
 
     return SuiteRunResult(
@@ -54,53 +41,46 @@ def _lib_ok_result():
     )
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+@pytest.fixture
+def capture_cov(otto_test_cli, monkeypatch):
+    """Invoke ``otto test <cli_args> test_x`` with ``run_tests`` faked.
 
+    Returns ``(exit_code, run_options, output)``; ``run_options`` is the
+    ``RunOptions`` the command handed ``run_tests`` as a dict, or ``{}`` when
+    the command aborted before the run (e.g. during option validation).
+    """
 
-def _make_isolated_app(suite_class: type) -> typer.Typer:
-    """Build a fresh Typer app containing only the given suite as a subcommand."""
-    if suite_class.__name__ not in SUITES:
-        raise LookupError(f"{suite_class.__name__} not found in SUITES")
-    app = typer.Typer(no_args_is_help=True)
-    app.add_typer(SUITES.get(suite_class.__name__).sub_app)
-    return app
+    def _capture(cli_args: list[str]) -> tuple[int, dict, str]:
+        captured: dict = {}
+
+        def fake_run_tests(names, **kw):
+            captured.update(dataclasses.asdict(kw["run_options"]))
+            return _lib_ok_result()
+
+        monkeypatch.setattr("otto.suite.run.run_tests", fake_run_tests)
+        result = otto_test_cli(["test", *cli_args, "test_x"])
+        return result.exit_code, captured, result.output
+
+    return _capture
 
 
 # ── Help behaviour ────────────────────────────────────────────────────────────
 
 
 class TestTestHelp:
-    def test_help_flag(self):
-        result = runner.invoke(suite_app, ["--help"])
-        assert result.exit_code == 0
+    def test_help_flag(self, otto_test_cli):
+        assert otto_test_cli(["test", "--help"], lab=None).exit_code == 0
 
-    def test_short_help_flag(self):
-        result = runner.invoke(suite_app, ["-h"])
-        assert result.exit_code == 0
+    def test_short_help_flag(self, otto_test_cli):
+        assert otto_test_cli(["test", "-h"], lab=None).exit_code == 0
 
-    def test_suite_help_shows_options(self):
-        """Otto test <SuiteName> --help must list suite-specific options."""
-
-        class _HelpSuite(OttoSuite):
-            @dataclass
-            class Options:
-                firmware: Annotated[str, typer.Option()] = "latest"
-
-        register_suite_class(_HelpSuite)
-
-        app = _make_isolated_app(_HelpSuite)
-        result = runner.invoke(app, ["_HelpSuite", "--help"])
-        assert result.exit_code == 0
-        assert "--firmware" in result.output
-
-    def test_parent_help_shows_runner_options(self):
-        """Runner options live on ``otto test --help``, not the suite subcommand."""
-        result = runner.invoke(suite_app, ["--help"])
+    def test_help_shows_runner_options(self, otto_test_cli):
+        result = otto_test_cli(["test", "--help"], lab=None)
         assert result.exit_code == 0
         for flag in ("--iterations", "--duration", "--threshold", "--results", "--markers"):
             assert flag in result.output
 
-    def test_monitor_hosts_help_states_fullmatch_semantics(self):
+    def test_monitor_hosts_help_states_fullmatch_semantics(self, otto_test_cli):
         """``--monitor-hosts`` narrows the fleet the same way ``otto monitor --hosts`` does.
 
         It reaches the identical ``all_hosts(pattern=...)`` seam, so its help
@@ -109,374 +89,179 @@ class TestTestHelp:
         the tool itself. Asserted on the RENDERED table, widened so truncation
         cannot masquerade as a missing phrase.
         """
-        result = runner.invoke(suite_app, ["--help"], env={"COLUMNS": "300"})
+        result = runner.invoke(
+            __import__("otto.cli.test", fromlist=["test_app"]).test_app,
+            ["--help"],
+            env={"COLUMNS": "300"},
+        )
         assert result.exit_code == 0
         rendered = " ".join(result.output.split())
         assert "--monitor-hosts" in rendered
         assert "(fullmatch)" in rendered
 
-    def test_suite_help_omits_runner_options(self):
-        """Runner options must NOT appear in the per-suite ``--help`` output."""
+    def test_a_verb_option_and_its_help_show_in_help(self, otto_test_cli):
+        """A field annotated with ``typer.Option(help=...)`` shows that text in --help."""
 
-        class _SuiteNoRunnerOpts(OttoSuite):
-            pass
+        @options
+        class DeviceOpts:
+            device_type: Annotated[str, typer.Option(help="Kind of device under test.")] = "router"
 
-        register_suite_class(_SuiteNoRunnerOpts)
-
-        app = _make_isolated_app(_SuiteNoRunnerOpts)
-        result = runner.invoke(app, ["_SuiteNoRunnerOpts", "--help"])
+        register_options(DeviceOpts, verbs=["test"])
+        result = otto_test_cli(["test", "--help"], lab=None)
         assert result.exit_code == 0
-        for flag in ("--iterations", "--duration", "--threshold", "--results", "--markers"):
-            assert flag not in result.output
+        rendered = " ".join(result.output.replace("│", " ").split())
+        assert "--device-type" in rendered
+        assert "Kind of device under test." in rendered
+
+    def test_an_inherited_verb_option_field_shows_its_help(self, otto_test_cli):
+        @options
+        class ParentOpts:
+            device_type: Annotated[str, typer.Option(help="Inherited device help.")] = "router"
+
+        @options
+        class ChildOpts(ParentOpts):
+            firmware: Annotated[str, typer.Option(help="Firmware help.")] = "latest"
+
+        register_options(ChildOpts, verbs=["test"])
+        result = otto_test_cli(["test", "--help"], lab=None)
+        rendered = " ".join(result.output.replace("│", " ").split())
+        assert "Inherited device help." in rendered
+        assert "Firmware help." in rendered
+
+    def test_an_option_registered_only_for_run_is_not_a_test_flag(self, otto_test_cli):
+        @options
+        class RunOnly:
+            only_run: str = "x"
+
+        register_options(RunOnly, verbs=["run"])
+        assert "--only-run" not in otto_test_cli(["test", "--help"], lab=None).output
 
 
-# ── Callback / logger setup ───────────────────────────────────────────────────
+# ── The run directory ─────────────────────────────────────────────────────────
 
 
-class TestTestCallback:
-    def test_logger_output_dir_called_for_suite(self):
-        """The leaf-invoke preamble creates the test output dir named after the suite.
+class TestRunDirectory:
+    def test_the_run_directory_is_test_and_a_timestamp(self):
+        """The leaf's name is the spec's name, so the run dir is ``test/<timestamp>/``.
 
-        Since Task 7 the output dir is created by the shared leaf-invoke preamble
-        (``otto.cli.invoke.command_preamble``), not the ``suite_app`` callback — so
-        dispatch goes through the root ``app`` (which wraps leaves with the
-        preamble). ``ensure_cli_session`` / ``ensure_lab_context`` are stubbed to
-        isolate the output-dir naming (``create_output_dir('test', <suite>)``).
+        Dispatched through the root ``app`` (which wraps leaves with the
+        preamble). ``ensure_cli_session`` / ``ensure_lab_context`` are stubbed
+        to isolate the output-dir naming (``create_output_dir('test', None)``).
         """
         from otto.cli.main import app
-
-        class _CallbackSuite(OttoSuite):
-            pass
-
-        register_suite_class(_CallbackSuite)
 
         with (
             patch("otto.cli.invoke.ensure_cli_session"),
             patch("otto.cli.invoke.ensure_lab_context"),
             patch("otto.logger.management.create_output_dir") as p_create,
-            patch("otto.suite.run.run_suite", new=lambda *a, **k: _lib_ok_result()),
+            patch("otto.suite.run.run_tests", new=lambda *a, **k: _lib_ok_result()),
         ):
-            runner.invoke(app, ["--lab", "x", "test", "_CallbackSuite"])
+            runner.invoke(app, ["--lab", "x", "test", "test_x"])
 
-        p_create.assert_called_once_with("test", "_CallbackSuite")
-
-
-# ── run_selection adapter: no-match narrowing ────────────────────────────────
-
-
-class TestRunSelectionAdapter:
-    """The CLI ``run_selection`` adapter maps library exceptions onto Typer.
-
-    Only the library's :class:`~otto.suite.run.NoTestsMatchedError` becomes the
-    red "No tests matched the selection." + exit 1. An unrelated pipeline
-    ``ValueError`` must propagate untouched — a broad ``except ValueError``
-    would misreport it as a no-match.
-    """
-
-    @staticmethod
-    def _fake_ctx(tmp_path):
-        from otto.cli.test import RUN_OPTIONS_KEY
-        from otto.suite.run import RunOptions
-
-        get_context().output_dir = tmp_path
-        ctx = MagicMock()
-        ctx.meta = {RUN_OPTIONS_KEY: RunOptions(tests="test_x")}
-        return ctx
-
-    def test_no_tests_matched_reports_and_exits_1(self, tmp_path):
-        from otto.cli.test import run_selection
-        from otto.suite.run import NoTestsMatchedError
-
-        with (
-            patch(
-                "otto.cli.test._run_selection_lib",
-                side_effect=NoTestsMatchedError("No tests matched the selection."),
-            ),
-            pytest.raises(typer.Exit) as exc_info,
-        ):
-            run_selection(self._fake_ctx(tmp_path))
-        assert exc_info.value.exit_code == 1
-
-    def test_unrelated_value_error_propagates(self, tmp_path):
-        """A generic ValueError from the pipeline is NOT relabeled 'No tests matched'."""
-        from otto.cli.test import run_selection
-
-        with (
-            patch(
-                "otto.cli.test._run_selection_lib",
-                side_effect=ValueError("pipeline exploded"),
-            ),
-            pytest.raises(ValueError, match="pipeline exploded"),
-        ):
-            run_selection(self._fake_ctx(tmp_path))
+        p_create.assert_called_once_with("test", None)
 
 
 # ── Type enforcement ──────────────────────────────────────────────────────────
 
 
 class TestTypeEnforcement:
-    def test_invalid_int_rejected_by_typer(self):
-        """Passing a non-integer to an int option must fail at CLI level."""
+    def test_invalid_iterations_rejected(self, capture_cov):
+        exit_code, run_options, _output = capture_cov(["--iterations", "oops"])
+        assert exit_code == 2
+        assert run_options == {}
 
-        class _TypeSuite(OttoSuite):
-            @dataclass
-            class Options:
-                count: Annotated[int, typer.Option()] = 1
+    def test_invalid_verb_option_rejected(self, otto_test_cli, monkeypatch):
+        @options
+        class CountOpts:
+            count: int = 1
 
-        register_suite_class(_TypeSuite)
+        register_options(CountOpts, verbs=["test"])
+        ran: list = []
+        monkeypatch.setattr("otto.suite.run.run_tests", lambda *a, **k: ran.append(a))
+        result = otto_test_cli(["test", "test_x", "--count", "not-a-number"])
+        assert result.exit_code == 2
+        assert ran == []
 
-        app = _make_isolated_app(_TypeSuite)
-        result = runner.invoke(app, ["_TypeSuite", "--count", "not-a-number"])
-        assert result.exit_code != 0
+    def test_verb_option_defaults_applied_when_omitted(self, otto_test_cli, monkeypatch):
+        @options
+        class RetryOpts:
+            max_retries: int = 9
 
-    def test_invalid_iterations_rejected(self):
-        """--iterations lives on the parent; bad values must still reject."""
-
-        class _IterSuite(OttoSuite):
-            pass
-
-        register_suite_class(_IterSuite)
-
-        with patch("otto.suite.run.run_suite"):
-            result = runner.invoke(suite_app, ["--iterations", "oops", "_IterSuite"])
-        assert result.exit_code != 0
-
-    def test_defaults_applied_when_omitted(self):
-        class _DefaultSuite(OttoSuite):
-            @dataclass
-            class Options:
-                max_retries: Annotated[int, typer.Option()] = 9
-
-        register_suite_class(_DefaultSuite)
-
-        app = _make_isolated_app(_DefaultSuite)
-        captured: dict[str, object] = {}
-
-        def fake_run_suite(suite, **kw):
-            captured["opts"] = kw["options"]
-            return _lib_ok_result()
-
-        with patch("otto.suite.run.run_suite", fake_run_suite):
-            result = runner.invoke(app, ["_DefaultSuite"])
-
-        assert result.exit_code == 0
-        opts = captured.get("opts")
-        assert opts is not None
-        assert opts.max_retries == 9  # type: ignore[union-attr]
-
-
-# ── Help content (integration-level) ─────────────────────────────────────────
-
-
-class TestHelpContent:
-    """Verify that typer.Option help text appears in rendered --help output."""
-
-    def test_annotated_help_in_cli_output(self):
-        """A field annotated with typer.Option(help=...) shows that text in --help."""
-
-        class _AnnotatedHelpSuite(OttoSuite):
-            @dataclass
-            class Options:
-                device_type: Annotated[
-                    str,
-                    typer.Option(
-                        help="Kind of device under test.",
-                    ),
-                ] = "router"
-
-        register_suite_class(_AnnotatedHelpSuite)
-
-        app = _make_isolated_app(_AnnotatedHelpSuite)
-        result = runner.invoke(app, ["_AnnotatedHelpSuite", "--help"])
-        assert result.exit_code == 0
-        assert "--device-type" in result.output
-        assert "Kind of device under test." in result.output
-
-    def test_no_help_when_option_has_none(self):
-        """A bare typer.Option() with no help= produces no help text in --help."""
-
-        class _BareHelpSuite(OttoSuite):
-            @dataclass
-            class Options:
-                firmware: Annotated[str, typer.Option()] = "latest"
-
-        register_suite_class(_BareHelpSuite)
-
-        app = _make_isolated_app(_BareHelpSuite)
-        result = runner.invoke(app, ["_BareHelpSuite", "--help"])
-        assert result.exit_code == 0
-        assert "--firmware" in result.output
-
-    def test_inherited_annotated_field_help_in_cli_output(self):
-        """Parent class annotated fields appear with their help text in child --help."""
-
-        @dataclass
-        class _InheritedParentOpts:
-            device_type: Annotated[
-                str,
-                typer.Option(
-                    help="Inherited device help.",
-                ),
-            ] = "router"
-
-        class _InheritedHelpSuite(OttoSuite):
-            @dataclass
-            class Options(_InheritedParentOpts):
-                firmware: Annotated[
-                    str,
-                    typer.Option(
-                        help="Suite firmware help.",
-                    ),
-                ] = "latest"
-
-        register_suite_class(_InheritedHelpSuite)
-
-        app = _make_isolated_app(_InheritedHelpSuite)
-        result = runner.invoke(app, ["_InheritedHelpSuite", "--help"])
-        assert result.exit_code == 0
-        assert "Inherited device help." in result.output
-        assert "Suite firmware help." in result.output
-
-    def test_parent_runner_option_help_present(self):
-        """Parent-callback runner options retain their help text.
-
-        Rich wraps long help strings across multiple columns, so we assert
-        on short fragments rather than the full sentence.
-        """
-        result = runner.invoke(suite_app, ["--help"])
-        assert result.exit_code == 0
-        output_lower = result.output.lower()
-        assert "--markers" in result.output
-        assert "marker" in output_lower
-        assert "iterations" in output_lower
-
-
-# ── Parent-callback runner options thread through ctx.meta ───────────────────
-
-
-class TestParentRunnerOptionsCtx:
-    """Verify ``--markers``, ``--iterations`` etc. reach run_suite via ctx.meta.
-
-    These options live on ``suite_app``'s callback, so the full CLI path is
-    exercised to check wiring: CLI → callback sets ctx.meta → runner closure →
-    run_suite reads parent context.
-    """
-
-    def _capture_ctx(self, cli_args: list[str], suite_name: str) -> dict:
-        import dataclasses
-
+        register_options(RetryOpts, verbs=["test"])
         captured: dict = {}
 
-        def fake_run_suite(*_args, **_kwargs):
-            # The runner reads RunOptions from ctx.meta and passes them to the
-            # library run_suite as the ``run_options`` keyword.
-            opts = _kwargs.get("run_options")
-            if opts is not None:
-                captured.update(dataclasses.asdict(opts))
+        def fake_run_tests(names, **kw):
+            captured["options"] = kw["options"]
             return _lib_ok_result()
 
-        with patch("otto.suite.run.run_suite", fake_run_suite):
-            runner.invoke(suite_app, [*cli_args, suite_name])
-        return captured
+        monkeypatch.setattr("otto.suite.run.run_tests", fake_run_tests)
+        assert otto_test_cli(["test", "test_x"]).exit_code == 0
+        (opts,) = captured["options"]
+        assert opts.max_retries == 9
 
-    def test_iterations_forwarded_via_ctx(self):
-        class _CtxIterSuite(OttoSuite):
-            pass
+    def test_an_unrelated_value_error_propagates(self, otto_test_cli, monkeypatch):
+        """A generic ValueError from the pipeline is NOT relabeled 'No tests matched'."""
 
-        register_suite_class(_CtxIterSuite)
+        def boom(*_a, **_k):
+            raise ValueError("pipeline exploded")
 
-        ctx_obj = self._capture_ctx(["--iterations", "5"], "_CtxIterSuite")
-        assert ctx_obj.get("iterations") == 5
+        monkeypatch.setattr("otto.suite.run.run_tests", boom)
+        result = otto_test_cli(["test", "test_x"])
+        assert isinstance(result.exception, ValueError)
+        assert "pipeline exploded" in str(result.exception)
+        assert "No tests matched" not in result.output
 
-    def test_random_order_defaults_on_with_no_seed(self):
-        class _CtxRandDefSuite(OttoSuite):
-            pass
 
-        register_suite_class(_CtxRandDefSuite)
+# ── Run flags thread into RunOptions ──────────────────────────────────────────
 
-        ctx_obj = self._capture_ctx([], "_CtxRandDefSuite")
-        assert ctx_obj.get("random_order") is True
-        assert ctx_obj.get("seed") is None
 
-    def test_no_random_forwarded_via_ctx(self):
-        class _CtxNoRandSuite(OttoSuite):
-            pass
+class TestRunOptionsForwarded:
+    def test_iterations_forwarded(self, capture_cov):
+        assert capture_cov(["--iterations", "5"])[1]["iterations"] == 5
 
-        register_suite_class(_CtxNoRandSuite)
+    def test_random_order_defaults_on_with_no_seed(self, capture_cov):
+        run_options = capture_cov([])[1]
+        assert run_options["random_order"] is True
+        assert run_options["seed"] is None
 
-        ctx_obj = self._capture_ctx(["--no-random"], "_CtxNoRandSuite")
-        assert ctx_obj.get("random_order") is False
+    def test_no_random_forwarded(self, capture_cov):
+        assert capture_cov(["--no-random"])[1]["random_order"] is False
 
-    def test_seed_forwarded_via_ctx(self):
-        class _CtxSeedSuite(OttoSuite):
-            pass
+    def test_seed_forwarded(self, capture_cov):
+        run_options = capture_cov(["--seed", "7"])[1]
+        assert run_options["seed"] == 7
+        assert run_options["random_order"] is True
 
-        register_suite_class(_CtxSeedSuite)
-
-        ctx_obj = self._capture_ctx(["--seed", "7"], "_CtxSeedSuite")
-        assert ctx_obj.get("seed") == 7
-        assert ctx_obj.get("random_order") is True
-
-    def test_seed_with_no_random_is_a_usage_error(self):
+    def test_seed_with_no_random_is_a_usage_error(self, capture_cov):
         """A seed with nothing to seed is a contradiction: refuse, don't guess."""
+        exit_code, run_options, output = capture_cov(["--no-random", "--seed", "7"])
+        assert exit_code == 2
+        assert "--seed" in output
+        assert "--no-random" in output
+        assert run_options == {}
 
-        class _CtxSeedNoRandSuite(OttoSuite):
-            pass
+    def test_markers_forwarded(self, capture_cov):
+        assert capture_cov(["--markers", "not integration"])[1]["markers"] == "not integration"
 
-        register_suite_class(_CtxSeedNoRandSuite)
-
-        result = runner.invoke(suite_app, ["--no-random", "--seed", "7", "_CtxSeedNoRandSuite"])
-        assert result.exit_code == 2
-        assert "--seed" in result.output
-        assert "--no-random" in result.output
-
-    def test_markers_forwarded_via_ctx(self):
-        class _CtxMarkSuite(OttoSuite):
-            pass
-
-        register_suite_class(_CtxMarkSuite)
-
-        ctx_obj = self._capture_ctx(
-            ["--markers", "not integration"],
-            "_CtxMarkSuite",
-        )
-        assert ctx_obj.get("markers") == "not integration"
-
-    def test_defaults_when_omitted(self):
-        class _CtxDefSuite(OttoSuite):
-            pass
-
-        register_suite_class(_CtxDefSuite)
-
-        ctx_obj = self._capture_ctx([], "_CtxDefSuite")
-        assert ctx_obj.get("markers") == ""
-        assert ctx_obj.get("iterations") == 0
-        assert ctx_obj.get("duration") == 0
-        assert ctx_obj.get("threshold") == 100.0
-        assert ctx_obj.get("results") == ""
+    def test_defaults_when_omitted(self, capture_cov):
+        run_options = capture_cov([])[1]
+        assert run_options["markers"] == ""
+        assert run_options["iterations"] == 0
+        assert run_options["duration"] == 0
+        assert run_options["threshold"] == 100.0
+        assert run_options["results"] == ""
         # Monitor defaults: disabled, default interval, no override path / regex.
-        assert ctx_obj.get("monitor") is False
-        assert ctx_obj.get("monitor_interval") == 5.0
-        assert ctx_obj.get("monitor_output") is None
-        assert ctx_obj.get("monitor_hosts") is None
+        assert run_options["monitor"] is False
+        assert run_options["monitor_interval"] == 5.0
+        assert run_options["monitor_output"] is None
+        assert run_options["monitor_hosts"] is None
 
-    def test_monitor_flag_forwarded_via_ctx(self):
-        class _CtxMonSuite(OttoSuite):
-            pass
+    def test_monitor_flag_forwarded(self, capture_cov):
+        assert capture_cov(["--monitor"])[1]["monitor"] is True
 
-        register_suite_class(_CtxMonSuite)
-
-        ctx_obj = self._capture_ctx(["--monitor"], "_CtxMonSuite")
-        assert ctx_obj.get("monitor") is True
-
-    def test_monitor_options_forwarded_via_ctx(self, tmp_path):
-        class _CtxMonOptSuite(OttoSuite):
-            pass
-
-        register_suite_class(_CtxMonOptSuite)
-
+    def test_monitor_options_forwarded(self, capture_cov, tmp_path):
         out = tmp_path / "m.json"
-        ctx_obj = self._capture_ctx(
+        run_options = capture_cov(
             [
                 "--monitor",
                 "--monitor-interval",
@@ -485,140 +270,91 @@ class TestParentRunnerOptionsCtx:
                 str(out),
                 "--monitor-hosts",
                 "router|switch",
-            ],
-            "_CtxMonOptSuite",
-        )
-        assert ctx_obj.get("monitor") is True
-        assert ctx_obj.get("monitor_interval") == 2.0
-        assert ctx_obj.get("monitor_output") == out
-        assert ctx_obj.get("monitor_hosts") == "router|switch"
+            ]
+        )[1]
+        assert run_options["monitor"] is True
+        assert run_options["monitor_interval"] == 2.0
+        assert run_options["monitor_output"] == out
+        assert run_options["monitor_hosts"] == "router|switch"
 
-    def test_monitor_implied_by_output_or_hosts(self):
+    def test_monitor_implied_by_output_or_hosts(self, capture_cov):
         """--monitor-output or --monitor-hosts alone should imply --monitor."""
-
-        class _CtxMonImplSuite(OttoSuite):
-            pass
-
-        register_suite_class(_CtxMonImplSuite)
-
-        ctx_obj = self._capture_ctx(["--monitor-hosts", "router"], "_CtxMonImplSuite")
-        assert ctx_obj.get("monitor") is True
+        assert capture_cov(["--monitor-hosts", "router"])[1]["monitor"] is True
 
 
 # ── --cov-dir option (destination override + validation) ─────────────────────
 
 
-# Register a single suite once at module import; every --cov-dir test
-# reuses it, varying only the CLI args it's invoked with.
-class _CovCtxSuite(OttoSuite):
-    """Fixture suite used for exercising the cov/cov-dir callback plumbing."""
-
-
-register_suite_class(_CovCtxSuite)
-
-
-def _capture_cov_ctx(cli_args: list[str]) -> tuple[int, dict, str]:
-    """Invoke ``otto test <cli_args> _CovCtxSuite`` against the real suite_app.
-
-    Callback options like ``--cov`` / ``--cov-dir`` are declared on
-    ``suite_app`` itself, so we invoke through it (not an isolated app) to
-    exercise the actual option wiring. ``suite_app`` resolves ``_CovCtxSuite``
-    lazily from the ``SUITES`` registry, so no explicit attach step is needed.
-
-    Returns ``(exit_code, ctx_obj, output)``. ``ctx_obj`` is ``{}`` when the
-    command aborts before the subcommand is reached (e.g. during option
-    validation).
-    """
-    import dataclasses
-
-    captured: dict = {}
-
-    def fake_run_suite(*_args, **_kwargs):
-        # The runner reads RunOptions from ctx.meta and passes them to the
-        # library run_suite as the ``run_options`` keyword.
-        opts = _kwargs.get("run_options")
-        if opts is not None:
-            captured.update(dataclasses.asdict(opts))
-        return _lib_ok_result()
-
-    with patch("otto.suite.run.run_suite", fake_run_suite):
-        result = runner.invoke(suite_app, [*cli_args, "_CovCtxSuite"])
-
-    return result.exit_code, captured, result.output
-
-
 class TestCovDirOption:
-    def test_no_flags_leaves_coverage_on_auto(self):
-        exit_code, ctx_obj, output = _capture_cov_ctx([])
+    def test_no_flags_leaves_coverage_on_auto(self, capture_cov):
+        exit_code, ctx_obj, output = capture_cov([])
         assert exit_code == 0, f"output={output!r}"
         # Neither --cov nor --no-cov: auto — the decision is the run's, taken
         # from the lab's instrumentation (otto.suite.run.resolve_coverage).
         assert ctx_obj["cov"] is None
         assert ctx_obj["cov_dir"] is None
 
-    def test_no_cov_forces_off(self):
-        exit_code, ctx_obj, output = _capture_cov_ctx(["--no-cov"])
+    def test_no_cov_forces_off(self, capture_cov):
+        exit_code, ctx_obj, output = capture_cov(["--no-cov"])
         assert exit_code == 0, f"output={output!r}"
         assert ctx_obj["cov"] is False
 
-    def test_no_cov_with_cov_dir_is_a_usage_error(self, tmp_path):
-        exit_code, _ctx_obj, output = _capture_cov_ctx(
-            ["--no-cov", "--cov-dir", str(tmp_path / "c")]
-        )
+    def test_no_cov_with_cov_dir_is_a_usage_error(self, capture_cov, tmp_path):
+        exit_code, _ctx_obj, output = capture_cov(["--no-cov", "--cov-dir", str(tmp_path / "c")])
         assert exit_code == 2, f"output={output!r}"  # typer/click usage error
         assert "--no-cov" in output
         assert "--cov-dir" in output
 
-    def test_no_cov_with_cov_report_is_a_usage_error(self):
-        exit_code, _ctx_obj, output = _capture_cov_ctx(["--no-cov", "--cov-report"])
+    def test_no_cov_with_cov_report_is_a_usage_error(self, capture_cov):
+        exit_code, _ctx_obj, output = capture_cov(["--no-cov", "--cov-report"])
         assert exit_code == 2, f"output={output!r}"  # typer/click usage error
         assert "--no-cov" in output
         assert "--cov-report" in output
 
-    def test_cov_flag_only_uses_default_dir(self):
-        exit_code, ctx_obj, output = _capture_cov_ctx(["--cov"])
+    def test_cov_flag_only_uses_default_dir(self, capture_cov):
+        exit_code, ctx_obj, output = capture_cov(["--cov"])
         assert exit_code == 0, f"output={output!r}"
         assert ctx_obj["cov"] is True
         assert ctx_obj["cov_dir"] is None
 
-    def test_cov_dir_implies_cov_and_records_path(self, tmp_path):
+    def test_cov_dir_implies_cov_and_records_path(self, capture_cov, tmp_path):
         target = tmp_path / "custom"
-        exit_code, ctx_obj, output = _capture_cov_ctx(["--cov-dir", str(target)])
+        exit_code, ctx_obj, output = capture_cov(["--cov-dir", str(target)])
         assert exit_code == 0, f"output={output!r}"
         assert ctx_obj["cov"] is True
         assert ctx_obj["cov_dir"] == target.resolve()
         # Validation creates the directory eagerly.
         assert target.is_dir()
 
-    def test_cov_with_cov_dir_records_path(self, tmp_path):
+    def test_cov_with_cov_dir_records_path(self, capture_cov, tmp_path):
         target = tmp_path / "both"
-        exit_code, ctx_obj, output = _capture_cov_ctx(
+        exit_code, ctx_obj, output = capture_cov(
             ["--cov", "--cov-dir", str(target)],
         )
         assert exit_code == 0, f"output={output!r}"
         assert ctx_obj["cov"] is True
         assert ctx_obj["cov_dir"] == target.resolve()
 
-    def test_cov_dir_nonempty_without_overwrite_aborts(self, tmp_path):
+    def test_cov_dir_nonempty_without_overwrite_aborts(self, capture_cov, tmp_path):
         target = tmp_path / "existing"
         target.mkdir()
         (target / "leftover.txt").write_text("stale")
 
-        exit_code, ctx_obj, output = _capture_cov_ctx(["--cov-dir", str(target)])
+        exit_code, ctx_obj, output = capture_cov(["--cov-dir", str(target)])
         assert exit_code != 0
         assert ctx_obj == {}
         assert "not empty" in output or "--overwrite-cov-dir" in output
         # Stale file preserved when we refuse to proceed.
         assert (target / "leftover.txt").exists()
 
-    def test_overwrite_cov_dir_clears_contents(self, tmp_path):
+    def test_overwrite_cov_dir_clears_contents(self, capture_cov, tmp_path):
         target = tmp_path / "to_clear"
         target.mkdir()
         (target / "leftover.txt").write_text("stale")
         (target / "sub").mkdir()
         (target / "sub" / "nested.txt").write_text("more stale")
 
-        exit_code, ctx_obj, output = _capture_cov_ctx(
+        exit_code, ctx_obj, output = capture_cov(
             ["--cov-dir", str(target), "--overwrite-cov-dir"],
         )
         assert exit_code == 0, f"output={output!r}"
@@ -627,11 +363,11 @@ class TestCovDirOption:
         assert target.is_dir()
         assert list(target.iterdir()) == []
 
-    def test_cov_dir_pointing_at_file_fails(self, tmp_path):
+    def test_cov_dir_pointing_at_file_fails(self, capture_cov, tmp_path):
         target = tmp_path / "not_a_dir"
         target.write_text("i am a file")
 
-        exit_code, _, output = _capture_cov_ctx(["--cov-dir", str(target)])
+        exit_code, _, output = capture_cov(["--cov-dir", str(target)])
         assert exit_code != 0
         assert "--cov-dir" in output
         assert "is a file" in output or "not a directory" in output
@@ -696,28 +432,28 @@ class TestInRunReportGeneration:
 
 
 class TestCovReportOption:
-    def test_no_flags_disables_report(self):
-        exit_code, ctx_obj, output = _capture_cov_ctx([])
+    def test_no_flags_disables_report(self, capture_cov):
+        exit_code, ctx_obj, output = capture_cov([])
         assert exit_code == 0, f"output={output!r}"
         assert ctx_obj["cov_report"] is False
         assert ctx_obj["cov_report_dir"] is None
 
-    def test_cov_report_flag_enables_report_and_implies_cov(self):
-        exit_code, ctx_obj, output = _capture_cov_ctx(["--cov-report"])
+    def test_cov_report_flag_enables_report_and_implies_cov(self, capture_cov):
+        exit_code, ctx_obj, output = capture_cov(["--cov-report"])
         assert exit_code == 0, f"output={output!r}"
         assert ctx_obj["cov_report"] is True
         assert ctx_obj["cov"] is True
         assert ctx_obj["cov_report_dir"] is None
 
-    def test_short_r_flag_enables_report(self):
-        exit_code, ctx_obj, output = _capture_cov_ctx(["-r"])
+    def test_short_r_flag_enables_report(self, capture_cov):
+        exit_code, ctx_obj, output = capture_cov(["-r"])
         assert exit_code == 0, f"output={output!r}"
         assert ctx_obj["cov_report"] is True
         assert ctx_obj["cov"] is True
 
-    def test_cov_report_dir_implies_cov_report_and_cov(self, tmp_path):
+    def test_cov_report_dir_implies_cov_report_and_cov(self, capture_cov, tmp_path):
         target = tmp_path / "report"
-        exit_code, ctx_obj, output = _capture_cov_ctx(
+        exit_code, ctx_obj, output = capture_cov(
             ["--cov-report-dir", str(target)],
         )
         assert exit_code == 0, f"output={output!r}"
@@ -727,11 +463,11 @@ class TestCovReportOption:
         # Validation creates the directory eagerly.
         assert target.is_dir()
 
-    def test_cov_report_dir_nonempty_without_overwrite_aborts(self, tmp_path):
+    def test_cov_report_dir_nonempty_without_overwrite_aborts(self, capture_cov, tmp_path):
         target = tmp_path / "existing"
         target.mkdir()
         (target / "stale.html").write_text("stale")
-        exit_code, ctx_obj, output = _capture_cov_ctx(
+        exit_code, ctx_obj, output = capture_cov(
             ["--cov-report-dir", str(target)],
         )
         assert exit_code != 0
@@ -739,14 +475,14 @@ class TestCovReportOption:
         assert "not empty" in output or "--overwrite-cov-report-dir" in output
         assert (target / "stale.html").exists()
 
-    def test_overwrite_cov_report_dir_clears_contents(self, tmp_path):
+    def test_overwrite_cov_report_dir_clears_contents(self, capture_cov, tmp_path):
         target = tmp_path / "to_clear"
         target.mkdir()
         (target / "stale.html").write_text("stale")
         (target / "sub").mkdir()
         (target / "sub" / "nested.html").write_text("nested")
 
-        exit_code, ctx_obj, output = _capture_cov_ctx(
+        exit_code, ctx_obj, output = capture_cov(
             ["--cov-report-dir", str(target), "--overwrite-cov-report-dir"],
         )
         assert exit_code == 0, f"output={output!r}"
@@ -754,22 +490,22 @@ class TestCovReportOption:
         assert ctx_obj["cov_report_dir"] == target.resolve()
         assert list(target.iterdir()) == []
 
-    def test_project_name_recorded(self):
-        exit_code, ctx_obj, output = _capture_cov_ctx(
+    def test_project_name_recorded(self, capture_cov):
+        exit_code, ctx_obj, output = capture_cov(
             ["--cov-report", "--project-name", "My App"],
         )
         assert exit_code == 0, f"output={output!r}"
         assert ctx_obj["project_name"] == "My App"
 
-    def test_project_name_default(self):
-        exit_code, ctx_obj, output = _capture_cov_ctx([])
+    def test_project_name_default(self, capture_cov):
+        exit_code, ctx_obj, output = capture_cov([])
         assert exit_code == 0, f"output={output!r}"
         assert ctx_obj["project_name"] == "Coverage Report"
 
-    def test_cov_report_dir_pointing_at_file_fails(self, tmp_path):
+    def test_cov_report_dir_pointing_at_file_fails(self, capture_cov, tmp_path):
         target = tmp_path / "not_a_dir"
         target.write_text("i am a file")
-        exit_code, _, output = _capture_cov_ctx(
+        exit_code, _, output = capture_cov(
             ["--cov-report-dir", str(target)],
         )
         assert exit_code != 0
@@ -793,55 +529,55 @@ def _repo_with_tickets_configured():
 
 
 class TestCovTicketsJsonOption:
-    def test_no_flag_leaves_cov_tickets_json_none(self):
-        exit_code, ctx_obj, output = _capture_cov_ctx([])
+    def test_no_flag_leaves_cov_tickets_json_none(self, capture_cov):
+        exit_code, ctx_obj, output = capture_cov([])
         assert exit_code == 0, f"output={output!r}"
         assert ctx_obj["cov_tickets_json"] is None
 
-    def test_cov_tickets_json_recorded(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("otto.cli.test.get_repos", lambda: [_repo_with_tickets_configured()])
+    def test_cov_tickets_json_recorded(self, capture_cov, tmp_path, monkeypatch):
+        monkeypatch.setattr("otto.config.get_repos", lambda: [_repo_with_tickets_configured()])
         target = tmp_path / "tickets.json"
-        exit_code, ctx_obj, output = _capture_cov_ctx(["--cov-tickets-json", str(target)])
+        exit_code, ctx_obj, output = capture_cov(["--cov-tickets-json", str(target)])
         assert exit_code == 0, f"output={output!r}"
         assert ctx_obj["cov_tickets_json"] == target
 
-    def test_cov_tickets_json_implies_cov_report_and_cov(self, tmp_path, monkeypatch):
+    def test_cov_tickets_json_implies_cov_report_and_cov(self, capture_cov, tmp_path, monkeypatch):
         """Mirrors --cov-report-dir: naming a tickets export with no other
         --cov-report flag still implies --cov-report (and --cov) — a bare
         --cov-tickets-json PATH must not silently do nothing."""
-        monkeypatch.setattr("otto.cli.test.get_repos", lambda: [_repo_with_tickets_configured()])
+        monkeypatch.setattr("otto.config.get_repos", lambda: [_repo_with_tickets_configured()])
         target = tmp_path / "tickets.json"
-        exit_code, ctx_obj, output = _capture_cov_ctx(["--cov-tickets-json", str(target)])
+        exit_code, ctx_obj, output = capture_cov(["--cov-tickets-json", str(target)])
         assert exit_code == 0, f"output={output!r}"
         assert ctx_obj["cov_report"] is True
         assert ctx_obj["cov"] is True
 
     def test_cov_tickets_json_without_coverage_tickets_config_fails_fast(
-        self, tmp_path, monkeypatch
+        self, capture_cov, tmp_path, monkeypatch
     ):
         """Misconfiguration (flag given, no [coverage.tickets] anywhere) must
         fail BEFORE the (possibly long) test run starts, not silently
         warn-and-skip after it finishes — otherwise a CI pipeline wiring
         --cov-tickets-json gets exit 0, no file, and a warning nobody reads."""
-        monkeypatch.setattr("otto.cli.test.get_repos", list)
+        monkeypatch.setattr("otto.config.get_repos", list)
         target = tmp_path / "tickets.json"
-        exit_code, ctx_obj, output = _capture_cov_ctx(["--cov-tickets-json", str(target)])
+        exit_code, ctx_obj, output = capture_cov(["--cov-tickets-json", str(target)])
         assert exit_code != 0
         assert ctx_obj == {}
         assert "--cov-tickets-json" in output
         assert "[coverage.tickets]" in output
 
     def test_cov_tickets_json_with_coverage_but_no_tickets_table_fails_fast(
-        self, tmp_path, monkeypatch
+        self, capture_cov, tmp_path, monkeypatch
     ):
         """[coverage] configured but with no [coverage.tickets] sub-table is
         the same knowable-up-front misconfiguration as no [coverage] at
         all."""
         repo = MagicMock()
         repo.settings = {"coverage": {"tiers": {"system": {"kind": "e2e", "precedence": 1}}}}
-        monkeypatch.setattr("otto.cli.test.get_repos", lambda: [repo])
+        monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
         target = tmp_path / "tickets.json"
-        exit_code, ctx_obj, output = _capture_cov_ctx(["--cov-tickets-json", str(target)])
+        exit_code, ctx_obj, output = capture_cov(["--cov-tickets-json", str(target)])
         assert exit_code != 0
         assert ctx_obj == {}
         assert "[coverage.tickets]" in output

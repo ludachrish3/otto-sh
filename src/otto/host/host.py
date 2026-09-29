@@ -30,7 +30,7 @@ from typing import (
     cast,
 )
 
-from typing_extensions import Never, Self, override
+from typing_extensions import Never, Self, final, override
 
 from .. import layout
 from ..logger.mode import LogMode, effective_mode
@@ -1178,7 +1178,17 @@ class BaseHost(ABC):
 
     _session_mgr: "SessionManager" = field(init=False, repr=False)
     """Manages the persistent shell session(s) for this host; built by the
-    family's ``__post_init__``."""
+    family's ``__post_init__``. Async code reads it through
+    :meth:`_live_session_mgr`, which claims the running loop first."""
+
+    _owner_loop: "asyncio.AbstractEventLoop | None" = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    """The event loop this host's connection belongs to; ``None`` until first use.
+
+    Set by :meth:`_claim_loop`, cleared by :meth:`close`. ``init=False`` so a
+    copy (``dataclasses.replace``, which is how option overrides build one)
+    starts unowned, with its own freshly built managers."""
 
     @override
     def __str__(self) -> str:
@@ -1469,8 +1479,12 @@ class BaseHost(ABC):
         Seeded from the login user; changes only through :meth:`switch_user` /
         :meth:`as_user`. See :attr:`~otto.host.session.HostSession.current_user`
         for named sessions.
+
+        Reading it claims the running loop, as every connection-touching step
+        does: a switch recorded on a loop that has since closed died with that
+        loop's shell, so it must not decide ``sudo`` on this one.
         """
-        return self._session_mgr.current_user
+        return self._live_session_mgr().current_user
 
     def _apply_sudo(self, sc: "ShellCommand", user: str | None = None) -> "ShellCommand":
         """Rewrite a ``ShellCommand`` to run under sudo.
@@ -2027,8 +2041,87 @@ class BaseHost(ABC):
         """Upload local files to a directory on the host. Subclasses must override."""
         raise NotImplementedError from None
 
+    ####################
+    #  Loop ownership
+    ####################
+
+    def _claim_loop(self) -> None:
+        """Make the running loop this host's connection owner, or fail fast.
+
+        Called by every connection-touching step (through
+        :meth:`_live_session_mgr` and the family accessors) before any I/O:
+
+        - no running loop, or the owner IS the running loop: nothing to do;
+        - the owner is a different loop that is still open: raise
+          :class:`~otto.host.loop_owner.HostLoopError` — its transports can
+          only be driven by that loop, even while it sits idle;
+        - the owner closed: drop its dead connection state and fall through;
+        - otherwise the running loop becomes the owner, and the host
+          registers with that loop's host scope in the active context, which
+          closes it when the loop ends.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        owner = self._owner_loop
+        if owner is loop:
+            return
+        if owner is not None and not owner.is_closed():
+            from .loop_owner import HostLoopError  # the raise path only: off the startup graph
+
+            raise HostLoopError(self.id, owner, loop)
+        if owner is not None:
+            self._drop_dead_connections()
+        self._owner_loop = loop
+        from ..context import try_get_context  # function-local: otto.context imports this module
+
+        ctx = try_get_context()
+        if ctx is not None:
+            ctx.scope_for(loop).register(self)
+
+    def _drop_dead_connections(self) -> None:
+        """Abandon connection state bound to a closed loop (``rebuild_connections``), if any."""
+        rebuild = getattr(self, "rebuild_connections", None)
+        if rebuild is not None:
+            rebuild()
+
+    def _live_session_mgr(self) -> "SessionManager":
+        """Return the session manager, after claiming the running loop (see :meth:`_claim_loop`)."""
+        self._claim_loop()
+        return self._session_mgr
+
+    @final
     async def close(self) -> None:
-        """Close the persistent session and release held resources. Subclasses must override."""
+        """Close this host's connections; the next use reconnects on whatever loop uses it.
+
+        Idempotent. Closing is a network step, so it runs on the loop that
+        owns the connection: from another loop that is still open it raises
+        :class:`~otto.host.loop_owner.HostLoopError`. When the owning loop has
+        already closed there is nothing left to close gracefully, so the dead
+        connection state is dropped without any I/O. Either way the host is
+        unowned afterwards, even when the close itself raised.
+
+        Families implement ``_close``; this wrapper is not overridden.
+        """
+        owner = self._owner_loop
+        if owner is not None and owner.is_closed():
+            self._drop_dead_connections()
+            self._owner_loop = None
+            return
+        if owner is not None:
+            loop = asyncio.get_running_loop()
+            if owner is not loop:
+                from .loop_owner import HostLoopError  # the raise path only: off the startup graph
+
+                raise HostLoopError(self.id, owner, loop)
+        try:
+            await self._close()
+        finally:
+            self._owner_loop = None
+
+    async def _close(self) -> None:
+        """Release this host's sessions and transports. Idempotent. Families override."""
         raise NotImplementedError from None
 
     async def __aenter__(self) -> Self:

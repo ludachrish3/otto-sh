@@ -128,8 +128,12 @@ def _tree():
             "test": _leaf(
                 "test",
                 [
-                    _param(["--tests"], "tests", sep=",", source={"kind": "tests", "sep": ","}),
+                    # `otto test`'s variadic NAMES: no separator, one name per word.
+                    _param([], "names", nargs=-1, source={"kind": "tests"}),
                     _param(["--markers", "-m"], "markers", source={"kind": "markers"}),
+                    _param(["--seed"], "seed"),
+                    _param(["--random", "--no-random"], "random_order", takes_value=False),
+                    _param(["--list-tests"], "list_tests", takes_value=False),
                 ],
             ),
             "tunnel": {
@@ -177,17 +181,18 @@ NAMES = {
         ],
     },
 }
-TESTS = {"tests": ["test_a", "test_b"], "markers": ["slow", "smoke"]}
-COLLECTED = {"names": ["test_gen"], "markers": ["deep"]}
+TESTS = sc.TestNames(
+    names=["test_a", "test_b", "test_gen"], markers=["deep", "slow", "smoke"], check_due=False
+)
 ROOT_OPTIONS = ["--lab", "-l", "--field", "--debug", "--xdir", "-x", "--out", "-o", "--help", "-h"]
 
 
-def _answer(words: str, cword: int, env: dict | None = None, collected=COLLECTED):
+def _answer(words: str, cword: int, env: dict | None = None, tests: "sc.TestNames | None" = TESTS):
     parts = sc.split_arg_string(words)
     args, frag = parts[1:cword], (parts[cword] if cword < len(parts) else "")
     tree = _tree()
     res = sc.resolve(tree, args, NAMES["host_classes_by_id"])
-    return sc.complete(tree, res, frag, env or {}, sc.Payloads(NAMES, TESTS, collected))
+    return sc.complete(tree, res, frag, env or {}, sc.Payloads(NAMES, tests))
 
 
 def test_click_split_keeps_a_partial_quoted_token():
@@ -328,8 +333,8 @@ def test_lab_from_env_when_no_flag_is_given():
 
 
 def test_tests_and_markers_sites():
-    assert _answer("otto test --tests ", 3) == ["test_a", "test_b", "test_gen"]
-    assert _answer("otto test --tests test_a,te", 3) == ["test_a,test_b", "test_a,test_gen"]
+    assert _answer("otto test ", 2) == ["test_a", "test_b", "test_gen"]
+    assert _answer("otto test test_b", 2) == ["test_b"]
     assert _answer('otto test -m "smoke and "', 3) == [
         "smoke and deep",
         "smoke and slow",
@@ -339,6 +344,23 @@ def test_tests_and_markers_sites():
         "not (slow",
         "not (smoke",
     ]  # unterminated quote: partial token
+
+
+def test_names_complete_after_a_valued_flag_not_as_its_value():
+    """After ``--seed 5`` the word being completed is a NAMES candidate, not a seed value."""
+    assert _answer("otto test --seed 5 te", 4) == ["test_a", "test_b", "test_gen"]
+    assert _answer("otto test --seed ", 3) == []  # the seed's own value: no source
+
+
+def test_names_complete_after_a_marker_expression():
+    assert _answer("otto test -m slow te", 4) == ["test_a", "test_b", "test_gen"]
+
+
+def test_names_keep_completing_after_a_name():
+    """NAMES is variadic: the word after one name is another name, filtered by plain prefix."""
+    assert _answer("otto test test_a ", 3) == ["test_a", "test_b", "test_gen"]
+    assert _answer("otto test test_a test_g", 3) == ["test_gen"]
+    assert _answer("otto test --no-random test_a te", 4) == ["test_a", "test_b", "test_gen"]
 
 
 def test_hand_overs():
@@ -356,8 +378,8 @@ def test_hand_overs():
         _answer("otto tunnel remove ", 3)
     with pytest.raises(sc.Handover, match="past its first"):
         _answer("otto tunnel add --hosts a1,", 4)
-    with pytest.raises(sc.Handover, match="collected"):
-        _answer("otto test --tests ", 3, collected=None)
+    with pytest.raises(sc.Handover, match="no tables read"):
+        _answer("otto test ", 2, tests=None)
     with pytest.raises(sc.Handover, match="nargs=2 positional"):
         _answer("otto pair ", 2)
     with pytest.raises(sc.Handover, match="nargs=2 positional"):

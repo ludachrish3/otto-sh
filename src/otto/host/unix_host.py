@@ -502,8 +502,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """Recreate the ConnectionManager and dependents.
 
         Useful after changing ``hop`` or when the host must reconnect on a
-        new event loop (e.g. after ``pytest.main()`` returns and coverage
-        collection starts in a fresh ``asyncio.run()``).
+        new event loop: ``_claim_loop`` calls it when the loop that owned the
+        connection has closed, so the next use dials fresh on the loop it
+        runs on.
 
         The old manager is dropped, not closed (its transports may belong to
         a dead loop or a rebooted device), except for a cached console
@@ -648,13 +649,20 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 f"session as {login!r}, so it cannot run as {user!r}"
             )
 
+    def _live_file_transfer(self) -> UnixFileTransfer:
+        """Return the shared transfer backend, after claiming the running loop (``_claim_loop``)."""
+        self._claim_loop()
+        return self._file_transfer
+
     def _transfer_for(self, user: "str | None") -> UnixFileTransfer:
         """Return the transfer backend for *user* — the shared one for ``None``.
 
         Cached per user: the backend holds a live connection view and, for nc,
         a warmed-up control plane, so rebuilding it per call would re-probe
-        the remote on every transfer.
+        the remote on every transfer. Claims the running loop first, so a
+        backend bound to a closed loop is rebuilt before it is handed out.
         """
+        self._claim_loop()
         if user is None:
             return self._file_transfer
         ft = self._user_transfers.get(user)
@@ -689,14 +697,14 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """
         if self.term == "console":
             await self.close()
-            await self._connections.console()
+            await self._live_connections().console()
         elif self.term == "ssh":
-            await self._connections.ssh()
+            await self._live_connections().ssh()
         else:
-            await self._connections.telnet()
+            await self._live_connections().telnet()
 
         if self.transfer == "ftp":
-            await self._connections.ftp()
+            await self._live_connections().ftp()
 
     ####################
     #  Command execution
@@ -755,11 +763,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             await self._console_login_bridge(user, force=force)
             return
 
-        target = user if user is not None else self._connections.login_target
+        conns = self._live_connections()
+        target = user if user is not None else conns.login_target
         direct, hops = resolve_chain(self.creds, target, self.term)
 
         if self.term == "ssh":
-            via_login, _ = self._connections.credentials
+            via_login, _ = conns.credentials
             if direct.login != via_login:
                 raise LoginProxyError(
                     f"{self.name}: login is authenticated as {via_login!r}, "
@@ -767,7 +776,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     f"{direct.login!r}; starting a fresh connection as "
                     f"{direct.login!r} is not supported."
                 )
-            conn = await self._connections.ssh()
+            conn = await conns.ssh()
             await run_ssh_login(
                 conn=conn,
                 host_name=self.name,
@@ -781,7 +790,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             )
             return
 
-        login_user, password = self._connections.credentials
+        login_user, password = conns.credentials
         if direct.login != login_user:
             raise LoginProxyError(
                 f"{self.name}: login is authenticated as {login_user!r}, but "
@@ -791,12 +800,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             )
         interactive_options = replace(self.telnet_options, auto_window_resize=True)
         remote_port = interactive_options.port
-        if self._connections.has_tunnel:
-            local_port = await self._connections._forward_port(remote_port)  # noqa: SLF001 — intra-package access to HostConnections._forward_port for tunnel setup
+        if conns.has_tunnel:
+            local_port = await conns._forward_port(remote_port)  # noqa: SLF001 — intra-package access to HostConnections._forward_port for tunnel setup
             connect_host = "localhost"
             connect_port: int | None = local_port
         else:
-            connect_host = self._connections.ip
+            connect_host = conns.ip
             connect_port = None  # TelnetClient will use options.port
 
         client = TelnetClient(
@@ -876,10 +885,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         session manager replays them for ``run``. A console with no cred at
         all (and no ``--user``) resolves nothing and bridges as it is.
         """
-        opts = self._connections.console_options
-        login_user, _ = self._connections.credentials
+        conns = self._live_connections()
+        opts = conns.console_options
+        login_user, _ = conns.credentials
         hops: list[Cred] = []
-        target_login = user if user is not None else self._connections.login_target
+        target_login = user if user is not None else conns.login_target
         if target_login:
             direct, hops = resolve_chain(self.creds, target_login, self.term)
             if direct.login != login_user:
@@ -890,7 +900,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     f"{direct.login!r} is not supported."
                 )
         await self.close()
-        target = await self._connections.console_target()
+        target = await self._live_connections().console_target()
         client = self._new_console_client(target)
         try:
             await client.open(interactive=True)
@@ -928,14 +938,14 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         prompt to return to, so nothing is dialled.
         """
         self._refuse_console_verb("logout")
-        opts = self._connections.console_options
+        opts = self._live_connections().console_options
         if not opts.login:
             return Result(
                 Status.Success,
                 value=f"{self.name}: this console has no login step; nothing to reset",
             )
         await self.close()
-        target = await self._connections.console_target()
+        target = await self._live_connections().console_target()
         client = self._new_console_client(target)
         try:
             await client.open()
@@ -1030,13 +1040,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             user is not None
             and self.term == "ssh"
             and not needs_shell
-            and self._connections.has_direct_cred(user)
+            and self._live_connections().has_direct_cred(user)
         ):
-            conn = await self._connections.ssh_as(user)
-            return await self._session_mgr.exec_on(
+            conn = await self._live_connections().ssh_as(user)
+            return await self._live_session_mgr().exec_on(
                 conn, cmd, timeout=timeout, log=self._effective_log(log)
             )
-        return await self._session_mgr.exec(
+        return await self._live_session_mgr().exec(
             cmd,
             timeout=timeout,
             log=self._effective_log(log),
@@ -1078,6 +1088,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         ``@dataclass(slots=True)`` class, which is rebuilt after the methods
         close over the original.
         """
+        # Claimed before the line lock: the lock is per-loop state that a
+        # stale owner's rebuild replaces.
+        self._claim_loop()
         parent = super(UnixHost, self)
         if self.term != "console":
             return await parent._run_one(cmd, timeout, expects=expects, log=log, user=user)  # noqa: SLF001 — the parent's own implementation, via two-argument super()
@@ -1113,7 +1126,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         a ``session_setup`` hook that calls back into ``exec`` while the
         session is being built would wait on itself.
         """
-        mgr = self._session_mgr
+        mgr = self._live_session_mgr()
         async with self._console_line():
             if user is None or user == mgr.current_user:
                 return await mgr.exec(

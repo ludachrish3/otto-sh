@@ -27,8 +27,8 @@ import types
 
 import pytest
 
+from otto.params import OPTIONS
 from otto.registry import Registry
-from otto.suite.register import SUITES
 
 pytestmark = pytest.mark.hostless
 
@@ -67,8 +67,8 @@ def test_registry_discovery_sees_ottos_registries() -> None:
 
     found = _loaded_registries()
     assert found, "registry discovery found no otto registries — the guard is a no-op"
-    assert isinstance(SUITES, Registry)
-    assert any(reg is SUITES for reg in found), "SUITES is not among the guarded registries"
+    assert isinstance(OPTIONS, Registry)
+    assert any(reg is OPTIONS for reg in found), "OPTIONS is not among the guarded registries"
 
 
 def test_discovery_sees_a_new_registry_at_unchanged_module_count(monkeypatch) -> None:

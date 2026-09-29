@@ -11,7 +11,7 @@ command that does nothing at all.
 import logging
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
@@ -21,7 +21,6 @@ from otto.cli.invoke import LabReference, render_leaf_value
 from otto.cli.registry import CommandSpec, cli_command, register_cli_command
 from otto.host.element import Element
 from otto.result import CommandResult, NotRunResult, Result
-from otto.suite import OttoSuite
 from otto.utils import DRY_RUN_HEADLINE, Status, cli_exposed
 from tests._fixtures.dispatch import DispatchRunner
 from tests.conftest import active_context
@@ -127,7 +126,7 @@ class TestTheShippedRegistrationCarriesTheFlag:
 
         `otto host <id> exec 'uptime' -n` does not opt in — the echoed
         command IS the whole announcement, so there is nothing a body run
-        could add — and `test`'s opt-in lives on the suite LEAF, not here.
+        could add — and `test`'s opt-in lives on the `otto test` LEAF, not here.
         """
         assert _shipped(name).dry_run_preview is False
 
@@ -613,60 +612,45 @@ class TestRendererHandlesADecline:
 
 
 # ---------------------------------------------------------------------------
-# `otto test` — the suite imports, the steps bind, no step body runs
+# `otto test` — the verb's options bind, the static tree prints, no pytest runs
 # ---------------------------------------------------------------------------
 
 
-class SeamPreviewSuite(OttoSuite):
-    """A suite-shaped class with two bound tests."""
+class TestTestPreview:
+    """``otto -n test NAMES`` previews on its leaf; the ``test`` spec keeps the default.
 
-    def test_alpha(self) -> None: ...
-    def test_beta(self) -> None: ...
-    def helper(self) -> None: ...
+    The opt-in is stamped on the ``otto test`` LEAF (``otto/cli/test.py``),
+    which also finishes its own dry run: it binds the ``test`` verb's options
+    exactly as a run would, then prints the shared block and the static tree.
+    """
 
-
-@pytest.fixture
-def registered_suite() -> Any:
-    from otto.suite.register import SUITES, register_suite_class
-
-    register_suite_class(SeamPreviewSuite)
-    yield SeamPreviewSuite
-    SUITES.unregister(SeamPreviewSuite.__name__)
-
-
-class TestSuitePreview:
-    def test_dry_run_lists_the_bound_tests_and_never_reaches_run_suite(
-        self, registered_suite: Any
+    def test_dry_run_lists_the_static_tests_and_never_reaches_run_tests(
+        self, otto_test_cli: Any, sut_repo: Any
     ) -> None:
-        from otto.cli.test import suite_app
-
+        sut_repo(files={"tests/test_p.py": "def test_alpha(): pass\ndef test_beta(): pass\n"})
         ran: list[Any] = []
 
-        def spy_run_suite(suite: Any, **kw: Any) -> Any:
-            ran.append(suite)
-            raise AssertionError("run_suite must not be reached under --dry-run")
+        def spy_run_tests(names: Any, **kw: Any) -> Any:
+            ran.append(names)
+            raise AssertionError("run_tests must not be reached under --dry-run")
 
-        with (
-            active_context(dry_run=True),
-            patch("otto.suite.run.run_suite", spy_run_suite),
-        ):
-            dry = runner.invoke(suite_app, ["SeamPreviewSuite"], spec_name="test")
+        with patch("otto.suite.run.run_tests", spy_run_tests):
+            dry = otto_test_cli(["-n", "test", "test_alpha"])
         assert dry.exit_code == 0, dry.output
         out = flat(dry.output)
         assert DRY_RUN_HEADLINE in out
-        assert "2 test(s), no test body will run" in out
-        assert "- test_alpha" in out
-        assert "- test_beta" in out
-        assert "helper" not in out
+        assert "would run: otto test test_alpha" in out
+        assert "test_alpha" in out
+        assert "test_beta" not in out
         assert ran == []
 
-        # POSITIVE CONTROL, same command, same seam: without -n the suite runs.
+        # POSITIVE CONTROL, same command, same harness: without -n the run happens.
         from pathlib import Path
 
         from otto.suite.run import SuiteRunResult
 
-        def real_run_suite(suite: Any, **kw: Any) -> SuiteRunResult:
-            ran.append(suite)
+        def real_run_tests(names: Any, **kw: Any) -> SuiteRunResult:
+            ran.append(names)
             return SuiteRunResult(
                 exit_code=0,
                 junit_paths=[],
@@ -675,123 +659,24 @@ class TestSuitePreview:
                 output_dir=Path(),
             )
 
-        with active_context(), patch("otto.suite.run.run_suite", real_run_suite):
-            real = runner.invoke(suite_app, ["SeamPreviewSuite"], spec_name="test")
+        with patch("otto.suite.run.run_tests", real_run_tests):
+            real = otto_test_cli(["test", "test_alpha"])
         assert real.exit_code == 0, real.output
-        assert ran == [SeamPreviewSuite], "the suite did not run even WITHOUT --dry-run"
+        assert ran == [["test_alpha"]], "the tests did not run even WITHOUT --dry-run"
         assert DRY_RUN_HEADLINE not in real.output
 
-    def test_bound_test_names_reads_the_class_not_a_collection(self) -> None:
-        from otto.suite.register import bound_test_names
-
-        assert bound_test_names(SeamPreviewSuite) == ["test_alpha", "test_beta"]
-
-
-class TestTheSuitelessSelectionPathKeepsTheSafeDefault:
-    """`otto test --tests foo -n` stops at the seam and runs no pytest.
-
-    WHY THIS IS A SEPARATE PATH, and why the guard has to exist. `otto test`'s
-    opt-in is stamped on the SUITE LEAF (`otto/suite/register.py`), not on the
-    `test` `CommandSpec`. That placement is load-bearing, not incidental: the
-    `--tests` / `-m` selection has NO leaf at all — the group callback
-    (`otto/cli/test.py`) handles it inline, stamps the `test` spec on
-    `ctx.meta` itself, calls `command_preamble`, and then runs the selection
-    for real. Move the opt-in up to the spec (the obvious simplification: "one
-    flag for the whole command") and the seam waves this path through, so
-    `otto test --tests foo -n` invokes pytest against real hardware.
-
-    Nothing else covers it: `TestSuitePreview` above drives the suite leaf,
-    which is the arm that must NOT stop.
-    """
-
-    def _preamble_without_a_lab(self) -> "list[Any]":
-        """Neutralise the lab/gate halves of the preamble; the SEAM stays real.
-
-        `command_preamble` is `lab load → gate → seam`, and the selection path
-        reaches it under the real `test` spec (`lab_free=False`). A sub-app
-        unit test has no lab and no reservation backend, so those two are
-        stubbed — the line under test, `stop_at_dry_run_seam`, is untouched,
-        and both controls below run through the same stubs.
-        """
-        return [
-            patch("otto.cli.invoke.ensure_lab_session", lambda *_a, **_k: None),
-            patch("otto.cli.invoke.present_reservation_gate", lambda *_a, **_k: None),
-        ]
-
-    def test_a_tests_selection_stops_at_the_seam_while_a_suite_still_previews(
-        self, registered_suite: Any
-    ) -> None:
-        from otto.cli.test import suite_app
-
-        selected: list[Any] = []
-        lab, gate = self._preamble_without_a_lab()
-
-        with (
-            active_context(dry_run=True),
-            lab,
-            gate,
-            patch("otto.cli.test.run_selection", selected.append),
-        ):
-            dry = runner.invoke(suite_app, ["--tests", "test_alpha"], spec_name="test")
-
-        assert dry.exception is None, f"the selection path tracebacked: {dry.exception!r}"
-        assert dry.exit_code == 0, dry.output
-        assert selected == [], (
-            "`otto test --tests ... -n` ran the suite-less selection for real; "
-            "the opt-in has leaked from the suite leaf onto the `test` CommandSpec"
-        )
-        out = flat(dry.output)
-        assert DRY_RUN_HEADLINE in out, "the stop produced no announcement at all"
-        # `would run: test`, not `otto test --tests test_alpha`: `would_run_line`
-        # omits the ROOT context's own options, and under this harness the
-        # group IS the root (the real root is `otto`, which makes `test` a
-        # child and echoes its flags). The claim under test is that the stop
-        # announced itself — a dry run whose output is empty is a bug.
-        assert "would run: test" in out
-        assert dry.output.strip()
-
-        # POSITIVE CONTROL 1, same seam, same command group: the SUITE path
-        # still runs its body and prints its own deeper preview. Without this
-        # the assertion above is satisfied by a seam that stops everything —
-        # which is precisely the regression the leaf stamp exists to prevent.
-        lab, gate = self._preamble_without_a_lab()
-        with active_context(dry_run=True), lab, gate:
-            suite = runner.invoke(suite_app, ["SeamPreviewSuite"], spec_name="test")
-        assert suite.exit_code == 0, suite.output
-        assert "2 test(s), no test body will run" in flat(suite.output), (
-            "the suite leaf's own preview is gone, so `--tests` stopping proves nothing"
-        )
-
-        # POSITIVE CONTROL 2, same selection, same stubs, without -n: the
-        # selection IS reached. Without this, a `--tests` path that was simply
-        # broken would satisfy `selected == []` above.
-        lab, gate = self._preamble_without_a_lab()
-        with (
-            active_context(),
-            lab,
-            gate,
-            patch("otto.cli.test.run_selection", selected.append),
-        ):
-            real = runner.invoke(suite_app, ["--tests", "test_alpha"], spec_name="test")
-        assert real.exit_code == 0, real.output
-        assert len(selected) == 1, "the selection did not run even WITHOUT --dry-run"
-        assert DRY_RUN_HEADLINE not in real.output
-
-    def test_the_opt_in_is_on_the_leaf_and_not_on_the_test_command_spec(
-        self, registered_suite: Any
-    ) -> None:
+    def test_the_opt_in_is_on_the_leaf_and_not_on_the_test_command_spec(self) -> None:
         """The structural half, pinned so the drift is named and not inferred."""
-        from otto.suite.register import SUITES
+        from otto.cli import test as cli_test
+        from otto.cli.invoke import DRY_RUN_PREVIEW_ATTR, DRY_RUN_SELF_FINISHING_ATTR
 
-        assert _shipped("test").dry_run_preview is False, (
-            "moving `otto test`'s opt-in onto the CommandSpec opts the suite-less "
-            "`--tests` selection in too, and that path runs pytest for real"
-        )
-        # POSITIVE CONTROL: the opt-in DOES exist — one level down, on the leaf
-        # the suite registration generates. Without it, "the spec says False"
-        # would be satisfied by an `otto test` with no preview at all.
-        leaf = SUITES.get(registered_suite.__name__).sub_app.registered_commands[0].callback
-        assert leaf.__cli_dry_run_preview__ is True
+        assert _shipped("test").dry_run_preview is False
+        # POSITIVE CONTROL: the opt-in DOES exist — one level down, on the leaf.
+        # Without it, "the spec says False" would be satisfied by an `otto test`
+        # with no preview at all.
+        leaf = cli_test.test_app.registered_commands[0].callback
+        assert getattr(leaf, DRY_RUN_PREVIEW_ATTR) is True
+        assert getattr(leaf, DRY_RUN_SELF_FINISHING_ATTR) is True
 
 
 # ---------------------------------------------------------------------------
@@ -1293,6 +1178,60 @@ class TestProbeDialsAndNeverCommands:
         assert opened.opens == []
 
 
+class TestSeamStaysLoopFreeWithoutProbe:
+    """Round-3 fix: the seam's OWN tail must never pay for a loop it doesn't need.
+
+    Before this fix ``stop_at_dry_run_seam`` bridged its ENTIRE tail through
+    ``run_command(finish_dry_run(...))`` unconditionally — signal handlers,
+    a host-scope sweep, and a teardown-deadline lookup, all to print a few
+    lines and raise ``typer.Exit(0)``. Patching ``otto.lifecycle.run_command``
+    and asserting it went untouched is the only way to prove the loop truly
+    never starts; asserting on output alone could not tell this fix apart
+    from one that still spins a loop it happens to tear down cleanly.
+    """
+
+    def test_a_plain_dry_run_stop_starts_no_event_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run_command_spy = MagicMock(name="run_command")
+        monkeypatch.setattr("otto.lifecycle.run_command", run_command_spy)
+        host = _dialable_host()
+        lab = _lab_with(host)
+        calls: list[str] = []
+
+        with active_context(lab=lab, dry_run=True):
+            result = runner.invoke(_probe_app(["dut1"], probe=False, calls=calls), ["go"])
+
+        assert result.exit_code == 0, result.output
+        assert calls == [], "the seam let the body run under --dry-run"
+        run_command_spy.assert_not_called()
+
+    def test_with_probe_the_seam_still_reports_reachability_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression guard: routing the probe step through the sync
+        ``run_probe`` wrapper directly (rather than through ``finish_dry_run``'s
+        own ``run_command`` bridge) must not change a byte of what
+        ``-n --probe`` prints — same headline, same transport count, same
+        zero commands issued.
+        """
+        host = _dialable_host()
+        lab = _lab_with(host)
+        opened, ran = _spy_transport_and_commands(monkeypatch)
+        calls: list[str] = []
+
+        with active_context(lab=lab, dry_run=True):
+            probed = runner.invoke(_probe_app(["dut1"], probe=True, calls=calls), ["go"])
+
+        assert probed.exit_code == 0, probed.output
+        assert len(opened.opens) == 1, (
+            f"--probe opened {len(opened.opens)} transports, expected exactly one"
+        )
+        assert ran == [], f"--probe RAN A COMMAND: {ran}"
+        assert calls == [], "the seam let the body run under --dry-run --probe"
+        assert "dut1: reachable" in flat(probed.output)
+
+
 class TestProbeRequiresDryRun:
     def test_bare_probe_is_a_usage_error_naming_the_dependency(self, tmp_path: Any) -> None:
         """Driven through the shipped root app: this is a ROOT-option contract."""
@@ -1415,3 +1354,155 @@ class TestProbeHostSetAndTable:
             print_probe_report([])
         assert rprint.call_count == 1
         assert PROBE_NO_HOSTS in rprint.call_args[0][0]
+
+
+# ---------------------------------------------------------------------------
+# Task 4b fix round 2, item 1: one shared probe/resolve/print/exit tail, and
+# `--probe` must never be dropped for a SELF-FINISHING leaf (options=...).
+# ---------------------------------------------------------------------------
+
+
+def _options_leaf_app(
+    *, probe: bool, preview: bool, names_host: bool, calls: "list[str]"
+) -> typer.Typer:
+    """A self-finishing leaf (``options=`` via ``prepare_command_target``), root-stashed.
+
+    Mirrors :func:`_probe_app`'s shape (its own root callback stashes
+    ``_otto_root_options``, its own leaf lends the seam/tail a reference
+    resolver) but for a leaf that carries options, so it validates and shows
+    them itself instead of the generic seam doing it.
+
+    *preview* stamps the leaf's OWN ``DRY_RUN_PREVIEW_ATTR`` (the
+    per-leaf escape hatch, not a group-level ``CommandSpec``), so this is
+    drivable through a bare ``runner.invoke`` with no synthetic
+    ``dry_run_preview=`` needed. *names_host* stamps ``DRY_RUN_REFS_ATTR``
+    naming ``dut1``, or leaves it unset (a leaf that names no host).
+    """
+    from otto import options
+    from otto.cli.invoke import DRY_RUN_PREVIEW_ATTR, DRY_RUN_REFS_ATTR, prepare_command_target
+
+    @options
+    class Opts:
+        k: int = 1
+
+        def __post_init__(self) -> None:
+            if self.k < 1:
+                raise ValueError("k must be >= 1")
+
+    async def go(opts: Opts) -> None:
+        calls.append(f"go k={opts.k}")
+
+    if names_host:
+        setattr(
+            go,
+            DRY_RUN_REFS_ATTR,
+            lambda _ctx: [LabReference(kind="host", name="dut1", host_ids=["dut1"])],
+        )
+    if preview:
+        setattr(go, DRY_RUN_PREVIEW_ATTR, True)
+
+    target = prepare_command_target(go, Opts)
+    app = typer.Typer(name="optsdemo")
+
+    @app.callback()
+    def _root(ctx: typer.Context) -> None:  # ty: ignore[unused-function]
+        if ctx.resilient_parsing:
+            return
+        ctx.meta["_otto_root_options"] = _root_options(dry_run=True, probe=probe)
+
+    app.command("go")(target)
+    return app
+
+
+class TestSelfFinishingLeafSharesTheProbeTail:
+    """A leaf with ``options=`` gets the SAME ``--probe`` treatment a plain leaf does."""
+
+    def test_a_previewing_leaf_with_options_still_gets_probed_under_probe(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: a ``dry_run_preview`` leaf WITH options used to drop ``--probe``.
+
+        The wrapper's dry-run branch used to gate the ENTIRE tail (probe
+        included) on ``not preview``, so an options-bearing preview leaf
+        printed nothing and dialed nothing under ``-n --probe`` — silently
+        different from a plain (no-options) preview leaf, which the seam
+        already probed. ``finish_dry_run`` now runs the probe step first
+        regardless of *preview*, matching that shape.
+        """
+        host = _dialable_host()
+        lab = _lab_with(host)
+        opened, _ran = _spy_transport_and_commands(monkeypatch)
+        calls: list[str] = []
+
+        with active_context(lab=lab, dry_run=True):
+            res = runner.invoke(
+                _options_leaf_app(probe=True, preview=True, names_host=True, calls=calls),
+                ["go", "--k", "3"],
+                async_leaves=True,
+            )
+        assert res.exit_code == 0, res.output
+        assert res.exception is None, repr(res.exception)
+        assert "dut1: reachable" in flat(res.output), (
+            "an options-bearing preview leaf ignored --probe"
+        )
+        assert calls == ["go k=3"], "the probe swallowed the preview body"
+        assert len(opened.opens) == 1
+
+        # POSITIVE CONTROL: without --probe, options still validate, the body
+        # still runs, and nothing is dialed -- so the assertions above are
+        # about the flag, not about the opt-in.
+        calls.clear()
+        opened.opens.clear()
+        with active_context(lab=lab, dry_run=True):
+            plain = runner.invoke(
+                _options_leaf_app(probe=False, preview=True, names_host=True, calls=calls),
+                ["go", "--k", "3"],
+                async_leaves=True,
+            )
+        assert plain.exit_code == 0, plain.output
+        assert calls == ["go k=3"]
+        assert opened.opens == []
+
+        # And a bad value still fails validation before anything else --
+        # preview never buys a leaf out of its own options check.
+        calls.clear()
+        with active_context(lab=lab, dry_run=True):
+            bad = runner.invoke(
+                _options_leaf_app(probe=False, preview=True, names_host=True, calls=calls),
+                ["go", "--k", "0"],
+                async_leaves=True,
+            )
+        assert bad.exit_code == 2, bad.output
+        assert calls == []
+
+    def test_a_self_finishing_leaf_naming_a_host_probes_with_no_nested_asyncio_run(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: probing used to nest ``asyncio.run`` inside the leaf's own loop.
+
+        ``finish_dry_run``'s probe step used to call ``run_probe``, which
+        bridges into :func:`~otto.lifecycle.run_command` (a bare
+        ``asyncio.run``) — safe from the SEAM's sync context, but a
+        self-finishing leaf calls ``finish_dry_run`` from INSIDE its own
+        body, which is already running under otto's OWN outer
+        ``run_command``. The first self-finishing leaf whose references
+        named a host raised ``RuntimeError: asyncio.run() cannot be called
+        from a running event loop``. The probe step now awaits
+        ``probe_references`` directly instead.
+        """
+        host = _dialable_host()
+        lab = _lab_with(host)
+        opened, _ran = _spy_transport_and_commands(monkeypatch)
+        calls: list[str] = []
+
+        with active_context(lab=lab, dry_run=True):
+            res = runner.invoke(
+                _options_leaf_app(probe=True, preview=False, names_host=True, calls=calls),
+                ["go", "--k", "3"],
+                async_leaves=True,
+            )
+        assert res.exception is None, repr(res.exception)
+        assert res.exit_code == 0, res.output
+        assert "dut1: reachable" in flat(res.output)
+        assert calls == [], "a non-previewing self-finishing leaf ran its body"
+        assert len(opened.opens) == 1

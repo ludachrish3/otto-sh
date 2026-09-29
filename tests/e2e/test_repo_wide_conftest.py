@@ -1,4 +1,4 @@
-"""otto test loads conftest.py from the repo root, not just the suite's dir."""
+"""otto test loads conftest.py from the repo root, not just the test file's dir."""
 
 from pathlib import Path
 
@@ -31,10 +31,7 @@ def root_marker() -> str:
 """
 
 SUITE = """\
-from otto.suite import OttoSuite
-
-
-class TestConfcut(OttoSuite):
+class TestConfcut:
     async def test_sees_root_fixture(self, root_marker: str) -> None:
         assert root_marker == "from-repo-root"
 """
@@ -51,7 +48,7 @@ def _make_repo(root: Path) -> None:
     )
 
 
-def test_suite_in_subdir_sees_repo_root_fixture(tmp_path: Path) -> None:
+def test_class_in_subdir_sees_repo_root_fixture(tmp_path: Path) -> None:
     repo = tmp_path / "confrepo"
     _make_repo(repo)
     r = run_otto(

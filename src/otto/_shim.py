@@ -21,6 +21,8 @@ written to stdout before that decision is made — the same rule the resolver
 itself follows. When the cache itself is what failed (not merely a TAB the
 shim does not model), the outcome's ``stale`` flag rides along to ``entry()``
 so THIS TAB repairs the cache and the next one is answered from here again.
+A test-name TAB answered from a table whose files moved starts the collect
+child detached, after its answer is written.
 
 Imports nothing from otto at module scope.
 """
@@ -72,9 +74,10 @@ def main() -> None:
         # library alone when the cache validates (docs/superpowers/specs/
         # 2026-09-04-shim-completion-design.md); anything else falls through
         # to the full path below, which is always right.
-        from ._shim_complete import answer_or_reason
+        from ._shim_complete import answer_or_reason, spawn_refresh
 
-        outcome = answer_or_reason(dict(os.environ))
+        environ = dict(os.environ)
+        outcome = answer_or_reason(environ)
         cache_stale = outcome.stale
         text = None if outcome.items is None else "\n".join(outcome.items)
         if text is not None:
@@ -92,6 +95,11 @@ def main() -> None:
                 # same TAB the way click does.
                 pass
             else:
+                if outcome.refresh is not None:
+                    # A test-name TAB answered from a table with moved paths: the
+                    # collect child re-reads them, started only now that the
+                    # shell has its answer, and never waited for.
+                    spawn_refresh(outcome.refresh, environ)
                 raise SystemExit(0)
 
     # pydantic looks for its plugins on the first model build by opening

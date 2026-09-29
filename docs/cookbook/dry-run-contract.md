@@ -93,9 +93,9 @@ dry run: no command body was run and no device was contacted
 See {doc}`../cli/link/index` and {doc}`../cli/tunnel/index` for what each of those
 previews can and cannot tell you.
 
-## The library contract, for suite and script authors
+## The library contract, for test and script authors
 
-Everything above is about the CLI. If you write suites, instructions or
+Everything above is about the CLI. If you write tests, instructions or
 scripts, you call `host.run(...)` directly and the seam is not above you — this
 section is the one that matters.
 

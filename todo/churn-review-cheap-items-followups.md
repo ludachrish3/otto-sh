@@ -401,7 +401,10 @@ to `otto run` and `@cli_command` rather than applied to every leaf:
 
 ## From `docs(suite): registration reads the top level, and says so`
 
-- **A nested `Test*` OttoSuite is still silently unavailable.** The boundary is
+- ✅ **A nested `Test*` OttoSuite is still silently unavailable.**
+  Moot (#457): `OttoSuite`, its registry, and the `otto test <Suite>`
+  subcommands are deleted; nested test files are just pytest's own
+  collection problem now, not otto's. The boundary is
   now documented and tested, but a user who puts a suite in
   `tests/device/test_x.py` gets click's bare "No such command" with no hint
   that the file was never imported. Naming it would need a recursive AST scan
@@ -412,7 +415,9 @@ to `otto run` and `@cli_command` rather than applied to every leaf:
   there legitimately). The natural seam is `make_registry_group.get_command`
   returning None.
 
-- **`import_test_file` keys its module name on the FILE STEM alone.**
+- ✅ **`import_test_file` keys its module name on the FILE STEM alone.**
+  Obsolete (#457): the test-file loader and the suite registry are deleted;
+  only pytest imports a test file now.
   `_otto_suite_{stem}`, and it returns early when that name is already in
   `sys.modules` — so two repos that both have `tests/test_device.py` silently
   register only the first one's suites, and in-process test runs inherit
@@ -423,7 +428,11 @@ to `otto run` and `@cli_command` rather than applied to every leaf:
   name would fix it; the early return is load-bearing for idempotence, so it
   needs the name to be unique rather than the check removed.
 
-- **★ Bootstrap's containment seam does not contain `pytest.importorskip`.**
+- ✅ **★ Bootstrap's containment seam does not contain `pytest.importorskip`.**
+  Moot (#457): bootstrap no longer imports test files at all — `Repo.iter_test_files`/
+  `import_test_file(s)` and `load_test_suites` are deleted, so "a registered
+  test file... tracebacks straight out of `entry()`" can't happen; test files
+  load only inside a pytest session now.
   `bootstrap.py:126` catches `Exception`, but a module-level
   `pytest.importorskip` (or `pytest.skip(allow_module_level=True)`) raises
   `_pytest.outcomes.Skipped`, whose MRO is `(Skipped, OutcomeException,
@@ -437,7 +446,11 @@ to `otto run` and `@cli_command` rather than applied to every leaf:
   argument for keeping `iter_test_files` narrow and deserves a fix, not just
   a citation.
 
-- **Collection registers nested suites as a side effect.** `collect_tests`
+- ✅ **Collection registers nested suites as a side effect.**
+  Moot (#457): `collect_tests`, `SUITES` and the suite registry are all
+  deleted; test names now come from pytest collection via
+  `otto/config/collected_tests.py`, which registers nothing.
+  `collect_tests`
   runs `pytest.main` in process, which IMPORTS every collected module, so a
   nested suite does reach `SUITES` — under pytest's own module name, long
   after the `otto test` group was built, so it never becomes a subcommand. It
@@ -453,7 +466,9 @@ to `otto run` and `@cli_command` rather than applied to every leaf:
 
 Outside the F10 change; recorded with their evidence level stated.
 
-- **`otto test --tests <name>` panics when `tach` is installed in the venv.**
+- ✅ **`otto test --tests <name>` panics when `tach` is installed in the venv.**
+  Moot (#457): `collect_tests`, its `sys.modules.clear()`/`update(saved)`
+  hack, and `--tests` are all deleted.
   `collect_tests` does `sys.modules.clear(); sys.modules.update(saved)`, which
   unloads the plugins its own inner session imported; the next
   `_guarded_pytest_session` re-imports `tach.extension`, whose Rust module
@@ -463,7 +478,13 @@ Outside the F10 change; recorded with their evidence level stated.
   installs. Reproduced by the reviewer on every run from the worktree venv;
   workaround `PYTEST_ADDOPTS="-p no:tach"`. Mechanism read from code.
 
-- **`otto test <Suite>` reports 3× the true pass count.** A 1-method suite
+- ✅ **`otto test <Suite>` reports 3× the true pass count.**
+  Moot as filed (#457): there is no more per-suite `otto test <Suite>`
+  subcommand to reproduce this against — `OttoSuite` and its per-class
+  subcommands are deleted, `otto test` is one plain-pytest verb now. Root
+  cause was never established, so re-check for a live triple-count against
+  today's single `otto test` surface before assuming it is gone too. A
+  1-method suite
   prints `3 passed`, a 2-method suite `6 passed`, while junit records 1 and 2
   and a side-effect counter confirms one execution. Reporting only, but
   user-facing. Root cause not established.

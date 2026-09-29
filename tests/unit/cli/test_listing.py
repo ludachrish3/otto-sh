@@ -1,30 +1,30 @@
 """
 Tests for the --list-* options on otto test and otto run.
 
-Unit tests exercise panel methods directly using pre-built CollectedTest
-objects and tmp_path-backed Repo instances.
-
-Integration tests create an external SUT repo in tmp_path (outside the
-otto project root) and verify the full pipeline:
-  - CollectedTest.path is always absolute
-  - Panels display paths relative to sut_dir
+Unit tests exercise panel methods directly on tmp_path-backed Repo
+instances; the listings pytest collects are pinned in
+``tests/unit/cli/test_test_listings.py``.
 """
 
 import io
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
-from otto.cli.test import suite_app
-from otto.config.repo import CollectedTest, Repo, _test_run_syntax
+from otto.config.repo import Repo
 from tests._fixtures.labdata import write_lab_json
-from tests._fixtures.paths import PROJECT_ROOT
 from tests._fixtures.sutrepo import make_sut_repo
 
 runner = CliRunner()
+
+
+def _test_app():
+    """``otto test``'s app, read at call time so it carries the current verb flags."""
+    from otto.cli import test as cli_test
+
+    return cli_test.test_app
 
 
 # ---------------------------------------------------------------------------
@@ -60,109 +60,6 @@ def _add_test_file(
     p = tests_dir / filename
     p.write_text(content)
     return p
-
-
-def _item(sut_dir: Path, rel: str, name: str, cls_name: str | None = None) -> CollectedTest:
-    """Build a CollectedTest with an absolute path inside sut_dir."""
-    return CollectedTest(
-        nodeid=f"pytest/root/{rel}::{name}",
-        name=name,
-        path=(sut_dir / rel).resolve(),
-        cls_name=cls_name,
-    )
-
-
-# ---------------------------------------------------------------------------
-# get_test_suites_panel — unique suites / files
-# ---------------------------------------------------------------------------
-
-
-class TestGetTestSuitesPanel:
-    def _seed(self, sut_dir, *names):
-        from otto.suite.register import SUITES, SuiteEntry
-
-        for n in names:
-            SUITES.register(
-                n,
-                SuiteEntry(
-                    name=n,
-                    sub_app=__import__("typer").Typer(),
-                    file=str((sut_dir / "tests" / f"{n}.py").resolve()),
-                    cls=object,
-                ),
-                origin="test_listing",
-            )
-
-    def _cleanup(self, *names):
-        from otto.suite.register import SUITES
-
-        for n in names:
-            if n in SUITES:
-                SUITES.unregister(n)
-
-    def test_lists_registered_suite_names(self, tmp_path):
-        sut_dir = _make_sut(tmp_path)
-        repo = Repo(sut_dir=sut_dir)
-        self._seed(sut_dir, "TestAlpha", "TestBeta")
-        try:
-            text = _render(repo.get_test_suites_panel())
-        finally:
-            self._cleanup("TestAlpha", "TestBeta")
-        assert "TestAlpha" in text
-        assert "TestBeta" in text
-
-    def test_empty_when_no_suites(self, tmp_path):
-        repo = Repo(sut_dir=_make_sut(tmp_path))
-        assert "no tests found" in _render(repo.get_test_suites_panel())
-
-
-# ---------------------------------------------------------------------------
-# Repo.registered_suites() — registry-based suite attribution
-# ---------------------------------------------------------------------------
-
-
-class TestRegisteredSuites:
-    def test_attributes_suites_under_sut_dir(self, tmp_path):
-        from otto.suite.register import SUITES, SuiteEntry
-
-        sut_dir = _make_sut(tmp_path)
-        repo = Repo(sut_dir=sut_dir)
-        suite_file = str((sut_dir / "tests" / "test_thing.py").resolve())
-        # Seed the registry directly (no real import needed).
-        SUITES.register(
-            "TestThing",
-            SuiteEntry(
-                name="TestThing",
-                sub_app=__import__("typer").Typer(),
-                file=suite_file,
-                cls=object,
-            ),
-            origin="test_listing",
-        )
-        try:
-            assert repo.registered_suites() == ["TestThing"]
-        finally:
-            SUITES.unregister("TestThing")
-
-    def test_excludes_suites_outside_sut_dir(self, tmp_path):
-        from otto.suite.register import SUITES, SuiteEntry
-
-        sut_dir = _make_sut(tmp_path)
-        repo = Repo(sut_dir=sut_dir)
-        SUITES.register(
-            "Foreign",
-            SuiteEntry(
-                name="Foreign",
-                sub_app=__import__("typer").Typer(),
-                file=str((tmp_path / "other" / "test_x.py").resolve()),
-                cls=object,
-            ),
-            origin="test_listing",
-        )
-        try:
-            assert repo.registered_suites() == []
-        finally:
-            SUITES.unregister("Foreign")
 
 
 # ---------------------------------------------------------------------------
@@ -209,84 +106,21 @@ class TestGetLabPanel:
 
 
 # ---------------------------------------------------------------------------
-# --list-* CLI callbacks
+# get_markers_panel
 # ---------------------------------------------------------------------------
-
-
-class TestListCallbacks:
-    """Verify callbacks invoke the correct panel method and exit cleanly."""
-
-    def test_list_suites_renders_registry_names(self, tmp_path):
-        from otto.suite.register import SUITES, SuiteEntry
-
-        sut_dir = _make_sut(tmp_path)
-        SUITES.register(
-            "TestRealSuite",
-            SuiteEntry(
-                name="TestRealSuite",
-                sub_app=__import__("typer").Typer(),
-                file=str((sut_dir / "tests" / "test_real.py").resolve()),
-                cls=object,
-            ),
-            origin="test_listing",
-        )
-        try:
-            with patch("otto.cli.test.get_repos", return_value=[Repo(sut_dir=sut_dir)]):
-                result = runner.invoke(suite_app, ["--list-suites"])
-        finally:
-            SUITES.unregister("TestRealSuite")
-        assert result.exit_code == 0
-        assert "TestRealSuite" in result.stdout
-
-
-# ---------------------------------------------------------------------------
-# configured_markers + get_markers_panel
-# ---------------------------------------------------------------------------
-
-
-class TestConfiguredMarkers:
-    def test_reads_pyproject_markers(self, tmp_path):
-        sut = _make_sut(tmp_path)
-        (sut / "pyproject.toml").write_text(
-            '[tool.pytest.ini_options]\nmarkers = ["slow: heavy", "smoke: quick"]\n'
-        )
-        repo = Repo(sut_dir=sut)
-        assert repo.configured_markers() == ["slow", "smoke"]
-
-    def test_returns_empty_when_no_pyproject(self, tmp_path):
-        repo = Repo(sut_dir=_make_sut(tmp_path))
-        assert repo.configured_markers() == []
-
-    def test_returns_empty_when_no_markers_key(self, tmp_path):
-        sut = _make_sut(tmp_path)
-        (sut / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
-        repo = Repo(sut_dir=sut)
-        assert repo.configured_markers() == []
-
-    def test_strips_paren_form(self, tmp_path):
-        sut = _make_sut(tmp_path)
-        (sut / "pyproject.toml").write_text(
-            '[tool.pytest.ini_options]\nmarkers = ["timeout(n): time limit"]\n'
-        )
-        repo = Repo(sut_dir=sut)
-        assert repo.configured_markers() == ["timeout"]
 
 
 class TestGetMarkersPanel:
     def test_populated_panel_shows_markers(self, tmp_path):
-        sut = _make_sut(tmp_path)
-        (sut / "pyproject.toml").write_text(
-            '[tool.pytest.ini_options]\nmarkers = ["slow: heavy", "smoke: quick"]\n'
-        )
-        repo = Repo(sut_dir=sut)
-        text = _render(repo.get_markers_panel())
+        repo = Repo(sut_dir=_make_sut(tmp_path))
+        text = _render(repo.get_markers_panel(["slow", "smoke"]))
         assert "slow" in text
         assert "smoke" in text
 
     def test_empty_panel_shows_placeholder(self, tmp_path):
         repo = Repo(sut_dir=_make_sut(tmp_path))
-        text = _render(repo.get_markers_panel())
-        assert "no markers configured" in text
+        text = _render(repo.get_markers_panel([]))
+        assert "no markers found" in text
 
 
 # ---------------------------------------------------------------------------
@@ -295,28 +129,18 @@ class TestGetMarkersPanel:
 
 
 class TestListMarkers:
-    def test_list_markers_renders_configured(self, tmp_path):
+    def test_a_repo_with_no_tests_shows_the_placeholder(self, tmp_path):
         sut = _make_sut(tmp_path)
-        (sut / "pyproject.toml").write_text(
-            '[tool.pytest.ini_options]\nmarkers = ["smoke: quick"]\n'
-        )
-        with patch("otto.cli.test.get_repos", return_value=[Repo(sut_dir=sut)]):
-            result = runner.invoke(suite_app, ["--list-markers"])
+        with patch("otto.config.get_repos", return_value=[Repo(sut_dir=sut)]):
+            result = runner.invoke(_test_app(), ["--list-markers"])
         assert result.exit_code == 0
-        assert "smoke" in result.stdout
-
-    def test_list_markers_empty_shows_placeholder(self, tmp_path):
-        sut = _make_sut(tmp_path)
-        with patch("otto.cli.test.get_repos", return_value=[Repo(sut_dir=sut)]):
-            result = runner.invoke(suite_app, ["--list-markers"])
-        assert result.exit_code == 0
-        assert "no markers configured" in result.stdout
+        assert "no markers found" in result.stdout
 
     def test_list_markers_includes_otto_builtins(self, tmp_path):
         """`ensure` and `retry` are otto's, not the repo's — they get their own panel."""
         sut = _make_sut(tmp_path)
-        with patch("otto.cli.test.get_repos", return_value=[Repo(sut_dir=sut)]):
-            result = runner.invoke(suite_app, ["--list-markers"])
+        with patch("otto.config.get_repos", return_value=[Repo(sut_dir=sut)]):
+            result = runner.invoke(_test_app(), ["--list-markers"])
         assert result.exit_code == 0
         assert "ensure(*steps)" in result.stdout
         assert "retry(n)" in result.stdout
@@ -391,105 +215,6 @@ class TestGetInstructionsPanel:
 
 
 # ---------------------------------------------------------------------------
-# Integration tests — external SUT repo in tmp_path
-# ---------------------------------------------------------------------------
-
-
-class TestExternalRepoIntegration:
-    """
-    Full-pipeline tests using a real SUT repo created in tmp_path.
-
-    tmp_path resolves to a directory outside the otto project root (typically
-    /tmp/pytest-*), confirming that otto handles external SUT repos correctly.
-    The tests cover the absolute-vs-relative invariant end-to-end:
-      - CollectedTest.path must be absolute
-      - Panel display must be relative to sut_dir
-    """
-
-    @pytest.fixture
-    def sut(self, tmp_path) -> tuple[Path, Repo]:
-        sut_dir = make_sut_repo(
-            tmp_path / "external_sut",
-            name="external",
-            version="0.1.0",
-            tests=["tests"],
-            files={
-                "tests/test_suite.py": (
-                    "def test_alpha():\n    assert True\n\ndef test_beta():\n    assert True\n"
-                )
-            },
-        )
-        return sut_dir, Repo(sut_dir=sut_dir)
-
-    def test_sut_dir_is_outside_otto_root(self, sut: tuple[Path, Repo]):
-        """Confirm the fixture actually creates an external repo."""
-        sut_dir, _ = sut
-        assert not sut_dir.is_relative_to(PROJECT_ROOT)
-
-    def test_collected_paths_are_absolute(self, sut: tuple[Path, Repo]):
-        _, repo = sut
-        items = repo.collect_tests()
-        assert len(items) == 2
-        for item in items:
-            assert item.path.is_absolute()
-
-    def test_collected_paths_are_under_sut_dir(self, sut: tuple[Path, Repo]):
-        sut_dir, repo = sut
-        items = repo.collect_tests()
-        assert len(items) == 2  # collect_tests() returning [] must not pass silently
-        for item in items:
-            assert item.path.is_relative_to(sut_dir)
-
-    def test_suites_panel_excludes_bare_functions(self, sut: tuple[Path, Repo]):
-        """Bare functions have no 'otto test' subcommand and must not appear."""
-        _, repo = sut
-        # No suites registered for this repo — panel must show placeholder.
-        text = _render(repo.get_test_suites_panel())
-        assert "test_suite" not in text
-        assert "no tests found" in text
-
-    def test_class_based_suites_panel_shows_class_name(self, tmp_path):
-        """Class-based suites show just ClassName — the 'otto test ClassName' subcommand."""
-        from otto.suite.register import SUITES, SuiteEntry
-
-        sut_dir = _make_sut(tmp_path)
-        _add_test_file(
-            sut_dir,
-            "test_class.py",
-            "class TestMyDevice:\n    def test_ping(self):\n        assert True\n",
-        )
-        repo = Repo(sut_dir=sut_dir)
-        SUITES.register(
-            "TestMyDevice",
-            SuiteEntry(
-                name="TestMyDevice",
-                sub_app=__import__("typer").Typer(),
-                file=str((sut_dir / "tests" / "test_class.py").resolve()),
-                cls=object,
-            ),
-            origin="test_listing",
-        )
-        try:
-            text = _render(repo.get_test_suites_panel())
-        finally:
-            SUITES.unregister("TestMyDevice")
-        assert "TestMyDevice" in text
-        assert "test_class.py" not in text
-        assert str(sut_dir) not in text
-
-    def test_collected_display_paths_are_relative_to_sut(self, sut: tuple[Path, Repo]):
-        """The panel display path is sut_dir-relative and resolves to an existing file."""
-        sut_dir, repo = sut
-        items = repo.collect_tests()
-        assert items
-        for item in items:
-            display_path = _test_run_syntax(item, sut_dir)
-            file_part, _, _ = display_path.partition("::")
-            assert not Path(file_part).is_absolute(), f"{file_part!r} is absolute"
-            assert (sut_dir / file_part).exists(), f"{file_part!r} does not exist under sut_dir"
-
-
-# ---------------------------------------------------------------------------
 # --list-tests CLI flag
 # ---------------------------------------------------------------------------
 
@@ -512,43 +237,21 @@ class TestListTests:
 
     def test_list_tests_lists_all_and_exits(self, tmp_path: Path) -> None:
         repo = self._repo_with_tests(tmp_path)
-        with patch("otto.cli.test.get_repos", return_value=[repo]):
-            result = runner.invoke(suite_app, ["--list-tests"])
+        with patch("otto.config.get_repos", return_value=[repo]):
+            result = runner.invoke(_test_app(), ["--list-tests"])
         assert result.exit_code == 0
         assert "test_alpha" in result.stdout
         assert "test_beta" in result.stdout
 
     def test_list_tests_filters_by_marker(self, tmp_path: Path) -> None:
         repo = self._repo_with_tests(tmp_path)
-        with patch("otto.cli.test.get_repos", return_value=[repo]):
-            result = runner.invoke(suite_app, ["--list-tests", "--markers", "slow"])
+        with patch("otto.config.get_repos", return_value=[repo]):
+            result = runner.invoke(_test_app(), ["--list-tests", "--markers", "slow"])
         assert result.exit_code == 0
         assert "test_beta" in result.stdout
         assert "test_alpha" not in result.stdout
 
-    def test_no_subcommand_no_flags_shows_help(self) -> None:
-        result = runner.invoke(suite_app, [])
-        assert result.exit_code == 0
-        assert "Usage" in result.stdout or "Commands" in result.stdout
-
-
-def test_list_suites_warns_once_for_a_broken_test_file(tmp_path):
-    """``--list-suites`` reads suites, so it loads them and prints the lazy finding once."""
-    import os
-    import subprocess
-    import sys
-
-    repo = make_sut_repo(
-        tmp_path / "r", name="r", tests=["tests"], files={"tests/test_bad.py": "def (:\n"}
-    )
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
-    env.update(OTTO_SUT_DIRS=str(repo), OTTO_HOME=str(tmp_path / "home"))
-    p = subprocess.run(
-        [str(Path(sys.executable).with_name("otto")), "test", "--list-suites"],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert p.returncode == 0, p.stderr
-    assert p.stderr.count("failed to load test_bad.py") == 1, p.stderr
+    def test_no_names_and_no_flags_is_a_usage_error(self) -> None:
+        result = runner.invoke(_test_app(), [])
+        assert result.exit_code == 2
+        assert "at least one test name or -m" in result.output

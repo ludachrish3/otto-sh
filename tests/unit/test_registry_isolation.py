@@ -52,9 +52,9 @@ def test_dropped_entry_origin_module_is_evicted() -> None:
 
 def test_origin_module_loaded_before_the_test_is_not_evicted() -> None:
     """A module already imported before the test (e.g. the running test file,
-    which registers local suite classes via ``register_suite_class``) must be
-    left in ``sys.modules`` — evicting it breaks ``inspect.getfile`` for every
-    later registration in that file.
+    which registers a locally defined class) must be left in ``sys.modules`` —
+    evicting it breaks ``inspect.getfile`` for every later registration in
+    that file.
     """
     reg = Registry("thing", register_hint="register_thing()")
     snapshot = _snapshot(reg)

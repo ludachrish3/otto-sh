@@ -90,9 +90,14 @@ def test_tests_and_markers_sites_are_classified():
     tree = serialize_tree(_cli()).tree
     test_node = tree["commands"]["test"]
     by_flag = {f: p for p in test_node["params"] for f in p["flags"]}
-    assert by_flag["--tests"]["source"] == {"kind": "tests", "sep": ","}
-    assert by_flag["--tests"]["sep"] == ","
+    (names,) = [p for p in test_node["params"] if p["name"] == "names"]
+    assert names["flags"] == []
+    assert names["nargs"] == -1
+    assert names["source"] == {"kind": "tests"}
+    assert not names["sep"]
+    assert "--tests" not in by_flag
     assert by_flag["-m"]["source"] == {"kind": "markers"}
+    assert test_node["commands"] == {}
 
 
 def test_user_options_are_host_scoped_login_sources_per_verb_and_family():

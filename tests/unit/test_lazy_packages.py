@@ -445,7 +445,7 @@ IMPORT_ORDERS = [
     "import otto.tunnel.manage; from otto.tunnel import discover_tunnels",
     "import otto.check.verdict; from otto.check import probe_fingerprint",
     "import otto.creds.registry; from otto.creds import JsonCredsStore",
-    "import otto.suite.run; from otto.suite import OttoSuite",
+    "import otto.suite.run; from otto.suite import OttoFixturesPlugin",
     # The built-in command table imports the registry only when it runs: a
     # process whose first import is the table still gets every built-in.
     (

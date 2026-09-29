@@ -36,7 +36,7 @@ digraph monitor {
     hosts [label="lab hosts\n(Unix or SNMP-enabled)"];
     factory [label="factory\nMonitorTarget per host\nshell parsers or SNMP source\nhost.log → NEVER"];
     collector [label="collector tick loop\nconcurrent poll, one shared\ntimestamp per tick"];
-    events [label="suite events\nstart_monitor / add_monitor_event", style=dashed];
+    events [label="test events\nmonitor fixture · per-test marks", style=dashed];
     db [label="SQLite session archive (--db)\nWAL local / DELETE on network FS"];
     dash [label="web dashboard\nOS-assigned port"];
     replay [label="otto monitor <source>\nreview (no hosts touched)", style=dashed];
@@ -83,9 +83,12 @@ query in the interval without being taxed by the polling itself.
 human sets, and otto's own tests drive it as fast as 0.01 s against fake
 hosts.
 
-**Events.** Suites stamp markers onto the same timeline
-(`start_monitor` / `add_monitor_event` from {class}`~otto.suite.suite.OttoSuite`),
-so "CPU spiked" and "test_load started" correlate.
+**Events.** Tests stamp markers onto the same timeline, so "CPU spiked" and
+"test_load started" correlate. Under `otto test --monitor`, every test, class
+or plain function, gets a start and an end mark automatically; a test marks
+its own moments with `monitor.event(...)` through the `monitor` fixture
+({class}`~otto.suite.monitor_fixture.MonitorHandle`), which can also start a
+collector and dashboard of the test's own.
 
 **Serving and persistence.** A live dashboard
 ({class}`~otto.monitor.server.MonitorServer`) binds an OS-assigned port and
@@ -119,13 +122,14 @@ partial archive that `finalize()` then silently no-ops on, and its failures
 die inside a task whose supervising `gather(return_exceptions=True)` swallows
 them. The rule used to be a comment repeated at every call site; now it lives
 in one method with the precondition behind it, so a caller that bypasses the
-seam fails at once instead of racing. Two suite-side callers legitimately
-await `init_db()` themselves instead, for different reasons: the session
-plugin opens on the session loop because the *classes* drive `run()` on their
-own loops, a cross-loop split `spawn_collection()` does not express; and
-`OttoSuite.start_monitor` opens before spawning because its spawn happens
-inside a task, where `spawn_collection()` would put the open back into
-cancellable context — the very thing the seam exists to prevent. Both are
+seam fails at once instead of racing. Two test-side callers legitimately
+await `init_db()` themselves instead, for different reasons: the `--monitor`
+session plugin opens once, when the session starts, while a class-scoped
+fixture restarts `run()` for each test class, a split `spawn_collection()`
+does not express; and the `monitor` fixture's `MonitorHandle.start` opens
+before spawning because its spawn happens inside a task, where
+`spawn_collection()` would put the open back into cancellable context — the
+very thing the seam exists to prevent. Both are
 still covered by `run()`'s precondition, which is what makes them safe to
 write by hand.
 

@@ -1,9 +1,11 @@
-"""Repo-wide options shared by every repo1 suite and instruction.
+"""Options shared by repo1's tests and instructions.
 
-Inherit ``RepoOptions`` from your suite's inner ``Options`` dataclass or
-from the dataclass you pass to ``@instruction(options=...)`` and every
-field below becomes a CLI flag on both ``otto test`` and ``otto run``
-subcommands.
+``repo1_instructions`` registers both classes for their verbs:
+``RepoOptions`` for ``otto run`` and ``otto test``, so ``--device-type`` and
+``--lab-env`` are flags on every instruction and on ``otto test``;
+``DeviceTestOptions`` for ``otto test`` only. A test reads its instance with
+``ctx.options(DeviceTestOptions)``; an instruction whose own ``options=``
+class inherits ``RepoOptions`` gets the shared fields as one flag each.
 """
 
 from typing import Annotated
@@ -15,6 +17,8 @@ from otto import options
 
 @options
 class RepoOptions:
+    """Repo-wide options, registered for ``otto run`` and ``otto test``."""
+
     device_type: Annotated[
         str,
         typer.Option(
@@ -28,3 +32,22 @@ class RepoOptions:
             help="Lab environment to target (e.g. 'staging', 'production').",
         ),
     ] = "staging"
+
+
+@options
+class DeviceTestOptions:
+    """Test-only options, registered for ``otto test`` alone."""
+
+    firmware: Annotated[
+        str,
+        typer.Option(
+            help="Firmware version to validate against.",
+        ),
+    ] = "latest"
+
+    check_interfaces: Annotated[
+        bool,
+        typer.Option(
+            help="When True, verify all expected interfaces are up.",
+        ),
+    ] = True

@@ -242,7 +242,7 @@ def test_suite_public_api_still_resolves():
         [
             sys.executable,
             "-c",
-            "from otto.suite import OttoSuite, OttoOptionsPlugin; print('ok')",
+            "from otto.suite import OttoFixturesPlugin, run_tests; print('ok')",
         ],
         capture_output=True,
         text=True,
@@ -467,26 +467,43 @@ def test_version_does_not_read_the_corpus():
     assert delta == 0, f"--version still scales with the corpus: {small_ops} -> {large_ops}"
 
 
-def test_repo_bearing_surfaces_actually_walk_the_generated_repo():
+def test_repo_bearing_surfaces_actually_find_the_generated_repo():
     """The liveness pin: the harness's env injection reaches a child that finds a real repo.
 
-    A repo-bearing surface whose ``workspace`` count reads (close to) zero is
-    not measuring a repo at all — the env injection failed, and every ceiling
-    on the repo-bearing surfaces would pass for the wrong reason.
+    A repo-bearing surface whose ``workspace`` count is what a repo-less run
+    would count is not measuring a repo at all — the env injection failed,
+    and every ceiling on the repo-bearing surfaces would pass for the wrong
+    reason.
 
     SCOPED TO ``help_repo``. ``version_repo`` legitimately stops reading the
     repo (the shim answers ``--version``), and the warm surfaces answer from
     the cache. Every measurement is cold by construction (a fresh
-    ``OTTO_HOME`` per call), and a cold ``--help`` MUST take the full load —
-    cache-or-load never degrades the screen — so this surface reads every
-    generated file and lists every generated directory. Bounding on that
-    rather than on ``> 0`` also catches "found the repo but stopped walking
-    part-way", and a stat of the ``OTTO_HOME`` directory alone.
+    ``OTTO_HOME`` per call), so a cold ``--help`` takes the full load, and
+    the full load stats every path the ``names`` digest keys on. It reads no
+    test file (a rebuild does not), so the bound is a CONTROL: the same
+    command pointed at a repo that does not exist, plus one operation per
+    ``names`` key path inside the generated repo. A stat of the ``OTTO_HOME``
+    directory alone cannot clear it.
     """
+    from otto.config.cache_sections import section_by_name
+    from otto.config.repo import Repo
+
     surface = harness.surface_by_key("help_repo")
-    ops = harness.measure_surface(surface)["file_ops"]
-    floor = surface.sut_files + surface.sut_dirs_count
-    assert ops["workspace"] >= floor, f"help_repo counted {ops['workspace']} < {floor}: {ops}"
+    live = harness.measure_surface(surface)["file_ops"]["workspace"]
+
+    env = harness.surface_env(surface)
+    repo_dir = Path(env["OTTO_SUT_DIRS"])
+    env["OTTO_SUT_DIRS"] = str(repo_dir.parent / "no-such-repo")
+    dead = harness.measure(
+        surface.argv, bootstrap=surface.bootstrap, real_entry=surface.real_entry, env=env
+    )["file_ops"]["workspace"]
+
+    keys = set(section_by_name("names").key_paths([Repo(sut_dir=repo_dir)]))
+    in_repo = [p for p in keys if repo_dir in p.parents]
+    assert in_repo, "the generated repo declares no settings or init module"
+    assert live >= dead + len(in_repo), (
+        f"help_repo counted {live}, a repo-less run {dead}: the repo was not found"
+    )
 
 
 def test_repo_bearing_surface_does_not_grow_sys_path():
@@ -569,21 +586,19 @@ def test_fixture_path_entries_counts_the_paths_it_is_given(monkeypatch):
     assert bare["_fixture_path_entries"]() == 0
 
 
-def test_name_only_surfaces_execute_no_suite_modules():
+def test_name_only_surfaces_execute_no_test_modules():
     """Importing a repo's test files to answer --version/--help is the defect.
 
-    ``import_test_file`` names them ``_otto_suite_<stem>``, so their presence in
+    A test file is a ``test_*.py`` module, so a module of that name in
     ``sys.modules`` is a direct, cheap signal.
 
-    ``help_repo_warm``, not ``help_repo``: a COLD help legitimately executes
-    them, because a cold cache means a full load and a full load registers.
-    The name-only promise is about the CACHED path — the one a second and
-    every later ``otto --help`` takes.
+    ``help_repo_warm``, not ``help_repo``: the name-only promise is about the
+    CACHED path — the one a second and every later ``otto --help`` takes.
     """
     for key in ("version_repo", "help_repo_warm"):
         mods = harness.measure_surface(harness.surface_by_key(key))["modules"]
-        suites = [m for m in mods if m.startswith("_otto_suite_")]
-        assert suites == [], f"{key} executed suite modules: {suites}"
+        test_mods = [m for m in mods if m.rpartition(".")[2].startswith("test_")]
+        assert test_mods == [], f"{key} executed test modules: {test_mods}"
 
 
 def test_help_io_does_not_scale_with_corpus_size():
@@ -818,7 +833,7 @@ def test_bootstrap_repo_is_the_repo_bearing_sibling():
 
     The repo is witnessed by the workspace I/O bootstrap still pays (reading
     the repo's settings, putting its lib dirs on the path, importing its init
-    tree); test files load on demand, only for the commands that read suites.
+    tree); no test file is imported outside a pytest session.
     """
     empty = harness.measure_surface(harness.surface_by_key("run_bootstrapped"))["file_ops"]
     assert empty["workspace"] == 0, empty
@@ -946,21 +961,14 @@ def test_dispatch_io_does_not_scale_with_corpus_size():
     )
 
 
-def test_cold_rebuild_walks_the_corpus_once():
-    """A cold rebuild may read every test file, but only ONCE.
+def test_cold_rebuild_does_not_scale_with_corpus_size():
+    """A cold rebuild reads nothing of the test corpus: O(1), like every other help and TAB.
 
-    Cold `help_repo` rebuilds the cache, which legitimately scales, so this pins
-    a RATE rather than a constant. Between 50 files/5 dirs and 200 files/20
-    dirs, each added nested file costs a few workspace operations (its stat,
-    its open for the AST parse) and each added directory a few more (its stat,
-    its open and listing). A second walker anywhere in the rebuild doubles the
-    per-file rate and fails here.
-
-    THE BOUND IS MEASURED, NOT ARGUED. The rebuild pays exactly 2 workspace
-    operations per added file and 2 per added directory: 226 -> 556 on
-    CPython 3.10 and 220 -> 550 on 3.14, a delta of 330 = 150 * 2 + 15 * 2 on
-    both. The limit is that rate plus 20%, so a second walker (4 per file)
-    is well over it.
+    Cold ``help_repo`` rebuilds the ``names`` and ``shim`` sections, whose key
+    sets are the settings, the init trees and the lab files. Test names come
+    only from pytest's collections (the per-file table), so a rebuild neither
+    walks nor stats a test file: between 50 files/5 dirs and 200 files/20
+    dirs its workspace I/O holds, with the same tolerance as the warm pins.
     """
     import dataclasses
 
@@ -969,12 +977,51 @@ def test_cold_rebuild_walks_the_corpus_once():
     large = dataclasses.replace(base, key="rebuild_large", sut_files=200, sut_dirs_count=20)
     ops_small = harness.measure_surface(small)["file_ops"]
     ops_large = harness.measure_surface(large)["file_ops"]
-    d_files, d_dirs = 150, 15
-    delta = ops_large["workspace"] - ops_small["workspace"]
-    limit = (d_files * 2 + d_dirs * 2) * 6 // 5
-    assert delta <= limit, (
-        f"cold rebuild re-walks the corpus: workspace delta {delta} > {limit} "
-        f"({ops_small['workspace']} -> {ops_large['workspace']})"
+    assert ops_large["workspace"] - ops_small["workspace"] <= 5, (
+        f"cold rebuild workspace I/O scales with corpus: "
+        f"{ops_small['workspace']} -> {ops_large['workspace']}"
+    )
+
+
+def test_a_test_name_tab_does_not_scale_with_corpus_size():
+    """A test-name TAB answered by the shim is O(1) in the corpus: it never stats the test tree.
+
+    The seed is the same TAB on a cold home: it hands over, and the full path
+    rebuilds the sections and waits once for the collect child's whole-tree
+    table, which starts the check window. The measured TAB is answered by the
+    shim from that table (no typer): it reads the table and stats the
+    ``env`` (the pytest configs, the settings, site-packages), and the check
+    of what the table tracks is the detached collect child's, once a window
+    has lapsed. Between 50 files/5 dirs and 200 files/20 dirs its I/O holds,
+    with the tolerance the other O(1) pins use (Chris, 2026-09-28: a warm
+    TAB's file ops must not grow with the corpus; on NFS each is a round
+    trip).
+    """
+    import dataclasses
+
+    base = harness.surface_by_key("completion_repo_warm")
+    tab = (("_OTTO_COMPLETE", "complete_bash"), ("COMP_WORDS", "otto test T"), ("COMP_CWORD", "2"))
+    small = dataclasses.replace(
+        base, key="tests_tab_small", sut_files=50, sut_dirs_count=5, env_extra=tab
+    )
+    large = dataclasses.replace(
+        base, key="tests_tab_large", sut_files=200, sut_dirs_count=20, env_extra=tab
+    )
+    measured_small = harness.measure_surface(small)
+    measured_large = harness.measure_surface(large)
+    for measured in (measured_small, measured_large):
+        loaded = measured["non_stdlib_modules"]
+        assert not any(m == "typer" or m.startswith("typer.") for m in loaded), (
+            "the shim did not answer the measured TAB"
+        )
+    ops_small, ops_large = measured_small["file_ops"], measured_large["file_ops"]
+    assert ops_large["workspace"] - ops_small["workspace"] <= 5, (
+        f"a test-name TAB's workspace I/O scales with the corpus: "
+        f"{ops_small['workspace']} -> {ops_large['workspace']}"
+    )
+    assert ops_large["total"] - ops_small["total"] <= 15, (
+        f"a test-name TAB's file ops scale with the corpus: "
+        f"{ops_small['total']} -> {ops_large['total']}"
     )
 
 

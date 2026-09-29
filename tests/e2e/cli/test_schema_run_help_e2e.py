@@ -129,14 +129,16 @@ def test_host_help_is_stderr_clean_and_lab_free(tmp_path: Path) -> None:
     assert_no_output_dir(tmp_path)
 
 
-def test_test_suite_discovery_flag_no_crash(tmp_path: Path) -> None:
-    # Regression (bug#3): a discovery flag after a suite name must fail cleanly, never
-    # with a create_output_dir RuntimeError traceback. `--list-suites` is a group-level
-    # flag, so targeting a specific suite is a usage error — but a *clean* one.
-    r = run_otto(["test", "TestE2EFixture", "--list-suites"], xdir=tmp_path, sut_dirs=REPO_E2E)
+def test_test_discovery_flag_after_a_name_no_crash(tmp_path: Path) -> None:
+    # Regression (bug#3): a discovery flag after a test name must never crash with a
+    # create_output_dir RuntimeError traceback. `--list-tests` narrows to the names
+    # given, and exits before any run directory is made.
+    r = run_otto(["test", "TestE2EFixture", "--list-tests"], xdir=tmp_path, sut_dirs=REPO_E2E)
     combined = r.stdout + r.stderr
-    assert "RuntimeError" not in combined, f"discovery flag after suite crashed:\n{combined}"
+    assert r.returncode == 0, combined
+    assert "RuntimeError" not in combined, f"discovery flag after a name crashed:\n{combined}"
     assert "init_cli_logging" not in combined, f"create_output_dir ran before init:\n{combined}"
+    assert "test_gated" in r.stdout
     assert_no_output_dir(tmp_path)
 
 

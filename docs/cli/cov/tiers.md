@@ -70,7 +70,7 @@ A settings file with no `[coverage.tiers]` section gets an implicit
 
 ## Three-tier walkthrough
 
-**e2e** — run the suite with coverage on:
+**e2e** — run your tests with coverage on:
 
 ```bash
 otto test --cov TestMyDevice

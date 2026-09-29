@@ -12,12 +12,12 @@ The module also holds the *registering-repo marker* (:func:`registering_repo`,
 each repo's init imports, so those same registration seams can record *which
 repo* an entry came from rather than only which module.
 
-A registry may also carry a lazy *loader* that fills it on first read
-(:func:`suspend_loaders` reads without running it), and a registry refuses
-entries registered from outside otto while repo test files load
-(:func:`loading_test_files`) unless it opted in: test files load only for the
-commands that read suites, so anything else they registered would exist for
-some commands and not others.
+Every registry refuses entries registered from outside otto while repo test files load
+(:func:`loading_test_files`): test files and conftests load only inside a
+pytest session, so anything they registered would exist for some commands and
+not others. A registered :class:`Ref` resolves outside that phase, wherever
+its first lookup happens: an init module named it, so what its module
+registers on import is the init module's.
 
 >>> r: Registry[str] = Registry("demo backend", register_hint="register_demo()")
 >>> r.register("json", "the-json-backend", origin="example")
@@ -72,12 +72,25 @@ class Ref:
     def resolve(self) -> object:
         """Import the module and return the attribute.
 
+        The import runs outside the test-file loading phase
+        (:func:`loading_test_files`), even when the first lookup happens
+        inside a pytest session. A registered ``Ref`` was named by an init
+        module or by otto (the same registration from a test file is
+        refused), so whatever its module registers at import belongs to that
+        init module, not to the test file whose lookup triggered it. The
+        phase is back in force as soon as the import returns.
+
         Import and attribute errors propagate unchanged.
         """
         import importlib
 
         module, _, attr = self.target.partition(":")
-        return getattr(importlib.import_module(module), attr)
+        token = _LOADING_TEST_FILES.set(False)
+        try:
+            imported = importlib.import_module(module)
+        finally:
+            _LOADING_TEST_FILES.reset(token)
+        return getattr(imported, attr)
 
 
 def caller_module(depth: int = 1) -> str:
@@ -93,36 +106,25 @@ def caller_module(depth: int = 1) -> str:
     return frame.f_globals.get("__name__", "<unknown>")
 
 
-class RegistrationRefused(OttoError, ValueError):  # noqa: N818 — interface-fixed name the loader and its docs refer to
-    """A test file tried to register something other than a suite.
+class RegistrationRefused(OttoError, ValueError):  # noqa: N818 — interface-fixed name the docs refer to
+    """A test file or conftest tried to register something.
 
-    Test files load on demand, only for the commands that read suites, so
-    anything else they registered would silently exist for some commands and not
-    others. Extensions belong in an init module, which loads for every command.
+    Test files and conftests load only inside a pytest session (``otto test``'s
+    collection and run), so anything they registered would silently exist for
+    some commands and not others. Extensions belong in an init module, which
+    loads for every command. Registrations made by otto's own modules are
+    exempt: a test file is often the first thing to import one.
     """
 
 
-_LOADERS_SUSPENDED: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
-    "otto_registry_loaders_suspended", default=False
-)
 _LOADING_TEST_FILES: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
     "otto_loading_test_files", default=False
 )
 
 
 @contextlib.contextmanager
-def suspend_loaders() -> "Iterator[None]":
-    """Read registries without running their loaders (test isolation, introspection)."""
-    token = _LOADERS_SUSPENDED.set(True)
-    try:
-        yield
-    finally:
-        _LOADERS_SUSPENDED.reset(token)
-
-
-@contextlib.contextmanager
 def loading_test_files() -> "Iterator[None]":
-    """Mark the block as importing repo test files: only suites may register inside it."""
+    """Mark the block as importing repo test files: only otto's modules may register in it."""
     token = _LOADING_TEST_FILES.set(True)
     try:
         yield
@@ -151,7 +153,7 @@ def refuse_during_test_load(kind: str, name: str, origin: str) -> None:
         raise RegistrationRefused(
             f"{kind} {name!r} is registered from {origin!r} while repo test files load; "
             f"register it from an init module listed in .otto/settings.toml, not a test "
-            f"file (test files load only for the commands that read suites)"
+            f"file or conftest (those load only inside a pytest session)"
         )
 
 
@@ -166,8 +168,6 @@ class Registry(Generic[T]):
         *,
         register_hint: str,
         collision_hint: str | None = None,
-        loader: str | None = None,
-        accepts_test_files: bool = False,
         validate: "Callable[[str, T], None] | None" = None,
     ) -> None:
         """Create a registry for *kind* entries (e.g. ``"term backend"``).
@@ -179,13 +179,6 @@ class Registry(Generic[T]):
         deliberately." sentence in duplicate-registration errors. Pass it for a
         registry with no ``overwrite`` escape hatch (e.g. CLI commands), where
         the default sentence would point at a parameter that does not exist.
-
-        *loader* is a ``'module:function'`` called before every read, resolved
-        lazily so this module imports nothing; the function decides whether
-        there is anything to load, and a read from inside it does not recurse.
-
-        *accepts_test_files* says whether entries may be registered while repo
-        test files load (only the suites registry).
 
         *validate* is this registry's own check of an entry. It runs exactly
         once per entry: at :meth:`register` for a real object, or at the
@@ -201,28 +194,13 @@ class Registry(Generic[T]):
         self._collision_hint = collision_hint or "Pass overwrite=True to replace it deliberately."
         self._entries: dict[str, "T | Ref"] = {}
         self._origins: dict[str, str] = {}
-        self._loader = loader
-        self._accepts_test_files = accepts_test_files
         self._validate = validate
-        self._loading = False
         Registry._instances.add(self)
 
     @classmethod
     def instances(cls) -> "list[Registry[Any]]":
         """Every live registry, for guards that must cover registries added later."""
         return list(cls._instances)
-
-    def _load(self) -> None:
-        if self._loader is None or self._loading or _LOADERS_SUSPENDED.get():
-            return
-        module_name, _, attr = self._loader.partition(":")
-        import importlib
-
-        self._loading = True
-        try:
-            getattr(importlib.import_module(module_name), attr)()
-        finally:
-            self._loading = False
 
     def register(
         self, name: str, obj: "T | Ref", *, overwrite: bool = False, origin: str | None = None
@@ -237,9 +215,8 @@ class Registry(Generic[T]):
         used in collision and listing messages.
 
         Raises:
-            RegistrationRefused: If repo test files are loading, *origin* is
-                outside the ``otto`` package, and this registry does not
-                accept test-file registrations.
+            RegistrationRefused: If repo test files are loading and *origin*
+                is outside the ``otto`` package.
             ValueError: If *name* is already registered and *overwrite* is
                 false; the message names both registering modules and ends
                 with this registry's collision hint. Also raised by
@@ -247,8 +224,7 @@ class Registry(Generic[T]):
                 (nothing is stored, and no collision state changes).
         """
         entry_origin = origin if origin is not None else caller_module()
-        if not self._accepts_test_files:
-            refuse_during_test_load(self._kind, name, entry_origin)
+        refuse_during_test_load(self._kind, name, entry_origin)
         if name in self._entries and not overwrite:
             raise ValueError(
                 f"{self._kind} {name!r} is already registered by "
@@ -278,11 +254,7 @@ class Registry(Generic[T]):
         )
 
     def _resolved(self, name: str) -> T:
-        """Return *name*'s entry, resolving and caching a :class:`Ref`.
-
-        Assumes the caller already ran ``_load()``, so :meth:`items` loads
-        once for every name it resolves.
-        """
+        """Return *name*'s entry, resolving and caching a :class:`Ref`."""
         self._ensure_known(name)
         entry = self._entries[name]
         if isinstance(entry, Ref):
@@ -309,7 +281,6 @@ class Registry(Generic[T]):
                 names, adds a did-you-mean suggestion, and points at the
                 registration function.
         """
-        self._load()
         return self._resolved(name)
 
     def unregister(self, name: str) -> None:
@@ -318,14 +289,12 @@ class Registry(Generic[T]):
         Raises:
             ValueError: If *name* is unknown (same rich error as :meth:`get`).
         """
-        self._load()
         self._ensure_known(name)
         del self._entries[name]
         del self._origins[name]
 
     def names(self) -> list[str]:
         """Return registered names in registration order."""
-        self._load()
         return list(self._entries)
 
     def origin(self, name: str) -> str:
@@ -334,23 +303,19 @@ class Registry(Generic[T]):
         Raises:
             ValueError: If *name* is unknown (same rich error as :meth:`get`).
         """
-        self._load()
         self._ensure_known(name)
         return self._origins[name]
 
     def items(self) -> list[tuple[str, T]]:
         """Return ``(name, entry)`` pairs in registration order, resolving every :class:`Ref`.
 
-        Calls the loader once, up front, then resolves each entry the same
-        way :meth:`get` does (through the shared ``_resolved`` helper) rather
-        than calling ``get`` itself, which would run the loader again per
-        name.
+        Each entry resolves the same way :meth:`get` resolves it, through the
+        shared ``_resolved`` helper.
         """
-        self._load()
         return [(name, self._resolved(name)) for name in list(self._entries)]
 
     def _raw_items(self) -> "list[tuple[str, T | Ref, str]]":
-        """Return ``(name, raw_entry, origin)`` for every entry, without resolving or loading.
+        """Return ``(name, raw_entry, origin)`` for every entry, without resolving any.
 
         Test support: lets a fixture snapshot and restore a registry's exact
         stored state — a real object or a :class:`Ref` — across a test without
@@ -378,12 +343,10 @@ class Registry(Generic[T]):
 
     def __contains__(self, name: str) -> bool:
         """Return whether *name* is registered."""
-        self._load()
         return name in self._entries
 
     def __len__(self) -> int:
         """Return the number of registered entries."""
-        self._load()
         return len(self._entries)
 
 

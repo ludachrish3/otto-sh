@@ -1,11 +1,7 @@
 """Repo settings loading, parsing, and test-collection helpers for SUT repositories."""
 
-import asyncio
-import contextlib
 import importlib
 import logging
-import os
-import shlex
 import sys
 from dataclasses import (
     dataclass,
@@ -19,11 +15,11 @@ from typing import (
 
 import tomli
 
-from . import corpus_snapshot
 from .scope import ProjectScopeConfig
 from .version import Version
 
 if TYPE_CHECKING:
+    import pytest
     from rich.panel import Panel
     from rich.text import Text
 
@@ -32,25 +28,13 @@ if TYPE_CHECKING:
     from ..labs.sources import CompiledLabSource
     from ..models.dependencies import ParsedDependency
     from ..models.settings import OsProfileSpec
+    from ..registry import RegistrationRefused
     from .dependencies import ResolvedDependency
 
 logger = logging.getLogger(__name__)
 
 SETTINGS_FILENAME = "settings.toml"
 TOML_SETTINGS_PATH = Path(".otto") / SETTINGS_FILENAME
-
-
-def _test_run_syntax(t: "CollectedTest", sut_dir: Path) -> str:
-    """Build the ``otto test`` path argument for a single collected test.
-
-    Uses a path relative to ``sut_dir`` so panels show short, copy-pasteable
-    paths. ``otto test`` transparently resolves these back to absolute paths
-    before passing them to pytest.
-    """
-    rel_path = t.path.relative_to(sut_dir.resolve())
-    if t.cls_name:
-        return f"{rel_path}::{t.cls_name}::{t.name}"
-    return f"{rel_path}::{t.name}"
 
 
 @dataclass(frozen=True)
@@ -158,43 +142,67 @@ class MonitorSettings:
     tls_key: Path | None = None
 
 
-@dataclass(frozen=True)
-class CollectedTest:
-    """A single test item collected from a SUT repo's test directories.
+def selectable_names(classes: list[str], name: str) -> list[str]:
+    """Return the names one test answers to: its base name, its classes, ``Class::test``.
 
-    Attributes
-    ----------
-    nodeid :
-        Full pytest node ID, e.g. ``dir/test_x.py::ClassName::test_fn``.
-        Suitable for use directly as the ``SUITE`` argument to ``otto test``.
-    name :
-        Test function name only, e.g. ``test_fn``.
-    path :
-        Absolute path to the test file.
-    cls_name :
-        Class name if the test belongs to a class, else ``None``.
-    markers :
-        Names of the markers applied to this item (``item.iter_markers()``),
-        own plus inherited from its class/module — the collected-layer
-        counterpart of the ``ast``-scanned marker floor.
+    *name* is collapsed to its base (``test_x[a]`` → ``test_x``); ``Class`` in
+    the pair is the class the test is defined in directly, at whatever depth
+    that class is nested. Completion (static and collected) and the
+    did-you-mean hint of an unknown name all offer exactly these, so they
+    cannot disagree on shape.
     """
-
-    nodeid: str
-    name: str
-    path: Path
-    cls_name: str | None
-    markers: list[str] = field(default_factory=list)
+    base = name.partition("[")[0]
+    return [base, *classes, *([f"{classes[-1]}::{base}"] if classes else [])]
 
 
-#: pytest's own ``python_files`` default, used when nothing overrides it.
-DEFAULT_PYTHON_FILES: tuple[str, ...] = ("test_*.py", "*_test.py")
+def classes_from_nodeid(nodeid: str, name: str) -> list[str]:
+    """Return the classes a collected test is nested in, outermost first, from its node ID.
 
-#: Every filename pytest looks for, in ITS order — `_pytest.config.findpaths`'s
-#: `config_names`. The FIRST one that counts as pytest's config wins outright;
-#: pytest does not fall through to the next file when a key is absent there,
-#: and neither may we. A leftover `[tool.pytest.ini_options]` in a pyproject.toml
-#: next to a `pytest.ini` is ignored by pytest, and honouring it would blind
-#: both readers of the tests dirs to every real test.
+    ``tests/t.py::TestOuter::TestInner::test_x[a::b]`` with *name*
+    ``test_x[a::b]`` gives ``["TestOuter", "TestInner"]``. The test's own
+    *name* is cut off the end first, so a parametrization id that itself
+    contains ``::`` never reads as a class.
+    """
+    head = nodeid.removesuffix(name).removesuffix("::")
+    return head.split("::")[1:]
+
+
+def collect_failure_reason(report: "pytest.CollectReport") -> str:
+    """Say in one line why a failed collection *report* failed.
+
+    The last line of pytest's report is the exception itself
+    (``E   SyntaxError: ...``); the traceback above it is noise in a one-line
+    log record or a cache entry.
+    """
+    lines = report.longreprtext.strip().splitlines()
+    return lines[-1].removeprefix("E").strip() if lines else "no detail"
+
+
+def registration_refusal(exc: BaseException) -> "RegistrationRefused | None":
+    """Return the registration refusal behind *exc*, if a refused registration is what failed.
+
+    A conftest's own exception reaches pytest wrapped in
+    ``ConftestImportFailure``, whose ``cause`` is the original.
+    """
+    from ..registry import RegistrationRefused
+
+    cause = getattr(exc, "cause", exc)
+    return cause if isinstance(cause, RegistrationRefused) else None
+
+
+def marker_name(entry: str) -> str:
+    """Reduce one ``markers`` ini line to the marker's name.
+
+    ``"slow: marks slow tests"`` and ``"timeout(timeout, method=None)"`` give
+    ``slow`` and ``timeout``; a blank entry gives ``""``.
+    """
+    return entry.split(":", 1)[0].split("(", 1)[0].strip()
+
+
+#: Every filename pytest looks for its config in, in ITS order —
+#: `_pytest.config.findpaths`'s `config_names`. otto parses none of them: each
+#: is a stat key of a test table's `env`, so editing, adding or removing any
+#: one of them sends the table back to a whole-tree collection.
 PYTEST_CONFIG_NAMES: tuple[str, ...] = (
     "pytest.toml",
     ".pytest.toml",
@@ -207,121 +215,13 @@ PYTEST_CONFIG_NAMES: tuple[str, ...] = (
 
 
 def pytest_config_paths(sut_dir: Path) -> list[Path]:
-    """Every path :func:`configured_python_files` may read, existing or not.
+    """Every file pytest may read its config from in *sut_dir*, existing or not.
 
-    Non-existent paths are included on purpose: the completion fingerprint
-    hashes these, and a "missing" entry is what lets the digest move when
-    someone ADDS a ``pytest.ini``.
+    Non-existent paths are included on purpose: a test table stores a
+    ``None`` stat for each, which is what lets it see someone ADD a
+    ``pytest.ini``.
     """
     return [sut_dir / name for name in PYTEST_CONFIG_NAMES]
-
-
-def _split_patterns(raw: object) -> list[str]:
-    """Normalize a ``python_files`` value to a list of globs.
-
-    TOML mode gives a real list; ini mode gives one string, which pytest
-    splits with :func:`shlex.split` (the option's type is ``args``), so a
-    quoted pattern containing a space survives.
-    """
-    if raw is None:
-        return []
-    if isinstance(raw, (list, tuple)):
-        return [str(x).strip() for x in raw if str(x).strip()]
-    return shlex.split(str(raw))
-
-
-def _ini_section(path: Path, section: str) -> dict[str, str] | None:
-    """Return the named section of an ini/cfg file, or None if it has none.
-
-    ``interpolation=None`` because pytest parses these with ``iniconfig``,
-    which does not interpolate: a perfectly legal
-    ``python_files = test_%d_*.py`` would otherwise raise
-    ``InterpolationSyntaxError`` out of the completion fast path. ``str(path)``
-    because ``ConfigParser.read`` treats a non-str, non-PathLike argument as a
-    file DESCRIPTOR — a stray test double there opens fd 1 and closes stdout.
-    """
-    import configparser
-
-    parser = configparser.ConfigParser(interpolation=None)
-    try:
-        parser.read(str(path))
-        if not parser.has_section(section):
-            return None
-        return dict(parser.items(section))
-    except (OSError, configparser.Error):
-        return None
-
-
-def _load_pytest_config(path: Path) -> dict[str, Any] | None:
-    """Return the settings *path* contributes, or None if pytest ignores it.
-
-    A deliberate mirror of pytest's ``load_config_dict_from_file``. Returning
-    an EMPTY dict is meaningfully different from returning None: an empty
-    ``pytest.ini`` still counts as pytest's config and stops the search, which
-    is exactly the case that makes a neighbouring pyproject.toml irrelevant.
-    """
-    name, suffix = path.name, path.suffix
-    if suffix == ".ini":
-        section = _ini_section(path, "pytest")
-        if section is not None:
-            return dict(section)
-        # `pytest.ini` / `.pytest.ini` are pytest's config even when empty.
-        return {} if name in ("pytest.ini", ".pytest.ini") else None
-    if suffix == ".cfg":
-        section = _ini_section(path, "tool:pytest")
-        return dict(section) if section is not None else None
-    if suffix == ".toml":
-        try:
-            data = tomli.loads(path.read_text())
-        except (OSError, tomli.TOMLDecodeError, UnicodeDecodeError):
-            return None
-        if name in ("pytest.toml", ".pytest.toml"):
-            table = data.get("pytest", {})
-            return dict(table) if table else None
-        tool_pytest = data.get("tool", {}).get("pytest", {})
-        if not isinstance(tool_pytest, dict):
-            return None
-        # [tool.pytest] (native TOML, pytest 9's recommended form) wins over
-        # the older [tool.pytest.ini_options]; pytest errors when both exist,
-        # and completion is not the place to raise about it.
-        native = {k: v for k, v in tool_pytest.items() if k != "ini_options"}
-        if native:
-            return native
-        ini_options = tool_pytest.get("ini_options")
-        return dict(ini_options) if isinstance(ini_options, dict) else None
-    return None
-
-
-def configured_python_files(sut_dir: Path) -> list[str]:
-    """Return *sut_dir*'s pytest ``python_files``, or pytest's own defaults.
-
-    Static read, no collection — the same shape as
-    :meth:`Repo.configured_markers`. Both readers of a repo's tests dirs use
-    this (the ``--tests`` name scan and the fingerprint that invalidates it),
-    because a project collecting ``check_*.py`` and a completer that only
-    knows ``test_*.py`` disagree about which tests exist.
-
-    Takes a directory rather than a ``Repo`` because that is all it needs, and
-    because the completion callers reach it from repo-SHAPED objects.
-
-    Two deliberate divergences from pytest, both in the safe direction:
-    only *sut_dir* is searched (pytest walks up from the args to find a
-    rootdir), and a ``python_files`` set outside it therefore falls back to
-    the defaults.
-    """
-    for name in PYTEST_CONFIG_NAMES:
-        path = sut_dir / name
-        if not path.is_file():
-            continue
-        config = _load_pytest_config(path)
-        if config is None:
-            continue  # pytest would not treat this file as its config
-        if "python_files" not in config:
-            return list(DEFAULT_PYTHON_FILES)
-        # Present-but-empty is not the same as absent: `python_files = []`
-        # tells pytest to collect nothing, and the completer must agree.
-        return _split_patterns(config["python_files"])
-    return list(DEFAULT_PYTHON_FILES)
 
 
 @dataclass
@@ -532,150 +432,6 @@ class Repo:
         content = Text("\n".join(lines)) if lines else Text("no instructions found", style="dim")
         return self._make_test_panel(f"{self.name} {self.version}", content)
 
-    def collect_tests(
-        self,
-        markers: str | None = None,
-        suite: str | None = None,
-        tests: str | None = None,
-    ) -> list[CollectedTest]:
-        """Collect all tests from this repo's configured test directories.
-
-        Performs a single pytest collection pass (no tests are executed).
-        The returned list can be passed to any of the ``get*Panel`` methods
-        so that multiple listing options share one collection run.
-
-        Parameters
-        ----------
-        markers :
-            Passed as ``-m <markers>`` to the inner pytest run, narrowing
-            collection to tests matching the marker expression.
-        suite :
-            Restrict collection to the registered suite of this name (its
-            source file is looked up in the ``SUITES`` registry).  Also
-            passes ``-k <suite>`` so only the matching class is selected
-            within that file.
-        tests :
-            Passed as ``-k <tests>`` to the inner pytest run, narrowing
-            collection to tests whose name matches the keyword expression.
-
-        Returns
-        -------
-        list[CollectedTest]
-            One entry per discovered test item, in collection order.
-        """
-        import pytest
-
-        class _Collector:
-            def __init__(self) -> None:
-                self.items: list[pytest.Item] = []
-
-            def pytest_collection_finish(self, session: pytest.Session) -> None:
-                self.items = list(session.items)
-
-        collector = _Collector()
-        paths = [str(d) for d in self.tests if d.exists()]
-        if paths:
-            import gc
-
-            saved_modules = sys.modules.copy()
-            # pytest-asyncio installs a session-scoped event loop on first
-            # async test collection. The inner pytest.main() session leaves
-            # that loop open (held by plugin reference cycles); without
-            # explicit cleanup its self-pipe socketpair lingers and surfaces
-            # later as PytestUnraisableExceptionWarning when an outer
-            # gc.collect() breaks the cycle. Same pattern as the fix in
-            # tests/unit/suite/test_plugin.py.
-            loops_before = {
-                o
-                for o in gc.get_objects()
-                if isinstance(o, asyncio.AbstractEventLoop) and not o.is_closed()
-            }
-            try:
-                selector_args: list[str] = []
-                if markers:
-                    selector_args += ["-m", markers]
-                if tests:
-                    selector_args += ["-k", tests]
-                if suite:
-                    from ..suite.register import SUITES
-
-                    suite_file = SUITES.get(suite).file if suite in SUITES else None
-                    if suite_file is not None:
-                        paths = [suite_file]
-                    else:
-                        logger.warning(
-                            "suite %r not found in the registry; listing all tests in %s",
-                            suite,
-                            self.name,
-                        )
-                    # -k narrows to the class within that file
-                    selector_args += ["-k", suite]
-
-                with (
-                    Path(os.devnull).open("w") as sink_out,
-                    Path(os.devnull).open("w") as sink_err,
-                    contextlib.redirect_stdout(sink_out),
-                    contextlib.redirect_stderr(sink_err),
-                ):
-                    rc = pytest.main(
-                        [
-                            *paths,
-                            "--collect-only",
-                            "-p",
-                            "no:terminal",
-                            "-p",
-                            "no:cov",
-                            # tach's pytest plugin installs a C-level SIGINT
-                            # handler at import and panics on a second
-                            # in-process session (issue #193); this collect-only
-                            # session runs inside processes that may start more.
-                            "-p",
-                            "no:tach",
-                            "--override-ini",
-                            "addopts=",
-                            "--override-ini",
-                            "filterwarnings=",
-                            "-o",
-                            "asyncio_default_fixture_loop_scope=function",
-                            *selector_args,
-                        ],
-                        plugins=[collector],
-                    )
-                # Surface a real collection failure instead of returning [] silently.
-                if rc not in (0, 5):  # 0 = OK, 5 = no tests collected
-                    logger.error(
-                        "Test collection failed for repo %r (pytest exit %s); "
-                        "see above. Listing may be incomplete.",
-                        self.name,
-                        rc,
-                    )
-            finally:
-                sys.modules.clear()
-                sys.modules.update(saved_modules)
-                for leaked in [
-                    o
-                    for o in gc.get_objects()
-                    if isinstance(o, asyncio.AbstractEventLoop)
-                    and not o.is_closed()
-                    and o not in loops_before
-                ]:
-                    leaked.close()
-
-        collected: list[CollectedTest] = []
-        for item in collector.items:
-            item_cls = getattr(item, "cls", None)
-            cls_name = item_cls.__name__ if item_cls is not None else None
-            collected.append(
-                CollectedTest(
-                    nodeid=item.nodeid,
-                    name=item.name,
-                    path=item.path,
-                    cls_name=cls_name,
-                    markers=sorted({m.name for m in item.iter_markers()}),
-                )
-            )
-        return collected
-
     def _make_test_panel(self, title: str, content: "Text") -> "Panel":
         from rich.panel import Panel
         from rich.text import Text
@@ -690,90 +446,12 @@ class Repo:
             expand=True,
         )
 
-    def get_tests_panel(self, items: list[CollectedTest]) -> "Panel":
-        """Rich panel listing every individual test with its full run syntax.
-
-        Each line shows ``otto test <absolute-path>::[Class::]test_fn`` which
-        can be copy-pasted directly to run that specific test regardless of
-        the current working directory.
-
-        Parameters
-        ----------
-        items :
-            Pre-collected tests from :meth:`collect_tests`.
-        """
+    def get_markers_panel(self, markers: list[str]) -> "Panel":
+        """Rich panel listing *markers*, the markers pytest knows in this repo's tests."""
         from rich.text import Text
 
-        lines = [f"• {_test_run_syntax(t, self.sut_dir)}" for t in items]
-        content = Text("\n".join(lines)) if lines else Text("(no tests found)", style="dim")
-        return self._make_test_panel(f"{self.name} {self.version}", content)
-
-    def registered_suites(self) -> list[str]:
-        """Names of auto-registered suites whose source file is under this repo.
-
-        Reads ``otto.suite.register.SUITES`` (populated at suite import time)
-        and returns the registered suite names — the exact subcommand names
-        ``otto test <name>`` accepts — for suites defined under this repo's
-        ``sut_dir``, preserving registration order.
-        """
-        from ..suite.register import SUITES
-
-        sut_root = self.sut_dir.resolve()
-        names: list[str] = []
-        for name, entry in SUITES.items():
-            try:
-                Path(entry.file).resolve().relative_to(sut_root)
-            except ValueError:
-                continue
-            names.append(name)
-        return names
-
-    def get_test_suites_panel(self) -> "Panel":
-        """Rich panel listing this repo's runnable suite names.
-
-        Sourced from the suite registry (``registered_suites``) — the exact
-        ``otto test <name>`` subcommands — not from a pytest collection.
-        """
-        from rich.text import Text
-
-        names = self.registered_suites()
-        lines = [f"• {n}" for n in names]
-        content = Text("\n".join(lines)) if lines else Text("(no tests found)", style="dim")
-        return self._make_test_panel(f"{self.name} {self.version}", content)
-
-    def configured_markers(self) -> list[str]:
-        """Marker names declared in this repo's pytest config (for ``--list-markers``).
-
-        Reads ``pyproject.toml [tool.pytest.ini_options].markers``. Each entry
-        is reduced to the token before ``:`` or ``(``. Static read — no
-        collection.
-        """
-        pyproject = self.sut_dir / "pyproject.toml"
-        if not pyproject.is_file():
-            return []
-        try:
-            data = tomli.loads(pyproject.read_text())
-        except (OSError, tomli.TOMLDecodeError):
-            return []
-        raw = data.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("markers", [])
-        out: list[str] = []
-        for entry in raw:
-            token = str(entry).split(":", 1)[0].split("(", 1)[0].strip()
-            if token:
-                out.append(token)
-        return out
-
-    def get_markers_panel(self) -> "Panel":
-        """Rich panel listing this repo's configured pytest markers.
-
-        Sourced statically from ``pyproject.toml [tool.pytest.ini_options].markers``
-        via :meth:`configured_markers` — no inner pytest collection is performed.
-        """
-        from rich.text import Text
-
-        markers = self.configured_markers()
         lines = [f"• {m}" for m in markers]
-        content = Text("\n".join(lines)) if lines else Text("(no markers configured)", style="dim")
+        content = Text("\n".join(lines)) if lines else Text("(no markers found)", style="dim")
         return self._make_test_panel(f"{self.name} {self.version}", content)
 
     def get_otto_settings_path(
@@ -925,98 +603,6 @@ class Repo:
         """
         for mod in self.init:
             importlib.import_module(mod)
-
-    def iter_test_files(self, *, visited: "set[Path] | None" = None) -> list[Path]:
-        r"""Top-level ``test_*.py`` in each configured tests dir, sorted.
-
-        Deliberately NOT recursive, and deliberately not pytest's
-        ``python_files`` — this is the third and narrowest of the three
-        readers of a repo's tests dirs, and the only one that EXECUTES what it
-        returns. :func:`otto.bootstrap.load_test_suites` execs each of these to
-        trigger ``OttoSuite.__init_subclass__``, on the first read of the
-        suites registry after bootstrap — i.e. only for the commands that read
-        suites (``otto test``, ``--list-suites``, a completion-cache rebuild).
-        A file that fails to load fails those commands, loudly, and no other.
-
-        The reason for not recursing is blast radius, NOT cost. A file listed
-        here runs its module body, and a failure is a framed error that fails
-        every command reading suites; recursion would point that at the user's
-        whole test tree rather than at a handful of files they chose. Test
-        files load on demand rather than in bootstrap since 2026-09-25 (the
-        reversal of the "one broken test file fails every command" ruling),
-        which shrank that radius from every command to the suite commands.
-
-        Containment covers ``BaseException``: a module-level
-        ``pytest.importorskip`` raises ``Skipped``, which is rooted at
-        ``BaseException``, so an ``except Exception`` seam would let a repo
-        with one optional-dependency test file traceback out of the suite
-        commands — and out of shell completion, into the user's terminal
-        mid-TAB. The seam re-raises via :func:`otto.errors.is_containable`,
-        so declining to load is framed like any other load failure.
-
-        The escape hatch is that ``tests`` is a LIST — a repo keeping suites
-        under ``tests/device/`` adds that directory (``tests = ["tests",
-        "tests/device"]``) and its suites register. That keeps nesting an
-        opt-in. The middle design — rglob, ``ast.parse``, import only files
-        that statically declare a ``class Test*`` — would be nearly free given
-        the parse already happens, and is worth revisiting if the opt-in
-        proves to be a papercut; it narrows the blast radius but does not
-        remove it, since a suite file can still fail at import.
-
-        *visited*, when given, receives each configured tests dir that
-        exists — so a caller building a stat-only key set sees a new
-        top-level test file by that directory's own mtime, without re-globbing.
-
-        This bounds REGISTRATION only. ``otto test`` hands the same
-        directories to pytest (:meth:`collect_tests`), which recurses
-        normally, so a nested ``test_*`` function still runs and still
-        completes under ``--tests`` — including the methods of a nested
-        ``Test*`` OttoSuite. Only the ``otto test <Suite>`` SUBCOMMAND needs
-        the file to be reachable here.
-        """
-        found: list[Path] = []
-        for test_dir in self.tests:
-            if test_dir.is_dir():
-                if visited is not None:
-                    visited.add(test_dir)
-                found.extend(corpus_snapshot.glob(test_dir, "test_*.py"))
-        return found
-
-    def import_test_file(self, test_file: Path) -> None:
-        """Import one suite test file (idempotent per file); may raise on bad user code.
-
-        Triggers ``OttoSuite.__init_subclass__`` for every ``Test*``-named
-        class defined in the file, which populates
-        ``otto.suite.register.SUITES`` at import time.  ``cli/test.py``'s
-        ``suite_app`` resolves entries from that registry lazily.
-
-        A failed module is removed, so the next load re-raises instead of
-        silently skipping it.
-        """
-        import importlib.util
-
-        mod_name = f"_otto_suite_{test_file.stem}"
-        if mod_name in sys.modules:
-            return
-        spec = importlib.util.spec_from_file_location(mod_name, test_file)
-        if spec is None or spec.loader is None:
-            return
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[mod_name] = mod
-        try:
-            spec.loader.exec_module(mod)  # type: ignore[union-attr]
-        except BaseException:
-            sys.modules.pop(mod_name, None)
-            raise
-
-    def import_test_files(self) -> None:
-        """Import all test files, uncontained.
-
-        The CLI does not call this: :func:`otto.bootstrap.load_test_suites`
-        imports the same files one at a time, containing each failure.
-        """
-        for test_file in self.iter_test_files():
-            self.import_test_file(test_file)
 
 
 def get_repos(

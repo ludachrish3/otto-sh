@@ -40,6 +40,9 @@ import sys
 
 import pytest
 
+from otto.config.lab import Lab
+from otto.context import OttoContext
+
 
 @pytest.fixture(autouse=True)
 def _no_ambient_webassets(neutralized_webassets: object) -> None:
@@ -123,3 +126,29 @@ def purge_tmp_imports(tmp_path_factory):
         origin = getattr(module, "__file__", None) or ""
         if origin.startswith(base):
             del sys.modules[name]
+
+
+def _lab_with(*ne_names: str) -> Lab:
+    """Build a Lab with real UnixHosts from available NE names in the test lab data."""
+    from tests.conftest import make_host
+
+    lab = Lab(name="t")
+    for ne in ne_names:
+        lab.add_host(make_host(ne))
+    return lab
+
+
+@pytest.fixture
+def make_otto_context():
+    """Factory fixture building a plain ``OttoContext`` over a throwaway Lab.
+
+    A factory (not a built context) so a test can ask for one or more real
+    hosts by NE name when it needs them, the same way
+    ``tests/unit/test_context.py`` builds its contexts. The context is NOT
+    installed; a test that needs it active calls ``set_context`` itself.
+    """
+
+    def _make(*ne_names: str) -> OttoContext:
+        return OttoContext(lab=_lab_with(*ne_names))
+
+    return _make

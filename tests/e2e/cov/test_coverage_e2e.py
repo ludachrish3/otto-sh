@@ -647,7 +647,7 @@ class TestGcdaFetchStructure:
 def auto_cov_run(tmp_path_factory):
     """Run ``otto test TestCoverageProduct`` as a subprocess — NO ``--cov``.
 
-    Verifies the real ``otto test`` invocation path (``run_suite``),
+    Verifies the real ``otto test`` invocation path (``run_tests``),
     catching class-lifecycle issues (e.g. missing event loops in
     class-scoped fixtures) that direct-call e2e tests would miss. Pinned to
     the same xdist group as the rest of this file so it doesn't race on VMs.

@@ -204,24 +204,50 @@ async def _probe_all(targets: "list[ProbeTarget]") -> "list[ProbeResult]":
     return list(await asyncio.gather(*(_probe_one(target) for target in targets)))
 
 
-def run_probe(references: "list[LabReference]") -> "list[ProbeResult]":
+async def probe_references(references: "list[LabReference]") -> "list[ProbeResult]":
     """Dial the hosts *references* name; return one result per host.
 
-    Runs under :func:`~otto.lifecycle.run_command` rather than a bare
-    ``asyncio.run``, for cleanup rather than for policy: ``get_host`` registers
-    every host it hands out with the active context's host scope, and that
-    scope's exit sweep is what CLOSES the transports this function opened. A
-    probe that left them open would strand them on a loop that is about to be
-    torn down — and, on the preview path, hand the command body connections
-    bound to a dead loop. An override copy (``--term``/``--transfer``) is
-    registered by the same call, so it is swept too.
+    The async CORE, awaited directly by a caller that already owns a running
+    loop — a self-finishing leaf's own dry-run tail (``otto.cli.invoke.
+    finish_dry_run``), called from inside the leaf's body, which is itself
+    already running under :func:`~otto.lifecycle.run_command` (otto's own
+    lifecycle bridge, installed once per invocation by
+    ``otto.cli.invoke._wrap_invoke``). That OUTER ``run_command`` is what
+    sweeps the active context's host scope when the leaf's coroutine finishes
+    — the same cleanup guarantee :func:`run_probe` gets from its OWN
+    ``run_command`` call below, so nothing here needs a second one. Calling
+    ``asyncio.run`` again from in here — the bug this split fixes — would
+    raise ``RuntimeError: asyncio.run() cannot be called from a running event
+    loop`` the first time a self-finishing leaf's references named a host.
     """
     targets = probe_targets(references)
     if not targets:
         return []
+    return await _probe_all(targets)
+
+
+def run_probe(references: "list[LabReference]") -> "list[ProbeResult]":
+    """Dial the hosts *references* name; return one result per host.
+
+    The SYNC entry point for a caller with no running loop of its own —
+    :func:`~otto.cli.invoke.stop_at_dry_run_seam`'s own probe step, called
+    only when ``--probe`` was actually given. The seam runs inside
+    ``command_preamble``, before any leaf coroutine is even constructed, so
+    this is the ONLY place that path ever spins up a lifecycle event loop —
+    a plain ``-n`` stop with no ``--probe`` never reaches this function and
+    starts no loop at all. Bridges into :func:`probe_references` via
+    :func:`~otto.lifecycle.run_command` rather than a bare ``asyncio.run``,
+    for cleanup rather than for policy: ``get_host`` registers every host it
+    hands out with the active context's host scope, and that scope's exit
+    sweep is what CLOSES the transports this opened. A probe that left them
+    open would strand them on a loop that is about to be torn down — and, on
+    the preview path, hand the command body connections bound to a dead
+    loop. An override copy (``--term``/``--transfer``) is registered by the
+    same call, so it is swept too.
+    """
     from ..lifecycle import run_command
 
-    return run_command(_probe_all(targets))
+    return run_command(probe_references(references))
 
 
 def probe_contacted(results: "list[ProbeResult]") -> bool:

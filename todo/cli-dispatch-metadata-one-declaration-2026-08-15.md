@@ -48,9 +48,12 @@ below.
 
 **The two-level system (spec-level + leaf-level stamp) is load-bearing, not
 redundant.** `otto test`'s `dry_run_preview` opt-in deliberately lives on the
-LEAF (`src/otto/suite/register.py`), not on the `test` `CommandSpec`, because
-a spec-level flag would also have opted in the suite-less `otto test --tests
-foo` selection path (`src/otto/cli/test.py:625-636`), which must keep the safe
+LEAF (`otto.cli.test`, per the `DRY_RUN_PREVIEW_ATTR` docstring in
+`cli/invoke.py`; #457 deleted `src/otto/suite/register.py` and `--tests`, so
+the leaf is no longer that module or that selection path — re-verify the
+current leaf site before touching this), not on the `test` `CommandSpec`,
+because a spec-level flag would also have opted in every other `otto test`
+selection path, which must keep the safe
 default. Collapsing to one level silently runs real pytest bodies under
 `--dry-run`. There is now a guard for this; check it goes red before you
 believe any simplification here.

@@ -3,10 +3,10 @@
 Two things both e2es need, factored here so neither carries its own,
 drifting copy:
 
-- Build-and-freshness, PER FAMILY. ``otto test``/``OttoSuite`` never touch
+- Build-and-freshness, PER FAMILY. ``otto test`` and its test classes never touch
   a product verb (``stage``/``install``/``uninstall``/``get_product_logs``
   are reachable only from the project-CLI actions, ``otto install`` and
-  friends) — each suite installs only its OWN products, on the hosts it
+  friends) — each test class installs only its OWN products, on the hosts it
   itself selects: ``TestKmodDemo`` on test1/test2, ``TestCovContainer`` on
   test3. So the kmod e2e needs only the kernel-module half built
   (``ensure_kmod_artifacts``, which runs ``tests/repo5/kmod/build.sh`` —

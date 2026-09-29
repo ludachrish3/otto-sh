@@ -86,6 +86,7 @@ if TYPE_CHECKING:
     from ..config.scope import ProjectScope
     from ..context import OttoContext
     from ..host.host import Host
+    from ..instructions import ProjectInstructionBody
 
 logger = logging.getLogger(__name__)
 
@@ -543,6 +544,45 @@ def _source(opts: Any, default_cls: type) -> OptionsSource:
     return OptionsSource.from_instance(opts)
 
 
+def _walk_order(
+    name: str, ctx: "OttoContext", repos: "Iterable[Repo]"
+) -> "list[tuple[Repo, ProjectActions, ProjectInstructionBody]]":
+    """Return the ordered (repo, actions, body) triples a walk of *name* visits.
+
+    THE ONE WALK: :func:`_run_bodies` (a real run) and
+    :func:`project_instruction_dry_run_options` (a dry run's per-repo options
+    build) both resolve their repos through this -- same order (copied before
+    ``spec.walk == "reverse"`` reverses it, since ``repos`` may be bootstrap's
+    own list an in-place ``.reverse()`` would leave every later caller walking
+    backwards), same applicability filter (:func:`_applicable`, so a repo no
+    loaded lab applies to is silently skipped, not reported as an absence),
+    and the same body resolved per repo (:func:`actions_for` +
+    ``entry.body_for``) -- so a bad value raises from the identical repo, in
+    the identical position, whichever caller is walking.
+
+    ``require_dependencies`` is threaded straight to :func:`_applicable` and is
+    the ONE thing that can make this raise rather than return: a walk that
+    requires its dependencies refuses a kept repo whose required provider the
+    labs dropped.
+    """
+    entry = PROJECT_INSTRUCTIONS.get(name)
+    spec = entry.spec
+    ordered = list(repos)
+    if spec.walk == "reverse":
+        ordered.reverse()
+    triples: "list[tuple[Repo, ProjectActions, ProjectInstructionBody]]" = []
+    for repo in _applicable(ctx, ordered, name, require_dependencies=spec.require_dependencies):
+        actions = actions_for(repo, ctx)
+        body = entry.body_for(type(actions))
+        # Unreachable: every registered actions class descends from
+        # ProjectActions, whose own bodies are in the table, so the MRO walk
+        # body_for performs always finds one.
+        if body is None:  # pragma: no cover
+            continue
+        triples.append((repo, actions, body))
+    return triples
+
+
 async def _run_bodies(
     name: str, ctx: "OttoContext", repos: "Iterable[Repo]", source: OptionsSource
 ) -> "dict[str, Any]":
@@ -553,39 +593,10 @@ async def _run_bodies(
     options by declaring class -- so a repo never sees a neighbour's flags.
     ``continue_on_failure`` False stops after the first failing Result; True
     attempts every repo. The dict preserves walk order for the combiner.
-
-    A repo no loaded lab applies to is not walked at all (see
-    :func:`_applicable`), and its absence is a log line rather than an entry:
-    it is not a failure, and reporting it as one would make every mixed lab
-    exit non-zero on a correct run.
-
-    ``require_dependencies`` is threaded straight to :func:`_applicable` and is
-    the ONE thing that can make this function raise rather than return: a walk
-    that requires its dependencies refuses a kept repo whose required provider
-    the labs dropped. It is a separate bit from ``continue_on_failure`` even
-    though the two agree on today's six specs, because they are different facts
-    -- "how do I report a failure DURING the walk" and "may this walk start at
-    all" -- and an instruction that ever wanted best-effort building would
-    silently lose the refusal.
-
-    The walk order is COPIED before it is reversed: ``get_ordered_repos()``
-    hands back bootstrap's own list, so an in-place ``.reverse()`` on it would
-    leave every later caller walking backwards.
     """
-    entry = PROJECT_INSTRUCTIONS.get(name)
-    spec = entry.spec
-    ordered = list(repos)
-    if spec.walk == "reverse":
-        ordered.reverse()
+    spec = PROJECT_INSTRUCTIONS.get(name).spec
     results: "dict[str, Any]" = {}
-    for repo in _applicable(ctx, ordered, name, require_dependencies=spec.require_dependencies):
-        actions = actions_for(repo, ctx)
-        body = entry.body_for(type(actions))
-        # Unreachable: every registered actions class descends from
-        # ProjectActions, whose own bodies are in the table, so the MRO walk
-        # body_for performs always finds one.
-        if body is None:  # pragma: no cover
-            continue
+    for repo, actions, body in _walk_order(name, ctx, repos):
         method = getattr(actions, body.method_name)
         if body.options_cls is None:
             result = await method()
@@ -634,6 +645,43 @@ async def _walk(
     combiner answers in Results.
     """
     return _combine(name, await _run_bodies(name, ctx, repos, source))
+
+
+def project_instruction_dry_run_options(
+    name: str, ctx: "OttoContext", kwargs: "dict[str, Any]"
+) -> "list[Any]":
+    """Build every applicable repo's own options instance for *name*, in walk order.
+
+    The per-repo HALF of what a real run's ``_run_bodies`` builds -- both walk
+    the SAME ``_walk_order`` (same repos, same order, same body resolved per
+    repo), so a bad value raises the identical exception a real run's first
+    applicable repo would raise, before any device is touched. Two repos that
+    never overrode a body's own class share ONE class and so contribute ONE
+    instance, matching ``otto.cli.invoke._bind_and_build_own``'s
+    own-class-once rule for a standalone instruction.
+
+    Called from the ``otto run <name>`` leaf (:mod:`otto.project.commands`)
+    under ``--dry-run``, BEFORE :func:`run_project_instruction` -- the six
+    first-party entry points (``install``, ...) build their own base options
+    class again on the real path, but that class is one of the bodies walked
+    here too, so this already validates it.
+
+    A body with no options class contributes nothing. Raises whatever
+    ``_applicable`` raises for a build-shaped walk with an unmet, required,
+    lab-inactive dependency (:class:`InactiveRequiredDependencyError`) --
+    exactly as a real run's walk would, before either builds anything.
+    """
+    from ..config import get_ordered_repos
+
+    source = OptionsSource.from_kwargs(kwargs)
+    seen: set[type] = set()
+    instances: list[Any] = []
+    for _repo, _actions, body in _walk_order(name, ctx, get_ordered_repos()):
+        if body.options_cls is None or body.options_cls in seen:
+            continue
+        seen.add(body.options_cls)
+        instances.append(source.build(body.options_cls))
+    return instances
 
 
 ####################

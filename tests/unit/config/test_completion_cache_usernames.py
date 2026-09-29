@@ -24,7 +24,7 @@ def test_usernames_round_trip(tmp_path, monkeypatch):
         )
     ]
 
-    cc.write_cache(repos, [], [], [], usernames=["alice", "bob"])
+    cc.write_cache(repos, [], [], usernames=["alice", "bob"])
     result = cc.read_cache(repos)
 
     assert result is not None

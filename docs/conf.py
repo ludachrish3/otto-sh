@@ -202,6 +202,8 @@ _SHORT_TYPE_ALIASES = {
     "datetime": "datetime.datetime",
     "timedelta": "datetime.timedelta",
     "asyncio.queues.Queue": "asyncio.Queue",
+    # A loop's class is documented at its re-export; autodoc names the defining module.
+    "asyncio.events.AbstractEventLoop": "asyncio.AbstractEventLoop",
     # The C-accelerated Task's __module__ is the private _asyncio; same
     # misqualification class as _contextvars.Token below it.
     "_asyncio.Task": "asyncio.Task",
@@ -219,6 +221,7 @@ _SHORT_TYPE_ALIASES = {
     "pathlib.Annotated": "typing.Annotated",
     # rich
     "Panel": "rich.panel.Panel",
+    "Tree": "rich.tree.Tree",
     "Progress": "rich.progress.Progress",
     # asyncssh
     "SSHClientConnection": "asyncssh.SSHClientConnection",

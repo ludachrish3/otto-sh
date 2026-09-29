@@ -17,12 +17,12 @@ See [The workspace home](../cli/index.md#the-workspace-home).
 Create `.otto/settings.toml` in your repo root:
 
 ```toml
-name = "my_project"
+name = "acme"
 version = "1.0.0"
 
 libs  = ["pylib"]
 tests = ["tests"]
-init  = ["my_instructions", "my_shared_options"]
+init  = ["acme_instructions"]
 
 # Where otto's hosts come from, read in order — later sources override
 # earlier ones one element (or one labs table entry) at a time.
@@ -134,18 +134,14 @@ libs
   libraries.  Defaults to `[]`.
 
 tests
-: Defines where test discovery happens, in two different senses.  Every
-  `test_*.py` at the **top level** of a listed directory is imported the first
-  time a command needs the suite list (`otto test`, or a rebuild of the
-  completion cache), which auto-registers any `Test`-prefixed `OttoSuite`
-  subclass as an `otto test` subcommand — that scan is *not* recursive (list a
-  subdirectory too if you keep suites there). Other commands never import
-  these files, and a test file may register suites only; everything else
-  belongs in `init`.  Selection runs (`otto test --tests NAME[,NAME...]` or
-  `otto test -m EXPRESSION` with no suite name) hand the same directories to
-  pytest, one session per repo, and pytest recurses as usual — so a plain
-  `test_*` function in a subdirectory runs without being imported here.
-  Defaults to `[]`.  See {doc}`../cli/test/index`.
+: The repo's test directories.  `otto test` hands them to pytest, one session
+  per repo, and pytest collects them the way it always does: `test_*.py` files
+  at any depth, each directory's `conftest.py`, `norecursedirs` honored.  otto
+  imports test files only inside a pytest session: `otto test`'s own, and the
+  background collection that fills test-name completion.  No other command
+  imports them, so a test file or conftest may not register anything;
+  registrations belong in `init`.  Defaults to `[]`.  See
+  {doc}`../cli/test/index`.
 
 init
 : List of Python module names (dot-separated) to import at startup.  Use
@@ -329,9 +325,8 @@ occurs:
    - Adds `libs` directories to `sys.path`
    - Imports modules listed in `init` (this registers instructions)
 
-   Test files are not imported here. Each `test_*.py` at the top level of a
-   `tests` directory is imported later, and only by a command that reads the
-   suite list (see `tests` above).
+   Test files are not imported here, only inside a pytest session (see
+   `tests` above).
 
 4. **Lab loading** -- Otto builds the host source via `build_lab_sources`,
    concatenating every repo's `[[lab.sources]]` entries in `OTTO_SUT_DIRS`
@@ -360,8 +355,8 @@ export OTTO_SUT_DIRS=/path/to/repo1,/path/to/repo2
 ```
 
 Each repo has its own settings, libs, tests, and host-data sources.  They
-are all merged at startup -- instructions and suites from every repo appear
-in the CLI, and every repo's `[[lab.sources]]` entries are concatenated in
+are all merged at startup -- instructions and registered options from every
+repo appear in the CLI, `otto test` finds tests in every repo, and every repo's `[[lab.sources]]` entries are concatenated in
 `OTTO_SUT_DIRS` order.
 
 ### Declaring dependencies between repos
@@ -459,9 +454,10 @@ otto for a team:
    page, above) with every optional section present but commented out, the
    generated editor schemas
    (`.otto/schemas/` + `.vscode` wiring, see {doc}`../cli/schema/editors`), an example
-   lab host, and a shared `RepoOptions` class inherited by both an example test
-   suite and an example instructions module — so `otto test TestExample` and
-   `otto run smoke` share a `--message` flag out of the box. `otto init --all`
+   lab host, and a `RepoOptions` class that the example instructions module
+   registers for both `otto run` and `otto test`, and that the example tests
+   read — so `otto test TestExample` and `otto run smoke` share a `--message`
+   flag out of the box. `otto init --all`
    scaffolds everything with no prompts; bare `otto init` asks per missing
    area; `otto init --schemas` also *refreshes* the generated schemas after an
    otto upgrade. See {doc}`../installation` and {doc}`../cli/index`.
@@ -477,9 +473,10 @@ otto for a team:
    `-R` / `--skip-reservation-check` break-glass overrides *before* they need
    them. See {doc}`../cli/reservation/index`.
 4. **Register shared code** — put instruction/option modules under `libs` and
-   list them in `init`; suites in top-level `test_*.py` files under `tests`
-   register when a command reads the suite list. See {doc}`../cli/run/index` and
-   {doc}`../cli/test/index`.
+   list them in `init`; that is also where options classes register for
+   `otto run` and `otto test`. Tests are plain pytest files under `tests`. See
+   {doc}`../cli/run/index`, {doc}`../cli/test/index` and
+   {doc}`../cookbook/authoring/options-classes`.
 5. **Set per-product preferences** — optional `[host_preferences]` /
    `[os_profiles]` (this page, above, and {doc}`lab-config` / {doc}`os-profiles`).
 6. **Enable tab completion** — see {doc}`../getting-started/index`.

@@ -2,8 +2,8 @@
 
 otto is an asyncio test orchestrator: a CLI and a Python library that drive
 *labs* of remote hosts — Unix machines over SSH/Telnet, embedded targets over
-serial consoles, Docker containers — to deploy products, run commands and test
-suites, and collect metrics and coverage. One process, one event loop; hosts
+serial consoles, Docker containers — to deploy products, run commands and tests,
+and collect metrics and coverage. One process, one event loop; hosts
 are fanned out with asyncio, never threads.
 
 ## The nine first-party commands
@@ -16,7 +16,7 @@ explaining what it does once the shared machinery hands over control:
 | Command | What it is |
 | --- | --- |
 | {doc}`otto run <subsystems/execution>` | Procedures: registered instructions with lab access |
-| {doc}`otto test <subsystems/execution>` | Verdicts: suites and pytest-native selection runs |
+| {doc}`otto test <subsystems/execution>` | Verdicts: your pytest tests, chosen by name or marker |
 | {doc}`otto host <subsystems/hosts>` | Direct host verbs, synthesized from Python methods |
 | {doc}`otto monitor <subsystems/monitoring>` | Live metrics, dashboard, and replay |
 | {doc}`otto cov <subsystems/coverage/index>` | Cross-compiled gcov coverage reports |
@@ -49,7 +49,7 @@ digraph bigpicture {
     subgraph cluster_subsystems {
         label="subsystems";
         hosts [label="host subsystem\nsessions · connections · transfer"];
-        suites [label="suite subsystem\n+ pytest plugin"];
+        tests [label="test runner\n(run_tests + pytest plugins)"];
         observers [label="monitor + coverage\npipelines"];
         data [label="data boundary\nmodels · labs · settings"];
     }
@@ -99,7 +99,7 @@ a lower layer never imports from a higher one.
 | Package | Responsibility |
 | --- | --- |
 | `otto.host` | Host classes, sessions, connections, transfers, privilege, power |
-| `otto.suite` | Test-suite base class, auto-registration, the pytest plugin, `expect()` |
+| `otto.suite` | `run_tests`, name resolution, the pytest plugins and their fixtures (`ctx`, `module_dir`, `test_dir`, `expect`, `monitor`), the artifact layout, `expect()` |
 | `otto.monitor` | Metric collection, parsers, SNMP, the live dashboard |
 | `otto.coverage` | The embedded gcov pipeline: fetch, merge, render, report |
 | {mod}`otto.docker` | Image builds and compose lifecycles on parent hosts |

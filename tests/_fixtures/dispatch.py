@@ -72,7 +72,7 @@ def shipped_dry_run_preview(name: str) -> bool:
 class DispatchRunner(CliRunner):
     """``CliRunner`` that invokes through the leaf-invoke wrapper (the bridge)."""
 
-    def invoke(
+    def invoke(  # noqa: PLR0913 — CliRunner.invoke's own parameters plus the spec knobs
         self,
         app: Any,
         args: str | Sequence[str] | None = None,
@@ -85,6 +85,7 @@ class DispatchRunner(CliRunner):
         async_leaves: bool = False,
         dry_run_preview: bool | None = None,
         lab_free: bool = True,
+        under_root: bool = False,
         **extra: Any,
     ) -> Result:
         """Invoke *app* (a Typer app or plain/async function loader) dispatched.
@@ -121,6 +122,12 @@ class DispatchRunner(CliRunner):
         one (:func:`tests._fixtures.rootoptions.make_root_options`, ``labs``
         left at its ``None`` default: no ``--lab`` given), the exact case the
         lab slice must refuse.
+
+        *under_root* nests the dispatched command under a bare ``otto`` group,
+        so *args* start with the command's own name (``["test", ...]``) and the
+        click context chain is root → command, as on the real CLI. A reader that
+        walks that chain (the dry run's ``would run:`` line echoes every node's
+        parameters but the root's) then sees the command where it really is.
         """
         from otto.cli.invoke import wrap_leaf_callbacks
         from otto.cli.registry import CommandSpec, resolve_spec_command
@@ -152,6 +159,14 @@ class DispatchRunner(CliRunner):
                 return original_invoke(inner_ctx)
 
             cmd.invoke = _invoke_with_seeded_root_options
+        if under_root:
+            from typer.core import TyperGroup
+
+            cmd = TyperGroup(
+                name="otto",
+                commands={name: cmd},
+                context_settings={"help_option_names": ["-h", "--help"]},
+            )
         with (
             # CliRunner.invoke's only use of `app` is `_get_command(app)`;
             # substituting the dispatched command there keeps every other

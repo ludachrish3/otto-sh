@@ -31,7 +31,7 @@ Semantics, each pinned by ``tests/unit/suite/test_retry_semantics.py``:
   outer clock pauses for the attempt; the conservative direction. A
   pytest-timeout expiry on an attempt counts as a failed attempt and is
   retried (a hang can be the flake), so a retried item's total budget
-  approaches n-times the timeout. Off the main thread (``run_suite`` as a library
+  approaches n-times the timeout. Off the main thread (``run_tests`` as a library
   call from a worker thread — a supported mode) SIGALRM is unavailable;
   attempts still retry, unbounded, and never convert an arming error into a
   fake test failure.

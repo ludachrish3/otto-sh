@@ -1,7 +1,7 @@
 # Extending otto for new embedded targets
 
 otto's embedded-host support is built to be extended from your own project —
-the same way you register instructions and suites. Two seams matter when you
+the same way you register instructions and options classes. Two seams matter when you
 bring up a target otto doesn't ship support for:
 
 - a **command frame** — the shell *dialect*: how a command is wrapped to send

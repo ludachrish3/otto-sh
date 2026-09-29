@@ -145,9 +145,7 @@ def test_every_builtin_reference_resolves():
     registries = _otto_registries()
     assert registries, "no otto registries found"
     for registry in registries:
-        with reg.suspend_loaders():
-            items = registry.items()
-        for name, entry in items:
+        for name, entry in registry.items():
             assert not isinstance(entry, reg.Ref), (registry.defined_in, name, entry)
     for builtins in BUILTINS:
         if not builtins.by_reference:
@@ -163,7 +161,6 @@ def test_every_builtin_reference_resolves():
 
 _OTTO_ORIGIN_NAMES = """
 import json, sys
-from otto import registry as reg
 from tests.unit.test_registry_loading import (
     _import_every_module_that_builds_a_registry, _otto_registries,
 )
@@ -171,8 +168,7 @@ _import_every_module_that_builds_a_registry()
 out = {}
 for r in _otto_registries():
     attrs = [n for n, v in vars(sys.modules[r.defined_in]).items() if v is r]
-    with reg.suspend_loaders():
-        names = [n for n, _e, o in r._raw_items() if o == "otto" or o.startswith("otto.")]
+    names = [n for n, _e, o in r._raw_items() if o == "otto" or o.startswith("otto.")]
     if names:
         out[r.defined_in + ":" + ",".join(attrs)] = sorted(names)
 print(json.dumps(out))

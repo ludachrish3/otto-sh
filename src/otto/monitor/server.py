@@ -925,7 +925,7 @@ class MonitorServer:
                 # callers must not selectively cancel a never-stepped serve
                 # task while keeping its waiter alive. Safe in-tree: every
                 # teardown path cancels whole lifecycles, so the waiter
-                # (e.g. suite.start_monitor's own task) is cancelled too.
+                # (e.g. MonitorHandle.start's own task) is cancelled too.
                 config = uvicorn.Config(
                     self._app,
                     host=self._bind_host,

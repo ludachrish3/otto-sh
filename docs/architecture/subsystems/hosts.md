@@ -58,7 +58,7 @@ isn't offered there. A project that registers `MyHost` with a `@cli_exposed`
 method gets its verb with no extra wiring — the same first/third-party
 symmetry as everywhere else ({doc}`registries`). Each verb's flags come from
 the method's own signature, via the same options-to-parameters machinery
-instructions and suites use; `Arg`/`Opt`/`Exclude` annotations fine-tune the
+instructions and tests use; `Arg`/`Opt`/`Exclude` annotations fine-tune the
 CLI projection without touching the Python call shape.
 
 A verb's return value is rendered by one shared path: members of the

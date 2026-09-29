@@ -16,18 +16,13 @@ import time
 
 import pytest
 
-from otto.suite.run import run_suite
-
-
-class _LibSuite:
-    pass
+from otto.suite.run import run_tests
+from tests._fixtures.sut_repos import DOUBLE_TEST_NAME, pytest_main_returning
 
 
 @pytest.fixture(autouse=True)
-def _no_repos(monkeypatch):
-    import otto.config
-
-    monkeypatch.setattr(otto.config, "get_repos", list)
+def _one_repo(one_repo_double):
+    """Every run here selects the double's one test; the session itself is stubbed."""
 
 
 @pytest.fixture
@@ -61,7 +56,7 @@ def test_graceful_interrupt_exits_130_and_skips_post_coverage(
 
     monkeypatch.setattr("pytest.main", fake_main)
     with pytest.raises(SystemExit) as excinfo:
-        run_suite(_LibSuite, output_dir=tmp_path)
+        run_tests([DOUBLE_TEST_NAME], output_dir=tmp_path)
     assert excinfo.value.code == 130
     assert "ran" not in post_cov_sentinel, "interrupt means STOP: no post-coverage"
 
@@ -76,7 +71,7 @@ def test_hard_abort_exits_130(tmp_path, monkeypatch, post_cov_sentinel, real_syn
 
     monkeypatch.setattr("pytest.main", fake_main)
     with pytest.raises(SystemExit) as excinfo:
-        run_suite(_LibSuite, output_dir=tmp_path)
+        run_tests([DOUBLE_TEST_NAME], output_dir=tmp_path)
     assert excinfo.value.code == 130
     assert "ran" not in post_cov_sentinel
 
@@ -88,8 +83,8 @@ def test_undisturbed_session_unchanged(tmp_path, monkeypatch, post_cov_sentinel)
     identically through an inert guard (which is also what every other test
     in the suite gets from the root conftest's autouse patch).
     """
-    monkeypatch.setattr("pytest.main", lambda *_a, **_k: pytest.ExitCode.OK)
-    result = run_suite(_LibSuite, output_dir=tmp_path)
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
+    result = run_tests([DOUBLE_TEST_NAME], output_dir=tmp_path)
     assert result.exit_code == 0
     assert post_cov_sentinel.get("ran") is True
 
@@ -106,12 +101,12 @@ def test_off_main_thread_runs_unguarded(tmp_path, monkeypatch, post_cov_sentinel
     would still pass. With the real function, a wrongly-computed ``True``
     off the main thread raises ``RuntimeError`` and fails this test.
     """
-    monkeypatch.setattr("pytest.main", lambda *_a, **_k: pytest.ExitCode.OK)
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
     holder = {}
 
     def call():
         try:
-            holder["result"] = run_suite(_LibSuite, output_dir=tmp_path)
+            holder["result"] = run_tests([DOUBLE_TEST_NAME], output_dir=tmp_path)
         except BaseException as exc:  # noqa: BLE001 — the failure surface under test
             holder["error"] = exc
 

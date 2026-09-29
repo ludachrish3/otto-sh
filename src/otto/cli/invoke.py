@@ -14,20 +14,27 @@ import inspect
 from collections.abc import Callable
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn, get_type_hints
+from typing import TYPE_CHECKING, Any, NoReturn, cast, get_type_hints
 
 import typer
 from rich.markup import escape
 from typing_extensions import override
 
 from ..errors import OttoError
-from ..params import build_options, options_params
+from ..params import (
+    OptionsOrigin,
+    build_options,
+    drop_unset_secrets,
+    merge_option_params,
+    options_params,
+    sensitive_field_names,
+    verb_option_classes,
+)
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
     from typer.core import TyperGroup
 
-    from ..bootstrap import BootstrapResult
     from ..config.lab import Lab
     from ..config.repo import Repo
     from ..context import OttoContext
@@ -69,42 +76,136 @@ def _inject_ctx(func: Callable[..., Any], ctx_name: str) -> Callable[..., Any]:
     return wrapper
 
 
+def _bind_and_build_own(
+    kw: "dict[str, Any]",
+    *,
+    opts_cls: "type[DataclassInstance] | None",
+    verb: str | None,
+    own_field_names: "set[str]",
+    verb_field_names: "set[str]",
+    registered: "set[type]",
+) -> Any:
+    """Split *kw*, bind the verb's options on the context, build the own class.
+
+    The ONE place this split/bind/build happens — the leaf wrapper's real
+    dispatch and its own dry-run branch (``finish_dry_run``, called from the
+    SAME wrapper once this returns) both use it, so a bad value fails a dry
+    run exactly as it fails a real run (the same
+    ``typer.BadParameter`` from :func:`build_options`), and the own instance
+    handed back is the SAME OBJECT :meth:`~otto.context.OttoContext.options`
+    reads back afterward when the own class doubles as a registered verb
+    class (``opts_cls in registered``) — one construction, not two.
+
+    *kw* may hold more keys than the two field sets need (a leaf's other
+    parameters, or extra keys a caller's dict happens to carry); anything
+    outside *own_field_names* / *verb_field_names* is ignored. Returns
+    ``None`` when *opts_cls* is ``None`` (a verb-only leaf with no own class).
+    """
+    from ..context import get_context
+
+    opts_kw = {k: v for k, v in kw.items() if k in own_field_names}
+    verb_kw = {k: v for k, v in kw.items() if k in verb_field_names}
+    if verb is not None:
+        get_context().bind_verb_options(verb, {**opts_kw, **verb_kw})
+    if opts_cls is None:
+        return None
+    return (
+        get_context().options(opts_cls)
+        if any(opts_cls is cls for cls in registered)
+        else build_options(opts_cls, drop_unset_secrets(opts_cls, opts_kw))
+    )
+
+
 def _wrap_with_options(
     func: Callable[..., Any],
-    opts_cls: "type[DataclassInstance]",
+    opts_cls: "type[DataclassInstance] | None",
+    *,
+    verb: str | None = None,
+    repo: str | None = None,
 ) -> Callable[..., Any]:
-    """Build a wrapper that expands an options dataclass into CLI parameters.
+    """Build a wrapper that expands options classes into CLI parameters.
 
-    The wrapper:
-    1. Accepts the expanded dataclass fields as keyword arguments.
-    2. Constructs the dataclass instance from those kwargs.
-    3. Forwards it to *func* in the position of the original options parameter.
+    *opts_cls* is the command's own options class: its fields become flags,
+    and at call time the populated instance is forwarded to *func* in the
+    position of the parameter annotated with it.
+
+    With *verb*, the command also takes the flags of every options class
+    registered for that verb, merged with the own class by declaring class: a
+    field the own class inherits from a registered base is one flag, and the
+    same name introduced by two unrelated classes raises
+    ``OptionsCollisionError`` here, when the command is built. At call time
+    the own and verb values together are bound on the active context
+    (``OttoContext.bind_verb_options``), so an inherited base field set
+    through the own class reaches the registered base too, and every
+    parameter annotated with a registered class receives ``ctx.options(cls)``.
+    *repo* owns the own class, and is who a collision message names for it.
     """
+    from ..context import get_context
+
+    func_name = getattr(func, "__name__", repr(func))
     sig = inspect.signature(func)
     hints = get_type_hints(func, include_extras=True)
 
     # Find the parameter annotated with the options class
     opts_param_name: str | None = None
-    for name, hint in hints.items():
-        if hint is opts_cls:
-            opts_param_name = name
-            break
+    if opts_cls is not None:
+        for name, hint in hints.items():
+            if hint is opts_cls:
+                opts_param_name = name
+                break
+        if opts_param_name is None:
+            raise TypeError(
+                f"instruction {func_name!r} declares options={opts_cls.__name__} "
+                f"but has no parameter annotated as {opts_cls.__name__}"
+            )
 
-    if opts_param_name is None:
-        raise TypeError(
-            f"instruction {getattr(func, '__name__', repr(func))!r} declares options={opts_cls.__name__} "  # noqa: E501 — long error message f-string
-            f"but has no parameter annotated as {opts_cls.__name__}"
+    own_params = options_params(opts_cls) if opts_cls is not None else []
+    own_field_names = {p.name for p in own_params}
+
+    verb_params: list[inspect.Parameter] = []
+    injected: dict[str, type] = {}
+    registered: set[type] = set()
+    sensitive_names: set[str] = sensitive_field_names(opts_cls) if opts_cls is not None else set()
+    if verb is not None:
+        verb_origins = verb_option_classes(verb)
+        for origin in verb_origins:
+            sensitive_names |= sensitive_field_names(cast("type[DataclassInstance]", origin.cls))
+        # Matched by identity, as `_ctx_param_name` matches OttoContext: an
+        # annotation IS a registered class, or it is an ordinary parameter.
+        registered = {origin.cls for origin in verb_origins}
+        injected = {
+            name: hints[name]
+            for name in sig.parameters
+            if name != opts_param_name
+            and name in hints
+            and any(hints[name] is cls for cls in registered)
+        }
+        # The own class goes first, so a base field it inherits is counted
+        # once, under the class that declares it, and a clash between an own
+        # field and a verb field is reported naming both. Every other visible
+        # parameter is reserved: a verb field of the same name would make the
+        # signature ambiguous.
+        own_origin = [OptionsOrigin(opts_cls, repo)] if opts_cls is not None else []
+        reserved = {
+            name: f"parameter {name!r} of instruction {func_name!r}"
+            for name in sig.parameters
+            if name != opts_param_name and name not in injected
+        }
+        merged = merge_option_params(
+            own_origin + verb_origins, what=f"otto {verb} {func_name}", reserved=reserved
         )
+        verb_params = [p for p in merged if p.name not in own_field_names]
+    verb_field_names = {p.name for p in verb_params}
 
-    # Build new parameter list: replace the opts param with expanded fields
-    opts_field_names = {f.name for f in dataclasses.fields(opts_cls)}
-    expanded = options_params(opts_cls)
-
+    # Build new parameter list: replace the opts param with expanded fields,
+    # drop the injected ones, and append the verb's fields. No hidden click
+    # Context parameter: the wrapper reads the current one (see below), so the
+    # public signature stays exactly what the own + verb fields declare.
     new_params: list[inspect.Parameter] = []
     for p in sig.parameters.values():
         if p.name == opts_param_name:
-            new_params.extend(expanded)
-        else:
+            new_params.extend(own_params)
+        elif p.name not in injected:
             # Ensure all params are KEYWORD_ONLY for a consistent Typer signature
             kw_only_p = (
                 p
@@ -112,21 +213,71 @@ def _wrap_with_options(
                 else p.replace(kind=inspect.Parameter.KEYWORD_ONLY)
             )
             new_params.append(kw_only_p)
+    new_params.extend(verb_params)
 
     @functools.wraps(func)
     async def wrapper(**kw: Any) -> Any:
-        # Split kwargs: dataclass fields vs. remaining params
-        opts_kw = {k: kw.pop(k) for k in list(kw) if k in opts_field_names}
-        opts_instance = build_options(opts_cls, opts_kw)
-        kw[opts_param_name] = opts_instance
+        own_instance = _bind_and_build_own(
+            kw,
+            opts_cls=opts_cls,
+            verb=verb,
+            own_field_names=own_field_names,
+            verb_field_names=verb_field_names,
+            registered=registered,
+        )
+        for name in own_field_names | verb_field_names:
+            kw.pop(name, None)
+        ctx = get_context() if verb is not None else None
+        if ctx is not None:
+            for name, cls in injected.items():
+                kw[name] = ctx.options(cls)
+        if opts_cls is not None and opts_param_name is not None:
+            kw[opts_param_name] = own_instance
+        # Validation is already DONE by this point (the two blocks above),
+        # exactly as it is on a real run -- so a dry run's `finish_dry_run`
+        # never has to re-validate anything, only report what was just built.
+        # `click_ctx` is `None` for a call that never went through the CLI at
+        # all (a test, or a library caller reaching this callable directly)
+        # -- and never having gone through the CLI seam is exactly the case a
+        # dry run cannot apply to, so that IS the "not a dry run" answer here.
+        from typer._click.globals import get_current_context
+
+        # `typer.Context` (used everywhere else in this module) is a thin
+        # subclass typer's OWN commands never actually instantiate --
+        # `TyperCommand.context_class` is the vendored click base
+        # (`typer._click.core.Context`) that `get_current_context` returns --
+        # so every real dispatch already hands this module that base class
+        # under the `typer.Context` alias; the cast just makes that existing
+        # fact visible to the type checker instead of leaving it untyped.
+        click_ctx = cast("typer.Context | None", get_current_context(silent=True))
+        if click_ctx is not None and dry_run_requested(click_ctx):
+            instances: list[Any] = [own_instance] if own_instance is not None else []
+            if verb is not None and ctx is not None:
+                for origin in verb_option_classes(verb):
+                    if origin.cls is opts_cls:
+                        continue
+                    instances.append(ctx.options(origin.cls))
+            # `finish_dry_run` decides itself, from *preview*, whether to
+            # print+exit or just return -- the SAME distinction
+            # `stop_at_dry_run_seam` always made for an options-free leaf,
+            # made here now too: a previewing leaf still gets `--probe`'s
+            # announcement/dial/report, then runs its real body regardless.
+            preview = command_spec(click_ctx).dry_run_preview or _leaf_declares_preview(click_ctx)
+            await finish_dry_run(click_ctx, instances, preview=preview)
         return await func(**kw)
 
     wrapper.__signature__ = inspect.Signature(new_params)  # ty: ignore[unresolved-attribute]
+    setattr(wrapper, DRY_RUN_SELF_FINISHING_ATTR, True)
+    setattr(wrapper, SENSITIVE_FIELDS_ATTR, frozenset(sensitive_names))
     return wrapper
 
 
 def prepare_command_target(
-    func: Callable[..., Any], options_cls: type | None = None
+    func: Callable[..., Any],
+    options_cls: type | None = None,
+    *,
+    verb: str | None = None,
+    repo: str | None = None,
 ) -> Callable[..., Any]:
     """Apply otto's CLI wrappers to *func*: OttoContext injection + options expansion.
 
@@ -134,6 +285,15 @@ def prepare_command_target(
     parameter annotated ``OttoContext`` is stripped from the CLI signature and
     injected at call time; an *options_cls* dataclass parameter is expanded
     into individual CLI flags.
+
+    With *verb*, the command also gains the flag of every options class
+    registered for that verb, the parsed values are bound on the active
+    context before *func* runs, and a parameter annotated with a registered
+    class is injected with ``ctx.options(cls)`` (see ``_wrap_with_options``).
+    The verb's classes are resolved HERE, which may import their modules, so
+    a caller passes *verb* only where the command is being built for that
+    verb's own dispatch. *repo* is the repo that registered *func* (``None``
+    for otto), named for *options_cls* when one of its fields collides.
 
     Idempotent by contract, not coincidence: a callable this function already
     wrapped is returned unchanged (sentinel attribute). The dispatch path
@@ -149,8 +309,11 @@ def prepare_command_target(
     target: Callable[..., Any] = func
     if ctx_name is not None:
         target = _inject_ctx(func, ctx_name)
+    own_cls: "type[DataclassInstance] | None" = None
     if options_cls is not None and dataclasses.is_dataclass(options_cls):
-        target = _wrap_with_options(target, options_cls)
+        own_cls = options_cls
+    if own_cls is not None or verb is not None:
+        target = _wrap_with_options(target, own_cls, verb=verb, repo=repo)
     if target is not func:
         target.__otto_cli_prepared__ = True  # ty: ignore[unresolved-attribute]
     return target
@@ -721,42 +884,12 @@ def validate_project_switches(ctx: typer.Context) -> None:
         fail(f"no project {value!r}{hint}", 2)
 
 
-def render_bootstrap_findings(result: "BootstrapResult") -> None:
-    """Print each contained error not yet printed, as one framed ``warning:`` line.
-
-    Startup prints what bootstrap found; a lazy suite load can find more later.
-    Every path that can surface a finding calls this, and ``rendered`` makes
-    each error print exactly once, whichever path got there first.
-    """
-    for err in result.errors:
-        if not err.rendered:
-            typer.echo(f"warning: {err}", err=True)
-            err.rendered = True
-
-
-def render_pending_bootstrap_findings() -> None:
-    """:func:`render_bootstrap_findings` for a read site that must never bootstrap.
-
-    The suites registry loads test files on its first read after bootstrap, and
-    click performs that read itself (listing ``otto test``'s subcommands for its
-    help, resolving a suite name) before any otto callback runs. Such a site
-    prints what the load found; before bootstrap there is nothing to print, and
-    asking must not start one.
-    """
-    from ..bootstrap import bootstrap, is_bootstrapped
-
-    if is_bootstrapped():
-        render_bootstrap_findings(bootstrap())
-
-
 def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
     """Exit(1) when bootstrap contained an ACTIVE repo's error — shared loud gate.
 
     The per-error ``warning:`` lines were already printed by ``entry()`` at
-    startup, except for findings a lazy suite load appended since, which
-    :func:`render_bootstrap_findings` prints first; then print ONLY the framed
-    summary here (don't re-print each error in red) — the summary points back
-    at those warnings. Used by the leaf
+    startup; print ONLY the framed summary here (don't re-print each error
+    in red) — the summary points back at those warnings. Used by the leaf
     preamble AND the root ``--show-lab``/``--list-hosts`` branch, so anything
     that inspects the registered world fails the same way.
 
@@ -776,7 +909,6 @@ def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
     from ..bootstrap import bootstrap
 
     result = bootstrap()
-    render_bootstrap_findings(result)
     if not result.errors:
         return
 
@@ -900,11 +1032,12 @@ def ensure_lab_session(ctx: typer.Context, spec: "CommandSpec") -> None:
         from ..context import get_context
         from ..logger import management
 
-        # A flattened single-command group (e.g. ``monitor``) IS the group-level
-        # command: its leaf name equals ``spec.name``, so there is no meaningful
-        # sub-name — pass None to keep the base ``monitor/<TS>`` dir (not
-        # ``monitor/<TS>_monitor``). Real sub-groups (run/test/host) keep their
-        # ``<name>/<TS>_<sub>`` layout since ``ctx.command.name`` differs.
+        # A single command (``test``) or a flattened single-command group
+        # (``monitor``) IS the top-level command: its leaf name equals
+        # ``spec.name``, so there is no meaningful sub-name — pass None to keep
+        # the base ``test/<TS>`` dir (not ``test/<TS>_test``). Real sub-groups
+        # (run/host) keep their ``<name>/<TS>_<sub>`` layout since
+        # ``ctx.command.name`` differs.
         leaf_name = ctx.command.name
         sub = None if leaf_name == spec.name else (leaf_name or spec.name)
         get_context().output_dir = management.create_output_dir(spec.name, sub)
@@ -1178,7 +1311,7 @@ DRY_RUN_PREVIEW_ATTR = "__cli_dry_run_preview__"
 """Per-leaf opt-out marker read off the resolved command's callback.
 
 Stamped by ``@cli_exposed(dry_run_preview=True)`` (host verbs) and by
-``otto.suite.register`` (suite leaves); read here the same way
+``otto.cli.test`` (the ``otto test`` leaf); read here the same way
 ``ensure_lab_session`` reads ``__cli_output_dir__``, so a third-party leaf
 opts in through exactly the mechanism otto's own leaves use.
 """
@@ -1193,6 +1326,35 @@ reference resolution lives in command BODIES, and the seam's whole job is not
 running those -- the hook lets a leaf lend the seam the same resolver its body
 would have used (``otto host`` lends :func:`~otto.cli.host.resolve_cli_host`),
 so there is one authority rather than a mirrored copy that can drift.
+"""
+
+SENSITIVE_FIELDS_ATTR = "__otto_sensitive_fields__"
+"""Per-leaf set of option field names whose VALUE the ``would run:`` line must mask.
+
+A ``frozenset[str]``, stamped by ``_wrap_with_options`` (and by
+``otto.project.commands``) from ``otto.params.sensitive_field_names`` over every
+options class contributing flags to the command. Read by ``_param_words``
+so the generic argv echo -- which knows nothing about options classes, only
+raw click parameters -- can still print ``<hidden>`` for a
+``SecretStr``/``SecretBytes`` field or one declared ``repr=False``, the same
+two conditions ``_options_line`` already masks in the ``options:`` block.
+"""
+
+DRY_RUN_SELF_FINISHING_ATTR = "__otto_dry_run_self_finishing__"
+"""Per-leaf marker that a leaf validates its own options and finishes its own dry run.
+
+Stamped ``True`` by ``_wrap_with_options`` on every leaf its ``options=``/verb
+machinery builds (:func:`prepare_command_target`), and by
+``otto.project.commands``'s project-instruction leaf. Read by
+:func:`stop_at_dry_run_seam`, which returns immediately for such a leaf --
+no probe, no reference resolution, no print -- because the leaf's own body
+does all three itself, via :func:`finish_dry_run`, AFTER it has bound and
+built its options from the real, typer-CONVERTED kwargs (never
+``ctx.params``, which holds pre-conversion values: a ``Path``, an ``Enum``, a
+``list`` -- whatever typer's own callback shim converts them to -- so a
+``-n`` build cannot construct a different object than a real run's, and a
+project instruction's verb-registered classes (which used to reach the seam
+not at all) validate under ``-n`` exactly as they do on the real path.
 """
 
 
@@ -1267,6 +1429,11 @@ def _leaf_declares_preview(ctx: typer.Context) -> bool:
     return bool(getattr(getattr(ctx.command, "callback", None), DRY_RUN_PREVIEW_ATTR, False))
 
 
+def _leaf_self_finishes_dry_run(ctx: typer.Context) -> bool:
+    """Whether the resolved leaf validates its own options and finishes its own dry run."""
+    return bool(getattr(getattr(ctx.command, "callback", None), DRY_RUN_SELF_FINISHING_ATTR, False))
+
+
 def resolve_dry_run_references(ctx: typer.Context) -> "list[LabReference]":
     """Resolve the lab references the leaf names, or return an empty list.
 
@@ -1281,9 +1448,16 @@ def resolve_dry_run_references(ctx: typer.Context) -> "list[LabReference]":
 
 
 def _param_words(ctx: typer.Context) -> "list[str]":
-    """Echo one context's non-default parameters back as command-line words."""
+    """Echo one context's non-default parameters back as command-line words.
+
+    A name :data:`SENSITIVE_FIELDS_ATTR` lists on this node's callback has its
+    VALUE replaced with the literal ``<hidden>`` -- the flag still shows (an
+    operator needs to know the switch was given), only what followed it is
+    masked. A boolean flag carries no separate value word to mask.
+    """
     import shlex
 
+    sensitive = getattr(getattr(ctx.command, "callback", None), SENSITIVE_FIELDS_ATTR, frozenset())
     words: list[str] = []
     for param in getattr(ctx.command, "params", ()):
         name = getattr(param, "name", None)
@@ -1293,15 +1467,22 @@ def _param_words(ctx: typer.Context) -> "list[str]":
         if value is None or value == param.default:
             continue
         opts = [o for o in (getattr(param, "opts", None) or []) if o.startswith("-")]
+        masked = name in sensitive
         items = list(value) if isinstance(value, (list, tuple)) else [value]
         for item in items:
+            word = "<hidden>" if masked else shlex.quote(str(item))
             if not opts:  # a positional argument: the value IS the word
-                words.append(shlex.quote(str(item)))
+                words.append(word)
             elif isinstance(item, bool):
+                # An on/off pair (`--random/--no-random`) turned OFF is echoed
+                # by its off switch; a plain flag is only ever echoed on.
+                off = [o for o in (getattr(param, "secondary_opts", None) or []) if o]
                 if item:
                     words.append(max(opts, key=len))
+                elif off:
+                    words.append(max(off, key=len))
             else:
-                words.extend((max(opts, key=len), shlex.quote(str(item))))
+                words.extend((max(opts, key=len), word))
     return words
 
 
@@ -1347,10 +1528,39 @@ def _lab_line(references: "list[LabReference]") -> str:
     return line
 
 
+def _options_line(instance: Any) -> str:
+    """Render one resolved options instance: ``ClassName: field=value, field=value``.
+
+    Field DEFINITION order (``dataclasses.fields``, which walks the MRO base
+    first, same order :func:`~otto.params.options_params` builds CLI flags
+    in). A field :func:`~otto.params.sensitive_field_names` names -- ``repr=False``
+    (``dataclasses.field``, or a pydantic ``Field``), or a type that IS or
+    CONTAINS ``pydantic.SecretStr``/``SecretBytes`` -- prints ``name=<hidden>``
+    unconditionally; every other field prints through plain ``repr()``.
+
+    That SAME set, not a bare ``repr=False`` check, is the whole point: a
+    pydantic (``@options``) class's ``SecretStr`` field already reprs masked
+    (``SecretStr('**********')``) because pydantic COERCED the parsed string
+    into a real ``SecretStr`` instance -- but a plain stdlib
+    ``@dataclasses.dataclass`` field typed ``SecretStr``/``Optional[SecretStr]``
+    never goes through pydantic construction at all, so its runtime value is
+    still the raw parsed string, and a bare ``repr()`` of THAT would print the
+    secret in full. Checking the set here closes that gap the same way
+    :func:`_param_words` already had to.
+    """
+    sensitive = sensitive_field_names(type(instance))
+    parts = [
+        f"{f.name}=<hidden>" if f.name in sensitive else f"{f.name}={getattr(instance, f.name)!r}"
+        for f in dataclasses.fields(instance)
+    ]
+    return f"{type(instance).__name__}: {', '.join(parts)}"
+
+
 def print_dry_run_block(
     ctx: typer.Context,
     references: "list[LabReference] | None" = None,
     contacted: bool = False,
+    options: "list[Any] | None" = None,
 ) -> None:
     """Print the dry run's product: what would run, and what it was checked against.
 
@@ -1364,15 +1574,32 @@ def print_dry_run_block(
     contacted" — printing that immediately below a table reporting a host
     reachable would be a plain falsehood, and the one thing this contract
     cannot ship is a dry run that says something untrue about device contact.
+
+    *options* is every option instance the caller already bound and built for
+    this leaf (own class first, then the bound verb's classes) — one
+    ``options:`` line, then one line per class via ``_options_line``.
+    Empty or ``None`` (a leaf with no options at all) prints no ``options:``
+    section, the same "suppress the payload, not its absence" rule the lab
+    line already follows.
+
+    Every line prints ``soft_wrap=True`` (the same call ``fail()`` uses for a
+    message meant to be re-typed): a long resolved value — a path, a token, a
+    URL — must stay on ONE line when piped or captured, never hard-wrapped or
+    cropped at the console width.
     """
-    from rich import print as rprint
+    from rich import get_console
 
     from ..utils import DRY_RUN_HEADLINE, DRY_RUN_HEADLINE_PROBED
 
+    console = get_console()
     headline = DRY_RUN_HEADLINE_PROBED if contacted else DRY_RUN_HEADLINE
-    rprint(f"[magenta]{escape(headline)}[/magenta]")
-    rprint(f"  would run: {escape(would_run_line(ctx))}")
-    rprint(f"  {escape(_lab_line(references or []))}")
+    console.print(f"[magenta]{escape(headline)}[/magenta]", soft_wrap=True)
+    console.print(f"  would run: {escape(would_run_line(ctx))}", soft_wrap=True)
+    if options:
+        console.print("  options:", soft_wrap=True)
+        for instance in options:
+            console.print(f"    {escape(_options_line(instance))}", soft_wrap=True)
+    console.print(f"  {escape(_lab_line(references or []))}", soft_wrap=True)
 
 
 def stop_at_dry_run_seam(ctx: typer.Context, spec: "CommandSpec") -> None:
@@ -1386,41 +1613,185 @@ def stop_at_dry_run_seam(ctx: typer.Context, spec: "CommandSpec") -> None:
 
     A no-op when this is not a dry run, which is every non-``-n`` invocation.
 
-    ``--probe`` (spec §3) is the one thing that happens ahead of the preview
-    check: the reachability table is printed for a previewing command
-    (``link``/``tunnel``) and a seam-stopped one alike, and in both cases
-    BEFORE the thing it informs. Without the flag not a single transport is
-    opened here, which is what keeps every guard Tasks 5-5c added — "a dry run
-    makes no device contact" — true by default.
+    A leaf marked :data:`DRY_RUN_SELF_FINISHING_ATTR` is handled not at all:
+    it returns immediately, because such a leaf's OWN body binds and builds
+    its options from the real, typer-converted kwargs and then calls
+    :func:`finish_dry_run` itself.
+
+    Otherwise this function runs the probe step itself, synchronously, via
+    ``run_probe`` — the ONLY place this path spins up a
+    lifecycle event loop, and only when ``--probe`` was actually given — and
+    then calls ``_conclude_dry_run``, the sync resolve/print/exit tail
+    shared with :func:`finish_dry_run`. A plain ``-n`` stop (no ``--probe``)
+    therefore starts no event loop at all: no signal handlers, no host-scope
+    sweep, no teardown-deadline lookup, to do what is otherwise a few printed
+    lines and a ``typer.Exit(0)``. This runs inside ``command_preamble``,
+    before any leaf coroutine is even constructed, so staying loop-free here
+    is not an optimization otto's own outer ``run_command`` would have made
+    redundant — nothing else has spun one up yet. *spec*'s (or the leaf's
+    own) ``dry_run_preview`` is passed straight through, so a previewing
+    command (``link``/``tunnel``) still gets ``--probe``'s announcement/
+    dial/report before its body runs for real, exactly as it always has.
     """
     if not dry_run_requested(ctx):
         return
 
-    contacted = False
+    if _leaf_self_finishes_dry_run(ctx):
+        return
+
+    preview = spec.dry_run_preview or _leaf_declares_preview(ctx)
+    step = _sync_probe_step(ctx)
+    _conclude_dry_run(
+        ctx, [], preview=preview, contacted=step.contacted, references=step.references
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class _ProbeStep:
+    """What the ``--probe`` step of a dry run did: whether it dialed, and what it resolved."""
+
+    contacted: bool = False
     references: "list[LabReference] | None" = None
-    if probe_requested(ctx):
-        from .probe import print_probe_report, probe_contacted, run_probe
+    """The references the probe resolved, or ``None`` when no probe ran."""
 
-        # Resolution first, and its failure still wins: dialing a host set
-        # derived from an unresolvable reference would be acting on a
-        # reference the command could not use.
+
+def _sync_probe_step(ctx: typer.Context) -> _ProbeStep:
+    """Run ``--probe`` for a caller with no running loop; a no-op without the flag.
+
+    Shared by :func:`stop_at_dry_run_seam` and :func:`print_preview_dry_run`.
+    Uses the sync ``run_probe``, which spins up a lifecycle loop only when
+    ``--probe`` was actually given.
+    """
+    if not probe_requested(ctx):
+        return _ProbeStep()
+    from .probe import print_probe_report, probe_contacted, run_probe
+
+    # Resolution first, and its failure still wins: dialing a host set
+    # derived from an unresolvable reference would be acting on a
+    # reference the command could not use.
+    references = resolve_dry_run_references(ctx)
+    results = run_probe(references)
+    print_probe_report(results)
+    # `probe_contacted`, not `bool(results)`: a result set that is entirely
+    # `not probed`, or entirely LocalHost, opened no socket, and the probed
+    # headline would then assert a connection nobody made.
+    return _ProbeStep(contacted=probe_contacted(results), references=references)
+
+
+def print_preview_dry_run(ctx: typer.Context, options: "list[Any]") -> None:
+    """Print a previewing sync leaf's dry-run block: probe (if requested), then the block.
+
+    For a leaf that is both :data:`DRY_RUN_PREVIEW_ATTR` and
+    :data:`DRY_RUN_SELF_FINISHING_ATTR` and runs without a loop of its own
+    (``otto test``, whose body is sync because ``pytest.main`` is): it has
+    already bound and built *options* from the real, typer-converted kwargs,
+    exactly as a real run would, so a bad value has already failed. This runs
+    the shared ``--probe`` step (its announcement prints whenever the flag was
+    given, a no-hosts probe included), then prints the same ``would run:`` /
+    ``options:`` / lab block the seam prints, with the same masking, and
+    returns without exiting: the leaf prints its own preview after it.
+    """
+    step = _sync_probe_step(ctx)
+    references = step.references
+    if references is None:
+        # Before the print, for the reason `_conclude_dry_run` gives.
         references = resolve_dry_run_references(ctx)
-        results = run_probe(references)
-        print_probe_report(results)
-        # `probe_contacted`, not `bool(results)`: a result set that is entirely
-        # `not probed`, or entirely LocalHost, opened no socket, and the probed
-        # headline would then assert a connection nobody made.
-        contacted = probe_contacted(results)
+    print_dry_run_block(ctx, references, contacted=step.contacted, options=options)
 
-    if spec.dry_run_preview or _leaf_declares_preview(ctx):
+
+def _conclude_dry_run(
+    ctx: typer.Context,
+    options: "list[Any]",
+    *,
+    preview: bool,
+    contacted: bool,
+    references: "list[LabReference] | None",
+) -> None:
+    """Resolve (if needed), print the dry-run block, and exit — never *preview*.
+
+    The shared tail :func:`stop_at_dry_run_seam` and :func:`finish_dry_run`
+    both call once their own probe step (sync ``run_probe``, or an ``await``
+    of ``probe_references`` — the only difference between the two callers)
+    is done. Deliberately sync end-to-end: resolving a reference, printing a
+    block, and raising ``typer.Exit`` are ordinary sync work that never
+    needed the event loop probing brings in, so factoring it out here is what
+    lets the seam skip that loop entirely when ``--probe`` was not given. One
+    authority for "what a dry run's tail prints", instead of two copies that
+    could drift.
+
+    *preview* is the escape hatch a command buys deliberately
+    (``dry_run_preview=True`` at registration, or the leaf's own
+    ``@cli_exposed`` stamp). ``False``, for a command that did not buy it,
+    prints the ``would run:`` / ``options:`` / lab block and raises
+    ``typer.Exit(0)``; ``True`` returns after the probe step, letting the
+    caller's own body run for real under ``-n`` too.
+    """
+    if preview:
         return
     # Before the print, not after: the resolution error is the answer when a
     # reference does not exist, and a block claiming a bad command "would run"
     # is exactly the fabrication this whole contract exists to remove.
     if references is None:
         references = resolve_dry_run_references(ctx)
-    print_dry_run_block(ctx, references, contacted=contacted)
+    print_dry_run_block(ctx, references, contacted=contacted, options=options)
     raise typer.Exit(0)
+
+
+async def finish_dry_run(
+    ctx: typer.Context, options: "list[Any]", *, preview: bool = False
+) -> None:
+    """Run the shared dry-run tail: probe (if requested), then resolve+print+exit, unless *preview*.
+
+    Shared by two call sites, both leaves already running inside a coroutine
+    that otto's OWN outer ``run_command`` is driving: a self-finishing leaf's
+    own wrapper (``otto.cli.invoke._wrap_with_options``'s ``wrapper``, awaited
+    directly once it has bound and built *options* from the real,
+    typer-converted kwargs — so a bad value has already raised the identical
+    ``typer.BadParameter`` a real run gives, before this is ever reached), and
+    a project instruction's own leaf (``otto.project.commands``, likewise
+    awaited after its own build). ``stop_at_dry_run_seam`` — the third dry-run
+    stop, reached before any leaf coroutine exists — does not call this at
+    all; it runs its own probe step synchronously and calls
+    ``_conclude_dry_run`` directly, so that path never pays for a loop it
+    does not need. This function and the seam share that same
+    ``_conclude_dry_run`` tail, so "what a dry run's tail prints" still
+    has one authority, not two.
+
+    ``--probe`` (spec §3) always runs first when requested, whether or not
+    *preview* is set — the reachability table prints for a previewing leaf
+    and a stopped one alike, in both cases before the thing it informs.
+    Without the flag not a single transport is opened here, which is what
+    keeps "a dry run makes no device contact" true by default.
+
+    *preview* is the escape hatch a command buys deliberately
+    (``dry_run_preview=True`` at registration, or the leaf's own
+    ``@cli_exposed`` stamp). ``False``, for a command that did not buy it,
+    prints the ``would run:`` / ``options:`` / lab block and raises
+    ``typer.Exit(0)``; ``True`` returns after the probe step, letting the
+    caller's own body run for real under ``-n`` too.
+
+    Async because dialing a host is (``otto.cli.probe.probe_references`` is
+    awaited directly, never through a nested ``asyncio.run``) — both callers
+    already own a running loop, so nothing here ever bridges in via a fresh
+    ``run_command`` of its own.
+    """
+    contacted = False
+    references: "list[LabReference] | None" = None
+    if probe_requested(ctx):
+        from .probe import print_probe_report, probe_contacted, probe_references
+
+        # Resolution first, and its failure still wins: dialing a host set
+        # derived from an unresolvable reference would be acting on a
+        # reference the command could not use.
+        references = resolve_dry_run_references(ctx)
+        results = await probe_references(references)
+        print_probe_report(results)
+        # `probe_contacted`, not `bool(results)`: a result set that is entirely
+        # `not probed`, or entirely LocalHost, opened no socket, and the probed
+        # headline would then assert a connection nobody made.
+        contacted = probe_contacted(results)
+
+    _conclude_dry_run(ctx, options, preview=preview, contacted=contacted, references=references)
 
 
 DRY_RUN_DECLINE = "dry run: this command was not run"
@@ -1758,26 +2129,36 @@ def wrap_leaf_callbacks(cmd: Any, spec: "CommandSpec") -> Any:
 
 # ---------------------------------------------------------------------------
 # Shared lazy child-group factory — the "one attachment idiom" for
-# registry-backed Typer groups (root CLI_COMMANDS, run/instructions,
-# test/suites all resolve their children this way).
+# registry-backed Typer groups (root CLI_COMMANDS and run/instructions
+# resolve their children this way).
 # ---------------------------------------------------------------------------
 
 
-def make_registry_group(child_registry: "Registry[Any]") -> "type[TyperGroup]":
+def make_registry_group(
+    child_registry: "Registry[Any]", *, app_of: "Callable[[Any], typer.Typer]"
+) -> "type[TyperGroup]":
     """Build a TyperGroup class whose children come from *child_registry*.
 
-    Children (suite/instruction sub-apps) convert lazily on first access.
+    Children (instruction sub-apps) convert lazily on first access.
+    *app_of* returns an entry's Typer app: an instruction BUILDS its app then
+    (``InstructionEntry.make_app``), so building it is where a clash between
+    its flags and the ``run`` verb's is found, or a ``run`` options class that
+    fails to import. ``get_command`` lets that ``OttoError`` propagate, so a
+    reader that walks every child (the completion tree) can contain it and keep
+    the rest of the CLI. ``resolve_command`` -- dispatch, which is how
+    ``otto run <name>`` and ``otto run <name> --help`` both reach the command --
+    renders it as the command's error and exits 1, before any body runs.
     This follows the same idiom as ``HostGroup`` (``cli/expose.py``): the
     group only resolves children on demand — it does NOT itself wrap them
     with the leaf-invoke preamble. ``main.py``'s root dispatch wraps the
     WHOLE resolved group (and therefore every child it lazily resolves, via
     ``wrap_leaf_callbacks``'s ``get_command`` recursion) with the preamble
-    for the top-level spec (``"run"`` / ``"test"``). This keeps ``run_app`` /
-    ``suite_app`` usable standalone without going through the full ``otto``
+    for the top-level spec (``"run"``). This keeps ``run_app``
+    usable standalone without going through the full ``otto``
     root app (unit tests drive them through the same seam via
     ``tests/_fixtures/dispatch.DispatchRunner``; note a plain ``async def``
     leaf needs that wrapper — bare, it fails loudly with an un-awaited
-    coroutine) while ``otto run smoke`` / ``otto test TestX`` still get the
+    coroutine) while ``otto run smoke`` still gets the
     preamble when dispatched for real.
 
     """
@@ -1789,14 +2170,18 @@ def make_registry_group(child_registry: "Registry[Any]") -> "type[TyperGroup]":
         _child_cache: dict[str, Any]
 
         @override
+        def resolve_command(self, ctx: Any, args: list[str]) -> Any:
+            # Dispatch only: a child that cannot be built is this command's
+            # error, said in one line, never a traceback.
+            try:
+                return super().resolve_command(ctx, args)
+            except OttoError as exc:
+                fail(exc)
+
+        @override
         def list_commands(self, ctx: Any) -> list[str]:
             static = super().list_commands(ctx)
-            names = child_registry.names()
-            # The read may have run a lazy loader (suites load test files on
-            # first read) whose findings click's help screen would otherwise
-            # swallow; printed once, before the help.
-            render_pending_bootstrap_findings()
-            return static + [n for n in names if n not in static]
+            return static + [n for n in child_registry.names() if n not in static]
 
         @override
         def get_command(self, ctx: Any, cmd_name: str) -> Any:
@@ -1804,12 +2189,9 @@ def make_registry_group(child_registry: "Registry[Any]") -> "type[TyperGroup]":
             if static is not None:
                 return static
             if cmd_name not in child_registry:
-                # A name missing because its file failed to load must not
-                # arrive as a bare "No such command": print why, first.
-                render_pending_bootstrap_findings()
                 return None
             # Converted-child cache with NO invalidation: fine for the CLI's
-            # one-shot process lifetime, but a same-file suite re-registration
+            # one-shot process lifetime, but a same-module re-registration
             # (sanctioned: overwrite=True within one module) that happens
             # AFTER this group already converted the child would keep serving
             # the earlier conversion. If long-lived embedders ever hit that,
@@ -1818,7 +2200,7 @@ def make_registry_group(child_registry: "Registry[Any]") -> "type[TyperGroup]":
             self._child_cache = cache
             if cmd_name not in cache:
                 entry = child_registry.get(cmd_name)
-                converted: Any = typer.main.get_command(entry.sub_app)
+                converted: Any = typer.main.get_command(app_of(entry))
                 cache[cmd_name] = (
                     converted.commands[cmd_name]
                     if hasattr(converted, "commands") and cmd_name in converted.commands

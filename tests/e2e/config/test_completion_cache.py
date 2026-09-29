@@ -83,17 +83,20 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
     # writes SCHEMA_VERSION - 1 (tests/unit/config/test_completion_cache_unit.py).
     assert cache["schema"] == SCHEMA_VERSION
     sections = cache["sections"]
-    assert set(sections) == {"names", "tests", "shim"}
+    assert set(sections) == {"names", "shim"}
     names = sections["names"]
     assert isinstance(names["generated_at"], int)
     assert names["tainted"] is False
     payload = names["payload"]
     instruction_names = {i["name"] for i in payload["instructions"]}
-    suite_names = {s["name"] for s in payload["suites"]}
     assert "test-instruction" in instruction_names
-    assert {"TestDevice", "TestCoverageProduct"} <= suite_names
+    # `otto test` has no per-test subcommands: its names come from the
+    # per-file test tables a pytest collection writes, never from `names`,
+    # and a `--help` rebuild collects nothing.
+    assert "suites" not in payload
+    assert "__collected_tests__" not in cache
     # Host IDs from tests/_fixtures/lab_data/tech1/lab.json — co-cached
-    # alongside instructions/suites so `otto host <TAB>` hits the fast path.
+    # alongside instructions so `otto host <TAB>` hits the fast path.
     assert {"test1", "test2", "test3"} <= set(payload["hosts"])
     # docker-capable parents are cached separately so `otto docker --on <TAB>`
     # only suggests hosts that can actually run containers. All three unix
@@ -105,20 +108,19 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
 
 
 def test_slow_path_seeds_cache_with_option_schemas(tmp_path: Path) -> None:
-    """Cached suites/instructions carry their option schemas for reconstruction."""
+    """Cached instructions carry their option schemas for reconstruction."""
     result = _run_otto(["--help"], xdir=tmp_path)
     assert result.returncode == 0, result.stderr
 
     payload = _read_cache(tmp_path)["sections"]["names"]["payload"]
-    # Pick a suite that we know has user-defined Options — TestDevice in repo1.
-    test_device = next(s for s in payload["suites"] if s["name"] == "TestDevice")
-    opts = test_device["options"]
-    assert opts, "expected TestDevice to have cached options"
+    # An instruction we know has an own options class — repo1's test-instruction.
+    instruction = next(i for i in payload["instructions"] if i["name"] == "test-instruction")
+    opts = instruction["options"]
+    assert opts, "expected test-instruction to have cached options"
     option_names = {o["name"] for o in opts}
-    # Options dataclass fields — suite-specific plus inherited RepoOptions.
-    assert {"firmware", "check_interfaces"} <= option_names
-    # Runner options (markers/iterations/...) live on the parent callback
-    # and must NOT appear in per-suite cached schemas.
+    # Its own field plus the inherited RepoOptions ones.
+    assert {"debug", "lab_env"} <= option_names
+    # `otto test`'s run flags belong to that command, not an instruction.
     assert option_names.isdisjoint(
         {"markers", "iterations", "duration", "threshold", "results"},
     )
@@ -159,8 +161,8 @@ def test_fast_path_returns_cached_instructions(tmp_path: Path) -> None:
     assert "test-instruction" in result.stdout
 
 
-def test_fast_path_returns_cached_suites(tmp_path: Path) -> None:
-    """`otto test <TAB>` should list registered suite names."""
+def test_fast_path_returns_cached_test_names(tmp_path: Path) -> None:
+    """`otto test <TAB>` lists test and class names from the static parse."""
     _run_otto(["--help"], xdir=tmp_path)
 
     result = _run_otto(
@@ -240,8 +242,15 @@ def test_host_completion_unscoped_shows_all_hosts(tmp_path: Path) -> None:
     assert names >= (_UNIX | _EMBEDDED | {"local"})
 
 
-def test_touching_test_file_invalidates_cache(tmp_path: Path) -> None:
-    """Bumping a tracked test file's mtime forces a rebuild with new digests."""
+def test_touching_a_test_file_leaves_the_names_section_valid(tmp_path: Path) -> None:
+    """A test file keys no section, so root help keeps serving ``names``.
+
+    No test file can register anything, so an edit to one never moves the
+    ``names`` digest, and root help (which reads ``names`` alone) neither
+    rebuilds nor rewrites the cache. The per-file test table sees the edit
+    through the file's own stat, and the next test-name TAB refreshes it
+    behind its answer (``tests/unit/shim/test_differential.py``).
+    """
     _run_otto(["--help"], xdir=tmp_path)
     before = _read_cache(tmp_path)["sections"]
 
@@ -253,14 +262,10 @@ def test_touching_test_file_invalidates_cache(tmp_path: Path) -> None:
     try:
         _run_otto(["--help"], xdir=tmp_path)
         after = _read_cache(tmp_path)["sections"]
-        # A TOP-LEVEL test file keys BOTH sections (it can register a suite,
-        # and it is a test source), so both digests must move. The sections
-        # map is rewritten in place: under v15 there is exactly one entry per
-        # section, so stale digests no longer pile up as dead top-level keys.
-        for name in ("names", "tests"):
-            assert after[name]["fingerprint"] != before[name]["fingerprint"], (
-                f"{name} digest did not move on a top-level test edit"
-            )
+        assert after["names"]["fingerprint"] == before["names"]["fingerprint"], (
+            "a test-file edit moved the names digest"
+        )
+        assert after == before, "root help rewrote the cache for a test-file edit"
     finally:
         os.utime(tracked, ns=(st.st_atime_ns, st.st_mtime_ns))
 
@@ -357,12 +362,12 @@ def test_fast_path_returns_static_parent_options(tmp_path: Path) -> None:
     flags = set(result.stdout.splitlines())
     # Click emits "plain,--flag\n"; match on substring to cover both shapes.
     blob = result.stdout
-    # Runner options (--markers / --iterations / --threshold / ...) live on the
-    # ``otto test`` parent callback alongside --cov / --cov-dir / --list-suites.
+    # Run flags (--markers / --iterations / --threshold / ...) live on the
+    # ``otto test`` command alongside --cov / --cov-dir / --list-tests.
     for flag in (
         "--cov",
         "--cov-dir",
-        "--list-suites",
+        "--list-tests",
         "--markers",
         "--iterations",
         "--duration",
@@ -372,8 +377,8 @@ def test_fast_path_returns_static_parent_options(tmp_path: Path) -> None:
         assert flag in blob, f"{flag!r} missing from: {flags!r}"
 
 
-def test_fast_path_returns_rebuilt_suite_options(tmp_path: Path) -> None:
-    """`otto test TestDevice --<TAB>` must include cached Options-derived flags."""
+def test_fast_path_offers_run_flags_after_a_name(tmp_path: Path) -> None:
+    """`otto test TestDevice --<TAB>`: a name is a positional, so every flag still applies."""
     _run_otto(["--help"], xdir=tmp_path)
 
     result = _run_otto(
@@ -384,13 +389,8 @@ def test_fast_path_returns_rebuilt_suite_options(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     blob = result.stdout
-    # --firmware comes from the TestDevice.Options dataclass and proves the
-    # Annotated[...] reconstruction path survived serialization round-trip.
-    assert "--firmware" in blob, f"--firmware missing from: {blob!r}"
-    # Runner options now live on the parent callback, not each suite — they
-    # must NOT appear in per-suite completion.
-    for flag in ("--markers", "--iterations", "--threshold"):
-        assert flag not in blob, f"{flag!r} unexpectedly in per-suite output: {blob!r}"
+    for flag in ("--markers", "--iterations", "--threshold", "--list-tests"):
+        assert flag in blob, f"{flag!r} missing after a name: {blob!r}"
 
 
 def test_fast_path_returns_host_ids_for_host_subcommand(tmp_path: Path) -> None:

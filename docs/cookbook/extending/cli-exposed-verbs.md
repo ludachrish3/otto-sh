@@ -190,7 +190,7 @@ carries the lab's declared `resources` and `metadata`, which are only known
 once every source has contributed. Inside a provider it still holds the
 default `LabInfo()` — so `host.lab_info.metadata.get("site")` returns `None`
 for every host, silently and forever. Gate on `source_lab` instead; read
-`lab_info` later, from a suite or instruction, where it is populated.
+`lab_info` later, from a test or instruction, where it is populated.
 ```
 
 Code-constructed hosts (`UnixHost(..., products=[...])`) keep their explicit

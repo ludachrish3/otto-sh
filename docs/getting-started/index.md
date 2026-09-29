@@ -46,7 +46,7 @@ your `~/.bashrc` (or `~/.profile`) so they run automatically at login. Type
 
 Otto discovers your project through a `.otto/settings.toml` file. `otto init
 --all --name acme --path /tmp/otto-gs/acme` scaffolds a runnable one (settings,
-an example lab host, an example suite, an example instruction) and prints the
+an example lab host, example tests, an example instruction) and prints the
 next steps, completion included. The directory has to exist first
 (`mkdir -p /tmp/otto-gs/acme`) — `otto init` never creates one. Substitute
 your own name and a path of your own.
@@ -85,7 +85,7 @@ The pages below define otto's own test bed — four Ubuntu VMs, five BusyBox
 guests, seven Zephyr targets — as the checked-in project
 `docs/examples/getting-started/`. The last two pages return to the project you
 scaffolded in [Project setup](#project-setup) to write an instruction and a
-test suite of your own.
+test of your own.
 
 ```{toctree}
 :maxdepth: 1
@@ -98,7 +98,7 @@ customizing-project-instructions
 boards-of-interest
 reservations
 running-instructions
-running-test-suites
+running-tests
 ```
 
 ## Where to go next

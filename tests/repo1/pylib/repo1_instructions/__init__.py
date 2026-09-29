@@ -1,6 +1,14 @@
+from otto import register_options
+
 from .install import test_instruction
 from .nc_smoke import nc_smoke
 from .run_on_container import run_on_container
+
+# Verb-wide options: ``RepoOptions`` adds ``--device-type``/``--lab-env`` to
+# ``otto run`` and ``otto test``; ``DeviceTestOptions`` adds ``--firmware`` and
+# ``--check-interfaces`` to ``otto test`` only.
+register_options("repo1_common.options:RepoOptions", verbs=["run", "test"])
+register_options("repo1_common.options:DeviceTestOptions", verbs=["test"])
 
 # The Zephyr 2.7 ``zephyr-inline`` command frame moved to the shared
 # ``custom_hosts`` module — a third-party-style package this repo now depends on

@@ -154,9 +154,9 @@ otto.reservations:resolve_username
 otto.result:CommandNotRunError
 otto.result:Result
 otto.suite.expect:ExpectCollector
-otto.suite.run:run_selection
-otto.suite:OttoSuite
-otto.suite:find_suite
+otto.suite:NoTestsMatchedError
+otto.suite:UnknownSelectionError
+otto.suite:run_tests
 otto.testing:assert_creds_store_conforms
 otto.testing:assert_host_conforms
 otto.testing:assert_inventory_conforms
@@ -200,8 +200,9 @@ otto:open_context
 otto:options
 otto:register_cli_command
 otto:register_login_proxy
+otto:register_options
 otto:register_project_actions
 otto:register_session_setup
 otto:run_on_all_hosts
-otto:run_suite
+otto:run_tests
 otto:try_get_context

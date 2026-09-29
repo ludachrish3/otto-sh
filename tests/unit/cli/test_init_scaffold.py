@@ -132,22 +132,24 @@ def test_creds_json_is_written_owner_only_and_nothing_is_overwritten(tmp_path: P
     assert inventory.read_text() == "{}"
 
 
-def test_tests_scaffold_suite_is_pytest_native(tmp_path: Path) -> None:
-    """The scaffold models the shapes the docs teach (spec §8.1): a bare subclass
-    with `Options = _Options`, a module logger, a classmethod class fixture, a
-    test that uses `expect` and `test_dir`, a plain function — and none of the
-    removed spellings."""
+def test_tests_scaffold_is_plain_pytest(tmp_path: Path) -> None:
+    """The scaffold models the shapes the docs teach: a plain class that reads
+    the repo's options through `ctx.options`, a module logger, a classmethod
+    class fixture, a test that uses `expect` and `test_dir`, a plain function —
+    and none of the removed spellings."""
     BY_NAME["tests"].scaffold(tmp_path, CFG)
     src = (tmp_path / "tests" / "test_example.py").read_text()
-    assert "class TestExample(OttoSuite):" in src
-    assert "Options = _Options" in src
+    assert "class TestExample:" in src
+    assert "ctx.options(RepoOptions)" in src
     assert "logger = logging.getLogger(__name__)" in src
     assert '@pytest.fixture(scope="class", autouse=True)\n    @classmethod' in src
     assert "def test_example_function" in src
     assert "expect(" in src
     assert "test_dir" in src
     for old in (
-        "OttoSuite[",
+        "OttoSuite",
+        "suite_options",
+        "Options = ",
         "self.logger",
         "self.expect",
         "testDir",
@@ -157,7 +159,15 @@ def test_tests_scaffold_suite_is_pytest_native(tmp_path: Path) -> None:
         assert old not in src, old
     conftest = (tmp_path / "tests" / "conftest.py").read_text()
     assert '@pytest_asyncio.fixture(scope="class")' in conftest
-    assert 'loop_scope="session"' in conftest  # the pin rule, stated where it will be copied
+    assert 'loop_scope="session"' not in conftest  # the session loop is the default
+    # The narrower-pin rule, stated where it will be copied: one shared host
+    # instance stays on the session loop, fixtures carry the tests' pin, and a
+    # wider-scoped fixture pinned to the class loop is pytest-asyncio's
+    # ScopeMismatch.
+    assert '@pytest_asyncio.fixture(scope="class", loop_scope="class")' in conftest
+    assert "one shared instance per host" in conftest
+    assert "ScopeMismatch" in conftest
+    assert "opens its own host" not in conftest
 
 
 def test_instructions_scaffold_imports(tmp_path: Path) -> None:
@@ -179,9 +189,8 @@ def test_tests_scaffold_creates_shared_options_module(tmp_path: Path) -> None:
     src = options_mod.read_text()
     assert "class RepoOptions" in src
     assert "hello from widget" in src
-    suite_src = (tmp_path / "tests" / "test_example.py").read_text()
-    assert "from widget_options import RepoOptions" in suite_src
-    assert "class _Options(RepoOptions)" in suite_src
+    test_src = (tmp_path / "tests" / "test_example.py").read_text()
+    assert "from widget_options import RepoOptions" in test_src
 
 
 def test_instructions_scaffold_creates_shared_options_module(tmp_path: Path) -> None:
@@ -189,7 +198,10 @@ def test_instructions_scaffold_creates_shared_options_module(tmp_path: Path) -> 
     assert tmp_path / "pylib" / "widget_options.py" in created
     src = (tmp_path / "pylib" / "widget_instructions" / "__init__.py").read_text()
     assert "from widget_options import RepoOptions" in src
-    assert "@instruction(options=_Options)" in src
+    # The init module registers the shared class for both verbs, and the
+    # instruction receives it by injection rather than inheriting it.
+    assert 'register_options("widget_options:RepoOptions", verbs=["run", "test"])' in src
+    assert "@instruction()\nasync def smoke(\n    opts: RepoOptions," in src
     # The decorator rejects a sync handler, so scaffolding one would make
     # `otto init` emit a repo that cannot import.
     assert "async def smoke" in src

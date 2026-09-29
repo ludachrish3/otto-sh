@@ -114,37 +114,50 @@ first-party class to inherit, so `DeployOpts` above inherits nothing.
 
 ## Tests follow the flags
 
-A test does not pass CLI flags, so where does a body's `--variant` come from
-under `otto test`? From the suite's own options, matched **by declaring
-class**:
+A test marked `@pytest.mark.ensure("installed")` converges the lab through the
+same `install` bodies before it runs. Under `otto test`, a body's `--variant`
+comes from `otto test`'s own flags, matched by field name
+([Which flags reach an install body under `otto test`](../cookbook/authoring/options-classes.md#which-flags-reach-an-install-body-under-otto-test)).
+So the flag has to be registered for `test` too, which is what the example
+repo's init module does:
+
+```{literalinclude} ../examples/getting-started/libs/gs_example/actions.py
+:language: python
+:start-after: "# doc: begin register-variant"
+:end-before: "# doc: end register-variant"
+```
+
+`BedVariant` is the small class that declares `variant`, and `BedInstall`
+inherits it, so `--variant` is one flag on `otto run install`. Registering
+`BedVariant` for `run` and `test` puts `--variant`, and only `--variant`, on
+every `otto run` command and on `otto test`. `BedInstall` itself stays `install`'s own
+options class, unregistered, because a registration reaches every command of
+the verb: registering it would put `--ensure` and `--recover-partial` on
+`otto run status`, `otto run uninstall` and `otto test` as well. The rule is
+in [A registration reaches every command of the
+verb](../cookbook/authoring/options-classes.md#a-registration-reaches-every-command-of-the-verb).
+
+A test then asks for the state, and `otto test --variant` steers the install
+that reaches it:
 
 ```python
 import pytest
 
-from otto.suite import OttoSuite
-
-from gs_example.actions import BedInstall
-
 
 @pytest.mark.ensure("installed")
-class TestAgent(OttoSuite):
-    Options = BedInstall  # declares variant, so otto test --variant steers the install
+class TestAgent:
+    async def test_agent_answers(self) -> None: ...
 ```
 
-A field reaches a body when the suite's `Options` class and the repo's options
-class get it from the **same declaring class** — here both sides *are*
-`BedInstall`, the class that declares `variant`. Every other field takes its
-default. Matching is by the declaring class, never by the field's name, so a
-suite field that merely spells `variant` on an unrelated class of its own never
-leaks into an install.
+```bash
+otto --lab unix test TestAgent --variant debug
+```
 
-Sharing the whole install class is the shortest version and puts `--ensure` on
-the suite too. The usual shape is the one the flag-sharing rule above already
-described: put `variant` on a small repo-wide options class, and let both the
-install options and the suite's `Options` inherit *that*. See
-{doc}`../cookbook/authoring/options-classes`.
+`BedInstall`'s other fields, such as `ensure`, have no `otto test` flag, so
+the body gets their defaults.
 
-The suite side of the marker is in
-{doc}`../cookbook/authoring/writing-suites`; the declaration rules on this page have their
-home in {doc}`../cookbook/authoring/writing-instructions` under *Project instructions*,
+The test side of the marker is in
+[Declaring lab state](../cookbook/authoring/writing-tests.md#declaring-lab-state-the-ensure-marker);
+the declaration rules on this page have their home in
+{doc}`../cookbook/authoring/writing-instructions` under *Project instructions*,
 and the composition rules in {doc}`../cli/run/defaults`.

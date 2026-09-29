@@ -177,7 +177,7 @@ def _ensure_options_module(root: Path, cfg: InitConfig) -> list[Path]:
     """Create ``pylib/<module_base>_options.py`` if absent; never overwrite.
 
     Shared plumbing between the tests and instructions areas: both samples
-    inherit ``RepoOptions``, so whichever scaffold runs first creates it and
+    read ``RepoOptions``, so whichever scaffold runs first creates it and
     the other reuses it (idempotent — the module is user-owned once written).
     """
     pylib = root / "pylib"
@@ -771,11 +771,10 @@ def _lab_warnings(
 def _validate_tests(root: Path) -> list[str]:
     """Light check of configured test dirs: existence, ``test_*.py`` presence, syntax.
 
-    Deliberately does NOT build a :class:`~otto.config.repo.Repo` and
-    run :meth:`~otto.config.repo.Repo.collect_tests` — that spins an
-    inner pytest collection pass (module-cache save/restore, event-loop
-    bookkeeping) which is too heavy for a doctor check. ``ast.parse`` catches
-    syntax errors without importing user code.
+    Deliberately does NOT run pytest's collection (``otto test
+    --list-tests``): that imports every test file and conftest, which is too
+    heavy for a doctor check. ``ast.parse`` catches syntax errors without
+    importing user code.
     """
     import ast
 
@@ -969,6 +968,28 @@ OPT_IN_AREAS: frozenset[str] = frozenset({"kgcov"})
 
 A kernel-module coverage library does not belong in every new repo."""
 
+AREA_PREREQUISITES: dict[str, list[str]] = {"tests": ["instructions"]}
+"""Areas a scaffolded area cannot run without, scaffolded with it when missing.
+
+The example tests read ``RepoOptions`` through ``ctx.options``, and the
+instructions module — the init module ``settings.toml`` names — is what
+registers it for ``otto test``. The scaffold loop learns an area's
+prerequisites as it passes that area, so each prerequisite comes after the
+area that needs it in :data:`AREAS`."""
+
+
+def _note_prerequisites_found(found: set[str]) -> None:
+    """Say what a scaffolded area needs from a prerequisite area that was already there.
+
+    otto reads no init module to see what it registers, so it names the call.
+    """
+    if "instructions" in found:
+        typer.echo(
+            "the example tests read RepoOptions through ctx.options: make sure an init "
+            'module calls register_options(RepoOptions, verbs=["run", "test"]) '
+            "(the instructions area otto scaffolds does)."
+        )
+
 
 def _area_wanted(
     area: Area, *, interactive: bool, all_areas: bool, requested: dict[str, bool]
@@ -1007,7 +1028,15 @@ async def init_command(
         ),
     ] = False,
     tests: Annotated[
-        bool, typer.Option("--tests", help="Scaffold the tests area (example suite + conftest).")
+        bool,
+        typer.Option(
+            "--tests",
+            help=(
+                "Scaffold the tests area (example tests + conftest), plus the "
+                "instructions area when missing: its init module registers the "
+                "options the tests read."
+            ),
+        ),
     ] = False,
     instructions: Annotated[
         bool, typer.Option("--instructions", help="Scaffold the instructions area (pylib module).")
@@ -1086,17 +1115,23 @@ async def init_command(
     )
 
     scaffolded: list[str] = []
+    prerequisites: set[str] = set()
     for area in AREAS:
         if area.name not in missing_names and area.name not in refresh_names:
             continue
-        wanted = _area_wanted(
+        if area.name in prerequisites and not (all_areas or requested.get(area.name)):
+            typer.echo(
+                f"the {area.name} area is a prerequisite of what you asked for — scaffolding it."
+            )
+        elif not _area_wanted(
             area, interactive=interactive, all_areas=all_areas, requested=requested
-        )
-        if not wanted:
+        ):
             continue
         for created in area.scaffold(root, cfg):
             typer.echo(f"created {created.relative_to(root)}")
         scaffolded.append(area.name)
+        prerequisites.update(AREA_PREREQUISITES.get(area.name, []))
+    _note_prerequisites_found(prerequisites - set(scaffolded))
 
     from rich import print as rprint
     from rich.markup import escape
@@ -1118,9 +1153,9 @@ async def init_command(
     # user concludes completion is broken (spec §12).
     steps.append("source ~/.bash_completions/otto.sh")
     steps.append(f"otto --lab {EXAMPLE_LAB_NAME} --list-hosts")
-    steps.append("otto test --list-suites")
+    steps.append("otto test --list-tests")
     steps.append(f"otto --lab {EXAMPLE_LAB_NAME} test TestExample")
-    steps.append(f"otto --lab {EXAMPLE_LAB_NAME} test --tests test_example_function")
+    steps.append(f"otto --lab {EXAMPLE_LAB_NAME} test test_example_function")
     steps.append(f"otto --lab {EXAMPLE_LAB_NAME} run smoke")
     rprint("\n[bold]Next steps[/bold]")
     for i, step in enumerate(steps, 1):

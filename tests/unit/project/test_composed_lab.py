@@ -118,7 +118,7 @@ class _FleetHost(BaseHost):
         self.events.append((self.id, f"as_user:{user}"))
         yield self
 
-    async def close(self):
+    async def _close(self):
         return None
 
 

@@ -603,7 +603,9 @@ class TestInstructionSeamGuard:
         from otto.cli.invoke import make_registry_group
         from otto.instructions import INSTRUCTIONS as REGISTRY
 
-        app = typer.Typer(name="run", cls=make_registry_group(REGISTRY))
+        app = typer.Typer(
+            name="run", cls=make_registry_group(REGISTRY, app_of=lambda entry: entry.make_app())
+        )
 
         @app.callback()
         def _cb() -> None:
@@ -657,7 +659,7 @@ class TestInstructionSeamGuard:
 
         REGISTRY.register(
             "_seam_registered",
-            InstructionEntry(name="_seam_registered", sub_app=sub, module=__name__),
+            InstructionEntry(name="_seam_registered", make_app=lambda: sub, module=__name__),
             origin=__name__,
         )
         try:

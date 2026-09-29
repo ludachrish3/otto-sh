@@ -231,8 +231,6 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         if self.default_dest_dir == Path() and self.filesystem.mount is not None:
             self.default_dest_dir = Path(self.filesystem.mount)
 
-        hop_transport = self._build_hop_transport() if self.hop else None
-
         TERM_RESOLVER.validate_choice(self.valid_terms, self.term)
         TRANSFER_RESOLVER.validate_choice(self.valid_transfers, self.transfer)
 
@@ -241,6 +239,30 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         # waiting for a ``login:`` prompt that the device will never send.
         if self.term == "console" and self.console_options.login:
             logger.debug(f"{self.name}: console_options.login overridden to False (no RTOS login)")
+        self._build_connection_state()
+
+    def rebuild_connections(self) -> None:
+        """Recreate the ConnectionManager and its dependents, dropping the old ones unclosed.
+
+        Mirrors :meth:`~otto.host.unix_host.UnixHost.rebuild_connections`: how
+        a host leaves a closed event loop (or a rebooted board). The old
+        manager's transports may belong to a dead loop, so they are abandoned
+        rather than closed, except a cached console client, whose line is
+        released at once: the console server serves one client, so a client
+        left holding it would refuse every dial the new manager makes.
+        """
+        abandon_console = getattr(self._connections, "abandon_console", None)
+        if abandon_console is not None:
+            abandon_console()
+        self._build_connection_state()
+
+    def _build_connection_state(self) -> None:
+        """Build the connection manager, session manager and transfer backend from the fields.
+
+        Shared by ``__post_init__`` and :meth:`rebuild_connections`, so a
+        rebuilt host is wired exactly as a new one.
+        """
+        hop_transport = self._build_hop_transport() if self.hop else None
         factory = self._connection_factory or ConnectionManager
         self._connections = factory(
             ip=self.ip,
@@ -282,6 +304,11 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             ),
         )
 
+    def _live_file_transfer(self) -> "EmbeddedFileTransfer":
+        """Return the transfer backend, after claiming the running loop (see ``_claim_loop``)."""
+        self._claim_loop()
+        return self._file_transfer
+
     ####################
     #  Connection
     ####################
@@ -289,9 +316,8 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     @override
     async def _probe_connection(self) -> None:
         """Open the single console (telnet or console term) — the embedded connect probe."""
-        await (
-            self._connections.console() if self.term == "console" else self._connections.telnet()
-        )
+        conns = self._live_connections()
+        await (conns.console() if self.term == "console" else conns.telnet())
 
     ####################
     #  Command execution
@@ -355,7 +381,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         so it lands above ``exec``'s dry-run arm. *needs_shell* is accepted
         for signature parity — this family always runs on the shared shell.
         """
-        return await self._session_mgr.run_cmd(
+        return await self._live_session_mgr().run_cmd(
             cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
         )
 
@@ -434,7 +460,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
         with SuppressCommandOutput(host=cast("Host", self)):
-            return await self._file_transfer.get_files(
+            return await self._live_file_transfer().get_files(
                 src_files, dest_dir, show_progress, concurrent=concurrent
             )
 
@@ -499,7 +525,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         if is_dry_run():
             return self._dry_run_transfer("PUT", src_files, dest_dir, mode)
         with SuppressCommandOutput(host=cast("Host", self)):
-            return await self._file_transfer.put_files(
+            return await self._live_file_transfer().put_files(
                 src_files, dest_dir, show_progress, mode, concurrent=concurrent
             )
 
@@ -628,14 +654,14 @@ class EmbeddedHost(UserlandHost, RemoteHost):
                 def _wp(done: int, total: int) -> None:
                     handler(str(file), f"{self.name}:{name}", done, total)
 
-                result = await self._session_mgr.run_cmd(
+                result = await self._live_session_mgr().run_cmd(
                     cmd,
                     timeout=timeout,
                     log=LogMode.NEVER,
                     write_progress=_wp,
                 )
         else:
-            result = await self._session_mgr.run_cmd(cmd, timeout=timeout, log=LogMode.NEVER)
+            result = await self._live_session_mgr().run_cmd(cmd, timeout=timeout, log=LogMode.NEVER)
         ok, reason = loader.check_loaded(result.value)
         if ok:
             return Result(Status.Success)
@@ -663,7 +689,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         cmd = loader.unload_command(name)
         last = ""
         for _ in range(loader.max_unload_rounds):
-            result = await self._session_mgr.run_cmd(cmd, timeout=timeout)
+            result = await self._live_session_mgr().run_cmd(cmd, timeout=timeout)
             last = result.value
             if loader.is_fully_unloaded(result.value):
                 return Result(Status.Success)

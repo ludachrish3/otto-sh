@@ -1,4 +1,4 @@
-"""Embedded (Zephyr LLEXT) coverage OttoSuite.
+"""Embedded (Zephyr LLEXT) coverage tests.
 
 The embedded analogue of repo1's ``TestCoverageProduct``. Instead of compiling a
 host binary and emitting ``.gcda`` to a filesystem, it loads a
@@ -35,13 +35,11 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto import options
 from otto.config import get_repos
 from otto.config.fleet import all_hosts
 from otto.host import LocalHost
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.llext_kind import LlextProduct
-from otto.suite import OttoSuite
 from otto.utils import Status
 
 logger = logging.getLogger(__name__)
@@ -174,24 +172,17 @@ async def _call(host: EmbeddedHost, fn: str, timeout: float = 60) -> None:
         raise RuntimeError(f"call_fn {fn} failed on {host.id}: {result.value}")
 
 
-@options
-class _Options:
-    pass
-
-
-class TestEmbeddedCoverage(OttoSuite):
+class TestEmbeddedCoverage:
     """Exercise the LLEXT coverage product over the console on each embedded
     coverage host, leaving the extension loaded for ``--cov`` collection.
     """
-
-    Options = _Options
 
     @pytest_asyncio.fixture(autouse=True, scope="class")
     @classmethod
     async def _load_extension(cls, ctx):
         """Rebuild (per version), then load + initialise the extension on every
         embedded host; unload on teardown (unless ``--cov`` needs it kept for
-        the post-test dump). A classmethod on the suite's own loop (no
+        the post-test dump). A classmethod on the run's session loop (no
         ``loop_scope`` pin).
 
         Each distinct ``(build_dir, zver)`` pair is built exactly once so that

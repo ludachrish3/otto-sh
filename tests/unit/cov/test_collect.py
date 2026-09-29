@@ -1228,14 +1228,17 @@ class TestPostRunSwallowPolicy:
         assert any("Coverage collection failed" in rec.message for rec in caplog.records)
 
 
-# ── clean_remote_gcda (pre-run cleanup + connection rebuild) ──────────────────
+# ── clean_remote_gcda (pre-run cleanup) ────────────────────────────────────────
 
 
 class TestCleanRemoteGcda:
-    """``clean_remote_gcda`` zeroes remote counters (when configured) and always
-    rebuilds Unix host connections so pytest reconnects on its own loop."""
+    """``clean_remote_gcda`` zeroes remote counters when configured.
 
-    def test_cleans_and_rebuilds_when_configured(self):
+    It never rebuilds a host's connections: that would abandon the live shells
+    the clean just opened, unclosed. The caller's loop closes them when it
+    ends, and a host reconnects on whatever loop uses it next."""
+
+    def test_cleans_when_configured_and_leaves_connections_alone(self):
         from otto.coverage.collect import clean_remote_gcda
         from otto.host import UnixHost
 
@@ -1257,9 +1260,9 @@ class TestCleanRemoteGcda:
         assert fetcher_cls.call_args.kwargs["pattern"].pattern == ".*"
         # No argument: the clean re-walks each host's instrumented products.
         fetcher_instance.clean_remote.assert_awaited_once_with()
-        host.rebuild_connections.assert_called_once()
+        host.rebuild_connections.assert_not_called()
 
-    def test_no_config_skips_clean_but_still_rebuilds(self):
+    def test_no_config_skips_the_clean(self):
         from otto.coverage.collect import clean_remote_gcda
         from otto.host import UnixHost
 
@@ -1272,7 +1275,7 @@ class TestCleanRemoteGcda:
             asyncio.run(clean_remote_gcda([MagicMock()]))
 
         fetcher_cls.assert_not_called()
-        host.rebuild_connections.assert_called_once()
+        host.rebuild_connections.assert_not_called()
 
     def test_no_hosts_in_the_lab_skips_the_clean(self):
         """A configured lab with no hosts has nothing to clean — and no fetcher

@@ -48,7 +48,7 @@ paths = ["lab"]
 """
 
 INIT = '''
-"""Registers a host class, a plugin group with a nested command, and an instruction."""
+"""Registers a host class, a nested plugin group, an instruction and test options."""
 
 import enum
 from pathlib import Path
@@ -103,32 +103,27 @@ class _Opts:
 @instruction(options=_Opts)
 async def blink_all(opts: _Opts) -> None:
     """Blink every host."""
+
+
+@otto.options
+class _ShimTestOpts:
+    depth: Annotated[int, typer.Option("--depth")] = 1
+
+
+otto.register_options(_ShimTestOpts, verbs=["test"])
 '''
 
 SUITE = '''
-from typing import Annotated
-
 import pytest
-import typer
-
-from otto import options
-from otto.suite import OttoSuite
 
 pytestmark = pytest.mark.slow
 
 
-@options
-class _Options:
-    depth: Annotated[int, typer.Option("--depth")] = 1
-
-
-class TestShim(OttoSuite):
-    """The differential fixture suite."""
-
-    Options = _Options
+class TestShim:
+    """The differential fixture class."""
 
     @pytest.mark.smoke
-    async def test_one(self, suite_options: _Options) -> None:
+    async def test_one(self, ctx) -> None:
         pass
 
     async def test_two(self) -> None:

@@ -75,17 +75,16 @@ class CollectResult:
 
 
 async def clean_remote_gcda(repos: "list[Repo] | None" = None) -> None:
-    """Delete each instrumented product's ``.gcda`` on the lab's remote hosts, then rebuild.
+    """Delete each instrumented product's ``.gcda`` on the lab's remote hosts.
 
     The pre-run cleanup for ``otto test --cov --cov-clean``: zero every
     instrumented product's counters, under that product's own ``cov_dir``, so
-    stale data from a previous run cannot be mixed in — then rebuild all Unix
-    host connections so the pytest session reconnects on its own event loop.
-    The rebuild runs whenever this returns, including when the clean itself was
-    skipped for want of config — matching the old ``_pre_run_cov_clean``
-    behavior. The one path that skips it is the malformed-selector refusal
-    below, which raises before any host is touched. The ``if opts.cov and
-    opts.cov_clean`` gate stays with the caller.
+    stale data from a previous run cannot be mixed in. The connections the
+    clean opens belong to the caller's event loop and stay open. Under
+    ``otto test`` the caller is :func:`~otto.lifecycle.run_command`, whose
+    loop closes them as it ends, and the pytest session then reconnects each
+    host on its own loop. The ``if opts.cov and opts.cov_clean`` gate stays
+    with the caller.
 
     Raises:
         CoverageConfigError: ``[coverage].hosts`` is malformed — refused by
@@ -94,7 +93,6 @@ async def clean_remote_gcda(repos: "list[Repo] | None" = None) -> None:
     """
     from ..config import all_hosts, get_repos
     from ..config.coverage_settings import get_cov_config, load_hosts_pattern
-    from ..host import UnixHost
     from .fetcher.remote import GcdaFetcher
 
     if repos is None:
@@ -103,20 +101,12 @@ async def clean_remote_gcda(repos: "list[Repo] | None" = None) -> None:
     cov_config = get_cov_config(repos)
 
     if not cov_config:
-        pass  # no [coverage] section — nothing to clean, but still rebuild below
-    elif not any(all_hosts(include_containers=True)):
-        pass  # no hosts in the lab — nothing to clean
-    else:
-        # The staging root is unused by clean_remote() — nothing is downloaded.
-        staging_root = Path("/tmp")  # noqa: S108 — deliberate staging path, never written to
-        await GcdaFetcher(staging_root, pattern=load_hosts_pattern(cov_config)).clean_remote()
-
-    # Rebuild host connections so pytest gets fresh ones on its own loop.
-    # rebuild_connections() only exists on UnixHost; embedded targets don't
-    # carry the same connection lifecycle so skip them.
-    for host in all_hosts():
-        if isinstance(host, UnixHost):
-            host.rebuild_connections()
+        return  # no [coverage] section — nothing to clean
+    if not any(all_hosts(include_containers=True)):
+        return  # no hosts in the lab — nothing to clean
+    # The staging root is unused by clean_remote() — nothing is downloaded.
+    staging_root = Path("/tmp")  # noqa: S108 — deliberate staging path, never written to
+    await GcdaFetcher(staging_root, pattern=load_hosts_pattern(cov_config)).clean_remote()
 
 
 async def collect_coverage(
@@ -229,13 +219,9 @@ async def collect_coverage(
     product_dirs: dict[tuple[str, str], Path] = {}
     fetched: dict[tuple[str, str], Path] = {}
     if fetch_hosts:
-        # Hosts may carry stale connections from pytest's event loop; rebuild
-        # their connection state so they reconnect on the current loop. A
-        # container host fronts its Unix parent and has no rebuild of its own.
-        for host in fetch_hosts:
-            rebuild = getattr(host, "rebuild_connections", None)
-            if rebuild is not None:
-                rebuild()
+        # No reconnect step: a host whose connection belonged to one of
+        # pytest's closed loops drops it on first use here and reconnects on
+        # this loop (BaseHost._claim_loop).
         fetcher = GcdaFetcher(cov_dir, pattern=cov_pattern)
         fetched = await fetcher.fetch_all()
         product_dirs.update(fetched)

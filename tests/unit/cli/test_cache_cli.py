@@ -53,6 +53,24 @@ def test_clear_bare_clears_only_current_workspace(tmp_path, monkeypatch):
     assert current.exists()  # bare clear never removes the dir
 
 
+def test_clear_bare_removes_the_bytecode_and_pytests_cache_too(tmp_path, monkeypatch):
+    from otto.cli.cache import cache_app
+    from otto.config.home import workspace_key
+
+    home = _home(monkeypatch, tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    current = _mk_workspace(home, workspace_key([repo]), cache_age=YOUNG, session_dirs=True)
+
+    result = runner.invoke(cache_app, ["clear"])
+
+    assert result.exit_code == 0
+    assert not (current / "pycache").exists()
+    assert not (current / "pytest-cache").exists()
+    assert f"removed {current / 'pycache'}" in result.output
+
+
 def test_clear_bare_reports_nothing_to_remove_when_empty(tmp_path, monkeypatch):
     _home(monkeypatch, tmp_path)
     from otto.cli.cache import cache_app

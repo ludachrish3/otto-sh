@@ -189,6 +189,15 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     def __post_init__(self) -> None:
         self.id = "local"
+        self.rebuild_connections()
+
+    def rebuild_connections(self) -> None:
+        """Recreate the session manager and transfer backend, dropping the old ones unclosed.
+
+        How a host leaves a closed event loop: the old shell's pipes belong
+        to that loop and cannot be driven from another, so they are abandoned
+        rather than closed. ``__post_init__`` builds through here too.
+        """
         self._session_mgr = SessionManager(
             name=self.name,
             log_command=self._log_command,
@@ -199,6 +208,11 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             host_id=self.id,
         )
         self._file_transfer = LocalFileTransfer(name=self.name)
+
+    def _live_file_transfer(self) -> LocalFileTransfer:
+        """Return the transfer backend, after claiming the running loop (see ``_claim_loop``)."""
+        self._claim_loop()
+        return self._file_transfer
 
     ####################
     #  Command execution
@@ -230,7 +244,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             ) from None
         if is_dry_run():
             return self._dry_run_result(cmd, log)
-        return await self._session_mgr.run_cmd(
+        return await self._live_session_mgr().run_cmd(
             cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
         )
 
@@ -409,7 +423,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         """
         if is_dry_run():
             return self._dry_run_session(name)
-        return await self._session_mgr.open_session(name)
+        return await self._live_session_mgr().open_session(name)
 
     @override
     async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
@@ -425,7 +439,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             # `text` is already a live `str` and `repr` only copies it.
             self._log_command(f"[DRY RUN] send({text!r})", effective)
             return
-        await self._session_mgr.send(text, log=effective)
+        await self._live_session_mgr().send(text, log=effective)
 
     @override
     async def _expect_one(
@@ -434,7 +448,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         timeout: float,
     ) -> str:
         """Wait for a pattern in the host's session output stream."""
-        return await self._session_mgr.expect(pattern, timeout)
+        return await self._live_session_mgr().expect(pattern, timeout)
 
     ####################
     #  File transfer
@@ -490,7 +504,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             )
         if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
-        return await self._file_transfer.get_files(
+        return await self._live_file_transfer().get_files(
             src_files,
             dest_dir,
             show_progress,
@@ -553,7 +567,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             )
         if is_dry_run():
             return self._dry_run_transfer("PUT", src_files, dest_dir, mode)
-        return await self._file_transfer.put_files(
+        return await self._live_file_transfer().put_files(
             src_files,
             dest_dir,
             show_progress,
@@ -624,5 +638,5 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     ####################
 
     @override
-    async def close(self) -> None:
+    async def _close(self) -> None:
         await self._session_mgr.close_all()

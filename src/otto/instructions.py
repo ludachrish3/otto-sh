@@ -1,12 +1,13 @@
 """Registry of user-defined ``otto run`` instructions (pure data, CLI-free).
 
-:func:`otto.cli.run.instruction` builds each instruction's Typer sub-app and
-registers it here as init modules are imported during startup. The registry
-itself is deliberately CLI-free (the ``typer.Typer`` field is a
-TYPE_CHECKING-only annotation), so core consumers — ``Repo``'s instruction
-panel and the completion cache — read the registered set without importing
-the CLI stack. An unpopulated registry simply yields no entries: instructions
-only exist once init modules have run their ``@instruction()`` decorators.
+:func:`otto.cli.run.instruction` registers a factory for each instruction's
+Typer app here as init modules are imported during startup; the app is built
+when ``otto run`` resolves the command. The registry itself is deliberately
+CLI-free (the ``typer.Typer`` return is a TYPE_CHECKING-only annotation), so
+core consumers — ``Repo``'s instruction panel and the completion cache — read
+the registered set without importing the CLI stack. An unpopulated registry
+simply yields no entries: instructions only exist once init modules have run
+their ``@instruction()`` decorators.
 """
 
 import dataclasses
@@ -23,10 +24,18 @@ if TYPE_CHECKING:
 
 @dataclasses.dataclass(frozen=True)
 class InstructionEntry:
-    """One registered instruction: its Typer sub-app, defining module, owning repo."""
+    """One registered instruction: how to build its Typer app, defining module, owning repo."""
 
     name: str
-    sub_app: "typer.Typer"
+    make_app: "Callable[[], typer.Typer]"
+    """Build the instruction's one-command Typer app, when the command is resolved.
+
+    A factory rather than the app itself, because the command's flags include
+    every options class registered for ``run``, and a repo may register one in
+    its init module AFTER an earlier init module's instructions were
+    decorated. Building on resolution also keeps resolving those classes
+    (which may import their modules) off every path but ``otto run``'s own.
+    """
     module: str
 
     registered_by: str | None = None

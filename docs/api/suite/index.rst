@@ -1,13 +1,17 @@
 suite
 =====
 
-The suite package provides the test framework built on top of pytest.
+The suite package runs otto tests: plain pytest classes and functions, with
+otto's fixtures and hooks layered on. :func:`otto.suite.run.run_tests` is the
+library entry point behind ``otto test``.
 
 .. toctree::
 
-   suite
    run
    selection
+   pytest_plugin
    plugin
-   register
+   layout
+   monitor_fixture
+   loops
    expect

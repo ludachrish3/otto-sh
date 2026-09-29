@@ -7,15 +7,15 @@ based: an init module calls `register_*` functions (or applies decorators),
 and from then on the new component behaves exactly like a built-in — same
 registries, same CLI listing and completion, same error messages
 ({doc}`registries`). Test files are not an extension point: they load only
-for the commands that read suites, so they may register suites and nothing
-else ({doc}`../lifecycle`).
+inside `otto test`'s pytest session, so they may register nothing
+({doc}`registries`, "What test files may register").
 
 ## The seams
 
 | You want to add | Register with | Guide |
 | --- | --- | --- |
 | an `otto run` subcommand | {func}`@instruction() <otto.cli.run.instruction>` | {doc}`../../cli/run/index` |
-| an `otto test` suite | `Test`-prefixed {class}`~otto.suite.suite.OttoSuite` subclass (auto-registers) | {doc}`../../cli/test/index` |
+| flags on `otto run` and `otto test` | {func}`otto.register_options <otto.params.register_options>` / `@options(verbs=[...])` | {doc}`../../cookbook/authoring/options-classes` |
 | a top-level `otto` command | {func}`otto.register_cli_command <otto.cli.registry.register_cli_command>` / {func}`@otto.cli_command <otto.cli.registry.cli_command>` | {doc}`../../cookbook/extending/extending-cli` |
 | a CLI verb on a host class | `@cli_exposed` on the method | {doc}`../../cookbook/extending/cli-exposed-verbs` |
 | a host class (new `os_type` base) | `register_host_class` | {doc}`../../cookbook/extending/custom-host-classes` |
@@ -34,9 +34,11 @@ else ({doc}`../lifecycle`).
 | per-host monitor parsers | `register_host_parsers` | {doc}`../../cookbook/extending/custom-parsers` |
 | SNMP metric descriptors | `register_snmp_metric` | {doc}`../../cookbook/extending/custom-parsers` |
 
-Options classes deserve a mention even though they aren't a registry: a
-repo-wide `@options` class shared by instructions and suites is the standard
-way to give a whole project consistent CLI flags ({doc}`../../cookbook/authoring/options-classes`).
+Tests are not a seam either: they are plain pytest files in the repo's test
+directories, found by pytest and run by `otto test`
+({doc}`../../cookbook/authoring/writing-tests`). A repo-wide options class
+registered for both `run` and `test` is the standard way to give a whole
+project consistent CLI flags ({doc}`../../cookbook/authoring/options-classes`).
 
 ## What keeps third-party code honest
 
@@ -94,15 +96,15 @@ Each seam's user-facing how-to lives in the guide:
 - Host sources — {doc}`../../configuration/host-sources`
 - Reservation backends — {doc}`../../cli/reservation/index`
 - Monitor parsers & SNMP metrics — {doc}`../../cli/monitor/index`
-- Instructions, suites & options — {doc}`../../cli/run/index`, {doc}`../../cli/test/index`, {doc}`../../cookbook/authoring/options-classes`
+- Instructions, tests & options — {doc}`../../cli/run/index`, {doc}`../../cli/test/index`, {doc}`../../cookbook/authoring/options-classes`
 - New top-level commands — {doc}`../../cookbook/extending/extending-cli`
 
 ## Where the code lives
 
 - {mod}`otto.cli.run` — the `@instruction()` decorator behind an `otto run`
   subcommand
-- {mod}`otto.suite.suite` — `OttoSuite.__init_subclass__`, the
-  auto-registration hook behind an `otto test` suite
+- {mod}`otto.params` — `register_options` and `@options(verbs=[...])`, the
+  options registry behind `otto run`'s and `otto test`'s verb-wide flags
 - {mod}`otto.cli.registry` — `register_cli_command` / `cli_command` for a
   top-level `otto` command
 - `otto.testing` — the `assert_*_conforms` conformance helpers, one per

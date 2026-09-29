@@ -32,7 +32,7 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(home))
     bootstrap.invalidate()
     repos = bootstrap.discover().repos
-    cc.write_cache(repos, [], [], ["local"], shim=build_shim_payload(repos))
+    cc.write_cache(repos, [], ["local"], shim=build_shim_payload(repos))
     cache = Path(sc.locate_cache(dict(os.environ)))
     assert cache == cc._cache_path()
     yield repo, cache
@@ -75,7 +75,7 @@ def test_a_fresh_entry_validates_by_stat_then_by_marker(workspace):
     data = _data(cache)
     marker = cache.parent / sc.MARKER_FILENAMES["names"]
     assert not marker.exists()
-    assert sc.validate_keys(cache, data, "names", time.time()) == "stat"
+    assert sc.validate_keys(cache, data, time.time()) == "stat"
     # The stat pass stamped the marker with the REAL clock, no earlier than the cache.
     cache_ns = cache.stat().st_mtime_ns
     assert marker.stat().st_mtime_ns >= cache_ns
@@ -88,9 +88,9 @@ def test_a_fresh_entry_validates_by_stat_then_by_marker(workspace):
     stamp_ns = (cache_ns // 10**9 + 1000) * 10**9
     os.utime(marker, ns=(stamp_ns, stamp_ns))
     stamp = stamp_ns / 10**9
-    assert sc.validate_keys(cache, data, "names", stamp + 30) == "marker"
+    assert sc.validate_keys(cache, data, stamp + 30) == "marker"
     assert marker.stat().st_mtime_ns == stamp_ns  # a marker-path TAB does not renew the window
-    assert sc.validate_keys(cache, data, "names", stamp + 60) == "stat"  # one minute, exactly
+    assert sc.validate_keys(cache, data, stamp + 60) == "stat"  # one minute, exactly
     assert marker.stat().st_mtime_ns != stamp_ns  # the stat pass re-touched it
 
 
@@ -101,22 +101,15 @@ def test_a_marker_dated_in_the_future_is_not_trusted(workspace):
     info` would report the marker as validated a negative number of seconds ago."""
     _, cache = workspace
     data = _data(cache)
-    assert sc.validate_keys(cache, data, "names", time.time()) == "stat"
+    assert sc.validate_keys(cache, data, time.time()) == "stat"
     marker = cache.parent / sc.MARKER_FILENAMES["names"]
     stamp_ns = (cache.stat().st_mtime_ns // 10**9 + 1000) * 10**9
     stamp = stamp_ns / 10**9
     os.utime(marker, ns=(stamp_ns, stamp_ns))
-    assert sc.validate_keys(cache, data, "names", stamp) == "marker"  # age 0 is fresh
-    assert sc.validate_keys(cache, data, "names", stamp - 1) == "stat"
+    assert sc.validate_keys(cache, data, stamp) == "marker"  # age 0 is fresh
+    assert sc.validate_keys(cache, data, stamp - 1) == "stat"
     os.utime(marker, ns=(stamp_ns, stamp_ns))
     assert sc.inspect_shim(cache, stamp - 1) == "served (validated now)"
-
-
-def test_tests_site_checks_both_key_sets_and_both_markers(workspace):
-    _, cache = workspace
-    now = time.time()
-    assert sc.validate_keys(cache, _data(cache), "tests", now) == "stat"
-    assert (cache.parent / sc.MARKER_FILENAMES["tests"]).is_file()
 
 
 def test_an_edited_key_file_fails_the_stat_pass_and_the_digest(workspace):
@@ -125,34 +118,37 @@ def test_an_edited_key_file_fails_the_stat_pass_and_the_digest(workspace):
         'name = "genrepo"\nversion = "0.1.0"\n\n'
     )
     with pytest.raises(sc.Handover, match="stale"):
-        sc.validate_keys(cache, _data(cache), "names", time.time())
+        sc.validate_keys(cache, _data(cache), time.time())
     assert cc.cache_rebuild_is_worthwhile(bootstrap.discover().repos) is True
 
 
-def test_a_file_created_in_a_watched_directory_fails_the_stat_pass(workspace):
+def test_a_file_created_in_a_tests_directory_leaves_the_names_key_set_valid(workspace):
+    """No test file registers anything, so no test directory keys the ``names`` section."""
     repo, cache = workspace
     (repo / "tests" / "test_added.py").write_text("def test_z():\n    pass\n")
-    with pytest.raises(sc.Handover, match="stale"):
-        sc.validate_keys(cache, _data(cache), "names", time.time())
+    assert sc.validate_keys(cache, _data(cache), time.time()) == "stat"
 
 
-def test_a_stored_missing_path_that_appears_fails(workspace):
+def test_a_stored_missing_path_that_appears_fails(workspace, tmp_path):
+    """A key stored as missing (``[path, None, None]``) fails the pass once it exists."""
     _repo, cache = workspace
     data = _data(cache)
-    missing = next(t for t in data["sections"]["shim"]["payload"]["keys"]["names"] if t[1] is None)
-    Path(missing[0]).parent.mkdir(parents=True, exist_ok=True)
-    Path(missing[0]).write_text("")
+    later = tmp_path / "later.toml"
+    data["sections"]["shim"]["payload"]["keys"].append([str(later), None, None])
+    assert sc.validate_keys(cache, data, time.time()) == "stat"
+    (cache.parent / sc.MARKER_FILENAMES["names"]).unlink()
+    later.write_text("")
     with pytest.raises(sc.Handover, match="appeared"):
-        sc.validate_keys(cache, data, "names", time.time())
+        sc.validate_keys(cache, data, time.time())
 
 
 def test_a_marker_older_than_the_cache_file_is_not_trusted(workspace):
     _, cache = workspace
     now = time.time()
-    sc.validate_keys(cache, _data(cache), "names", now)
+    sc.validate_keys(cache, _data(cache), now)
     marker = cache.parent / sc.MARKER_FILENAMES["names"]
     os.utime(marker, ns=(cache.stat().st_mtime_ns - 1, cache.stat().st_mtime_ns - 1))
-    assert sc.validate_keys(cache, _data(cache), "names", now + 1) == "stat"
+    assert sc.validate_keys(cache, _data(cache), now + 1) == "stat"
 
 
 def test_a_deleted_marker_sends_the_next_tab_back_through_the_stat_pass(workspace):
@@ -165,10 +161,10 @@ def test_a_deleted_marker_sends_the_next_tab_back_through_the_stat_pass(workspac
     _, cache = workspace
     now = time.time()
     marker = cache.parent / sc.MARKER_FILENAMES["names"]
-    assert sc.validate_keys(cache, _data(cache), "names", now) == "stat"
-    assert sc.validate_keys(cache, _data(cache), "names", now + 1) == "marker"
+    assert sc.validate_keys(cache, _data(cache), now) == "stat"
+    assert sc.validate_keys(cache, _data(cache), now + 1) == "marker"
     marker.unlink()
-    assert sc.validate_keys(cache, _data(cache), "names", now + 2) == "stat"
+    assert sc.validate_keys(cache, _data(cache), now + 2) == "stat"
     assert marker.is_file()  # and the pass re-creates it
 
 
@@ -188,7 +184,7 @@ def test_a_marker_that_cannot_be_created_is_ignored(workspace, monkeypatch):
         return real_open(file, *args, **kwargs)
 
     monkeypatch.setattr("builtins.open", only_the_marker_fails)
-    assert sc.validate_keys(cache, data, "names", time.time()) == "stat"
+    assert sc.validate_keys(cache, data, time.time()) == "stat"
     assert not marker.exists()
 
 
@@ -199,7 +195,7 @@ def test_a_failed_touch_is_ignored(workspace, monkeypatch):
         raise OSError("read-only")
 
     monkeypatch.setattr(sc.os, "utime", boom)
-    assert sc.validate_keys(cache, _data(cache), "names", time.time()) == "stat"
+    assert sc.validate_keys(cache, _data(cache), time.time()) == "stat"
 
 
 @pytest.mark.parametrize(
@@ -221,7 +217,7 @@ def test_servable_shim_hands_over(workspace, mutate, reason):
     mutate(data)
     with pytest.raises(sc.Handover, match=reason):  # noqa: PT012 — two calls: opaque only fails the 2nd
         sc.servable_shim(data, time.time())
-        sc.validate_keys(cache, data, "names", time.time())
+        sc.validate_keys(cache, data, time.time())
 
 
 def test_answer_or_reason_end_to_end(workspace, monkeypatch):
@@ -273,14 +269,22 @@ def test_answer_or_reason_never_raises(monkeypatch):
 
 
 def test_schema_constants_track_the_product():
+    from otto.config import collected_tests as ct
+    from otto.config.repo import TOML_SETTINGS_PATH, selectable_names
+
     assert sc.SCHEMA == cc.SCHEMA_VERSION
-    assert sc.COLLECTED_SCHEMA == cc.COLLECTED_SCHEMA_VERSION
-    assert sc.COLLECTED_TTL_SECONDS == cc.CACHE_TTL_SECONDS
+    assert sc.TABLE_SCHEMA == ct.RECORDS_SCHEMA_VERSION
+    assert sc.TABLE_TTL_SECONDS == cc.CACHE_TTL_SECONDS
+    assert sc.TABLES_KEY == cc.COLLECTED_TESTS_KEY
+    assert str(TOML_SETTINGS_PATH) == sc.SETTINGS_RELPATH
     assert sc.CACHE_FILENAME == cc.CACHE_FILENAME
+    for classes, name in [([], "test_x"), (["TestA"], "test_y[1]"), (["TestA", "TestB"], "t")]:
+        assert sc.selectable_names(classes, name) == selectable_names(classes, name)
     from otto.config import cache_maintenance as cmn
 
     assert sc.MARKER_FILENAMES == cmn.MARKER_FILENAMES
     assert sc.WINDOW_SECONDS == cmn.SHIM_WINDOW_SECONDS
+    assert sc.CHECK_WINDOW_SECONDS == cmn.CHECK_WINDOW_SECONDS
 
 
 STALE_REASON_FRAGMENTS = [
@@ -289,7 +293,7 @@ STALE_REASON_FRAGMENTS = [
     "no sections",
     "no shim section",
     "no names section",
-    "no tests section",
+    "test-names cache",
     "expired",
     "stale: ",
 ]

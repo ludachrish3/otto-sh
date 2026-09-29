@@ -574,7 +574,7 @@ def test_effective_timeout_reads_both_marker_forms_and_the_ini(marker, ini, expe
 
 
 def test_attempt_alarm_is_inert_off_the_main_thread():
-    """``run_suite`` as a library call from a worker thread is a supported
+    """``run_tests`` as a library call from a worker thread is a supported
     mode; ``signal.signal`` raises ValueError there. The alarm must skip
     arming — an arming error surfacing as the attempt's failure both hides
     the real result and makes the rerun evidence lie (interim review,

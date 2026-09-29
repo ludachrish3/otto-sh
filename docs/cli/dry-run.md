@@ -8,13 +8,17 @@ see whether the hosts would answer.
 ## The default: validate, print, stop
 
 Under `--dry-run` (`-n`), otto's dispatch layer — not the command — does this,
-and exits **0 before the command body runs**:
+and exits **0 before the command body runs** (the command body is the work
+the command exists to do: an instruction, the tests, a host command):
 
 - arguments parse and coerce, so a typo'd `--mode 789` still fails here
 - the lab loads, and every host, link or tunnel the command names resolves
   against it
-- the command's module imports; for `otto test`, the suite imports and its
-  steps bind
+- the command's module imports
+- for `otto run`, and for any other `@cli_command(options=)` leaf, the
+  command's own options build and validate exactly as a real run would; for
+  `otto run` and `otto test`, every option class registered for the verb
+  builds and validates too (see below)
 - it prints what would run: the command, its target, and the arguments you gave
 
 ```console
@@ -41,16 +45,71 @@ Available hosts:
   - local
 ```
 
-`otto test -n` is the same rule rather than a special case — the suite really
-imports and its tests really bind, and then nothing runs:
+`otto -n test` is the same rule, plus one listing: after the block it prints
+the tests the run would run, from the run's own pytest collection with
+`--collect-only`. Parametrizations are expanded and a `-m` expression is
+evaluated. Collecting imports the test files and conftests it reaches, so
+their module-level code runs, as it does for `--list-tests`; no test,
+fixture or host is touched:
 
 ```console
 $ otto --lab my_lab -n test TestExample
 dry run: no command body was run and no device was contacted
   would run: otto test TestExample
-  suite: TestExample imported and bound; 1 test(s), no test body will run
-    - test_logs_message
+  options:
+    RepoOptions: message='hello from acme'
+  lab: my_lab (2 hosts)
+dry run: pytest collected these tests; nothing ran
+acme 0.1.0
+└── test_example.py
+    └── TestExample
+        ├── test_logs_message
+        └── test_expect_and_artifacts
 ```
+
+## `otto run` and `otto test` build and show their options
+
+`run` and `test` are the verbs that take *registered* options
+(`register_options`/`@options(verbs=[...])`, see
+{doc}`../cookbook/authoring/options-classes`). Under `run` they sit alongside
+each command's own options: a standalone `@instruction`, and every one of
+otto's six project instructions (`install`, `uninstall`, `cleanup`,
+`get-logs`, `install-tools`, `status`) alike. `otto test` has no options class
+of its own, only the registered ones, as the `otto -n test` example above
+shows. A dry run pays for them exactly as a real run would: the command's own
+options class and every class registered for the verb build and validate from
+the flags you gave, so a bad value fails here with the identical exit-2 error
+a real run would give — and, once everything validates, the block shows the
+*resolved* value of every option that applies to the command:
+
+```console
+$ otto --lab my_lab -n run install --ensure
+dry run: no command body was run and no device was contacted
+  would run: otto run install --ensure
+  options:
+    InstallOptions: ensure=True, recover_partial=True
+  lab: my_lab (3 hosts)
+```
+
+`install` here is the real project instruction — a repo overriding it with its
+own options class (inheriting `InstallOptions`, see
+{doc}`../getting-started/customizing-project-instructions`) shows the same
+way, its own fields included.
+
+The command's own options class is listed first, then any classes registered
+for the verb, in registration order. One rule decides what a field prints:
+a field masks to `name=<hidden>` — never the raw value — when its type IS or
+CONTAINS `pydantic.SecretStr`/`SecretBytes` anywhere (including inside
+`Optional[...]`, a union, a container such as `list[...]`, or an `Annotated`
+wrapper), or when the field is declared `repr=False`. Every other field
+prints its real value. The `would run:` echo above masks that same flag's
+value too, so no line in the block ever carries it. A command with no
+options at all (its own or the verb's) prints no `options:` line.
+
+A leaf built with `@cli_command(options=...)` on any OTHER top-level verb
+gets this same treatment — its own options class builds, validates and shows
+under `-n` exactly as above — even though that verb never takes registered
+options.
 
 ## The stop is uniform, and that will surprise you once
 
@@ -81,6 +140,11 @@ dry run: no command body was run and no device was contacted
 
 So `otto schema export -n` writes no schemas and `otto init -n` scaffolds
 nothing.
+
+One thing is still written. A command that keeps a run directory, such as
+`otto test`, creates it before the stop, as it does on a real run: the dry
+run ends with its `Output directory:` line, and the directory stays, holding
+that run's log.
 
 `lab_free` means **"this command drives its own lifecycle"**, not "this command
 touches no device" — `otto monitor --live` is registered lab-free and collects
@@ -209,7 +273,7 @@ dry run core: no device was contacted — nothing was read and nothing was chang
 steps call — compose the host verbs above, and inherit their answers. Two of
 them have an answer of their own, and both are reached from a *library* caller:
 the `otto run` group keeps the seam default, so `otto -n run cleanup` prints the
-block and runs no body at all, while a suite marked `ensure("clean")` calls
+block and runs no body at all, while a test marked `ensure("clean")` calls
 the converge directly.
 
 - `cleanup()` finishes with two lab-wide steps, and neither pretends to have
