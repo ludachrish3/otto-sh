@@ -42,11 +42,9 @@ def _a(seen: Path) -> str:
 
 
 @pytest.fixture
-def home(tmp_path, monkeypatch) -> Path:
+def home(tmp_path, monkeypatch, real_shell_bytecode) -> Path:
     """A private ``OTTO_HOME`` and a real shell's bytecode settings: no prefix, writing on."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    monkeypatch.setattr(sys, "pycache_prefix", None)
-    monkeypatch.setattr(sys, "dont_write_bytecode", False)
     return tmp_path / "home"
 
 
@@ -150,7 +148,6 @@ def test_a_collect_only_seed_writes_its_bytecode_under_the_prefix(repo):
     for test_file in [tests / "test_a.py", tests / "test_b.py", tests / "sub" / "test_c.py"]:
         assert _rewritten(_prefix(), test_file).is_file(), test_file.name
     assert sys.pycache_prefix is None
-    assert sys.dont_write_bytecode is False
 
 
 def test_a_prefix_the_user_set_is_honoured(repo, tmp_path, monkeypatch):

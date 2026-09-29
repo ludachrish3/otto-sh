@@ -73,3 +73,36 @@ def _restore_ensure_installed(monkeypatch):
     from otto import project
 
     monkeypatch.setattr(project, "ensure_installed", project.ensure_installed)
+
+
+@pytest.fixture
+def real_shell_bytecode(monkeypatch):
+    """A real shell's bytecode settings for otto's sessions: no pycache prefix, writing on.
+
+    The suite runs under a prefix (``tests/conftest.py``); a real shell has none.
+    Writing is on ONLY inside :func:`otto.suite.run._outside_the_repo`, where the
+    session's own prefix is set, and off everywhere else in the test. Turning it
+    on for the whole test would let every module this worker imports for the
+    first time outside a session — otto's own lazy imports included — write a
+    ``__pycache__`` beside its source, under ``src/otto``, which fails the
+    suite's session guard in an import order the seed happens to draw (#518).
+    """
+    import contextlib
+    import sys
+
+    from otto.suite import run
+
+    real_outside_the_repo = run._outside_the_repo
+
+    @contextlib.contextmanager
+    def writing_inside_the_session(**kwargs):
+        with real_outside_the_repo(**kwargs) as args:
+            sys.dont_write_bytecode = False
+            try:
+                yield args
+            finally:
+                sys.dont_write_bytecode = True
+
+    monkeypatch.setattr(sys, "pycache_prefix", None)
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    monkeypatch.setattr(run, "_outside_the_repo", writing_inside_the_session)

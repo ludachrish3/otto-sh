@@ -18,7 +18,6 @@ logs its run, so "nothing ran" is too.
 import dataclasses
 import json
 import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -128,17 +127,14 @@ def test_a_current_table_is_returned_without_a_collection(repo, sessions):
     assert repo.imported() == []
 
 
-def test_the_seed_writes_nothing_into_the_repo(repo, sessions, monkeypatch):
+def test_the_seed_writes_nothing_into_the_repo(repo, sessions, real_shell_bytecode):
     """No ``__pycache__`` beside a test file, no ``.pytest_cache``: a TAB must not move the tree."""
-    monkeypatch.setattr(sys, "pycache_prefix", None)
-    monkeypatch.setattr(sys, "dont_write_bytecode", False)
     before = sorted(p.relative_to(repo.root) for p in repo.root.rglob("*"))
 
     _refresh()
 
     assert repo.imported() == ["test_a", "test_b", "test_c"]
     assert sorted(p.relative_to(repo.root) for p in repo.root.rglob("*")) == before
-    assert sys.dont_write_bytecode is False, "restored after the session"
 
 
 def test_another_env_seeds_the_whole_tree_again(repo, sessions):

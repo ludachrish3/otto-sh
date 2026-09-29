@@ -39,12 +39,14 @@ real_outside_the_repo = run._outside_the_repo
 
 @contextlib.contextmanager
 def writing_bytecode(**kwargs):
-    sys.dont_write_bytecode = False
-    try:
-        with real_outside_the_repo(**kwargs) as args:
+    # Writing goes on only once the session's own prefix is set: the lazy
+    # imports _outside_the_repo makes before setting it are otto's own.
+    with real_outside_the_repo(**kwargs) as args:
+        sys.dont_write_bytecode = False
+        try:
             yield args
-    finally:
-        sys.dont_write_bytecode = True
+        finally:
+            sys.dont_write_bytecode = True
 
 
 run._outside_the_repo = writing_bytecode

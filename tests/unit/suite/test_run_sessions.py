@@ -170,15 +170,6 @@ def test_a_new_file_is_collected_in_the_first_session(repo, tmp_path, sessions):
     assert repo.ran_tests() == ["test_d1"]
 
 
-@pytest.fixture
-def real_shell_bytecode(monkeypatch):
-    """No pycache prefix and bytecode writing on, as in a real shell (the suite sets a prefix)."""
-    import sys
-
-    monkeypatch.setattr(sys, "pycache_prefix", None)
-    monkeypatch.setattr(sys, "dont_write_bytecode", False)
-
-
 def test_a_file_saved_as_a_pruned_session_starts_is_not_vouched_for(
     sut_repo, tmp_path, sessions, monkeypatch, real_shell_bytecode
 ):
