@@ -8,7 +8,7 @@ release.
 
 ``surfaces``
     The kgcov contracts: every test under ``tests/e2e/cov/test_kgcov_*.py``
-    that takes the ``built_with``, ``coverage_run`` or ``cross_build``
+    that takes the ``built_with``, ``coverage_run`` or ``kernel_build``
     fixture. The id and title of a row are labels and are written down in
     :data:`SURFACES`; :func:`discover_contracts` walks the tree and
     ``tests/unit/test_kgcov_matrix.py`` asserts the two sets are equal both
@@ -16,15 +16,17 @@ release.
     silently losing or gaining a row.
 
 ``profiles``
-    The compilers the lane measures: the ``Makefile``'s default
-    ``KGCOV_TOOLCHAINS`` (read, not copied — :func:`bed_profile_ids`), one
-    column each, in the ``bed`` venue; and ``x86_64-cross`` in the ``build``
-    venue. A column id is the NAME the lane selects by, so the ``clang``
-    column keeps its id when the VM's clang changes; the measured full
-    version is provenance on the cell.
+    The compilers and kernels the lane measures: the Makefile's default
+    KGCOV_TOOLCHAINS (read, not copied — bed_profile_ids), one column each,
+    in the bed venue; and its default KGCOV_KERNELS (build_profile_ids), one
+    column each, in the build venue — x86_64-cross first, the 6.8 source
+    tree built on the host, then each provisioned kernel built in an image
+    of its own era. A column id is the NAME the lane selects by, so the
+    ``clang`` column keeps its id when the VM's clang changes; the measured
+    full version is provenance on the cell.
 
 A row and a column meet only in the same venue, so the grid holds bed rows
-by bed columns and build rows by the build column, and nothing else.
+by bed columns and build rows by the build columns, and nothing else.
 
 REGENERATING THE AXES, when a contract or the Makefile default changes::
 
@@ -62,10 +64,10 @@ UNTESTED_STATUS = "untested"
 STATUSES = (MEASURED_OK, MEASURED_BROKEN, UNTESTED_STATUS)
 
 #: The fixtures a test takes to be a contract, and the venue each one measures in.
-CONTRACT_FIXTURES = {"built_with": BED, "coverage_run": BED, "cross_build": BUILD}
+CONTRACT_FIXTURES = {"built_with": BED, "coverage_run": BED, "kernel_build": BUILD}
 
 _BED_MODULE = "tests/e2e/cov/test_kgcov_toolchains_e2e.py"
-_BUILD_MODULE = "tests/e2e/cov/test_kgcov_cross_build.py"
+_BUILD_MODULE = "tests/e2e/cov/test_kgcov_kernel_builds.py"
 
 
 @dataclass(frozen=True)
@@ -156,44 +158,78 @@ SURFACES: "tuple[Surface, ...]" = (
         f"{_BED_MODULE}::TestCoverage::test_the_mid_suite_dump_does_not_double_count",
     ),
     Surface(
-        "cross-release",
-        "cross: both modules carry the tree's release",
+        "build-release",
+        "build: both modules carry the tree's release",
         BUILD,
         f"{_BUILD_MODULE}::test_both_modules_carry_the_trees_release",
     ),
     Surface(
-        "cross-x86_64-objects",
-        "cross: both modules are x86_64 objects",
+        "build-target-isa",
+        "build: both modules are objects for the column's ISA",
         BUILD,
-        f"{_BUILD_MODULE}::test_both_modules_are_x86_64_objects",
+        f"{_BUILD_MODULE}::test_both_modules_are_objects_for_the_columns_isa",
     ),
     Surface(
-        "cross-compiler-built",
-        "cross: the cross compiler built them",
+        "build-compiler",
+        "build: the column's compiler built them",
         BUILD,
-        f"{_BUILD_MODULE}::test_the_cross_compiler_built_them",
+        f"{_BUILD_MODULE}::test_the_columns_compiler_built_them",
     ),
     Surface(
-        "cross-instrumented-bracketed",
-        "cross: the demo is instrumented and bracketed",
+        "build-instrumented-bracketed",
+        "build: the demo is instrumented and bracketed",
         BUILD,
         f"{_BUILD_MODULE}::test_the_demo_is_instrumented_and_bracketed",
     ),
     Surface(
-        "cross-fixture-untouched",
-        "cross: the in-place fixture build was not touched",
+        "build-fixture-untouched",
+        "build: the in-place fixture build was not touched",
         BUILD,
         f"{_BUILD_MODULE}::test_the_in_place_fixture_build_was_not_touched",
     ),
     Surface(
-        "cross-linked-against-library",
-        "cross: the demo linked against the library",
+        "build-linked-against-library",
+        "build: the demo linked against the library",
         BUILD,
         f"{_BUILD_MODULE}::test_the_demo_linked_against_the_library",
+    ),
+    Surface(
+        "build-library-warning-free",
+        "build: the library compiled without a warning of its own",
+        BUILD,
+        f"{_BUILD_MODULE}::test_the_library_compiled_without_a_warning_of_its_own",
+    ),
+    Surface(
+        "build-clang-backend-compiles",
+        "build: the clang backend's unit compiles with the column's gcc",
+        BUILD,
+        f"{_BUILD_MODULE}::test_the_clang_backends_unit_compiles_with_the_columns_gcc",
+    ),
+    Surface(
+        "build-ctors-convention-bracketed",
+        "build: a .ctors-convention demo is bracketed too",
+        BUILD,
+        f"{_BUILD_MODULE}::test_a_ctors_convention_demo_is_bracketed_too",
     ),
 )
 
 CONTROL_SURFACE = next(s for s in SURFACES if s.control)
+
+RENAMED_ROWS = {
+    "cross-release": "build-release",
+    "cross-x86_64-objects": "build-target-isa",
+    "cross-compiler-built": "build-compiler",
+    "cross-instrumented-bracketed": "build-instrumented-bracketed",
+    "cross-fixture-untouched": "build-fixture-untouched",
+    "cross-linked-against-library": "build-linked-against-library",
+}
+"""Row ids the build venue used while it had one column, mapped to their ids now.
+
+Applied by :func:`build_matrix` to whatever artifact it is given, so the
+``x86_64-cross`` verdicts and their provenance travelled to the new ids
+with nothing lost, even transiently; on the rewritten artifact it is a
+no-op, which is what keeps ``build_matrix(committed) == committed``.
+"""
 
 
 def surface_for(contract: str) -> "Surface | None":
@@ -210,20 +246,33 @@ class Profile:
     venue: str
 
 
-def bed_profile_ids() -> "list[str]":
-    """The Makefile's default ``KGCOV_TOOLCHAINS``, read off the file."""
+def _makefile_default(variable: str) -> "list[str]":
     text = MAKEFILE_PATH.read_text(encoding="utf-8")
-    m = re.search(r"^KGCOV_TOOLCHAINS \?= (.+)$", text, re.MULTILINE)
+    m = re.search(rf"^{variable} \?= (.+)$", text, re.MULTILINE)
     if not m:
-        raise RuntimeError(f"{MAKEFILE_PATH} declares no `KGCOV_TOOLCHAINS ?= …` line")
+        raise RuntimeError(f"{MAKEFILE_PATH} declares no `{variable} ?= …` line")
     return [name.strip() for name in m.group(1).split(",") if name.strip()]
 
 
+def bed_profile_ids() -> "list[str]":
+    """The Makefile's default ``KGCOV_TOOLCHAINS``, read off the file."""
+    return _makefile_default("KGCOV_TOOLCHAINS")
+
+
+def build_profile_ids() -> "list[str]":
+    """The Makefile's default ``KGCOV_KERNELS``, read off the file; ``x86_64-cross`` leads."""
+    return _makefile_default("KGCOV_KERNELS")
+
+
+def _build_title(kernel_id: str) -> str:
+    return "x86_64 cross build" if kernel_id == CROSS_PROFILE else f"kernel {kernel_id}"
+
+
 def profiles() -> "list[Profile]":
-    """Every matrix column: the Makefile's bed toolchains, then the cross build."""
+    """Every matrix column: the Makefile's bed toolchains, then its build kernels."""
     return [
         *(Profile(n, n, BED) for n in bed_profile_ids()),
-        Profile(CROSS_PROFILE, "x86_64 cross build", BUILD),
+        *(Profile(k, _build_title(k), BUILD) for k in build_profile_ids()),
     ]
 
 
@@ -278,9 +327,21 @@ def build_matrix(existing: "dict | None" = None) -> dict:
     Cells the tree still declares keep whatever verdict they carry; cells it
     no longer declares are dropped and new ones start :data:`UNTESTED`. This
     function NEVER writes a ``measured-*`` verdict of its own -- that is
-    reserved for the collator (spec 2026-09-18 §3).
+    reserved for the collator (spec 2026-09-18 §3). A row named in
+    RENAMED_ROWS is carried under its new id, its cells' nodeid rewritten to
+    the new contract.
     """
-    old = (existing or {}).get("cells", {})
+    contract_of_id = {s.id: s.contract for s in SURFACES}
+    old: dict[str, dict] = {}
+    for row_id, row in (existing or {}).get("cells", {}).items():
+        new_id = RENAMED_ROWS.get(row_id, row_id)
+        carried = {}
+        for profile_id, raw_cell in row.items():
+            cell = dict(raw_cell)
+            if row_id != new_id and "nodeid" in cell and new_id in contract_of_id:
+                cell["nodeid"] = contract_of_id[new_id]
+            carried[profile_id] = cell
+        old.setdefault(new_id, {}).update(carried)
     cols = profiles()
     return {
         "$schema": "./kgcov-matrix.schema.json",

@@ -1045,27 +1045,32 @@ conformance-bed: ## Run the host-contract conformance suite against the REAL BED
 # the system gcc; this lane is the rest of otto_kgcov's promise — any gcc,
 # clang, another ISA — and it is opt-in because it needs what only the dev
 # VM has: gcc 9 to 14 and clang 18 installed, the bed to load each build on,
-# and a prepared kernel source tree for the cross build. A compiler or tree
+# a prepared kernel source tree for the cross build, and the provisioned
+# kernel set (scripts/provision_kgcov_kernels.sh; docker with the
+# qemu-x86_64 binfmt) for the per-kernel build columns. A compiler or tree
 # that is missing FAILS the lane naming it; nothing skips, so a green here
 # is one a release can trust. `make release` invokes this target right after
 # `release-matrix` (both need the bed; make stages are sequential).
 # `not kgcov` rides every other selector in this file and noxfile.py —
 # tests/unit/test_tier_marker_invariants.py's G12 family pins all of it.
 #
-# Wall-clock: 85s end to end for the whole lane (83 tests, measured
-# 2026-09-18) — seven builds and bed runs of the kmod e2e plus the cross
-# build; the cap is stated rather than inherited.
+# Wall-clock: about 85s for the bed matrix (measured 2026-09-18) plus about
+# 65s for the seven build columns, the x86_64 cross build and the emulated
+# 2.6.32 included (measured 2026-09-29); the cap is stated rather than
+# inherited.
 KGCOV_TOOLCHAINS ?= gcc-9,gcc-10,gcc-11,gcc-12,gcc-13,gcc-14,clang
 KGCOV_CROSS_KDIR ?= /home/vagrant/build/linux-6.8
+KGCOV_KERNELS ?= x86_64-cross,2.6.32,3.13,4.4,5.4,5.15,6.17
+KGCOV_KERNELS_DIR ?= /home/vagrant/build/kgcov-kernels
 KGCOV_TIMEOUT := 3600s
 # WARNING: `make -n kgcov` is NOT a dry run — the recipe is one
 # semicolon/backslash-continued line containing $(MAKE) (the `kgcov-matrix`
 # fold below), so GNU make executes it under -n; the $(MAKE) sub-call
 # inherits -n and no-ops, but the plain `uv run pytest -m "kgcov"` command
 # runs for real. Never dry-run this target.
-kgcov: ## Run the otto_kgcov toolchain proofs (`kgcov`-marked; excluded from every default lane): rebuild the kernel-module fixture with each compiler in KGCOV_TOOLCHAINS and run the kmod coverage e2e on the bed per compiler, then cross-build it for x86_64 from the kernel source tree at KGCOV_CROSS_KDIR. Dev VM only; a missing compiler or tree FAILS. Invoked through `make release-kgcov-matrix` by `make release`. JUnit XML lands in reports/junit/kgcov/. Ends by folding what it measured into schemas/kgcov_matrix.json (`make kgcov-matrix`) — review the diff and commit it, or let `make release-kgcov-matrix` do both when the change is not a downgrade.
-	@$(SAY) "pytest: otto_kgcov toolchain proofs ($(KGCOV_TOOLCHAINS); cross tree $(KGCOV_CROSS_KDIR))"
-	@OTTO_KGCOV_TOOLCHAINS="$(KGCOV_TOOLCHAINS)" OTTO_KGCOV_CROSS_KDIR="$(KGCOV_CROSS_KDIR)" \
+kgcov: ## Run the otto_kgcov toolchain proofs (`kgcov`-marked; excluded from every default lane): rebuild the kernel-module fixture with each compiler in KGCOV_TOOLCHAINS and run the kmod coverage e2e on the bed per compiler, then build it for every kernel in KGCOV_KERNELS: the x86_64 cross build from the source tree at KGCOV_CROSS_KDIR on the host, and each provisioned kernel under KGCOV_KERNELS_DIR inside a container image of its own era (scripts/provision_kgcov_kernels.sh). Dev VM only; a missing compiler, tree or image FAILS. Invoked through `make release-kgcov-matrix` by `make release`. JUnit XML lands in reports/junit/kgcov/. Ends by folding what it measured into schemas/kgcov_matrix.json (`make kgcov-matrix`) — review the diff and commit it, or let `make release-kgcov-matrix` do both when the change is not a downgrade.
+	@$(SAY) "pytest: otto_kgcov toolchain proofs ($(KGCOV_TOOLCHAINS); kernels $(KGCOV_KERNELS); cross tree $(KGCOV_CROSS_KDIR))"
+	@OTTO_KGCOV_TOOLCHAINS="$(KGCOV_TOOLCHAINS)" OTTO_KGCOV_CROSS_KDIR="$(KGCOV_CROSS_KDIR)" OTTO_KGCOV_KERNELS="$(KGCOV_KERNELS)" OTTO_KGCOV_KERNELS_DIR="$(KGCOV_KERNELS_DIR)" \
 	    timeout --foreground --kill-after=10s $(KGCOV_TIMEOUT) \
 	    uv run pytest -m "kgcov" -n0 --no-cov $(call junitxml,kgcov); \
 	  lane=$$?; $(MAKE) --no-print-directory kgcov-matrix; collate=$$?; \

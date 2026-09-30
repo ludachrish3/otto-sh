@@ -10,7 +10,7 @@
     "$schema": {"type": "string", "title": "$schema"},
     "format": {"const": 1, "type": "integer", "title": "Format", "description": "Document version. Required with no default: an unversioned file fails loud rather than validating as an empty modern one."},
     "surfaces": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Surface"}, "title": "Surfaces", "description": "The matrix rows, in render order. tests/unit/test_kgcov_matrix.py asserts this set equals the contracts the tree declares, both ways."},
-    "profiles": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Profile"}, "title": "Profiles", "description": "The matrix columns, in render order: the Makefile's default KGCOV_TOOLCHAINS, then the cross build."},
+    "profiles": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Profile"}, "title": "Profiles", "description": "The matrix columns, in render order: the Makefile's default KGCOV_TOOLCHAINS (bed), then its default KGCOV_KERNELS (build)."},
     "cells": {
       "type": "object",
       "title": "Cells",
@@ -36,7 +36,7 @@
       "required": ["id", "title", "venue"],
       "title": "Profile",
       "properties": {
-        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$", "title": "Id", "description": "The name the lane selects by (gcc-12, clang, x86_64-cross); the measured version lives on the cell."},
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$", "title": "Id", "description": "The name the lane selects by (gcc-12, clang, x86_64-cross, 3.13); the measured version lives on the cell."},
         "title": {"type": "string", "minLength": 1, "title": "Title"},
         "venue": {"$ref": "#/$defs/Venue"}
       }
@@ -54,7 +54,7 @@
         "outcome": {"type": "string", "enum": ["passed", "failed", "error"], "title": "Outcome", "description": "What pytest reported. A skip never reaches the artifact: the collate step discards it with a reason."},
         "compiler_version": {"type": "string", "minLength": 1, "title": "Compiler Version", "description": "The compiler's -dumpfullversion (clang: -dumpversion) on the machine that measured."},
         "kernel_release": {"type": "string", "minLength": 1, "title": "Kernel Release", "description": "The release the modules were built for: the bed's running kernel, or the cross tree's include/config/kernel.release."},
-        "control": {"oneOf": [{"$ref": "#/$defs/NodeId"}, {"type": "null"}], "title": "Control", "description": "For a bed cell, the control contract's nodeid whose passing record backs this verdict; null for the build column, which has no control and whose cells prove what a build can prove."},
+        "control": {"oneOf": [{"$ref": "#/$defs/NodeId"}, {"type": "null"}], "title": "Control", "description": "For a bed cell, the control contract's nodeid whose passing record backs this verdict; null for the build columns, which have no control and whose cells prove what a build can prove."},
         "failure_summary": {"type": "string", "minLength": 1, "title": "Failure Summary", "description": "How a measured-broken cell broke: the failing phase's last E line, or the control's own outcome when the control did not pass."}
       },
       "allOf": [

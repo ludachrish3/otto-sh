@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.kgcov_matrix import BED, BUILD, CROSS_PROFILE, surface_for
+from tests._fixtures.kgcov_matrix import BED, BUILD, surface_for
 from tests._fixtures.paths import PROJECT_ROOT
 from tests.conformance._observation import failure_summary, outcome_of, today
 from tests.e2e.cov._repo5_build import TOOLCHAINS_KEY
@@ -42,7 +42,7 @@ OBSERVATION = "observation"
 DEFAULT_OBSERVATIONS_DIR = PROJECT_ROOT / "reports" / "kgcov-observations"
 
 BED_PARAM = "built_with"
-BUILD_FIXTURE = "cross_build"
+BUILD_FIXTURE = "kernel_build"
 
 _PHASE_REPORTS = pytest.StashKey["dict[str, object]"]()
 _RUN = pytest.StashKey["dict[str, object]"]()
@@ -88,7 +88,9 @@ def profile_of_item(item) -> "tuple[str, str] | None":
     """``(profile, venue)`` for *item*, or None when it measures no column.
 
     A bed item carries the compiler in its callspec (the ``built_with``
-    parameter, whose value is the NAME); a build item takes ``cross_build``.
+    parameter, whose value is the NAME); a build item carries the kernel in
+    its callspec (the ``kernel_build`` fixture's parameter, whose value is
+    the column id).
 
     Placement by fixture/param alone is not the whole answer: a nodeid the
     surface table (:data:`~tests._fixtures.kgcov_matrix.SURFACES`) does not
@@ -104,10 +106,11 @@ def profile_of_item(item) -> "tuple[str, str] | None":
     say so.
     """
     callspec = getattr(item, "callspec", None)
-    if callspec is not None and BED_PARAM in callspec.params:
-        placed = str(callspec.params[BED_PARAM]), BED
-    elif BUILD_FIXTURE in getattr(item, "fixturenames", ()):
-        placed = CROSS_PROFILE, BUILD
+    params = callspec.params if callspec is not None else {}
+    if BED_PARAM in params:
+        placed = str(params[BED_PARAM]), BED
+    elif BUILD_FIXTURE in params:
+        placed = str(params[BUILD_FIXTURE]), BUILD
     else:
         return None
     surface = surface_for(contract_of(item.nodeid))

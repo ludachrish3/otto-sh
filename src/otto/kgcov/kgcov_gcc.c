@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Vendored from Linux v6.8 kernel/gcov/ for otto_kgcov. Changed from the
- * original: the include name; the counter table below; every allocation and
- * free routed through the KGCOV_ macros in kgcov_gcov.h, so a build may
- * replace them; and store_gcov_u32()/store_gcov_u64() at the end of the
- * file, vendored verbatim from kernel/gcov/base.c — convert_to_gcda() calls
- * them, but upstream they live in base.c, which is not vendored (see their
- * own comment).
+ * original: the include name; the counter table below; every allocation,
+ * free and within-module check routed through the KGCOV_ macros in
+ * kgcov_compat.h, so a build may replace them; and store_gcov_u32()/
+ * store_gcov_u64() at the end of the file, vendored verbatim from
+ * kernel/gcov/base.c — convert_to_gcda() calls them, but upstream they live
+ * in base.c, which is not vendored (see their own comment).
  *
  *  This code provides functions to handle gcc's profiling data format
  *  introduced with gcc 4.7.
@@ -194,7 +194,7 @@ void gcov_info_unlink(struct gcov_info *prev, struct gcov_info *info)
  */
 bool gcov_info_within_module(struct gcov_info *info, struct module *mod)
 {
-	return within_module((unsigned long)info, mod);
+	return KGCOV_WITHIN_MODULE((unsigned long)info, mod);
 }
 
 /* Symbolic links to be created for each profiling data file. */

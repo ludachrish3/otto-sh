@@ -117,9 +117,23 @@ AMBIENT_OPT_INS: "dict[str, str]" = {
     ),
     "OTTO_KGCOV_CROSS_KDIR": (
         "the prepared kernel source tree the x86_64 cross build compiles "
-        "against (tests/e2e/cov/test_kgcov_cross_build.py); set by `make "
+        "against (tests/e2e/cov/test_kgcov_kernel_builds.py); set by `make "
         "kgcov` from KGCOV_CROSS_KDIR. Stripped, the default tree path "
         "/home/vagrant/build/linux-6.8 is used"
+    ),
+    "OTTO_KGCOV_KERNELS": (
+        "which kernels the otto_kgcov kernel builds compile the library and "
+        "the demo for, comma-separated column ids "
+        "(tests/e2e/cov/test_kgcov_kernel_builds.py, read at collection); set "
+        "by `make kgcov` from KGCOV_KERNELS. Stripped, the module collects "
+        "x86_64-cross alone and certifies one kernel while reporting green for "
+        "the whole lane"
+    ),
+    "OTTO_KGCOV_KERNELS_DIR": (
+        "where scripts/provision_kgcov_kernels.sh put the kernel set "
+        "(tests/e2e/cov/test_kgcov_kernel_builds.py); set by `make kgcov` "
+        "from KGCOV_KERNELS_DIR. Stripped, the default "
+        "/home/vagrant/build/kgcov-kernels is used"
     ),
     "OTTO_TUNNEL_SOAK_CYCLES": (
         "internal soak depth per tunnel stability test "

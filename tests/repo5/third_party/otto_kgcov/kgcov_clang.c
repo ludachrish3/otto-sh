@@ -6,15 +6,17 @@
  * kgcov_ctor_info() instead of the in-kernel gcov's list, lock and event
  * (otto_kgcov keeps its own per-client list in kgcov.c); local
  * prototypes for the llvm_* entry points; the two backend hooks
- * kgcov_gcov.h declares, at the end of the file; every allocation, free and
- * lock operation routed through the KGCOV_ macros in kgcov_gcov.h, so a
- * build may replace them; and store_gcov_u32()/
- * store_gcov_u64(), vendored verbatim from Linux v6.8 kernel/gcov/base.c —
- * convert_to_gcda() below calls them, but upstream they live in base.c, not
- * clang.c, and this backend has no base.c-equivalent translation unit of its
- * own (kgcov_gcc.c carries the same pair for the same reason: Kbuild links
- * exactly one backend, gcc or clang, so the duplicate definition never
- * collides).
+ * kgcov_gcov.h declares, at the end of the file; every allocation, free,
+ * lock and within-module check routed through the KGCOV_ macros in
+ * kgcov_compat.h, so a build may replace them; the dropped
+ * <linux/printk.h> include (2.6.37; <linux/kernel.h> above it already
+ * provides printk and the pr_* macros on every kernel in the range); and
+ * store_gcov_u32()/store_gcov_u64(), vendored verbatim from Linux v6.8
+ * kernel/gcov/base.c — convert_to_gcda() below calls them, but upstream
+ * they live in base.c, not clang.c, and this backend has no
+ * base.c-equivalent translation unit of its own (kgcov_gcc.c carries the
+ * same pair for the same reason: Kbuild links exactly one backend, gcc or
+ * clang, so the duplicate definition never collides).
  */
 /*
  * Copyright (C) 2019 Google, Inc.
@@ -70,7 +72,6 @@
 
 #include <linux/kernel.h>
 #include <linux/list.h>
-#include <linux/printk.h>
 #include <linux/ratelimit.h>
 #include <linux/slab.h>
 #include <linux/mm.h>
@@ -248,7 +249,7 @@ void gcov_info_unlink(struct gcov_info *prev, struct gcov_info *info)
  */
 bool gcov_info_within_module(struct gcov_info *info, struct module *mod)
 {
-	return within_module((unsigned long)info->filename, mod);
+	return KGCOV_WITHIN_MODULE((unsigned long)info->filename, mod);
 }
 
 /* Symbolic links to be created for each profiling data file. */

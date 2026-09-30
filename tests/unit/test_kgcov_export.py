@@ -39,54 +39,199 @@ def test_the_module_version_is_built_from_the_version_header_and_the_interface()
     assert 'MODULE_VERSION(KGCOV_OTTO_VERSION "+kgcov" KGCOV_STR(KGCOV_INTERFACE));' in source
 
 
+OVERRIDE_NAMES = (
+    "KGCOV_ALLOC",
+    "KGCOV_ALLOC_ARRAY",
+    "KGCOV_STRDUP",
+    "KGCOV_MEMDUP",
+    "KGCOV_ASPRINTF",
+    "KGCOV_FREE",
+    "KGCOV_BIG_ALLOC",
+    "KGCOV_BIG_FREE",
+    "KGCOV_DEFINE_LOCK",
+    "KGCOV_LOCK",
+    "KGCOV_UNLOCK",
+    "KGCOV_DEBUGFS_DIR",
+    "KGCOV_DEBUGFS_FILE",
+    "KGCOV_DEBUGFS_REMOVE",
+    "KGCOV_MKDIR",
+    "KGCOV_FILE_WRITE",
+    "KGCOV_FOPS_OPEN",
+    "KGCOV_LLSEEK",
+    "KGCOV_WITHIN_MODULE",
+)
+
+
 def test_the_override_header_is_force_included_only_when_present():
     kbuild = (PACKAGE / "Kbuild").read_text()
     assert (
         "ccflags-y += $(if $(wildcard $(src)/kgcov_local.h),-include $(src)/kgcov_local.h)"
         in kbuild
     )
+    compat = (PACKAGE / "kgcov_compat.h").read_text()
+    for macro in OVERRIDE_NAMES:
+        # The default may sit behind one version test, never more: an override
+        # defined first must skip the whole block.
+        pattern = rf"^#ifndef {macro}\n(?:#if .*\n)?#define {macro}\b"
+        assert re.search(pattern, compat, re.MULTILINE), macro
     gcov_h = (PACKAGE / "kgcov_gcov.h").read_text()
-    for macro in (
-        "KGCOV_ALLOC",
-        "KGCOV_ALLOC_ARRAY",
-        "KGCOV_STRDUP",
-        "KGCOV_MEMDUP",
-        "KGCOV_ASPRINTF",
-        "KGCOV_FREE",
-        "KGCOV_BIG_ALLOC",
-        "KGCOV_BIG_FREE",
-        "KGCOV_DEFINE_LOCK",
-        "KGCOV_LOCK",
-        "KGCOV_UNLOCK",
-        "KGCOV_DEBUGFS_DIR",
-        "KGCOV_DEBUGFS_FILE",
-        "KGCOV_DEBUGFS_REMOVE",
-    ):
-        assert f"#ifndef {macro}\n#define {macro}" in gcov_h, macro
+    assert '#include "kgcov_compat.h"' in gcov_h
+    assert "#ifndef KGCOV_" not in gcov_h, "the override surface has one home: kgcov_compat.h"
+
+
+BARE_KERNEL_CALLS = (
+    "kzalloc(",
+    "kcalloc(",
+    "kstrdup(",
+    "kmemdup(",
+    "kasprintf(",
+    "kfree(",
+    "kvmalloc(",
+    "kvfree(",
+    "vmalloc(",
+    "vfree(",
+    "DEFINE_MUTEX(",
+    "mutex_lock(",
+    "mutex_unlock(",
+    "debugfs_create_dir(",
+    "debugfs_create_file(",
+    "debugfs_remove_recursive(",
+    "within_module(",
+    "kernel_write(",
+    "kern_path_create(",
+    "done_path_create(",
+    "vfs_mkdir(",
+    "simple_open",
+    "noop_llseek",
+    "mnt_idmap(",
+    "d_inode(",
+)
 
 
 @pytest.mark.parametrize("name", ["kgcov.c", "kgcov_gcc.c", "kgcov_gcc_abi.c", "kgcov_clang.c"])
-def test_the_library_calls_no_kernel_allocator_lock_or_debugfs_helper_directly(name):
+def test_the_library_calls_no_kernel_helper_the_ladder_owns_directly(name):
     source = (PACKAGE / name).read_text()
-    for bare in (
-        "kzalloc(",
-        "kcalloc(",
-        "kstrdup(",
-        "kmemdup(",
-        "kasprintf(",
-        "kfree(",
-        "kvmalloc(",
-        "kvfree(",
-        "vmalloc(",
-        "vfree(",
-        "DEFINE_MUTEX(",
-        "mutex_lock(",
-        "mutex_unlock(",
-        "debugfs_create_dir(",
-        "debugfs_create_file(",
-        "debugfs_remove_recursive(",
-    ):
-        assert bare not in source, f"{name} calls {bare} directly; use the KGCOV_ macro"
+    for bare in BARE_KERNEL_CALLS:
+        # A no-preceding-word-char anchor, not a bare substring: a vendored
+        # identifier like gcov_info_within_module() must not trip on the
+        # "within_module(" it contains as a tail. simple_open/noop_llseek
+        # have no "(" of their own, so they need a trailing \b too.
+        pattern = rf"(?<!\w){re.escape(bare)}"
+        if bare in ("simple_open", "noop_llseek"):
+            pattern += r"\b"
+        assert not re.search(pattern, source), f"{name} calls {bare} directly; use the KGCOV_ macro"
+
+
+def test_every_error_directive_in_the_ladder_sits_inside_an_override_guard():
+    """An #error, if one ever appears in the ladder, must sit inside its override guard.
+
+    Walks the preprocessor nesting: at each `#error`, the guard that must
+    silence it is the INNERMOST `#ifndef KGCOV_` on the stack — any other
+    nested `#ifndef`/`#ifdef`/`#if` (not a `KGCOV_` name) in between is
+    skipped when picking it — and the `#error` message must name that
+    guard's macro and kgcov_local.h.
+    """
+    stack: list[str] = []
+    for line in (PACKAGE / "kgcov_compat.h").read_text().splitlines():
+        s = line.strip()
+        if s.startswith(("#if ", "#ifdef ", "#ifndef ")):
+            stack.append(s)
+        elif s.startswith("#endif"):
+            assert stack, f"{s!r} has no matching #if/#ifdef/#ifndef"
+            stack.pop()
+        elif s.startswith("#error"):
+            guards = [g for g in stack if g.startswith("#ifndef KGCOV_")]
+            assert guards, f"{s!r} is outside every #ifndef KGCOV_ block"
+            name = guards[-1].split()[1]
+            assert name in s, s
+            assert "kgcov_local.h" in s, s
+    assert stack == [], "unbalanced conditionals"
+
+
+def _kgcov_mkdir_block(header_path: Path) -> list[str]:
+    """The lines of `kgcov_compat.h`'s `#ifndef KGCOV_MKDIR` block, both `#endif`s included."""
+    lines = header_path.read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.strip() == "#ifndef KGCOV_MKDIR")
+    depth = 0
+    for i in range(start, len(lines)):
+        s = lines[i].strip()
+        if s.startswith(("#if ", "#ifdef ", "#ifndef ")):
+            depth += 1
+        elif s.startswith("#endif"):
+            depth -= 1
+            if depth == 0:
+                return lines[start : i + 1]
+    raise AssertionError("#ifndef KGCOV_MKDIR has no matching #endif")
+
+
+def _assert_untested_comment_follows(block: list[str], marker_index: int, marker: str) -> None:
+    # The comment beside an UNTESTED arm runs a handful of lines (the arm's own
+    # prose varies in length); a generous lookahead avoids coupling this test to
+    # exact wraps while still requiring the comment to sit right beside the code.
+    nearby = "\n".join(block[marker_index + 1 : marker_index + 10])
+    assert "UNTESTED" in nearby, f"no UNTESTED comment beside {marker!r}"
+    assert "headers column" in nearby, f"no 'headers column' beside {marker!r}"
+    assert "kgcov_local.h" in nearby, f"no 'kgcov_local.h' override beside {marker!r}"
+
+
+def _assert_kgcov_mkdir_untested_arms_are_documented(header_path: Path | None = None) -> None:
+    """Each `KGCOV_MKDIR` arm no kernel in `make kgcov`'s set has run says so beside its code.
+
+    Inside the `#ifndef KGCOV_MKDIR` block, the `#else` after the 2.6.39 check
+    opens the 2.6.39-to-3.0 arm and the `< KERNEL_VERSION(3, 6, 0)` guard opens
+    the 3.1-to-3.5 arm; each is unproven by any kernel in the set, so the
+    comment beside it must say UNTESTED, name the headers column that would
+    prove it, and name the kgcov_local.h override that replaces it outright.
+    No `#error` may stand in for that comment anywhere in the block.
+
+    Takes the header's path so a scratch copy can prove this red; defaults to
+    the package's own `kgcov_compat.h` for the real, green check below.
+    """
+    block = _kgcov_mkdir_block(header_path or PACKAGE / "kgcov_compat.h")
+
+    assert not any(line.strip().startswith("#error") for line in block), (
+        "an #error sits inside the KGCOV_MKDIR block; the window ships as untested arms now"
+    )
+
+    below_239 = next(i for i, line in enumerate(block) if "KERNEL_VERSION(2, 6, 39)" in line)
+    else_239 = next(i for i in range(below_239 + 1, len(block)) if block[i].strip() == "#else")
+    _assert_untested_comment_follows(block, else_239, "the #else after the 2.6.39 check")
+
+    below_360 = next(
+        i
+        for i, line in enumerate(block)
+        if line.strip() == "#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 6, 0)"
+    )
+    _assert_untested_comment_follows(
+        block, below_360, "#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 6, 0)"
+    )
+
+
+def test_every_untested_arm_says_so_beside_its_code():
+    _assert_kgcov_mkdir_untested_arms_are_documented()
+
+
+def test_the_consumer_fragment_applies_the_linker_script_and_build_sh_ships_it():
+    assert "ldflags-y += -T $(KGCOV)/kgcov.lds" in (PACKAGE / "consumer.mk").read_text()
+    lds = (PACKAGE / "kgcov.lds").read_text()
+    assert (
+        ".init_array : { *(SORT(.init_array.*)) *(SORT(.ctors.*)) *(.ctors) *(.init_array) }" in lds
+    )
+    build_sh_lines = (PACKAGE / "build.sh").read_text().splitlines()
+    copy_line = next(line for line in build_sh_lines if line.startswith('cp "$SRC_DIR"/{'))
+    for name in kgcov.SHIPPED_FILES:
+        if name not in ("build.sh", "README.md"):
+            assert name in copy_line, f"build.sh does not copy {name}"
+
+
+def test_check_names_the_two_files_an_older_vendored_copy_lacks(tmp_path: Path):
+    kgcov.export_tree(tmp_path)
+    (tmp_path / "kgcov_compat.h").unlink()
+    (tmp_path / "kgcov.lds").unlink()
+    result = kgcov.check_tree(tmp_path)
+    assert (result.state, result.exit_code) == ("differs", 1)
+    assert sorted(result.missing) == ["kgcov.lds", "kgcov_compat.h"]
+    assert result.differing == []
 
 
 def _ko_bytes(*modinfo: str) -> bytes:

@@ -29,7 +29,9 @@ from tests.e2e.cov._repo5_build import TOOLCHAINS_KEY, Toolchain
 pytestmark = pytest.mark.interpreter_agnostic
 
 PARSE = "tests/e2e/cov/test_kgcov_toolchains_e2e.py::TestCoverage::test_parse_hits"
-CROSS = "tests/e2e/cov/test_kgcov_cross_build.py::test_both_modules_are_x86_64_objects"
+CROSS = (
+    "tests/e2e/cov/test_kgcov_kernel_builds.py::test_both_modules_are_objects_for_the_columns_isa"
+)
 
 
 class _Config:
@@ -76,9 +78,16 @@ def test_a_bed_item_is_placed_by_its_built_with_param():
     assert profile_of_item(item) == ("gcc-12", BED)
 
 
-def test_a_build_item_is_placed_by_the_cross_build_fixture():
-    item = _item(CROSS, config=_Config(), fixturenames=["cross_build", "request"])
+def test_a_build_item_is_placed_by_its_kernel_build_param():
+    item = _item(
+        f"{CROSS}[x86_64-cross]", config=_Config(), params={"kernel_build": "x86_64-cross"}
+    )
     assert profile_of_item(item) == (CROSS_PROFILE, BUILD)
+
+
+def test_a_build_item_for_a_provisioned_kernel_is_its_own_column():
+    item = _item(f"{CROSS}[3.13]", config=_Config(), params={"kernel_build": "3.13"})
+    assert profile_of_item(item) == ("3.13", BUILD)
 
 
 def test_an_item_with_neither_is_not_placed():
@@ -193,7 +202,11 @@ def _item_for_surface(surface, *, config, profile="gcc-12"):
             profile,
         )
     return (
-        _item(surface.contract, config=config, fixturenames=["cross_build", "request"]),
+        _item(
+            f"{surface.contract}[{CROSS_PROFILE}]",
+            config=config,
+            params={"kernel_build": CROSS_PROFILE},
+        ),
         CROSS_PROFILE,
     )
 
@@ -242,7 +255,7 @@ def test_two_different_items_in_one_session_both_survive(tmp_path):
             record_phase(item, _report(when), tmp_path)
     assert len(list(tmp_path.glob("*.json"))) == 2
     records = read_records(tmp_path)
-    assert {r["item"] for r in records} == {f"{PARSE}[gcc-12]", CROSS}
+    assert {r["item"] for r in records} == {f"{PARSE}[gcc-12]", f"{CROSS}[{CROSS_PROFILE}]"}
 
 
 def test_the_same_nodeid_under_two_profiles_both_survive(tmp_path):
@@ -418,9 +431,16 @@ def test_rule_3_a_control_from_another_run_does_not_count():
 def test_rule_3_a_build_cell_needs_no_control():
     cell = collate(
         _fresh(), [_record(CROSS, CROSS_PROFILE, "passed", venue=BUILD, version="13.3.0")]
-    ).matrix["cells"]["cross-x86_64-objects"][CROSS_PROFILE]
+    ).matrix["cells"]["build-target-isa"][CROSS_PROFILE]
     assert cell["status"] == "measured-ok"
     assert cell["control"] is None
+
+
+def test_a_record_for_a_provisioned_kernel_column_lands_in_its_cell():
+    matrix = _fresh()
+    cell = collate(matrix, [_record(CROSS, "3.13", "passed", venue=BUILD, version="4.8.4")]).matrix
+    assert cell["cells"]["build-target-isa"]["3.13"]["status"] == "measured-ok"
+    assert cell["cells"]["build-target-isa"]["3.13"]["compiler_version"] == "4.8.4"
 
 
 def test_rule_4_a_cell_the_run_did_not_draw_is_copied_unchanged():

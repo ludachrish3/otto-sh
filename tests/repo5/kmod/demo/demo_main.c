@@ -13,6 +13,7 @@
 #include <linux/uaccess.h>
 
 #include "demo.h"
+#include "demo_compat.h"
 #include "kgcov.h"
 
 KGCOV_DECLARE();
