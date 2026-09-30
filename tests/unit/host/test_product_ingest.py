@@ -124,11 +124,11 @@ def test_apply_providers_runs_all_four_seams_in_order(monkeypatch):
     assert order == ["dp", "pp", "dt", "tp"]
 
 
-def test_apply_providers_runs_the_kgcov_binding_check(monkeypatch):
+def test_apply_providers_runs_the_kmodcov_binding_check(monkeypatch):
     from otto.host import kmod_tool_kind
 
     seen = []
-    monkeypatch.setattr(kmod_tool_kind, "check_kgcov_bindings", lambda host: seen.append(host.id))
+    monkeypatch.setattr(kmod_tool_kind, "check_kmodcov_bindings", lambda host: seen.append(host.id))
     host = SimpleNamespace(id="h1", products=[], dev_tools=[], source_lab="", inventory_ref=None)
     factory.apply_providers(host)
     assert seen == ["h1"]
@@ -250,19 +250,19 @@ def test_products_that_stage_nothing_never_collide():
     assert [p.name for p in host.products] == ["a", "b"]
 
 
-@pytest.mark.parametrize("tool_kind", ["kmod", "kgcov"])
+@pytest.mark.parametrize("tool_kind", ["kmod", "kmodcov"])
 def test_a_dev_tool_and_a_product_staging_one_basename_collide(tool_kind):
     """A REAL dev tool, so the production ``stages_artifact`` is what admits it.
 
     A hand-written double that set the flag itself would pass even with the
     flag missing from :class:`~otto.host.kmod_tool_kind.KmodTool` — and the
     check skips anything whose flag is falsy, so every real dev tool would
-    have been silently exempt. Both concrete kinds are built here; ``KgcovTool``
+    have been silently exempt. Both concrete kinds are built here; ``KmodcovTool``
     inherits the flag rather than declaring its own.
     """
-    from otto.host.kmod_tool_kind import KgcovTool, KmodTool
+    from otto.host.kmod_tool_kind import KmodcovTool, KmodTool
 
-    cls = KmodTool if tool_kind == "kmod" else KgcovTool
+    cls = KmodTool if tool_kind == "kmod" else KmodcovTool
     tool = cls(name="tracer", artifact=Path("/builds/b/demo.ko"))
     assert tool.stages_artifact is True  # the production flag, not a test's
 

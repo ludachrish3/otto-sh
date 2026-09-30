@@ -259,7 +259,7 @@ def _register_builtin_kinds() -> None:
     for kind, module, factory in [
         ("shell", "otto.host.shell_kind", "_shell_kind"),
         ("kmod", "otto.host.kmod_tool_kind", "_kmod_tool_kind"),
-        ("kgcov", "otto.host.kmod_tool_kind", "_kgcov_tool_kind"),
+        ("kmodcov", "otto.host.kmod_tool_kind", "_kmodcov_tool_kind"),
     ]:
         DEV_TOOL_KINDS.register(kind, Ref(f"{module}:{factory}"), origin=module)
 

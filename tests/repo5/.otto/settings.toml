@@ -14,17 +14,17 @@ backend = "json"
 paths = ["../_fixtures/lab_data/tech1"]
 
 # The library builds out of tree into build/lib/ (git-ignored) from this
-# repo's vendored copy, third_party/otto_kgcov/ (an `otto cov kgcov export`,
+# repo's vendored copy, third_party/otto_kmodcov/ (an `otto cov kmodcov export`,
 # held current against the installed otto by a guard), by this repo's own
 # build.sh. It is a DEV TOOL, not a product: nothing measures it, and the
 # demo below loads it on demand at install — `install-tools` beforehand
 # costs nothing, and `cleanup` removes it after the products. One entry per
 # kernel; both bed hosts run the same one.
 [[dev_tools]]
-name = "otto_kgcov"
-kind = "kgcov"
-artifact = "build/lib/otto_kgcov.ko"
-source = "third_party/otto_kgcov"
+name = "otto_kmodcov"
+kind = "kmodcov"
+artifact = "build/lib/otto_kmodcov.ko"
+source = "third_party/otto_kmodcov"
 match = { id = "test[12]" }
 
 # The demo builds IN PLACE under kmod/demo/, alongside its committed sources:

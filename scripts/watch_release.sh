@@ -47,7 +47,7 @@ JUNIT_DIR="$REPO/reports/junit"
 POLL_SECONDS="${POLL_SECONDS:-20}"
 
 # The gates of the `release` target, in the order the recipe chains them.
-STAGES=(clean-dist web-install check-python release-matrix release-kgcov-matrix \
+STAGES=(clean-dist web-install check-python release-matrix release-kmodcov-matrix \
         docs nox web dashboard-all validate-ts profile wheel-check build)
 
 usage() { sed -n '2,/^# Two traps/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }

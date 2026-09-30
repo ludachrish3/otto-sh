@@ -1,4 +1,4 @@
-"""End-to-end: kernel-module coverage through otto_kgcov on the unix bed.
+"""End-to-end: kernel-module coverage through otto_kmodcov on the unix bed.
 
     otto -l unix test --cov TestKmodDemo      (repo5)
     otto -l unix cov report <run> --dir <report>

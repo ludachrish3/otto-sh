@@ -451,7 +451,7 @@ class TestGcdaFetcher:
     ):
         host = _make_mock_host("host1")
         host.products[0].prepare_coverage = AsyncMock(
-            return_value=Result(Status.Error, msg="no /sys/kernel/debug/otto_kgcov/app")
+            return_value=Result(Status.Error, msg="no /sys/kernel/debug/otto_kmodcov/app")
         )
         fake_config_module(host)
         result = await GcdaFetcher(tmp_path / "staging").fetch_all()
@@ -460,7 +460,8 @@ class TestGcdaFetcher:
         host.get.assert_not_called()
         assert not (tmp_path / "staging" / "host1").exists()
         assert (
-            "host1:app: prepare_coverage failed: no /sys/kernel/debug/otto_kgcov/app" in caplog.text
+            "host1:app: prepare_coverage failed: no /sys/kernel/debug/otto_kmodcov/app"
+            in caplog.text
         )
 
     @pytest.mark.asyncio

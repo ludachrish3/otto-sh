@@ -831,89 +831,89 @@ def test_a_missing_creds_store_file_warns_rather_than_aborting_init(tmp_path, mo
     assert "Traceback" not in result.output
 
 
-def test_all_never_scaffolds_the_kgcov_area(tmp_path: Path) -> None:
+def test_all_never_scaffolds_the_kmodcov_area(tmp_path: Path) -> None:
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert not (tmp_path / "third_party").exists()
-    assert "kgcov" in result.output
+    assert "kmodcov" in result.output
     assert "not requested" in result.output
 
 
-def test_kgcov_flag_scaffolds_the_area_and_refreshes_it(tmp_path: Path) -> None:
-    from otto import kgcov
+def test_kmodcov_flag_scaffolds_the_area_and_refreshes_it(tmp_path: Path) -> None:
+    from otto import kmodcov
 
     _scaffold_all(tmp_path)
-    result = _invoke(["--kgcov", "--path", str(tmp_path)])
+    result = _invoke(["--kmodcov", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
-    vendored = tmp_path / "third_party" / "otto_kgcov"
-    assert kgcov.check_tree(vendored).state == "current"
-    (vendored / "kgcov.h").write_text("// stale\n")
-    again = _invoke(["--kgcov", "--path", str(tmp_path)])
+    vendored = tmp_path / "third_party" / "otto_kmodcov"
+    assert kmodcov.check_tree(vendored).state == "current"
+    (vendored / "kmodcov.h").write_text("// stale\n")
+    again = _invoke(["--kmodcov", "--path", str(tmp_path)])
     assert again.exit_code == 0, again.output
-    assert kgcov.check_tree(vendored).state == "current"
+    assert kmodcov.check_tree(vendored).state == "current"
 
 
-def test_kgcov_dir_option_places_the_export(tmp_path: Path) -> None:
+def test_kmodcov_dir_option_places_the_export(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
-    result = _invoke(["--kgcov", "--kgcov-dir", "vendor/kgcov", "--path", str(tmp_path)])
+    result = _invoke(["--kmodcov", "--kmodcov-dir", "vendor/kmodcov", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
-    assert (tmp_path / "vendor" / "kgcov" / "kgcov.h").is_file()
+    assert (tmp_path / "vendor" / "kmodcov" / "kmodcov.h").is_file()
 
 
 def test_a_differing_vendored_copy_is_a_warning_not_a_failure(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
-    _invoke(["--kgcov", "--path", str(tmp_path)])
+    _invoke(["--kmodcov", "--path", str(tmp_path)])
     settings = tmp_path / ".otto" / "settings.toml"
     settings.write_text(  # sutrepo-exempt: appends to a settings.toml otto init itself scaffolded
-        settings.read_text() + '\n[[dev_tools]]\nname = "kgcov-6.8"\nkind = "kgcov"\n'
-        'artifact = "build/otto_kgcov.ko"\nsource = "third_party/otto_kgcov"\n'
+        settings.read_text() + '\n[[dev_tools]]\nname = "kmodcov-6.8"\nkind = "kmodcov"\n'
+        'artifact = "build/otto_kmodcov.ko"\nsource = "third_party/otto_kmodcov"\n'
         'match = { id = ".*" }\n'
     )
-    (tmp_path / "third_party" / "otto_kgcov" / "kgcov.c").write_text("// edited\n")
+    (tmp_path / "third_party" / "otto_kmodcov" / "kmodcov.c").write_text("// edited\n")
     result = _invoke(["--path", str(tmp_path)], input="n\n" * 6)
     assert result.exit_code == 0, result.output
     assert "Warnings" in result.output
-    assert "kgcov.c" in result.output
-    assert "otto cov kgcov export" in result.output
+    assert "kmodcov.c" in result.output
+    assert "otto cov kmodcov export" in result.output
 
 
-def test_a_declared_source_with_no_library_fails_the_kgcov_area(tmp_path: Path) -> None:
+def test_a_declared_source_with_no_library_fails_the_kmodcov_area(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
     settings = tmp_path / ".otto" / "settings.toml"
     settings.write_text(  # sutrepo-exempt: appends to a settings.toml otto init itself scaffolded
-        settings.read_text() + '\n[[dev_tools]]\nname = "kgcov-6.8"\nkind = "kgcov"\n'
-        'artifact = "build/otto_kgcov.ko"\nsource = "vendor/missing"\nmatch = { id = ".*" }\n'
+        settings.read_text() + '\n[[dev_tools]]\nname = "kmodcov-6.8"\nkind = "kmodcov"\n'
+        'artifact = "build/otto_kmodcov.ko"\nsource = "vendor/missing"\nmatch = { id = ".*" }\n'
     )
     result = _invoke(["--path", str(tmp_path)], input="n\n" * 6)
     assert result.exit_code == 1
     assert "vendor/missing" in result.output
 
 
-def test_kgcov_dir_rejects_an_absolute_path_outside_the_repo(tmp_path: Path) -> None:
-    """--kgcov-dir must stay inside the repo — an absolute value discards --path entirely."""
-    outside = tmp_path.parent / "escaped-kgcov"
-    result = _invoke(["--kgcov", "--kgcov-dir", str(outside), "--path", str(tmp_path)])
+def test_kmodcov_dir_rejects_an_absolute_path_outside_the_repo(tmp_path: Path) -> None:
+    """--kmodcov-dir must stay inside the repo — an absolute value discards --path entirely."""
+    outside = tmp_path.parent / "escaped-kmodcov"
+    result = _invoke(["--kmodcov", "--kmodcov-dir", str(outside), "--path", str(tmp_path)])
     assert result.exit_code == 2
     assert str(outside) in result.output
     assert not outside.exists()
     assert not (tmp_path / ".otto").exists()  # nothing scaffolded at all
-    assert not any(tmp_path.rglob("kgcov.h"))
+    assert not any(tmp_path.rglob("kmodcov.h"))
 
 
-def test_kgcov_dir_rejects_a_path_that_climbs_out_of_the_repo(tmp_path: Path) -> None:
-    result = _invoke(["--kgcov", "--kgcov-dir", "../escaped-kgcov", "--path", str(tmp_path)])
+def test_kmodcov_dir_rejects_a_path_that_climbs_out_of_the_repo(tmp_path: Path) -> None:
+    result = _invoke(["--kmodcov", "--kmodcov-dir", "../escaped-kmodcov", "--path", str(tmp_path)])
     assert result.exit_code == 2
-    assert "../escaped-kgcov" in result.output
-    assert not (tmp_path.parent / "escaped-kgcov").exists()
+    assert "../escaped-kmodcov" in result.output
+    assert not (tmp_path.parent / "escaped-kmodcov").exists()
     assert not (tmp_path / ".otto").exists()
-    assert not any(tmp_path.rglob("kgcov.h"))
+    assert not any(tmp_path.rglob("kmodcov.h"))
 
 
-def test_kgcov_dir_rejects_the_repo_root_itself(tmp_path: Path) -> None:
+def test_kmodcov_dir_rejects_the_repo_root_itself(tmp_path: Path) -> None:
     """A degenerate '.' (or '') would export into root and put the starter beside tmp_path."""
-    result = _invoke(["--kgcov", "--kgcov-dir", ".", "--path", str(tmp_path)])
+    result = _invoke(["--kmodcov", "--kmodcov-dir", ".", "--path", str(tmp_path)])
     assert result.exit_code == 2
     assert "'.'" in result.output
     assert not list(tmp_path.parent.glob("*-consumer"))
     assert not (tmp_path / ".otto").exists()
-    assert not any(tmp_path.rglob("kgcov.h"))
+    assert not any(tmp_path.rglob("kmodcov.h"))

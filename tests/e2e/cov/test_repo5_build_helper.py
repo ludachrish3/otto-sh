@@ -146,7 +146,7 @@ def test_ensure_kmod_artifacts_tells_the_build_script_which_toolchain_ran(monkey
     argv, env = calls[0]
     assert argv == [str(helper.KMOD_BUILD)]
     assert env["CC"] == "gcc-12"
-    assert env["OTTO_KGCOV_TOOLCHAIN"] == "gcc-12"
+    assert env["OTTO_KMODCOV_TOOLCHAIN"] == "gcc-12"
 
 
 # The measured shape of readelf's three tables for a demo .ko as GNU as on
@@ -187,7 +187,7 @@ Symbol table '.symtab' contains 11 entries:
    Num:    Value          Size Type    Bind   Vis      Ndx Name
      0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
      1: 0000000000000008     0 NOTYPE  LOCAL  DEFAULT    1 $x
-     2: 0000000000000008    12 FUNC    LOCAL  DEFAULT    1 __kgcov_begin_marker
+     2: 0000000000000008    12 FUNC    LOCAL  DEFAULT    1 __kmodcov_begin_marker
      3: 0000000000000008     0 NOTYPE  LOCAL  DEFAULT    7 $x
      4: 0000000000000008    80 FUNC    LOCAL  DEFAULT    7 _sub_I_00100_0
      5: 0000000000000058     0 NOTYPE  LOCAL  DEFAULT    7 $x
@@ -195,7 +195,7 @@ Symbol table '.symtab' contains 11 entries:
      7: 00000000000000a8     0 NOTYPE  LOCAL  DEFAULT    7 $x
      8: 00000000000000a8    80 FUNC    LOCAL  DEFAULT    7 _sub_I_00100_0
      9: 0000000000001340     0 NOTYPE  LOCAL  DEFAULT    1 $x
-    10: 0000000000001340    12 FUNC    LOCAL  DEFAULT    1 __kgcov_end_marker
+    10: 0000000000001340    12 FUNC    LOCAL  DEFAULT    1 __kmodcov_end_marker
 """
 _READELF_BY_FLAG = {"-rW": _READELF_R, "-SW": _READELF_S, "-sW": _READELF_SYM}
 
@@ -211,23 +211,23 @@ def fake_readelf(monkeypatch):
 
 def test_init_array_symbols_resolve_section_relocations_in_offset_order(fake_readelf, tmp_path):
     assert helper.init_array_symbols(tmp_path / "x.ko") == [
-        "__kgcov_begin_marker",
+        "__kmodcov_begin_marker",
         "_sub_I_00100_0",
         "_sub_I_00100_0",
         "_sub_I_00100_0",
-        "__kgcov_end_marker",
+        "__kmodcov_end_marker",
     ]
 
 
 def test_init_array_symbols_keep_a_named_relocation_as_is(monkeypatch, tmp_path):
-    named = _READELF_R.replace(".text + 8", "__kgcov_begin_marker + 0")
+    named = _READELF_R.replace(".text + 8", "__kmodcov_begin_marker + 0")
     tables = {**_READELF_BY_FLAG, "-rW": named}
     monkeypatch.setattr(
         helper.subprocess,
         "run",
         lambda argv, **kw: subprocess.CompletedProcess(argv, 0, stdout=tables[argv[1]], stderr=""),
     )
-    assert helper.init_array_symbols(tmp_path / "x.ko")[0] == "__kgcov_begin_marker"
+    assert helper.init_array_symbols(tmp_path / "x.ko")[0] == "__kmodcov_begin_marker"
 
 
 def test_init_array_symbols_fails_on_a_module_without_the_section(monkeypatch, tmp_path):

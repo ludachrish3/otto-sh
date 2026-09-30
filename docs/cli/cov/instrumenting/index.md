@@ -34,6 +34,6 @@ gcc
 clang
 embedded
 kernel-modules
-kgcov-matrix
+kmodcov-matrix
 containers
 ```

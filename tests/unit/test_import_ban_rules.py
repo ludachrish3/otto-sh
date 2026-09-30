@@ -44,7 +44,7 @@ LAZY_PACKAGES = [
     "otto.host.survey",
     "otto.host.transfer",
     "otto.inventory",
-    "otto.kgcov",
+    "otto.kmodcov",
     "otto.labs",
     "otto.link",
     "otto.logger",

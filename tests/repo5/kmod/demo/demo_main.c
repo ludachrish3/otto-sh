@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * otto_kmod_demo: a bounded queue driven from debugfs, instrumented with
- * otto_kgcov. Write a command to /sys/kernel/debug/otto_kmod_demo/ctl and
+ * otto_kmodcov. Write a command to /sys/kernel/debug/otto_kmod_demo/ctl and
  * read the counters back; a rejected command is reported in `err=`, not as
  * a failed write.
  */
@@ -14,9 +14,9 @@
 
 #include "demo.h"
 #include "demo_compat.h"
-#include "kgcov.h"
+#include "kmodcov.h"
 
-KGCOV_DECLARE();
+KMODCOV_DECLARE();
 
 static struct demo_queue queue;
 static DEFINE_MUTEX(demo_lock);
@@ -81,13 +81,13 @@ static const struct file_operations ctl_fops = {
 
 static int __init demo_init(void)
 {
-	int err = KGCOV_INIT();
+	int err = KMODCOV_INIT();
 
 	if (err)
 		return err;
 	err = demo_queue_init(&queue, 8);
 	if (err) {
-		KGCOV_EXIT();
+		KMODCOV_EXIT();
 		return err;
 	}
 	demo_dir = debugfs_create_dir("otto_kmod_demo", NULL);
@@ -105,7 +105,7 @@ static void __exit demo_exit(void)
 		pr_info("draining %zu item(s) left at exit\n", demo_drain(&queue, &sum));
 	demo_queue_free(&queue);
 	pr_info("unloaded after %lu enqueue(s), %lu dropped\n", queue.enqueued, queue.dropped);
-	KGCOV_EXIT();
+	KMODCOV_EXIT();
 }
 
 module_init(demo_init);

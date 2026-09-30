@@ -10,10 +10,10 @@ chosen per entry by ``coverage``:
 ``none``
     no counters of its own; the hooks are the defaults.
 ``module``
-    the module links against ``otto_kgcov`` (``src/otto/kgcov/``), declared on
-    its host as a ``kgcov`` dev tool (:mod:`otto.host.kmod_tool_kind`) that
+    the module links against ``otto_kmodcov`` (``src/otto/kmodcov/``), declared on
+    its host as a ``kmodcov`` dev tool (:mod:`otto.host.kmod_tool_kind`) that
     ``install`` loads on demand when it is not already resident: otto then
-    passes ``gcov_dir=<cov_dir>`` to ``insmod``, ``prepare_coverage`` asks the
+    passes ``cov_dir=<cov_dir>`` to ``insmod``, ``prepare_coverage`` asks the
     library to dump through debugfs while the module is loaded (an unloaded
     module already dumped at exit), and ``reset_coverage`` zeroes it there.
 ``kernel``
@@ -38,7 +38,7 @@ from typing_extensions import override
 from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
-from .kmod_tool_kind import kgcov_tool_for
+from .kmod_tool_kind import kmodcov_tool_for
 from .product import ShellProduct, cov_dir_of, cov_dir_of_name, sudo_gcda_delete
 from .shell_kind import (
     bool_param,
@@ -53,8 +53,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-KGCOV_DEBUGFS = "/sys/kernel/debug/otto_kgcov"
-"""Where ``otto_kgcov`` exposes ``<module>/dump`` and ``<module>/reset``."""
+KMODCOV_DEBUGFS = "/sys/kernel/debug/otto_kmodcov"
+"""Where ``otto_kmodcov`` exposes ``<module>/dump`` and ``<module>/reset``."""
 
 KERNEL_GCOV_DEBUGFS = "/sys/kernel/debug/gcov"
 """The in-kernel gcov tree (``CONFIG_GCOV_KERNEL``); ``gcov_path`` lives under it."""
@@ -113,9 +113,9 @@ class KmodProduct(ShellProduct):
             if not library.is_ok and library.status is not Status.NotRun:
                 return library
             # UnixHost.load appends `params` to the insmod line UNQUOTED, so
-            # the gcov_dir=<cov_dir> token is quoted as ONE argument here — a
+            # the cov_dir=<cov_dir> token is quoted as ONE argument here — a
             # cov_dir containing whitespace would otherwise split in two.
-            gcov_dir_arg = shlex.quote(f"gcov_dir={cov_dir_of(self)}")
+            gcov_dir_arg = shlex.quote(f"cov_dir={cov_dir_of(self)}")
             params = f"{params} {gcov_dir_arg}".strip()
         result = await host.load(  # ty: ignore[unresolved-attribute]
             self.artifact,
@@ -127,14 +127,14 @@ class KmodProduct(ShellProduct):
             # The library is in (or was already): this is the CONSUMER's own
             # insmod failing, so the message says so and names the library's
             # state — otherwise a `vermagic`/`Unknown symbol` line reads like
-            # otto_kgcov never loaded.
+            # otto_kmodcov never loaded.
             return Result(
-                Status.Error, msg=f"{self.name}: {result.msg} ({await self._kgcov_context(host)})"
+                Status.Error, msg=f"{self.name}: {result.msg} ({await self._kmodcov_context(host)})"
             )
         return result
 
     async def _ensure_library(self, host: Any) -> Result:
-        """Load the host's otto_kgcov dev tool when it is not resident; the consumer needs it.
+        """Load the host's otto_kmodcov dev tool when it is not resident; the consumer needs it.
 
         The tool's own ``install`` runs the interface check first. A decline
         (``NotRun``, a dry run) comes back as-is, like every other hook here,
@@ -148,12 +148,12 @@ class KmodProduct(ShellProduct):
         happens, as everywhere else in this file. The run's verbose.log is
         where a lane reads the line back.
         """
-        tool = kgcov_tool_for(host)
+        tool = kmodcov_tool_for(host)
         if tool is None:
             return Result(
                 Status.Error,
-                msg=f'{self.name}: coverage = "module" needs otto_kgcov on host '
-                f"{getattr(host, 'id', '?')}, and no [[dev_tools]] entry of kind 'kgcov' "
+                msg=f'{self.name}: coverage = "module" needs otto_kmodcov on host '
+                f"{getattr(host, 'id', '?')}, and no [[dev_tools]] entry of kind 'kmodcov' "
                 "matches that host",
             )
         # The tool's own install short-circuits on a resident library too,
@@ -163,27 +163,28 @@ class KmodProduct(ShellProduct):
         # below is said at all.
         if await tool.is_installed(host):
             return Result(Status.Success)
-        logger.info(f"{getattr(host, 'id', '?')}: {self.name}: loading otto_kgcov ({tool.name})")
+        logger.info(f"{getattr(host, 'id', '?')}: {self.name}: loading otto_kmodcov ({tool.name})")
         result = await tool.install(host)
         if result.status is Status.NotRun or result.is_ok:
             return result
         return Result(
-            Status.Error, msg=f"{self.name}: loading otto_kgcov ({tool.name}) failed: {result.msg}"
+            Status.Error,
+            msg=f"{self.name}: loading otto_kmodcov ({tool.name}) failed: {result.msg}",
         )
 
-    async def _kgcov_context(self, host: Any) -> str:
-        """Name the host's kgcov tool and whether the library is resident, for an error.
+    async def _kmodcov_context(self, host: Any) -> str:
+        """Name the host's kmodcov tool and whether the library is resident, for an error.
 
         ERROR PATHS ONLY: it costs an extra ``lsmod``, which a hook that
         succeeded must never pay. Residency is stated rather than asked —
         the answer is one read away, and the reader has neither the host nor
         the tool name in hand.
         """
-        tool = kgcov_tool_for(host)
+        tool = kmodcov_tool_for(host)
         if tool is None:
-            return "otto_kgcov: no kgcov dev tool declared for this host"
+            return "otto_kmodcov: no kmodcov dev tool declared for this host"
         resident = "resident" if await tool.is_installed(host) else "not resident"
-        return f"otto_kgcov: {tool.name!r} dev tool, {resident}"
+        return f"otto_kmodcov: {tool.name!r} dev tool, {resident}"
 
     @override
     async def uninstall(self, host: "Host") -> Result:
@@ -215,20 +216,20 @@ class KmodProduct(ShellProduct):
                 # lsmod itself declined: residency is unknowable, so announce
                 # the write a real run might issue too (declined in turn by
                 # the same session) — the shared delete below closes it out.
-                reset_file = shlex.quote(self._kgcov_file("reset"))
+                reset_file = shlex.quote(self._kmodcov_file("reset"))
                 await self._run_sudo(host, f"echo 1 > {reset_file}")
             else:
                 if not loaded.is_ok:
                     return loaded
                 if loaded.value:
-                    reset_file = shlex.quote(self._kgcov_file("reset"))
+                    reset_file = shlex.quote(self._kmodcov_file("reset"))
                     zero = await self._run_sudo(host, f"echo 1 > {reset_file}")
                     if not zero.is_ok:
                         if zero.status is Status.NotRun:
                             return zero  # the session declined; nothing failed
                         return Result(
                             Status.Error,
-                            msg=f"{zero.msg} ({await self._kgcov_context(host)})",
+                            msg=f"{zero.msg} ({await self._kmodcov_context(host)})",
                         )
         else:
             # Guarded by `test -d` first, for the same reason _prepare_kernel's
@@ -249,8 +250,8 @@ class KmodProduct(ShellProduct):
         # The kernel wrote the files as root: the default delete, elevated.
         return await sudo_gcda_delete(self, host)
 
-    def _kgcov_file(self, name: str) -> str:
-        return f"{KGCOV_DEBUGFS}/{self.module_name}/{name}"
+    def _kmodcov_file(self, name: str) -> str:
+        return f"{KMODCOV_DEBUGFS}/{self.module_name}/{name}"
 
     def _kernel_gcov_error(self, result: Result) -> Result:
         """Build the friendly ``Error`` naming :attr:`gcov_path` for a failed kernel-gcov script.
@@ -307,18 +308,18 @@ class KmodProduct(ShellProduct):
             if not loaded.is_ok:
                 return loaded
             if not loaded.value:
-                # Unloaded: otto_kgcov dumped at KGCOV_EXIT(); the files are already there.
+                # Unloaded: otto_kmodcov dumped at KMODCOV_EXIT(); the files are already there.
                 return Result(Status.Success)
         # lsmod declined (dry run) or the module is loaded: announce the
         # debugfs write either way — a decline here becomes the session's own
         # [DRY RUN] line, and the overall result mirrors it (Status.NotRun).
-        dump = self._kgcov_file("dump")
+        dump = self._kmodcov_file("dump")
         result = await self._run_sudo(host, f"echo 1 > {shlex.quote(dump)}")
         if result.status is Status.NotRun or result.is_ok:
             return result
         return Result(
             Status.Error,
-            msg=f"{self.name}: cannot write {dump} — {await self._kgcov_context(host)}; was the "
+            msg=f"{self.name}: cannot write {dump} — {await self._kmodcov_context(host)}; was the "
             f"module built with its consumer snippet? ({result.msg})",
         )
 
@@ -385,9 +386,9 @@ def _kmod_kind(entry: DeclaredEntry, host: "Host") -> KmodProduct:
         raise ValueError(
             f"[[products]] {entry.name!r}: 'gcov_path' only applies with coverage = \"kernel\""
         )
-    if coverage == "module" and "gcov_dir=" in insmod_params:
+    if coverage == "module" and "cov_dir=" in insmod_params:
         raise ValueError(
-            f"[[products]] {entry.name!r}: 'params' must not set gcov_dir — otto passes the "
+            f"[[products]] {entry.name!r}: 'params' must not set cov_dir — otto passes the "
             "entry's cov_dir"
         )
     cov_dir = str_param(entry, params, "cov_dir")

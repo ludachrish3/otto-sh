@@ -12,7 +12,7 @@ again after upgrading otto to refresh the generated editor schemas.
 
 ```text
 otto init [--all | --schemas | --lab | --tests | --instructions] [--name NAME]
-          [--version X.Y.Z] [--path DIR] [--kgcov [--kgcov-dir DIR]]
+          [--version X.Y.Z] [--path DIR] [--kmodcov [--kmodcov-dir DIR]]
 ```
 
 `otto init` is **lab-free**: it needs no `--lab` and no `OTTO_SUT_DIRS`, and
@@ -25,8 +25,8 @@ it never creates an output directory.
 | `--lab` | `False` | Scaffold the lab area (`lab_data/lab.json` + `inventory.json` + `creds.json` + README) |
 | `--tests` | `False` | Scaffold the tests area (example tests + conftest), plus the instructions area when it is missing |
 | `--instructions` | `False` | Scaffold the instructions area (`pylib/<name>_instructions/`) |
-| `--kgcov` | `False` | Scaffold (or refresh) the kgcov area: vendor the `otto_kgcov` library at `--kgcov-dir` (default `third_party/otto_kgcov`), append a commented `[[dev_tools]]` entry of kind `kgcov`, and write a consumer starter beside it. Never scaffolded by `--all` or the prompts |
-| `--kgcov-dir DIR` | `third_party/otto_kgcov` | Where `--kgcov` vendors the library (repo-relative) |
+| `--kmodcov` | `False` | Scaffold (or refresh) the kmodcov area: vendor the `otto_kmodcov` library at `--kmodcov-dir` (default `third_party/otto_kmodcov`), append a commented `[[dev_tools]]` entry of kind `kmodcov`, and write a consumer starter beside it. Never scaffolded by `--all` or the prompts |
+| `--kmodcov-dir DIR` | `third_party/otto_kmodcov` | Where `--kmodcov` vendors the library (repo-relative) |
 | `--name NAME` | directory name | Product name for `settings.toml` |
 | `--version X.Y.Z` | `0.1.0` | Product version for `settings.toml` |
 | `--path DIR` | current dir | Repo root to operate on (must already exist) |
@@ -43,13 +43,13 @@ declares it. When the repo already has an init module, the tests import from
 the first one its `init` setting names instead, and `otto init` prints what
 that module must declare for them to run:
 `@otto.options(verbs=["run", "test"]) class RepoOptions` with a
-`message: str` field. `--kgcov` is
+`message: str` field. `--kmodcov` is
 **opt-in**: it is never scaffolded by `--all` and never offered by the
 interactive prompt, only by its own flag.
 
 Areas that already exist are never modified — except the otto-owned schemas
 area, which `otto init --schemas` refreshes (e.g. after upgrading otto), and
-the otto-owned kgcov library, which `otto init --kgcov` refreshes the same
+the otto-owned kmodcov library, which `otto init --kmodcov` refreshes the same
 way. Instead, `otto init` validates them with the same ingestion code otto uses
 elsewhere and reports each one `✓` or `✗` in a summary table; the command
 exits with code 1 if any existing area fails validation. The name used for areas scaffolded on a later run is
@@ -130,24 +130,24 @@ Alongside the schemas, `otto init --schemas` writes
 entry, an element, a cred, and each registered host type.  See
 {doc}`schema/editors`.
 
-## kgcov
+## kmodcov
 
-`otto init --kgcov` vendors the `otto_kgcov` kernel-module coverage library
-into the repo (`--kgcov-dir`, default `third_party/otto_kgcov`), appends a
-commented `[[dev_tools]]` entry of kind `kgcov` naming that directory as
-`source` (only when the repo declares no `kgcov` dev tool yet, commented or
+`otto init --kmodcov` vendors the `otto_kmodcov` kernel-module coverage library
+into the repo (`--kmodcov-dir`, default `third_party/otto_kmodcov`), appends a
+commented `[[dev_tools]]` entry of kind `kmodcov` naming that directory as
+`source` (only when the repo declares no `kmodcov` dev tool yet, commented or
 not), and writes a consumer starter beside it — two sentinel translation
-units (`kgcov_begin.c`, `kgcov_end.c`), a `Kbuild.example` fragment, and a
-`README.md` — each written only where absent. Re-running `--kgcov` always
+units (`kmodcov_begin.c`, `kmodcov_end.c`), a `Kbuild.example` fragment, and a
+`README.md` — each written only where absent. Re-running `--kmodcov` always
 refreshes the vendored library itself (it is otto-owned), but never touches
 the `[[dev_tools]]` entry once one exists, nor the starter files once
 written.
 
-Validating an existing kgcov area checks every declared `[[dev_tools]]` entry
-of kind `kgcov`: a `source` naming a directory with no library there at all
+Validating an existing kmodcov area checks every declared `[[dev_tools]]` entry
+of kind `kmodcov`: a `source` naming a directory with no library there at all
 is a *problem* (the run exits 1), while a vendored copy that differs from the
 installed otto's library is only a *warning* — advisory, like the lab
-findings above, and naming the differing files and the `otto cov kgcov
+findings above, and naming the differing files and the `otto cov kmodcov
 export` remedy.
 
 See {doc}`cov/instrumenting/kernel-modules` for how the library attaches to a

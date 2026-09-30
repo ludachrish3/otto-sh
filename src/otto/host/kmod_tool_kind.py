@@ -1,8 +1,8 @@
 """
-The built-in ``kmod`` DEV-TOOL kind, and its ``kgcov`` subtype.
+The built-in ``kmod`` DEV-TOOL kind, and its ``kmodcov`` subtype.
 
 A kernel module a repo places on a host as tooling rather than as software
-under test: a tracer, a test driver, or — the subtype — the otto_kgcov
+under test: a tracer, a test driver, or — the subtype — the otto_kmodcov
 coverage library. The kernel's module loader drives the verbs, exactly as
 for the ``kmod`` PRODUCT kind (:mod:`otto.host.kmod_kind`): ``install`` is
 :meth:`~otto.host.unix_host.UnixHost.load`, ``uninstall`` is
@@ -13,13 +13,13 @@ dev tool has: installed by ``install-tools`` before any product, removed by
 answer — and no coverage of its own, so none of the product kind's coverage
 params exist here.
 
-``kgcov`` fixes the module name to ``otto_kgcov`` and adds the library's
-interface check: a built ``.ko`` reports ``<otto version>+kgcov<n>`` through
-``MODULE_VERSION`` (:mod:`otto.kgcov`), and one whose ``n`` is not this
-otto's :data:`otto.kgcov.library.INTERFACE` is refused — at lab load when the file
+``kmodcov`` fixes the module name to ``otto_kmodcov`` and adds the library's
+interface check: a built ``.ko`` reports ``<otto version>+kmodcov<n>`` through
+``MODULE_VERSION`` (:mod:`otto.kmodcov`), and one whose ``n`` is not this
+otto's :data:`otto.kmodcov.library.INTERFACE` is refused — at lab load when the file
 exists, and again at ``install``, before it is ever loaded. Lab load also
-refuses both ways the binding can fail: a host matching two kgcov entries (a
-host has one kernel and holds one otto_kgcov), and a host whose
+refuses both ways the binding can fail: a host matching two kmodcov entries (a
+host has one kernel and holds one otto_kmodcov), and a host whose
 ``coverage = "module"`` product matches none. Which product needs the
 library, and how it is loaded on demand, is the product kind's side
 (:mod:`otto.host.kmod_kind`).
@@ -41,11 +41,11 @@ from .shell_kind import stage_dir_param, str_param
 if TYPE_CHECKING:
     from .host import Host
 
-KGCOV_MODULE_NAME = "otto_kgcov"
-"""What ``/proc/modules`` shows for the library; the ``kgcov`` kind fixes it."""
+KMODCOV_MODULE_NAME = "otto_kmodcov"
+"""What ``/proc/modules`` shows for the library; the ``kmodcov`` kind fixes it."""
 
 _VALID = "artifact, stage_dir, module_name, params"
-_VALID_KGCOV = "artifact, stage_dir, params, source"
+_VALID_KMODCOV = "artifact, stage_dir, params, source"
 _MODULE_VERBS = ("load", "unload", "lsmod")
 
 
@@ -75,7 +75,7 @@ class KmodTool(DevTool):
     def stages_artifact(self) -> bool:
         """``load`` puts the ``.ko`` at ``<stage_dir>/<basename>`` before the ``insmod``, so True.
 
-        Inherited by :class:`KgcovTool`, which stages the identical way.
+        Inherited by :class:`KmodcovTool`, which stages the identical way.
         Without it the per-host collision check would skip every kernel-module
         dev tool, which is exactly the case a ``.ko`` basename shared with a
         product would overwrite.
@@ -189,14 +189,14 @@ def _kmod_tool_kind(entry: DeclaredEntry, host: "Host") -> KmodTool:
 
 
 @dataclass
-class KgcovTool(KmodTool):
-    """A ``kind = "kgcov"`` dev tool: the otto_kgcov library built for one kernel."""
+class KmodcovTool(KmodTool):
+    """A ``kind = "kmodcov"`` dev tool: the otto_kmodcov library built for one kernel."""
 
     source: Path | None = None
     """The vendored sources this build came from (for the drift advisory); optional."""
 
     def __post_init__(self) -> None:
-        self.module_name = KGCOV_MODULE_NAME
+        self.module_name = KMODCOV_MODULE_NAME
 
     @override
     async def install(self, host: "Host") -> Result:
@@ -212,61 +212,61 @@ class KgcovTool(KmodTool):
         return await super().install(host)
 
 
-def interface_problem(tool: KgcovTool) -> str | None:
+def interface_problem(tool: KmodcovTool) -> str | None:
     """Why *tool*'s ``.ko`` cannot be loaded by this otto, or ``None`` when it can.
 
-    Absent file: "not built"; no ``MODULE_VERSION``: not an otto_kgcov built
-    from an export; a ``MODULE_VERSION`` carrying no ``+kgcov<n>`` suffix: said
-    in words, never as "kgcovNone"; another interface number: the number. Every
+    Absent file: "not built"; no ``MODULE_VERSION``: not an otto_kmodcov built
+    from an export; a ``MODULE_VERSION`` carrying no ``+kmodcov<n>`` suffix: said
+    in words, never as "kmodcovNone"; another interface number: the number. Every
     mismatch ends in the re-export remedy, which names the vendored directory
     only when the entry declares one — the artifact's parent is the BUILD
     directory, and advising an export into it would put sources where the
     ``.ko`` lands.
     """
-    from ..kgcov import INTERFACE, interface_of, modinfo_version
+    from ..kmodcov import INTERFACE, interface_of, modinfo_version
 
     if not tool.artifact.is_file():
         return f"{tool.name}: {tool.artifact} is not built (no such file)"
     version = modinfo_version(tool.artifact)
     if version is None:
         return (
-            f"{tool.name}: {tool.artifact} carries no MODULE_VERSION — not an otto_kgcov built "
+            f"{tool.name}: {tool.artifact} carries no MODULE_VERSION — not an otto_kmodcov built "
             "from exported sources?"
         )
     found = interface_of(version)
     if found == INTERFACE:
         return None
     reports = (
-        f"reports {version}, which carries no kgcov interface number"
+        f"reports {version}, which carries no kmodcov interface number"
         if found is None
-        else f"reports {version} (interface kgcov{found})"
+        else f"reports {version} (interface kmodcov{found})"
     )
     remedy = (
-        f"re-export the library with `otto cov kgcov export {tool.source}` and rebuild"
+        f"re-export the library with `otto cov kmodcov export {tool.source}` and rebuild"
         if tool.source is not None
         else "re-export the vendored library (declare `source` on the entry to have it named "
         "here) and rebuild"
     )
     return (
         f"{tool.name}: {tool.artifact} {reports}, but this otto drives interface "
-        f"kgcov{INTERFACE} — {remedy}"
+        f"kmodcov{INTERFACE} — {remedy}"
     )
 
 
-def kgcov_tool_for(host: Any) -> KgcovTool | None:
-    """Find the kgcov dev tool attached to *host*, or ``None`` (two are refused at lab load)."""
+def kmodcov_tool_for(host: Any) -> KmodcovTool | None:
+    """Find the kmodcov dev tool attached to *host*, or ``None`` (two are refused at lab load)."""
     for tool in getattr(host, "dev_tools", []):
-        if isinstance(tool, KgcovTool):
+        if isinstance(tool, KmodcovTool):
             return tool
     return None
 
 
-def check_kgcov_bindings(host: Any) -> None:
-    """Refuse a host whose kgcov binding cannot hold, on either side.
+def check_kmodcov_bindings(host: Any) -> None:
+    """Refuse a host whose kmodcov binding cannot hold, on either side.
 
-    Two rules: a host matching TWO kgcov entries is refused — one kernel, one
-    otto_kgcov — and a host carrying a ``coverage = "module"`` kernel-module
-    product but NO kgcov entry is refused too, since that product's ``install``
+    Two rules: a host matching TWO kmodcov entries is refused — one kernel, one
+    otto_kmodcov — and a host carrying a ``coverage = "module"`` kernel-module
+    product but NO kmodcov entry is refused too, since that product's ``install``
     has no library to load.
 
     Called at the ingest chokepoint (:func:`otto.host.factory.apply_providers`)
@@ -274,12 +274,12 @@ def check_kgcov_bindings(host: Any) -> None:
     """
     from .kmod_kind import KmodProduct  # function-local: kmod_kind imports this module
 
-    tools = [t for t in getattr(host, "dev_tools", []) if isinstance(t, KgcovTool)]
+    tools = [t for t in getattr(host, "dev_tools", []) if isinstance(t, KmodcovTool)]
     if len(tools) > 1:
         names = ", ".join(repr(t.name) for t in tools)
         raise ValueError(
             f"host {getattr(host, 'id', '?')}: {len(tools)} [[dev_tools]] entries of kind "
-            f"'kgcov' match it ({names}); a host runs one kernel and holds one otto_kgcov — "
+            f"'kmodcov' match it ({names}); a host runs one kernel and holds one otto_kmodcov — "
             "narrow their `match` tables so exactly one applies"
         )
     needy = [
@@ -291,30 +291,30 @@ def check_kgcov_bindings(host: Any) -> None:
         names = ", ".join(repr(p.name) for p in needy)
         raise ValueError(
             f'[[products]] {names}: coverage = "module" on host {getattr(host, "id", "?")} '
-            "needs otto_kgcov, and no [[dev_tools]] entry of kind 'kgcov' matches that host — "
+            "needs otto_kmodcov, and no [[dev_tools]] entry of kind 'kmodcov' matches that host — "
             "declare one naming the .ko built for its kernel (see the kernel-modules docs page)"
         )
 
 
-def _kgcov_tool_kind(entry: DeclaredEntry, host: "Host") -> KgcovTool:
-    """Build a :class:`KgcovTool`; the interface check runs now when the ``.ko`` exists."""
+def _kmodcov_tool_kind(entry: DeclaredEntry, host: "Host") -> KmodcovTool:
+    """Build a :class:`KmodcovTool`; the interface check runs now when the ``.ko`` exists."""
     _require_module_verbs(entry, host)
     params = dict(entry.params)
     artifact = _artifact_param(entry, params)
     stage_dir = stage_dir_param(entry, params)
     insmod_params = _params_param(entry, params)
-    if "gcov_dir=" in insmod_params:
+    if "cov_dir=" in insmod_params:
         raise ValueError(
-            f"[[dev_tools]] {entry.name!r}: 'params' must not set gcov_dir — that is a "
+            f"[[dev_tools]] {entry.name!r}: 'params' must not set cov_dir — that is a "
             "consumer's parameter, which otto passes to the product's own insmod"
         )
     source = str_param(entry, params, "source")
     if params:
         raise ValueError(
-            f"[[dev_tools]] {entry.name!r}: kind 'kgcov' got unknown param(s): "
-            f"{sorted(params)}; valid: {_VALID_KGCOV}"
+            f"[[dev_tools]] {entry.name!r}: kind 'kmodcov' got unknown param(s): "
+            f"{sorted(params)}; valid: {_VALID_KMODCOV}"
         )
-    tool = KgcovTool(
+    tool = KmodcovTool(
         name=entry.name,
         artifact=artifact,
         params=insmod_params,

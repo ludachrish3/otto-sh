@@ -1,0 +1,1739 @@
+{
+  "$schema": "./kmodcov-matrix.schema.json",
+  "format": 1,
+  "surfaces": [
+    {
+      "id": "build-names-compiler",
+      "title": "build: both modules name the requested compiler",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_both_modules_name_the_requested_compiler",
+      "control": false
+    },
+    {
+      "id": "build-init-array-bracket",
+      "title": "build: the .init_array is bracketed by the sentinels",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_the_init_array_is_bracketed_by_the_sentinels",
+      "control": false
+    },
+    {
+      "id": "refuses-other-compiler",
+      "title": "control: a demo from another compiler is refused at load",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load",
+      "control": true
+    },
+    {
+      "id": "fetch-only-the-demo",
+      "title": "coverage: only the demo is fetched from the two hosts",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_only_the_demo_is_fetched_from_the_two_hosts",
+      "control": false
+    },
+    {
+      "id": "three-gcda-per-host",
+      "title": "coverage: three .gcda per host",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_three_gcda_per_host",
+      "control": false
+    },
+    {
+      "id": "library-loaded-on-demand",
+      "title": "coverage: the run log says the library was loaded for the demo",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
+      "control": false
+    },
+    {
+      "id": "store-three-demo-files",
+      "title": "coverage: the store has the three demo files",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_store_has_the_three_demo_files",
+      "control": false
+    },
+    {
+      "id": "policy-hits",
+      "title": "coverage: policy paths have the expected hits",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_policy_paths_have_the_expected_hits",
+      "control": false
+    },
+    {
+      "id": "parse-hits",
+      "title": "coverage: parse hits",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_parse_hits",
+      "control": false
+    },
+    {
+      "id": "exit-routine-once-per-host",
+      "title": "coverage: exit-routine lines are hit once per host",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_exit_routine_lines_are_hit_once_per_host",
+      "control": false
+    },
+    {
+      "id": "policy-branches",
+      "title": "coverage: branches are recorded for the policy switch",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_branches_are_recorded_for_the_policy_switch",
+      "control": false
+    },
+    {
+      "id": "mid-dump-no-double-count",
+      "title": "coverage: the mid-suite dump does not double count",
+      "venue": "bed",
+      "contract": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_mid_suite_dump_does_not_double_count",
+      "control": false
+    },
+    {
+      "id": "build-release",
+      "title": "build: both modules carry the tree's release",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_carry_the_trees_release",
+      "control": false
+    },
+    {
+      "id": "build-target-isa",
+      "title": "build: both modules are objects for the column's ISA",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_are_objects_for_the_columns_isa",
+      "control": false
+    },
+    {
+      "id": "build-compiler",
+      "title": "build: the column's compiler built them",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_columns_compiler_built_them",
+      "control": false
+    },
+    {
+      "id": "build-instrumented-bracketed",
+      "title": "build: the demo is instrumented and bracketed",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_is_instrumented_and_bracketed",
+      "control": false
+    },
+    {
+      "id": "build-fixture-untouched",
+      "title": "build: the in-place fixture build was not touched",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_in_place_fixture_build_was_not_touched",
+      "control": false
+    },
+    {
+      "id": "build-linked-against-library",
+      "title": "build: the demo linked against the library",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_linked_against_the_library",
+      "control": false
+    },
+    {
+      "id": "build-library-warning-free",
+      "title": "build: the library compiled without a warning of its own",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_library_compiled_without_a_warning_of_its_own",
+      "control": false
+    },
+    {
+      "id": "build-clang-backend-compiles",
+      "title": "build: the clang backend's unit compiles with the column's gcc",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_clang_backends_unit_compiles_with_the_columns_gcc",
+      "control": false
+    },
+    {
+      "id": "build-ctors-convention-bracketed",
+      "title": "build: a .ctors-convention demo is bracketed too",
+      "venue": "build",
+      "contract": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_a_ctors_convention_demo_is_bracketed_too",
+      "control": false
+    }
+  ],
+  "profiles": [
+    {
+      "id": "gcc-9",
+      "title": "gcc-9",
+      "venue": "bed"
+    },
+    {
+      "id": "gcc-10",
+      "title": "gcc-10",
+      "venue": "bed"
+    },
+    {
+      "id": "gcc-11",
+      "title": "gcc-11",
+      "venue": "bed"
+    },
+    {
+      "id": "gcc-12",
+      "title": "gcc-12",
+      "venue": "bed"
+    },
+    {
+      "id": "gcc-13",
+      "title": "gcc-13",
+      "venue": "bed"
+    },
+    {
+      "id": "gcc-14",
+      "title": "gcc-14",
+      "venue": "bed"
+    },
+    {
+      "id": "clang",
+      "title": "clang",
+      "venue": "bed"
+    },
+    {
+      "id": "x86_64-cross",
+      "title": "x86_64 cross build",
+      "venue": "build"
+    },
+    {
+      "id": "2.6.32",
+      "title": "kernel 2.6.32",
+      "venue": "build"
+    },
+    {
+      "id": "3.13",
+      "title": "kernel 3.13",
+      "venue": "build"
+    },
+    {
+      "id": "4.4",
+      "title": "kernel 4.4",
+      "venue": "build"
+    },
+    {
+      "id": "5.4",
+      "title": "kernel 5.4",
+      "venue": "build"
+    },
+    {
+      "id": "5.15",
+      "title": "kernel 5.15",
+      "venue": "build"
+    },
+    {
+      "id": "6.17",
+      "title": "kernel 6.17",
+      "venue": "build"
+    }
+  ],
+  "cells": {
+    "build-names-compiler": {
+      "gcc-9": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_both_modules_name_the_requested_compiler",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-10": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_both_modules_name_the_requested_compiler",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "10.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-11": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_both_modules_name_the_requested_compiler",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-12": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_both_modules_name_the_requested_compiler",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "12.4.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_both_modules_name_the_requested_compiler",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-14": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_both_modules_name_the_requested_compiler",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "14.2.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "clang": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_both_modules_name_the_requested_compiler",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "18.1.3",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      }
+    },
+    "build-init-array-bracket": {
+      "gcc-9": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_the_init_array_is_bracketed_by_the_sentinels",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-10": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_the_init_array_is_bracketed_by_the_sentinels",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "10.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-11": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_the_init_array_is_bracketed_by_the_sentinels",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-12": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_the_init_array_is_bracketed_by_the_sentinels",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "12.4.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_the_init_array_is_bracketed_by_the_sentinels",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-14": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_the_init_array_is_bracketed_by_the_sentinels",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "14.2.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "clang": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_the_init_array_is_bracketed_by_the_sentinels",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "18.1.3",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      }
+    },
+    "refuses-other-compiler": {
+      "gcc-9": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-10": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "10.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-11": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-12": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "12.4.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-14": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "14.2.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "clang": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "18.1.3",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      }
+    },
+    "fetch-only-the-demo": {
+      "gcc-9": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_only_the_demo_is_fetched_from_the_two_hosts",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-10": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_only_the_demo_is_fetched_from_the_two_hosts",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "10.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-11": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_only_the_demo_is_fetched_from_the_two_hosts",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-12": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_only_the_demo_is_fetched_from_the_two_hosts",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "12.4.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_only_the_demo_is_fetched_from_the_two_hosts",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-14": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_only_the_demo_is_fetched_from_the_two_hosts",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "14.2.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "clang": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_only_the_demo_is_fetched_from_the_two_hosts",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "18.1.3",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      }
+    },
+    "three-gcda-per-host": {
+      "gcc-9": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_three_gcda_per_host",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-10": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_three_gcda_per_host",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "10.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-11": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_three_gcda_per_host",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-12": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_three_gcda_per_host",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "12.4.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_three_gcda_per_host",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-14": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_three_gcda_per_host",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "14.2.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "clang": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_three_gcda_per_host",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "18.1.3",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      }
+    },
+    "library-loaded-on-demand": {
+      "gcc-9": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-10": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "10.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-11": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-12": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "12.4.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-14": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "14.2.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "clang": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_run_log_says_the_library_was_loaded_for_the_demo",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "18.1.3",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      }
+    },
+    "store-three-demo-files": {
+      "gcc-9": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_store_has_the_three_demo_files",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-10": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_store_has_the_three_demo_files",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "10.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-11": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_store_has_the_three_demo_files",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-12": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_store_has_the_three_demo_files",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "12.4.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_store_has_the_three_demo_files",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-14": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_store_has_the_three_demo_files",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "14.2.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "clang": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_store_has_the_three_demo_files",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "18.1.3",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      }
+    },
+    "policy-hits": {
+      "gcc-9": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_policy_paths_have_the_expected_hits",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-10": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_policy_paths_have_the_expected_hits",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "10.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-11": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_policy_paths_have_the_expected_hits",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-12": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_policy_paths_have_the_expected_hits",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "12.4.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_policy_paths_have_the_expected_hits",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-14": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_policy_paths_have_the_expected_hits",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "14.2.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "clang": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_policy_paths_have_the_expected_hits",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "18.1.3",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      }
+    },
+    "parse-hits": {
+      "gcc-9": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_parse_hits",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-10": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_parse_hits",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "10.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-11": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_parse_hits",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-12": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_parse_hits",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "12.4.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_parse_hits",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-14": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_parse_hits",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "14.2.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "clang": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_parse_hits",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "18.1.3",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      }
+    },
+    "exit-routine-once-per-host": {
+      "gcc-9": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_exit_routine_lines_are_hit_once_per_host",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-10": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_exit_routine_lines_are_hit_once_per_host",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "10.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-11": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_exit_routine_lines_are_hit_once_per_host",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-12": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_exit_routine_lines_are_hit_once_per_host",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "12.4.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_exit_routine_lines_are_hit_once_per_host",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-14": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_exit_routine_lines_are_hit_once_per_host",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "14.2.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "clang": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_exit_routine_lines_are_hit_once_per_host",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "18.1.3",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      }
+    },
+    "policy-branches": {
+      "gcc-9": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_branches_are_recorded_for_the_policy_switch",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-10": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_branches_are_recorded_for_the_policy_switch",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "10.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-11": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_branches_are_recorded_for_the_policy_switch",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-12": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_branches_are_recorded_for_the_policy_switch",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "12.4.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_branches_are_recorded_for_the_policy_switch",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-14": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_branches_are_recorded_for_the_policy_switch",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "14.2.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "clang": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_branches_are_recorded_for_the_policy_switch",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "18.1.3",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      }
+    },
+    "mid-dump-no-double-count": {
+      "gcc-9": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_mid_suite_dump_does_not_double_count",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-10": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_mid_suite_dump_does_not_double_count",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "10.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-11": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_mid_suite_dump_does_not_double_count",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.5.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-12": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_mid_suite_dump_does_not_double_count",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "12.4.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_mid_suite_dump_does_not_double_count",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "gcc-14": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_mid_suite_dump_does_not_double_count",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "14.2.0",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      },
+      "clang": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestCoverage::test_the_mid_suite_dump_does_not_double_count",
+        "venue": "bed",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "18.1.3",
+        "kernel_release": "6.8.0-86-generic",
+        "control": "tests/e2e/cov/test_kmodcov_toolchains_e2e.py::TestBuild::test_a_demo_from_another_compiler_is_refused_at_load"
+      }
+    },
+    "build-release": {
+      "x86_64-cross": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_carry_the_trees_release",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0",
+        "control": null
+      },
+      "2.6.32": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_carry_the_trees_release",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.7.3",
+        "kernel_release": "2.6.32.71",
+        "control": null
+      },
+      "3.13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_carry_the_trees_release",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.8.4",
+        "kernel_release": "3.13.0-170-generic",
+        "control": null
+      },
+      "4.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_carry_the_trees_release",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "5.4.0",
+        "kernel_release": "4.4.0-210-generic",
+        "control": null
+      },
+      "5.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_carry_the_trees_release",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.4.0",
+        "kernel_release": "5.4.0-218-generic",
+        "control": null
+      },
+      "5.15": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_carry_the_trees_release",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.4.0",
+        "kernel_release": "5.15.0-198-generic",
+        "control": null
+      },
+      "6.17": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_carry_the_trees_release",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "15.2.0",
+        "kernel_release": "6.17.0-41-generic",
+        "control": null
+      }
+    },
+    "build-target-isa": {
+      "x86_64-cross": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_are_objects_for_the_columns_isa",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0",
+        "control": null
+      },
+      "2.6.32": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_are_objects_for_the_columns_isa",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.7.3",
+        "kernel_release": "2.6.32.71",
+        "control": null
+      },
+      "3.13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_are_objects_for_the_columns_isa",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.8.4",
+        "kernel_release": "3.13.0-170-generic",
+        "control": null
+      },
+      "4.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_are_objects_for_the_columns_isa",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "5.4.0",
+        "kernel_release": "4.4.0-210-generic",
+        "control": null
+      },
+      "5.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_are_objects_for_the_columns_isa",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.4.0",
+        "kernel_release": "5.4.0-218-generic",
+        "control": null
+      },
+      "5.15": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_are_objects_for_the_columns_isa",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.4.0",
+        "kernel_release": "5.15.0-198-generic",
+        "control": null
+      },
+      "6.17": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_both_modules_are_objects_for_the_columns_isa",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "15.2.0",
+        "kernel_release": "6.17.0-41-generic",
+        "control": null
+      }
+    },
+    "build-compiler": {
+      "x86_64-cross": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_columns_compiler_built_them",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0",
+        "control": null
+      },
+      "2.6.32": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_columns_compiler_built_them",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.7.3",
+        "kernel_release": "2.6.32.71",
+        "control": null
+      },
+      "3.13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_columns_compiler_built_them",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.8.4",
+        "kernel_release": "3.13.0-170-generic",
+        "control": null
+      },
+      "4.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_columns_compiler_built_them",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "5.4.0",
+        "kernel_release": "4.4.0-210-generic",
+        "control": null
+      },
+      "5.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_columns_compiler_built_them",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.4.0",
+        "kernel_release": "5.4.0-218-generic",
+        "control": null
+      },
+      "5.15": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_columns_compiler_built_them",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.4.0",
+        "kernel_release": "5.15.0-198-generic",
+        "control": null
+      },
+      "6.17": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_columns_compiler_built_them",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "15.2.0",
+        "kernel_release": "6.17.0-41-generic",
+        "control": null
+      }
+    },
+    "build-instrumented-bracketed": {
+      "x86_64-cross": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_is_instrumented_and_bracketed",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0",
+        "control": null
+      },
+      "2.6.32": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_is_instrumented_and_bracketed",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.7.3",
+        "kernel_release": "2.6.32.71",
+        "control": null
+      },
+      "3.13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_is_instrumented_and_bracketed",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.8.4",
+        "kernel_release": "3.13.0-170-generic",
+        "control": null
+      },
+      "4.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_is_instrumented_and_bracketed",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "5.4.0",
+        "kernel_release": "4.4.0-210-generic",
+        "control": null
+      },
+      "5.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_is_instrumented_and_bracketed",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.4.0",
+        "kernel_release": "5.4.0-218-generic",
+        "control": null
+      },
+      "5.15": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_is_instrumented_and_bracketed",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.4.0",
+        "kernel_release": "5.15.0-198-generic",
+        "control": null
+      },
+      "6.17": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_is_instrumented_and_bracketed",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "15.2.0",
+        "kernel_release": "6.17.0-41-generic",
+        "control": null
+      }
+    },
+    "build-fixture-untouched": {
+      "x86_64-cross": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_in_place_fixture_build_was_not_touched",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0",
+        "control": null
+      },
+      "2.6.32": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_in_place_fixture_build_was_not_touched",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.7.3",
+        "kernel_release": "2.6.32.71",
+        "control": null
+      },
+      "3.13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_in_place_fixture_build_was_not_touched",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.8.4",
+        "kernel_release": "3.13.0-170-generic",
+        "control": null
+      },
+      "4.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_in_place_fixture_build_was_not_touched",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "5.4.0",
+        "kernel_release": "4.4.0-210-generic",
+        "control": null
+      },
+      "5.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_in_place_fixture_build_was_not_touched",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.4.0",
+        "kernel_release": "5.4.0-218-generic",
+        "control": null
+      },
+      "5.15": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_in_place_fixture_build_was_not_touched",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.4.0",
+        "kernel_release": "5.15.0-198-generic",
+        "control": null
+      },
+      "6.17": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_in_place_fixture_build_was_not_touched",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "15.2.0",
+        "kernel_release": "6.17.0-41-generic",
+        "control": null
+      }
+    },
+    "build-linked-against-library": {
+      "x86_64-cross": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_linked_against_the_library",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0",
+        "control": null
+      },
+      "2.6.32": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_linked_against_the_library",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.7.3",
+        "kernel_release": "2.6.32.71",
+        "control": null
+      },
+      "3.13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_linked_against_the_library",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.8.4",
+        "kernel_release": "3.13.0-170-generic",
+        "control": null
+      },
+      "4.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_linked_against_the_library",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "5.4.0",
+        "kernel_release": "4.4.0-210-generic",
+        "control": null
+      },
+      "5.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_linked_against_the_library",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.4.0",
+        "kernel_release": "5.4.0-218-generic",
+        "control": null
+      },
+      "5.15": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_linked_against_the_library",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.4.0",
+        "kernel_release": "5.15.0-198-generic",
+        "control": null
+      },
+      "6.17": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_demo_linked_against_the_library",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "15.2.0",
+        "kernel_release": "6.17.0-41-generic",
+        "control": null
+      }
+    },
+    "build-library-warning-free": {
+      "x86_64-cross": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_library_compiled_without_a_warning_of_its_own",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0",
+        "control": null
+      },
+      "2.6.32": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_library_compiled_without_a_warning_of_its_own",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.7.3",
+        "kernel_release": "2.6.32.71",
+        "control": null
+      },
+      "3.13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_library_compiled_without_a_warning_of_its_own",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.8.4",
+        "kernel_release": "3.13.0-170-generic",
+        "control": null
+      },
+      "4.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_library_compiled_without_a_warning_of_its_own",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "5.4.0",
+        "kernel_release": "4.4.0-210-generic",
+        "control": null
+      },
+      "5.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_library_compiled_without_a_warning_of_its_own",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.4.0",
+        "kernel_release": "5.4.0-218-generic",
+        "control": null
+      },
+      "5.15": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_library_compiled_without_a_warning_of_its_own",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.4.0",
+        "kernel_release": "5.15.0-198-generic",
+        "control": null
+      },
+      "6.17": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_library_compiled_without_a_warning_of_its_own",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "15.2.0",
+        "kernel_release": "6.17.0-41-generic",
+        "control": null
+      }
+    },
+    "build-clang-backend-compiles": {
+      "x86_64-cross": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_clang_backends_unit_compiles_with_the_columns_gcc",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0",
+        "control": null
+      },
+      "2.6.32": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_clang_backends_unit_compiles_with_the_columns_gcc",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.7.3",
+        "kernel_release": "2.6.32.71",
+        "control": null
+      },
+      "3.13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_clang_backends_unit_compiles_with_the_columns_gcc",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.8.4",
+        "kernel_release": "3.13.0-170-generic",
+        "control": null
+      },
+      "4.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_clang_backends_unit_compiles_with_the_columns_gcc",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "5.4.0",
+        "kernel_release": "4.4.0-210-generic",
+        "control": null
+      },
+      "5.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_clang_backends_unit_compiles_with_the_columns_gcc",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.4.0",
+        "kernel_release": "5.4.0-218-generic",
+        "control": null
+      },
+      "5.15": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_clang_backends_unit_compiles_with_the_columns_gcc",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.4.0",
+        "kernel_release": "5.15.0-198-generic",
+        "control": null
+      },
+      "6.17": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_the_clang_backends_unit_compiles_with_the_columns_gcc",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "15.2.0",
+        "kernel_release": "6.17.0-41-generic",
+        "control": null
+      }
+    },
+    "build-ctors-convention-bracketed": {
+      "x86_64-cross": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_a_ctors_convention_demo_is_bracketed_too",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0",
+        "control": null
+      },
+      "2.6.32": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_a_ctors_convention_demo_is_bracketed_too",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.7.3",
+        "kernel_release": "2.6.32.71",
+        "control": null
+      },
+      "3.13": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_a_ctors_convention_demo_is_bracketed_too",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "4.8.4",
+        "kernel_release": "3.13.0-170-generic",
+        "control": null
+      },
+      "4.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_a_ctors_convention_demo_is_bracketed_too",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "5.4.0",
+        "kernel_release": "4.4.0-210-generic",
+        "control": null
+      },
+      "5.4": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_a_ctors_convention_demo_is_bracketed_too",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "9.4.0",
+        "kernel_release": "5.4.0-218-generic",
+        "control": null
+      },
+      "5.15": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_a_ctors_convention_demo_is_bracketed_too",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "11.4.0",
+        "kernel_release": "5.15.0-198-generic",
+        "control": null
+      },
+      "6.17": {
+        "status": "measured-ok",
+        "nodeid": "tests/e2e/cov/test_kmodcov_kernel_builds.py::test_a_ctors_convention_demo_is_bracketed_too",
+        "venue": "build",
+        "as_of": "2026-09-30",
+        "outcome": "passed",
+        "compiler_version": "15.2.0",
+        "kernel_release": "6.17.0-41-generic",
+        "control": null
+      }
+    }
+  }
+}

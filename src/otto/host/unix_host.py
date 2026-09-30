@@ -1379,8 +1379,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         afterward (the module lives in kernel memory once inserted). ``name``
         defaults to the file stem (``-``→``_``) and is used in error text.
         *params* is appended to the ``insmod`` line as given (stripped of surrounding
-        whitespace) — ``"gcov_dir=/tmp/demo debug=1"`` becomes ``insmod
-        <dest_dir>/demo.ko gcov_dir=/tmp/demo debug=1``. It is appended UNQUOTED, so
+        whitespace) — ``"cov_dir=/tmp/demo debug=1"`` becomes ``insmod
+        <dest_dir>/demo.ko cov_dir=/tmp/demo debug=1``. It is appended UNQUOTED, so
         the caller is responsible for quoting any value that itself contains
         whitespace. *dest_dir* is used EXACTLY as given — a caller that resolved a
         staging directory owns that answer. ``None`` means "resolve it here",

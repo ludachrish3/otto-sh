@@ -1,4 +1,4 @@
-"""The assertions repo5's kmod coverage e2e and the otto_kgcov toolchain matrix share.
+"""The assertions repo5's kmod coverage e2e and the otto_kmodcov toolchain matrix share.
 
 Everything here is a fact about the demo module's coverage that does not
 depend on which compiler built it: which hosts and files the fetch tree
@@ -64,19 +64,19 @@ def assert_three_gcda_per_host(cov_dir: Path) -> None:
 
 
 def assert_run_log_reports_the_library_loaded_on_demand(log_dir: Path) -> None:
-    # otto_kgcov is a DEV TOOL here, not a product: nothing measures it, so it
+    # otto_kmodcov is a DEV TOOL here, not a product: nothing measures it, so it
     # can never be a `report.missing()` row and no partial-instrumentation
     # warning can name it. What the run log proves instead is the positive
     # fact — the demo pulled its own library up at install, on both hosts.
     # KmodProduct._ensure_library says so at INFO once per real load (never
     # when the library was already resident), and the run's verbose.log holds
     # it: a root-logger handler floored at INFO, so the line lands there
-    # regardless of --log-level. The demo repo names its kgcov entry
-    # `otto_kgcov`, which is the name in the parentheses.
+    # regardless of --log-level. The demo repo names its kmodcov entry
+    # `otto_kmodcov`, which is the name in the parentheses.
     verbose = (log_dir / "verbose.log").read_text()
     collapsed = " ".join(verbose.split())
-    assert f"test1: {DEMO}: loading otto_kgcov (otto_kgcov)" in collapsed, verbose[-3000:]
-    assert f"test2: {DEMO}: loading otto_kgcov (otto_kgcov)" in collapsed, verbose[-3000:]
+    assert f"test1: {DEMO}: loading otto_kmodcov (otto_kmodcov)" in collapsed, verbose[-3000:]
+    assert f"test2: {DEMO}: loading otto_kmodcov (otto_kmodcov)" in collapsed, verbose[-3000:]
 
 
 def assert_store_has_the_three_demo_files(store: CoverageStore) -> None:
@@ -143,7 +143,7 @@ def assert_mid_suite_dump_does_not_double_count(cov_dir: Path) -> None:
     """Merge semantics, per host: two dumps of one run must not double count.
 
     test1's mix triggers a runtime dump right after its drop-oldest eviction,
-    then teardown's uninstall triggers a second dump at unload. otto_kgcov's
+    then teardown's uninstall triggers a second dump at unload. otto_kmodcov's
     own contract ("a dump never double counts, and two dumps of the same run
     add correctly") means the drop-oldest line reads exactly 1 hit, not 2.
     Checked on test1's PER-HOST ``capture.json`` — the raw retrieval before

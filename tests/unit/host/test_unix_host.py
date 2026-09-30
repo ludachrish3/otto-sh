@@ -2873,8 +2873,8 @@ async def test_load_appends_insmod_params_verbatim(tmp_path):
     host.put = AsyncMock(return_value=Result(Status.Success, value={}))
     host.run = AsyncMock(return_value=_run_result("insmod ...", "", Status.Success, 0))
     host.rm = AsyncMock(return_value=Result(Status.Success))
-    await host.load(ko, params="  gcov_dir=/tmp/demo debug=1 ")
-    assert host.run.await_args.args[0] == "insmod /tmp/demo.ko gcov_dir=/tmp/demo debug=1"
+    await host.load(ko, params="  cov_dir=/tmp/demo debug=1 ")
+    assert host.run.await_args.args[0] == "insmod /tmp/demo.ko cov_dir=/tmp/demo debug=1"
 
 
 @pytest.mark.asyncio
@@ -3782,7 +3782,7 @@ def _assert_staged_at(host, directory, basename):
     # `sudo=True` + this line is what the device receives as
     # `sudo -S -p 'otto-sudo:' insmod <directory>/<basename>` (the composition
     # itself is PosixPrivilege's, covered in test_privilege.py). The bed's
-    # failing form was `sudo -S -p 'otto-sudo:' insmod ~/'~/otto_kgcov.ko'`:
+    # failing form was `sudo -S -p 'otto-sudo:' insmod ~/'~/otto_kmodcov.ko'`:
     # the staging rule had been applied at BOTH hops, and `insmod` read the
     # result as a literal `~` directory under the login home.
     assert host.rm.await_args.args[0] == Path(f"{directory}/{basename}")
@@ -3794,26 +3794,30 @@ async def test_kmod_dev_tool_install_stages_once_in_the_login_home(tmp_path):
     from otto.host.kmod_tool_kind import KmodTool
 
     host = _home_probe_host()
-    ko = tmp_path / "otto_kgcov.ko"
+    ko = tmp_path / "otto_kmodcov.ko"
     ko.write_bytes(b"\x00")
-    tool = KmodTool(name="kgcov-6.8", artifact=ko, module_name="otto_kgcov")
+    tool = KmodTool(name="kmodcov-6.8", artifact=ko, module_name="otto_kmodcov")
     assert (await tool.install(host)).is_ok
-    _assert_staged_at(host, "/home/vagrant", "otto_kgcov.ko")
+    _assert_staged_at(host, "/home/vagrant", "otto_kmodcov.ko")
 
 
 @pytest.mark.asyncio
-async def test_kgcov_dev_tool_install_stages_once_in_the_login_home(tmp_path):
+async def test_kmodcov_dev_tool_install_stages_once_in_the_login_home(tmp_path):
     """The kind the bed actually failed on; its install is KmodTool's, unchanged."""
-    from otto import kgcov as kgcov_mod
-    from otto.host.kmod_tool_kind import KgcovTool
+    from otto import kmodcov as kmodcov_mod
+    from otto.host.kmod_tool_kind import KmodcovTool
 
     host = _home_probe_host()
-    ko = tmp_path / "otto_kgcov.ko"
-    strings = ("srcversion=ABC", "vermagic=6.8.0 SMP", f"version=1.6.0+kgcov{kgcov_mod.INTERFACE}")
+    ko = tmp_path / "otto_kmodcov.ko"
+    strings = (
+        "srcversion=ABC",
+        "vermagic=6.8.0 SMP",
+        f"version=1.6.0+kmodcov{kmodcov_mod.INTERFACE}",
+    )
     ko.write_bytes(b"\x7fELF\x00" + b"\x00".join(s.encode() for s in strings) + b"\x00")
-    tool = KgcovTool(name="kgcov-6.8", artifact=ko)
+    tool = KmodcovTool(name="kmodcov-6.8", artifact=ko)
     assert (await tool.install(host)).is_ok
-    _assert_staged_at(host, "/home/vagrant", "otto_kgcov.ko")
+    _assert_staged_at(host, "/home/vagrant", "otto_kmodcov.ko")
 
 
 @pytest.mark.asyncio

@@ -203,7 +203,7 @@ need. Three structural choices keep it that way.
   imports, and a `TYPE_CHECKING` block of the real imports is what `ty`, IDEs
   and Sphinx read. An `__init__` imports nothing else at module scope and
   defines no code of its own, which sits instead in a named submodule the
-  table points at (`otto.env.manage`, `otto.kgcov.library`). The exceptions
+  table points at (`otto.env.manage`, `otto.kmodcov.library`). The exceptions
   are few: `otto`, `otto.logger`, `otto.config` and `otto.host.transfer`
   keep the eager imports they cannot work without (and `otto` the library
   `NullHandler` its `logging` import attaches), each an entry, with its

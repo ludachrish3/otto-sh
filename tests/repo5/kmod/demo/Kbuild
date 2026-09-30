@@ -1,11 +1,11 @@
 # The sentinels go FIRST and LAST: ld -r keeps this order, and that is what
-# brackets the gcov constructors in .init_array that otto_kgcov walks.
-# `-include`, not `include`: `make clean` (KGCOV unset, tests/repo5/build/
+# brackets the gcov constructors in .init_array that otto_kmodcov walks.
+# `-include`, not `include`: `make clean` (KMODCOV unset, tests/repo5/build/
 # gone) must still work when consumer.mk can't be found. A real build still
-# fails loudly afterward on the missing $(KGCOV_CFLAGS)/kgcov.h.
--include $(KGCOV)/consumer.mk
+# fails loudly afterward on the missing $(KMODCOV_CFLAGS)/kmodcov.h.
+-include $(KMODCOV)/consumer.mk
 obj-m := otto_kmod_demo.o
-otto_kmod_demo-y := kgcov_begin.o demo_main.o demo_parse.o demo_policy.o kgcov_end.o
-CFLAGS_demo_main.o += $(KGCOV_CFLAGS)
-CFLAGS_demo_parse.o += $(KGCOV_CFLAGS)
-CFLAGS_demo_policy.o += $(KGCOV_CFLAGS)
+otto_kmod_demo-y := kmodcov_begin.o demo_main.o demo_parse.o demo_policy.o kmodcov_end.o
+CFLAGS_demo_main.o += $(KMODCOV_CFLAGS)
+CFLAGS_demo_parse.o += $(KMODCOV_CFLAGS)
+CFLAGS_demo_policy.o += $(KMODCOV_CFLAGS)

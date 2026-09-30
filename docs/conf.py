@@ -559,10 +559,10 @@ def _generate_support_matrix(app):  # noqa: ARG001 — Sphinx event signature
         )
 
 
-def _generate_kgcov_matrix(app):  # noqa: ARG001 — Sphinx event signature
-    """Render docs/cli/cov/instrumenting/kgcov-matrix.md from the committed artifact.
+def _generate_kmodcov_matrix(app):  # noqa: ARG001 — Sphinx event signature
+    """Render docs/cli/cov/instrumenting/kmodcov-matrix.md from the committed artifact.
 
-    The sibling of the hook above for the kgcov compatibility matrix; every builder,
+    The sibling of the hook above for the kmodcov compatibility matrix; every builder,
     for the same reason — the page is a real source file the instrumenting toctree
     names, so every builder has to find it on disk, and a non-zero exit RAISES so a
     matrix whose axes the tree no longer backs is a build FAILURE and not a warning.
@@ -574,7 +574,7 @@ def _generate_kgcov_matrix(app):  # noqa: ARG001 — Sphinx event signature
     logger = sphinx_logging.getLogger(__name__)
     root = pathlib.Path(__file__).parent.parent
     proc = subprocess.run(
-        [sys.executable, "-m", "scripts.render_kgcov_matrix"],
+        [sys.executable, "-m", "scripts.render_kmodcov_matrix"],
         capture_output=True,
         text=True,
         check=False,
@@ -584,7 +584,7 @@ def _generate_kgcov_matrix(app):  # noqa: ARG001 — Sphinx event signature
         logger.info(proc.stdout.strip())
     if proc.returncode != 0:
         raise RuntimeError(
-            f"scripts/render_kgcov_matrix.py failed with exit code "
+            f"scripts/render_kmodcov_matrix.py failed with exit code "
             f"{proc.returncode}:\n{proc.stderr}"
         )
 
@@ -624,7 +624,7 @@ def setup(app):
     app.connect("source-read", _substitute_version_token)
     app.connect("builder-inited", _generate_docs_media)
     app.connect("builder-inited", _generate_support_matrix)
-    app.connect("builder-inited", _generate_kgcov_matrix)
+    app.connect("builder-inited", _generate_kmodcov_matrix)
     app.connect("builder-inited", _generate_proven_range)
     app.connect("missing-reference", _resolve_short_types)
     app.connect("missing-reference", _resolve_internal_aliases)

@@ -1,4 +1,4 @@
-"""Coverage e2e tree conftest: the kgcov observation hook.
+"""Coverage e2e tree conftest: the kmodcov observation hook.
 
 One wrapper over the report hook, the way ``tests/conformance/conftest.py``
 wires its own: the outcome is read off pytest's report after it exists.
@@ -15,7 +15,7 @@ rather than swallow.
 
 import pytest
 
-from tests.e2e.cov._kgcov_observation import observations_dir, record_phase
+from tests.e2e.cov._kmodcov_observation import observations_dir, record_phase
 
 
 @pytest.hookimpl(wrapper=True)

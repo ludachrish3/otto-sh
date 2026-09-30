@@ -57,7 +57,7 @@ invalid:
   from pathlib import Path
 
   INTERFACE = 1
-  _VERSION_LINE = re.compile(r"^#define KGCOV_OTTO_VERSION")
+  _VERSION_LINE = re.compile(r"^#define KMODCOV_OTTO_VERSION")
 # An eager re-export in a lazy package: every import of the package, and of
 # any of its submodules, now loads the collector.
 - |

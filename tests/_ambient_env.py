@@ -107,33 +107,33 @@ AMBIENT_OPT_INS: "dict[str, str]" = {
         "upstream — though it now refuses to run rather than reporting a "
         "vacuous pass (scripts/check_busybox_upstream_drift.py)"
     ),
-    "OTTO_KGCOV_TOOLCHAINS": (
-        "which compilers the otto_kgcov toolchain matrix rebuilds the "
+    "OTTO_KMODCOV_TOOLCHAINS": (
+        "which compilers the otto_kmodcov toolchain matrix rebuilds the "
         "kernel-module fixture with, comma-separated "
-        "(tests/e2e/cov/test_kgcov_toolchains_e2e.py, read at collection); set "
-        "by `make kgcov` from KGCOV_TOOLCHAINS. Stripped, the matrix collects "
+        "(tests/e2e/cov/test_kmodcov_toolchains_e2e.py, read at collection); set "
+        "by `make kmodcov` from KMODCOV_TOOLCHAINS. Stripped, the matrix collects "
         "one `default` parameter and certifies the system compiler alone while "
         "reporting green for the whole lane"
     ),
-    "OTTO_KGCOV_CROSS_KDIR": (
+    "OTTO_KMODCOV_CROSS_KDIR": (
         "the prepared kernel source tree the x86_64 cross build compiles "
-        "against (tests/e2e/cov/test_kgcov_kernel_builds.py); set by `make "
-        "kgcov` from KGCOV_CROSS_KDIR. Stripped, the default tree path "
+        "against (tests/e2e/cov/test_kmodcov_kernel_builds.py); set by `make "
+        "kmodcov` from KMODCOV_CROSS_KDIR. Stripped, the default tree path "
         "/home/vagrant/build/linux-6.8 is used"
     ),
-    "OTTO_KGCOV_KERNELS": (
-        "which kernels the otto_kgcov kernel builds compile the library and "
+    "OTTO_KMODCOV_KERNELS": (
+        "which kernels the otto_kmodcov kernel builds compile the library and "
         "the demo for, comma-separated column ids "
-        "(tests/e2e/cov/test_kgcov_kernel_builds.py, read at collection); set "
-        "by `make kgcov` from KGCOV_KERNELS. Stripped, the module collects "
+        "(tests/e2e/cov/test_kmodcov_kernel_builds.py, read at collection); set "
+        "by `make kmodcov` from KMODCOV_KERNELS. Stripped, the module collects "
         "x86_64-cross alone and certifies one kernel while reporting green for "
         "the whole lane"
     ),
-    "OTTO_KGCOV_KERNELS_DIR": (
-        "where scripts/provision_kgcov_kernels.sh put the kernel set "
-        "(tests/e2e/cov/test_kgcov_kernel_builds.py); set by `make kgcov` "
-        "from KGCOV_KERNELS_DIR. Stripped, the default "
-        "/home/vagrant/build/kgcov-kernels is used"
+    "OTTO_KMODCOV_KERNELS_DIR": (
+        "where scripts/provision_kmodcov_kernels.sh put the kernel set "
+        "(tests/e2e/cov/test_kmodcov_kernel_builds.py); set by `make kmodcov` "
+        "from KMODCOV_KERNELS_DIR. Stripped, the default "
+        "/home/vagrant/build/kmodcov-kernels is used"
     ),
     "OTTO_TUNNEL_SOAK_CYCLES": (
         "internal soak depth per tunnel stability test "

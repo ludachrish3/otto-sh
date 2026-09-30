@@ -224,9 +224,9 @@ def apply_providers(host: "RemoteHost | Any") -> None:
     """Attach declared + provider products and dev tools, then finish each product.
 
     The single ingest chokepoint: declared entries first per seam (config
-    wins, code fills the gaps), then the kgcov binding check
-    (:func:`otto.host.kmod_tool_kind.check_kgcov_bindings` — a host matching
-    two ``kgcov`` dev-tool entries is refused here, and so is one whose
+    wins, code fills the gaps), then the kmodcov binding check
+    (:func:`otto.host.kmod_tool_kind.check_kmodcov_bindings` — a host matching
+    two ``kmodcov`` dev-tool entries is refused here, and so is one whose
     ``coverage = "module"`` product matches none), then the product-only
     finishing pass — the name must be a safe run-tree segment
     (:mod:`otto.layout`) and ``cov_dir`` becomes concrete. Called by
@@ -237,9 +237,9 @@ def apply_providers(host: "RemoteHost | Any") -> None:
     apply_product_providers(host)
     apply_declared_dev_tools(host)
     apply_dev_tool_providers(host)
-    from .kmod_tool_kind import check_kgcov_bindings
+    from .kmod_tool_kind import check_kmodcov_bindings
 
-    check_kgcov_bindings(host)
+    check_kmodcov_bindings(host)
     for product in host.products:
         try:
             validate_product_name(product.name)

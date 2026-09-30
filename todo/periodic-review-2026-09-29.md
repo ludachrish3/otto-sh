@@ -215,7 +215,7 @@ not.
 | auto-filed "CI failed on main" / "Nightly run failed" | 21 | all closed; median 5.8 h, p75 13.4 h over all 100 ever filed |
 | harness flakes filed by hand | ~14 | #319 #321 #330 #357 #381 #382 #383 #401 #402 #421 #438 #454 #483 #514 |
 | CLI-vs-library parity bugs (2026-09-28 audit) | 19 | #493–#511, filed in one batch on 09-29 |
-| kgcov / product-kind / console follow-ups | ~25 | #362–#371, #403–#416, #430–#453 |
+| kmodcov / product-kind / console follow-ups | ~25 | #362–#371, #403–#416, #430–#453 |
 | covapp (web) nits | ~15 | #335–#348 |
 | enhancements / follow-ups filed at landing | rest | |
 
@@ -227,7 +227,7 @@ not.
 | 09-16 | `2b18bf7a` feat(cov) | src | import-budget warm-repeat listdir 59 vs 60 (#343) |
 | 09-17 | `cf5f1bc6` test(import-budget) | tests | (#344) |
 | 09-18 | `0185f62b` ci(canary) | ci | import-budget listdir ±1 / FileFinder refill (#360/#361) |
-| 09-19 | `33944c92` feat(kgcov) | src | toolchain fake patched the parse, not the exec seam (#405) |
+| 09-19 | `33944c92` feat(kmodcov) | src | toolchain fake patched the parse, not the exec seam (#405) |
 | 09-19 | `e69a64c6` docs(spec) | docs only | empty `FORCE_COLOR` still set (#387) |
 | 09-20 | `e0d43f0b` fix(test) | tests | tick-count-in-a-window timing (#407) |
 | 09-21 | `97c88056` chore(release) | bump only | pytest-repeat `--count` multiplies before deselection (#428/#429) |

@@ -1894,63 +1894,63 @@ class TestConnectCovHostsSelectorValidation:
             await _connect_cov_hosts()
 
 
-# ── kgcov subgroup — export/check are thin over otto.kgcov, lab-free ────────
+# ── kmodcov subgroup — export/check are thin over otto.kmodcov, lab-free ────────
 
 
-class TestKgcov:
-    """``otto cov kgcov export|check``: thin over otto.kgcov, lab-free, no output dir."""
+class TestKmodcov:
+    """``otto cov kmodcov export|check``: thin over otto.kmodcov, lab-free, no output dir."""
 
     def test_listed_in_help(self):
         result = runner.invoke(cov_app, ["--help"])
         assert result.exit_code == 0
-        assert "kgcov" in result.output
+        assert "kmodcov" in result.output
 
     def test_export_writes_the_library_and_reports_what_changed(self, tmp_path):
-        from otto import kgcov
+        from otto import kmodcov
 
-        result = runner.invoke(cov_app, ["kgcov", "export", str(tmp_path / "lib")])
+        result = runner.invoke(cov_app, ["kmodcov", "export", str(tmp_path / "lib")])
         assert result.exit_code == 0, result.output
-        assert (tmp_path / "lib" / "kgcov.h").is_file()
-        assert f"{len(kgcov.SHIPPED_FILES) + 1} file(s) written" in result.output
-        again = runner.invoke(cov_app, ["kgcov", "export", str(tmp_path / "lib")])
+        assert (tmp_path / "lib" / "kmodcov.h").is_file()
+        assert f"{len(kmodcov.SHIPPED_FILES) + 1} file(s) written" in result.output
+        again = runner.invoke(cov_app, ["kmodcov", "export", str(tmp_path / "lib")])
         assert again.exit_code == 0
         assert "already current" in again.output
 
     def test_check_exits_zero_on_a_current_copy(self, tmp_path):
-        runner.invoke(cov_app, ["kgcov", "export", str(tmp_path)])
-        result = runner.invoke(cov_app, ["kgcov", "check", str(tmp_path)])
+        runner.invoke(cov_app, ["kmodcov", "export", str(tmp_path)])
+        result = runner.invoke(cov_app, ["kmodcov", "check", str(tmp_path)])
         assert result.exit_code == 0, result.output
         assert "current" in result.output
 
     def test_check_exits_one_and_names_the_files_on_a_differing_copy(self, tmp_path):
-        runner.invoke(cov_app, ["kgcov", "export", str(tmp_path)])
-        (tmp_path / "kgcov.c").write_text("// edited\n")
+        runner.invoke(cov_app, ["kmodcov", "export", str(tmp_path)])
+        (tmp_path / "kmodcov.c").write_text("// edited\n")
         (tmp_path / "Kbuild").unlink()
-        result = runner.invoke(cov_app, ["kgcov", "check", str(tmp_path)])
+        result = runner.invoke(cov_app, ["kmodcov", "check", str(tmp_path)])
         assert result.exit_code == 1
-        assert "kgcov.c" in result.output and "Kbuild" in result.output  # noqa: PT018
-        assert "otto cov kgcov export" in result.output
+        assert "kmodcov.c" in result.output and "Kbuild" in result.output  # noqa: PT018
+        assert "otto cov kmodcov export" in result.output
 
     def test_check_exits_two_where_there_is_no_library(self, tmp_path):
-        result = runner.invoke(cov_app, ["kgcov", "check", str(tmp_path / "nowhere")])
+        result = runner.invoke(cov_app, ["kmodcov", "check", str(tmp_path / "nowhere")])
         assert result.exit_code == 2
-        assert "no otto_kgcov" in result.output
+        assert "no otto_kmodcov" in result.output
 
     def test_the_leaves_are_lab_free_and_make_no_output_dir(self):
-        from otto.cli.cov import kgcov_check, kgcov_export
+        from otto.cli.cov import kmodcov_check, kmodcov_export
 
-        for leaf in (kgcov_export, kgcov_check):
+        for leaf in (kmodcov_export, kmodcov_check):
             assert leaf.__cli_lab_free__ is True
             assert leaf.__cli_output_dir__ is False
 
 
-def test_kgcov_check_runs_through_the_bridge_without_a_lab(tmp_path, monkeypatch):
+def test_kmodcov_check_runs_through_the_bridge_without_a_lab(tmp_path, monkeypatch):
     """The per-leaf marker, end to end: the cov group is lab-bound, this leaf is not.
 
     ``lab_free=False`` on the bridge is what makes this a real test of the
     marker: it drives the synthetic ``CommandSpec`` itself to lab-bound (the
     same as the real ``cov`` group's registration), so the preamble's
-    ``not spec.lab_free`` arm is TRUE and only ``kgcov_check``'s own
+    ``not spec.lab_free`` arm is TRUE and only ``kmodcov_check``'s own
     ``__cli_lab_free__`` marker can still skip the lab slice. Confirmed by the
     negative control right below, which sends a leaf with no such marker
     through the same lab_free=False bridge and gets the missing-lab error.
@@ -1960,7 +1960,7 @@ def test_kgcov_check_runs_through_the_bridge_without_a_lab(tmp_path, monkeypatch
     monkeypatch.delenv("OTTO_LAB", raising=False)
     bridge = DispatchRunner()
     result = bridge.invoke(
-        cov_app, ["kgcov", "check", str(tmp_path)], spec_name="cov", lab_free=False
+        cov_app, ["kmodcov", "check", str(tmp_path)], spec_name="cov", lab_free=False
     )
     assert "Missing option '--lab'" not in result.output
     assert result.exit_code == 2  # absent: the marker let it run, and it answered

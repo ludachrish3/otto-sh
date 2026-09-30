@@ -1,6 +1,6 @@
 """Shared support for repo5's coverage e2es.
 
-Two things both bed e2es need, and one the kgcov build e2e needs:
+Two things both bed e2es need, and one the kmodcov build e2e needs:
 
 - Build-and-freshness, PER FAMILY. ``otto test`` and its test classes never touch
   a product verb (``stage``/``install``/``uninstall``/``get_product_logs``
@@ -27,14 +27,14 @@ Two things both bed e2es need, and one the kgcov build e2e needs:
   read a captured line's hit count off a source file and a
   :class:`~otto.coverage.store.model.CoverageStore`, failing with a message
   that names the file/line rather than a bare ``KeyError``/``StopIteration``.
-- The kernel-column table behind ``make kgcov``'s build columns
+- The kernel-column table behind ``make kmodcov``'s build columns
   (:class:`KernelColumn`, :func:`kernel_columns`/:func:`kernel_column`), the
   container-or-host runner that builds and tests inside one
   (:func:`run_in_column`), and the ELF section helpers
   (:func:`elf_sections`, :func:`set_section_type`,
   :func:`constructor_section`, :func:`rename_constructor_section`) that find
-  and rewrite a build's one constructor section — for the kgcov build e2e
-  (``test_kgcov_kernel_builds.py``), not the two e2es named above.
+  and rewrite a build's one constructor section — for the kmodcov build e2e
+  (``test_kmodcov_kernel_builds.py``), not the two e2es named above.
 """
 
 import json
@@ -56,8 +56,8 @@ from tests.e2e._otto_subprocess import REPO5
 
 BUILD = REPO5 / "build"
 DEMO_SRC = REPO5 / "kmod" / "demo"
-KGCOV = REPO5 / "third_party" / "otto_kgcov"
-"""The demo repo's vendored copy, held ``current`` against ``otto.kgcov`` by a guard — what a
+KMODCOV = REPO5 / "third_party" / "otto_kmodcov"
+"""The demo repo's vendored copy, held ``current`` against ``otto.kmodcov`` by a guard — what a
 user's repo holds."""
 DOCKER = REPO5 / "docker"
 DOCKER_SRC = DOCKER / "src"
@@ -71,7 +71,7 @@ The library's ``.ko`` lands in one place (``build/lib``, where the fixture's
 ``settings.toml`` points) and the demo builds in place, so "built by which
 compiler" cannot be read off a path — it is read off this file. Written by
 ``tests/repo5/kmod/build.sh`` itself on a successful build, from
-``OTTO_KGCOV_TOOLCHAIN`` (``manual`` when unset, e.g. a hand-run build) — the
+``OTTO_KMODCOV_TOOLCHAIN`` (``manual`` when unset, e.g. a hand-run build) — the
 single writer, so a hand run is never mistaken for one of this helper's own
 toolchains. A stamp naming another compiler makes the artifacts stale.
 """
@@ -123,7 +123,7 @@ class Toolchain:
     compiler_version: str = ""
     """The compiler's own full version (``-dumpfullversion``; clang ``-dumpversion``).
 
-    Provenance for the kgcov matrix: the column is the NAME the lane selects
+    Provenance for the kmodcov matrix: the column is the NAME the lane selects
     by (``gcc-12``, ``clang``), and this is what that name resolved to on the
     machine that measured. Empty only on :data:`DEFAULT_TOOLCHAIN`, which is
     no matrix column.
@@ -139,8 +139,8 @@ TOOLCHAINS_KEY = pytest.StashKey["dict[str, Toolchain]"]()
 """``config.stash`` slot: profile id -> the :class:`Toolchain` a fixture built with.
 
 Filled by the ``built_with`` fixture (bed columns) and ``kernel_build``
-(every build column), read by the kgcov observation hook
-(``tests/e2e/cov/_kgcov_observation.py``) — the hook has an item and its
+(every build column), read by the kmodcov observation hook
+(``tests/e2e/cov/_kmodcov_observation.py``) — the hook has an item and its
 callspec, which carry the NAME, and this is how the name reaches the
 version and release the fixture already measured, without probing again.
 """
@@ -224,11 +224,12 @@ def toolchain(name: str, kdir: Path | None = None) -> Toolchain:
     kdir = kdir or running_kernel_kdir()
     config = kernel_config(kdir)
     if name == "clang":
-        _require("clang", "install clang and lld, or drop clang from OTTO_KGCOV_TOOLCHAINS")
+        _require("clang", "install clang and lld, or drop clang from OTTO_KMODCOV_TOOLCHAINS")
         _require(
-            "ld.lld", "install lld (LLVM=1 links with it), or drop clang from OTTO_KGCOV_TOOLCHAINS"
+            "ld.lld",
+            "install lld (LLVM=1 links with it), or drop clang from OTTO_KMODCOV_TOOLCHAINS",
         )
-        _require("llvm-cov", "install llvm (llvm-cov) or drop clang from OTTO_KGCOV_TOOLCHAINS")
+        _require("llvm-cov", "install llvm (llvm-cov) or drop clang from OTTO_KMODCOV_TOOLCHAINS")
         env = {"LLVM": "1"}
         if "CONFIG_CC_IS_GCC=y" in config:
             env["KMAKEFLAGS"] = CLANG_ON_GCC_KERNEL.format(version=compiler_version_number("clang"))
@@ -239,11 +240,11 @@ def toolchain(name: str, kdir: Path | None = None) -> Toolchain:
             compiler_version=compiler_version_string("clang"),
             kernel_release=os.uname().release,
         )
-    _require(name, f"install it (apt install {name}) or drop it from OTTO_KGCOV_TOOLCHAINS")
+    _require(name, f"install it (apt install {name}) or drop it from OTTO_KMODCOV_TOOLCHAINS")
     gcov = name.replace("gcc", "gcov", 1)
     _require(
         gcov,
-        f"install {name} (its package ships {gcov}) or drop it from OTTO_KGCOV_TOOLCHAINS",
+        f"install {name} (its package ships {gcov}) or drop it from OTTO_KMODCOV_TOOLCHAINS",
     )
     env = {"CC": name}
     actual = compiler_version_number(name)
@@ -294,7 +295,7 @@ def build_foreign_demo(tc: Toolchain, root: Path) -> Path:
 
     The in-place fixture build belongs to the column under test and stays
     untouched; the copy is built the way the kernel builds build their own
-    copy (``test_kgcov_kernel_builds.py``). ``KBUILD_MODPOST_WARN=1``: a gcc demo
+    copy (``test_kmodcov_kernel_builds.py``). ``KBUILD_MODPOST_WARN=1``: a gcc demo
     against a clang library (or the reverse) references a runtime symbol the
     library does not export, and modpost would otherwise FAIL THE BUILD on it
     — the family rule has to be allowed to reach ``insmod``, where the
@@ -317,7 +318,7 @@ def build_foreign_demo(tc: Toolchain, root: Path) -> Path:
     env["KMAKEFLAGS"] = f"{tc.env.get('KMAKEFLAGS', '')} KBUILD_MODPOST_WARN=1".strip()
     try:
         subprocess.run(
-            ["make", "-C", str(demo), f"KDIR={running_kernel_kdir()}", f"KGCOV={BUILD / 'lib'}"],
+            ["make", "-C", str(demo), f"KDIR={running_kernel_kdir()}", f"KMODCOV={BUILD / 'lib'}"],
             env=env,
             check=True,
             capture_output=True,
@@ -381,8 +382,8 @@ def overlay_repo(tc: Toolchain, root: Path) -> "Path | None":
     if lab is None:
         return None
     return make_sut_repo(
-        root / "kgcov_overlay",
-        name="kgcov_overlay",
+        root / "kmodcov_overlay",
+        name="kmodcov_overlay",
         version="1.0.0",
         extra=f'[[lab.sources]]\nbackend = "json"\npaths = ["{lab}"]\n',
     )
@@ -433,7 +434,7 @@ def init_array_symbols(ko: Path) -> list[str]:
 
     What the consumer's link put between the sentinels: the begin marker,
     one gcov constructor per instrumented unit, the end marker — the order
-    ``kgcov_register()`` walks. A relocation against a section symbol
+    ``kmodcov_register()`` walks. A relocation against a section symbol
     (``.text.startup + 58``) is resolved through the symbol table.
     """
     out = _readelf(ko, "-rW")
@@ -451,7 +452,7 @@ def init_array_symbols(ko: Path) -> list[str]:
     ]
 
 
-# ---- the kernel set of `make kgcov`'s build columns ---------------------------
+# ---- the kernel set of `make kmodcov`'s build columns ---------------------------
 #
 # One KernelColumn per column: where its tree is and how its modules are
 # built. Pure data, so a unit test can read it on a machine with neither
@@ -463,12 +464,12 @@ def init_array_symbols(ko: Path) -> list[str]:
 
 CROSS_KERNEL = "x86_64-cross"
 KERNEL_IDS = [CROSS_KERNEL, "2.6.32", "3.13", "4.4", "5.4", "5.15", "6.17"]
-PROVISION = "scripts/provision_kgcov_kernels.sh"
-DEFAULT_KERNELS_DIR = Path("/home/vagrant/build/kgcov-kernels")
-"""``scripts/provision_kgcov_kernels.sh``'s own default for ``OTTO_KGCOV_KERNELS_DIR`` (and the
-Makefile's ``KGCOV_KERNELS_DIR ?=``). A column's printed ``provision`` remedy is prefixed with
-``OTTO_KGCOV_KERNELS_DIR=<dir>`` only when its *kernels_dir* differs from this, so the remedy
-still works when `make kgcov` was pointed somewhere else."""
+PROVISION = "scripts/provision_kmodcov_kernels.sh"
+DEFAULT_KERNELS_DIR = Path("/home/vagrant/build/kmodcov-kernels")
+"""``scripts/provision_kmodcov_kernels.sh``'s own default for ``OTTO_KMODCOV_KERNELS_DIR`` (and the
+Makefile's ``KMODCOV_KERNELS_DIR ?=``). A column's printed ``provision`` remedy is prefixed with
+``OTTO_KMODCOV_KERNELS_DIR=<dir>`` only when its *kernels_dir* differs from this, so the remedy
+still works when `make kmodcov` was pointed somewhere else."""
 ISA_MACHINE = {"x86_64": "Advanced Micro Devices X86-64", "arm64": "AArch64"}
 """What ``readelf -h`` prints as Machine, per ISA."""
 ISA_OBJCOPY = {"x86_64": "x86_64-linux-gnu-objcopy", "arm64": "objcopy"}
@@ -528,7 +529,7 @@ def kernel_columns(kernels_dir: Path, cross_kdir: Path) -> list[KernelColumn]:
     Rooted at *kernels_dir*; the cross tree is at *cross_kdir*.
     """
     provision_prefix = (
-        "" if kernels_dir == DEFAULT_KERNELS_DIR else f"OTTO_KGCOV_KERNELS_DIR={kernels_dir} "
+        "" if kernels_dir == DEFAULT_KERNELS_DIR else f"OTTO_KMODCOV_KERNELS_DIR={kernels_dir} "
     )
     cross = KernelColumn(
         id=CROSS_KERNEL,
@@ -553,7 +554,7 @@ def kernel_columns(kernels_dir: Path, cross_kdir: Path) -> list[KernelColumn]:
         tree=oldest_tree,
         stamp=kernels_dir / "2.6.32" / f".prepared-{oldest_tree.name}",
         cc="gcc-4.7",
-        image="otto-kgcov-kernel:2.6.32",
+        image="otto-kmodcov-kernel:2.6.32",
         platform="linux/amd64",
         env={},
         kmakeflags="HOSTCC=gcc-4.7",
@@ -570,7 +571,7 @@ def kernel_columns(kernels_dir: Path, cross_kdir: Path) -> list[KernelColumn]:
                 tree=tree,
                 stamp=kernels_dir / kernel_id / f".prepared-{tree.name}",
                 cc=None,
-                image=f"otto-kgcov-kernel:{kernel_id}",
+                image=f"otto-kmodcov-kernel:{kernel_id}",
                 platform="linux/arm64",
                 env={},
                 kmakeflags="",
@@ -791,8 +792,8 @@ def warnings_under(output: str, directory: Path) -> list[str]:
 def assert_bracketed(syms: list[str], units: int) -> None:
     """*syms* is the begin marker, one gcov constructor per unit, the end marker."""
     assert syms, syms
-    assert syms[0] == "__kgcov_begin_marker", syms
-    assert syms[-1] == "__kgcov_end_marker", syms
+    assert syms[0] == "__kmodcov_begin_marker", syms
+    assert syms[-1] == "__kmodcov_end_marker", syms
     inner = syms[1:-1]
     assert len(inner) == units, syms
     assert all(GCOV_CONSTRUCTOR.match(s) for s in inner), syms
@@ -912,8 +913,8 @@ def _hits(rec: FileRecord, lineno: int) -> int:
     return rec.lines[lineno].hits.for_tier("system")
 
 
-def _demo_and_kgcov_sources() -> list[Path]:
-    """Everything the kernel-module rebuild depends on: the demo's own files and otto_kgcov's."""
+def _demo_and_kmodcov_sources() -> list[Path]:
+    """Everything the kernel-module rebuild depends on: the demo's own files and otto_kmodcov's."""
     return [
         # Kbuild writes the generated <module>.mod.c beside the sources AFTER the
         # library .ko; counting it would make every build look stale.
@@ -922,7 +923,7 @@ def _demo_and_kgcov_sources() -> list[Path]:
         DEMO_SRC / "Kbuild",
         DEMO_SRC / "Makefile",
         KMOD_BUILD,
-        *(p for p in KGCOV.rglob("*") if p.is_file()),
+        *(p for p in KMODCOV.rglob("*") if p.is_file()),
     ]
 
 
@@ -990,17 +991,17 @@ def ensure_kmod_artifacts(tmp_path_factory, tc: Toolchain = DEFAULT_TOOLCHAIN) -
 
     Runs ``tests/repo5/kmod/build.sh`` — only the kernel half; the
     container-image half has its own script and its own ensure function —
-    with *tc*'s environment, plus ``OTTO_KGCOV_TOOLCHAIN=tc.name``, on top of
+    with *tc*'s environment, plus ``OTTO_KMODCOV_TOOLCHAIN=tc.name``, on top of
     the process's; the script itself is the toolchain stamp's single writer.
     """
     _assert_committed([DEMO_SRC], tmp_path_factory)
-    lib_ko = BUILD / "lib" / "otto_kgcov.ko"
+    lib_ko = BUILD / "lib" / "otto_kmodcov.ko"
     demo_ko = DEMO_SRC / "otto_kmod_demo.ko"
-    if kmod_artifacts_are_stale([lib_ko, demo_ko], _demo_and_kgcov_sources(), tc):
+    if kmod_artifacts_are_stale([lib_ko, demo_ko], _demo_and_kmodcov_sources(), tc):
         try:
             subprocess.run(
                 [str(KMOD_BUILD)],
-                env={**os.environ, **tc.env, "OTTO_KGCOV_TOOLCHAIN": tc.name},
+                env={**os.environ, **tc.env, "OTTO_KMODCOV_TOOLCHAIN": tc.name},
                 check=True,
                 capture_output=True,
                 text=True,

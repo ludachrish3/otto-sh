@@ -8,7 +8,7 @@ API Reference
    monitor/index
    cli/index
    coverage/index
-   kgcov
+   kmodcov
    docker/index
    models/index
    bootstrap

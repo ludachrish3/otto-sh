@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Build repo5's kernel-module products: the library out of tree into
-# build/lib/ (git-ignored — third_party/otto_kgcov/build.sh does that half),
+# build/lib/ (git-ignored — third_party/otto_kmodcov/build.sh does that half),
 # then the demo IN PLACE under kmod/demo/ against it. The demo's sources are
 # committed here rather than copied: otto's coverage capture anchors every
 # measured file to a committed git blob under the SUT repo, so only the
 # library (never itself directly measured) needs an out-of-tree build.
 #
-# The library is the repo's OWN vendored copy at third_party/otto_kgcov/,
-# written by `otto cov kgcov export` — exactly what a user's repo holds,
+# The library is the repo's OWN vendored copy at third_party/otto_kmodcov/,
+# written by `otto cov kmodcov export` — exactly what a user's repo holds,
 # never a reach into otto's package sources.
 #
 #   kmod/build.sh [<kernel-release>]
 #
 # The kernel tree and toolchain are the environment's, exactly as
-# third_party/otto_kgcov/build.sh takes them: KDIR (default
+# third_party/otto_kmodcov/build.sh takes them: KDIR (default
 # /lib/modules/<release>/build), ARCH, CROSS_COMPILE, LLVM, CC, KMAKEFLAGS.
 # <release> defaults to the running kernel, or to the tree's own release
 # when KDIR is set; both modules' vermagic is checked against it.
@@ -34,14 +34,14 @@ else
 fi
 export KDIR
 
-"$REPO/third_party/otto_kgcov/build.sh" "$REPO/build" "$RELEASE"
+"$REPO/third_party/otto_kmodcov/build.sh" "$REPO/build" "$RELEASE"
 # The demo builds IN PLACE (unlike the library, which build.sh always starts
 # from a clean copy) so a previous run's objects for another compiler or
 # ARCH must be cleaned first, or they can survive into this one's link.
 # shellcheck disable=SC2086
-make -C "$HERE/demo" KDIR="$KDIR" KGCOV="$REPO/build/lib" ${CC:+CC=$CC} ${KMAKEFLAGS:-} clean
+make -C "$HERE/demo" KDIR="$KDIR" KMODCOV="$REPO/build/lib" ${CC:+CC=$CC} ${KMAKEFLAGS:-} clean
 # shellcheck disable=SC2086
-make -C "$HERE/demo" KDIR="$KDIR" KGCOV="$REPO/build/lib" ${CC:+CC=$CC} ${KMAKEFLAGS:-}
+make -C "$HERE/demo" KDIR="$KDIR" KMODCOV="$REPO/build/lib" ${CC:+CC=$CC} ${KMAKEFLAGS:-}
 
 vermagic="$(modinfo -F vermagic "$HERE/demo/otto_kmod_demo.ko")"
 case "$vermagic" in
@@ -52,11 +52,11 @@ case "$vermagic" in
         ;;
 esac
 ls "$HERE"/demo/*.gcno >/dev/null
-echo "built: $REPO/build/lib/otto_kgcov.ko $HERE/demo/otto_kmod_demo.ko (for $RELEASE)"
+echo "built: $REPO/build/lib/otto_kmodcov.ko $HERE/demo/otto_kmod_demo.ko (for $RELEASE)"
 
 # The single writer of the toolchain stamp the fixture's e2e helper
 # (tests/e2e/cov/_repo5_build.py) reads to know which compiler built these
-# modules: a hand run leaves OTTO_KGCOV_TOOLCHAIN unset, so it stamps
+# modules: a hand run leaves OTTO_KMODCOV_TOOLCHAIN unset, so it stamps
 # "manual" — a name no helper Toolchain ever carries, so the next
 # ensure_kmod_artifacts() call always rebuilds rather than trusting it.
-printf '%s\n' "${OTTO_KGCOV_TOOLCHAIN:-manual}" > "$REPO/build/toolchain"
+printf '%s\n' "${OTTO_KMODCOV_TOOLCHAIN:-manual}" > "$REPO/build/toolchain"

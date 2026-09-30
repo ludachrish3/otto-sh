@@ -29,7 +29,7 @@ from otto.config.fleet import all_hosts, do_for_all_hosts
 from otto.host.unix_host import UnixHost
 
 CTL = "/sys/kernel/debug/otto_kmod_demo/ctl"
-DUMP = "/sys/kernel/debug/otto_kgcov/otto_kmod_demo/dump"
+DUMP = "/sys/kernel/debug/otto_kmodcov/otto_kmod_demo/dump"
 _HOSTS = re.compile(r"test[12]")
 
 COMMON = [
@@ -96,11 +96,11 @@ async def _uninstall(host: UnixHost) -> None:
     # The library is a dev tool the demo loaded on demand; otto test never runs
     # cleanup, so this teardown removes it — after the demo, which depends on
     # it — the way `cleanup` would. Left resident, the NEXT run's demo (built
-    # by another compiler under `make kgcov`) would load against a library it
+    # by another compiler under `make kmodcov`) would load against a library it
     # cannot use.
     removed = await host.uninstall_dev_tools()
     if not removed.is_ok:
-        raise RuntimeError(f"{host.id}: unloading otto_kgcov failed: {removed.msg}")
+        raise RuntimeError(f"{host.id}: unloading otto_kmodcov failed: {removed.msg}")
 
 
 class TestKmodDemo:

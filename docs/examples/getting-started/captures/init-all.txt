@@ -40,7 +40,7 @@ Next steps
 │ lab          │ scaffolded │               │
 │ tests        │ scaffolded │               │
 │ instructions │ scaffolded │               │
-│ kgcov        │ skipped    │ not requested │
+│ kmodcov      │ skipped    │ not requested │
 └──────────────┴────────────┴───────────────┘
 inventory: json:/tmp/otto-gs/acme/lab_data/inventory.json
 creds:     json:/tmp/otto-gs/acme/lab_data/creds.json

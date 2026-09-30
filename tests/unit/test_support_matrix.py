@@ -160,10 +160,10 @@ rather than excluded by scope, so the collision stays visible -- see
 ``test_the_gap_registry_uses_the_same_two_status_words_for_a_different_artifact``.
 """
 
-KGCOV_FIXTURE_PATH = PROJECT_ROOT / "tests" / "_fixtures" / "kgcov_matrix.py"
-KGCOV_COLLATOR_PATH = PROJECT_ROOT / "scripts" / "collate_kgcov_matrix.py"
-KGCOV_RENDERER_PATH = PROJECT_ROOT / "scripts" / "render_kgcov_matrix.py"
-"""The kgcov compatibility matrix's own three files, sharing this vocabulary.
+KMODCOV_FIXTURE_PATH = PROJECT_ROOT / "tests" / "_fixtures" / "kmodcov_matrix.py"
+KMODCOV_COLLATOR_PATH = PROJECT_ROOT / "scripts" / "collate_kmodcov_matrix.py"
+KMODCOV_RENDERER_PATH = PROJECT_ROOT / "scripts" / "render_kmodcov_matrix.py"
+"""The kmodcov compatibility matrix's own three files, sharing this vocabulary.
 
 Its axes fixture, its collate step and its renderer. See the guard below for
 why all three are allow-listed.
@@ -4107,12 +4107,12 @@ def test_only_the_collator_ever_writes_a_measured_verdict():
     the gate reads two files and prints, and running it leaves the artifact
     byte-identical.
 
-    ★ THE KGCOV MATRIX'S OWN FILES ARE ALLOW-LISTED FOR THE SAME REASON, and
+    ★ THE KMODCOV MATRIX'S OWN FILES ARE ALLOW-LISTED FOR THE SAME REASON, and
     THIS ONE for a fourth: it is a SIBLING artifact with its own collator
-    (spec 2026-09-18, kgcov compatibility matrix, §3), not a second writer of
+    (spec 2026-09-18, kmodcov compatibility matrix, §3), not a second writer of
     THIS matrix -- it shares this vocabulary, not this document. Allow-listed
     by name rather than excluded by scope, same as the gap registry, and
-    backed the same way: ``tests/unit/test_kgcov_matrix.py``'s
+    backed the same way: ``tests/unit/test_kmodcov_matrix.py``'s
     verdict-preservation guard proves its ``build_matrix`` never mints a
     ``measured-*`` verdict of its own either.
     """
@@ -4122,9 +4122,9 @@ def test_only_the_collator_ever_writes_a_measured_verdict():
         GAP_REGISTRY_PATH,
         RENDERER_PATH,
         DOWNGRADE_GATE_PATH,
-        KGCOV_FIXTURE_PATH,
-        KGCOV_COLLATOR_PATH,
-        KGCOV_RENDERER_PATH,
+        KMODCOV_FIXTURE_PATH,
+        KMODCOV_COLLATOR_PATH,
+        KMODCOV_RENDERER_PATH,
     )
     offenders = [
         path.relative_to(PROJECT_ROOT).as_posix()

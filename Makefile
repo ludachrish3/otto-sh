@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-breaking profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kgcov kgcov-matrix release-kgcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-breaking profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -172,9 +172,9 @@ STABILITY_TUNNEL_CYCLES := $(if $(filter command line,$(origin CYCLES)),$(CYCLES
 # the plain stability soak); `not chaos` closes the same hole for the newer
 # chaos lane in the same change. See
 # tests/unit/test_tier_marker_invariants.py's G7.
-M_UNIX := integration and not embedded and not stability and not chaos and not kgcov
-M_EMBEDDED := embedded and not stability and not chaos and not kgcov
-M_HOSTLESS := not integration and not embedded and not stability and not browser and not busybox and not conformance and not kgcov
+M_UNIX := integration and not embedded and not stability and not chaos and not kmodcov
+M_EMBEDDED := embedded and not stability and not chaos and not kmodcov
+M_HOSTLESS := not integration and not embedded and not stability and not browser and not busybox and not conformance and not kmodcov
 
 # `not busybox` rides every CATCH-ALL selector below (and this one), for a
 # reason unrelated to the bed: that tier downloads real artifacts from
@@ -214,13 +214,13 @@ M_HOSTLESS := not integration and not embedded and not stability and not browser
 # G8d re-derives for busybox: nothing under tests/conformance/ is stamped by
 # another tree's conftest. Do not re-derive that claim from this comment.
 
-# `not kgcov` rides every selector here, catch-all AND positive: the otto_kgcov
-# toolchain tier (tests/e2e/cov/test_kgcov_*) carries a resource marker of its
+# `not kmodcov` rides every selector here, catch-all AND positive: the otto_kmodcov
+# toolchain tier (tests/e2e/cov/test_kmodcov_*) carries a resource marker of its
 # own — `integration` for the bed matrix, `hostless` for the cross build — so
 # M_UNIX would reach the matrix and M_HOSTLESS the cross build without it.
 # Both need what only the dev VM has (six gccs and clang, the bed, a kernel
 # source tree) and FAIL where it is absent, because a release must be able to
-# trust a green. `make kgcov` is the opt-in lane; `make release` runs it.
+# trust a green. `make kmodcov` is the opt-in lane; `make release` runs it.
 # Pinned by tests/unit/test_tier_marker_invariants.py's G12 family.
 
 # `browser` (Playwright) tests always run as their own pytest process — sync
@@ -357,12 +357,12 @@ changelog: ## (Build & Release) Regenerate the WHOLE of CHANGELOG.md from conven
 # git-cliff/git-add/bump-my-version commands run for real (version bump +
 # CHANGELOG staged). Never dry-run this target.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) npm ci web/, Python static checks (check-python), otto_kgcov toolchain proofs (release-kgcov-matrix), docs, nox, build web dist, all-browser dashboard e2e, full TS gate (validate-ts, incl. merged coverage), profile, then changelog, bump, build dist (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
+release: ## (Build & Release) npm ci web/, Python static checks (check-python), otto_kmodcov toolchain proofs (release-kmodcov-matrix), docs, nox, build web dist, all-browser dashboard e2e, full TS gate (validate-ts, incl. merged coverage), profile, then changelog, bump, build dist (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
 	@$(MAKE) clean-dist \
 		&& $(MAKE) web-install \
 		&& $(MAKE) check-python \
 		&& $(MAKE) release-matrix \
-		&& $(MAKE) release-kgcov-matrix \
+		&& $(MAKE) release-kmodcov-matrix \
 		&& $(MAKE) docs \
 		&& $(LEAK_DETECT) $(MAKE) nox \
 		&& $(MAKE) web \
@@ -627,17 +627,17 @@ wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + w
 		exit 1; \
 	fi; \
 	echo "wheel-check: OK — no *.map files in the wheel."
-	@if ! unzip -l dist/*.whl | grep -q 'otto/kgcov/kgcov\.h$$'; then \
-		echo "wheel-check: FAIL — otto/kgcov/kgcov.h missing from dist/*.whl; the otto_kgcov sources ship inside the package (otto cov kgcov export/check read them from there), so an installed otto could export nothing." >&2; \
+	@if ! unzip -l dist/*.whl | grep -q 'otto/kmodcov/kmodcov\.h$$'; then \
+		echo "wheel-check: FAIL — otto/kmodcov/kmodcov.h missing from dist/*.whl; the otto_kmodcov sources ship inside the package (otto cov kmodcov export/check read them from there), so an installed otto could export nothing." >&2; \
 		exit 1; \
 	fi; \
-	echo "wheel-check: OK — otto/kgcov/ library sources embedded (incl. kgcov.h)."
-	@mode=$$(uv run python -c "import glob, zipfile; z = zipfile.ZipFile(glob.glob('dist/*.whl')[0]); i = z.NameToInfo.get('otto/kgcov/build.sh'); print(oct(i.external_attr >> 16 & 0o777) if i else 'absent')"); \
+	echo "wheel-check: OK — otto/kmodcov/ library sources embedded (incl. kmodcov.h)."
+	@mode=$$(uv run python -c "import glob, zipfile; z = zipfile.ZipFile(glob.glob('dist/*.whl')[0]); i = z.NameToInfo.get('otto/kmodcov/build.sh'); print(oct(i.external_attr >> 16 & 0o777) if i else 'absent')"); \
 	if [ "$$mode" != "0o755" ]; then \
-		echo "wheel-check: FAIL — otto/kgcov/build.sh is stored in dist/*.whl as $$mode, not 0o755; an exported copy would not be executable and the documented 'build.sh <build-dir>' could not be run." >&2; \
+		echo "wheel-check: FAIL — otto/kmodcov/build.sh is stored in dist/*.whl as $$mode, not 0o755; an exported copy would not be executable and the documented 'build.sh <build-dir>' could not be run." >&2; \
 		exit 1; \
 	fi; \
-	echo "wheel-check: OK — otto/kgcov/build.sh stored executable (0o755)."
+	echo "wheel-check: OK — otto/kmodcov/build.sh stored executable (0o755)."
 
 docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, clips, termynal blocks) in docs/_static/generated/
 	@$(SAY) "capturing docs GUI media (screenshots + clips)"
@@ -735,21 +735,21 @@ build: ## (Build & Release) Build the project with uv
 # Pinned by tests/unit/test_coverage_html_placement.py.
 coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Python) and enforce the 95.5 gate (lines + branches); the browser (Playwright) suite runs first as its own process via the `dashboard` prerequisite — its coverage data is folded in via --cov-append. Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage-python/.
 	@$(SAY) "pytest: all tiers, pinned Python (browser lane folded in)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "not stability and not browser and not busybox and not conformance and not kgcov and not serial_timing" --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "not stability and not browser and not busybox and not conformance and not kmodcov and not serial_timing" --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
 	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(COVERAGE_THRESHOLD)% lines+branches on the full fold)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and not stability and not browser and not busybox and not conformance and not kgcov" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) --cov-report=html $(call junitxml,coverage-python-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and not stability and not browser and not busybox and not conformance and not kmodcov" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) --cov-report=html $(call junitxml,coverage-python-serial)
 
 coverage: coverage-python coverage-ts ## Run BOTH language coverage gates: coverage-python (full pytest, 95.5 floor over lines and branches) + coverage-ts (merged vitest+e2e floor). The dashboard browser lane runs exactly once — coverage-python triggers it, and coverage-ts's artifact stamp sees it fresh.
 
 coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
 	@$(SAY) "pytest: tests/unit (no gate)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability and not busybox and not conformance and not kgcov and not serial_timing" $(call junitxml,coverage-unit)
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "serial_timing and not stability and not busybox and not conformance and not kgcov" -n0 --cov-append --cov-report=html $(call junitxml,coverage-unit-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability and not busybox and not conformance and not kmodcov and not serial_timing" $(call junitxml,coverage-unit)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "serial_timing and not stability and not busybox and not conformance and not kmodcov" -n0 --cov-append --cov-report=html $(call junitxml,coverage-unit-serial)
 
 coverage-integration: ## Run the unit + integration level tiers (tests/unit + tests/integration) with a coverage report (no gate). Requires the full lab. JUnit XML in reports/junit/coverage-integration/.
 	@$(SAY) "pytest: tests/unit + tests/integration (no gate)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability and not busybox and not conformance and not kgcov and not serial_timing" $(call junitxml,coverage-integration)
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "serial_timing and not stability and not busybox and not conformance and not kgcov" -n0 --cov-append --cov-report=html $(call junitxml,coverage-integration-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability and not busybox and not conformance and not kmodcov and not serial_timing" $(call junitxml,coverage-integration)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "serial_timing and not stability and not busybox and not conformance and not kmodcov" -n0 --cov-append --cov-report=html $(call junitxml,coverage-integration-serial)
 
 coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) and enforce the CI coverage gate. No VMs. JUnit XML lands in reports/junit/coverage-hostless/.
 	@$(SAY) "pytest: hostless CI slice, no VMs"
@@ -1038,63 +1038,63 @@ conformance-bed: ## Run the host-contract conformance suite against the REAL BED
 	  lane=$$?; $(MAKE) --no-print-directory support-matrix; collate=$$?; \
 	  if [ $$lane -ne 0 ]; then exit $$lane; fi; exit $$collate
 
-# --- otto_kgcov toolchain proofs ---------------------------------------------
+# --- otto_kmodcov toolchain proofs ---------------------------------------------
 #
 # RARELY BY HAND, ALWAYS BEFORE A RELEASE (Chris, 2026-09-18). The routine
 # kmod and docker coverage e2es already run under `make nox` at release with
-# the system gcc; this lane is the rest of otto_kgcov's promise — any gcc,
+# the system gcc; this lane is the rest of otto_kmodcov's promise — any gcc,
 # clang, another ISA — and it is opt-in because it needs what only the dev
 # VM has: gcc 9 to 14 and clang 18 installed, the bed to load each build on,
 # a prepared kernel source tree for the cross build, and the provisioned
-# kernel set (scripts/provision_kgcov_kernels.sh; docker with the
+# kernel set (scripts/provision_kmodcov_kernels.sh; docker with the
 # qemu-x86_64 binfmt) for the per-kernel build columns. A compiler or tree
 # that is missing FAILS the lane naming it; nothing skips, so a green here
 # is one a release can trust. `make release` invokes this target right after
 # `release-matrix` (both need the bed; make stages are sequential).
-# `not kgcov` rides every other selector in this file and noxfile.py —
+# `not kmodcov` rides every other selector in this file and noxfile.py —
 # tests/unit/test_tier_marker_invariants.py's G12 family pins all of it.
 #
 # Wall-clock: about 85s for the bed matrix (measured 2026-09-18) plus about
 # 65s for the seven build columns, the x86_64 cross build and the emulated
 # 2.6.32 included (measured 2026-09-29); the cap is stated rather than
 # inherited.
-KGCOV_TOOLCHAINS ?= gcc-9,gcc-10,gcc-11,gcc-12,gcc-13,gcc-14,clang
-KGCOV_CROSS_KDIR ?= /home/vagrant/build/linux-6.8
-KGCOV_KERNELS ?= x86_64-cross,2.6.32,3.13,4.4,5.4,5.15,6.17
-KGCOV_KERNELS_DIR ?= /home/vagrant/build/kgcov-kernels
-KGCOV_TIMEOUT := 3600s
-# WARNING: `make -n kgcov` is NOT a dry run — the recipe is one
-# semicolon/backslash-continued line containing $(MAKE) (the `kgcov-matrix`
+KMODCOV_TOOLCHAINS ?= gcc-9,gcc-10,gcc-11,gcc-12,gcc-13,gcc-14,clang
+KMODCOV_CROSS_KDIR ?= /home/vagrant/build/linux-6.8
+KMODCOV_KERNELS ?= x86_64-cross,2.6.32,3.13,4.4,5.4,5.15,6.17
+KMODCOV_KERNELS_DIR ?= /home/vagrant/build/kmodcov-kernels
+KMODCOV_TIMEOUT := 3600s
+# WARNING: `make -n kmodcov` is NOT a dry run — the recipe is one
+# semicolon/backslash-continued line containing $(MAKE) (the `kmodcov-matrix`
 # fold below), so GNU make executes it under -n; the $(MAKE) sub-call
-# inherits -n and no-ops, but the plain `uv run pytest -m "kgcov"` command
+# inherits -n and no-ops, but the plain `uv run pytest -m "kmodcov"` command
 # runs for real. Never dry-run this target.
-kgcov: ## Run the otto_kgcov toolchain proofs (`kgcov`-marked; excluded from every default lane): rebuild the kernel-module fixture with each compiler in KGCOV_TOOLCHAINS and run the kmod coverage e2e on the bed per compiler, then build it for every kernel in KGCOV_KERNELS: the x86_64 cross build from the source tree at KGCOV_CROSS_KDIR on the host, and each provisioned kernel under KGCOV_KERNELS_DIR inside a container image of its own era (scripts/provision_kgcov_kernels.sh). Dev VM only; a missing compiler, tree or image FAILS. Invoked through `make release-kgcov-matrix` by `make release`. JUnit XML lands in reports/junit/kgcov/. Ends by folding what it measured into schemas/kgcov_matrix.json (`make kgcov-matrix`) — review the diff and commit it, or let `make release-kgcov-matrix` do both when the change is not a downgrade.
-	@$(SAY) "pytest: otto_kgcov toolchain proofs ($(KGCOV_TOOLCHAINS); kernels $(KGCOV_KERNELS); cross tree $(KGCOV_CROSS_KDIR))"
-	@OTTO_KGCOV_TOOLCHAINS="$(KGCOV_TOOLCHAINS)" OTTO_KGCOV_CROSS_KDIR="$(KGCOV_CROSS_KDIR)" OTTO_KGCOV_KERNELS="$(KGCOV_KERNELS)" OTTO_KGCOV_KERNELS_DIR="$(KGCOV_KERNELS_DIR)" \
-	    timeout --foreground --kill-after=10s $(KGCOV_TIMEOUT) \
-	    uv run pytest -m "kgcov" -n0 --no-cov $(call junitxml,kgcov); \
-	  lane=$$?; $(MAKE) --no-print-directory kgcov-matrix; collate=$$?; \
+kmodcov: ## Run the otto_kmodcov toolchain proofs (`kmodcov`-marked; excluded from every default lane): rebuild the kernel-module fixture with each compiler in KMODCOV_TOOLCHAINS and run the kmod coverage e2e on the bed per compiler, then build it for every kernel in KMODCOV_KERNELS: the x86_64 cross build from the source tree at KMODCOV_CROSS_KDIR on the host, and each provisioned kernel under KMODCOV_KERNELS_DIR inside a container image of its own era (scripts/provision_kmodcov_kernels.sh). Dev VM only; a missing compiler, tree or image FAILS. Invoked through `make release-kmodcov-matrix` by `make release`. JUnit XML lands in reports/junit/kmodcov/. Ends by folding what it measured into schemas/kmodcov_matrix.json (`make kmodcov-matrix`) — review the diff and commit it, or let `make release-kmodcov-matrix` do both when the change is not a downgrade.
+	@$(SAY) "pytest: otto_kmodcov toolchain proofs ($(KMODCOV_TOOLCHAINS); kernels $(KMODCOV_KERNELS); cross tree $(KMODCOV_CROSS_KDIR))"
+	@OTTO_KMODCOV_TOOLCHAINS="$(KMODCOV_TOOLCHAINS)" OTTO_KMODCOV_CROSS_KDIR="$(KMODCOV_CROSS_KDIR)" OTTO_KMODCOV_KERNELS="$(KMODCOV_KERNELS)" OTTO_KMODCOV_KERNELS_DIR="$(KMODCOV_KERNELS_DIR)" \
+	    timeout --foreground --kill-after=10s $(KMODCOV_TIMEOUT) \
+	    uv run pytest -m "kmodcov" -n0 --no-cov $(call junitxml,kmodcov); \
+	  lane=$$?; $(MAKE) --no-print-directory kmodcov-matrix; collate=$$?; \
 	  if [ $$lane -ne 0 ]; then exit $$lane; fi; exit $$collate
 
-KGCOV_MATRIX_BASELINE := reports/.kgcov-matrix-baseline.json
+KMODCOV_MATRIX_BASELINE := reports/.kmodcov-matrix-baseline.json
 
-kgcov-matrix: ## Fold the kgcov run's observation records into schemas/kgcov_matrix.json (the ONLY writer of a `measured-*` verdict there). Reads reports/kgcov-observations/, discards every record it cannot place loudly, writes a bed cell measured-ok only when the column's control passed in the same run, never downgrades a cell no run drew, and never commits — `make release-kgcov-matrix` commits an auto-acceptable refresh, and a downgrade stays yours to review.
-	@$(SAY) "collate: folding the kgcov run's observations into schemas/kgcov_matrix.json"
-	@uv run python -m scripts.collate_kgcov_matrix --write
+kmodcov-matrix: ## Fold the kmodcov run's observation records into schemas/kmodcov_matrix.json (the ONLY writer of a `measured-*` verdict there). Reads reports/kmodcov-observations/, discards every record it cannot place loudly, writes a bed cell measured-ok only when the column's control passed in the same run, never downgrades a cell no run drew, and never commits — `make release-kmodcov-matrix` commits an auto-acceptable refresh, and a downgrade stays yours to review.
+	@$(SAY) "collate: folding the kmodcov run's observations into schemas/kmodcov_matrix.json"
+	@uv run python -m scripts.collate_kmodcov_matrix --write
 
-release-kgcov-matrix: ## (Build & Release) Re-measure the otto_kgcov toolchain proofs and commit schemas/kgcov_matrix.json, REFUSING a downgrade (a new measured-broken, or a lost measured-ok). The release's kgcov stage; dev VM only. Run it by hand before a release to deal with a downgrade on your own terms.
-	@$(SAY) "release: re-measuring the kgcov compatibility matrix"
-	@mkdir -p $(dir $(KGCOV_MATRIX_BASELINE))
-	@git show HEAD:schemas/kgcov_matrix.json > $(KGCOV_MATRIX_BASELINE)
-	@$(MAKE) --no-print-directory kgcov
-	@uv run python scripts/check_matrix_downgrades.py --baseline $(KGCOV_MATRIX_BASELINE) --candidate schemas/kgcov_matrix.json
-	@rm -f $(KGCOV_MATRIX_BASELINE)
-	@if git diff --quiet -- schemas/kgcov_matrix.json; then \
-	    $(SAY) "release: the kgcov matrix was already current"; \
+release-kmodcov-matrix: ## (Build & Release) Re-measure the otto_kmodcov toolchain proofs and commit schemas/kmodcov_matrix.json, REFUSING a downgrade (a new measured-broken, or a lost measured-ok). The release's kmodcov stage; dev VM only. Run it by hand before a release to deal with a downgrade on your own terms.
+	@$(SAY) "release: re-measuring the kmodcov compatibility matrix"
+	@mkdir -p $(dir $(KMODCOV_MATRIX_BASELINE))
+	@git show HEAD:schemas/kmodcov_matrix.json > $(KMODCOV_MATRIX_BASELINE)
+	@$(MAKE) --no-print-directory kmodcov
+	@uv run python scripts/check_matrix_downgrades.py --baseline $(KMODCOV_MATRIX_BASELINE) --candidate schemas/kmodcov_matrix.json
+	@rm -f $(KMODCOV_MATRIX_BASELINE)
+	@if git diff --quiet -- schemas/kmodcov_matrix.json; then \
+	    $(SAY) "release: the kmodcov matrix was already current"; \
 	  else \
-	    git add schemas/kgcov_matrix.json \
-	    && git -c core.hooksPath=/dev/null commit -q -m "chore(matrix): re-measure the kgcov matrix" \
-	    && $(SAY) "release: committed a refreshed kgcov matrix"; \
+	    git add schemas/kmodcov_matrix.json \
+	    && git -c core.hooksPath=/dev/null commit -q -m "chore(matrix): re-measure the kmodcov matrix" \
+	    && $(SAY) "release: committed a refreshed kmodcov matrix"; \
 	  fi
 
 # The collate step -- spec §5's fold of a run's observation records into the
@@ -1297,7 +1297,7 @@ repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repe
 	@$(SAY) "pytest soak: full local suite, no browser (x$(COUNT), leak detector on)"
 	@$(LEAK_DETECT) uv run pytest \
 	    tests/unit tests/integration tests/e2e \
-	    -m "not browser and not chaos and not busybox and not conformance and not kgcov and not serial_timing" \
+	    -m "not browser and not chaos and not busybox and not conformance and not kmodcov and not serial_timing" \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \
 	    --no-cov \
@@ -1305,7 +1305,7 @@ repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repe
 	@$(SAY) "pytest soak: serial_timing discriminators, -n0 (x$(COUNT))"
 	@$(LEAK_DETECT) uv run pytest \
 	    tests/unit tests/integration tests/e2e \
-	    -m "serial_timing and not browser and not chaos and not busybox and not conformance and not kgcov" \
+	    -m "serial_timing and not browser and not chaos and not busybox and not conformance and not kmodcov" \
 	    -n0 \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \
@@ -1531,9 +1531,9 @@ check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; R
 # schemas/support_matrix.json and its renderer are docs inputs like any page:
 # docs/architecture/support-matrix.md is rendered from them at builder-inited, so a
 # re-collated matrix has to re-trigger the build the same way editing a page does.
-# schemas/kgcov_matrix.json and its renderer are the same shape, for the
-# instrumenting docs' kgcov-matrix page: without both entries here, a release
-# where `release-kgcov-matrix` refreshes the artifact but no docs/** file
+# schemas/kmodcov_matrix.json and its renderer are the same shape, for the
+# instrumenting docs' kmodcov-matrix page: without both entries here, a release
+# where `release-kmodcov-matrix` refreshes the artifact but no docs/** file
 # changed leaves docs/_build/html/index.html newer than every listed input,
 # `make docs` no-ops, and the release publishes a page disagreeing with the
 # artifact it just committed. src/otto/check/proven.json and its renderer are the
@@ -1544,8 +1544,8 @@ SPHINX_SRCS :=  docs/conf.py                        \
                 $(shell find src/otto -name '*.py') \
                 schemas/support_matrix.json         \
                 scripts/render_support_matrix.py    \
-                schemas/kgcov_matrix.json           \
-                scripts/render_kgcov_matrix.py      \
+                schemas/kmodcov_matrix.json           \
+                scripts/render_kmodcov_matrix.py      \
                 src/otto/check/proven.json          \
                 scripts/render_proven_range.py      \
 

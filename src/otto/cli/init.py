@@ -26,9 +26,9 @@ from .init_templates import (
     EXAMPLE_LAB_NAME,
     INSTRUCTIONS_TEMPLATE,
     INVENTORY_JSON_TEMPLATE,
-    KGCOV_DEV_TOOL_TEMPLATE,
-    KGCOV_STARTER_KBUILD_TEMPLATE,
-    KGCOV_STARTER_README_TEMPLATE,
+    KMODCOV_DEV_TOOL_TEMPLATE,
+    KMODCOV_STARTER_KBUILD_TEMPLATE,
+    KMODCOV_STARTER_README_TEMPLATE,
     LAB_JSON_TEMPLATE,
     LAB_README_TEMPLATE,
     SETTINGS_TEMPLATE,
@@ -52,8 +52,8 @@ class InitConfig:
 
     name: str
     version: str
-    kgcov_dir: str = "third_party/otto_kgcov"
-    """Where ``--kgcov`` vendors the otto_kgcov library, relative to the repo root."""
+    kmodcov_dir: str = "third_party/otto_kmodcov"
+    """Where ``--kmodcov`` vendors the otto_kmodcov library, relative to the repo root."""
 
     @property
     def module_base(self) -> str:
@@ -836,11 +836,11 @@ def _validate_instructions(root: Path) -> list[str]:
     return problems
 
 
-# ── kgcov ────────────────────────────────────────────────────────────────────
+# ── kmodcov ────────────────────────────────────────────────────────────────────
 
 
-def _kgcov_entries(root: Path) -> list[dict[str, Any]]:
-    """Every ``[[dev_tools]]`` entry of kind ``kgcov`` the settings declare.
+def _kmodcov_entries(root: Path) -> list[dict[str, Any]]:
+    """Every ``[[dev_tools]]`` entry of kind ``kmodcov`` the settings declare.
 
     ``[]`` when there is no readable settings file — mirrors :func:`_settings_data`.
     """
@@ -850,46 +850,49 @@ def _kgcov_entries(root: Path) -> list[dict[str, Any]]:
     entries = data.get("dev_tools", [])
     if not isinstance(entries, list):
         return []
-    return [e for e in entries if isinstance(e, dict) and e.get("kind") == "kgcov"]
+    return [e for e in entries if isinstance(e, dict) and e.get("kind") == "kmodcov"]
 
 
-def _kgcov_sources(root: Path) -> list[Path]:
-    """Return the vendored directories the kgcov entries name via ``source``, anchored to *root*."""
+def _kmodcov_sources(root: Path) -> list[Path]:
+    """Return the vendored directories the kmodcov entries name via ``source``, under *root*."""
     from ..utils import anchor_path
 
     return [
         anchor_path(Path(str(e["source"])), root)
-        for e in _kgcov_entries(root)
+        for e in _kmodcov_entries(root)
         if isinstance(e.get("source"), str)
     ]
 
 
-def _detect_kgcov(root: Path) -> bool:
-    return bool(_kgcov_entries(root)) or (root / "third_party" / "otto_kgcov" / "kgcov.h").is_file()
+def _detect_kmodcov(root: Path) -> bool:
+    return (
+        bool(_kmodcov_entries(root))
+        or (root / "third_party" / "otto_kmodcov" / "kmodcov.h").is_file()
+    )
 
 
-def _validate_kgcov(root: Path) -> list[str]:
+def _validate_kmodcov(root: Path) -> list[str]:
     """Require a declared ``source`` to hold the library.
 
     Drift from the installed otto is advisory, never a failure — see
-    :func:`_kgcov_warnings`.
+    :func:`_kmodcov_warnings`.
     """
-    from ..kgcov import check_tree
+    from ..kmodcov import check_tree
 
     return [
-        f"{source}: a kgcov dev tool names it as `source`, but there is no otto_kgcov "
-        f"there — run `otto cov kgcov export {source}`"
-        for source in _kgcov_sources(root)
+        f"{source}: a kmodcov dev tool names it as `source`, but there is no otto_kmodcov "
+        f"there — run `otto cov kmodcov export {source}`"
+        for source in _kmodcov_sources(root)
         if check_tree(source).state == "absent"
     ]
 
 
-def _kgcov_warnings(root: Path) -> list[str]:
+def _kmodcov_warnings(root: Path) -> list[str]:
     """Vendored copies that differ from the installed otto — reported, never a failure."""
-    from ..kgcov import check_tree
+    from ..kmodcov import check_tree
 
     warnings: list[str] = []
-    for source in _kgcov_sources(root):
+    for source in _kmodcov_sources(root):
         result = check_tree(source)
         if result.state != "differs":
             continue
@@ -897,63 +900,63 @@ def _kgcov_warnings(root: Path) -> list[str]:
         names = ", ".join([*result.differing, *result.missing])
         warnings.append(
             f"{source}{origin} is not the installed otto's library: {names} — "
-            f"re-export with `otto cov kgcov export {source}` and review the diff"
+            f"re-export with `otto cov kmodcov export {source}` and review the diff"
         )
     return warnings
 
 
-def _kgcov_dir_path(root: Path, kgcov_dir: str) -> Path:
-    """Anchor *kgcov_dir* under *root*, refusing anything that would land outside it.
+def _kmodcov_dir_path(root: Path, kmodcov_dir: str) -> Path:
+    """Anchor *kmodcov_dir* under *root*, refusing anything that would land outside it.
 
-    ``pathlib`` silently discards *root* when *kgcov_dir* is absolute
+    ``pathlib`` silently discards *root* when *kmodcov_dir* is absolute
     (``root / "/etc"`` is just ``/etc``), and a ``../`` value can climb back
     out of the repo; a degenerate ``"."``/``""`` collapses onto *root*
     itself, which would export the library into the repo root and drop the
     consumer starter as a SIBLING of *root* (``starter = vendored.parent /
     f"{vendored.name}-consumer"``). All three are refused here, before any
-    file is written. Raises ``ValueError`` naming *kgcov_dir*;
+    file is written. Raises ``ValueError`` naming *kmodcov_dir*;
     :func:`init_command` re-raises it as ``typer.BadParameter``.
     """
-    vendored = root / kgcov_dir
+    vendored = root / kmodcov_dir
     root_r = root.resolve()
     vendored_r = vendored.resolve()
     if root_r not in vendored_r.parents:
         raise ValueError(
-            f"--kgcov-dir {kgcov_dir!r} must be a relative path strictly inside the repo "
+            f"--kmodcov-dir {kmodcov_dir!r} must be a relative path strictly inside the repo "
             f"({root}); it resolves to {vendored_r}"
         )
     return vendored
 
 
-def _scaffold_kgcov(root: Path, cfg: InitConfig) -> list[Path]:
+def _scaffold_kmodcov(root: Path, cfg: InitConfig) -> list[Path]:
     """Export the library (otto-owned, ALWAYS refreshed), then wire the repo once.
 
-    The settings entry is appended commented, only when no kgcov entry exists;
+    The settings entry is appended commented, only when no kmodcov entry exists;
     the consumer starter beside the export is written only where absent —
     both are the user's once created, unlike the library itself.
     """
-    from ..kgcov import SHIPPED_FILES, VERSION_HEADER, export_tree
+    from ..kmodcov import SHIPPED_FILES, VERSION_HEADER, export_tree
 
-    vendored = _kgcov_dir_path(root, cfg.kgcov_dir)
+    vendored = _kmodcov_dir_path(root, cfg.kmodcov_dir)
     export_tree(vendored)
     # Every shipped file counts as created: the directory is otto's, refreshed whole.
     created: list[Path] = [vendored / name for name in (*SHIPPED_FILES, VERSION_HEADER)]
     settings = root / ".otto" / "settings.toml"
     settings_present = settings.is_file()
     already_wired = settings_present and (
-        _kgcov_entries(root) or '#kind = "kgcov"' in settings.read_text()
+        _kmodcov_entries(root) or '#kind = "kmodcov"' in settings.read_text()
     )
     if settings_present and not already_wired:
         with settings.open("a") as f:
-            f.write(KGCOV_DEV_TOOL_TEMPLATE.format(kgcov_dir=cfg.kgcov_dir))
+            f.write(KMODCOV_DEV_TOOL_TEMPLATE.format(kmodcov_dir=cfg.kmodcov_dir))
         created.append(settings)
     starter = vendored.parent / f"{vendored.name}-consumer"
     starter.mkdir(parents=True, exist_ok=True)
     for name, text in (
-        ("kgcov_begin.c", '#include "kgcov.h"\nKGCOV_SENTINEL_BEGIN;\n'),
-        ("kgcov_end.c", '#include "kgcov.h"\nKGCOV_SENTINEL_END;\n'),
-        ("Kbuild.example", KGCOV_STARTER_KBUILD_TEMPLATE.format(kgcov_dir_name=vendored.name)),
-        ("README.md", KGCOV_STARTER_README_TEMPLATE.format(kgcov_dir=cfg.kgcov_dir)),
+        ("kmodcov_begin.c", '#include "kmodcov.h"\nKMODCOV_SENTINEL_BEGIN;\n'),
+        ("kmodcov_end.c", '#include "kmodcov.h"\nKMODCOV_SENTINEL_END;\n'),
+        ("Kbuild.example", KMODCOV_STARTER_KBUILD_TEMPLATE.format(kmodcov_dir_name=vendored.name)),
+        ("README.md", KMODCOV_STARTER_README_TEMPLATE.format(kmodcov_dir=cfg.kmodcov_dir)),
     ):
         if _write_if_absent(starter / name, text):
             created.append(starter / name)
@@ -966,10 +969,10 @@ AREAS: list[Area] = [
     Area("lab", _detect_lab, _validate_lab, _scaffold_lab),
     Area("tests", _detect_tests, _validate_tests, _scaffold_tests),
     Area("instructions", _detect_instructions, _validate_instructions, _scaffold_instructions),
-    Area("kgcov", _detect_kgcov, _validate_kgcov, _scaffold_kgcov),
+    Area("kmodcov", _detect_kmodcov, _validate_kmodcov, _scaffold_kmodcov),
 ]
 
-OPT_IN_AREAS: frozenset[str] = frozenset({"kgcov"})
+OPT_IN_AREAS: frozenset[str] = frozenset({"kmodcov"})
 """Areas ``--all`` and the interactive prompt never scaffold: only their own flag does.
 
 A kernel-module coverage library does not belong in every new repo."""
@@ -1049,20 +1052,20 @@ async def init_command(
     instructions: Annotated[
         bool, typer.Option("--instructions", help="Scaffold the instructions area (pylib module).")
     ] = False,
-    kgcov: Annotated[
+    kmodcov: Annotated[
         bool,
         typer.Option(
-            "--kgcov",
+            "--kmodcov",
             help=(
-                "Scaffold (or refresh, if present) the kgcov area: vendor the otto_kgcov "
+                "Scaffold (or refresh, if present) the kmodcov area: vendor the otto_kmodcov "
                 "library, a commented [[dev_tools]] entry, and a consumer starter."
             ),
         ),
     ] = False,
-    kgcov_dir: Annotated[
+    kmodcov_dir: Annotated[
         str,
-        typer.Option("--kgcov-dir", help="Where --kgcov vendors the library (repo-relative)."),
-    ] = "third_party/otto_kgcov",
+        typer.Option("--kmodcov-dir", help="Where --kmodcov vendors the library (repo-relative)."),
+    ] = "third_party/otto_kmodcov",
     name: Annotated[
         str,
         typer.Option("--name", help="Product name for settings.toml (default: directory name)."),
@@ -1085,16 +1088,16 @@ async def init_command(
     if not root.is_dir():
         raise typer.BadParameter(f"{root} is not a directory", param_hint="--path")
     try:
-        _kgcov_dir_path(root, kgcov_dir)
+        _kmodcov_dir_path(root, kmodcov_dir)
     except ValueError as e:
-        raise typer.BadParameter(str(e), param_hint="--kgcov-dir") from e
+        raise typer.BadParameter(str(e), param_hint="--kmodcov-dir") from e
 
     requested = {
         "schemas": schemas,
         "lab": lab,
         "tests": tests,
         "instructions": instructions,
-        "kgcov": kgcov,
+        "kmodcov": kmodcov,
     }
     explicit = any(requested.values())
     interactive = not (all_areas or explicit)
@@ -1105,8 +1108,8 @@ async def init_command(
     # detected schemas area (the doctor's "re-run `otto init --schemas`"
     # remedy). --all / interactive keep missing-only semantics.
     refresh_names: set[str] = {"schemas"} if schemas else set()
-    if kgcov:
-        refresh_names.add("kgcov")
+    if kmodcov:
+        refresh_names.add("kmodcov")
 
     if "settings" in missing_names and (all_areas or explicit):
         typer.echo("settings.toml is the repo marker — scaffolding it first.")
@@ -1119,7 +1122,7 @@ async def init_command(
     cfg = InitConfig(
         name=name or _existing_settings_name(root) or root.name,
         version=version,
-        kgcov_dir=kgcov_dir,
+        kmodcov_dir=kmodcov_dir,
     )
 
     scaffolded: list[str] = []
@@ -1208,7 +1211,7 @@ async def init_command(
     # Advisory only — printed after the verdict table, never folded into it,
     # and deliberately not part of `failed`.
     warnings = _lab_warnings(root, inventory_cache)
-    warnings.extend(_kgcov_warnings(root))
+    warnings.extend(_kmodcov_warnings(root))
     if warnings:
         rprint("\n[bold yellow]Warnings[/bold yellow]")
         for warning in warnings:

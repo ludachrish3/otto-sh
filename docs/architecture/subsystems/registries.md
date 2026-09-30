@@ -38,7 +38,7 @@ functions; the class is the shared engine behind them.
 | `POWER_CONTROLLERS` | power controller | `otto.host.power.register_power_controller` | `command` |
 | `SESSION_SETUPS` | session setup hook | `otto.host.session_setup.register_session_setup` | — |
 | `PRODUCT_KINDS` | settings-declared product kind | `otto.host.product.register_product_kind` | `shell`, `kmod`, `llext`, `docker_image` |
-| `DEV_TOOL_KINDS` | settings-declared dev tool kind | `otto.host.dev_tool.register_dev_tool_kind` | `shell`, `kmod`, `kgcov` |
+| `DEV_TOOL_KINDS` | settings-declared dev tool kind | `otto.host.dev_tool.register_dev_tool_kind` | `shell`, `kmod`, `kmodcov` |
 | `LAB_REPOSITORIES` | lab repository (host source) | {func}`otto.labs.register_lab_repository` | `json` |
 | `INVENTORY_BACKENDS` | inventory backend | `otto.inventory.register_inventory_backend` | `json`, `netbox` |
 | `RESERVATION_BACKENDS` | reservation backend | `otto.reservations.registry.register_reservation_backend` | `json`, `none` |
