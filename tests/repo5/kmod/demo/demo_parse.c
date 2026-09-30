@@ -6,6 +6,7 @@
 #include <linux/string.h>
 
 #include "demo.h"
+#include "demo_compat.h"
 
 static int parse_policy(const char *word, enum demo_policy *out)
 {

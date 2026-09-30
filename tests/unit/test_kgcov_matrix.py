@@ -16,11 +16,13 @@ from tests._fixtures.kgcov_matrix import (
     CROSS_PROFILE,
     FORMAT,
     KGCOV_TESTS,
+    RENAMED_ROWS,
     SCHEMA_PATH,
     SURFACES,
     axes_mismatch,
     bed_profile_ids,
     build_matrix,
+    build_profile_ids,
     discover_contracts,
     load_matrix,
     profiles,
@@ -62,17 +64,64 @@ def test_exactly_one_bed_surface_is_the_control(committed):
     assert controls[0]["venue"] == BED
 
 
-def test_the_column_axis_is_the_makefile_default_plus_the_cross_build(committed):
+def test_the_column_axis_is_the_two_makefile_defaults_bed_then_build(committed):
     makefile = (PROJECT_ROOT / "Makefile").read_text(encoding="utf-8")
-    m = re.search(r"^KGCOV_TOOLCHAINS \?= (.+)$", makefile, re.MULTILINE)
-    assert m, "the Makefile no longer declares KGCOV_TOOLCHAINS ?= …"
-    expected = [*m.group(1).split(","), CROSS_PROFILE]
+    bed = re.search(r"^KGCOV_TOOLCHAINS \?= (.+)$", makefile, re.MULTILINE)
+    build = re.search(r"^KGCOV_KERNELS \?= (.+)$", makefile, re.MULTILINE)
+    assert bed, "the Makefile no longer declares KGCOV_TOOLCHAINS ?= …"
+    assert build, "the Makefile no longer declares KGCOV_KERNELS ?= …"
+    expected = [*bed.group(1).split(","), *build.group(1).split(",")]
     assert [p["id"] for p in committed["profiles"]] == expected
-    assert bed_profile_ids() == m.group(1).split(",")
+    assert bed_profile_ids() == bed.group(1).split(",")
+    assert build_profile_ids() == build.group(1).split(",")
+    assert build_profile_ids()[0] == CROSS_PROFILE
     assert [p.id for p in profiles()] == expected
     venues = {p["id"]: p["venue"] for p in committed["profiles"]}
-    assert venues[CROSS_PROFILE] == BUILD
+    assert all(venues[p] == BUILD for p in build_profile_ids())
     assert all(venues[p] == BED for p in bed_profile_ids())
+
+
+def test_the_cross_rows_are_gone_and_every_build_row_has_its_new_id(committed):
+    ids = {s.id for s in SURFACES}
+    assert not [i for i in ids if i.startswith("cross-")]
+    assert not [i for i in committed["cells"] if i.startswith("cross-")]
+    build_rows = [s.id for s in SURFACES if s.venue == BUILD]
+    assert build_rows == [
+        "build-release",
+        "build-target-isa",
+        "build-compiler",
+        "build-instrumented-bracketed",
+        "build-fixture-untouched",
+        "build-linked-against-library",
+        "build-library-warning-free",
+        "build-clang-backend-compiles",
+        "build-ctors-convention-bracketed",
+    ]
+    assert set(RENAMED_ROWS.values()) <= ids
+
+
+def test_a_renamed_row_carries_its_cell_and_its_nodeid_is_rewritten(committed):
+    """The pre-rename artifact shape: a `cross-*` row with a measured x86_64-cross cell."""
+    old = json.loads(json.dumps(committed))
+    old_contract = "tests/e2e/cov/test_kgcov_cross_build.py::test_both_modules_are_x86_64_objects"
+    measured = {
+        "status": "measured-ok",
+        "nodeid": old_contract,
+        "venue": "build",
+        "as_of": "2026-09-19",
+        "outcome": "passed",
+        "compiler_version": "13.3.0",
+        "kernel_release": "6.8.0",
+        "control": None,
+    }
+    old["cells"].pop("build-target-isa")
+    old["cells"]["cross-x86_64-objects"] = {CROSS_PROFILE: measured}
+    rebuilt = build_matrix(old)
+    carried = rebuilt["cells"]["build-target-isa"][CROSS_PROFILE]
+    new_contract = next(s.contract for s in SURFACES if s.id == "build-target-isa")
+    assert carried == {**measured, "nodeid": new_contract}
+    assert "cross-x86_64-objects" not in rebuilt["cells"]
+    assert rebuilt["cells"]["build-target-isa"]["3.13"] == {"status": "untested"}
 
 
 def test_the_grid_pairs_every_row_with_every_column_of_its_venue_and_nothing_else(committed):
@@ -262,7 +311,7 @@ def test_a_non_iso_date_is_rejected(validator, committed):
 def test_a_null_control_on_a_bed_cell_is_a_schema_matter_for_the_collator_not_the_schema(
     validator, committed
 ):
-    # The schema admits null (the build column needs it); the cross-reference
+    # The schema admits null (the build columns need it); the cross-reference
     # "a bed measured-ok names the control" is the guard above, not the schema.
     assert _cell(validator, committed, {**_OK, "control": None}) == []
 

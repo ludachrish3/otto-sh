@@ -20,10 +20,8 @@
 #include <linux/fs.h>
 #include <linux/list.h>
 #include <linux/module.h>
-#include <linux/namei.h>
 #include <linux/sched.h>
 #include <linux/string.h>
-#include <linux/uaccess.h>
 
 #include "kgcov.h"
 #include "kgcov_gcov.h"
@@ -58,15 +56,8 @@ static struct task_struct *kgcov_registering_task; /* the thread running the wal
 
 static int kgcov_mkdir(const char *path)
 {
-	struct path parent;
-	struct dentry *d;
-	int err;
+	int err = KGCOV_MKDIR(path);
 
-	d = kern_path_create(AT_FDCWD, path, &parent, LOOKUP_DIRECTORY);
-	if (IS_ERR(d))
-		return PTR_ERR(d) == -EEXIST ? 0 : PTR_ERR(d);
-	err = vfs_mkdir(mnt_idmap(parent.mnt), d_inode(parent.dentry), d, 0755);
-	done_path_create(&parent, d);
 	return err == -EEXIST ? 0 : err;
 }
 
@@ -100,7 +91,7 @@ static int kgcov_write_file(const char *path, const char *buf, size_t len)
 	if (IS_ERR(f))
 		return PTR_ERR(f);
 	while (len) {
-		ssize_t w = kernel_write(f, buf, len, &pos);
+		ssize_t w = KGCOV_FILE_WRITE(f, buf, len, &pos);
 
 		if (w < 0) {
 			err = w;
@@ -211,16 +202,16 @@ static ssize_t kgcov_reset_write(struct file *f, const char __user *ubuf, size_t
 
 static const struct file_operations kgcov_dump_fops = {
 	.owner = THIS_MODULE,
-	.open = simple_open,
+	.open = KGCOV_FOPS_OPEN,
 	.write = kgcov_dump_write,
-	.llseek = noop_llseek,
+	.llseek = KGCOV_LLSEEK,
 };
 
 static const struct file_operations kgcov_reset_fops = {
 	.owner = THIS_MODULE,
-	.open = simple_open,
+	.open = KGCOV_FOPS_OPEN,
 	.write = kgcov_reset_write,
-	.llseek = noop_llseek,
+	.llseek = KGCOV_LLSEEK,
 };
 
 /* ---- the API ------------------------------------------------------------ */

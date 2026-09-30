@@ -7,9 +7,14 @@ provides the runtime symbols those constructors and objects reference (gcc's
 `__gcov_*` or clang's `llvm_gcov_*`/`llvm_gcda_*`, whichever compiler built
 the library), keeps an accumulator per instrumented object (a dump never
 double counts, and two dumps of the same run add correctly), and exposes a
-debugfs control file per registered module. Any gcc from 4.7 to 15, or
-clang 11 and newer; the library and its consumers must be built by the same
-compiler family, and for gcc by the same major.
+debugfs control file per registered module. It builds with any gcc from 4.7
+to 15, or clang 11 and newer. It builds against every kernel from 2.6.32 on,
+proven through 6.17. The 2.6.39 to 3.5 window builds from arms no kernel in
+the proof set has run; `kgcov_compat.h` marks them UNTESTED beside the code.
+Every kernel-facing call goes through a `KGCOV_` name whose default
+`kgcov_compat.h` chooses by kernel version, and the library and its
+consumers must be built by the same compiler family, and for gcc by the
+same major.
 
 This directory reaches a user's repo one of two ways: `otto init --kgcov`
 vendors it (default `third_party/otto_kgcov`) alongside a commented
@@ -23,8 +28,13 @@ the same drift as a warning. Every build reports a `MODULE_VERSION` of
 layout, the `gcov_dir` parameter and the consumer macros below all move
 together with it, and otto refuses to load a `.ko` whose `n` does not match
 its own. A `kgcov_local.h` beside the sources, never exported nor compared,
-lets a build replace the kernel-facing allocation, lock and debugfs names
-`kgcov_gcov.h` isolates for it, one name at a time. See
+lets a build replace, one name at a time, any of the kernel-facing names
+`kgcov_compat.h` isolates for it — mkdir, file write, fops, the
+module-address range, allocation, the lock and debugfs — the same header
+that holds the kernel version ladder; the supported range, the full name
+list and the override contract are on the kernel-modules guide page's
+[Kernel versions](../../../docs/cli/cov/instrumenting/kernel-modules.md#kernel-versions)
+section. See
 [the kernel-modules guide page](../../../docs/cli/cov/instrumenting/kernel-modules.md#getting-the-library)
 for all of the above in more detail.
 
@@ -43,7 +53,9 @@ A consumer becomes coverage-instrumented in three steps:
    `.init_array`.
 2. **Flags.** Compile every instrumented object with `$(KGCOV_CFLAGS)` from
    `consumer.mk`, which also adds `-I$(KGCOV)` via `ccflags-y` so `kgcov.h`
-   is on the include path — nothing else to pass.
+   is on the include path — nothing else to pass. `consumer.mk` also applies
+   `kgcov.lds` at the module's intermediate link, which is what brackets a
+   `.ctors`-convention toolchain's constructors too.
 3. **Macros.** Call `KGCOV_DECLARE()` at file scope, `KGCOV_INIT()` as the
    first statement of the module's init routine, and `KGCOV_EXIT()` as the
    last statement of its exit routine.

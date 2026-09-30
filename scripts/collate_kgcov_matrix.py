@@ -26,7 +26,7 @@ THE FIVE RULES, each structural:
    of the same ``run_id`` is ``passed``; otherwise the cell is written
    ``measured-broken`` with the reason in the report and in its
    ``failure_summary`` — a contract whose instrument did not demonstrate it
-   could fail is not evidence. The build column has no control and its
+   could fail is not evidence. The build columns have no control and their
    cells say so (``control: null``).
 4. A cell the run did not draw is copied across unchanged; the collator
    never downgrades what it did not measure.
@@ -109,7 +109,7 @@ def _bucket(records: "list[dict]", matrix: dict) -> "tuple[list[dict], list[Disc
         ),
         (
             "row and column do not meet -- this contract is not measured in that venue "
-            "(the grid holds bed rows by bed columns, build rows by the build column)"
+            "(the grid holds bed rows by bed columns, build rows by the build columns)"
         ),
         (
             "not evidence about the contract -- a skip, an xfail or an unexpected pass "

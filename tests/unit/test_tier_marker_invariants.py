@@ -1980,16 +1980,17 @@ def _assert_lane_collects_the_bed_venue(
 #
 # Two modules carry `kgcov`: the toolchain matrix (integration + kgcov)
 # rebuilds the kernel-module fixture with each compiler OTTO_KGCOV_TOOLCHAINS
-# names and runs the kmod coverage e2e on the bed per compiler; the cross
-# build (hostless + kgcov) builds the fixture from a kernel source tree on the
-# dev VM for another ISA. Neither can run where the compilers, the tree or the
-# bed are absent, and both FAIL there rather than skip — a release must be
-# able to trust a green — which is why every catch-all AND every positive
-# resource selector must exclude the marker: the matrix carries `integration`,
-# so M_UNIX reaches it without `not kgcov`; the cross build carries
-# `hostless`, so CI's hostless lane does. `make kgcov` is the one lane that
-# selects it, and `make release` invokes that lane: the tier runs rarely by
-# hand and always before a release (the principle stated 2026-09-18).
+# names and runs the kmod coverage e2e on the bed per compiler; the kernel
+# builds (hostless + kgcov) build the fixture for every kernel of a
+# provisioned set on the dev VM, most of them under docker. Neither can run
+# where the compilers, the tree, the bed, docker or the provisioned set are
+# absent, and both FAIL there rather than skip — a release must be able to
+# trust a green — which is why every catch-all AND every positive resource
+# selector must exclude the marker: the matrix carries `integration`, so
+# M_UNIX reaches it without `not kgcov`; the kernel builds carry `hostless`,
+# so CI's hostless lane does. `make kgcov` is the one lane that selects it,
+# and `make release` invokes that lane: the tier runs rarely by hand and
+# always before a release (the principle stated 2026-09-18).
 #
 # G12c differs from G8c/G11c on purpose: nothing in CI runs this lane and
 # nothing should (no compilers, no bed, no source tree there), so the

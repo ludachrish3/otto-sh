@@ -79,20 +79,16 @@ Writing to `reset` zeroes both. `otto_kgcov` never parses a `.gcda` itself
   walk only the list of files this otto currently ships — so a re-export
   after an upgrade can leave such a file behind, for the repo's own diff to
   catch.
-- **Kernel differences**: a `kgcov_local.h` beside the sources takes effect
-  with no flag — `Kbuild` force-includes it with `-include` whenever it
-  exists, ahead of `kgcov_gcov.h`'s own `#ifndef` guards, so a rebuild is
-  all that is needed. It replaces one kernel-facing name at a time —
-  `KGCOV_ALLOC`, `KGCOV_ALLOC_ARRAY`, `KGCOV_STRDUP`, `KGCOV_MEMDUP`,
-  `KGCOV_ASPRINTF`, `KGCOV_FREE`, `KGCOV_BIG_ALLOC`, `KGCOV_BIG_FREE`,
-  `KGCOV_DEFINE_LOCK`, `KGCOV_LOCK`, `KGCOV_UNLOCK`, `KGCOV_DEBUGFS_DIR`,
-  `KGCOV_DEBUGFS_FILE`, and `KGCOV_DEBUGFS_REMOVE` — under a contract the
-  library relies on and never checks: `KGCOV_ALLOC`/`KGCOV_ALLOC_ARRAY`
-  must return zeroed memory, `KGCOV_FREE`/`KGCOV_BIG_FREE` must accept
-  `NULL`, and whatever an allocator returns must be releasable by its
-  matching `KGCOV_FREE` — a mismatched pair corrupts rather than fails.
-  `check` ignores the file and `export` never overwrites it. Proving a
-  customised library against the matrix's own contracts is issue #406.
+- **Kernel differences**: the library builds from 2.6.32 on; the 2.6.39 to
+  3.5 window builds from arms no kernel in the proof set has run, marked
+  untested in the header, and a `kgcov_local.h` beside the sources replaces
+  one kernel-facing name at a time. `Kbuild` force-includes that file with
+  `-include` whenever it exists, ahead of `kgcov_compat.h`'s own `#ifndef`
+  defaults, so a rebuild is all that is needed. See
+  [Kernel versions](#kernel-versions) for the range, the names and the
+  contract. `check` ignores the file and `export` never overwrites it.
+  Proving a customised library against the matrix's own contracts is issue
+  #406.
 - **What otto checks**: the built `.ko`'s `MODULE_VERSION`
   (`<otto version>+kgcov<n>`, read directly off the file, no host tool)
   must carry this otto's interface number — checked at lab load when the
@@ -178,6 +174,14 @@ before it:
 :start-at: "demo_queue_free(&queue);"
 :end-at: "KGCOV_EXIT();"
 ```
+
+The demo also carries a `demo_compat.h`, three definitions of what a
+module of 2.6.32's age carries itself: `simple_open` below 3.5, `kstrtol`
+below 2.6.39 and `strim` below 2.6.33, each under its own version guard.
+It is the demo's business, not the library's — a module
+written for one kernel needs none of it — and it is what lets `make kgcov`
+build the same three instrumented units, with the same coverage
+expectations, on every kernel of the set.
 
 ## Building
 
@@ -282,6 +286,36 @@ The release to check `vermagic` against is the tree's own
 (`cat linux-6.8/include/config/kernel.release`), which is what the script
 reads when `KDIR` is set and no release is given.
 
+**Build an old kernel's modules with that kernel's own era of compiler.** A
+kernel tree is coupled to the compilers of its time in both directions: its
+headers dispatch on `__GNUC__` (kernels before 4.2 include a
+`compiler-gcc<major>.h` that exists only for the majors they knew), its
+kbuild assumes that compiler's defaults (2.6.32 and 3.13 refuse a
+PIE-by-default gcc, 2.6.32's host tools a `-fno-common` one), and
+distributions backport compiler fixes into their long-term kernels
+precisely because a newer gcc is unsupported there. A container image of
+the kernel's own distribution release is the cheap way to have that
+compiler; this is how `make kgcov` builds for every provisioned kernel it
+proves. Its oldest column, 2.6.32 in Ubuntu 12.04 with gcc 4.7 (the oldest
+gcc the library's `gcov_info` layouts cover), runs exactly this, inside
+the image:
+
+```bash
+tar -xJf linux-2.6.32.71.tar.xz
+make -C linux-2.6.32.71 CC=gcc-4.7 HOSTCC=gcc-4.7 defconfig modules_prepare
+KDIR=$PWD/linux-2.6.32.71 CC=gcc-4.7 KMAKEFLAGS="HOSTCC=gcc-4.7 KBUILD_MODPOST_WARN=1" \
+    src/otto/kgcov/build.sh build
+```
+
+The images and the prepared trees come from
+`scripts/provision_kgcov_kernels.sh`, whose header is the one home of that
+mechanism.
+
+A newer gcc *can* be shimmed onto such a tree — a `compiler-gcc<major>.h`
+copied from `compiler-gcc4.h`, `KCFLAGS=-fno-PIE`, `HOSTCFLAGS=-fcommon` —
+but that certifies an environment no user of that kernel has, and
+`make kgcov` does not certify it.
+
 A stock kernel's config was written for the compiler that built it, and
 kbuild applies that config's compiler-specific flags to every external
 module. Two cases need `KMAKEFLAGS`, both proven on Ubuntu's
@@ -300,10 +334,26 @@ module. Two cases need `KMAKEFLAGS`, both proven on Ubuntu's
 
 What is proven, and where: `make kgcov` (which `make release` runs) rebuilds
 the fixture with gcc 9, 10, 11, 12, 13 and 14 and with clang 18 and runs
-the kernel-module coverage suite on the bed for each, then cross-builds it
-for x86_64 from a 6.8 source tree; every gcc from 4.7 on is in the format
-table, and every clang from 11 on shares one format. `.ctors`-only
-toolchains, which predate `.init_array`, are not supported.
+the kernel-module coverage suite on the bed for each, then builds it for
+every kernel of the set under [Kernel versions](#kernel-versions)
+(`x86_64-cross`, `2.6.32`, `3.13`, `4.4`, `5.4`, `5.15`, `6.17`): each
+provisioned kernel inside the image of its own era described above, and
+the x86_64 cross build on the host with the VM's `x86_64-linux-gnu-gcc`
+13. Every gcc from 4.7 on is in the format table, and every clang from 11
+on shares one format.
+
+Where a gcc puts its constructor is decided when that gcc was configured,
+not by its version: Ubuntu's `x86_64-linux-gnu-gcc-9` cross package, a
+compiler `make kgcov` does not build with, emits `.ctors.65435` where the
+native `gcc-9` emits `.init_array.00100`. No compiler `make kgcov` builds
+with emits `.ctors`, which is why the matrix carries a synthetic
+`.ctors`-convention row. The library's own linker script, `kgcov.lds`, which
+`consumer.mk` applies at the consumer's intermediate link, folds
+`.init_array.*`, `.ctors.*` and `.ctors` into the one `.init_array` the
+sentinels bracket, so both conventions work on every kernel — including
+kernels before 4.0, whose module linker script orders none of these sections
+itself. What stays unsupported is older than either convention: the gcc 4.4
+to 4.6 counter layout (issue #492).
 
 Getting a module to load is not the same as getting its counters read
 back. The gcov that reads them is chosen per product from the data's own
@@ -332,6 +382,68 @@ root — which is the failure the capture exists to surface. If you have the
 kernel tree on the reporting machine, `["--base-directory", "<kernel
 tree>"]` travels the same way and resolves the records instead of dropping
 them.
+
+## Kernel versions
+
+The library builds against every kernel from 2.6.32 on, proven through 6.17,
+each compiled with a gcc of its kernel's own era, 4.7 for 2.6.32 up to 15
+for 6.17. Every kernel-facing call goes through a `KGCOV_` name whose
+default `kgcov_compat.h` chooses by `LINUX_VERSION_CODE`, and a
+`kgcov_local.h` beside the sources defines a name first to replace its
+default outright (see [Getting the library](#getting-the-library)). The
+2.6.39 to 3.5 window is the one stretch no kernel in otto's set has run:
+from 2.6.39 to 3.0 upstream had renamed `path_lookup()` to
+`kern_path_parent()`, and from 3.1 to 3.5 `kern_path_create()` existed
+without `done_path_create()`. The header carries an arm for each half,
+marked UNTESTED in a comment beside the code that names the headers column
+which would prove it; a module on those kernels builds, and the caveat sits
+where the reader is. Proving them is issue #531. A kernel whose version
+number lies about its APIs (a distribution kernel with backports) gets the
+same remedy, a `kgcov_local.h` that defines the name. On the beds' 6.8
+kernel the arm each name selects for 6.8 runs live, which is the newest for
+every name but `KGCOV_MKDIR` (its 6.3 to 6.14 arm); every other proven arm
+is build-proven (compiled against that kernel's tree, never loaded) on the
+kernel columns of the {ref}`compatibility matrix <kgcov-matrix>`, and the
+two untested arms are proven by nothing yet.
+
+| name | what it does | arms by kernel version | proven by |
+|---|---|---|---|
+| `KGCOV_MKDIR(path)` | create the last component of an absolute path whose parents exist; `-EEXIST` counts as success | below 2.6.39 `path_lookup` + `lookup_create`; 2.6.39–3.0 the same with `kern_path_parent` (untested); 3.1–3.5 `kern_path_create` with `done_path_create` written out (untested); 3.6–4.0 `kern_path_create` with `->d_inode`; 4.1–5.11 `d_inode()`; 5.12–6.2 `mnt_user_ns`; 6.3–6.14 `mnt_idmap`; 6.15+ `vfs_mkdir` returns the dentry | `2.6.32`, `3.13`, `4.4`, `5.15`, the beds' 6.8 live, and the 6.8 tree (`x86_64-cross`), `6.17`, the untested arms: none |
+| `KGCOV_FILE_WRITE(file, buf, len, ppos)` | write a kernel buffer at `*ppos`, advancing it | below 3.9 `vfs_write` under `set_fs`; 3.9–4.13 `kernel_write` with the offset by value; 4.14+ `kernel_write` by pointer | `2.6.32`, `3.13`, `5.4` |
+| `KGCOV_BIG_ALLOC` / `KGCOV_BIG_FREE` | the `.gcda` image buffer | below 4.12 `vmalloc`/`vfree`; 4.12+ `kvmalloc`/`kvfree` | `4.4`, `5.4` |
+| `KGCOV_FOPS_OPEN` | the debugfs files' `open` | below 3.5 a local open storing `i_private`; 3.5+ `simple_open` | `2.6.32`, `3.13` |
+| `KGCOV_LLSEEK` | the debugfs files' `llseek` | below 2.6.35 `no_llseek`; 2.6.35+ `noop_llseek` | `2.6.32`, `3.13` |
+| `KGCOV_WITHIN_MODULE(addr, mod)` | whether an address is the module's | below 3.17 `within_module_core` or `within_module_init`; 3.17+ `within_module` | `3.13`, `4.4` |
+| `list_first_entry_or_null`, `list_last_entry`, `list_next_entry`, `__list_del_entry` | the list helpers the clang backend uses | provided below 3.10, 3.13, 3.13 and 2.6.38 | `2.6.32`, `3.13` (the "build: the clang backend's unit compiles with the column's gcc" row) |
+| `KGCOV_ALLOC`, `KGCOV_ALLOC_ARRAY`, `KGCOV_STRDUP`, `KGCOV_MEMDUP`, `KGCOV_ASPRINTF`, `KGCOV_FREE`, `KGCOV_DEFINE_LOCK`, `KGCOV_LOCK`, `KGCOV_UNLOCK`, `KGCOV_DEBUGFS_DIR`, `KGCOV_DEBUGFS_FILE`, `KGCOV_DEBUGFS_REMOVE` | allocation, the lock, debugfs | one default each, unchanged since 2.6.32 | every column |
+
+On the two columns whose kbuild compiles every object as `.tmp_<unit>.o`
+before deciding whether to relink or rename it (3.13 and 4.4,
+`CONFIG_MODVERSIONS=y`), the `.gcno` gcc writes keeps that name —
+`.tmp_<unit>.gcno` beside the object — and a module's `.gcda` files carry
+the same prefix. gcc 4.7, 4.8 and 5 put their constructor,
+`_GLOBAL__sub_I_65535_0_<first public symbol, or the file name>`, in plain
+`.init_array`; gcc 9 and later put `_sub_I_00100_0` in `.init_array.00100`.
+No compiler `make kgcov` builds with emits `.ctors`, so that convention is
+proven instead on a rewritten object — the matrix row "build: a
+.ctors-convention demo is bracketed too". Collection of those files is
+tracked as #530.
+
+The contract an override must keep: `KGCOV_ALLOC` and `KGCOV_ALLOC_ARRAY`
+return zeroed memory; `KGCOV_FREE` and `KGCOV_BIG_FREE` accept `NULL`;
+whatever `KGCOV_ALLOC`, `KGCOV_ALLOC_ARRAY`, `KGCOV_STRDUP`, `KGCOV_MEMDUP`
+and `KGCOV_ASPRINTF` return is releasable by `KGCOV_FREE`, and
+`KGCOV_BIG_ALLOC`'s by `KGCOV_BIG_FREE` — a mismatched pair corrupts rather
+than fails. `KGCOV_MKDIR` returns `0`, `-EEXIST` or another negative errno;
+`KGCOV_FILE_WRITE` returns the bytes written or a negative errno.
+
+A reader writes one of these for a distribution kernel whose version number
+lies about its APIs, or to replace an untested arm that misbehaves:
+
+```c
+/* kgcov_local.h */
+#define KGCOV_MKDIR(path) my_mkdir(path)
+```
 
 ## Declaring the module and its library
 
